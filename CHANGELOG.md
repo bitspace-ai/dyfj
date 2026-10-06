@@ -9,6 +9,39 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent loop no longer sends a request larger than the model's context
+  window.** On a 32K-window local model, a few `grep_files` or `read_file`
+  results, or one test run's output, grew the next request past the window
+  and the provider refused it (llama-server: `request (82366 tokens) exceeds
+  the available context size (32768 tokens)`); nothing fitted the request
+  first, and because the oversized results stayed in the session's history,
+  every later turn in that session failed the same way. Three changes, in
+  `engine/fit-request.ts` and `context/request-fit.ts`: every loop call is
+  estimated (tool definitions included) against the selected model's
+  `contextWindow` less room for its output cap, and one over that budget is
+  shrunk before it is sent (earlier turns' tool results first, oldest first,
+  to a 1 KiB prefix and a marker; then elder turns compressed through the
+  existing compressor; then the current turn's results), failing with
+  `ContextWindowOverflowError`, which names the window, only when it still
+  cannot fit; each tool result is bounded as it is produced to its share of
+  the window left for the turn, not only to the tool's fixed cap, with a
+  marker that states how much was cut and how to get the rest (`read_file`:
+  re-read with `offset` and `limit`; search tools: narrow the query; `bash`:
+  pipe through `head`, `tail` or `grep`); and a provider's context-size
+  rejection (llama-server, OpenAI, Anthropic and Gemini bodies) is classified
+  as `ProviderContextExceededError` instead of a generic error, refitted
+  against the counts the provider reported and retried once, after which it
+  fails as context overflow. A session whose history is already over the
+  window recovers on its next turn through the same path. The durable
+  `tool_call` events are untouched: shrinking decides what the model sees,
+  not what the log keeps. Two runtime events, `toolResultTrimmed` and
+  `contextFitted`, report what was cut, and both clients show them. Golden
+  scenario 12's fixture window was raised from 2,000 to 12,000 tokens
+  (`specs/03-testing.md` §4): the old window could not hold the fixed
+  request prefix, which only the fake model server had let pass.
+
 ### Added
 
 - **`bash` takes a per-call `timeoutSec`, shown in the approval prompt.** The

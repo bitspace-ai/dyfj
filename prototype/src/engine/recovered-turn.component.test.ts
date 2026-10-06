@@ -40,7 +40,10 @@ function lengthReply(
   return chatReply({ content, finishReason: "length", usage, toolCalls });
 }
 
-const SMALL_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 100 };
+// A window the fixed request prefix (system prompt + tool definitions)
+// fits, so the fit step lets the call out; the overflow evidence below is
+// the model's REPORTED usage, scaled to it.
+const SMALL_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 10_000 };
 const COMPRESSED = [{ role: "user" as const, content: "compressed history" }];
 
 interface LengthRun {
@@ -221,9 +224,10 @@ Deno.test("a continuation retry never signals a supersede — its text extends t
 
 Deno.test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
   // Output cap hit (200 >= 200) → output-budget exhaustion by cap
-  // precedence, though the window is also full. The continuation cannot fit
-  // the 100-token window, so a retry would be a doomed over-window call.
-  const partial = "x".repeat(600);
+  // precedence, though the window is also full. The continuation (the
+  // transcript plus a 14,000-character partial) cannot fit the 4,000-token
+  // window, so a retry would be a doomed over-window call.
+  const partial = "x".repeat(14_000);
   const { run, frames, text } = await lengthTurn(
     [
       lengthReply(partial, { prompt_tokens: 50, completion_tokens: 200 }, [
@@ -232,7 +236,11 @@ Deno.test("both cap and window bind: the continuation would overflow, so it is s
     ],
     { prompt: "one more question" },
     {
-      models: [{ ...SMALL_WINDOW, max_output_tokens: 200 }],
+      models: [{
+        ...SMALL_WINDOW,
+        context_window: 4_000,
+        max_output_tokens: 200,
+      }],
     },
   );
   // Exactly one provider call — the doomed continuation was not attempted.
@@ -278,19 +286,20 @@ Deno.test("an adapter without transcript retry delivers the truncated partial in
 });
 
 Deno.test("thinking tokens count toward classification: a thinking-model cap hit near the window is exhaustion, not a false overflow", async () => {
-  // Reported output (96) sits below the 150 cap and input+output (196)
-  // reaches the 200-token window's 98% line — so WITHOUT counting reasoning
-  // this would misclassify as overflow and hard-fail. WITH reasoning, output
-  // is 96 + 60 = 156 ≥ 150 → output-budget exhaustion → truncated partial.
+  // Reported output (9,600) sits below the 15,000 cap and input+output
+  // (19,600) reaches the 20,000-token window's 98% line — so WITHOUT
+  // counting reasoning this would misclassify as overflow and hard-fail.
+  // WITH reasoning, output is 9,600 + 6,000 = 15,600 ≥ 15,000 →
+  // output-budget exhaustion → truncated partial.
   const { run, frames, text } = await lengthTurn(
     [
       geminiReply({
         text: "truncated thinking-model answer",
         finishReason: "MAX_TOKENS",
         usage: {
-          promptTokenCount: 100,
-          candidatesTokenCount: 96,
-          thoughtsTokenCount: 60,
+          promptTokenCount: 10_000,
+          candidatesTokenCount: 9_600,
+          thoughtsTokenCount: 6_000,
         },
       }),
     ],
@@ -298,8 +307,8 @@ Deno.test("thinking tokens count toward classification: a thinking-model cap hit
     {
       models: [{
         ...GEMINI_FREE_MODEL,
-        context_window: 200,
-        max_output_tokens: 150,
+        context_window: 20_000,
+        max_output_tokens: 15_000,
       }],
       env: GEMINI_KEY,
     },
@@ -309,8 +318,8 @@ Deno.test("thinking tokens count toward classification: a thinking-model cap hit
   assertObjectMatch(frame(frames, "lengthStopDetected")!, {
     classification: "output_budget_exhausted",
     severity: "warn",
-    // The event reports true consumption: 96 visible + 60 reasoning.
-    outputTokens: 156,
+    // The event reports true consumption: 9,600 visible + 6,000 reasoning.
+    outputTokens: 15_600,
   });
   assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_unsupported",
@@ -321,16 +330,19 @@ Deno.test("thinking tokens count toward classification: a thinking-model cap hit
 
 // ─── context overflow ────────────────────────────────────────────────────────
 
-/** A 100-token-window reply that overflows: 95 in + 4 out ≥ 98. */
+/**
+ * A 10,000-token-window reply that overflows: 9,750 in + 100 out ≥ 9,800,
+ * with the output short of every cap the tests below set.
+ */
 const OVERFLOW = lengthReply("cut off", {
-  prompt_tokens: 95,
-  completion_tokens: 4,
+  prompt_tokens: 9_750,
+  completion_tokens: 100,
 });
 
 Deno.test("context overflow fails the turn with the structured operator message and a clean event trail", async () => {
   const { run, frames, error } = await lengthTurn(
     [
-      lengthReply("cut off", { prompt_tokens: 90, completion_tokens: 9 }),
+      lengthReply("cut off", { prompt_tokens: 9_000, completion_tokens: 900 }),
     ],
     { prompt: "one more question" },
     { models: [SMALL_WINDOW] },
@@ -341,7 +353,7 @@ Deno.test("context overflow fails the turn with the structured operator message 
   assertObjectMatch(frame(frames, "lengthStopDetected")!, {
     classification: "context_overflow",
     severity: "error",
-    contextWindow: 100,
+    contextWindow: 10_000,
   });
   assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
@@ -372,9 +384,9 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
   const { run, frames, text } = await lengthTurn(
     [
       lengthReply("cut off", {
-        prompt_tokens: 95,
-        completion_tokens: 10,
-        completion_tokens_details: { reasoning_tokens: 6 },
+        prompt_tokens: 9_500,
+        completion_tokens: 1_000,
+        completion_tokens_details: { reasoning_tokens: 600 },
       } as never),
       chatReply({ content: "recovered answer" }),
     ],
@@ -386,7 +398,7 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
   );
   assertEquals(text, "recovered answer");
   assertSpyCalls(recoverContextOverflow, 1);
-  // The hook context reports reasoning-inclusive output (4 visible + 6
+  // The hook context reports reasoning-inclusive output (400 visible + 600
   // reasoning), consistent with classification — the compression consumer
   // sizes its plan from true token pressure, not just visible output.
   assertObjectMatch(
@@ -396,8 +408,8 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
     >,
     {
       modelSlug: LOCAL_MODEL.slug,
-      contextWindow: 100,
-      usage: { input: 95, output: 10 },
+      contextWindow: 10_000,
+      usage: { input: 9_500, output: 1_000 },
     },
   );
   assertEquals(conversation(run.transport.requests[1]), COMPRESSED);
@@ -532,21 +544,21 @@ Deno.test("compression resolves the overflow but the fresh answer hits its outpu
 });
 
 Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow is not mistaken for exhaustion", async () => {
-  // 20 + 70 cached + 5 cache-written prompt-side tokens + 4 output = 99 ≥ 98%
-  // of the 100-token window. Anthropic reports cache traffic outside
-  // input_tokens, so the prompt-side total must add it back.
+  // 2,000 + 7,000 cached + 500 cache-written prompt-side tokens + 400
+  // output = 9,900 ≥ 98% of the 10,000-token window. Anthropic reports cache
+  // traffic outside input_tokens, so the prompt-side total must add it back.
   const { frames, error } = await lengthTurn(
     [
       anthropicStop("cut off", "max_tokens", {
-        input_tokens: 20,
-        output_tokens: 4,
-        cache_read_input_tokens: 70,
-        cache_creation_input_tokens: 5,
+        input_tokens: 2_000,
+        output_tokens: 400,
+        cache_read_input_tokens: 7_000,
+        cache_creation_input_tokens: 500,
       }),
     ],
     { prompt: "one more question" },
     {
-      models: [{ ...HOSTED_FREE_MODEL, context_window: 100 }],
+      models: [{ ...HOSTED_FREE_MODEL, context_window: 10_000 }],
       env: { ANTHROPIC_API_KEY: "test-key-not-real" },
     },
   );
@@ -554,7 +566,7 @@ Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow 
   assert(error.message.includes("Context window overflow"));
   assertObjectMatch(frame(frames, "lengthStopDetected")!, {
     classification: "context_overflow",
-    inputTokens: 95,
+    inputTokens: 9_500,
   });
 });
 
@@ -564,13 +576,13 @@ Deno.test("an overflow on a model with no on-machine compressor fails without a 
   const { run, error } = await lengthTurn(
     [
       anthropicStop("cut off", "max_tokens", {
-        input_tokens: 95,
-        output_tokens: 4,
+        input_tokens: 9_500,
+        output_tokens: 400,
       }),
     ],
     { prompt: "one more question" },
     {
-      models: [{ ...HOSTED_FREE_MODEL, context_window: 100 }],
+      models: [{ ...HOSTED_FREE_MODEL, context_window: 10_000 }],
       env: { ANTHROPIC_API_KEY: "test-key-not-real" },
     },
   );

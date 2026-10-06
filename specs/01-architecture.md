@@ -167,7 +167,12 @@ over an engine-owned `TurnState`.
      compression.
   6. `agentLoop`: steps up to `max_tool_steps`. Each step is an
      `observedProviderCall` (below), then tool dispatch via `tools/`
-     invoke-with-event. _Landing spot for Run._
+     invoke-with-event. Every call is fitted to the model's context window
+     before it is sent (`engine/fit-request.ts`: earlier tool results
+     shrunk, elder turns compressed, else a structured overflow failure),
+     and each tool result is bounded to the window left for the turn as it
+     is produced; a provider's context-size rejection is refitted and
+     retried once. _Landing spot for Run._
   7. `finalize`: receipt, `session_end`/summary events, error classification.
      _Landing spot for receipt reconciliation._
 - **`observedProviderCall`** is the single implementation of "call provider →

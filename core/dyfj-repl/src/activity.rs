@@ -59,6 +59,52 @@ pub fn describe(event: &Value) -> Option<String> {
         "toolStepLimitReached" => {
             Some("· tool step limit reached; the turn stopped early".into())
         }
+        // A tool result was cut to fit the model's context window; the
+        // model got a marker in its place, the session log kept the result.
+        "toolResultTrimmed" => {
+            let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
+            let name = crate::approval::visible(name);
+            match (
+                event.get("keptChars").and_then(Value::as_i64),
+                event.get("totalChars").and_then(Value::as_i64),
+            ) {
+                (Some(kept), Some(total)) => Some(format!(
+                    "  · {name} result trimmed to fit the context window ({kept} of {total} chars kept)"
+                )),
+                _ => Some(format!("  · {name} result trimmed to fit the context window")),
+            }
+        }
+        // The request would not have fit the window and was made to fit
+        // before it went out: without this the operator cannot tell why the
+        // model stopped seeing an earlier tool result.
+        "contextFitted" => {
+            let window = event
+                .get("contextWindow")
+                .and_then(Value::as_i64)
+                .map(|window| format!("{window}-token "))
+                .unwrap_or_default();
+            let mut what: Vec<String> = Vec::new();
+            if let Some(trimmed) = event.get("trimmedToolResults").and_then(Value::as_i64) {
+                if trimmed > 0 {
+                    what.push(format!("{trimmed} tool result(s) trimmed"));
+                }
+            }
+            if event.get("compressed").and_then(Value::as_bool) == Some(true) {
+                what.push("elder turns compressed".into());
+            }
+            let cause = match event.get("trigger").and_then(Value::as_str) {
+                Some("provider_rejected") => " after the provider rejected the request",
+                _ => "",
+            };
+            if what.is_empty() {
+                Some(format!("· context fitted to the {window}window{cause}"))
+            } else {
+                Some(format!(
+                    "· context fitted to the {window}window{cause}: {}",
+                    what.join(", ")
+                ))
+            }
+        }
         // The runtime emitted text shaped like a tool call that executed
         // nothing. Without this the operator reads prose describing tool
         // activity that never happened.
@@ -102,6 +148,36 @@ mod tests {
             }))
             .as_deref(),
             Some("  ✓ list_files (11ms)")
+        );
+    }
+
+    #[test]
+    fn narrates_window_fitting_as_the_runtime_reports_it() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolResultTrimmed", "commandId": "read_file", "callId": "c1",
+                "contextWindow": 32768, "keptChars": 8192, "totalChars": 65536
+            }))
+            .as_deref(),
+            Some("  · read_file result trimmed to fit the context window (8192 of 65536 chars kept)")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "contextFitted", "modelSlug": "m", "contextWindow": 32768,
+                "budgetTokens": 23347, "estimatedTokensBefore": 47716,
+                "estimatedTokensAfter": 18200, "trimmedToolResults": 2,
+                "compressed": false, "trigger": "before_send"
+            }))
+            .as_deref(),
+            Some("· context fitted to the 32768-token window: 2 tool result(s) trimmed")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "contextFitted", "contextWindow": 32768, "trimmedToolResults": 0,
+                "compressed": true, "trigger": "provider_rejected"
+            }))
+            .as_deref(),
+            Some("· context fitted to the 32768-token window after the provider rejected the request: elder turns compressed")
         );
     }
 

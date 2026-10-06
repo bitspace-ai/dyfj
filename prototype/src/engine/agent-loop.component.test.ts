@@ -262,7 +262,7 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
         chatReply({
           content: "partial conclusion",
           finishReason: "length",
-          usage: { prompt_tokens: 99, completion_tokens: 0 },
+          usage: { prompt_tokens: 9_900, completion_tokens: 0 },
         }),
         { respond: { status: 500, body: sentinel } },
       ],
@@ -273,7 +273,7 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
             messages: [{ role: "user", content: "compressed history" }],
           });
       },
-      [{ ...LOCAL_MODEL, context_window: 100 }],
+      [{ ...LOCAL_MODEL, context_window: 10_000 }],
     )
   );
   const { error, frames } = loop.value;

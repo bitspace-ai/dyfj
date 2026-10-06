@@ -1,0 +1,244 @@
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "@std/assert";
+import type { WorkbenchMessage } from "../providers/mod.ts";
+import {
+  CONTEXT_FIT_MARGIN,
+  currentTurnStart,
+  DEFAULT_OUTPUT_RESERVE_TOKENS,
+  MIN_TOOL_RESULT_CHARS,
+  requestEstimateText,
+  requestInputBudget,
+  shrinkToolResults,
+  SHRUNK_TOOL_RESULT_CHARS,
+  toolResultShareChars,
+  TRIM_MARKER_ALLOWANCE_CHARS,
+  trimToolResult,
+} from "./request-fit.ts";
+
+const estimate = (messages: readonly WorkbenchMessage[]) =>
+  Math.ceil(requestEstimateText("", messages, undefined).length / 4);
+
+// --- requestInputBudget ---
+
+Deno.test("requestInputBudget: the window less the output cap, then the margin", () => {
+  assertStrictEquals(
+    requestInputBudget(32_768, 4_096),
+    Math.floor((32_768 - 4_096) * CONTEXT_FIT_MARGIN),
+  );
+});
+
+Deno.test("requestInputBudget: an output cap as large as the window still leaves three quarters for input", () => {
+  assertStrictEquals(
+    requestInputBudget(32_768, 32_768),
+    Math.floor((32_768 - 8_192) * CONTEXT_FIT_MARGIN),
+  );
+});
+
+Deno.test("requestInputBudget: no declared cap reserves the default", () => {
+  assertStrictEquals(
+    requestInputBudget(32_768, undefined),
+    Math.floor((32_768 - DEFAULT_OUTPUT_RESERVE_TOKENS) * CONTEXT_FIT_MARGIN),
+  );
+});
+
+// --- requestEstimateText ---
+
+Deno.test("requestEstimateText: tool definitions count toward the request", () => {
+  const messages: WorkbenchMessage[] = [{ role: "user", content: "hi" }];
+  const without = requestEstimateText("sys", messages, undefined);
+  const withTools = requestEstimateText("sys", messages, [{
+    name: "read_file",
+    description: "x".repeat(400),
+    parameters: {},
+  }]);
+  assert(withTools.length > without.length + 400);
+  assertStrictEquals(requestEstimateText("sys", messages, []), without);
+});
+
+// --- trimToolResult ---
+
+Deno.test("trimToolResult: a result within the allowance is untouched", () => {
+  assertStrictEquals(trimToolResult("short", 1_000, "bash", 32_768), null);
+  assertStrictEquals(trimToolResult("x".repeat(1_000), 1_000, "bash", 1), null);
+});
+
+Deno.test("trimToolResult: a cut that would save no more than the marker costs is not made", () => {
+  assertStrictEquals(
+    trimToolResult(
+      "x".repeat(1_000 + TRIM_MARKER_ALLOWANCE_CHARS),
+      1_000,
+      "bash",
+      32_768,
+    ),
+    null,
+  );
+  assert(
+    trimToolResult(
+      "x".repeat(1_001 + TRIM_MARKER_ALLOWANCE_CHARS),
+      1_000,
+      "bash",
+      32_768,
+    ) !== null,
+  );
+});
+
+Deno.test("trimToolResult: keeps the prefix and states what was cut, with the tool's recovery hint", () => {
+  const trimmed = trimToolResult("a".repeat(5_000), 1_000, "read_file", 32_768);
+  assert(trimmed !== null);
+  assertEquals(trimmed.keptChars, 1_000);
+  assertEquals(trimmed.totalChars, 5_000);
+  assert(
+    trimmed.content.startsWith("a".repeat(1_000) + "\n\n[Workbench trimmed"),
+  );
+  assertStringIncludes(trimmed.content, "32768-token context window");
+  assertStringIncludes(trimmed.content, "the first 1000 of 5000 characters");
+  assertStringIncludes(trimmed.content, "offset and limit");
+  assertStringIncludes(
+    trimToolResult("b".repeat(5_000), 1_000, "bash", 32_768)!.content,
+    "head, tail or grep",
+  );
+  assertStringIncludes(
+    trimToolResult("c".repeat(5_000), 1_000, "grep_files", 32_768)!.content,
+    "narrower query",
+  );
+});
+
+Deno.test("trimToolResult: never splits a surrogate pair", () => {
+  const content = "ab" + "😀".repeat(1_000);
+  // Cutting at 3 would land between the first emoji's two code units.
+  const trimmed = trimToolResult(content, 3, "bash", 100);
+  assert(trimmed !== null);
+  assertEquals(trimmed.keptChars, 2);
+  assert(trimmed.content.startsWith("ab\n\n["));
+});
+
+// --- toolResultShareChars ---
+
+Deno.test("toolResultShareChars: the remaining window split among the calls left", () => {
+  assertStrictEquals(toolResultShareChars(3_000, 3), 4_000);
+  assertStrictEquals(toolResultShareChars(3_000, 1), 12_000);
+});
+
+Deno.test("toolResultShareChars: never below the floor, even with no room left", () => {
+  assertStrictEquals(toolResultShareChars(0, 3), MIN_TOOL_RESULT_CHARS);
+  assertStrictEquals(toolResultShareChars(-500, 1), MIN_TOOL_RESULT_CHARS);
+});
+
+// --- currentTurnStart ---
+
+Deno.test("currentTurnStart: the last user message; the head when there is none", () => {
+  assertStrictEquals(
+    currentTurnStart([
+      { role: "user", content: "a" },
+      { role: "assistant", content: "b" },
+      { role: "user", content: "c" },
+      { role: "assistant", content: "", toolCalls: [] },
+    ]),
+    2,
+  );
+  assertStrictEquals(currentTurnStart([{ role: "assistant", content: "" }]), 0);
+});
+
+// --- shrinkToolResults ---
+
+function toolPair(id: string, chars: number): WorkbenchMessage[] {
+  return [
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id, name: "read_file", arguments: {} }],
+    },
+    {
+      role: "tool",
+      toolCallId: id,
+      name: "read_file",
+      content: "x".repeat(chars),
+    },
+  ];
+}
+
+Deno.test("shrinkToolResults: oldest first, stopping as soon as the request fits", () => {
+  const messages: WorkbenchMessage[] = [
+    { role: "user", content: "q" },
+    ...toolPair("t1", 8_000),
+    ...toolPair("t2", 8_000),
+    ...toolPair("t3", 8_000),
+    { role: "user", content: "next" },
+  ];
+  // 24,000 chars ≈ 6,000 tokens; a 3,000-token budget needs two shrunk.
+  const { messages: fitted, trims } = shrinkToolResults(
+    messages,
+    { from: 0, to: messages.length },
+    3_000,
+    estimate,
+    32_768,
+  );
+  assertEquals(trims.map((t) => t.callId), ["t1", "t2"]);
+  assertEquals(trims[0], {
+    index: 2,
+    commandId: "read_file",
+    callId: "t1",
+    keptChars: SHRUNK_TOOL_RESULT_CHARS,
+    totalChars: 8_000,
+  });
+  assert(estimate(fitted) <= 3_000);
+  // The newest result is kept verbatim; the input is not mutated.
+  assertStrictEquals(fitted[6], messages[6]);
+  assertStrictEquals(messages[2].content.length, 8_000);
+});
+
+Deno.test("shrinkToolResults: only the range it is given, and nothing when the request already fits", () => {
+  const messages: WorkbenchMessage[] = [
+    { role: "user", content: "q" },
+    ...toolPair("old", 8_000),
+    { role: "user", content: "next" },
+    ...toolPair("fresh", 8_000),
+  ];
+  const elderOnly = shrinkToolResults(
+    messages,
+    { from: 0, to: 3 },
+    1,
+    estimate,
+    32_768,
+  );
+  assertEquals(elderOnly.trims.map((t) => t.callId), ["old"]);
+  assertStrictEquals(elderOnly.messages[5], messages[5]);
+
+  const untouched = shrinkToolResults(
+    messages,
+    { from: 0, to: messages.length },
+    100_000,
+    estimate,
+    32_768,
+  );
+  assertEquals(untouched.trims, []);
+  assertEquals(untouched.messages, messages);
+});
+
+Deno.test("shrinkToolResults: a second pass over shrunk results changes nothing", () => {
+  const messages: WorkbenchMessage[] = [
+    { role: "user", content: "q" },
+    ...toolPair("t1", 8_000),
+    { role: "user", content: "next" },
+  ];
+  const once = shrinkToolResults(
+    messages,
+    { from: 0, to: messages.length },
+    1,
+    estimate,
+    32_768,
+  );
+  const twice = shrinkToolResults(
+    once.messages,
+    { from: 0, to: messages.length },
+    1,
+    estimate,
+    32_768,
+  );
+  assertEquals(once.trims.length, 1);
+  assertEquals(twice.trims, []);
+});

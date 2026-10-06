@@ -177,6 +177,41 @@ export function formatRuntimeEvent(
       : ` extensions=${extensions.join(",")}`;
     return `Memory recall MCP: era=${era} revision=${revision}${server}${extensionText}`;
   }
+  if (event.type === "toolResultTrimmed") {
+    const commandId = typeof event.commandId === "string"
+      ? event.commandId
+      : "tool";
+    const kept = typeof event.keptChars === "number" ? event.keptChars : "?";
+    const total = typeof event.totalChars === "number" ? event.totalChars : "?";
+    const window = typeof event.contextWindow === "number"
+      ? `${event.contextWindow}-token`
+      : "the";
+    return `context: trimmed ${commandId} result to fit the ${window} ` +
+      `window (${kept} of ${total} characters kept)`;
+  }
+  if (event.type === "contextFitted") {
+    const window = typeof event.contextWindow === "number"
+      ? `${event.contextWindow}-token`
+      : "the";
+    const before = typeof event.estimatedTokensBefore === "number"
+      ? event.estimatedTokensBefore
+      : "?";
+    const after = typeof event.estimatedTokensAfter === "number"
+      ? event.estimatedTokensAfter
+      : "?";
+    const trimmed = typeof event.trimmedToolResults === "number" &&
+        event.trimmedToolResults > 0
+      ? `, ${event.trimmedToolResults} tool result(s) trimmed`
+      : "";
+    const compressed = event.compressed === true
+      ? ", elder turns compressed"
+      : "";
+    const cause = event.trigger === "provider_rejected"
+      ? " after the provider rejected the request"
+      : "";
+    return `context: fitted to the ${window} window${cause} ` +
+      `(~${before} → ~${after} tokens${trimmed}${compressed})`;
+  }
   if (event.type === "contextCompressed") {
     const turns = typeof event.turnsCompressed === "number"
       ? event.turnsCompressed

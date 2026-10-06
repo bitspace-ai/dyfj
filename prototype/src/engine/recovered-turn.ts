@@ -6,6 +6,12 @@
  * shot first. Every retry goes back through `observedTurn`, so the budget
  * gates and usage recording hold for it.
  *
+ * A provider that rejects the request outright as larger than its window
+ * (`ProviderContextExceededError`, an HTTP 400 rather than a length stop)
+ * is the same overflow: the request is refitted against the counts the
+ * provider reported and retried once; a rejection that survives that, or
+ * one on any other retry, fails the turn with `ContextWindowOverflowError`.
+ *
  * Tool calls on a length-stopped response are a cut-off plan: every path
  * that delivers a truncated result strips them, so the loop never executes a
  * plan the model did not finish stating.
@@ -13,6 +19,7 @@
 import {
   modelRequestedOutputCap,
   modelSupportsTranscriptRetry,
+  ProviderContextExceededError,
   type WorkbenchTurnParams,
 } from "../providers/mod.ts";
 import {
@@ -24,6 +31,7 @@ import {
 } from "../context/mod.ts";
 import type { LengthRecoveryOutcome } from "../contract/mod.ts";
 import { compressionRecoverer } from "./compression.ts";
+import { estimateRequest, fitLimits, fitRequest } from "./fit-request.ts";
 import {
   type LoopCallPurpose,
   type LoopCallRequest,
@@ -40,6 +48,9 @@ import {
   transcriptEstimateText,
 } from "./transcript.ts";
 
+/** The least a provider rejection may scale the refit budget by. */
+const MIN_REFIT_SCALE = 0.5;
+
 /** A length stop's prompt- and output-side token totals. */
 interface LengthStop {
   result: LoopTurnResult;
@@ -51,7 +62,11 @@ interface LengthStop {
   ) => Promise<void>;
 }
 
-/** Make one loop call, recovering once from a length stop. */
+/**
+ * Make one loop call, recovering once from a length stop or a context-size
+ * rejection. A rejection that outlives its one refit — on the retry, or on
+ * a length-recovery retry — fails structured, naming the window.
+ */
 export async function recoveredTurn(
   turn: RoutedTurn,
   params: WorkbenchTurnParams,
@@ -59,13 +74,41 @@ export async function recoveredTurn(
   purpose: LoopCallPurpose,
   onProviderError?: (error: unknown) => unknown,
 ): Promise<LoopTurnResult> {
-  const result = await observedTurn(
-    turn,
-    params,
-    request,
-    purpose,
-    onProviderError,
-  );
+  try {
+    return await recoveredCall(turn, params, request, purpose, onProviderError);
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    throw new ContextWindowOverflowError({
+      modelSlug: turn.route.selected.slug,
+      contextWindow: fitLimits(turn, {
+        contextWindow: err.report.limitTokens,
+      })?.contextWindow,
+      inputTokens: err.report.requestedTokens ?? request.estimatedInputCount,
+      outputTokens: 0,
+    });
+  }
+}
+
+async function recoveredCall(
+  turn: RoutedTurn,
+  params: WorkbenchTurnParams,
+  request: LoopCallRequest,
+  purpose: LoopCallPurpose,
+  onProviderError?: (error: unknown) => unknown,
+): Promise<LoopTurnResult> {
+  let result: LoopTurnResult;
+  try {
+    result = await observedTurn(
+      turn,
+      params,
+      request,
+      purpose,
+      onProviderError,
+    );
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    return await refitRejected(turn, params, request, err, onProviderError);
+  }
   if (result.stopReason !== "length") return result;
   const stop = await classifyStop(turn, result);
   // A transcript retry only works where the adapter builds its request from
@@ -83,6 +126,72 @@ export async function recoveredTurn(
     );
   }
   return await continueTruncated(turn, params, request, stop, retryable);
+}
+
+/**
+ * The provider refused a request the estimate had passed: refit it against
+ * the counts the provider reported — its measured size calibrates the
+ * estimate, its limit bounds the window — so the retry is smaller by at
+ * least the ratio it was over, and retry once. A refit that changes nothing
+ * would resend the same request, so it fails instead; the retry's own
+ * rejection propagates to `recoveredTurn`, which fails it structured.
+ */
+async function refitRejected(
+  turn: RoutedTurn,
+  params: WorkbenchTurnParams,
+  request: LoopCallRequest,
+  rejection: ProviderContextExceededError,
+  onProviderError?: (error: unknown) => unknown,
+): Promise<LoopTurnResult> {
+  const loopRequest = {
+    systemPrompt: params.systemPrompt,
+    messages: params.messages ?? [],
+    tools: params.tools,
+  };
+  const estimate = estimateRequest(loopRequest);
+  const { requestedTokens, limitTokens } = rejection.report;
+  const catalogWindow = turn.route.selected.contextWindow;
+  const contextWindow = limitTokens === undefined
+    ? catalogWindow
+    : Math.min(limitTokens, catalogWindow ?? limitTokens);
+  if (contextWindow === undefined) throw rejection;
+  const limits = fitLimits(turn, { contextWindow });
+  // The provider's count against the estimate is the estimator's error on
+  // this transcript; the budget shrinks by it, but never below half — a
+  // single report is one data point, and the retry is bounded to one.
+  const scale = Math.max(
+    MIN_REFIT_SCALE,
+    requestedTokens !== undefined && requestedTokens > estimate
+      ? estimate / requestedTokens
+      : 1,
+  );
+  let budgetTokens = Math.floor((limits?.budgetTokens ?? 0) * scale);
+  // The provider's verdict outranks the estimate: whatever the report said,
+  // the retry must be smaller than what was refused.
+  if (budgetTokens >= estimate) budgetTokens = Math.floor(estimate / 2);
+  const fitted = await fitRequest(
+    turn,
+    loopRequest,
+    "provider_rejected",
+    { contextWindow, budgetTokens },
+  );
+  if (!fitted.changed) throw rejection;
+  turn.state.session.log(
+    "\n[the provider rejected the request as over its context window; " +
+      "refitted and retrying]",
+  );
+  return await observedTurn(
+    turn,
+    { ...params, messages: loopRequest.messages },
+    {
+      modelSlug: request.modelSlug,
+      estimatedInputCount: estimateRuntimeInputCount(
+        transcriptEstimateText(params.systemPrompt, loopRequest.messages),
+      ),
+    },
+    "recovery",
+    onProviderError,
+  );
 }
 
 /** Classify the stop and report it as a `lengthStopDetected` frame. */

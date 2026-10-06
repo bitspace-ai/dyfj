@@ -50,16 +50,17 @@ const VALID_SUMMARY = COMPRESSION_SECTIONS.map((s) => `## ${s}\n(none)`)
   .join("\n\n");
 
 // Four turns so that, with the K=2 verbatim tail, two elder turns remain to
-// compress. Long content so the estimate crosses the 50%-of-window trigger.
+// compress. Long content (~6,700 tokens) so the estimate crosses the
+// 50%-of-window trigger on SMALL_WINDOW.
 const BIG_HISTORY: WorkbenchMessage[] = [
-  { role: "user", content: "old question ".repeat(80) },
-  { role: "assistant", content: "old answer ".repeat(80) },
-  { role: "user", content: "second question ".repeat(80) },
-  { role: "assistant", content: "second answer ".repeat(80) },
-  { role: "user", content: "third question ".repeat(80) },
-  { role: "assistant", content: "third answer ".repeat(80) },
-  { role: "user", content: "fourth question ".repeat(80) },
-  { role: "assistant", content: "fourth answer ".repeat(80) },
+  { role: "user", content: "old question ".repeat(240) },
+  { role: "assistant", content: "old answer ".repeat(240) },
+  { role: "user", content: "second question ".repeat(240) },
+  { role: "assistant", content: "second answer ".repeat(240) },
+  { role: "user", content: "third question ".repeat(240) },
+  { role: "assistant", content: "third answer ".repeat(240) },
+  { role: "user", content: "fourth question ".repeat(240) },
+  { role: "assistant", content: "fourth answer ".repeat(240) },
 ];
 
 // Moderate history in a large window: the pre-call estimate stays under the
@@ -77,12 +78,22 @@ const MODERATE_HISTORY: WorkbenchMessage[] = [
   { role: "assistant", content: "ok ".repeat(25) },
 ];
 
-/** The local model with a small window, so the proactive trigger fires. */
-const SMALL_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 100 };
+/**
+ * The local model with a small window, so the proactive trigger fires. The
+ * fixed request prefix (system prompt + tool definitions, ~2,500 tokens)
+ * must still fit it, or the fit step fails the turn before any call.
+ */
+const SMALL_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 12_000 };
+/**
+ * A window BIG_HISTORY crosses the proactive trigger on, but that the
+ * UNCOMPRESSED request still fits: a declined compression leaves a sendable
+ * turn rather than one the fit step fails.
+ */
+const UNCOMPRESSED_FITS_WINDOW = 14_000;
 /** A window the proactive trigger never reaches. */
 const HUGE_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 1_000_000 };
 /** Large enough that the moderate history stays under the trigger. */
-const RECOVERY_WINDOW = 4_000;
+const RECOVERY_WINDOW = 6_000;
 
 /** A compression reply that checks it went to the compression prompt. */
 function summaryReply(reply = chatReply({ content: VALID_SUMMARY })) {
@@ -247,10 +258,16 @@ Deno.test("includes compression reasoning in the turn receipt", async () => {
 Deno.test("records a safe failed compression attempt and continues uncompressed", async () => {
   const providerMessage = "provider-controlled compression body";
   const { run, frames } = await quietly(() =>
-    compressionTurn([
-      { respond: { status: 500, body: providerMessage } },
-      chatReply({ content: "runtime response" }),
-    ], {})
+    compressionTurn(
+      [
+        { respond: { status: 500, body: providerMessage } },
+        chatReply({ content: "runtime response" }),
+      ],
+      {},
+      {
+        models: [{ ...SMALL_WINDOW, context_window: UNCOMPRESSED_FITS_WINDOW }],
+      },
+    )
   );
   assertStringIncludes(
     JSON.stringify(conversation(sessionRequest(run))),
@@ -281,6 +298,8 @@ Deno.test("an abort during compression cannot replace elder context", async () =
   }], {
     turnId: "123e4567-e89b-42d3-a456-426614174000",
     abortSignal: abortController.signal,
+  }, {
+    models: [{ ...SMALL_WINDOW, context_window: UNCOMPRESSED_FITS_WINDOW }],
   });
   // The aborted session call is never dispatched, so nothing past the
   // compression request reached the provider, and nothing was adopted.
@@ -359,7 +378,9 @@ Deno.test("declines compression when its event cannot be persisted", async () =>
         chatReply({ content: "runtime response" }),
       ],
       {},
-      {},
+      {
+        models: [{ ...SMALL_WINDOW, context_window: UNCOMPRESSED_FITS_WINDOW }],
+      },
       failingCompressionWrites({ lands: false }),
     )
   );
@@ -577,7 +598,10 @@ Deno.test("[case 22] persisted reactive compression is followed by an event-reco
 
 // ─── locality boundary ───────────────────────────────────────────────────────
 
-const HOSTED_SMALL: ModelSeed = { ...HOSTED_FREE_MODEL, context_window: 100 };
+const HOSTED_SMALL: ModelSeed = {
+  ...HOSTED_FREE_MODEL,
+  context_window: UNCOMPRESSED_FITS_WINDOW,
+};
 const LOCAL_FALLBACK: ModelSeed = {
   ...LOCAL_MODEL,
   slug: "qwen3-local",
@@ -624,7 +648,7 @@ Deno.test("compression routes to a local tier-0 row even when a hosted tier-0 ro
   const preferredHosted: ModelSeed = {
     ...HOSTED_FREE_MODEL,
     slug: "hosted-preferred",
-    context_window: 100,
+    context_window: UNCOMPRESSED_FITS_WINDOW,
   };
   const { frames } = await compressionTurn(
     [

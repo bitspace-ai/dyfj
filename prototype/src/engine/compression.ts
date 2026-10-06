@@ -4,9 +4,10 @@
  * `context_compressed` event that lets resume rebuild the same transcript,
  * and only then hand the compressed transcript back.
  *
- * Two triggers share it: `loadTranscript`'s proactive compression before the
- * first call, and the agent loop's reactive recovery when a call overflows
- * the context window. Every failure path returns a declined outcome rather
+ * Three triggers share it: `loadTranscript`'s proactive compression before
+ * the first call, the request fit before any loop call (`fit-request.ts`),
+ * and the agent loop's reactive recovery when a call overflows the context
+ * window. Every failure path returns a declined outcome rather
  * than throwing; the caller decides what a decline means. The one exception
  * is a write whose durability cannot be determined, which fails the turn.
  */
@@ -28,6 +29,7 @@ import {
   partitionForCompression,
   VERBATIM_TAIL_TURNS,
 } from "../context/mod.ts";
+import type { ContextCompressionTrigger } from "../contract/mod.ts";
 import {
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
@@ -41,7 +43,7 @@ import {
 } from "./transcript.ts";
 import { commitEvent } from "./turn-state.ts";
 
-export type CompressionTrigger = "proactive" | "context_overflow";
+export type CompressionTrigger = ContextCompressionTrigger;
 
 type Compressed = Extract<CompressionOutcome, { status: "compressed" }>;
 

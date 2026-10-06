@@ -76,12 +76,16 @@ const MODELS: GoldenModelRow[] = [
     capabilities: ["text"],
   },
   // A small context window so a short session crosses the proactive
-  // compression trigger.
+  // compression trigger. It must still hold the fixed request prefix (the
+  // system prompt and the tool definitions, ~2,500 tokens) with room for
+  // the padded turns: the engine fits every request to the window before it
+  // is sent and fails one that cannot fit, so a window under the prefix
+  // would never reach the model.
   {
     slug: SMALL,
     displayName: "Golden Small Context",
     tier: 0,
-    contextWindow: 2000,
+    contextWindow: 12_000,
     maxOutputTokens: 256,
     costInput: 0,
     costOutput: 0,
@@ -130,8 +134,10 @@ const COMPRESSION_SUMMARY = [
   "(none)",
 ].join("\n");
 
+// ~885 tokens per padded message: the fourth turn's history crosses the
+// 50% trigger of the small window; the third turn's does not.
 const PADDING = " Padding keeps this turn long enough to fill a small window."
-  .repeat(12);
+  .repeat(60);
 
 function goldenScript(request: ChatRequest): ModelReply {
   const messages = request.messages ?? [];

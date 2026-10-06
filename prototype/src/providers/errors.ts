@@ -97,3 +97,32 @@ export class WorkbenchModelNotRoutableError extends DomainError {
     this.name = "WorkbenchModelNotRoutableError";
   }
 }
+
+/**
+ * The provider rejected the request as larger than the model's context
+ * window (llama-server's HTTP 400 "exceeds the available context size",
+ * OpenAI's `context_length_exceeded`, Anthropic's "prompt is too long",
+ * Gemini's "input token count … exceeds"). The engine treats it as context
+ * overflow and refits the request; a generic provider error would end the
+ * turn. The message carries only the counts the provider stated, never its
+ * body.
+ */
+export class ProviderContextExceededError extends DomainError {
+  constructor(
+    public readonly slug: string,
+    public readonly status: number,
+    public readonly report: { requestedTokens?: number; limitTokens?: number },
+  ) {
+    const counts = report.requestedTokens !== undefined &&
+        report.limitTokens !== undefined
+      ? ` (${report.requestedTokens} tokens against a ${report.limitTokens}-token limit)`
+      : report.limitTokens !== undefined
+      ? ` (${report.limitTokens}-token limit)`
+      : "";
+    super(
+      `Context exceeded for ${errorField(slug)}: the provider rejected the ` +
+        `request as larger than its context window with HTTP ${status}${counts}`,
+    );
+    this.name = "ProviderContextExceededError";
+  }
+}
