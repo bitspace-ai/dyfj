@@ -304,7 +304,7 @@ function summaryReply(): ScriptedExchange {
 /** A window the fixed prefix fits, but two verbatim turns of prose do not. */
 const TINY_WINDOW: ModelSeed = {
   ...LOCAL_MODEL,
-  context_window: 6_000,
+  context_window: 8_000,
   max_output_tokens: 256,
 };
 
@@ -468,14 +468,14 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
 
 Deno.test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
   // Gemini carries no transcript and no tools on the wire, so the seeded
-  // history (which the transcript estimate would put far over a 4,000-token
+  // history (which the transcript estimate would put far over a 40,000-token
   // window) costs nothing; the turn goes out and completes.
   const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
     prompt: "a short follow-up",
     conversationMessages: overWindowHistory(60_000),
     defaultCompanionModel: GEMINI_FREE_MODEL.slug,
   }, {
-    models: [{ ...GEMINI_FREE_MODEL, context_window: 4_000 }],
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 40_000 }],
     env: { GEMINI_API_KEY: "test-key-not-real" },
   });
   assertEquals(fit.error, null);
@@ -554,7 +554,7 @@ Deno.test("an overflow-recovery plan is fitted before its retry is sent", async 
 // ─── the compression input is fitted to the compressor's window ──────────────
 
 Deno.test("an elder larger than the compressor's window is compressed in passes, each request within the window", async () => {
-  // Twelve prose turns of ~1,000 tokens on a 6,000-token model that is also
+  // Twelve prose turns of ~1,000 tokens on an 8,000-token model that is also
   // its own compressor: no single compression request can carry the elder,
   // so it is compressed from its oldest turns in passes until the request
   // fits. Every request the model receives, compression ones included, is
@@ -634,13 +634,13 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
 });
 
 Deno.test("an adapter that sends only the prompt is never proactively compressed, even with a local compressor at hand", async () => {
-  // Four prior turns cross the 50% trigger of a 4,000-token window by the
+  // Four prior turns cross the 50% trigger of a 40,000-token window by the
   // transcript estimate, and a local tier-0 row could compress them; but
   // Gemini sends none of that history, so compressing would only persist a
   // summary over turns the model never sees. One request, to Gemini.
   const prose = (word: string): WorkbenchMessage[] => [
-    { role: "user", content: `${word} question `.repeat(150) },
-    { role: "assistant", content: `${word} answer `.repeat(150) },
+    { role: "user", content: `${word} question `.repeat(1_000) },
+    { role: "assistant", content: `${word} answer `.repeat(1_000) },
   ];
   const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
     prompt: "a short follow-up",
@@ -652,7 +652,7 @@ Deno.test("an adapter that sends only the prompt is never proactively compressed
     ],
     defaultCompanionModel: GEMINI_FREE_MODEL.slug,
   }, {
-    models: [{ ...GEMINI_FREE_MODEL, context_window: 4_000 }, LOCAL_MODEL],
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 40_000 }, LOCAL_MODEL],
     env: { GEMINI_API_KEY: "test-key-not-real" },
   });
   assertEquals(fit.error, null);

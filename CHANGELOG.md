@@ -20,7 +20,9 @@ README are tracked separately in its Revision history section.
   every later turn in that session failed the same way. Three changes, in
   `engine/fit-request.ts` and `context/request-fit.ts`: every loop call is
   estimated (tool definitions included) against the selected model's
-  `contextWindow` less room for its output cap, and one over that budget is
+  `contextWindow` less the output cap the request transmits (a bounded
+  default when it sends none, as a local request with no cap requested
+  does), and one over that budget is
   shrunk before it is sent (earlier turns' tool results first, oldest first,
   to a 1 KiB prefix and a marker; then elder turns compressed through the
   existing compressor; then the current turn's results), failing with

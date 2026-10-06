@@ -74,6 +74,7 @@ export {
   createProviderRegistry,
   modelRequestCarriesTranscript,
   modelRequestedOutputCap,
+  modelTransmittedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
   PROVIDER_ADAPTERS,

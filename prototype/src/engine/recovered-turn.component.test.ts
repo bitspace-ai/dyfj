@@ -225,9 +225,9 @@ Deno.test("a continuation retry never signals a supersede — its text extends t
 Deno.test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
   // Output cap hit (200 >= 200) → output-budget exhaustion by cap
   // precedence, though the window is also full. The continuation (the
-  // transcript plus a 14,000-character partial) cannot fit the 4,000-token
+  // transcript plus a 20,000-character partial) cannot fit the 5,000-token
   // window, so a retry would be a doomed over-window call.
-  const partial = "x".repeat(14_000);
+  const partial = "x".repeat(20_000);
   const { run, frames, text } = await lengthTurn(
     [
       lengthReply(partial, { prompt_tokens: 50, completion_tokens: 200 }, [
@@ -238,7 +238,7 @@ Deno.test("both cap and window bind: the continuation would overflow, so it is s
     {
       models: [{
         ...SMALL_WINDOW,
-        context_window: 4_000,
+        context_window: 5_000,
         max_output_tokens: 200,
       }],
     },

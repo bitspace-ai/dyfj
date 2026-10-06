@@ -15,7 +15,7 @@
  */
 import {
   modelRequestCarriesTranscript,
-  modelRequestedOutputCap,
+  modelTransmittedOutputCap,
   type WorkbenchMessage,
   type WorkbenchToolDefinition,
 } from "../providers/mod.ts";
@@ -92,7 +92,7 @@ export function fitLimits(
     budgetTokens: override.budgetTokens ??
       requestInputBudget(
         contextWindow,
-        modelRequestedOutputCap(turn.route.selected),
+        modelTransmittedOutputCap(turn.route.selected),
       ),
   };
 }

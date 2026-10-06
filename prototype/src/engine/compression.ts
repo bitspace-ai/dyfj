@@ -15,7 +15,7 @@ import { generateSpanId, generateULID } from "../kernel/mod.ts";
 import { contextCompressedEvent } from "../store/mod.ts";
 import {
   isLocalWorkbenchModel,
-  modelRequestedOutputCap,
+  modelTransmittedOutputCap,
   selectWorkbenchModel,
   type WorkbenchMessage,
   type WorkbenchModel,
@@ -130,7 +130,7 @@ function compressionInput(
   if (model.contextWindow === undefined) return { slice: elder, remainder: [] };
   const budget = requestInputBudget(
     model.contextWindow,
-    modelRequestedOutputCap(model),
+    modelTransmittedOutputCap(model),
   );
   const estimate = (messages: readonly WorkbenchMessage[]) =>
     estimateRuntimeInputCount(

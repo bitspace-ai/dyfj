@@ -22,9 +22,10 @@ import type { WorkbenchMessage } from "../providers/mod.ts";
 export const CONTEXT_FIT_MARGIN = 0.95;
 
 /**
- * The output reserve when the catalog declares no output cap, and the most
- * of the window any reserve may take: a row whose output cap equals its
- * window must still leave room for input.
+ * The output reserve when the request transmits no output cap (a local
+ * OpenAI-compatible request with none requested: the server's own limit
+ * applies, and it counts the prompt alone), and the most of the window
+ * that default may take on a small window.
  */
 export const DEFAULT_OUTPUT_RESERVE_TOKENS = 2_048;
 export const OUTPUT_RESERVE_MAX_FRACTION = 0.25;
@@ -55,18 +56,26 @@ export type TokenEstimator = (text: string) => number;
 
 /**
  * The input tokens a request may carry on `contextWindow`: the window less
- * the output reserve (the requested output cap, bounded to a quarter of the
- * window; a default when the catalog declares none), then the margin.
+ * the output reserve, then the margin. The reserve is the output cap the
+ * request transmits, in full — a provider that counts the cap against the
+ * window refuses input + cap over it, so a smaller reserve admits a
+ * request the provider rejects — or, when the request transmits none, the
+ * default bounded to a quarter of the window. A cap at or over the window
+ * leaves no budget: no request fits such a row, and the overflow error
+ * says so.
  */
 export function requestInputBudget(
   contextWindow: number,
-  outputCap: number | undefined,
+  transmittedOutputCap: number | undefined,
 ): number {
-  const reserve = Math.min(
-    outputCap ?? DEFAULT_OUTPUT_RESERVE_TOKENS,
+  const reserve = transmittedOutputCap ?? Math.min(
+    DEFAULT_OUTPUT_RESERVE_TOKENS,
     Math.floor(contextWindow * OUTPUT_RESERVE_MAX_FRACTION),
   );
-  return Math.floor((contextWindow - reserve) * CONTEXT_FIT_MARGIN);
+  return Math.max(
+    0,
+    Math.floor((contextWindow - reserve) * CONTEXT_FIT_MARGIN),
+  );
 }
 
 /**

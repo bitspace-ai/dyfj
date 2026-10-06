@@ -27,24 +27,32 @@ const estimate = (messages: readonly WorkbenchMessage[]) =>
 
 // --- requestInputBudget ---
 
-Deno.test("requestInputBudget: the window less the output cap, then the margin", () => {
+Deno.test("requestInputBudget: the window less the transmitted output cap, then the margin", () => {
   assertStrictEquals(
     requestInputBudget(32_768, 4_096),
     Math.floor((32_768 - 4_096) * CONTEXT_FIT_MARGIN),
   );
 });
 
-Deno.test("requestInputBudget: an output cap as large as the window still leaves three quarters for input", () => {
+Deno.test("requestInputBudget: a transmitted cap is reserved in full, however large", () => {
+  // 200K window, 64K cap: 136K of input, not the 142.5K a quarter-window
+  // bound would admit — the provider counts input + cap.
   assertStrictEquals(
-    requestInputBudget(32_768, 32_768),
-    Math.floor((32_768 - 8_192) * CONTEXT_FIT_MARGIN),
+    requestInputBudget(200_000, 64_000),
+    Math.floor((200_000 - 64_000) * CONTEXT_FIT_MARGIN),
   );
+  assertStrictEquals(requestInputBudget(32_768, 32_768), 0);
+  assertStrictEquals(requestInputBudget(4_096, 8_192), 0);
 });
 
-Deno.test("requestInputBudget: no declared cap reserves the default", () => {
+Deno.test("requestInputBudget: no transmitted cap reserves the default, bounded on a small window", () => {
   assertStrictEquals(
     requestInputBudget(32_768, undefined),
     Math.floor((32_768 - DEFAULT_OUTPUT_RESERVE_TOKENS) * CONTEXT_FIT_MARGIN),
+  );
+  assertStrictEquals(
+    requestInputBudget(4_000, undefined),
+    Math.floor((4_000 - 1_000) * CONTEXT_FIT_MARGIN),
   );
 });
 
