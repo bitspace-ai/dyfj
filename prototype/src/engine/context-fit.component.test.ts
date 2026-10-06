@@ -21,6 +21,8 @@ import {
   type EngineRun,
   engineServices,
   eventRows,
+  GEMINI_FREE_MODEL,
+  geminiReply,
   LOCAL_MODEL,
   requestBody,
   runTurn,
@@ -34,6 +36,7 @@ import type { ModelSeed } from "../store/mod.ts";
 import type {
   NativeWorkbenchRuntimeResult,
   WorkbenchRuntimeInput,
+  WorkbenchRuntimeServices,
 } from "./runtime-types.ts";
 
 const WINDOW = LOCAL_MODEL.context_window!;
@@ -81,13 +84,22 @@ interface FitRun {
 async function fitTurn(
   exchanges: ScriptedExchange[],
   input: Partial<WorkbenchRuntimeInput> = {},
-  options: { files?: Record<string, string>; models?: ModelSeed[] } = {},
+  options: {
+    files?: Record<string, string>;
+    models?: ModelSeed[];
+    env?: Record<string, string>;
+    recoverContextOverflow?: WorkbenchRuntimeServices["recoverContextOverflow"];
+  } = {},
 ): Promise<FitRun> {
   const root = await Deno.makeTempDir({ prefix: "engine-fit-" });
   for (const [path, content] of Object.entries(options.files ?? {})) {
     await Deno.writeTextFile(`${root}/${path}`, content);
   }
-  const run = engineServices(exchanges, { models: options.models });
+  const run = engineServices(exchanges, {
+    models: options.models,
+    env: options.env,
+  });
+  run.services.recoverContextOverflow = options.recoverContextOverflow;
   const frames: WorkbenchRuntimeEvent[] = [];
   try {
     const result = await runTurn(run, {
@@ -410,4 +422,92 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
   const last = conversation(fit.run.transport.requests[2]);
   assertEquals(last.filter((m) => m.role === "tool")[0].content, "short\n");
   assert(requestBody(fit.run.transport.requests[2]).tools !== undefined);
+});
+
+// ─── the fit measures what the adapter sends ─────────────────────────────────
+
+Deno.test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
+  // Gemini carries no transcript and no tools on the wire, so the seeded
+  // history (which the transcript estimate would put far over a 4,000-token
+  // window) costs nothing; the turn goes out and completes. Load-time
+  // compression declines without a request: no on-machine compressor.
+  const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(60_000),
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 4_000 }],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "prompt-only reply");
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+});
+
+// ─── a fit that cannot reach the budget is a failure, not a fitted event ─────
+
+Deno.test("trimming that still leaves the request over the window fails without a contextFitted event", async () => {
+  // Three results shrink to their markers, and the fixed prefix plus the
+  // markers still exceed a 4,000-token window's budget: the turn fails
+  // before any call, and no event claims the request was made to fit.
+  const fit = await fitTurn([], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(60_000),
+  }, { models: [{ ...LOCAL_MODEL, context_window: 4_000 }] });
+  assert(fit.error instanceof Error);
+  assertStringIncludes(fit.error.message, "4000-token context window");
+  assertEquals(fit.run.transport.requests.length, 0);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
+
+// ─── recovery retries are fitted before they go out ──────────────────────────
+
+Deno.test("an overflow-recovery plan is fitted before its retry is sent", async () => {
+  // The injected plan keeps a 60,000-character tool result in its verbatim
+  // tail; the retry must shrink it rather than send it over the window.
+  const plan: WorkbenchMessage[] = [
+    { role: "user", content: "compressed history" },
+    ...overWindowHistory(60_000).slice(1, 3),
+    { role: "user", content: "a short follow-up" },
+  ];
+  const fit = await fitTurn(
+    [
+      chatReply({
+        content: "cut off",
+        finishReason: "length",
+        usage: { prompt_tokens: 9_750, completion_tokens: 100 },
+      }),
+      chatReply({ content: "recovered answer" }),
+    ],
+    { prompt: "a short follow-up" },
+    {
+      models: [{ ...LOCAL_MODEL, context_window: 10_000 }],
+      recoverContextOverflow: () => Promise.resolve({ messages: plan }),
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "recovered answer");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEveryRequestFits(fit.run, 10_000);
+  const retry = conversation(fit.run.transport.requests[1]);
+  assertStringIncludes(
+    retry.find((m) => m.role === "tool")!.content,
+    "trimmed",
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "before_send",
+    trimmedToolResults: 1,
+    compressed: false,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "recovered",
+    retriesUsed: 1,
+  });
 });

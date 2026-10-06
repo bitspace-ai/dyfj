@@ -200,7 +200,7 @@ async function runToolStep(
   const cancelled = () =>
     input.abortSignal?.aborted === true && result.stopReason !== "error";
   const requestSoFar = () =>
-    estimateRequest({
+    estimateRequest(turn, {
       systemPrompt: state.systemPrompt,
       messages: [
         ...messages,

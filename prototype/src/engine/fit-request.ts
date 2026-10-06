@@ -14,6 +14,7 @@
  * the model is sent, not a rewrite of the log (context/request-fit.ts).
  */
 import {
+  modelRequestCarriesTranscript,
   modelRequestedOutputCap,
   type WorkbenchMessage,
   type WorkbenchToolDefinition,
@@ -53,10 +54,24 @@ export interface FitLimits {
   budgetTokens: number;
 }
 
-/** The estimated input tokens of a request, tool definitions included. */
-export function estimateRequest(request: LoopRequest): number {
+/**
+ * The estimated input tokens of a request as its adapter would send it:
+ * with the transcript and the tool definitions, or (Gemini) the system
+ * prompt and the current prompt alone.
+ */
+export function estimateRequest(
+  turn: RoutedTurn,
+  request: LoopRequest,
+): number {
   return estimateRuntimeInputCount(
-    requestEstimateText(request.systemPrompt, request.messages, request.tools),
+    requestEstimateText(
+      request.systemPrompt,
+      request.messages,
+      request.tools,
+      modelRequestCarriesTranscript(turn.route.selected)
+        ? "transcript"
+        : "prompt_only",
+    ),
   );
 }
 
@@ -89,25 +104,41 @@ export interface FitOutcome {
   changed: boolean;
 }
 
+export interface FitOptions {
+  /** The window and budget to fit against; the turn's own when absent. */
+  limits?: Partial<FitLimits>;
+  /**
+   * Whether elder turns may be compressed. Off for a recovery retry: the
+   * continuation carries a nudge no session_start event backs, so a
+   * compression there would count a turn resume cannot find, and a
+   * compression plan has already had its one shot.
+   */
+  compress?: boolean;
+}
+
 /**
- * Make `request` fit `limits` (the turn's own when absent), in place. Emits
- * `contextFitted` when anything changed; throws `ContextWindowOverflowError`
- * when the request still does not fit, before any provider call.
+ * Make `request` fit its limits, in place. Emits `contextFitted` when the
+ * request was changed and now fits; throws `ContextWindowOverflowError`
+ * when it still does not, before any provider call. An adapter that sends
+ * only the prompt has nothing to shrink: its request fits or fails as is.
  */
 export async function fitRequest(
   turn: RoutedTurn,
   request: LoopRequest,
   trigger: FitTrigger,
-  override: Partial<FitLimits> = {},
+  options: FitOptions = {},
 ): Promise<FitOutcome> {
-  const limits = fitLimits(turn, override);
-  const before = estimateRequest(request);
+  const limits = fitLimits(turn, options.limits);
+  const before = estimateRequest(turn, request);
   if (limits === null || before <= limits.budgetTokens) {
     return { estimatedTokens: before, changed: false };
   }
+  if (!modelRequestCarriesTranscript(turn.route.selected)) {
+    throw overflow(turn, limits, before);
+  }
   const { messages } = request;
   const estimate = (candidate: readonly WorkbenchMessage[]) =>
-    estimateRequest({ ...request, messages: [...candidate] });
+    estimateRequest(turn, { ...request, messages: [...candidate] });
   const shrink = (from: number, to: number): number => {
     const shrunk = shrinkToolResults(
       messages,
@@ -127,7 +158,10 @@ export async function fitRequest(
   //    last user message), so the retained count takes no +1 — the same
   //    rule as the overflow recoverer in compression.ts.
   let compressed = false;
-  if (estimateRequest(request) > limits.budgetTokens) {
+  if (
+    options.compress !== false &&
+    estimateRequest(turn, request) > limits.budgetTokens
+  ) {
     const { elder, tail } = partitionForCompression(
       messages,
       VERBATIM_TAIL_TURNS,
@@ -147,10 +181,13 @@ export async function fitRequest(
   }
   // 3. The current turn's own results, oldest first, as the last resort
   //    before failing.
-  if (estimateRequest(request) > limits.budgetTokens) {
+  if (estimateRequest(turn, request) > limits.budgetTokens) {
     trimmed += shrink(currentTurnStart(messages), messages.length);
   }
-  const after = estimateRequest(request);
+  const after = estimateRequest(turn, request);
+  // A request that still does not fit fails here, before the event: the
+  // event reports a request made to fit, never one about to be refused.
+  if (after > limits.budgetTokens) throw overflow(turn, limits, after);
   const changed = trimmed > 0 || compressed;
   if (changed) {
     await emitRuntimeEvent(turn.input.frames?.onRuntimeEvent, {
@@ -172,15 +209,20 @@ export async function fitRequest(
         (compressed ? ", elder turns compressed" : "") + "]",
     );
   }
-  if (after > limits.budgetTokens) {
-    throw new ContextWindowOverflowError({
-      modelSlug: turn.route.selected.slug,
-      contextWindow: limits.contextWindow,
-      inputTokens: after,
-      outputTokens: 0,
-    });
-  }
   return { estimatedTokens: after, changed };
+}
+
+function overflow(
+  turn: RoutedTurn,
+  limits: FitLimits,
+  inputTokens: number,
+): ContextWindowOverflowError {
+  return new ContextWindowOverflowError({
+    modelSlug: turn.route.selected.slug,
+    contextWindow: limits.contextWindow,
+    inputTokens,
+    outputTokens: 0,
+  });
 }
 
 /**

@@ -72,6 +72,7 @@ export {
 } from "./registry/routing.ts";
 export {
   createProviderRegistry,
+  modelRequestCarriesTranscript,
   modelRequestedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,

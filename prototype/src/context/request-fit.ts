@@ -70,17 +70,30 @@ export function requestInputBudget(
 }
 
 /**
- * The text a request contributes to the estimate: the system prompt, the
- * transcript and the tool definitions the request offers. Tool definitions
- * are part of the fixed prefix every call carries and are not small — a
- * full catalog is thousands of tokens — so an estimate without them fits
- * on paper and overflows on the wire.
+ * What an adapter puts on the wire: the transcript with the tool
+ * definitions (OpenAI-compatible, Anthropic), or only the system prompt and
+ * the current prompt (Gemini, which sends no history and no tools).
+ */
+export type RequestWire = "transcript" | "prompt_only";
+
+/**
+ * The text a request contributes to the estimate, by what its adapter
+ * sends: the system prompt, the transcript and the tool definitions the
+ * request offers, or the system prompt and the prompt alone. Tool
+ * definitions are part of the fixed prefix every transcript call carries
+ * and are not small — a full catalog is thousands of tokens — so an
+ * estimate without them fits on paper and overflows on the wire.
  */
 export function requestEstimateText(
   systemPrompt: string,
   messages: readonly WorkbenchMessage[],
   tools: readonly unknown[] | undefined,
+  wire: RequestWire = "transcript",
 ): string {
+  if (wire === "prompt_only") {
+    const prompt = messages[currentTurnStart(messages)];
+    return `${systemPrompt}\n${prompt?.role === "user" ? prompt.content : ""}`;
+  }
   const body = messages
     .map((m) =>
       m.role === "assistant"

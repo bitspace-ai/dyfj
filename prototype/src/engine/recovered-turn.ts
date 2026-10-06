@@ -148,7 +148,7 @@ async function refitRejected(
     messages: params.messages ?? [],
     tools: params.tools,
   };
-  const estimate = estimateRequest(loopRequest);
+  const estimate = estimateRequest(turn, loopRequest);
   const { requestedTokens, limitTokens } = rejection.report;
   const catalogWindow = turn.route.selected.contextWindow;
   const contextWindow = limitTokens === undefined
@@ -173,7 +173,7 @@ async function refitRejected(
     turn,
     loopRequest,
     "provider_rejected",
-    { contextWindow, budgetTokens },
+    { limits: { contextWindow, budgetTokens } },
   );
   if (!fitted.changed) throw rejection;
   turn.state.session.log(
@@ -305,6 +305,20 @@ async function recoverOverflow(
       turn.state.session.log(
         "\n[context recovered — retrying; the reply restarts below]",
       );
+      // The plan is sized like any other request before it goes out: a
+      // compressed transcript whose verbatim tail still carries oversized
+      // tool results is shrunk, not sent over the window. Compression had
+      // its one shot in the plan itself.
+      await fitRequest(
+        turn,
+        {
+          systemPrompt: params.systemPrompt,
+          messages: plan.messages,
+          tools: params.tools,
+        },
+        "before_send",
+        { compress: false },
+      );
       retried = await observedTurn(
         turn,
         { ...params, messages: plan.messages },
@@ -319,8 +333,15 @@ async function recoverOverflow(
       );
     }
   } catch (err) {
-    // Close the recovery trail before the error surfaces as turnFailed.
-    await emitRecovery("retry_errored", retriesUsed);
+    // Close the recovery trail before the error surfaces as turnFailed. A
+    // plan that cannot be made to fit is the overflow itself, not an
+    // errored retry: no request was made.
+    await emitRecovery(
+      err instanceof ContextWindowOverflowError && retried === undefined
+        ? "overflow_failed"
+        : "retry_errored",
+      retriesUsed,
+    );
     throw err;
   }
   if (retried === undefined) {
@@ -426,12 +447,43 @@ async function continueTruncated(
     );
     return { ...result, toolCalls: undefined };
   }
+  // The continuation is sized like any other request: its tool results may
+  // be shrunk to fit the input budget (which, unlike the window check
+  // above, reserves room for the output); one that still cannot fit is the
+  // same doomed retry, skipped the same way. No compression here: the
+  // nudge is a user message no session_start backs.
+  try {
+    await fitRequest(
+      turn,
+      {
+        systemPrompt: params.systemPrompt,
+        messages: continuation,
+        tools: params.tools,
+      },
+      "before_send",
+      { compress: false },
+    );
+  } catch (err) {
+    if (!(err instanceof ContextWindowOverflowError)) throw err;
+    await emitRecovery("retry_would_overflow", 0);
+    log(
+      "\n[response truncated at the output limit; the continuation would " +
+        "exceed the context window, so it was not retried]",
+    );
+    return { ...result, toolCalls: undefined };
+  }
   let retried: LoopTurnResult;
   try {
     retried = await observedTurn(
       turn,
       { ...params, messages: continuation },
-      { modelSlug: request.modelSlug, estimatedInputCount: continuationInput },
+      {
+        modelSlug: request.modelSlug,
+        // Re-measured: the fit above may have shrunk the continuation.
+        estimatedInputCount: estimateRuntimeInputCount(
+          transcriptEstimateText(params.systemPrompt, continuation),
+        ),
+      },
       "recovery",
     );
   } catch (err) {

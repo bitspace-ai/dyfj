@@ -25,7 +25,11 @@ README are tracked separately in its Revision history section.
   to a 1 KiB prefix and a marker; then elder turns compressed through the
   existing compressor; then the current turn's results), failing with
   `ContextWindowOverflowError`, which names the window, only when it still
-  cannot fit; each tool result is bounded as it is produced to its share of
+  cannot fit (the estimate measures what the adapter sends: Gemini, which
+  carries neither history nor tools on the wire, is sized by its prompt
+  alone, and the length-recovery retries are fitted the same way before
+  they go out, shrinking only); each tool result is bounded as it is
+  produced to its share of
   the window left for the turn, not only to the tool's fixed cap, with a
   marker that states how much was cut and how to get the rest (`read_file`:
   re-read with `offset` and `limit`; search tools: narrow the query; `bash`:
