@@ -25,6 +25,7 @@ import {
 } from "../../testing/builders/engine.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
+import { ProviderRequestFailedError } from "../providers/mod.ts";
 import type { EventInsert } from "../store/mod.ts";
 
 /** One SSE line carrying a content delta. */
@@ -315,10 +316,11 @@ Deno.test("surfaces the error and emits turnFailed when the provider request fai
   const frames: WorkbenchRuntimeEvent[] = [];
   // An unexpected provider error propagates to the caller instead of being
   // swallowed into a benign empty receipt; turnFailed is still emitted first.
-  // The caller's exception carries the real message; the wire-facing frame
-  // does not — a plain Error is foreign under the provenance policy, so its
-  // errorMessage renders as class + byte count only.
-  await quietly(() =>
+  // The transport's exception is foreign under the provenance policy, so
+  // no surface carries its message: the adapter wraps it as the unclassified
+  // provider failure, whose Workbench-written message names the provider and
+  // renders the cause as class + byte count only.
+  const thrown = await quietly(() =>
     assertRejects(
       () =>
         runTurn(run, {
@@ -328,16 +330,21 @@ Deno.test("surfaces the error and emits turnFailed when the provider request fai
             log: () => {},
           },
         }),
-      Error,
-      "local model unavailable",
+      ProviderRequestFailedError,
     )
   );
+  assertStringIncludes(thrown.value.message, "[Error, 23 bytes]");
+  assertEquals(thrown.value.message.includes("unavailable"), false);
   const failed = frames.at(-1)!;
   assertObjectMatch(failed, {
     type: "turnFailed",
-    errorName: "Error",
-    errorMessage: "[Error, 23 bytes]",
+    errorName: "ProviderRequestFailedError",
+    errorMessage: thrown.value.message,
   });
+  assertStringIncludes(
+    String((failed as { errorMessage: string }).errorMessage),
+    `${LOCAL_MODEL.provider}/${LOCAL_MODEL.slug}`,
+  );
   assertEquals(frames[0].type, "sessionStart");
   assertObjectMatch(failed, {
     sessionId: frames[0].sessionId,

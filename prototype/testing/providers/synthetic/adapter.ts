@@ -96,7 +96,7 @@ export const syntheticAdapter: ProviderAdapter = {
           ),
         ),
       },
-      `synthetic/${model.slug}`,
+      model,
       ...providerFetchDeadline(stream),
     ).catch((error) =>
       annotateProviderAbort(error, io.signal, now, requestStarted)

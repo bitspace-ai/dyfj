@@ -13,14 +13,15 @@ import type {
 } from "../adapter.ts";
 import {
   HostedProviderCredentialMissingError,
-  ProviderContextExceededError,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
 } from "../errors.ts";
 import { fetchWithHeaderTimeout, providerFetchDeadline } from "../http.ts";
 import type { WorkbenchModel, WorkbenchTurnResult } from "../types.ts";
-import { annotateProviderAbort } from "../shared/abort.ts";
-import { classifyContextExceeded } from "../shared/context-exceeded.ts";
+import {
+  providerFetchFailure,
+  providerResponseError,
+} from "../shared/failure.ts";
 import {
   isAllowedHostedProviderBaseUrl,
   isAllowedLocalProviderBaseUrl,
@@ -119,10 +120,11 @@ function requestOutputCap(
 }
 
 /**
- * The error for a non-2xx response. A context-size rejection is overflow
- * the engine can recover from, so it is typed; everything else stays the
- * generic failure (the body is a bounded diagnostic, never a trusted
- * message).
+ * The error for a non-2xx response: classified by the shared classifier
+ * from the status and the bounded body, which is matched and never
+ * relayed. A context-size rejection is overflow the engine recovers from;
+ * the other classes and the unclassified failure end the turn with a
+ * message Workbench wrote.
  */
 async function httpFailure(
   model: WorkbenchModel,
@@ -134,18 +136,7 @@ async function httpFailure(
       if (error instanceof DomainError) throw error;
       return "";
     });
-  const exceeded = classifyContextExceeded(response.status, detail);
-  if (exceeded !== null) {
-    return new ProviderContextExceededError(
-      model.slug,
-      response.status,
-      exceeded,
-    );
-  }
-  return new Error(
-    `Model request failed for ${model.slug}: HTTP ${response.status}` +
-      (detail ? ` ${detail.slice(0, 300)}` : ""),
-  );
+  return providerResponseError(model, response.status, detail);
 }
 
 /**
@@ -208,10 +199,11 @@ async function executeOpenAICompatibleTurn(
         ),
       ),
     },
-    `${model.provider}/${model.slug}`,
+    model,
     ...providerFetchDeadline(stream),
   ).catch((error) =>
-    annotateProviderAbort(
+    providerFetchFailure(
+      model,
       error,
       io.signal,
       now,

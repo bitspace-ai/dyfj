@@ -4,15 +4,18 @@
 import { describe, it } from "@std/testing/bdd";
 import {
   assertEquals,
+  assertInstanceOf,
   assertMatch,
   assertObjectMatch,
   assertRejects,
+  assertStrictEquals,
 } from "@std/assert";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
   getModelAccessModality,
   HostedProviderCredentialMissingError,
+  ProviderRequestFailedError,
   runWorkbenchTurn,
   WorkbenchHostedProviderBaseUrlError,
   type WorkbenchModel,
@@ -199,7 +202,7 @@ describe("anthropic provider adapter", () => {
 });
 
 describe("tool wire names", () => {
-  it("error surfaces the provider response body", async () => {
+  it("an unclassified error names the status and withholds the provider response body", async () => {
     const transport = new ScriptedHttpTransport([{
       respond: {
         status: 400,
@@ -218,7 +221,9 @@ describe("tool wire names", () => {
         getEnv,
       })
     );
-    assertMatch((error as Error).message, /HTTP 400.*should match pattern/);
+    assertInstanceOf(error, ProviderRequestFailedError);
+    assertMatch(error.message, /anthropic\/.*HTTP 400/);
+    assertStrictEquals(error.message.includes("should match pattern"), false);
     transport.assertDone();
   });
 });

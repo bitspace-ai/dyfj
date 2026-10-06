@@ -8,6 +8,8 @@
  * the conformance suite in `testing/conformance/http-transport.ts`.
  */
 
+import { type ProviderTarget, ProviderUnreachableError } from "./errors.ts";
+
 /** Sends one HTTP request and resolves when the response headers arrive. */
 export type HttpTransport = (
   url: string,
@@ -19,8 +21,9 @@ export type HttpTransport = (
  * connection (VPN/mesh route flaps, IPv6 with no route) hung the whole turn
  * silently and indefinitely — the operator sees nothing after tool approval.
  * Bound the time to response HEADERS only: once headers arrive the abort timer
- * is cleared, so long streaming bodies are unaffected. Header-timeout failures
- * carry the provider label instead of becoming an infinite hang.
+ * is cleared, so long streaming bodies are unaffected. A header timeout fails
+ * as `ProviderUnreachableError`, naming the target and the budget that
+ * elapsed, instead of becoming an infinite hang.
  *
  * This budget suits a STREAMING request, whose endpoints send headers before
  * the body, so 30s without headers is worth failing on whatever the cause —
@@ -70,7 +73,7 @@ export async function fetchWithHeaderTimeout(
   fetchFn: HttpTransport,
   url: string,
   init: RequestInit,
-  label: string,
+  target: ProviderTarget,
   timeoutMs: number = PROVIDER_HEADER_TIMEOUT_MS,
   mode: "streaming" | "buffered" = "streaming",
 ): Promise<Response> {
@@ -96,12 +99,13 @@ export async function fetchWithHeaderTimeout(
     if (timedOut) {
       // Name the mode and the budget that elapsed. The timer cannot see a
       // cause: a queued streaming request and a dead route both present as
-      // silence, so both messages offer causes as possibilities rather than
+      // silence, so the message offers causes as possibilities rather than
       // findings. The budgets differ by an order of magnitude, so which one
       // ran out is itself the useful signal.
-      throw new Error(
-        `${label}: no response headers within ${timeoutMs}ms (${mode} request exceeded its budget; the provider may be unreachable or stalled)`,
-      );
+      throw new ProviderUnreachableError(target, "timeout", {
+        timeoutMs,
+        mode,
+      });
     }
     throw err;
   } finally {

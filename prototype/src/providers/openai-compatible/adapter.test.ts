@@ -9,7 +9,11 @@ import {
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
-import { defaultLocalWorkbenchModels, runWorkbenchTurn } from "../mod.ts";
+import {
+  defaultLocalWorkbenchModels,
+  ProviderRequestFailedError,
+  runWorkbenchTurn,
+} from "../mod.ts";
 import { providerTestModels } from "../../../testing/builders/models.ts";
 
 const models = [...providerTestModels];
@@ -234,8 +238,8 @@ describe("runWorkbenchTurn streaming", () => {
           models,
           fetchFn: transport.fetch,
         }),
-      Error,
-      "Model request failed for gemma4:e2b: HTTP 500",
+      ProviderRequestFailedError,
+      "ollama/gemma4:e2b: HTTP 500",
     );
     transport.assertDone();
   });

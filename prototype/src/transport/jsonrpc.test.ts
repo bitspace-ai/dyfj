@@ -18,6 +18,7 @@ import {
   RpcErrorCode,
   success,
 } from "./jsonrpc.ts";
+import { ProviderAuthenticationError } from "../providers/mod.ts";
 
 const dec = new TextDecoder();
 
@@ -230,4 +231,21 @@ Deno.test("the JSON-RPC standard error codes are unchanged", () => {
   assertEquals(RpcErrorCode.methodNotFound, -32601);
   assertEquals(RpcErrorCode.invalidParams, -32602);
   assertEquals(RpcErrorCode.internalError, -32603);
+});
+
+Deno.test("dispatchRequest relays a classified provider failure's Workbench-written message to the client verbatim", async () => {
+  // The Rust REPL prints this message after `turn failed:`; the TypeScript
+  // client after `dyfj:`. A provider failure classified at the adapter is a
+  // DomainError, so its message, which carries none of the provider's text,
+  // crosses the wire whole instead of as the opaque label.
+  const thrown = new ProviderAuthenticationError(
+    { provider: "anthropic", slug: "claude-x" },
+    401,
+  );
+  const res = await dispatchRequest(req("turn"), {
+    turn: () => {
+      throw thrown;
+    },
+  });
+  assertEquals(res, failure(1, RpcErrorCode.internalError, thrown.message));
 });
