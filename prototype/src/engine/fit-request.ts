@@ -28,7 +28,7 @@ import {
   requestInputBudget,
   shrinkToolResults,
   toolResultShareChars,
-  trimToolResult,
+  trimToolResultWithin,
   VERBATIM_TAIL_TURNS,
 } from "../context/mod.ts";
 import { compressTranscript } from "./compression.ts";
@@ -252,9 +252,13 @@ export async function boundToolResult(
     limits.budgetTokens - requestSoFarTokens,
     callsRemaining,
   );
-  const trimmed = trimToolResult(
+  // A hard bound on the whole result, marker included, less the newline
+  // the transcript estimate joins it with: a result that overshot its share
+  // by a marker would put the follow-up over budget and have the fit
+  // collapse this fresh result to the fallback size.
+  const trimmed = trimToolResultWithin(
     summary.result,
-    share,
+    share - 1,
     summary.commandId,
     limits.contextWindow,
     summary.trimmedFrom,

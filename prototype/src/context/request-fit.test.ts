@@ -20,6 +20,7 @@ import {
   TRIM_MARKER_ALLOWANCE_CHARS,
   trimmedResultMarker,
   trimToolResult,
+  trimToolResultWithin,
 } from "./request-fit.ts";
 
 const estimate = (messages: readonly WorkbenchMessage[]) =>
@@ -220,6 +221,52 @@ Deno.test("compressibleSlice: a prefix that is only an earlier summary is nothin
     compressibleSlice(elder, 100, estimate, (m) => m === summary),
     { slice: [], remainder: elder },
   );
+});
+
+// --- trimToolResultWithin ---
+
+Deno.test("trimToolResultWithin: the whole result, marker included, fits the bound", () => {
+  for (
+    const [total, max] of [[65_536, 35_000], [5_000, 1_024], [1_300, 1_024], [
+      10_000,
+      400,
+    ]]
+  ) {
+    const trimmed = trimToolResultWithin(
+      "z".repeat(total),
+      max,
+      "read_file",
+      32_768,
+    );
+    assert(trimmed !== null, `${total} within ${max}`);
+    assert(trimmed.content.length <= max, `${trimmed.content.length} > ${max}`);
+    assert(trimmed.content.length > max - 40, "the bound is used, not wasted");
+    assertEquals(trimmed.totalChars, total);
+    assertStringIncludes(trimmed.content, `of ${total} characters`);
+  }
+  assertStrictEquals(
+    trimToolResultWithin("z".repeat(1_024), 1_024, "bash", 1),
+    null,
+  );
+});
+
+Deno.test("trimToolResultWithin: a result already trimmed is cut on its payload and keeps its original size", () => {
+  const bounded = trimToolResultWithin(
+    "y".repeat(10_000),
+    5_000,
+    "bash",
+    32_768,
+  )!;
+  const again = trimToolResultWithin(
+    bounded.content,
+    2_000,
+    "bash",
+    32_768,
+    bounded.totalChars,
+  )!;
+  assert(again.content.length <= 2_000);
+  assertEquals(again.totalChars, 10_000);
+  assertEquals(again.content.split("[Workbench trimmed").length, 2);
 });
 
 // --- toolResultShareChars ---

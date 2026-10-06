@@ -200,9 +200,52 @@ export function trimToolResult(
   const payload = prior?.payload ?? content;
   const totalChars = trimmedFrom ?? content.length;
   if (payload.length <= keepChars + TRIM_MARKER_ALLOWANCE_CHARS) return null;
-  let cut = Math.max(0, keepChars);
-  // Never split a surrogate pair: back off one unit when the cut would land
-  // between a high surrogate and its low half.
+  return cutResult(payload, keepChars, commandId, contextWindow, totalChars);
+}
+
+/**
+ * Cut a tool result so that the WHOLE result, marker included, is at most
+ * `maxChars`: the bound a fresh result gets against the window left for the
+ * turn, where overshooting by a marker would put the follow-up over budget
+ * and have the fit collapse the result to the fallback size. A result
+ * within the bound is untouched. The marker's length is taken for the
+ * largest kept count it could state, so the real marker never runs longer.
+ */
+export function trimToolResultWithin(
+  content: string,
+  maxChars: number,
+  commandId: string,
+  contextWindow: number,
+  trimmedFrom?: number,
+): TrimmedResult | null {
+  const prior = trimmedFrom === undefined ? null : parseTrimmedResult(content);
+  const payload = prior?.payload ?? content;
+  const totalChars = trimmedFrom ?? content.length;
+  if (content.length <= maxChars) return null;
+  const markerChars = trimmedResultMarker(
+    commandId,
+    contextWindow,
+    maxChars,
+    totalChars,
+  ).length;
+  const keep = Math.max(0, maxChars - markerChars);
+  return cutResult(payload, keep, commandId, contextWindow, totalChars);
+}
+
+/**
+ * The prefix-plus-marker cut, with no allowance: `keep` characters of
+ * payload on a code-point boundary (never splitting a surrogate pair: the
+ * cut backs off one unit when it would land between a high surrogate and
+ * its low half), then the marker.
+ */
+function cutResult(
+  payload: string,
+  keep: number,
+  commandId: string,
+  contextWindow: number,
+  totalChars: number,
+): TrimmedResult {
+  let cut = Math.max(0, keep);
   const code = payload.charCodeAt(cut - 1);
   if (cut > 0 && code >= 0xd800 && code <= 0xdbff) cut -= 1;
   const kept = payload.slice(0, cut);

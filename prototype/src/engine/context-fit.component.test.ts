@@ -188,6 +188,10 @@ Deno.test("three parallel 64 KiB reads on a 32K window: every result is bounded 
   const trimmed = fit.frames.filter((f) => f.type === "toolResultTrimmed");
   assertEquals(trimmed.length, 3);
   assertObjectMatch(trimmed[0], { commandId: "read_file", callId: "c1" });
+  // The bound is a whole-result bound: the follow-up fits without the fit
+  // step having to collapse any of the fresh results further.
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  for (const message of toolMessages) assert(message.content.length > 20_000);
 
   // The durable tool_call events keep the full result (within the event
   // column's own limit): the window bound is a projection for the model, not
@@ -458,9 +462,11 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
   assertEquals(fit.result?.text, "all read");
   assertEquals(fit.run.transport.requests.length, 3);
   assertEveryRequestFits(fit.run);
-  // The small first result survives untouched on the later calls.
+  // The small first result survives untouched on the later calls, and the
+  // bounded results needed no further collapse.
   const last = conversation(fit.run.transport.requests[2]);
   assertEquals(last.filter((m) => m.role === "tool")[0].content, "short\n");
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
   assert(requestBody(fit.run.transport.requests[2]).tools !== undefined);
 });
 
