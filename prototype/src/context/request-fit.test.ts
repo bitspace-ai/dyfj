@@ -6,10 +6,12 @@ import {
 } from "@std/assert";
 import type { WorkbenchMessage } from "../providers/mod.ts";
 import {
+  compressibleSlice,
   CONTEXT_FIT_MARGIN,
   currentTurnStart,
   DEFAULT_OUTPUT_RESERVE_TOKENS,
   MIN_TOOL_RESULT_CHARS,
+  parseTrimmedResult,
   requestEstimateText,
   requestInputBudget,
   shrinkToolResults,
@@ -114,6 +116,80 @@ Deno.test("trimToolResult: never splits a surrogate pair", () => {
   assert(trimmed !== null);
   assertEquals(trimmed.keptChars, 2);
   assert(trimmed.content.startsWith("ab\n\n["));
+});
+
+Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps reporting its original size", () => {
+  const original = "r".repeat(10_000);
+  const bounded = trimToolResult(original, 5_000, "read_file", 32_768)!;
+  assertEquals(bounded.totalChars, 10_000);
+  const shrunk = trimToolResult(bounded.content, 1_024, "read_file", 32_768);
+  assert(shrunk !== null);
+  assertEquals(shrunk.keptChars, 1_024);
+  assertEquals(shrunk.totalChars, 10_000);
+  assertStringIncludes(shrunk.content, "the first 1024 of 10000 characters");
+  // The earlier marker is replaced, never carried as payload.
+  assertEquals(shrunk.content.split("[Workbench trimmed").length, 2);
+  assert(shrunk.content.startsWith("r".repeat(1_024) + "\n\n[Workbench"));
+});
+
+Deno.test("parseTrimmedResult: recognises only the marker at the very end", () => {
+  const trimmed = trimToolResult("p".repeat(3_000), 1_000, "bash", 32_768)!;
+  assertEquals(parseTrimmedResult(trimmed.content), {
+    payload: "p".repeat(1_000),
+    totalChars: 3_000,
+  });
+  assertStrictEquals(parseTrimmedResult(trimmed.content + "\nmore"), null);
+  assertStrictEquals(parseTrimmedResult("plain result"), null);
+});
+
+// --- compressibleSlice ---
+
+const notSummary = () => false;
+
+function turn(word: string, chars: number): WorkbenchMessage[] {
+  return [
+    { role: "user", content: `${word} q `.repeat(chars / 4) },
+    { role: "assistant", content: `${word} a `.repeat(chars / 4) },
+  ];
+}
+
+Deno.test("compressibleSlice: the longest prefix of whole turns within the budget, the rest returned", () => {
+  const elder = [
+    ...turn("one", 400),
+    ...turn("two", 400),
+    ...turn("three", 400),
+  ];
+  // Each turn is ~300 tokens; a 700-token budget takes two.
+  const { slice, remainder } = compressibleSlice(
+    elder,
+    700,
+    estimate,
+    notSummary,
+  );
+  assertEquals(slice, elder.slice(0, 4));
+  assertEquals(remainder, elder.slice(4));
+  // A roomy budget takes everything.
+  assertEquals(compressibleSlice(elder, 10_000, estimate, notSummary), {
+    slice: elder,
+    remainder: [],
+  });
+});
+
+Deno.test("compressibleSlice: a first turn over the budget yields nothing to compress", () => {
+  const elder = [...turn("one", 4_000), ...turn("two", 400)];
+  assertEquals(compressibleSlice(elder, 100, estimate, notSummary), {
+    slice: [],
+    remainder: elder,
+  });
+});
+
+Deno.test("compressibleSlice: a prefix that is only an earlier summary is nothing to compress", () => {
+  const summary: WorkbenchMessage = { role: "user", content: "[summary]" };
+  const elder = [summary, ...turn("one", 4_000)];
+  assertEquals(
+    compressibleSlice(elder, 100, estimate, (m) => m === summary),
+    { slice: [], remainder: elder },
+  );
 });
 
 // --- toolResultShareChars ---

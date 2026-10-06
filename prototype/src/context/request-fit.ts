@@ -150,10 +150,31 @@ export interface TrimmedResult {
 }
 
 /**
+ * The marker's exact shape, anchored at the end of a result, so a result
+ * trimmed once (bounded when it was produced) can be trimmed again with
+ * its original size intact rather than the marker counted as payload.
+ */
+const TRIM_MARKER_AT_END =
+  /\n\n\[Workbench trimmed this \S+ result to fit the model's \d+-token context window: the first \d+ of (\d+) characters are shown; the rest was cut\. [^\]\n]*\]$/;
+
+/** A result already trimmed: its payload before the marker, and its original size. */
+export function parseTrimmedResult(
+  content: string,
+): { payload: string; totalChars: number } | null {
+  const match = TRIM_MARKER_AT_END.exec(content);
+  if (match === null) return null;
+  const totalChars = Number.parseInt(match[1], 10);
+  if (!Number.isSafeInteger(totalChars)) return null;
+  return { payload: content.slice(0, match.index), totalChars };
+}
+
+/**
  * Keep the first `keepChars` characters of a tool result, on a code-point
- * boundary, followed by the marker. Returns null when the result already
- * fits, or when the cut would save no more than the marker costs, so a
- * result is never marked as trimmed when nothing worth cutting was cut.
+ * boundary, followed by the marker. A result trimmed before is cut on its
+ * payload and keeps reporting its original size. Returns null when the
+ * result already fits, or when the cut would save no more than the marker
+ * costs, so a result is never marked as trimmed when nothing worth cutting
+ * was cut.
  */
 export function trimToolResult(
   content: string,
@@ -161,14 +182,16 @@ export function trimToolResult(
   commandId: string,
   contextWindow: number,
 ): TrimmedResult | null {
-  const totalChars = content.length;
-  if (totalChars <= keepChars + TRIM_MARKER_ALLOWANCE_CHARS) return null;
+  const prior = parseTrimmedResult(content);
+  const payload = prior?.payload ?? content;
+  const totalChars = prior?.totalChars ?? content.length;
+  if (payload.length <= keepChars + TRIM_MARKER_ALLOWANCE_CHARS) return null;
   let cut = Math.max(0, keepChars);
   // Never split a surrogate pair: back off one unit when the cut would land
   // between a high surrogate and its low half.
-  const code = content.charCodeAt(cut - 1);
+  const code = payload.charCodeAt(cut - 1);
   if (cut > 0 && code >= 0xd800 && code <= 0xdbff) cut -= 1;
-  const kept = content.slice(0, cut);
+  const kept = payload.slice(0, cut);
   return {
     content: kept +
       trimmedResultMarker(commandId, contextWindow, kept.length, totalChars),
@@ -254,4 +277,35 @@ export function shrinkToolResults(
     if (estimate(out) <= budget) break;
   }
   return { messages: out, trims };
+}
+
+/**
+ * The longest prefix of whole turns of `elder` whose compression input the
+ * compressor can take (`estimate(prefix) <= budget`), and what is left.
+ * A turn begins at each user message (THE TURN-COUNTING INVARIANT); the
+ * cut lands on one so the retained count stays meaningful on resume. A
+ * prefix that is only an earlier summary is nothing to compress — a summary
+ * of a summary makes no room — so it is returned empty. An elder whose
+ * first turn alone is over the budget is also returned empty: the caller
+ * declines rather than send it.
+ */
+export function compressibleSlice(
+  elder: readonly WorkbenchMessage[],
+  budget: number,
+  estimate: (messages: readonly WorkbenchMessage[]) => number,
+  isSummary: (message: WorkbenchMessage) => boolean,
+): { slice: WorkbenchMessage[]; remainder: WorkbenchMessage[] } {
+  const boundaries: number[] = [];
+  for (let i = 1; i < elder.length; i++) {
+    if (elder[i].role === "user") boundaries.push(i);
+  }
+  boundaries.push(elder.length);
+  let end = 0;
+  for (const boundary of boundaries) {
+    if (estimate(elder.slice(0, boundary)) > budget) break;
+    end = boundary;
+  }
+  const slice = elder.slice(0, end);
+  if (slice.every(isSummary)) return { slice: [], remainder: [...elder] };
+  return { slice, remainder: elder.slice(end) };
 }

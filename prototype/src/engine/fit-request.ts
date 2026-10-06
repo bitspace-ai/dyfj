@@ -156,9 +156,13 @@ export async function fitRequest(
   // 2. Elder turns compressed, when there are any and shrinking was not
   //    enough. The current prompt is already inside the tail (it is the
   //    last user message), so the retained count takes no +1 — the same
-  //    rule as the overflow recoverer in compression.ts.
+  //    rule as the overflow recoverer in compression.ts. Each pass
+  //    compresses as much of the elder as the compressor's own window
+  //    takes, oldest first, and leaves the rest for the next pass; the
+  //    loop ends when the request fits, the elder is spent, or a pass
+  //    declines.
   let compressed = false;
-  if (
+  while (
     options.compress !== false &&
     estimateRequest(turn, request) > limits.budgetTokens
   ) {
@@ -166,18 +170,22 @@ export async function fitRequest(
       messages,
       VERBATIM_TAIL_TURNS,
     );
-    if (elder.length > 0) {
-      const outcome = await compressTranscript(
-        turn,
-        elder,
-        countTurns(tail),
-        "request_fit",
-      );
-      if (outcome.status === "compressed") {
-        messages.splice(0, messages.length, outcome.summaryMessage, ...tail);
-        compressed = true;
-      }
-    }
+    if (elder.length === 0) break;
+    const outcome = await compressTranscript(
+      turn,
+      elder,
+      countTurns(tail),
+      "request_fit",
+    );
+    if (outcome.status !== "compressed") break;
+    messages.splice(
+      0,
+      messages.length,
+      outcome.summaryMessage,
+      ...(outcome.remainder ?? []),
+      ...tail,
+    );
+    compressed = true;
   }
   // 3. The current turn's own results, oldest first, as the last resort
   //    before failing.

@@ -28,12 +28,18 @@ README are tracked separately in its Revision history section.
   cannot fit (the estimate measures what the adapter sends: Gemini, which
   carries neither history nor tools on the wire, is sized by its prompt
   alone, and the length-recovery retries are fitted the same way before
-  they go out, shrinking only); each tool result is bounded as it is
-  produced to its share of
+  they go out, shrinking only). The compression request is sized the same
+  way against the compressor's own window: an elder transcript larger than
+  it has its tool results shrunk and is compressed from its oldest turns in
+  passes, the rest kept verbatim until the next pass, so the compressor is
+  never sent the kind of request this fixes. Each tool result is bounded
+  as it is produced to its share of
   the window left for the turn, not only to the tool's fixed cap, with a
   marker that states how much was cut and how to get the rest (`read_file`:
   re-read with `offset` and `limit`; search tools: narrow the query; `bash`:
-  pipe through `head`, `tail` or `grep`); and a provider's context-size
+  pipe through `head`, `tail` or `grep`), and a result bounded when it was
+  produced and shrunk again later keeps reporting its original size; and a
+  provider's context-size
   rejection (llama-server, OpenAI, Anthropic and Gemini bodies) is classified
   as `ProviderContextExceededError` instead of a generic error, refitted
   against the counts the provider reported and retried once, after which it

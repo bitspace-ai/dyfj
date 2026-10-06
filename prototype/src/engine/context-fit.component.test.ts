@@ -29,8 +29,14 @@ import {
   systemMessage,
 } from "../../testing/builders/engine.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
-import { COMPRESSION_SYSTEM_PROMPT } from "../context/mod.ts";
-import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
+import {
+  buildConversationMessages,
+  COMPRESSION_SYSTEM_PROMPT,
+} from "../context/mod.ts";
+import type {
+  WorkbenchRuntimeEvent,
+  WorkbenchSessionEvent,
+} from "../contract/mod.ts";
 import type { WorkbenchMessage } from "../providers/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
 import type {
@@ -510,4 +516,86 @@ Deno.test("an overflow-recovery plan is fitted before its retry is sent", async 
     outcome: "recovered",
     retriesUsed: 1,
   });
+});
+
+// ─── the compression input is fitted to the compressor's window ──────────────
+
+Deno.test("an elder larger than the compressor's window is compressed in passes, each request within the window", async () => {
+  // Twelve prose turns of ~1,000 tokens on a 6,000-token model that is also
+  // its own compressor: no single compression request can carry the elder,
+  // so it is compressed from its oldest turns in passes until the request
+  // fits. Every request the model receives, compression ones included, is
+  // within the window.
+  const history: WorkbenchMessage[] = [];
+  for (let i = 0; i < 12; i++) {
+    history.push(
+      { role: "user", content: `question ${i} `.repeat(180) },
+      { role: "assistant", content: `answer ${i} `.repeat(200) },
+    );
+  }
+  // How many passes it takes is the constants' business, not the test's:
+  // every exchange answers by the request it sees, a summary to the
+  // compression prompt and the reply to the session.
+  const byPrompt: ScriptedExchange = {
+    respond: (request) =>
+      new Response(
+        systemMessage(request) === COMPRESSION_SYSTEM_PROMPT
+          ? (summaryReply().respond as { body: string }).body
+          : (chatReply({ content: "compressed in passes" }).respond as {
+            body: string;
+          }).body,
+      ),
+  };
+  const fit = await fitTurn(Array.from({ length: 12 }, () => byPrompt), {
+    prompt: "one more",
+    conversationMessages: history,
+  }, { models: [TINY_WINDOW] });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "compressed in passes");
+  assertEveryRequestFits(fit.run, TINY_WINDOW.context_window!);
+  const compressions = fit.run.transport.requests.filter((request) =>
+    systemMessage(request) === COMPRESSION_SYSTEM_PROMPT
+  );
+  assert(compressions.length >= 2, "expected more than one compression pass");
+  assertEquals(
+    fit.run.transport.requests.length,
+    compressions.length + 1,
+  );
+  const frames = fit.frames.filter((f) => f.type === "contextCompressed");
+  assertEquals(frames.length, compressions.length);
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, { compressed: true });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  // The persisted retained counts replay to the transcript the model saw:
+  // the summary, then exactly the turns kept verbatim.
+  const rows = await eventRows(
+    fit.run,
+    frame(fit.frames, "sessionStart")!.sessionId,
+  );
+  const persisted = rows.filter((row) =>
+    row.event_type === "context_compressed"
+  );
+  assertEquals(persisted.length, compressions.length);
+  const live = conversation(fit.run.transport.requests.at(-1)!);
+  const resumed = buildConversationMessages([
+    ...history.map((m) =>
+      ({
+        eventType: m.role === "user" ? "session_start" : "model_response",
+        content: m.content,
+      }) as unknown as WorkbenchSessionEvent
+    ),
+    {
+      eventType: "session_start",
+      content: "one more",
+    } as unknown as WorkbenchSessionEvent,
+    ...persisted.map((row) =>
+      ({
+        eventType: "context_compressed",
+        content: row.content,
+      }) as unknown as WorkbenchSessionEvent
+    ),
+  ]);
+  assertEquals(
+    resumed.map((m) => ({ role: m.role, content: m.content })),
+    live.map((m) => ({ role: m.role, content: m.content })),
+  );
 });

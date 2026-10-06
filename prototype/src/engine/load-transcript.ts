@@ -58,7 +58,14 @@ export async function loadTranscript(
         "proactive",
       );
       if (outcome.status === "compressed") {
-        seededHistory = [outcome.summaryMessage, ...tail];
+        // An elder larger than the compressor's window is compressed from
+        // its oldest turns; the rest stays verbatim for the fit step to
+        // compress on a later pass.
+        seededHistory = [
+          outcome.summaryMessage,
+          ...(outcome.remainder ?? []),
+          ...tail,
+        ];
       }
     }
   }
