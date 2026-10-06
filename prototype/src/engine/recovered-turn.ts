@@ -48,9 +48,6 @@ import {
   transcriptEstimateText,
 } from "./transcript.ts";
 
-/** The least a provider rejection may scale the refit budget by. */
-const MIN_REFIT_SCALE = 0.5;
-
 /** A length stop's prompt- and output-side token totals. */
 interface LengthStop {
   result: LoopTurnResult;
@@ -131,8 +128,8 @@ async function recoveredCall(
 /**
  * The provider refused a request the estimate had passed: refit it against
  * the counts the provider reported — its measured size calibrates the
- * estimate, its limit bounds the window — so the retry is smaller by at
- * least the ratio it was over, and retry once. A refit that changes nothing
+ * estimate, its limit bounds the window — so the retry is smaller by the
+ * ratio it was over, and retry once. A refit that changes nothing
  * would resend the same request, so it fails instead; the retry's own
  * rejection propagates to `recoveredTurn`, which fails it structured.
  */
@@ -157,14 +154,12 @@ async function refitRejected(
   if (contextWindow === undefined) throw rejection;
   const limits = fitLimits(turn, { contextWindow });
   // The provider's count against the estimate is the estimator's error on
-  // this transcript; the budget shrinks by it, but never below half — a
-  // single report is one data point, and the retry is bounded to one.
-  const scale = Math.max(
-    MIN_REFIT_SCALE,
-    requestedTokens !== undefined && requestedTokens > estimate
-      ? estimate / requestedTokens
-      : 1,
-  );
+  // this transcript, and the provider measured the request it refused: the
+  // budget shrinks by the whole ratio. A floor would leave the one retry
+  // predictably over the window exactly when the estimate was most wrong.
+  const scale = requestedTokens !== undefined && requestedTokens > estimate
+    ? estimate / requestedTokens
+    : 1;
   let budgetTokens = Math.floor((limits?.budgetTokens ?? 0) * scale);
   // The provider's verdict outranks the estimate: whatever the report said,
   // the retry must be smaller than what was refused.

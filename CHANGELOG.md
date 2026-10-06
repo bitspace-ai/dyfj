@@ -27,8 +27,8 @@ README are tracked separately in its Revision history section.
   `ContextWindowOverflowError`, which names the window, only when it still
   cannot fit (the estimate measures what the adapter sends: Gemini, which
   carries neither history nor tools on the wire, is sized by its prompt
-  alone, and the length-recovery retries are fitted the same way before
-  they go out, shrinking only). The compression request is sized the same
+  alone and never proactively compressed, and the length-recovery retries
+  are fitted the same way before they go out, shrinking only). The compression request is sized the same
   way against the compressor's own window: an elder transcript larger than
   it has its tool results shrunk and is compressed from its oldest turns in
   passes, the rest kept verbatim until the next pass, so the compressor is
@@ -44,8 +44,9 @@ README are tracked separately in its Revision history section.
   one); and a provider's context-size
   rejection (llama-server, OpenAI, Anthropic and Gemini bodies) is classified
   as `ProviderContextExceededError` instead of a generic error, refitted
-  against the counts the provider reported and retried once, after which it
-  fails as context overflow. A session whose history is already over the
+  against the counts the provider reported (the budget scaled by the ratio
+  of its count to the estimate) and retried once, after which it fails as
+  context overflow. A session whose history is already over the
   window recovers on its next turn through the same path. The durable
   `tool_call` events are untouched: shrinking decides what the model sees,
   not what the log keeps. Two runtime events, `toolResultTrimmed` and

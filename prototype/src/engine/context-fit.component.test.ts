@@ -348,15 +348,48 @@ Deno.test("fit compresses elder prose when there are no tool results to shrink",
 
 // ─── a provider's context-exceeded rejection is context overflow ─────────────
 
+/**
+ * A provider whose tokenizer counts `ratio` times the engine's estimate,
+ * enforcing `limit` the way llama-server does: a request it measures over
+ * the limit is refused with its counts; any other is answered. The retry
+ * passes only if the refit actually brought the request under the limit by
+ * the provider's own count.
+ */
+function strictProvider(ratio: number, limit: number): ScriptedExchange {
+  return {
+    respond: (request) => {
+      const measured = Math.round((request.body.length / 4) * ratio);
+      if (measured <= limit) {
+        return new Response(
+          (chatReply({ content: "recovered" }).respond as { body: string })
+            .body,
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 400,
+            message: `request (${measured} tokens) exceeds the available ` +
+              `context size (${limit} tokens), try increasing it`,
+            type: "exceed_context_size_error",
+          },
+        }),
+        { status: 400 },
+      );
+    },
+  };
+}
+
 Deno.test("a llama-server context-size rejection is classified and recovered by refitting", async () => {
-  // The history fits by estimate, so no fit runs before the first call; the
-  // provider disagrees. Its rejection carries the token counts, the refit
-  // shrinks the elder result against them, and one retry completes.
-  const history = overWindowHistory(8_000);
-  const fit = await fitTurn([
-    LLAMA_SERVER_REJECTION,
-    chatReply({ content: "recovered" }),
-  ], {
+  // The history fits by estimate (~17.5K of a 23K budget), so no fit runs
+  // before the first call; the provider counts 2.5 times as many tokens
+  // and refuses. Its rejection carries both counts, the refit scales the
+  // budget by the ratio and shrinks the elder results until the request is
+  // under the limit by the provider's count, and the one retry is accepted
+  // only because it is.
+  const history = overWindowHistory(20_000);
+  const provider = strictProvider(2.5, WINDOW);
+  const fit = await fitTurn([provider, provider], {
     prompt: "a short follow-up",
     conversationMessages: history,
   });
@@ -365,6 +398,7 @@ Deno.test("a llama-server context-size rejection is classified and recovered by 
   assertEquals(fit.run.transport.requests.length, 2);
   const [first, retry] = fit.run.transport.requests;
   assert(retry.body.length < first.body.length);
+  assert(Math.round((retry.body.length / 4) * 2.5) <= WINDOW);
   assertStringIncludes(
     conversation(retry).filter((m) => m.role === "tool")[0].content,
     "trimmed",
@@ -435,8 +469,7 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
 Deno.test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
   // Gemini carries no transcript and no tools on the wire, so the seeded
   // history (which the transcript estimate would put far over a 4,000-token
-  // window) costs nothing; the turn goes out and completes. Load-time
-  // compression declines without a request: no on-machine compressor.
+  // window) costs nothing; the turn goes out and completes.
   const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
     prompt: "a short follow-up",
     conversationMessages: overWindowHistory(60_000),
@@ -597,5 +630,42 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
   assertEquals(
     resumed.map((m) => ({ role: m.role, content: m.content })),
     live.map((m) => ({ role: m.role, content: m.content })),
+  );
+});
+
+Deno.test("an adapter that sends only the prompt is never proactively compressed, even with a local compressor at hand", async () => {
+  // Four prior turns cross the 50% trigger of a 4,000-token window by the
+  // transcript estimate, and a local tier-0 row could compress them; but
+  // Gemini sends none of that history, so compressing would only persist a
+  // summary over turns the model never sees. One request, to Gemini.
+  const prose = (word: string): WorkbenchMessage[] => [
+    { role: "user", content: `${word} question `.repeat(150) },
+    { role: "assistant", content: `${word} answer `.repeat(150) },
+  ];
+  const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
+    prompt: "a short follow-up",
+    conversationMessages: [
+      ...prose("first"),
+      ...prose("second"),
+      ...prose("third"),
+      ...prose("fourth"),
+    ],
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 4_000 }, LOCAL_MODEL],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "prompt-only reply");
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertStringIncludes(fit.run.transport.requests[0].url, "googleapis.com");
+  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
+  const rows = await eventRows(
+    fit.run,
+    frame(fit.frames, "sessionStart")!.sessionId,
+  );
+  assertEquals(
+    rows.some((row) => row.event_type === "context_compressed"),
+    false,
   );
 });
