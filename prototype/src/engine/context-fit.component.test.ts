@@ -32,6 +32,7 @@ import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transpo
 import {
   buildConversationMessages,
   COMPRESSION_SYSTEM_PROMPT,
+  ContextWindowOverflowError,
 } from "../context/mod.ts";
 import type {
   WorkbenchRuntimeEvent,
@@ -732,6 +733,48 @@ Deno.test("a refit retry that still overflows the window fails structured", asyn
     outcome: "overflow_failed",
     retriesUsed: 1,
   });
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
+
+Deno.test("a count-less rejection of the refit retry fails with the learned window and the retry's size", async () => {
+  // The first rejection states a 20,000-token limit below the catalog's
+  // 32,768; the second states nothing. The failure names the learned
+  // window and the retry's fitted size, not the catalog window and the
+  // stale pre-refit estimate.
+  const fit = await fitTurn([
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({
+          error: {
+            message: "request (50000 tokens) exceeds the available context " +
+              "size (20000 tokens), try increasing it",
+          },
+        }),
+      },
+    },
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({ error: { code: "context_length_exceeded" } }),
+      },
+    },
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(20_000),
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.run.transport.requests.length, 2);
+  const [first, retry] = fit.run.transport.requests;
+  assertEquals(fit.error.details.contextWindow, 20_000);
+  assert(fit.error.details.inputTokens <= Math.ceil(retry.body.length / 4));
+  assert(
+    fit.error.details.inputTokens < Math.ceil(first.body.length / 4) - 5_000,
+  );
+  assertStringIncludes(fit.error.message, "20000-token context window");
   assertObjectMatch(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",

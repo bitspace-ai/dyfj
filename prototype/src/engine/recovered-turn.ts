@@ -140,7 +140,8 @@ async function recoveredCall(
  * estimate, its limit bounds the window — so the retry is smaller by the
  * ratio it was over, and retry once. A refit that changes nothing
  * would resend the same request, so it fails instead; the retry's own
- * rejection propagates to `recoveredTurn`, which fails it structured.
+ * rejection fails structured here, with the window and size this recovery
+ * learned.
  */
 async function refitRejected(
   turn: RoutedTurn,
@@ -184,18 +185,35 @@ async function refitRejected(
     "\n[the provider rejected the request as over its context window; " +
       "refitted and retrying]",
   );
-  return await observedTurn(
-    turn,
-    { ...params, messages: loopRequest.messages },
-    {
-      modelSlug: request.modelSlug,
-      estimatedInputCount: estimateRuntimeInputCount(
-        transcriptEstimateText(params.systemPrompt, loopRequest.messages),
-      ),
-    },
-    "recovery",
-    onProviderError,
-  );
+  try {
+    return await observedTurn(
+      turn,
+      { ...params, messages: loopRequest.messages },
+      {
+        modelSlug: request.modelSlug,
+        estimatedInputCount: estimateRuntimeInputCount(
+          transcriptEstimateText(params.systemPrompt, loopRequest.messages),
+        ),
+      },
+      "recovery",
+      onProviderError,
+    );
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    // The retry was refused too. Fail with what this recovery learned —
+    // the window the first rejection bounded, the retry's own fitted size —
+    // preferring any counts the second rejection states, so a count-less
+    // second rejection does not fall back to the catalog window and the
+    // stale pre-refit estimate.
+    throw new ContextWindowOverflowError({
+      modelSlug: turn.route.selected.slug,
+      contextWindow: err.report.limitTokens === undefined
+        ? contextWindow
+        : Math.min(err.report.limitTokens, contextWindow),
+      inputTokens: err.report.requestedTokens ?? fitted.estimatedTokens,
+      outputTokens: 0,
+    });
+  }
 }
 
 /**
