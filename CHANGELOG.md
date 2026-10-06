@@ -43,9 +43,12 @@ README are tracked separately in its Revision history section.
   - Because the estimate is not the provider's tokenizer, a provider can
     still reject a request that passed it. That rejection (from
     llama-server, OpenAI, Anthropic or Gemini) is now classified as
-    `ProviderContextExceededError` instead of a generic error. The request
-    is refitted against the counts the provider reported and retried once;
-    a second rejection fails the turn as context overflow.
+    `ProviderContextExceededError` instead of a generic error. On an adapter
+    that sends the transcript (OpenAI-compatible, including llama-server,
+    and Anthropic), the request is refitted against the counts the provider
+    reported and retried once; a second rejection fails the turn as context
+    overflow. Gemini sends only the prompt, so there is nothing to refit:
+    its rejection fails the turn as context overflow without a retry.
 
   A session whose history is already over the window recovers on its next
   turn through the same path. The durable `tool_call` events are untouched:

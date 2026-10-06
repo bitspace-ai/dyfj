@@ -896,3 +896,36 @@ Deno.test("a result before a forced conclusion is sized against the request with
   assertEquals(frame(fit.frames, "contextFitted"), undefined);
   assertEveryRequestFits(fit.run, 12_000);
 });
+
+Deno.test("a Gemini context-size rejection fails as context overflow without a retry", async () => {
+  // Gemini sends only the prompt, so a refit has nothing to shrink: the
+  // classified rejection ends the turn as a structured overflow after one
+  // request, rather than resending the same prompt.
+  const fit = await fitTurn([{
+    respond: {
+      status: 400,
+      body: JSON.stringify({
+        error: {
+          code: 400,
+          message: "The input token count (82366) exceeds the maximum " +
+            "number of tokens allowed (32768).",
+          status: "INVALID_ARGUMENT",
+        },
+      }),
+    },
+  }], {
+    prompt: "a short question",
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [GEMINI_FREE_MODEL],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.error.details.contextWindow, 32_768);
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
