@@ -136,7 +136,14 @@ internal move.
       `tools/list`, `tools/inspect`.
   11. Extension methods with loopback fakes for third-party services: `ideas/*`,
       `packets/*`, `friction/post`.
-  12. Transcript compression triggered by a small context profile.
+  12. Transcript compression triggered by a small context profile. The
+      fixture window must hold the fixed request prefix (system prompt plus
+      tool definitions): the engine fits every request to the window before
+      it is sent, so a window under the prefix fails every turn before the
+      model sees it. The window was raised from 2,000 to 12,000 tokens, and
+      the padding sized to cross the trigger on the fourth turn, when
+      request fitting landed; scenarios 10 and 12 were re-snapshotted under
+      that decision.
 - **Hosted adapters are outside the golden suite** (Anthropic, OpenAI,
   OpenRouter, Gemini, xAI). Their base URLs are pinned to real HTTPS hosts. They
   are pinned instead by the provider conformance kit (§5), using recorded

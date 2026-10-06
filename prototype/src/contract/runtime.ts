@@ -150,6 +150,16 @@ export type LengthRecoveryOutcome =
   | "retry_errored"
   | "overflow_failed";
 
+/**
+ * Why elder turns were compressed: ahead of the first call at ~50% of the
+ * window, on a length stop that overflowed, or because a request would not
+ * fit the window before it was sent.
+ */
+export type ContextCompressionTrigger =
+  | "proactive"
+  | "context_overflow"
+  | "request_fit";
+
 export type WorkbenchRuntimeEvent =
   | { type: "sessionStart"; sessionId: string; traceId: string; mode: string }
   | { type: "inputReceived"; sessionId: string; promptLength: number }
@@ -260,10 +270,43 @@ export type WorkbenchRuntimeEvent =
     type: "contextCompressed";
     sessionId: string;
     compressorModelSlug: string;
-    trigger: "proactive" | "context_overflow";
+    trigger: ContextCompressionTrigger;
     turnsCompressed: number;
     tokensBeforeEstimate: number;
     tokensAfterEstimate: number;
+  }
+  | {
+    /**
+     * A tool result was cut to its share of the window remaining for the
+     * turn before it joined the transcript. The model sees a marker in its
+     * place; the durable tool_call event keeps the full result.
+     */
+    type: "toolResultTrimmed";
+    sessionId: string;
+    commandId: string;
+    callId: string;
+    contextWindow: number;
+    keptChars: number;
+    totalChars: number;
+  }
+  | {
+    /**
+     * A request that would not fit the model's context window was made to
+     * fit before it was sent: earlier tool results shrunk to a marker,
+     * elder turns compressed, or both. `provider_rejected` means the
+     * provider refused the request the estimate had passed, and the refit
+     * is sized by the counts it reported.
+     */
+    type: "contextFitted";
+    sessionId: string;
+    modelSlug: string;
+    contextWindow: number;
+    budgetTokens: number;
+    estimatedTokensBefore: number;
+    estimatedTokensAfter: number;
+    trimmedToolResults: number;
+    compressed: boolean;
+    trigger: "before_send" | "provider_rejected";
   }
   | { type: "turnCompleted"; sessionId: string; traceId: string }
   | {

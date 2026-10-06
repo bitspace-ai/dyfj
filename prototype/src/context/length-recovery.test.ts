@@ -173,3 +173,21 @@ Deno.test("isBudgetRefusal: anything else is not a budget refusal", () => {
   assertStrictEquals(isBudgetRefusal(undefined), false);
   assertStrictEquals(isBudgetRefusal("BudgetExceededError"), false);
 });
+
+Deno.test("buildContextOverflowMessage: a request refused before sending names the input budget, not a total that cannot add up", () => {
+  const message = buildContextOverflowMessage({
+    modelSlug: "hosted-200k",
+    contextWindow: 200_000,
+    inputTokens: 140_000,
+    outputTokens: 0,
+    inputBudgetTokens: 129_200,
+  });
+  assertStringIncludes(message, "200000-token context window");
+  assertStringIncludes(
+    message,
+    "~140000 input tokens against an input budget of 129200",
+  );
+  assertStringIncludes(message, "it was not sent");
+  assertEquals(message.includes("0 output tokens"), false);
+  assertStringIncludes(message, "/model");
+});

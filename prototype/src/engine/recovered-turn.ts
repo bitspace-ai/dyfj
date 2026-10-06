@@ -6,6 +6,12 @@
  * shot first. Every retry goes back through `observedTurn`, so the budget
  * gates and usage recording hold for it.
  *
+ * A provider that rejects the request outright as larger than its window
+ * (`ProviderContextExceededError`, an HTTP 400 rather than a length stop)
+ * is the same overflow: the request is refitted against the counts the
+ * provider reported and retried once; a rejection that survives that, or
+ * one on any other retry, fails the turn with `ContextWindowOverflowError`.
+ *
  * Tool calls on a length-stopped response are a cut-off plan: every path
  * that delivers a truncated result strips them, so the loop never executes a
  * plan the model did not finish stating.
@@ -13,17 +19,18 @@
 import {
   modelRequestedOutputCap,
   modelSupportsTranscriptRetry,
+  ProviderContextExceededError,
   type WorkbenchTurnParams,
 } from "../providers/mod.ts";
 import {
   buildContinuationMessages,
   classifyLengthStop,
-  CONTEXT_OVERFLOW_WINDOW_FRACTION,
   ContextWindowOverflowError,
   isBudgetRefusal,
 } from "../context/mod.ts";
 import type { LengthRecoveryOutcome } from "../contract/mod.ts";
 import { compressionRecoverer } from "./compression.ts";
+import { estimateRequest, fitLimits, fitRequest } from "./fit-request.ts";
 import {
   type LoopCallPurpose,
   type LoopCallRequest,
@@ -51,7 +58,11 @@ interface LengthStop {
   ) => Promise<void>;
 }
 
-/** Make one loop call, recovering once from a length stop. */
+/**
+ * Make one loop call, recovering once from a length stop or a context-size
+ * rejection. A rejection that outlives its one refit — on the retry, or on
+ * a length-recovery retry — fails structured, naming the window.
+ */
 export async function recoveredTurn(
   turn: RoutedTurn,
   params: WorkbenchTurnParams,
@@ -59,13 +70,50 @@ export async function recoveredTurn(
   purpose: LoopCallPurpose,
   onProviderError?: (error: unknown) => unknown,
 ): Promise<LoopTurnResult> {
-  const result = await observedTurn(
-    turn,
-    params,
-    request,
-    purpose,
-    onProviderError,
-  );
+  try {
+    return await recoveredCall(turn, params, request, purpose, onProviderError);
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    throw new ContextWindowOverflowError({
+      modelSlug: turn.route.selected.slug,
+      contextWindow: fitLimits(turn, {
+        contextWindow: err.report.limitTokens,
+      })?.contextWindow,
+      inputTokens: err.report.requestedTokens ?? request.estimatedInputCount,
+      outputTokens: 0,
+    });
+  }
+}
+
+async function recoveredCall(
+  turn: RoutedTurn,
+  params: WorkbenchTurnParams,
+  request: LoopCallRequest,
+  purpose: LoopCallPurpose,
+  onProviderError?: (error: unknown) => unknown,
+): Promise<LoopTurnResult> {
+  let result: LoopTurnResult;
+  try {
+    result = await observedTurn(
+      turn,
+      params,
+      request,
+      purpose,
+      onProviderError,
+    );
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    const { retried, contextWindow } = await refitRejected(
+      turn,
+      params,
+      request,
+      err,
+      onProviderError,
+    );
+    return retried.stopReason === "length"
+      ? await settleRefitRetry(turn, retried, contextWindow)
+      : retried;
+  }
   if (result.stopReason !== "length") return result;
   const stop = await classifyStop(turn, result);
   // A transcript retry only works where the adapter builds its request from
@@ -85,10 +133,131 @@ export async function recoveredTurn(
   return await continueTruncated(turn, params, request, stop, retryable);
 }
 
-/** Classify the stop and report it as a `lengthStopDetected` frame. */
+/**
+ * The provider refused a request the estimate had passed: refit it against
+ * the counts the provider reported — its measured size calibrates the
+ * estimate, its limit bounds the window — so the retry is smaller by the
+ * ratio it was over, and retry once. A refit that changes nothing
+ * would resend the same request, so it fails instead; the retry's own
+ * rejection fails structured here, with the window and size this recovery
+ * learned.
+ */
+async function refitRejected(
+  turn: RoutedTurn,
+  params: WorkbenchTurnParams,
+  request: LoopCallRequest,
+  rejection: ProviderContextExceededError,
+  onProviderError?: (error: unknown) => unknown,
+): Promise<{ retried: LoopTurnResult; contextWindow: number }> {
+  const loopRequest = {
+    systemPrompt: params.systemPrompt,
+    messages: params.messages ?? [],
+    tools: params.tools,
+  };
+  const estimate = estimateRequest(turn, loopRequest);
+  const { requestedTokens, limitTokens } = rejection.report;
+  const catalogWindow = turn.route.selected.contextWindow;
+  const contextWindow = limitTokens === undefined
+    ? catalogWindow
+    : Math.min(limitTokens, catalogWindow ?? limitTokens);
+  if (contextWindow === undefined) throw rejection;
+  const limits = fitLimits(turn, { contextWindow });
+  // The provider's count against the estimate is the estimator's error on
+  // this transcript, and the provider measured the request it refused: the
+  // budget shrinks by the whole ratio. A floor would leave the one retry
+  // predictably over the window exactly when the estimate was most wrong.
+  const scale = requestedTokens !== undefined && requestedTokens > estimate
+    ? estimate / requestedTokens
+    : 1;
+  let budgetTokens = Math.floor((limits?.budgetTokens ?? 0) * scale);
+  // The provider's verdict outranks the estimate: whatever the report said,
+  // the retry must be smaller than what was refused.
+  if (budgetTokens >= estimate) budgetTokens = Math.floor(estimate / 2);
+  const fitted = await fitRequest(
+    turn,
+    loopRequest,
+    "provider_rejected",
+    { limits: { contextWindow, budgetTokens } },
+  );
+  if (!fitted.changed) throw rejection;
+  turn.state.session.log(
+    "\n[the provider rejected the request as over its context window; " +
+      "refitted and retrying]",
+  );
+  try {
+    const retried = await observedTurn(
+      turn,
+      { ...params, messages: loopRequest.messages },
+      {
+        modelSlug: request.modelSlug,
+        estimatedInputCount: estimateRuntimeInputCount(
+          transcriptEstimateText(params.systemPrompt, loopRequest.messages),
+        ),
+      },
+      "recovery",
+      onProviderError,
+    );
+    return { retried, contextWindow };
+  } catch (err) {
+    if (!(err instanceof ProviderContextExceededError)) throw err;
+    // The retry was refused too. Fail with what this recovery learned —
+    // the window the first rejection bounded, the retry's own fitted size —
+    // preferring any counts the second rejection states, so a count-less
+    // second rejection does not fall back to the catalog window and the
+    // stale pre-refit estimate.
+    throw new ContextWindowOverflowError({
+      modelSlug: turn.route.selected.slug,
+      contextWindow: err.report.limitTokens === undefined
+        ? contextWindow
+        : Math.min(err.report.limitTokens, contextWindow),
+      inputTokens: err.report.requestedTokens ?? fitted.estimatedTokens,
+      outputTokens: 0,
+    });
+  }
+}
+
+/**
+ * The refit retry length-stopped. Recovery is bounded to the one retry
+ * already made, so no continuation or compression follows: the stop is
+ * classified like any other (reported as `lengthStopDetected`) against the
+ * window the rejection taught, overflow fails structured, and exhaustion
+ * delivers the truncated partial with its cut-off tool plan stripped —
+ * never a plan the model did not finish.
+ */
+async function settleRefitRetry(
+  turn: RoutedTurn,
+  retried: LoopTurnResult,
+  contextWindow: number,
+): Promise<LoopTurnResult> {
+  // Classified against the window the rejection taught, not the catalog's:
+  // a stop that filled the provider's real window is overflow even where
+  // the catalog window would have read it as exhaustion.
+  const stop = await classifyStop(turn, retried, contextWindow);
+  if (stop.classification === "context_overflow") {
+    await stop.emitRecovery("overflow_failed", 1);
+    throw overflowError(
+      retried,
+      stop.promptTokens,
+      stop.outputTokens,
+      contextWindow,
+    );
+  }
+  await stop.emitRecovery("still_truncated", 1);
+  turn.state.session.log(
+    "\n[response truncated at the output limit after the refit retry; " +
+      "not retrying further]",
+  );
+  return { ...retried, toolCalls: undefined };
+}
+
+/**
+ * Classify the stop and report it as a `lengthStopDetected` frame, against
+ * the catalog window unless a provider rejection taught a smaller one.
+ */
 async function classifyStop(
   turn: RoutedTurn,
   result: LoopTurnResult,
+  contextWindow: number | undefined = result.model.contextWindow,
 ): Promise<LengthStop & { classification: string }> {
   const { input, state } = turn;
   const sessionId = state.session.sessionId;
@@ -108,7 +277,7 @@ async function classifyStop(
   // the model can do, and a stop at the requested cap is exhaustion.
   const outputCap = modelRequestedOutputCap(result.model);
   const classification = classifyLengthStop(
-    { contextWindow: result.model.contextWindow, maxOutputTokens: outputCap },
+    { contextWindow, maxOutputTokens: outputCap },
     { input: promptTokens, output: outputTokens },
   );
   await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
@@ -119,7 +288,7 @@ async function classifyStop(
     severity: classification === "context_overflow" ? "error" : "warn",
     inputTokens: promptTokens,
     outputTokens,
-    contextWindow: result.model.contextWindow,
+    contextWindow,
     maxOutputTokens: outputCap,
   });
   return {
@@ -196,6 +365,20 @@ async function recoverOverflow(
       turn.state.session.log(
         "\n[context recovered — retrying; the reply restarts below]",
       );
+      // The plan is sized like any other request before it goes out: a
+      // compressed transcript whose verbatim tail still carries oversized
+      // tool results is shrunk, not sent over the window. Compression had
+      // its one shot in the plan itself.
+      await fitRequest(
+        turn,
+        {
+          systemPrompt: params.systemPrompt,
+          messages: plan.messages,
+          tools: params.tools,
+        },
+        "before_send",
+        { compress: false },
+      );
       retried = await observedTurn(
         turn,
         { ...params, messages: plan.messages },
@@ -210,8 +393,15 @@ async function recoverOverflow(
       );
     }
   } catch (err) {
-    // Close the recovery trail before the error surfaces as turnFailed.
-    await emitRecovery("retry_errored", retriesUsed);
+    // Close the recovery trail before the error surfaces as turnFailed. A
+    // plan that cannot be made to fit is the overflow itself, not an
+    // errored retry: no request was made.
+    await emitRecovery(
+      err instanceof ContextWindowOverflowError && retried === undefined
+        ? "overflow_failed"
+        : "retry_errored",
+      retriesUsed,
+    );
     throw err;
   }
   if (retried === undefined) {
@@ -260,10 +450,11 @@ function overflowError(
   result: LoopTurnResult,
   inputTokens: number,
   outputTokens: number,
+  contextWindow: number | undefined = result.model.contextWindow,
 ): ContextWindowOverflowError {
   return new ContextWindowOverflowError({
     modelSlug: result.model.slug,
-    contextWindow: result.model.contextWindow,
+    contextWindow,
     inputTokens,
     outputTokens,
   });
@@ -297,19 +488,26 @@ async function continueTruncated(
     params.messages ?? [{ role: "user", content: params.prompt }],
     result.text,
   );
-  const continuationInput = estimateRuntimeInputCount(
-    transcriptEstimateText(params.systemPrompt, continuation),
-  );
-  // Feasibility pre-check: when both the output cap AND the context window
-  // bind this stop, the continuation (original transcript + partial answer +
-  // nudge) no longer fits the window, so a retry would be a doomed
-  // over-window call. Skip it and deliver the capped partial. The threshold
-  // reuses the classification's window-evidence fraction.
-  if (
-    result.model.contextWindow !== undefined &&
-    continuationInput >=
-      result.model.contextWindow * CONTEXT_OVERFLOW_WINDOW_FRACTION
-  ) {
+  // Feasibility: when both the output cap AND the context window bind this
+  // stop, the continuation (original transcript + partial answer + nudge)
+  // may no longer fit, and a retry would be a doomed over-window call. The
+  // continuation is sized like any other request, so its tool results may
+  // be shrunk to make it fit; one that still cannot fit is skipped and the
+  // capped partial delivered. No compression here: the nudge is a user
+  // message no session_start backs.
+  try {
+    await fitRequest(
+      turn,
+      {
+        systemPrompt: params.systemPrompt,
+        messages: continuation,
+        tools: params.tools,
+      },
+      "before_send",
+      { compress: false },
+    );
+  } catch (err) {
+    if (!(err instanceof ContextWindowOverflowError)) throw err;
     await emitRecovery("retry_would_overflow", 0);
     log(
       "\n[response truncated at the output limit; the continuation would " +
@@ -322,7 +520,13 @@ async function continueTruncated(
     retried = await observedTurn(
       turn,
       { ...params, messages: continuation },
-      { modelSlug: request.modelSlug, estimatedInputCount: continuationInput },
+      {
+        modelSlug: request.modelSlug,
+        // Re-measured: the fit above may have shrunk the continuation.
+        estimatedInputCount: estimateRuntimeInputCount(
+          transcriptEstimateText(params.systemPrompt, continuation),
+        ),
+      },
       "recovery",
     );
   } catch (err) {

@@ -5,7 +5,10 @@
  * history) followed by the current user message — compressed first when it
  * would crowd the active model's context window.
  */
-import type { WorkbenchMessage } from "../providers/mod.ts";
+import {
+  modelRequestCarriesTranscript,
+  type WorkbenchMessage,
+} from "../providers/mod.ts";
 import {
   CONTEXT_COMPRESSION_TRIGGER_FRACTION,
   countTurns,
@@ -33,8 +36,14 @@ export async function loadTranscript(
   // active model's context window, compress the elder turns before the first
   // provider call, keeping the most recent turns verbatim. A declined
   // compression leaves the transcript untouched and the turn runs
-  // uncompressed.
-  if (seededHistory.length > 0 && contextWindow !== undefined) {
+  // uncompressed. An adapter that sends only the prompt (Gemini) carries no
+  // history on the wire, so there is nothing to make room for: compressing
+  // would persist a summary over history the model never sees, which a
+  // later turn on a transcript model would then be missing.
+  if (
+    seededHistory.length > 0 && contextWindow !== undefined &&
+    modelRequestCarriesTranscript(route.selected)
+  ) {
     const estimatedTokens = estimateRuntimeInputCount(
       transcriptEstimateText(state.systemPrompt, [...seededHistory, prompt]),
     );
@@ -58,7 +67,14 @@ export async function loadTranscript(
         "proactive",
       );
       if (outcome.status === "compressed") {
-        seededHistory = [outcome.summaryMessage, ...tail];
+        // An elder larger than the compressor's window is compressed from
+        // its oldest turns; the rest stays verbatim for the fit step to
+        // compress on a later pass.
+        seededHistory = [
+          outcome.summaryMessage,
+          ...(outcome.remainder ?? []),
+          ...tail,
+        ];
       }
     }
   }

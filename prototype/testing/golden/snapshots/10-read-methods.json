@@ -331,7 +331,7 @@
             "capabilities": [
               "text"
             ],
-            "contextWindow": 2000,
+            "contextWindow": 12000,
             "maxOutputTokens": 256,
             "modality": "local",
             "reasoningEffortControl": false
@@ -989,7 +989,7 @@
             "capabilities": [
               "text"
             ],
-            "contextWindow": 2000,
+            "contextWindow": 12000,
             "maxOutputTokens": 256,
             "modality": "local",
             "reasoningEffortControl": false,

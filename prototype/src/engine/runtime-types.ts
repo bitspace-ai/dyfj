@@ -245,6 +245,8 @@ export interface ToolResultSummary {
   callId: string;
   isError: boolean;
   result: string;
+  /** The result's original length when the engine cut it to fit the window. */
+  trimmedFrom?: number;
 }
 
 /**

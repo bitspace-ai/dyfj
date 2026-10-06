@@ -13,12 +13,14 @@ import type {
 } from "../adapter.ts";
 import {
   HostedProviderCredentialMissingError,
+  ProviderContextExceededError,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
 } from "../errors.ts";
 import { fetchWithHeaderTimeout, providerFetchDeadline } from "../http.ts";
 import type { WorkbenchModel, WorkbenchTurnResult } from "../types.ts";
 import { annotateProviderAbort } from "../shared/abort.ts";
+import { classifyContextExceeded } from "../shared/context-exceeded.ts";
 import {
   isAllowedHostedProviderBaseUrl,
   isAllowedLocalProviderBaseUrl,
@@ -117,6 +119,36 @@ function requestOutputCap(
 }
 
 /**
+ * The error for a non-2xx response. A context-size rejection is overflow
+ * the engine can recover from, so it is typed; everything else stays the
+ * generic failure (the body is a bounded diagnostic, never a trusted
+ * message).
+ */
+async function httpFailure(
+  model: WorkbenchModel,
+  response: Response,
+): Promise<Error> {
+  const detail = response.body === null
+    ? ""
+    : await readBoundedOpenAIText(response).catch((error) => {
+      if (error instanceof DomainError) throw error;
+      return "";
+    });
+  const exceeded = classifyContextExceeded(response.status, detail);
+  if (exceeded !== null) {
+    return new ProviderContextExceededError(
+      model.slug,
+      response.status,
+      exceeded,
+    );
+  }
+  return new Error(
+    `Model request failed for ${model.slug}: HTTP ${response.status}` +
+      (detail ? ` ${detail.slice(0, 300)}` : ""),
+  );
+}
+
+/**
  * Execute one OpenAI-compatible chat/completions turn. Shared by the local
  * provider path (no auth) and the hosted OpenAI path (bearer key). The caller
  * has already validated the base URL and provider.
@@ -188,18 +220,7 @@ async function executeOpenAICompatibleTurn(
   );
   const headersReceived = now();
 
-  if (!response.ok) {
-    const detail = response.body === null
-      ? ""
-      : await readBoundedOpenAIText(response).catch((error) => {
-        if (error instanceof DomainError) throw error;
-        return "";
-      });
-    throw new Error(
-      `Model request failed for ${model.slug}: HTTP ${response.status}` +
-        (detail ? ` ${detail.slice(0, 300)}` : ""),
-    );
-  }
+  if (!response.ok) throw await httpFailure(model, response);
 
   const result = onFrame !== undefined
     ? await readOpenAIChatStream(

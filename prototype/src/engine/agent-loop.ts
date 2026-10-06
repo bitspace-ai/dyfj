@@ -3,7 +3,9 @@
  * provider call, then model↔tools steps until the model stops requesting
  * tools, repeats itself, or reaches the step cap. Each call is an observed,
  * budget-gated call with length-stop recovery (`recovered-turn.ts`); each
- * tool call goes through `invokeCommandWithEvent`.
+ * tool call goes through `invokeCommandWithEvent`. Every call is fitted to
+ * the model's context window before it is sent, and every tool result is
+ * bounded against the window left for the turn (`fit-request.ts`).
  *
  * On the OpenAI-compatible path each gather step streams live (text deltas
  * and captured tool calls); elsewhere gather steps buffer and only the forced
@@ -15,6 +17,7 @@
  */
 import {
   modelStreamsToolCalls,
+  ProviderContextExceededError,
   type WorkbenchMessage,
   type WorkbenchToolCall,
   type WorkbenchTurnParams,
@@ -23,6 +26,7 @@ import { invokeCommandWithEvent } from "../tools/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
 import { classifyErrorKind, ToolStepLimitConclusionError } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
+import { boundToolResult, estimateRequest, fitRequest } from "./fit-request.ts";
 import type { LoopTurnResult } from "./observed-turn.ts";
 import { recoveredTurn } from "./recovered-turn.ts";
 import type { RoutedTurn } from "./routed-turn.ts";
@@ -70,6 +74,11 @@ export async function agentLoop(
       input.frames?.onTextDelta?.(delta);
     };
   }
+  await fitRequest(turn, {
+    systemPrompt: state.systemPrompt,
+    messages,
+    tools: state.commandTools,
+  }, "before_send");
   let result = await recoveredTurn(turn, {
     ...callParams(turn, state.systemPrompt, messages),
     jsonObject: session.isNextWork,
@@ -84,6 +93,9 @@ export async function agentLoop(
       : undefined,
   }, {
     modelSlug: route.selected.slug,
+    // The budget gate's estimate: the transcript as the cost preflight
+    // measured it, so the per-call gate agrees with the preflight. The fit
+    // above measures the request as sent, tool definitions included.
     estimatedInputCount: estimateRuntimeInputCount(
       transcriptEstimateText(state.systemPrompt, messages),
     ),
@@ -98,7 +110,7 @@ export async function agentLoop(
     result.toolCalls.length > 0 &&
     state.toolSteps < session.maxToolSteps
   ) {
-    const step = await runToolStep(turn, result, seenToolCalls);
+    const step = await runToolStep(turn, result, messages, seenToolCalls);
     if (step === "aborted") {
       result = { ...result, stopReason: "aborted", toolCalls: undefined };
       break;
@@ -155,10 +167,16 @@ interface ToolStep {
   allRepeats: boolean;
 }
 
-/** Run one step's tool calls, in order; "aborted" when the turn is cancelled. */
+/**
+ * Run one step's tool calls, in order; "aborted" when the turn is cancelled.
+ * Each result is bounded against the window left for the turn as it is
+ * produced: the request so far (the transcript, the assistant turn that
+ * requested the tools, the results already in) is what the step has used.
+ */
 async function runToolStep(
   turn: RoutedTurn,
   result: LoopTurnResult,
+  messages: WorkbenchMessage[],
   seenToolCalls: Set<string>,
 ): Promise<ToolStep | "aborted"> {
   const { state, input } = turn;
@@ -181,11 +199,31 @@ async function runToolStep(
   const stepResults: ToolResultSummary[] = [];
   const cancelled = () =>
     input.abortSignal?.aborted === true && result.stopReason !== "error";
-  for (const toolCall of requestedToolCalls) {
+  // Sized against the request the follow-up will actually send: a step
+  // that ends tool use is followed by the forced conclusion, which carries
+  // the longer instruction and no tool definitions.
+  const next = nextRequestShape(state, allRepeats);
+  const requestSoFar = () =>
+    estimateRequest(turn, {
+      systemPrompt: next.systemPrompt,
+      messages: [
+        ...messages,
+        ...toolStepToMessages(result.text, requestedToolCalls, stepResults),
+      ],
+      tools: next.tools,
+    });
+  for (const [index, toolCall] of requestedToolCalls.entries()) {
     if (cancelled()) return "aborted";
     const summary = await invokeTool(turn, result, toolCall);
     if (summary === "aborted") return "aborted";
-    stepResults.push(summary);
+    stepResults.push(
+      await boundToolResult(
+        turn,
+        summary,
+        requestSoFar(),
+        requestedToolCalls.length - index,
+      ),
+    );
     if (cancelled()) return "aborted";
   }
   return { requestedToolCalls, stepResults, allRepeats };
@@ -325,8 +363,10 @@ async function followUp(
 ): Promise<LoopTurnResult> {
   const { state, input } = turn;
   const { session } = state;
-  const atCap = state.toolSteps >= session.maxToolSteps;
-  const forceConclude = atCap || step.allRepeats;
+  const { atCap, forceConclude, systemPrompt, tools } = nextRequestShape(
+    state,
+    step.allRepeats,
+  );
   if (forceConclude) {
     session.log(
       atCap
@@ -349,12 +389,7 @@ async function followUp(
     ),
   );
   if (atCap) state.toolStepLimitReached = true;
-  const systemPrompt = forceConclude
-    ? forcedConclusionSystemPrompt(
-      state.systemPrompt,
-      atCap ? "limit" : "repeated_tool_calls",
-    )
-    : state.systemPrompt;
+  await fitRequest(turn, { systemPrompt, messages, tools }, "before_send");
   const estimatedInputCount = estimateRuntimeInputCount(
     transcriptEstimateText(systemPrompt, messages),
   );
@@ -363,7 +398,7 @@ async function followUp(
     turn,
     {
       ...callParams(turn, systemPrompt, messages),
-      tools: forceConclude ? undefined : state.commandTools,
+      tools,
       historyTools: forceConclude ? state.commandTools : undefined,
       // Stream the gather step when the provider streams tool calls, and
       // always stream the forced no-tools conclusion.
@@ -373,8 +408,46 @@ async function followUp(
     },
     { modelSlug: turn.route.selected.slug, estimatedInputCount },
     forceConclude ? "forced_conclusion" : "tool_followup",
-    atCap ? () => new ToolStepLimitConclusionError() : undefined,
+    // A context-size rejection keeps its class so the loop can refit and
+    // retry; any other failure of the capped conclusion is the conclusion's.
+    atCap
+      ? (err) =>
+        err instanceof ProviderContextExceededError
+          ? err
+          : new ToolStepLimitConclusionError()
+      : undefined,
   );
+}
+
+/**
+ * The request that follows a tool step: a forced conclusion (the longer
+ * instruction, no tool definitions) at the step cap or when the whole step
+ * repeated earlier calls, else the ordinary gather call. One decision, read
+ * both where the step's results are bounded and where the follow-up is sent,
+ * so the results are sized against the request that actually goes out.
+ */
+function nextRequestShape(
+  state: TurnState,
+  allRepeats: boolean,
+): {
+  atCap: boolean;
+  forceConclude: boolean;
+  systemPrompt: string;
+  tools: TurnState["commandTools"] | undefined;
+} {
+  const atCap = state.toolSteps >= state.session.maxToolSteps;
+  const forceConclude = atCap || allRepeats;
+  return {
+    atCap,
+    forceConclude,
+    systemPrompt: forceConclude
+      ? forcedConclusionSystemPrompt(
+        state.systemPrompt,
+        atCap ? "limit" : "repeated_tool_calls",
+      )
+      : state.systemPrompt,
+    tools: forceConclude ? undefined : state.commandTools,
+  };
 }
 
 function forcedConclusionSystemPrompt(
@@ -412,6 +485,9 @@ export function toolStepToMessages(
       name: result.commandId,
       content: result.result,
       ...(result.isError ? { isError: true } : {}),
+      ...(result.trimmedFrom === undefined
+        ? {}
+        : { trimmedFrom: result.trimmedFrom }),
     });
   }
   return messages;

@@ -11,6 +11,7 @@ import {
   modelRequestedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
+  modelTransmittedOutputCap,
   PROVIDER_ADAPTERS,
   type ProviderAdapter,
   runWorkbenchTurn,
@@ -133,6 +134,27 @@ Deno.test("the requested output cap applies each adapter's default ceiling", () 
   for (const [subject, requested, expected] of cases) {
     assertEquals(
       modelRequestedOutputCap(subject, requested),
+      expected,
+      `${subject.provider} requested=${requested}`,
+    );
+  }
+});
+
+Deno.test("modelTransmittedOutputCap is the cap on the wire: none for a local request with none requested", () => {
+  const cases: Array<[WorkbenchModel, number | undefined, number | undefined]> =
+    [
+      [model("anthropic"), undefined, 16000],
+      [model("anthropic", { maxOutputTokens: 64_000 }), undefined, 16000],
+      [model("google"), undefined, 8192],
+      [model("openai", { maxOutputTokens: 32_000 }), 20_000, 20_000],
+      // Local: the catalog limit is the server's, not this request's.
+      [model("ollama", { maxOutputTokens: 2048 }), undefined, undefined],
+      [model("llama-cpp", { maxOutputTokens: 8192 }), undefined, undefined],
+      [model("ollama", { maxOutputTokens: 2048 }), 1000, 1000],
+    ];
+  for (const [subject, requested, expected] of cases) {
+    assertEquals(
+      modelTransmittedOutputCap(subject, requested),
       expected,
       `${subject.provider} requested=${requested}`,
     );

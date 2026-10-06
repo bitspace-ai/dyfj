@@ -163,6 +163,51 @@ describe("handleTurnRuntimeEvent", () => {
     );
   });
 
+  it("renders the window-fit status lines to stderr", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      {
+        type: "toolResultTrimmed",
+        sessionId: "s",
+        commandId: "read_file",
+        callId: "c1",
+        contextWindow: 32768,
+        keptChars: 8192,
+        totalChars: 65536,
+      },
+      output,
+      io,
+    );
+    handleTurnRuntimeEvent(
+      {
+        type: "contextFitted",
+        sessionId: "s",
+        modelSlug: "qwen3:local",
+        contextWindow: 32768,
+        budgetTokens: 23347,
+        estimatedTokensBefore: 47716,
+        estimatedTokensAfter: 18200,
+        trimmedToolResults: 2,
+        compressed: true,
+        trigger: "provider_rejected",
+      },
+      output,
+      io,
+    );
+    assertStringIncludes(
+      stderr.join("\n"),
+      "context: trimmed read_file result to fit the 32768-token window " +
+        "(8192 of 65536 characters kept)",
+    );
+    assertStringIncludes(
+      stderr.join("\n"),
+      "context: fitted to the 32768-token window after the provider " +
+        "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
+        "trimmed, elder turns compressed)",
+    );
+  });
+
   // Both clients decode the transport JSON but never schema-validate the frame,
   // so a malformed event payload must be dropped, not dereferenced.
   for (

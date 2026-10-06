@@ -1,0 +1,931 @@
+/**
+ * Component tests for request fitting: whole native turns over the engine
+ * fakes on a model with a declared context window, where the scripted
+ * provider answers and every request it receives is measured. The window is
+ * the engine's to respect — a provider that silently accepts an over-window
+ * request (as the scripted transport does) must never see one.
+ *
+ * Covers the three causes of over-window requests: tool results bounded
+ * only by their own fixed caps, no fit check before each loop call, and a
+ * provider's "context exceeded" rejection surfacing as a generic error.
+ */
+import {
+  assert,
+  assertEquals,
+  assertObjectMatch,
+  assertStringIncludes,
+} from "@std/assert";
+import {
+  chatReply,
+  conversation,
+  type EngineRun,
+  engineServices,
+  eventRows,
+  GEMINI_FREE_MODEL,
+  geminiReply,
+  LOCAL_MODEL,
+  requestBody,
+  runTurn,
+  systemMessage,
+} from "../../testing/builders/engine.ts";
+import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
+import {
+  buildConversationMessages,
+  COMPRESSION_SYSTEM_PROMPT,
+  ContextWindowOverflowError,
+} from "../context/mod.ts";
+import type {
+  WorkbenchRuntimeEvent,
+  WorkbenchSessionEvent,
+} from "../contract/mod.ts";
+import type { WorkbenchMessage } from "../providers/mod.ts";
+import type { ModelSeed } from "../store/mod.ts";
+import type {
+  NativeWorkbenchRuntimeResult,
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeServices,
+} from "./runtime-types.ts";
+
+const WINDOW = LOCAL_MODEL.context_window!;
+
+type ToolCall = { id: string; name: string; arguments: unknown };
+
+function toolReply(calls: ToolCall[], text = ""): ScriptedExchange {
+  return chatReply({ content: text, toolCalls: calls });
+}
+
+const READ = (id: string, path: string): ToolCall => ({
+  id,
+  name: "read_file",
+  arguments: { path },
+});
+
+/** A file well past read_file's 64 KiB cap: three reads exceed a 32K window. */
+const BIG_FILE = "0123456789abcdef".repeat(12_500) + "\n"; // 200,001 bytes
+
+/** The llama-server rejection of an over-window request, verbatim shape. */
+const LLAMA_SERVER_REJECTION: ScriptedExchange = {
+  respond: {
+    status: 400,
+    body: JSON.stringify({
+      error: {
+        code: 400,
+        message: "request (82366 tokens) exceeds the available context size " +
+          "(32768 tokens), try increasing it",
+        type: "exceed_context_size_error",
+        n_prompt_tokens: 82366,
+        n_ctx: 32768,
+      },
+    }),
+  },
+};
+
+interface FitRun {
+  run: EngineRun;
+  frames: WorkbenchRuntimeEvent[];
+  result?: NativeWorkbenchRuntimeResult;
+  error: unknown;
+}
+
+/** Run a turn in a workspace holding `files`, returning what it produced or threw. */
+async function fitTurn(
+  exchanges: ScriptedExchange[],
+  input: Partial<WorkbenchRuntimeInput> = {},
+  options: {
+    files?: Record<string, string>;
+    models?: ModelSeed[];
+    env?: Record<string, string>;
+    recoverContextOverflow?: WorkbenchRuntimeServices["recoverContextOverflow"];
+  } = {},
+): Promise<FitRun> {
+  const root = await Deno.makeTempDir({ prefix: "engine-fit-" });
+  for (const [path, content] of Object.entries(options.files ?? {})) {
+    await Deno.writeTextFile(`${root}/${path}`, content);
+  }
+  const run = engineServices(exchanges, {
+    models: options.models,
+    env: options.env,
+  });
+  run.services.recoverContextOverflow = options.recoverContextOverflow;
+  const frames: WorkbenchRuntimeEvent[] = [];
+  try {
+    const result = await runTurn(run, {
+      prompt: "look around",
+      rootOverride: root,
+      ...input,
+      frames: {
+        onRuntimeEvent: (event) => void frames.push(event),
+        ...input.frames,
+      },
+    });
+    return { run, frames, result, error: null };
+  } catch (error) {
+    return { run, frames, error };
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+/**
+ * Every request the provider received fits the window by the engine's own
+ * estimate (four characters per token). The request body over-approximates
+ * what the engine estimates: it carries the tool definitions and the wire
+ * framing too, so a body that fits is a request that fits.
+ */
+function assertEveryRequestFits(run: EngineRun, window = WINDOW): void {
+  for (const [index, request] of run.transport.requests.entries()) {
+    const tokens = Math.ceil(request.body.length / 4);
+    assert(
+      tokens <= window,
+      `request ${index} estimates at ${tokens} tokens, over the ${window}-token window`,
+    );
+  }
+}
+
+function frame<T extends WorkbenchRuntimeEvent["type"]>(
+  frames: WorkbenchRuntimeEvent[],
+  type: T,
+): Extract<WorkbenchRuntimeEvent, { type: T }> | undefined {
+  return frames.find((f) => f.type === type) as
+    | Extract<WorkbenchRuntimeEvent, { type: T }>
+    | undefined;
+}
+
+async function rows(fit: FitRun) {
+  const sessionId = frame(fit.frames, "sessionStart")?.sessionId;
+  return await eventRows(fit.run, sessionId!);
+}
+
+// ─── tool results bounded against the window ─────────────────────────────────
+
+Deno.test("three parallel 64 KiB reads on a 32K window: every result is bounded and no request exceeds the window", async () => {
+  const fit = await fitTurn(
+    [
+      toolReply([
+        READ("c1", "CHANGELOG.md"),
+        READ("c2", "CHANGELOG.md"),
+        READ("c3", "CHANGELOG.md"),
+      ]),
+      chatReply({ content: "read it" }),
+    ],
+    {},
+    { files: { "CHANGELOG.md": BIG_FILE } },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "read it");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEveryRequestFits(fit.run);
+
+  // The model sees each result cut with an explicit marker that says how
+  // much survived and how to get the rest.
+  const toolMessages = conversation(fit.run.transport.requests[1])
+    .filter((m) => m.role === "tool");
+  assertEquals(toolMessages.length, 3);
+  for (const message of toolMessages) {
+    assertStringIncludes(message.content, "trimmed");
+    assertStringIncludes(message.content, `${WINDOW}-token context window`);
+    assertStringIncludes(message.content, "offset");
+  }
+  const trimmed = fit.frames.filter((f) => f.type === "toolResultTrimmed");
+  assertEquals(trimmed.length, 3);
+  assertObjectMatch(trimmed[0], { commandId: "read_file", callId: "c1" });
+  // The bound is a whole-result bound: the follow-up fits without the fit
+  // step having to collapse any of the fresh results further.
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  for (const message of toolMessages) assert(message.content.length > 20_000);
+
+  // The durable tool_call events keep the full result (within the event
+  // column's own limit): the window bound is a projection for the model, not
+  // a rewrite of the log.
+  const toolEvents = (await rows(fit)).filter((row) =>
+    row.event_type === "tool_call"
+  );
+  assertEquals(toolEvents.length, 3);
+  for (const event of toolEvents) {
+    assert(
+      (event.tool_result ?? "").length > toolMessages[0].content.length,
+      "the event row should hold more of the result than the model saw",
+    );
+    assertEquals((event.tool_result ?? "").includes("trimmed"), false);
+  }
+});
+
+// ─── an over-window history recovers on its next turn ───────────────────────
+
+/** The resume projection of one prior turn with three big tool results. */
+function overWindowHistory(resultChars: number): WorkbenchMessage[] {
+  const history: WorkbenchMessage[] = [
+    { role: "user", content: "earlier question" },
+  ];
+  for (const id of ["h1", "h2", "h3"]) {
+    history.push({
+      role: "assistant",
+      content: "",
+      toolCalls: [{ id, name: "read_file", arguments: { path: "big.md" } }],
+    });
+    history.push({
+      role: "tool",
+      toolCallId: id,
+      name: "read_file",
+      content: `${id}:` + "x".repeat(resultChars),
+    });
+  }
+  history.push({ role: "assistant", content: "earlier answer" });
+  return history;
+}
+
+Deno.test("a session whose history is already over the window completes its next turn", async () => {
+  // Three 60,000-character results (the event column's cap) sum to ~45K
+  // tokens on a 32K window. Nothing elder exists to compress: the one
+  // prior turn is inside the verbatim tail, so only shrinking can save it.
+  const history = overWindowHistory(60_000);
+  const fit = await fitTurn([chatReply({ content: "still here" })], {
+    prompt: "a short follow-up",
+    conversationMessages: history,
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "still here");
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertEveryRequestFits(fit.run);
+
+  const seen = conversation(fit.run.transport.requests[0]);
+  const toolMessages = seen.filter((m) => m.role === "tool");
+  assertEquals(toolMessages.length, 3);
+  // Oldest first: the earliest results are trimmed, the newest kept verbatim
+  // once the request fits.
+  assertStringIncludes(toolMessages[0].content, "trimmed");
+  assert(toolMessages[0].content.length < 2_000);
+  assertEquals(toolMessages[2].content, history[6].content);
+  assertEquals(
+    seen.map((m) => m.role),
+    [
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "user",
+    ],
+  );
+  const fitted = frame(fit.frames, "contextFitted");
+  assert(fitted !== undefined);
+  assertObjectMatch(fitted, {
+    trigger: "before_send",
+    contextWindow: WINDOW,
+    compressed: false,
+  });
+  assert(fitted.trimmedToolResults >= 1);
+  assert(fitted.estimatedTokensAfter < fitted.estimatedTokensBefore);
+});
+
+// ─── fit compresses elder turns when shrinking is not enough ─────────────────
+
+const VALID_SUMMARY = [
+  "## Session intent",
+  "Fit test.",
+  "## Decisions & outcomes",
+  "(none)",
+  "## Open threads",
+  "(none)",
+  "## Key facts & references",
+  "(none)",
+  "## Tool activity",
+  "(none)",
+  "## Operator's words",
+  "(none)",
+].join("\n");
+
+function summaryReply(): ScriptedExchange {
+  return {
+    ...chatReply({ content: VALID_SUMMARY }),
+    expect: (request) =>
+      assertEquals(systemMessage(request), COMPRESSION_SYSTEM_PROMPT),
+  };
+}
+
+/** A window the fixed prefix fits, but two verbatim turns of prose do not. */
+const TINY_WINDOW: ModelSeed = {
+  ...LOCAL_MODEL,
+  context_window: 8_000,
+  max_output_tokens: 256,
+};
+
+Deno.test("fit compresses elder prose when there are no tool results to shrink", async () => {
+  // Four prose turns: load-time compression summarizes the first two, and
+  // the two kept verbatim still overfill the window, so the fit step
+  // compresses once more before the first call.
+  const turn = (word: string) => [
+    { role: "user" as const, content: `${word} question `.repeat(300) },
+    { role: "assistant" as const, content: `${word} answer `.repeat(300) },
+  ];
+  const fit = await fitTurn([
+    summaryReply(),
+    summaryReply(),
+    chatReply({ content: "compressed twice" }),
+  ], {
+    prompt: "one more",
+    conversationMessages: [
+      ...turn("first"),
+      ...turn("second"),
+      ...turn("third"),
+      ...turn("fourth"),
+    ],
+  }, { models: [TINY_WINDOW] });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "compressed twice");
+  assertEquals(fit.run.transport.requests.length, 3);
+  assertEveryRequestFits(fit.run, TINY_WINDOW.context_window!);
+  const compressions = fit.frames.filter((f) => f.type === "contextCompressed");
+  assertEquals(
+    compressions.map((f) => f.type === "contextCompressed" && f.trigger),
+    ["proactive", "request_fit"],
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "before_send",
+    compressed: true,
+    trimmedToolResults: 0,
+  });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+});
+
+// ─── a provider's context-exceeded rejection is context overflow ─────────────
+
+/**
+ * A provider whose tokenizer counts `ratio` times the engine's estimate,
+ * enforcing `limit` the way llama-server does: a request it measures over
+ * the limit is refused with its counts; any other is answered. The retry
+ * passes only if the refit actually brought the request under the limit by
+ * the provider's own count.
+ */
+function strictProvider(ratio: number, limit: number): ScriptedExchange {
+  return {
+    respond: (request) => {
+      const measured = Math.round((request.body.length / 4) * ratio);
+      if (measured <= limit) {
+        return new Response(
+          (chatReply({ content: "recovered" }).respond as { body: string })
+            .body,
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 400,
+            message: `request (${measured} tokens) exceeds the available ` +
+              `context size (${limit} tokens), try increasing it`,
+            type: "exceed_context_size_error",
+          },
+        }),
+        { status: 400 },
+      );
+    },
+  };
+}
+
+Deno.test("a llama-server context-size rejection is classified and recovered by refitting", async () => {
+  // The history fits by estimate (~17.5K of a 23K budget), so no fit runs
+  // before the first call; the provider counts 2.5 times as many tokens
+  // and refuses. Its rejection carries both counts, the refit scales the
+  // budget by the ratio and shrinks the elder results until the request is
+  // under the limit by the provider's count, and the one retry is accepted
+  // only because it is.
+  const history = overWindowHistory(20_000);
+  const provider = strictProvider(2.5, WINDOW);
+  const fit = await fitTurn([provider, provider], {
+    prompt: "a short follow-up",
+    conversationMessages: history,
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "recovered");
+  assertEquals(fit.run.transport.requests.length, 2);
+  const [first, retry] = fit.run.transport.requests;
+  assert(retry.body.length < first.body.length);
+  assert(Math.round((retry.body.length / 4) * 2.5) <= WINDOW);
+  assertStringIncludes(
+    conversation(retry).filter((m) => m.role === "tool")[0].content,
+    "trimmed",
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "provider_rejected",
+    contextWindow: WINDOW,
+  });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+
+  const calls = (await rows(fit)).filter((row) =>
+    row.event_type === "provider_call"
+  );
+  assertObjectMatch(calls[0], {
+    stop_reason: "error",
+    provider_error_class: "ProviderContextExceededError",
+  });
+  assertObjectMatch(calls[1], {
+    provider_call_purpose: "recovery",
+    stop_reason: "stop",
+  });
+});
+
+Deno.test("a rejection with nothing left to trim fails as context overflow naming the window", async () => {
+  const fit = await fitTurn([LLAMA_SERVER_REJECTION], {
+    prompt: "a short question",
+  });
+  assert(fit.error instanceof Error);
+  assertStringIncludes(fit.error.message, "Context window overflow");
+  assertStringIncludes(fit.error.message, `${WINDOW}-token context window`);
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+  // The provider's body never rides the error: only the counts it reported.
+  assertEquals(fit.error.message.includes("try increasing it"), false);
+  const errorRow = (await rows(fit)).find((row) => row.event_type === "error");
+  assertStringIncludes(errorRow?.content ?? "", "/model");
+});
+
+Deno.test("the fit step never sends a request over the window on a tool follow-up", async () => {
+  // One read that fits on its own, then a bash-sized result: each follow-up
+  // call is measured before it goes out, not only the first.
+  const fit = await fitTurn(
+    [
+      toolReply([READ("c1", "notes.md")]),
+      toolReply([READ("c2", "CHANGELOG.md"), READ("c3", "CHANGELOG.md")]),
+      chatReply({ content: "all read" }),
+    ],
+    {},
+    {
+      files: { "notes.md": "short\n", "CHANGELOG.md": BIG_FILE },
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "all read");
+  assertEquals(fit.run.transport.requests.length, 3);
+  assertEveryRequestFits(fit.run);
+  // The small first result survives untouched on the later calls, and the
+  // bounded results needed no further collapse.
+  const last = conversation(fit.run.transport.requests[2]);
+  assertEquals(last.filter((m) => m.role === "tool")[0].content, "short\n");
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assert(requestBody(fit.run.transport.requests[2]).tools !== undefined);
+});
+
+// ─── the fit measures what the adapter sends ─────────────────────────────────
+
+Deno.test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
+  // Gemini carries no transcript and no tools on the wire, so the seeded
+  // history (which the transcript estimate would put far over a 40,000-token
+  // window) costs nothing; the turn goes out and completes.
+  const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(60_000),
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 40_000 }],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "prompt-only reply");
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+});
+
+// ─── a fit that cannot reach the budget is a failure, not a fitted event ─────
+
+Deno.test("trimming that still leaves the request over the window fails without a contextFitted event", async () => {
+  // Three results shrink to their markers, and the fixed prefix plus the
+  // markers still exceed a 4,000-token window's budget: the turn fails
+  // before any call, and no event claims the request was made to fit.
+  const fit = await fitTurn([], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(60_000),
+  }, { models: [{ ...LOCAL_MODEL, context_window: 4_000 }] });
+  assert(fit.error instanceof Error);
+  assertStringIncludes(fit.error.message, "4000-token context window");
+  assertStringIncludes(fit.error.message, "input budget");
+  assertStringIncludes(fit.error.message, "it was not sent");
+  assertEquals(fit.run.transport.requests.length, 0);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
+
+// ─── recovery retries are fitted before they go out ──────────────────────────
+
+Deno.test("an overflow-recovery plan is fitted before its retry is sent", async () => {
+  // The injected plan keeps a 60,000-character tool result in its verbatim
+  // tail; the retry must shrink it rather than send it over the window.
+  const plan: WorkbenchMessage[] = [
+    { role: "user", content: "compressed history" },
+    ...overWindowHistory(60_000).slice(1, 3),
+    { role: "user", content: "a short follow-up" },
+  ];
+  const fit = await fitTurn(
+    [
+      chatReply({
+        content: "cut off",
+        finishReason: "length",
+        usage: { prompt_tokens: 9_750, completion_tokens: 100 },
+      }),
+      chatReply({ content: "recovered answer" }),
+    ],
+    { prompt: "a short follow-up" },
+    {
+      models: [{ ...LOCAL_MODEL, context_window: 10_000 }],
+      recoverContextOverflow: () => Promise.resolve({ messages: plan }),
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "recovered answer");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEveryRequestFits(fit.run, 10_000);
+  const retry = conversation(fit.run.transport.requests[1]);
+  assertStringIncludes(
+    retry.find((m) => m.role === "tool")!.content,
+    "trimmed",
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "before_send",
+    trimmedToolResults: 1,
+    compressed: false,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "recovered",
+    retriesUsed: 1,
+  });
+});
+
+// ─── the compression input is fitted to the compressor's window ──────────────
+
+Deno.test("an elder larger than the compressor's window is compressed in passes, each request within the window", async () => {
+  // Twelve prose turns of ~1,000 tokens on an 8,000-token model that is also
+  // its own compressor: no single compression request can carry the elder,
+  // so it is compressed from its oldest turns in passes until the request
+  // fits. Every request the model receives, compression ones included, is
+  // within the window.
+  const history: WorkbenchMessage[] = [];
+  for (let i = 0; i < 12; i++) {
+    history.push(
+      { role: "user", content: `question ${i} `.repeat(180) },
+      { role: "assistant", content: `answer ${i} `.repeat(200) },
+    );
+  }
+  // How many passes it takes is the constants' business, not the test's:
+  // every exchange answers by the request it sees, a summary to the
+  // compression prompt and the reply to the session.
+  const byPrompt: ScriptedExchange = {
+    respond: (request) =>
+      new Response(
+        systemMessage(request) === COMPRESSION_SYSTEM_PROMPT
+          ? (summaryReply().respond as { body: string }).body
+          : (chatReply({ content: "compressed in passes" }).respond as {
+            body: string;
+          }).body,
+      ),
+  };
+  const fit = await fitTurn(Array.from({ length: 12 }, () => byPrompt), {
+    prompt: "one more",
+    conversationMessages: history,
+  }, { models: [TINY_WINDOW] });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "compressed in passes");
+  assertEveryRequestFits(fit.run, TINY_WINDOW.context_window!);
+  const compressions = fit.run.transport.requests.filter((request) =>
+    systemMessage(request) === COMPRESSION_SYSTEM_PROMPT
+  );
+  assert(compressions.length >= 2, "expected more than one compression pass");
+  assertEquals(
+    fit.run.transport.requests.length,
+    compressions.length + 1,
+  );
+  const frames = fit.frames.filter((f) => f.type === "contextCompressed");
+  assertEquals(frames.length, compressions.length);
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, { compressed: true });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  // The persisted retained counts replay to the transcript the model saw:
+  // the summary, then exactly the turns kept verbatim.
+  const rows = await eventRows(
+    fit.run,
+    frame(fit.frames, "sessionStart")!.sessionId,
+  );
+  const persisted = rows.filter((row) =>
+    row.event_type === "context_compressed"
+  );
+  assertEquals(persisted.length, compressions.length);
+  const live = conversation(fit.run.transport.requests.at(-1)!);
+  const resumed = buildConversationMessages([
+    ...history.map((m) =>
+      ({
+        eventType: m.role === "user" ? "session_start" : "model_response",
+        content: m.content,
+      }) as unknown as WorkbenchSessionEvent
+    ),
+    {
+      eventType: "session_start",
+      content: "one more",
+    } as unknown as WorkbenchSessionEvent,
+    ...persisted.map((row) =>
+      ({
+        eventType: "context_compressed",
+        content: row.content,
+      }) as unknown as WorkbenchSessionEvent
+    ),
+  ]);
+  assertEquals(
+    resumed.map((m) => ({ role: m.role, content: m.content })),
+    live.map((m) => ({ role: m.role, content: m.content })),
+  );
+});
+
+Deno.test("an adapter that sends only the prompt is never proactively compressed, even with a local compressor at hand", async () => {
+  // Four prior turns cross the 50% trigger of a 40,000-token window by the
+  // transcript estimate, and a local tier-0 row could compress them; but
+  // Gemini sends none of that history, so compressing would only persist a
+  // summary over turns the model never sees. One request, to Gemini.
+  const prose = (word: string): WorkbenchMessage[] => [
+    { role: "user", content: `${word} question `.repeat(1_000) },
+    { role: "assistant", content: `${word} answer `.repeat(1_000) },
+  ];
+  const fit = await fitTurn([geminiReply({ text: "prompt-only reply" })], {
+    prompt: "a short follow-up",
+    conversationMessages: [
+      ...prose("first"),
+      ...prose("second"),
+      ...prose("third"),
+      ...prose("fourth"),
+    ],
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [{ ...GEMINI_FREE_MODEL, context_window: 40_000 }, LOCAL_MODEL],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "prompt-only reply");
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertStringIncludes(fit.run.transport.requests[0].url, "googleapis.com");
+  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
+  const rows = await eventRows(
+    fit.run,
+    frame(fit.frames, "sessionStart")!.sessionId,
+  );
+  assertEquals(
+    rows.some((row) => row.event_type === "context_compressed"),
+    false,
+  );
+});
+
+// ─── a refit retry that length-stops is settled, never executed ──────────────
+
+/** A rejection, then a retry that stops at the output limit mid tool plan. */
+function rejectThenTruncate(
+  usage: { prompt_tokens: number; completion_tokens: number },
+) {
+  return [
+    LLAMA_SERVER_REJECTION,
+    chatReply({
+      content: "cut off plan",
+      finishReason: "length",
+      usage,
+      toolCalls: [READ("cut", "CHANGELOG.md")],
+    }),
+  ];
+}
+
+Deno.test("a refit retry that hits the output cap delivers the partial with its cut-off tool plan stripped", async () => {
+  const fit = await fitTurn(
+    rejectThenTruncate({ prompt_tokens: 3_000, completion_tokens: 4_096 }),
+    {
+      prompt: "a short follow-up",
+      conversationMessages: overWindowHistory(20_000),
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "cut off plan");
+  assertEquals(fit.run.transport.requests.length, 2);
+  // The cut-off plan never ran: recovery is bounded to the one retry.
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+    classification: "output_budget_exhausted",
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "still_truncated",
+    retriesUsed: 1,
+  });
+  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+});
+
+Deno.test("a refit retry that still overflows the window fails structured", async () => {
+  const fit = await fitTurn(
+    rejectThenTruncate({ prompt_tokens: 32_000, completion_tokens: 500 }),
+    {
+      prompt: "a short follow-up",
+      conversationMessages: overWindowHistory(20_000),
+    },
+  );
+  assert(fit.error instanceof Error);
+  assertStringIncludes(fit.error.message, "Context window overflow");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "overflow_failed",
+    retriesUsed: 1,
+  });
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
+
+Deno.test("a count-less rejection of the refit retry fails with the learned window and the retry's size", async () => {
+  // The first rejection states a 20,000-token limit below the catalog's
+  // 32,768; the second states nothing. The failure names the learned
+  // window and the retry's fitted size, not the catalog window and the
+  // stale pre-refit estimate.
+  const fit = await fitTurn([
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({
+          error: {
+            message: "request (50000 tokens) exceeds the available context " +
+              "size (20000 tokens), try increasing it",
+          },
+        }),
+      },
+    },
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({ error: { code: "context_length_exceeded" } }),
+      },
+    },
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(20_000),
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.run.transport.requests.length, 2);
+  const [first, retry] = fit.run.transport.requests;
+  assertEquals(fit.error.details.contextWindow, 20_000);
+  assert(fit.error.details.inputTokens <= Math.ceil(retry.body.length / 4));
+  assert(
+    fit.error.details.inputTokens < Math.ceil(first.body.length / 4) - 5_000,
+  );
+  assertStringIncludes(fit.error.message, "20000-token context window");
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});
+
+Deno.test("a refit retry's length stop is classified against the window the rejection taught", async () => {
+  // Catalog window 32,768; the rejection states a 20,000-token limit. The
+  // retry stops with 18,000 in + 2,000 out: exhaustion by the catalog
+  // window, overflow by the real one. The real one wins, in the event and
+  // in the error.
+  const fit = await fitTurn([
+    {
+      respond: {
+        status: 400,
+        body: JSON.stringify({
+          error: {
+            message: "request (50000 tokens) exceeds the available context " +
+              "size (20000 tokens), try increasing it",
+          },
+        }),
+      },
+    },
+    chatReply({
+      content: "cut off plan",
+      finishReason: "length",
+      usage: { prompt_tokens: 18_000, completion_tokens: 2_000 },
+      toolCalls: [READ("cut", "CHANGELOG.md")],
+    }),
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: overWindowHistory(20_000),
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.error.details.contextWindow, 20_000);
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
+  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+    classification: "context_overflow",
+    contextWindow: 20_000,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "overflow_failed",
+    retriesUsed: 1,
+  });
+});
+
+// ─── a continuation above the raw window check is fitted, not refused ────────
+
+Deno.test("a continuation the fit can make fit is retried even where the raw transcript check read it as doomed", async () => {
+  // 12,000-token window. The history's 26,000-character result and a
+  // 22,000-character partial put the continuation over 98% of the window
+  // by the transcript estimate; shrinking that result makes it fit the
+  // input budget, so the continuation goes out instead of being refused.
+  const history = overWindowHistory(26_000).slice(0, 3);
+  history.push({ role: "assistant", content: "earlier answer" });
+  const partial = "p".repeat(22_000);
+  const fit = await fitTurn([
+    chatReply({
+      content: partial,
+      finishReason: "length",
+      usage: { prompt_tokens: 9_000, completion_tokens: 4_096 },
+    }),
+    chatReply({ content: " and the rest" }),
+  ], {
+    prompt: "a short follow-up",
+    conversationMessages: history,
+  }, { models: [{ ...LOCAL_MODEL, context_window: 12_000 }] });
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, partial + " and the rest");
+  assertEquals(fit.run.transport.requests.length, 2);
+  assertEveryRequestFits(fit.run, 12_000);
+  const retry = conversation(fit.run.transport.requests[1]);
+  assertStringIncludes(
+    retry.find((m) => m.role === "tool")!.content,
+    "trimmed",
+  );
+  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+    trigger: "before_send",
+    trimmedToolResults: 1,
+  });
+  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+    outcome: "recovered",
+    retriesUsed: 1,
+  });
+});
+
+// ─── results before a forced conclusion are sized for that request ───────────
+
+Deno.test("a result before a forced conclusion is sized against the request without tool definitions", async () => {
+  // A 12,000-token window and a one-step cap: the step's follow-up is the
+  // forced conclusion, which carries no tool catalog. A 31,000-character
+  // read fits that request but not one with the catalog, so it reaches the
+  // model whole.
+  const notes = "n".repeat(30_999) + "\n";
+  const fit = await fitTurn(
+    [
+      toolReply([READ("c1", "notes.md")]),
+      chatReply({ content: "concluded" }),
+    ],
+    { maxToolSteps: 1 },
+    {
+      files: { "notes.md": notes },
+      models: [{ ...LOCAL_MODEL, context_window: 12_000 }],
+    },
+  );
+  assertEquals(fit.error, null);
+  assertEquals(fit.result?.text, "concluded");
+  assertEquals(fit.run.transport.requests.length, 2);
+  const conclusion = fit.run.transport.requests[1];
+  assertEquals(requestBody(conclusion).tools, undefined);
+  assertEquals(
+    conversation(conclusion).find((m) => m.role === "tool")?.content,
+    notes,
+  );
+  assertEquals(frame(fit.frames, "toolResultTrimmed"), undefined);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertEveryRequestFits(fit.run, 12_000);
+});
+
+Deno.test("a Gemini context-size rejection fails as context overflow without a retry", async () => {
+  // Gemini sends only the prompt, so a refit has nothing to shrink: the
+  // classified rejection ends the turn as a structured overflow after one
+  // request, rather than resending the same prompt.
+  const fit = await fitTurn([{
+    respond: {
+      status: 400,
+      body: JSON.stringify({
+        error: {
+          code: 400,
+          message: "The input token count (82366) exceeds the maximum " +
+            "number of tokens allowed (32768).",
+          status: "INVALID_ARGUMENT",
+        },
+      }),
+    },
+  }], {
+    prompt: "a short question",
+    defaultCompanionModel: GEMINI_FREE_MODEL.slug,
+  }, {
+    models: [GEMINI_FREE_MODEL],
+    env: { GEMINI_API_KEY: "test-key-not-real" },
+  });
+  assert(fit.error instanceof ContextWindowOverflowError);
+  assertEquals(fit.error.details.contextWindow, 32_768);
+  assertEquals(fit.run.transport.requests.length, 1);
+  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assertObjectMatch(fit.frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "ContextWindowOverflowError",
+  });
+});

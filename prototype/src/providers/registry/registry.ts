@@ -144,6 +144,38 @@ export function modelSupportsTranscriptRetry(model: WorkbenchModel): boolean {
 }
 
 /**
+ * The output cap the adapter puts on the wire for `model`, or undefined when
+ * it sends none: a local OpenAI-compatible request carries a cap only when
+ * one was requested, so the catalog's `maxOutputTokens` is a limit the
+ * server enforces on its own, not a reservation this request makes.
+ * Request sizing reserves exactly this much of the context window, since a
+ * provider that counts the cap against the window (OpenAI, Anthropic)
+ * refuses input + cap over it.
+ */
+export function modelTransmittedOutputCap(
+  model: WorkbenchModel,
+  requestedOutputTokens?: number,
+): number | undefined {
+  const fallback = defaultRegistry.adapterFor(model)?.defaultOutputTokens(
+    model,
+  );
+  if (requestedOutputTokens === undefined && fallback === undefined) {
+    return undefined;
+  }
+  return outputCap(model, requestedOutputTokens, fallback);
+}
+
+/**
+ * Whether the wire request carries `messages` and the tool definitions, so
+ * sizing a request must count them. The same adapter capability as the
+ * transcript retry: an adapter that sends only the seed prompt (Gemini)
+ * neither replays a rewritten transcript nor sends the history at all.
+ */
+export function modelRequestCarriesTranscript(model: WorkbenchModel): boolean {
+  return modelSupportsTranscriptRetry(model);
+}
+
+/**
  * The output-token limit used to classify stopReason "length" and size wire requests.
  * When a turn specifies `requestedOutputTokens`, the cap is bounded by the model's
  * catalog `maxOutputTokens`. When unspecified, hosted providers apply a safe default

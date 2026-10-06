@@ -272,6 +272,13 @@ export type CompressionOutcome =
     status: "compressed";
     summary: string;
     summaryMessage: WorkbenchMessage;
+    /**
+     * Elder messages the compression did not cover, kept verbatim between
+     * the summary and the tail. Set by the engine's `compressTranscript`
+     * when the elder was larger than the compressor's window and only its
+     * oldest turns were compressed; absent from the pure core.
+     */
+    remainder?: WorkbenchMessage[];
     turnsCompressed: number;
     compressorModelSlug: string;
     tokensBeforeEstimate: number;

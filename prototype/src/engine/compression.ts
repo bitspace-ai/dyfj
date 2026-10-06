@@ -4,9 +4,10 @@
  * `context_compressed` event that lets resume rebuild the same transcript,
  * and only then hand the compressed transcript back.
  *
- * Two triggers share it: `loadTranscript`'s proactive compression before the
- * first call, and the agent loop's reactive recovery when a call overflows
- * the context window. Every failure path returns a declined outcome rather
+ * Three triggers share it: `loadTranscript`'s proactive compression before
+ * the first call, the request fit before any loop call (`fit-request.ts`),
+ * and the agent loop's reactive recovery when a call overflows the context
+ * window. Every failure path returns a declined outcome rather
  * than throwing; the caller decides what a decline means. The one exception
  * is a write whose durability cannot be determined, which fails the turn.
  */
@@ -14,20 +15,27 @@ import { generateSpanId, generateULID } from "../kernel/mod.ts";
 import { contextCompressedEvent } from "../store/mod.ts";
 import {
   isLocalWorkbenchModel,
+  modelTransmittedOutputCap,
   selectWorkbenchModel,
   type WorkbenchMessage,
   type WorkbenchModel,
 } from "../providers/mod.ts";
 import {
+  buildCompressionMessages,
   compressElderTranscript,
+  compressibleSlice,
   COMPRESSION_SYSTEM_PROMPT,
   type CompressionCompletion,
   type CompressionOutcome,
   type ContextOverflowRecoverer,
+  CONVERSATION_SUMMARY_MARKER,
   countTurns,
   partitionForCompression,
+  requestInputBudget,
+  shrinkToolResults,
   VERBATIM_TAIL_TURNS,
 } from "../context/mod.ts";
+import type { ContextCompressionTrigger } from "../contract/mod.ts";
 import {
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
@@ -41,16 +49,21 @@ import {
 } from "./transcript.ts";
 import { commitEvent } from "./turn-state.ts";
 
-export type CompressionTrigger = "proactive" | "context_overflow";
+export type CompressionTrigger = ContextCompressionTrigger;
 
 type Compressed = Extract<CompressionOutcome, { status: "compressed" }>;
 
 /**
- * Compress `elder`. `turnsRetained` is the number of turns that, AT THE
- * MOMENT THE EVENT IS WRITTEN, already exist in the event stream and survive
- * verbatim in the live transcript. It is the caller's to compute: the two
- * triggers differ on whether the current prompt is already inside the tail,
- * and getting that wrong silently drops a retained turn on resume.
+ * Compress `elder`, or as much of it as the compressor's own window takes:
+ * the compression request is sized like any other, so an elder larger than
+ * that window has its tool results shrunk and then only its oldest turns
+ * compressed, the rest returned as `remainder` for the caller to keep
+ * verbatim and compress on a later pass. `turnsRetained` is the number of
+ * turns that, AT THE MOMENT THE EVENT IS WRITTEN, already exist in the event
+ * stream and survive verbatim in the live transcript, not counting any
+ * remainder (added here). It is the caller's to compute: the triggers
+ * differ on whether the current prompt is already inside the tail, and
+ * getting that wrong silently drops a retained turn on resume.
  */
 export async function compressTranscript(
   turn: RoutedTurn,
@@ -60,14 +73,28 @@ export async function compressTranscript(
 ): Promise<CompressionOutcome> {
   const model = compressionModel(turn);
   if (!("slug" in model)) return model;
+  const { slice, remainder } = compressionInput(elder, model);
+  if (slice.length === 0 && elder.length > 0) {
+    return {
+      status: "declined",
+      reason: "the oldest elder turn is larger than the compressor's window",
+    };
+  }
   const outcome = await compressElderTranscript(
-    elder,
+    slice,
     compressionCompletion(turn, model),
     (msgs) => estimateRuntimeInputCount(transcriptEstimateText("", msgs)),
     turn.input.abortSignal,
   );
   if (outcome.status !== "compressed") return outcome;
-  if (!await persistCompression(turn, outcome, turnsRetained, trigger)) {
+  if (
+    !await persistCompression(
+      turn,
+      outcome,
+      turnsRetained + countTurns(remainder),
+      trigger,
+    )
+  ) {
     return { status: "declined", reason: "compression event not persisted" };
   }
   // Durable now: surface it live — visible context source (receipt +
@@ -85,7 +112,49 @@ export async function compressTranscript(
     tokensBeforeEstimate: outcome.tokensBeforeEstimate,
     tokensAfterEstimate: outcome.tokensAfterEstimate,
   });
-  return outcome;
+  return { ...outcome, remainder };
+}
+
+/**
+ * The part of `elder` one compression request may carry on `model`: its
+ * tool results shrunk against the compressor's input budget (oldest first,
+ * as the fit does), then the longest prefix of whole turns whose rendered
+ * transcript fits. The remainder is returned from the ORIGINAL elder: the
+ * shrinking serves the compression input only. A compressor with no known
+ * window takes the whole elder.
+ */
+function compressionInput(
+  elder: WorkbenchMessage[],
+  model: WorkbenchModel,
+): { slice: WorkbenchMessage[]; remainder: WorkbenchMessage[] } {
+  if (model.contextWindow === undefined) return { slice: elder, remainder: [] };
+  const budget = requestInputBudget(
+    model.contextWindow,
+    modelTransmittedOutputCap(model),
+  );
+  const estimate = (messages: readonly WorkbenchMessage[]) =>
+    estimateRuntimeInputCount(
+      transcriptEstimateText(
+        COMPRESSION_SYSTEM_PROMPT,
+        buildCompressionMessages([...messages]),
+      ),
+    );
+  const shrunk = shrinkToolResults(
+    elder,
+    { from: 0, to: elder.length },
+    budget,
+    estimate,
+    model.contextWindow,
+  ).messages;
+  const { slice } = compressibleSlice(
+    shrunk,
+    budget,
+    estimate,
+    (message) =>
+      message.role === "user" &&
+      message.content.startsWith(CONVERSATION_SUMMARY_MARKER),
+  );
+  return { slice, remainder: elder.slice(slice.length) };
 }
 
 /**
@@ -113,7 +182,9 @@ export function compressionRecoverer(
       "context_overflow",
     );
     if (outcome.status !== "compressed") return null;
-    return { messages: [outcome.summaryMessage, ...tail] };
+    return {
+      messages: [outcome.summaryMessage, ...(outcome.remainder ?? []), ...tail],
+    };
   };
 }
 

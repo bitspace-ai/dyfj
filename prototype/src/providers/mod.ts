@@ -33,6 +33,7 @@ export type {
 export {
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
+  ProviderContextExceededError,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   WorkbenchModelFastSpeedUnsupportedError,
@@ -71,7 +72,9 @@ export {
 } from "./registry/routing.ts";
 export {
   createProviderRegistry,
+  modelRequestCarriesTranscript,
   modelRequestedOutputCap,
+  modelTransmittedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
   PROVIDER_ADAPTERS,
@@ -79,3 +82,7 @@ export {
   runWorkbenchTurn,
 } from "./registry/registry.ts";
 export { estimateTextTokens } from "./shared/tokens.ts";
+export {
+  classifyContextExceeded,
+  type ContextExceededReport,
+} from "./shared/context-exceeded.ts";
