@@ -26,7 +26,7 @@
     "npm:@agentclientprotocol/codex-acp@1.11.0": "1.11.0",
     "npm:@agentclientprotocol/sdk@1.4.0": "1.4.0_zod@4.6.5",
     "npm:@modelcontextprotocol/client@2.1.0": "2.1.0",
-    "npm:@modelcontextprotocol/server@2.0.0": "2.0.0",
+    "npm:@modelcontextprotocol/server@2.3.0": "2.3.0",
     "npm:mysql2@3.24.4": "3.24.4_@types+node@26.5.1",
     "npm:ulid@3.0.2": "3.0.2",
     "npm:zod@4.6.5": "4.6.5"
@@ -154,22 +154,22 @@
         "zod"
       ]
     },
-    "@modelcontextprotocol/core@2.0.0": {
-      "integrity": "sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==",
-      "dependencies": [
-        "zod"
-      ]
-    },
     "@modelcontextprotocol/core@2.1.0": {
       "integrity": "sha512-YdFj5gMRHr0gYNAhTbQDgjLHiEJdIAUYxomhKseUNye7ZGlISQmUoLh2sveFFCiQ7j2YMffT1kgSND0FSfIFjQ==",
       "dependencies": [
         "zod"
       ]
     },
-    "@modelcontextprotocol/server@2.0.0": {
-      "integrity": "sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw==",
+    "@modelcontextprotocol/core@2.3.0": {
+      "integrity": "sha512-09BHFaNVBe5pB2AhzCfLj0cqmsKLERvZQ4FblzP90UMGLaXVqdZPByFjURwsUYCmxonUW2yAwgTTvle+8O2/8w==",
       "dependencies": [
-        "@modelcontextprotocol/core@2.0.0",
+        "zod"
+      ]
+    },
+    "@modelcontextprotocol/server@2.3.0": {
+      "integrity": "sha512-+6b0LdsQLmHsvS7J6sQJ4weTpzUn61fU1JKS+321/+IyDYoHW5CR2Tgqcs6GgAAQvlesCo6yX3xttgmx+XGtJw==",
+      "dependencies": [
+        "@modelcontextprotocol/core@2.3.0",
         "zod"
       ]
     },
@@ -442,7 +442,7 @@
       "npm:@agentclientprotocol/codex-acp@1.11.0",
       "npm:@agentclientprotocol/sdk@1.4.0",
       "npm:@modelcontextprotocol/client@2.1.0",
-      "npm:@modelcontextprotocol/server@2.0.0",
+      "npm:@modelcontextprotocol/server@2.3.0",
       "npm:mysql2@3.24.4",
       "npm:ulid@3.0.2",
       "npm:zod@4.6.5"
