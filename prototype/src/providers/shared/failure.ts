@@ -66,10 +66,14 @@ const OVERLOADED_MARKERS = /overloaded/i;
 
 // OpenAI `model_not_found` arrives as 404; OpenRouter answers an unknown id
 // with HTTP 400 "is not a valid model ID" and a served-by-no-one id with 404
-// "No endpoints found"; llama-server's router answers "model '…' not found"
-// as `not_found_error`. Consulted on 400 and 422.
+// "No endpoints found"; Anthropic's 404 `not_found_error` message is
+// "model: <id>"; Gemini's is "models/<id> is not found"; llama-server's
+// router answers "model '…' not found". Consulted on 400, 404 and 422: a 404
+// alone proves only that the route was missing (a wrong base-URL path, or
+// llama-server's "File Not Found"), so without one of these the response
+// stays unclassified.
 const MODEL_NOT_FOUND_MARKERS =
-  /model_not_found|not a valid model id|no endpoints found|model '[^']{0,200}' not found|not_found_error/i;
+  /model_not_found|not a valid model id|no endpoints found|model '[^']{0,200}' not found|\bmodel: \S|models\/[^\s"]{1,200} is not found|the model .{0,200}?does not exist/i;
 
 // Anthropic `request_too_large` arrives as 413; Gemini refuses an oversized
 // payload with HTTP 400 "Request payload size exceeds the limit"; a proxy's
@@ -103,7 +107,11 @@ export function classifyProviderResponse(
       cause: QUOTA_MARKERS.test(text) ? "quota" : "rate_limit",
     };
   }
-  if (status === 404) return { kind: "model_not_found" };
+  if (status === 404) {
+    return MODEL_NOT_FOUND_MARKERS.test(text)
+      ? { kind: "model_not_found" }
+      : null;
+  }
   if (status === 413) return { kind: "request_too_large" };
   if (status === 400 || status === 422) {
     if (AUTHENTICATION_MARKERS.test(text)) return { kind: "authentication" };
@@ -161,7 +169,12 @@ const REFUSED_MARKERS =
   /connection refused|econnrefused|os error 61\b|os error 111\b/i;
 const DNS_MARKERS =
   /dns error|failed to lookup address|enotfound|eai_again|nodename nor servname|name or service not known|no such host/i;
-const REDIRECT_MARKERS = /redirect/i;
+// The runtime's own diagnostic for a redirect it refused to follow (Deno:
+// "Encountered redirect while redirect mode is set to 'error'"; undici:
+// "unexpected redirect"). Anchored to the diagnostic, never the bare word:
+// connection errors quote the request URL, which may contain it.
+const REDIRECT_MARKERS =
+  /encountered redirect|redirect mode is set to ['"]error['"]|unexpected redirect/i;
 const NETWORK_MARKERS =
   /no route to host|network is unreachable|network unreachable|ehostunreach|enetunreach|connection reset|econnreset|broken pipe|epipe|connection closed before message completed|tcp connect error|os error 5[14]\b|os error 6[45]\b/i;
 
@@ -185,10 +198,10 @@ export function classifyFetchFailure(
 ): FetchFailureReason | null {
   if (!(error instanceof Error)) return null;
   const text = causeChainText(error);
-  if (REDIRECT_MARKERS.test(text)) return "redirect";
   if (REFUSED_MARKERS.test(text)) return "refused";
   if (DNS_MARKERS.test(text)) return "dns";
   if (NETWORK_MARKERS.test(text)) return "network";
+  if (REDIRECT_MARKERS.test(text)) return "redirect";
   return null;
 }
 

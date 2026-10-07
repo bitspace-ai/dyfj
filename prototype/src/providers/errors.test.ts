@@ -142,6 +142,19 @@ describe("provider failure messages", () => {
     assertStrictEquals(err.kind, "authentication");
   });
 
+  it("a 403 is an access problem, not a bad key: the hint points at the account's access", () => {
+    const err = new ProviderAuthenticationError(
+      { provider: "anthropic", slug: "claude-x" },
+      403,
+    );
+    assertStringIncludes(err.message, "Access denied");
+    assertStringIncludes(err.message, "HTTP 403");
+    assertStringIncludes(err.message, "accepted");
+    assertStringIncludes(err.message, "/model");
+    assertFalse(err.message.includes("restart"));
+    assertStrictEquals(err.kind, "authentication");
+  });
+
   it("rate limited says to wait or switch; quota and overload say so by name", () => {
     const limited = new ProviderRateLimitedError(target, 429, "rate_limit");
     assertStringIncludes(limited.message, "Rate limited");

@@ -21,8 +21,10 @@ README are tracked separately in its Revision history section.
   documented markers for the OpenAI-compatible (llama-server, OpenRouter),
   Anthropic and Gemini shapes, and throw a `ProviderFailureError` subclass
   whose message Workbench writes: context exceeded with the provider's
-  request and window sizes, authentication failed, rate limited (or out of
-  quota, or overloaded), model not found at the provider, unreachable
+  request and window sizes, authentication failed (a 403 names denied
+  access rather than a bad key), rate limited (or out of quota, or
+  overloaded), model not found at the provider (only when the body names
+  the model; a bare 404 stays unclassified), unreachable
   (connection refused, host unresolved, network failure, or the header
   deadline), a redirect the adapter refused to follow, and request too
   large. Each message names the provider, the

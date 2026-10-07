@@ -180,17 +180,28 @@ export class ProviderContextExceededError extends ProviderFailureError {
   }
 }
 
-/** The provider refused the request's credential (or its permissions). */
+/**
+ * The provider refused the request's credential, or (HTTP 403) accepted it
+ * but denied access to the model or operation. The two have different ways
+ * out: a rejected key is fixed in the runtime's environment, denied access
+ * at the provider's account or by choosing another model.
+ */
 export class ProviderAuthenticationError extends ProviderFailureError {
   constructor(target: ProviderTarget, status: number) {
     super(
       "authentication",
       target,
       status,
-      `Authentication failed for ${targetField(target)}: the provider ` +
-        `rejected the request's credential (HTTP ${status}). Check the key ` +
-        `the runtime holds for this provider (\`dyfj status\` names it), ` +
-        `then restart the runtime (\`dyfj stop\`, then start it).`,
+      status === 403
+        ? `Access denied by ${errorField(target.provider)} for ` +
+          `${errorField(target.slug)} (HTTP 403): the credential was ` +
+          `accepted but is not allowed to use this model or operation. ` +
+          `Check the account's access at the provider, or pick another ` +
+          `model with /model.`
+        : `Authentication failed for ${targetField(target)}: the provider ` +
+          `rejected the request's credential (HTTP ${status}). Check the ` +
+          `key the runtime holds for this provider (\`dyfj status\` names ` +
+          `it), then restart the runtime (\`dyfj stop\`, then start it).`,
     );
     this.name = "ProviderAuthenticationError";
   }

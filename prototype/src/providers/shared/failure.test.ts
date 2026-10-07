@@ -75,9 +75,6 @@ describe("classifyProviderResponse", () => {
       kind: "rate_limited",
       cause: "rate_limit",
     });
-    assertEquals(classifyProviderResponse(404, ""), {
-      kind: "model_not_found",
-    });
     assertEquals(classifyProviderResponse(413, ""), {
       kind: "request_too_large",
     });
@@ -94,6 +91,24 @@ describe("classifyProviderResponse", () => {
         kind: "context_exceeded",
         report: { requestedTokens: 82366, limitTokens: 32768 },
       },
+    );
+  });
+
+  it("a 404 is model-not-found only when the body says so: a missing route is unclassified", () => {
+    // A local server with a wrong base-URL path answers 404 for
+    // /chat/completions with an empty or HTML body, and llama-server's own
+    // not-found body names a file, not a model. Neither proves the model.
+    assertStrictEquals(classifyProviderResponse(404, ""), null);
+    assertStrictEquals(
+      classifyProviderResponse(404, "<html><body>404 Not Found</body></html>"),
+      null,
+    );
+    assertStrictEquals(
+      classifyProviderResponse(
+        404,
+        '{"error":{"code":404,"message":"File Not Found","type":"not_found_error"}}',
+      ),
+      null,
     );
   });
 
@@ -157,6 +172,26 @@ describe("classifyFetchFailure", () => {
         ),
       ),
       "redirect",
+    );
+  });
+
+  it("the word redirect in the request URL does not make a refusal a redirect", () => {
+    // The runtime's connection errors quote the URL, so the redirect verdict
+    // must come from its redirect diagnostic, never from the URL's text.
+    assertStrictEquals(
+      classifyFetchFailure(
+        new TypeError(
+          "error sending request for url (http://127.0.0.1:8080/redirect/v1/chat/completions): " +
+            "client error (Connect): tcp connect error: Connection refused (os error 61)",
+        ),
+      ),
+      "refused",
+    );
+    assertStrictEquals(
+      classifyFetchFailure(
+        new Error("local model unavailable at http://host/redirect-proxy"),
+      ),
+      null,
     );
   });
 
