@@ -14,7 +14,10 @@ export interface ErrorBody {
   text: string;
   /** Bytes received and kept, at most the cap. */
   bytes: number;
-  /** Whether the body went past the cap, or the read failed part-way. */
+  /**
+   * Whether the read stopped before the body's end: at the cap (so `bytes`
+   * is a lower bound on the body's size), or because the read failed.
+   */
   truncated: boolean;
 }
 
@@ -37,7 +40,11 @@ export async function readBoundedErrorBody(
       const kept = value.byteLength > room ? value.subarray(0, room) : value;
       parts.push(decoder.decode(kept, { stream: true }));
       bytes += kept.byteLength;
-      if (kept.byteLength < value.byteLength) {
+      // Reaching the cap ends the read, whether or not more follows: the
+      // header deadline is long cleared, so waiting for the next chunk of a
+      // body that is exactly the cap and never closes would park the
+      // adapter forever. The count is then a lower bound.
+      if (bytes >= maxBytes) {
         truncated = true;
         void reader.cancel().catch(() => {});
         break;

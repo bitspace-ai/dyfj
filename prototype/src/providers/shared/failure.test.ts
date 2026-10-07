@@ -208,6 +208,22 @@ describe("classifyFetchFailure", () => {
   });
 });
 
+/** The promise's value, or "hung" when it has not settled within `ms`. */
+async function settlesWithin<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | "hung"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"hung">((resolve) => {
+    timer = setTimeout(() => resolve("hung"), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("readBoundedErrorBody", () => {
   async function respond(body: string | undefined, status = 500) {
     const transport = new ScriptedHttpTransport([{
@@ -238,6 +254,28 @@ describe("readBoundedErrorBody", () => {
       true,
     );
     assertEquals(read.text.startsWith('{"error":{"message":"xxx'), true);
+  });
+
+  it("a body that reaches exactly the cap and stays open settles at the cap instead of waiting", async () => {
+    // The header deadline has already been cleared by the time the body is
+    // read, so a server that sends exactly the cap and then holds the
+    // stream open would otherwise park the adapter forever. Reaching the
+    // cap is the end of the read, whether or not more ever arrives.
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        status: 500,
+        body: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES),
+        holdOpen: true,
+      },
+    }]);
+    const response = await transport.fetch("http://x/", { method: "POST" });
+    const outcome = await settlesWithin(readBoundedErrorBody(response), 500);
+    assertEquals(outcome !== "hung", true, "the read never settled");
+    assertEquals(outcome, {
+      text: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES),
+      bytes: MAX_ERROR_BODY_BYTES,
+      truncated: true,
+    });
   });
 
   it("a read that fails part-way yields what arrived, not a throw", async () => {

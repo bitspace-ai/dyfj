@@ -112,6 +112,22 @@ async function replay(
   return error;
 }
 
+/** The promise's value, or "hung" when it has not settled within `ms`. */
+async function settlesWithin<T>(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T | "hung"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"hung">((resolve) => {
+    timer = setTimeout(() => resolve("hung"), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("provider failure classification at the adapter", () => {
   const classified: ReadonlyArray<
     // deno-lint-ignore no-explicit-any
@@ -197,10 +213,29 @@ describe("provider failure classification at the adapter", () => {
       );
       assertStringIncludes(
         error.message,
-        `more than ${MAX_ERROR_BODY_BYTES} bytes`,
+        `at least ${MAX_ERROR_BODY_BYTES} bytes`,
       );
     });
   }
+
+  it("an error body of exactly the cap that never closes still fails the turn, as cut", async () => {
+    const transport = new ScriptedHttpTransport([{
+      respond: {
+        status: 500,
+        body: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES),
+        holdOpen: true,
+      },
+    }]);
+    const outcome = await settlesWithin(
+      turn(local, transport).then(() => "resolved", (error) => error),
+      500,
+    );
+    assertInstanceOf(outcome, ProviderRequestFailedError);
+    assertStringIncludes(
+      outcome.message,
+      `at least ${MAX_ERROR_BODY_BYTES} bytes`,
+    );
+  });
 
   it("a per-minute quota says the quota resets, not only to add credit", async () => {
     const error = await replay(F.GEMINI_QUOTA_PER_MINUTE);
