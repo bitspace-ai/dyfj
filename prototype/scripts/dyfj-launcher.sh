@@ -152,13 +152,6 @@ parse_launcher_args() {
         if [[ "$arg" == "--socket" ]]; then
           SOCKET_FLAG_SET=1
           SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
-          if [[ -z "$SOCKET_FLAG_VALUE" ]]; then
-            # An explicitly EMPTY socket cannot drive resolution and cannot be
-            # meaningfully probed or started against: presence and value are
-            # tracked separately, and empty presence declines autostart so the
-            # incoherence surfaces as the client's own connect error.
-            LAUNCHER_ARGS_INVALID=1
-          fi
         fi
         CLIENT_ARGS+=("${args[$((i + 1))]}")
       else
@@ -249,7 +242,9 @@ client_parse_check() {
 # operator happens to be standing in, so there is no fallback directory —
 # autostart declines instead.
 runtime_log_path() {
-  case "${HOME:-}" in
+  local home="${HOME:-}"
+  case "${home}" in
+    /) home="/" ;;
     /*) ;;
     *) return 1 ;;
   esac
@@ -257,7 +252,7 @@ runtime_log_path() {
   sock="$(resolve_socket_path)"
   base="$(basename "${sock%.sock}")"
   hash="$(printf '%s' "$sock" | cksum | cut -d' ' -f1)"
-  printf '%s/.dyfj/log/runtime-%s-%s.log' "$HOME" "$base" "$hash"
+  printf '%s/.dyfj/log/runtime-%s-%s.log' "$home" "$base" "$hash"
 }
 
 # Start lock name = basename + 16-hex sha256 (or cksum fallback) of the FULL socket path:

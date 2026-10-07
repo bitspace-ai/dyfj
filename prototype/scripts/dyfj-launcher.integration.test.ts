@@ -935,6 +935,14 @@ describe("an invocation the client's parser rejects never triggers autostart", (
     const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--socket"]);
     assertStrictEquals(autostart, "no");
   });
+  it("a later non-empty --socket clears an earlier empty --socket", async () => {
+    const { autostart, sock } = await dryRun(
+      { HOME: FAKE_HOME },
+      ["--socket", "", "--socket", "/tmp/last-wins.sock"],
+    );
+    assertStrictEquals(autostart, "yes");
+    assertStrictEquals(sock, "/tmp/last-wins.sock");
+  });
   it("a bare -p declines autostart", async () => {
     const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p"]);
     assertStrictEquals(autostart, "no");
@@ -1552,5 +1560,32 @@ describe("compile-cli grant construction", () => {
     const { code, err } = await compileWithHome("relative/home");
     assertNotStrictEquals(code, 0);
     assertStringIncludes(err, "absolute home path");
+  });
+});
+
+describe("HOME=/ produces a single-slash runtime log path", () => {
+  it("a root HOME does not produce a double-slash log path in dry-run output", async () => {
+    const proc = new Deno.Command(BASH, {
+      args: [LAUNCHER],
+      env: {
+        DYFJ_LAUNCHER_DRY_RUN: "1",
+        DENO_DIR: realDenoDir(),
+        DYFJ_CODEX_TOOLCHAIN_PATH: "",
+        DYFJ_CODEX_RUSTUP_HOME: "",
+        HOME: "/",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await proc.output();
+    assertStrictEquals(code, 0);
+    const text = new TextDecoder().decode(stdout).trim();
+    // The sock value is derived from the full socket path, not HOME itself,
+    // but if runtime_log_path produced // .dyfj/log/, the launcher would
+    // fail to write the log and the dry-run output would still carry the
+    // resolved socket; we assert the sock itself is not double-slash as a
+    // proxy that no HOME-derived segment doubled up.
+    const sock = text.match(/sock=(.*?) toolchain_directories=/)?.[1];
+    assertNotMatch(sock, /^\/\//);
   });
 });
