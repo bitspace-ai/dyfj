@@ -281,6 +281,36 @@ export const GEMINI_QUOTA: FailureFixture = {
   foreignText: "head to: https://ai.google.dev",
 };
 
+/** The free tier's per-minute limit, which the body also calls a quota. */
+export const GEMINI_QUOTA_PER_MINUTE: FailureFixture = {
+  family: "gemini",
+  source: "gemini",
+  status: 429,
+  body: json({
+    error: {
+      code: 429,
+      message: "You exceeded your current quota, please check your plan " +
+        "and billing details. For more information on this error, head " +
+        "to: https://ai.google.dev/gemini-api/docs/rate-limits.",
+      status: "RESOURCE_EXHAUSTED",
+      details: [{
+        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+        violations: [{
+          quotaMetric: "generativelanguage.googleapis.com/" +
+            "generate_content_free_tier_requests",
+          quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+          quotaDimensions: { model: "gemini-2.5-flash", location: "global" },
+          quotaValue: "15",
+        }],
+      }, {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        retryDelay: "41s",
+      }],
+    },
+  }),
+  foreignText: "GenerateRequestsPerMinutePerProjectPerModel",
+};
+
 export const GEMINI_OVERLOADED: FailureFixture = {
   family: "gemini",
   source: "gemini",
@@ -446,6 +476,11 @@ export const GEMINI_SERVER_ERROR: FailureFixture = {
   }),
   foreignText: "developers.generativeai.google",
 };
+
+/** An error body of `bytes` ASCII bytes, larger than any reader should keep. */
+export function oversizedErrorBody(bytes: number): string {
+  return `{"error":{"message":"${"x".repeat(Math.max(0, bytes - 24))}"}}`;
+}
 
 // ─── no response at all ──────────────────────────────────────────────────────
 

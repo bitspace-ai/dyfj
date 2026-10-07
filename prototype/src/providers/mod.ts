@@ -99,6 +99,11 @@ export {
   type ContextExceededReport,
 } from "./shared/context-exceeded.ts";
 export {
+  type ErrorBody,
+  MAX_ERROR_BODY_BYTES,
+  readBoundedErrorBody,
+} from "./shared/error-body.ts";
+export {
   classifyFetchFailure,
   classifyProviderResponse,
   type FetchFailureReason,

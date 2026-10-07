@@ -15,6 +15,7 @@ import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
 import * as F from "../../testing/providers/failure-fixtures.ts";
 import { DomainError } from "../contract/mod.ts";
+import { MAX_ERROR_BODY_BYTES } from "./shared/error-body.ts";
 import {
   ProviderAuthenticationError,
   ProviderContextExceededError,
@@ -181,6 +182,31 @@ describe("provider failure classification at the adapter", () => {
       );
     });
   }
+
+  for (const model of models) {
+    it(`${model.provider}: an oversized unrecognised body is read only to the cap and reported as cut`, async () => {
+      const transport = new ScriptedHttpTransport([{
+        respond: {
+          status: 500,
+          body: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES * 4),
+        },
+      }]);
+      const error = await assertRejects(
+        () => turn(model, transport),
+        ProviderRequestFailedError,
+      );
+      assertStringIncludes(
+        error.message,
+        `more than ${MAX_ERROR_BODY_BYTES} bytes`,
+      );
+    });
+  }
+
+  it("a per-minute quota says the quota resets, not only to add credit", async () => {
+    const error = await replay(F.GEMINI_QUOTA_PER_MINUTE);
+    assertInstanceOf(error, ProviderRateLimitedError);
+    assertStringIncludes(error.message, "reset");
+  });
 
   it("an unrecognised failure with an empty body still names the provider and status", async () => {
     const transport = new ScriptedHttpTransport([{

@@ -31,8 +31,10 @@ README are tracked separately in its Revision history section.
   model and the status and ends with what to do next; none carries the
   provider's text. An unclassified failure keeps the opaque treatment of
   the foreign part (the body's byte count, or the `[Error, N bytes]` label
-  of a transport throw) and now adds the provider and the status. The
-  `error` event records the class in `provider_error_class` beside the
+  of a transport throw) and now adds the provider and the status. Every
+  adapter reads a non-2xx body to a 64 KiB cap (the Anthropic and Gemini
+  adapters read it whole before), cancelling the rest and reporting the cut.
+  The `error` event records the class in `provider_error_class` beside the
   message, and the server console no longer logs a classified provider
   failure as an unexpected error. A context-size rejection whose refit
   cannot bring the request under the window now fails the turn with the

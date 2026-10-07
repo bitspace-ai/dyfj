@@ -7,6 +7,7 @@ import {
   WorkbenchHostedProviderBaseUrlError,
 } from "../errors.ts";
 import { fetchWithHeaderTimeout, providerFetchDeadline } from "../http.ts";
+import { readBoundedErrorBody } from "../shared/error-body.ts";
 import {
   providerFetchFailure,
   providerResponseError,
@@ -136,8 +137,11 @@ export const anthropicAdapter: ProviderAdapter = {
       // Classified from the status and the body, which is matched and never
       // relayed; a context-size rejection is overflow the engine recovers
       // from, the rest end the turn with a message Workbench wrote.
-      const detail = await response.text().catch(() => "");
-      throw providerResponseError(model, response.status, detail);
+      throw providerResponseError(
+        model,
+        response.status,
+        await readBoundedErrorBody(response),
+      );
     }
 
     const result = onFrame !== undefined

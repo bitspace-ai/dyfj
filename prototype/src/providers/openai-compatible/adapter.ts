@@ -18,6 +18,7 @@ import {
 } from "../errors.ts";
 import { fetchWithHeaderTimeout, providerFetchDeadline } from "../http.ts";
 import type { WorkbenchModel, WorkbenchTurnResult } from "../types.ts";
+import { readBoundedErrorBody } from "../shared/error-body.ts";
 import {
   providerFetchFailure,
   providerResponseError,
@@ -44,7 +45,7 @@ import {
   openAIHostedProviders,
 } from "./providers.ts";
 import { buildOpenAIChatRequest } from "./request.ts";
-import { readBoundedOpenAIText, readOpenAIChatJson } from "./response.ts";
+import { readOpenAIChatJson } from "./response.ts";
 import { normaliseFinishReason } from "./stop-reason.ts";
 import { readOpenAIChatStream } from "./stream.ts";
 import { openAIChatUsage } from "./usage.ts";
@@ -121,7 +122,7 @@ function requestOutputCap(
 
 /**
  * The error for a non-2xx response: classified by the shared classifier
- * from the status and the bounded body, which is matched and never
+ * from the status and the body, read to the shared cap and matched, never
  * relayed. A context-size rejection is overflow the engine recovers from;
  * the other classes and the unclassified failure end the turn with a
  * message Workbench wrote.
@@ -130,13 +131,11 @@ async function httpFailure(
   model: WorkbenchModel,
   response: Response,
 ): Promise<Error> {
-  const detail = response.body === null
-    ? ""
-    : await readBoundedOpenAIText(response).catch((error) => {
-      if (error instanceof DomainError) throw error;
-      return "";
-    });
-  return providerResponseError(model, response.status, detail);
+  return providerResponseError(
+    model,
+    response.status,
+    await readBoundedErrorBody(response),
+  );
 }
 
 /**

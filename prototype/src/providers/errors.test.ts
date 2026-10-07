@@ -160,8 +160,14 @@ describe("provider failure messages", () => {
     assertStringIncludes(limited.message, "Rate limited");
     assertStringIncludes(limited.message, "HTTP 429");
     assertStringIncludes(limited.message, "/model");
+    // A body that says "quota" may be a per-minute limit that resets on its
+    // own or an account that needs credit; the body does not say which, so
+    // the hint covers both and never sends the operator to billing alone.
     const quota = new ProviderRateLimitedError(target, 429, "quota");
     assertStringIncludes(quota.message, "quota");
+    assertStringIncludes(quota.message, "reset");
+    assertStringIncludes(quota.message, "credit");
+    assertStringIncludes(quota.message, "/model");
     const overloaded = new ProviderRateLimitedError(target, 529, "overloaded");
     assertStringIncludes(overloaded.message, "overloaded");
     assertStrictEquals(overloaded.reason, "overloaded");
@@ -222,6 +228,15 @@ describe("provider failure messages", () => {
     assertStringIncludes(err.message, "log");
     assertStrictEquals(err.status, 500);
     assertStrictEquals(err.kind, "unclassified");
+  });
+
+  it("an unclassified HTTP failure whose body was cut at the reader's cap says so", () => {
+    const err = new ProviderRequestFailedError(target, {
+      status: 502,
+      bodyBytes: 65_536,
+      truncated: true,
+    });
+    assertStringIncludes(err.message, "more than 65536 bytes");
   });
 
   it("an unclassified failure before any response keeps the opaque label of its cause", () => {

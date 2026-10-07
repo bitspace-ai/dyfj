@@ -217,10 +217,16 @@ export class ProviderRateLimitedError extends ProviderFailureError {
     status: number,
     public readonly reason: ProviderRateLimitReason,
   ) {
+    // A body that says "quota" may be a per-minute allowance that resets on
+    // its own (Gemini's free tier) or an account out of credit; it does not
+    // say which, so the hint covers both rather than sending the operator
+    // to billing for a limit that resets.
     const condition = reason === "quota"
       ? `Quota exhausted at ${errorField(target.provider)} for ` +
         `${errorField(target.slug)} (HTTP ${status}): the provider reports ` +
-        `no remaining quota or credit. Add credit at the provider`
+        `the quota for this key is used up. Quotas reset on the provider's ` +
+        `schedule and paid tiers raise them: wait for the reset or add ` +
+        `credit at the provider`
       : reason === "overloaded"
       ? `${errorField(target.provider)} is overloaded for ` +
         `${errorField(target.slug)} (HTTP ${status}). Wait a moment and ` +
@@ -346,7 +352,9 @@ export class ProviderRequestTooLargeError extends ProviderFailureError {
 export class ProviderRequestFailedError extends ProviderFailureError {
   constructor(
     target: ProviderTarget,
-    failure: { status: number; bodyBytes: number } | { cause: unknown },
+    failure:
+      | { status: number; bodyBytes: number; truncated?: boolean }
+      | { cause: unknown },
   ) {
     const field = targetField(target);
     super(
@@ -355,8 +363,9 @@ export class ProviderRequestFailedError extends ProviderFailureError {
       "status" in failure ? failure.status : undefined,
       "status" in failure
         ? `Provider request failed for ${field}: HTTP ${failure.status} ` +
-          `(response body withheld, ${failure.bodyBytes} bytes). The ` +
-          `provider's own log has the body.`
+          `(response body withheld, ${
+            failure.truncated ? "more than " : ""
+          }${failure.bodyBytes} bytes). The provider's own log has the body.`
         : `Provider request failed for ${field}: no response ` +
           `(${summarizeError(failure.cause)}). The provider's own log may ` +
           `say why.`,

@@ -6,7 +6,9 @@
 import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import * as F from "../../../testing/providers/failure-fixtures.ts";
+import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { classifyFetchFailure, classifyProviderResponse } from "./failure.ts";
+import { MAX_ERROR_BODY_BYTES, readBoundedErrorBody } from "./error-body.ts";
 
 describe("classifyProviderResponse", () => {
   const cases: ReadonlyArray<
@@ -37,6 +39,7 @@ describe("classifyProviderResponse", () => {
     [F.ANTHROPIC_RATE_LIMIT, { kind: "rate_limited", cause: "rate_limit" }],
     [F.ANTHROPIC_OVERLOADED, { kind: "rate_limited", cause: "overloaded" }],
     [F.GEMINI_QUOTA, { kind: "rate_limited", cause: "quota" }],
+    [F.GEMINI_QUOTA_PER_MINUTE, { kind: "rate_limited", cause: "quota" }],
     [F.GEMINI_OVERLOADED, { kind: "rate_limited", cause: "overloaded" }],
     [F.OPENAI_MODEL_NOT_FOUND, { kind: "model_not_found" }],
     [F.OPENROUTER_INVALID_MODEL, { kind: "model_not_found" }],
@@ -202,5 +205,65 @@ describe("classifyFetchFailure", () => {
     );
     assertStrictEquals(classifyFetchFailure("refused"), null);
     assertStrictEquals(classifyFetchFailure(undefined), null);
+  });
+});
+
+describe("readBoundedErrorBody", () => {
+  async function respond(body: string | undefined, status = 500) {
+    const transport = new ScriptedHttpTransport([{
+      respond: body === undefined
+        ? () => new Response(null, { status })
+        : { status, body },
+    }]);
+    return await transport.fetch("http://x/", { method: "POST" });
+  }
+
+  it("reads a small body whole and counts its bytes as received", async () => {
+    const read = await readBoundedErrorBody(await respond("héllo"));
+    assertEquals(read, { text: "héllo", bytes: 6, truncated: false });
+  });
+
+  it("a missing body reads as empty", async () => {
+    const read = await readBoundedErrorBody(await respond(undefined));
+    assertEquals(read, { text: "", bytes: 0, truncated: false });
+  });
+
+  it("stops at the cap: the text and the count are bounded, and the cut is reported", async () => {
+    const body = F.oversizedErrorBody(MAX_ERROR_BODY_BYTES * 4);
+    const read = await readBoundedErrorBody(await respond(body));
+    assertEquals(read.truncated, true);
+    assertEquals(read.bytes, MAX_ERROR_BODY_BYTES);
+    assertEquals(
+      new TextEncoder().encode(read.text).byteLength <= MAX_ERROR_BODY_BYTES,
+      true,
+    );
+    assertEquals(read.text.startsWith('{"error":{"message":"xxx'), true);
+  });
+
+  it("a read that fails part-way yields what arrived, not a throw", async () => {
+    let delivered = false;
+    const transport = new ScriptedHttpTransport([{
+      respond: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            // The first pull delivers a chunk; the second fails, as a reset
+            // mid-read does. (Erroring inside start would fail the first
+            // read before the chunk is delivered.)
+            pull(controller) {
+              if (controller.desiredSize !== null && !delivered) {
+                delivered = true;
+                controller.enqueue(new TextEncoder().encode("partial"));
+                return;
+              }
+              controller.error(new Error("socket reset"));
+            },
+          }),
+          { status: 500 },
+        ),
+    }]);
+    const read = await readBoundedErrorBody(
+      await transport.fetch("http://x/", { method: "POST" }),
+    );
+    assertEquals(read, { text: "partial", bytes: 7, truncated: true });
   });
 });

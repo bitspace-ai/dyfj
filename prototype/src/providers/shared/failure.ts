@@ -30,6 +30,7 @@ import {
   classifyContextExceeded,
   type ContextExceededReport,
 } from "./context-exceeded.ts";
+import type { ErrorBody } from "./error-body.ts";
 
 /** What a non-2xx response was recognised as. */
 export type ProviderResponseVerdict =
@@ -124,16 +125,17 @@ export function classifyProviderResponse(
 }
 
 /**
- * The error to throw for a non-2xx response: the classified failure when
- * the verdict names one, else the unclassified failure carrying the
- * provider, the status and the body's size.
+ * The error to throw for a non-2xx response, read through
+ * `readBoundedErrorBody`: the classified failure when the verdict names
+ * one, else the unclassified failure carrying the provider, the status and
+ * the body's size as counted during the read.
  */
 export function providerResponseError(
   target: ProviderTarget,
   status: number,
-  body: string,
+  body: ErrorBody,
 ): ProviderFailureError {
-  const verdict = classifyProviderResponse(status, body);
+  const verdict = classifyProviderResponse(status, body.text);
   switch (verdict?.kind) {
     case "context_exceeded":
       return new ProviderContextExceededError(target, status, verdict.report);
@@ -148,7 +150,8 @@ export function providerResponseError(
     default:
       return new ProviderRequestFailedError(target, {
         status,
-        bodyBytes: new TextEncoder().encode(body).byteLength,
+        bodyBytes: body.bytes,
+        truncated: body.truncated,
       });
   }
 }

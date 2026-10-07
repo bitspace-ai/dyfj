@@ -11,6 +11,7 @@ import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
   defaultLocalWorkbenchModels,
+  MAX_ERROR_BODY_BYTES,
   ProviderRequestFailedError,
   runWorkbenchTurn,
 } from "../mod.ts";
@@ -87,7 +88,10 @@ describe("runWorkbenchTurn streaming", () => {
     assertStrictEquals(transport.requests[0].redirect, "error");
   });
 
-  it("bounds an OpenAI-compatible error response body", async () => {
+  it("reads an oversized error response body only to the shared cap and reports the cut", async () => {
+    // The error-body reader keeps at most MAX_ERROR_BODY_BYTES and cancels
+    // the rest; the body is never relayed, so its size is all the operator
+    // sees, and a body past the cap is reported as more than the cap.
     const transport = new ScriptedHttpTransport([{
       respond: { status: 500, body: "x".repeat(4 * 1024 * 1024 + 1) },
     }]);
@@ -100,8 +104,8 @@ describe("runWorkbenchTurn streaming", () => {
           models,
           fetchFn: transport.fetch,
         }),
-      Error,
-      "Provider response exceeded the adapter limit",
+      ProviderRequestFailedError,
+      `more than ${MAX_ERROR_BODY_BYTES} bytes`,
     );
     transport.assertDone();
   });
