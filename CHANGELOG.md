@@ -11,12 +11,12 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- **An empty `--socket` value no longer permanently invalidates later, non-empty
-  `--socket` occurrences.** The flag is parsed last-wins; only the final value's
-  emptiness sets `LAUNCHER_ARGS_INVALID`.
+- **`--socket` validity now uses last-wins semantics.** An empty `--socket` no
+  longer permanently invalidates the invocation; only the final `--socket`
+  value determines whether `LAUNCHER_ARGS_INVALID` is set.
 - **`runtime_log_path` no longer produces a double-slash path when `HOME=/`.**
-  A root `HOME` is collapsed so the resulting log path starts with a single
-  slash.
+  A root `HOME` is collapsed to the empty string before the `printf`
+  template, yielding `/.dyfj/log/...` instead of `//.dyfj/log/...`.
 - **A provider's failure reaches the operator as a readable condition with a
   recovery hint, not as `[Error, N bytes]`.** A rejected request printed
   `turn failed: [Error, 260 bytes]` in the REPL and recorded the same label

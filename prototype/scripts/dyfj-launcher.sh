@@ -152,6 +152,9 @@ parse_launcher_args() {
         if [[ "$arg" == "--socket" ]]; then
           SOCKET_FLAG_SET=1
           SOCKET_FLAG_VALUE="${args[$((i + 1))]}"
+          # Only judge validity after the loop; last-wins means the final
+          # --socket decides.  An empty earlier --socket does not permanently
+          # poison a later non-empty one.
         fi
         CLIENT_ARGS+=("${args[$((i + 1))]}")
       else
@@ -178,6 +181,11 @@ parse_launcher_args() {
     CLIENT_ARGS+=("$arg")
     i=$((i + 1))
   done
+  # Judge --socket validity last-wins: if the final --socket is empty, the
+  # invocation is invalid.  Earlier emptiness is overridden by a later value.
+  if [[ "$SOCKET_FLAG_SET" == "1" && -z "$SOCKET_FLAG_VALUE" ]]; then
+    LAUNCHER_ARGS_INVALID=1
+  fi
 }
 
 # True when this invocation should ensure a runtime first. Position-aware:
@@ -244,7 +252,7 @@ client_parse_check() {
 runtime_log_path() {
   local home="${HOME:-}"
   case "${home}" in
-    /) home="/" ;;
+    /) home="" ;;
     /*) ;;
     *) return 1 ;;
   esac
@@ -788,8 +796,8 @@ main() {
         toolchain_count=$((toolchain_count + 1))
       fi
     fi
-    printf 'route=%s autostart=%s node_path=%s sock=%s toolchain_directories=%s\n' \
-      "$route" "$autostart" "${DYFJ_NODE_PATH:-}" "$(resolve_socket_path)" "$toolchain_count"
+    printf 'route=%s autostart=%s node_path=%s sock=%s toolchain_directories=%s log=%s\n' \
+      "$route" "$autostart" "${DYFJ_NODE_PATH:-}" "$(resolve_socket_path)" "$toolchain_count" "$(runtime_log_path)"
     exit 0
   fi
 
