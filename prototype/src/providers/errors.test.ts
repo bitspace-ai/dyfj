@@ -168,13 +168,18 @@ describe("provider failure messages", () => {
     assertStrictEquals(overloaded.kind, "rate_limited");
   });
 
-  it("model not found names the model, the registry row and the base URL", () => {
+  it("model not found keeps both readings: not served, or not accessible to this account", () => {
+    // OpenAI's recorded 404 says "does not exist or you do not have access
+    // to it", so the hint must cover the account's access as well as the
+    // registry row and the base URL.
     const err = new ProviderModelNotFoundError(target, 404);
     assertStringIncludes(err.message, "Model not found");
     assertStringIncludes(err.message, "qwen3.6-35b-a3b");
     assertStringIncludes(err.message, "HTTP 404");
+    assertStringIncludes(err.message, "no access");
     assertStringIncludes(err.message, "registry");
     assertStringIncludes(err.message, "base URL");
+    assertStringIncludes(err.message, "account's access");
     assertStrictEquals(err.kind, "model_not_found");
   });
 

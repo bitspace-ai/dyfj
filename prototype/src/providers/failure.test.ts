@@ -156,6 +156,13 @@ describe("provider failure classification at the adapter", () => {
     assertStringIncludes(error.message, "32768");
   });
 
+  it("OpenAI's 404, which may mean no access rather than no such model, keeps both in the hint", async () => {
+    const error = await replay(F.OPENAI_MODEL_NOT_FOUND);
+    assertInstanceOf(error, ProviderModelNotFoundError);
+    assertStringIncludes(error.message, "no access");
+    assertStringIncludes(error.message, "account's access");
+  });
+
   const unclassified = [
     F.OPENAI_SERVER_ERROR,
     F.ANTHROPIC_SERVER_ERROR,

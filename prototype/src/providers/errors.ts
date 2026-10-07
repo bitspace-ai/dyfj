@@ -238,7 +238,12 @@ export class ProviderRateLimitedError extends ProviderFailureError {
   }
 }
 
-/** The provider does not serve the model the registry row names. */
+/**
+ * The provider does not serve the model the registry row names, or this
+ * account has no access to it: OpenAI's 404 says "does not exist or you do
+ * not have access", and the body does not say which, so the message keeps
+ * both and the hint covers both.
+ */
 export class ProviderModelNotFoundError extends ProviderFailureError {
   constructor(target: ProviderTarget, status: number) {
     super(
@@ -246,9 +251,10 @@ export class ProviderModelNotFoundError extends ProviderFailureError {
       target,
       status,
       `Model not found at ${errorField(target.provider)}: it does not ` +
-        `serve ${errorField(target.slug)} (HTTP ${status}). Check the model ` +
-        `id on its registry row and the provider's base URL, or pick ` +
-        `another model with /model.`,
+        `serve ${errorField(target.slug)}, or this account has no access ` +
+        `to it (HTTP ${status}). Check the model id on its registry row, ` +
+        `the provider's base URL and the account's access to the model, ` +
+        `or pick another model with /model.`,
     );
     this.name = "ProviderModelNotFoundError";
   }
