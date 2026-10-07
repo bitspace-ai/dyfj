@@ -936,12 +936,23 @@ describe("an invocation the client's parser rejects never triggers autostart", (
     assertStrictEquals(autostart, "no");
   });
   it("a later non-empty --socket clears an earlier empty --socket", async () => {
+    // "--socket '' --socket /tmp/x.sock" — empty first, then value: last-wins
+    // clears emptiness, so autostart stays yes.
     const { autostart, sock } = await dryRun(
       { HOME: FAKE_HOME },
-      ["--socket", "", "--socket", "/tmp/last-wins.sock"],
+      ["--socket", "", "--socket", "/tmp/x.sock"],
     );
     assertStrictEquals(autostart, "yes");
-    assertStrictEquals(sock, "/tmp/last-wins.sock");
+    assertStrictEquals(sock, "/tmp/x.sock");
+  });
+  it("--socket '' last wins declines autostart", async () => {
+    // "--socket /tmp/x.sock --socket ''" — value first, then empty: last-wins
+    // emptiness, so autostart declines.
+    const { autostart } = await dryRun(
+      { HOME: FAKE_HOME },
+      ["--socket", "/tmp/x.sock", "--socket", ""],
+    );
+    assertStrictEquals(autostart, "no");
   });
   it("a bare -p declines autostart", async () => {
     const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p"]);
@@ -1580,12 +1591,12 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
     const { code, stdout, stderr } = await proc.output();
     assertStrictEquals(code, 0);
     const text = new TextDecoder().decode(stdout).trim();
-    // The sock value is derived from the full socket path, not HOME itself,
-    // but if runtime_log_path produced // .dyfj/log/, the launcher would
-    // fail to write the log and the dry-run output would still carry the
-    // resolved socket; we assert the sock itself is not double-slash as a
-    // proxy that no HOME-derived segment doubled up.
-    const sock = text.match(/sock=(.*?) toolchain_directories=/)?.[1];
-    assertNotMatch(sock, /^\/\//);
+    const logMatch = text.match(/log=(\S+)/);
+    const log = logMatch?.[1];
+    // When HOME=/, runtime_log_path yields /.dyfj/log/... (home="" so
+    // printf produces a single leading slash).  Assert the log field starts
+    // with /.dyfj/log/ and not //.
+    assertStrictEquals(log?.startsWith("/.dyfj/log/"), true);
+    assertStrictEquals(log?.startsWith("//"), false);
   });
 });
