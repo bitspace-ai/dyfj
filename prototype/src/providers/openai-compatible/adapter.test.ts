@@ -105,7 +105,7 @@ describe("runWorkbenchTurn streaming", () => {
           fetchFn: transport.fetch,
         }),
       ProviderRequestFailedError,
-      `more than ${MAX_ERROR_BODY_BYTES} bytes`,
+      `at least ${MAX_ERROR_BODY_BYTES} bytes`,
     );
     transport.assertDone();
   });

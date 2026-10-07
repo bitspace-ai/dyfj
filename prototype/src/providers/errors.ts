@@ -364,7 +364,7 @@ export class ProviderRequestFailedError extends ProviderFailureError {
       "status" in failure
         ? `Provider request failed for ${field}: HTTP ${failure.status} ` +
           `(response body withheld, ${
-            failure.truncated ? "more than " : ""
+            failure.truncated ? "at least " : ""
           }${failure.bodyBytes} bytes). The provider's own log has the body.`
         : `Provider request failed for ${field}: no response ` +
           `(${summarizeError(failure.cause)}). The provider's own log may ` +

@@ -230,13 +230,15 @@ describe("provider failure messages", () => {
     assertStrictEquals(err.kind, "unclassified");
   });
 
-  it("an unclassified HTTP failure whose body was cut at the reader's cap says so", () => {
+  it("an unclassified HTTP failure whose body was cut at the reader's cap reports a lower bound", () => {
+    // The read stops at the cap whether or not more follows, so the count
+    // is "at least", never "more than".
     const err = new ProviderRequestFailedError(target, {
       status: 502,
       bodyBytes: 65_536,
       truncated: true,
     });
-    assertStringIncludes(err.message, "more than 65536 bytes");
+    assertStringIncludes(err.message, "at least 65536 bytes");
   });
 
   it("an unclassified failure before any response keeps the opaque label of its cause", () => {
