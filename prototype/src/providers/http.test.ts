@@ -2,13 +2,14 @@
 
 import {
   assertEquals,
+  assertInstanceOf,
   assertMatch,
   assertRejects,
   assertStrictEquals,
 } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
-import { fetchWithHeaderTimeout } from "./mod.ts";
+import { fetchWithHeaderTimeout, ProviderUnreachableError } from "./mod.ts";
 
 describe("fetchWithHeaderTimeout", () => {
   it("aborts a blackholed connection with a named error", async () => {
@@ -20,13 +21,18 @@ describe("fetchWithHeaderTimeout", () => {
         transport.fetch,
         "http://x/",
         {},
-        "anthropic/test",
+        { provider: "anthropic", slug: "test" },
         30,
       )
     );
+    // The deadline's error is a classified provider failure: a DomainError
+    // whose message the operator sees whole, naming the target and the
+    // budget that elapsed.
+    assertInstanceOf(err, ProviderUnreachableError);
+    assertEquals(err.reason, "timeout");
     assertMatch(
-      (err as Error).message,
-      /anthropic\/test: no response headers within 30ms/,
+      err.message,
+      /anthropic\/test .*no response headers within 30ms/,
     );
   });
 
@@ -36,7 +42,7 @@ describe("fetchWithHeaderTimeout", () => {
       transport.fetch,
       "http://x/",
       {},
-      "l",
+      { provider: "l", slug: "m" },
       30,
     );
     assertEquals(await response.text(), "hi");
@@ -49,7 +55,14 @@ describe("fetchWithHeaderTimeout", () => {
       respond: () => Promise.reject(new Error("connection refused")),
     }]);
     await assertRejects(
-      () => fetchWithHeaderTimeout(transport.fetch, "http://x/", {}, "l", 1000),
+      () =>
+        fetchWithHeaderTimeout(
+          transport.fetch,
+          "http://x/",
+          {},
+          { provider: "l", slug: "m" },
+          1000,
+        ),
       Error,
       "connection refused",
     );
@@ -64,14 +77,14 @@ describe("fetchWithHeaderTimeout", () => {
         transport.fetch,
         "http://x/",
         {},
-        "anthropic/test",
+        { provider: "anthropic", slug: "test" },
         30,
         "buffered",
       )
     );
     assertMatch(
       (err as Error).message,
-      /anthropic\/test: no response headers within 30ms \(buffered request exceeded its budget/,
+      /anthropic\/test .*no response headers within 30ms \(buffered request exceeded its budget/,
     );
   });
 
@@ -91,7 +104,7 @@ describe("fetchWithHeaderTimeout", () => {
       transport.fetch,
       "http://x/",
       { signal: controller.signal },
-      "l",
+      { provider: "l", slug: "m" },
       5,
     );
 

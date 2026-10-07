@@ -5,12 +5,14 @@
 import type { BaseUrlCheck, ProviderAdapter } from "../adapter.ts";
 import {
   HostedProviderCredentialMissingError,
-  ProviderContextExceededError,
   WorkbenchHostedProviderBaseUrlError,
 } from "../errors.ts";
 import { fetchWithHeaderTimeout, providerFetchDeadline } from "../http.ts";
-import { annotateProviderAbort } from "../shared/abort.ts";
-import { classifyContextExceeded } from "../shared/context-exceeded.ts";
+import { readBoundedErrorBody } from "../shared/error-body.ts";
+import {
+  providerFetchFailure,
+  providerResponseError,
+} from "../shared/failure.ts";
 import { isAllowedHostedProviderBaseUrl } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
@@ -105,10 +107,11 @@ export const geminiAdapter: ProviderAdapter = {
           }),
         ),
       },
-      `gemini/${model.slug}`,
+      model,
       ...providerFetchDeadline(stream),
     ).catch((error) =>
-      annotateProviderAbort(
+      providerFetchFailure(
+        model,
         error,
         io.signal,
         now,
@@ -118,19 +121,13 @@ export const geminiAdapter: ProviderAdapter = {
     const headersReceived = now();
 
     if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      // A context-size rejection is overflow the engine can recover from.
-      const exceeded = classifyContextExceeded(response.status, detail);
-      if (exceeded !== null) {
-        throw new ProviderContextExceededError(
-          model.slug,
-          response.status,
-          exceeded,
-        );
-      }
-      throw new Error(
-        `Gemini request failed for ${model.slug}: HTTP ${response.status}` +
-          (detail ? ` ${detail.slice(0, 300)}` : ""),
+      // Classified from the status and the body, which is matched and never
+      // relayed; a context-size rejection is overflow the engine fails as,
+      // the rest end the turn with a message Workbench wrote.
+      throw providerResponseError(
+        model,
+        response.status,
+        await readBoundedErrorBody(response),
       );
     }
 

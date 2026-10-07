@@ -173,12 +173,22 @@ async function refitRejected(
   // The provider's verdict outranks the estimate: whatever the report said,
   // the retry must be smaller than what was refused.
   if (budgetTokens >= estimate) budgetTokens = Math.floor(estimate / 2);
-  const fitted = await fitRequest(
-    turn,
-    loopRequest,
-    "provider_rejected",
-    { limits: { contextWindow, budgetTokens } },
-  );
+  let fitted;
+  try {
+    fitted = await fitRequest(
+      turn,
+      loopRequest,
+      "provider_rejected",
+      { limits: { contextWindow, budgetTokens } },
+    );
+  } catch (err) {
+    // The refit could not bring the request under the budget the rejection
+    // taught. The provider's measured sizes are what the operator can act
+    // on, so the failure reports those, not the estimate the fit declined
+    // to send.
+    if (err instanceof ContextWindowOverflowError) throw rejection;
+    throw err;
+  }
   if (!fitted.changed) throw rejection;
   turn.state.session.log(
     "\n[the provider rejected the request as over its context window; " +

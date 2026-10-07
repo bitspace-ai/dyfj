@@ -18,6 +18,7 @@ import {
   BudgetExceededError,
 } from "../budget/mod.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
+import { ProviderFailureError } from "../providers/mod.ts";
 import {
   classifyErrorKind,
   PaidEscalationDeclinedError,
@@ -259,6 +260,22 @@ export async function failTurn(
     await writeErrorEvent(state, ports, err, "workbench_model", "length");
     log(`\n${summarizeError(err)}`);
     state.turnError = err;
+  } else if (err instanceof ProviderFailureError) {
+    // A provider failure classified at the adapter is an expected
+    // operational condition, already fully stated by its Workbench-written
+    // message (the condition, the provider and status, the way out). The
+    // event records the class alongside the message, so the kind survives
+    // without reading the text; the server console gets nothing extra.
+    await writeErrorEvent(
+      state,
+      ports,
+      err,
+      "workbench_model",
+      "error",
+      classifyErrorKind(err),
+    );
+    log(`\n${summarizeError(err)}`);
+    state.turnError = err;
   } else if (err instanceof BudgetCeilingDeclinedError) {
     // Already sanitized at construction — safe to read directly.
     const detail = err.reason;
@@ -341,6 +358,7 @@ async function writeErrorEvent(
   err: unknown,
   fallbackResource: string,
   stopReason: "error" | "length",
+  providerErrorClass: string | null = null,
 ): Promise<void> {
   const { session } = state;
   await writeMaybe(
@@ -363,6 +381,7 @@ async function writeErrorEvent(
           api: state.selectedForEvents?.api ?? null,
           ...session.authnEventFields,
           content: summarizeError(err),
+          provider_error_class: providerErrorClass,
           stop_reason: stopReason,
           duration_ms: ports.clock.now() - session.startedAt,
         }),

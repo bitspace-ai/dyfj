@@ -33,7 +33,19 @@ export type {
 export {
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
+  ProviderAuthenticationError,
   ProviderContextExceededError,
+  ProviderFailureError,
+  type ProviderFailureKind,
+  ProviderModelNotFoundError,
+  ProviderRateLimitedError,
+  type ProviderRateLimitReason,
+  ProviderRedirectedError,
+  ProviderRequestFailedError,
+  ProviderRequestTooLargeError,
+  type ProviderTarget,
+  ProviderUnreachableError,
+  type ProviderUnreachableReason,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   WorkbenchModelFastSpeedUnsupportedError,
@@ -74,9 +86,9 @@ export {
   createProviderRegistry,
   modelRequestCarriesTranscript,
   modelRequestedOutputCap,
-  modelTransmittedOutputCap,
   modelStreamsToolCalls,
   modelSupportsTranscriptRetry,
+  modelTransmittedOutputCap,
   PROVIDER_ADAPTERS,
   type ProviderRegistry,
   runWorkbenchTurn,
@@ -86,3 +98,14 @@ export {
   classifyContextExceeded,
   type ContextExceededReport,
 } from "./shared/context-exceeded.ts";
+export {
+  type ErrorBody,
+  MAX_ERROR_BODY_BYTES,
+  readBoundedErrorBody,
+} from "./shared/error-body.ts";
+export {
+  classifyFetchFailure,
+  classifyProviderResponse,
+  type FetchFailureReason,
+  type ProviderResponseVerdict,
+} from "./shared/failure.ts";

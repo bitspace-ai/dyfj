@@ -3,7 +3,7 @@
  * field bounding every one of them applies to registry-sourced values.
  */
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
-import { DomainError } from "../contract/mod.ts";
+import { DomainError, summarizeError } from "../contract/mod.ts";
 
 // DomainError messages are trusted up to MAX_ERROR_SUMMARY_BYTES by
 // summarizeError, so every nonliteral field interpolated into one must be
@@ -98,6 +98,51 @@ export class WorkbenchModelNotRoutableError extends DomainError {
   }
 }
 
+/** The provider and model a request was addressed to. */
+export interface ProviderTarget {
+  provider: string;
+  slug: string;
+}
+
+/** The classes the adapters sort a provider's failures into. */
+export type ProviderFailureKind =
+  | "context_exceeded"
+  | "authentication"
+  | "rate_limited"
+  | "model_not_found"
+  | "unreachable"
+  | "redirected"
+  | "request_too_large"
+  | "unclassified";
+
+/**
+ * A provider request that failed, classified at the adapter. Every subclass
+ * writes its own message from fixed literals, the bounded target and the
+ * HTTP status: provider text is foreign input and never rides one. The
+ * message ends with the recovery hint, so the operator line, the
+ * `turnFailed` frame and the durable `error` event all say what to do next.
+ */
+export abstract class ProviderFailureError extends DomainError {
+  readonly provider: string;
+  readonly slug: string;
+  constructor(
+    readonly kind: ProviderFailureKind,
+    target: ProviderTarget,
+    /** The HTTP status the provider answered with; none when it never did. */
+    readonly status: number | undefined,
+    message: string,
+  ) {
+    super(message);
+    this.provider = target.provider;
+    this.slug = target.slug;
+  }
+}
+
+/** `provider/slug`, each bounded, for a message. */
+function targetField(target: ProviderTarget): string {
+  return `${errorField(target.provider)}/${errorField(target.slug)}`;
+}
+
 /**
  * The provider rejected the request as larger than the model's context
  * window (llama-server's HTTP 400 "exceeds the available context size",
@@ -107,22 +152,224 @@ export class WorkbenchModelNotRoutableError extends DomainError {
  * turn. The message carries only the counts the provider stated, never its
  * body.
  */
-export class ProviderContextExceededError extends DomainError {
+export class ProviderContextExceededError extends ProviderFailureError {
   constructor(
-    public readonly slug: string,
-    public readonly status: number,
+    target: ProviderTarget,
+    status: number,
     public readonly report: { requestedTokens?: number; limitTokens?: number },
   ) {
     const counts = report.requestedTokens !== undefined &&
         report.limitTokens !== undefined
-      ? ` (${report.requestedTokens} tokens against a ${report.limitTokens}-token limit)`
+      ? `; the request was ${report.requestedTokens} tokens against a ` +
+        `${report.limitTokens}-token window`
       : report.limitTokens !== undefined
-      ? ` (${report.limitTokens}-token limit)`
+      ? `; the window is ${report.limitTokens} tokens`
+      : report.requestedTokens !== undefined
+      ? `; the request was ${report.requestedTokens} tokens`
       : "";
     super(
-      `Context exceeded for ${errorField(slug)}: the provider rejected the ` +
-        `request as larger than its context window with HTTP ${status}${counts}`,
+      "context_exceeded",
+      target,
+      status,
+      `Context exceeded for ${targetField(target)}: the provider rejected ` +
+        `the request as larger than its context window (HTTP ${status}` +
+        `${counts}). Use a model with a larger context window, or start a ` +
+        `new session.`,
     );
     this.name = "ProviderContextExceededError";
+  }
+}
+
+/**
+ * The provider refused the request's credential, or (HTTP 403) accepted it
+ * but denied access to the model or operation. The two have different ways
+ * out: a rejected key is fixed in the runtime's environment, denied access
+ * at the provider's account or by choosing another model.
+ */
+export class ProviderAuthenticationError extends ProviderFailureError {
+  constructor(target: ProviderTarget, status: number) {
+    super(
+      "authentication",
+      target,
+      status,
+      status === 403
+        ? `Access denied by ${errorField(target.provider)} for ` +
+          `${errorField(target.slug)} (HTTP 403): the credential was ` +
+          `accepted but is not allowed to use this model or operation. ` +
+          `Check the account's access at the provider, or pick another ` +
+          `model with /model.`
+        : `Authentication failed for ${targetField(target)}: the provider ` +
+          `rejected the request's credential (HTTP ${status}). Check the ` +
+          `key the runtime holds for this provider (\`dyfj status\` names ` +
+          `it), then restart the runtime (\`dyfj stop\`, then start it).`,
+    );
+    this.name = "ProviderAuthenticationError";
+  }
+}
+
+/** Why the provider is refusing to serve the request right now. */
+export type ProviderRateLimitReason = "rate_limit" | "quota" | "overloaded";
+
+/** The provider is throttling, out of quota, or overloaded. */
+export class ProviderRateLimitedError extends ProviderFailureError {
+  constructor(
+    target: ProviderTarget,
+    status: number,
+    public readonly reason: ProviderRateLimitReason,
+  ) {
+    // A body that says "quota" may be a per-minute allowance that resets on
+    // its own (Gemini's free tier) or an account out of credit; it does not
+    // say which, so the hint covers both rather than sending the operator
+    // to billing for a limit that resets.
+    const condition = reason === "quota"
+      ? `Quota exhausted at ${errorField(target.provider)} for ` +
+        `${errorField(target.slug)} (HTTP ${status}): the provider reports ` +
+        `the quota for this key is used up. Quotas reset on the provider's ` +
+        `schedule and paid tiers raise them: wait for the reset or add ` +
+        `credit at the provider`
+      : reason === "overloaded"
+      ? `${errorField(target.provider)} is overloaded for ` +
+        `${errorField(target.slug)} (HTTP ${status}). Wait a moment and ` +
+        `send the turn again`
+      : `Rate limited by ${errorField(target.provider)} for ` +
+        `${errorField(target.slug)} (HTTP ${status}). Wait a moment and ` +
+        `send the turn again`;
+    super(
+      "rate_limited",
+      target,
+      status,
+      `${condition}, or switch to another model with /model.`,
+    );
+    this.name = "ProviderRateLimitedError";
+  }
+}
+
+/**
+ * The provider does not serve the model the registry row names, or this
+ * account has no access to it: OpenAI's 404 says "does not exist or you do
+ * not have access", and the body does not say which, so the message keeps
+ * both and the hint covers both.
+ */
+export class ProviderModelNotFoundError extends ProviderFailureError {
+  constructor(target: ProviderTarget, status: number) {
+    super(
+      "model_not_found",
+      target,
+      status,
+      `Model not found at ${errorField(target.provider)}: it does not ` +
+        `serve ${errorField(target.slug)}, or this account has no access ` +
+        `to it (HTTP ${status}). Check the model id on its registry row, ` +
+        `the provider's base URL and the account's access to the model, ` +
+        `or pick another model with /model.`,
+    );
+    this.name = "ProviderModelNotFoundError";
+  }
+}
+
+/** How the connection to the provider failed. */
+export type ProviderUnreachableReason =
+  | "refused"
+  | "dns"
+  | "network"
+  | "timeout";
+
+/**
+ * No response arrived: the connection was refused, the host did not
+ * resolve, the network failed, or the header deadline passed in silence.
+ */
+export class ProviderUnreachableError extends ProviderFailureError {
+  constructor(
+    target: ProviderTarget,
+    public readonly reason: ProviderUnreachableReason,
+    budget?: { timeoutMs: number; mode: "streaming" | "buffered" },
+  ) {
+    const field = targetField(target);
+    super(
+      "unreachable",
+      target,
+      undefined,
+      reason === "refused"
+        ? `Provider unreachable: ${errorField(target.provider)} refused the ` +
+          `connection for ${errorField(target.slug)}. Check that the server ` +
+          `is running at the registry's base URL.`
+        : reason === "dns"
+        ? `Provider unreachable: the host for ${field} could not be ` +
+          `resolved. Check the registry's base URL and the network.`
+        : reason === "timeout"
+        ? `Provider unreachable or stalled: ${field} sent no response ` +
+          `headers within ${budget?.timeoutMs ?? 0}ms (${
+            budget?.mode ?? "streaming"
+          } request exceeded its budget). Check that the server is running ` +
+          `and responsive at the registry's base URL.`
+        : `Provider unreachable: the connection to ${field} failed. Check ` +
+          `the network and the registry's base URL.`,
+    );
+    this.name = "ProviderUnreachableError";
+  }
+}
+
+/**
+ * The provider answered with a redirect, which no adapter follows: only
+ * the validated base URL may receive the request body.
+ */
+export class ProviderRedirectedError extends ProviderFailureError {
+  constructor(target: ProviderTarget) {
+    super(
+      "redirected",
+      target,
+      undefined,
+      `Provider request refused for ${targetField(target)}: the provider ` +
+        `answered with a redirect, which Workbench does not follow (the ` +
+        `request goes only to the validated base URL). Check the ` +
+        `registry's base URL.`,
+    );
+    this.name = "ProviderRedirectedError";
+  }
+}
+
+/** The provider refused the request by its byte size, not its token count. */
+export class ProviderRequestTooLargeError extends ProviderFailureError {
+  constructor(target: ProviderTarget, status: number) {
+    super(
+      "request_too_large",
+      target,
+      status,
+      `Request too large for ${targetField(target)}: the provider refused ` +
+        `the request by its size (HTTP ${status}), not by token count. ` +
+        `Shorten the prompt or the tool results it carries, or start a new ` +
+        `session.`,
+    );
+    this.name = "ProviderRequestTooLargeError";
+  }
+}
+
+/**
+ * A failure the classifier does not recognise. The message keeps today's
+ * opaque treatment of the foreign part (a byte count for a response body,
+ * the `summarizeError` label for a transport throw) and adds what is not
+ * foreign: the provider, the model and the HTTP status.
+ */
+export class ProviderRequestFailedError extends ProviderFailureError {
+  constructor(
+    target: ProviderTarget,
+    failure:
+      | { status: number; bodyBytes: number; truncated?: boolean }
+      | { cause: unknown },
+  ) {
+    const field = targetField(target);
+    super(
+      "unclassified",
+      target,
+      "status" in failure ? failure.status : undefined,
+      "status" in failure
+        ? `Provider request failed for ${field}: HTTP ${failure.status} ` +
+          `(response body withheld, ${
+            failure.truncated ? "more than " : ""
+          }${failure.bodyBytes} bytes). The provider's own log has the body.`
+        : `Provider request failed for ${field}: no response ` +
+          `(${summarizeError(failure.cause)}). The provider's own log may ` +
+          `say why.`,
+    );
+    this.name = "ProviderRequestFailedError";
   }
 }

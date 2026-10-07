@@ -19,7 +19,14 @@ import { ContextWindowOverflowError } from "../context/mod.ts";
 import {
   HostedInferenceRequiresProviderError,
   HostedProviderCredentialMissingError,
+  ProviderAuthenticationError,
   ProviderContextExceededError,
+  ProviderModelNotFoundError,
+  ProviderRateLimitedError,
+  ProviderRedirectedError,
+  ProviderRequestFailedError,
+  ProviderRequestTooLargeError,
+  ProviderUnreachableError,
   WorkbenchHostedProviderBaseUrlError,
   WorkbenchLocalProviderBaseUrlError,
   WorkbenchModelFastSpeedUnsupportedError,
@@ -146,6 +153,13 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   ],
   [WorkbenchModelNotRoutableError, "WorkbenchModelNotRoutableError"],
   [ProviderContextExceededError, "ProviderContextExceededError"],
+  [ProviderAuthenticationError, "ProviderAuthenticationError"],
+  [ProviderRateLimitedError, "ProviderRateLimitedError"],
+  [ProviderModelNotFoundError, "ProviderModelNotFoundError"],
+  [ProviderUnreachableError, "ProviderUnreachableError"],
+  [ProviderRedirectedError, "ProviderRedirectedError"],
+  [ProviderRequestTooLargeError, "ProviderRequestTooLargeError"],
+  [ProviderRequestFailedError, "ProviderRequestFailedError"],
 ];
 
 /**

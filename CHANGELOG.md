@@ -11,6 +11,35 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A provider's failure reaches the operator as a readable condition with a
+  recovery hint, not as `[Error, N bytes]`.** A rejected request printed
+  `turn failed: [Error, 260 bytes]` in the REPL and recorded the same label
+  in the `error` event, because the adapters threw plain `Error`s carrying
+  the provider's text, which the wire boundary withholds by design. The
+  three adapters now classify every failure through one shared classifier
+  (`providers/shared/failure.ts`), from the HTTP status and the body's
+  documented markers for the OpenAI-compatible (llama-server, OpenRouter),
+  Anthropic and Gemini shapes, and throw a `ProviderFailureError` subclass
+  whose message Workbench writes: context exceeded with the provider's
+  request and window sizes, authentication failed (a 403 names denied
+  access rather than a bad key), rate limited (or out of quota, or
+  overloaded), model not found at the provider (only when the body names
+  the model; a bare 404 stays unclassified), unreachable
+  (connection refused, host unresolved, network failure, or the header
+  deadline), a redirect the adapter refused to follow, and request too
+  large. Each message names the provider, the
+  model and the status and ends with what to do next; none carries the
+  provider's text. An unclassified failure keeps the opaque treatment of
+  the foreign part (the body's byte count, or the `[Error, N bytes]` label
+  of a transport throw) and now adds the provider and the status. Every
+  adapter reads a non-2xx body to a 64 KiB cap (the Anthropic and Gemini
+  adapters read it whole before), cancelling the rest and reporting the cut.
+  The `error` event records the class in `provider_error_class` beside the
+  message, and the server console no longer logs a classified provider
+  failure as an unexpected error. A context-size rejection whose refit
+  cannot bring the request under the window now fails the turn with the
+  provider's measured sizes (the 2026-10-03 case: 82366 tokens against a
+  32768-token window) instead of the fit's own estimate.
 - **The agent loop fits each request to the model's context window before
   sending it, and recovers when a provider rejects one as too large.** On a
   32K-window local model, a few `grep_files` or `read_file` results, or one

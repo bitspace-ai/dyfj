@@ -1,7 +1,16 @@
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { BudgetExceededError } from "../budget/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
-import { WorkbenchModelFastSpeedUnsupportedError } from "../providers/mod.ts";
+import {
+  ProviderAuthenticationError,
+  ProviderModelNotFoundError,
+  ProviderRateLimitedError,
+  ProviderRedirectedError,
+  ProviderRequestFailedError,
+  ProviderRequestTooLargeError,
+  ProviderUnreachableError,
+  WorkbenchModelFastSpeedUnsupportedError,
+} from "../providers/mod.ts";
 import { classifyErrorKind, PaidEscalationDeclinedError } from "./errors.ts";
 
 // ── PaidEscalationDeclinedError — reason field sanitization ──────────────────
@@ -116,4 +125,33 @@ Deno.test("classifyErrorKind does not treat an error-shaped plain object as an E
   };
   assert(!(fake instanceof Error));
   assertEquals(classifyErrorKind(fake), "unknown");
+});
+
+Deno.test("classifyErrorKind reports each provider failure class by its own fixed literal", () => {
+  const target = { provider: "anthropic", slug: "claude-x" };
+  const cases: ReadonlyArray<[DomainError, string]> = [
+    [
+      new ProviderAuthenticationError(target, 401),
+      "ProviderAuthenticationError",
+    ],
+    [
+      new ProviderRateLimitedError(target, 429, "rate_limit"),
+      "ProviderRateLimitedError",
+    ],
+    [new ProviderModelNotFoundError(target, 404), "ProviderModelNotFoundError"],
+    [
+      new ProviderUnreachableError(target, "refused"),
+      "ProviderUnreachableError",
+    ],
+    [new ProviderRedirectedError(target), "ProviderRedirectedError"],
+    [
+      new ProviderRequestTooLargeError(target, 413),
+      "ProviderRequestTooLargeError",
+    ],
+    [
+      new ProviderRequestFailedError(target, { status: 500, bodyBytes: 1 }),
+      "ProviderRequestFailedError",
+    ],
+  ];
+  for (const [err, label] of cases) assertEquals(classifyErrorKind(err), label);
 });
