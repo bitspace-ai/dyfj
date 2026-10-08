@@ -24,8 +24,10 @@ README are tracked separately in its Revision history section.
   the turn with a message naming it, instead of falling back.
   `sessions/inspect` now reports the recorded model. The Rust REPL restores it
   on `--session` and `/session switch`, names it on the posture line
-  (`restored from session`), refuses an unroutable one at startup or at the
-  switch with the available models listed, and lets an explicit `--model` win;
+  (`restored from session`) and leaves the routing to the runtime so the
+  receipt reports `session_model`, refuses an unroutable one at startup or at
+  the switch with the available models listed, never carries a model chosen
+  for one session into another, and lets an explicit `--model` win;
   a session with no recorded model resumes on the default and the posture line
   says so. Sessions created before this change are restored too, because their
   turns already wrote the event. Golden scenarios 05, 10 and 11 were

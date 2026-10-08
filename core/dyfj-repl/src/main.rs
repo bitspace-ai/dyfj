@@ -101,6 +101,7 @@ fn parse_args(
     let set = |key: &str| env(key).filter(|value| !value.is_empty());
     let mut session = Session {
         model: set("DYFJ_WORKBENCH_MODEL"),
+        default_model: set("DYFJ_WORKBENCH_MODEL"),
         workspace: set("DYFJ_WORKSPACE").or(cwd),
         ..Session::default()
     };

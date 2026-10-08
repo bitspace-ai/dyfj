@@ -712,24 +712,24 @@ async fn session_list(client: &Client) {
 }
 
 async fn session_switch(client: &Client, session: &mut Session, id: String) {
-    let mut workspace = None;
-    let mut recorded = None;
-    match client
+    let inspected = match client
         .request("sessions/inspect", json!({"sessionId": id}))
         .await
     {
-        Ok(v) => {
-            if v.get("exists").and_then(Value::as_bool) == Some(false) {
-                eprintln!("warning: the runtime has no session {}", visible(&id));
-            }
-            workspace = v
-                .get("workspace")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            recorded = v.get("model").and_then(Value::as_str).map(str::to_string);
+        Ok(v) => v,
+        Err(err) => {
+            // Without the session's recorded model, the next turn could run
+            // its history on whatever model is left over; stay where we are.
+            error_line("not switched: could not inspect the session", &err);
+            return;
         }
-        Err(err) => error_line("could not inspect the session", &err),
+    };
+    if inspected.get("exists").and_then(Value::as_bool) == Some(false) {
+        eprintln!("warning: the runtime has no session {}", visible(&id));
     }
+    let text = |key: &str| inspected.get(key).and_then(Value::as_str).map(str::to_string);
+    let workspace = text("workspace");
+    let recorded = text("model");
     // Refuse before switching: once switched, the next turn would run the
     // session's history on whatever model is left over.
     let rows = match &recorded {
@@ -1064,8 +1064,13 @@ mod run_tests {
                     let verdict = lines.next_line().await.unwrap().unwrap();
                     seen.lock().unwrap().push(serde_json::from_str(&verdict).unwrap());
                 }
-                let reply = json!({"jsonrpc": "2.0", "id": msg["id"],
-                    "result": answer(&method, &msg["params"])});
+                let result = answer(&method, &msg["params"]);
+                // An answer shaped `{"rpcError": {...}}` is sent as an error
+                // response instead of a result.
+                let reply = match result.get("rpcError") {
+                    Some(error) => json!({"jsonrpc": "2.0", "id": msg["id"], "error": error}),
+                    None => json!({"jsonrpc": "2.0", "id": msg["id"], "result": result}),
+                };
                 write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
             }
         });
@@ -1205,7 +1210,25 @@ mod run_tests {
         assert_eq!(session.id.as_deref(), Some(id));
         assert_eq!(session.model.as_deref(), Some("z-ai/glm-5.2"));
         assert_eq!(session.model_origin, ModelOrigin::Restored);
-        assert_eq!(session.turn_body("hi", "t")["routingOptions"]["modelId"], "z-ai/glm-5.2");
+        assert!(session.turn_body("hi", "t").get("routingOptions").is_none());
+    }
+
+    fn inspect_fails(method: &str, params: &Value) -> Value {
+        match method {
+            "sessions/inspect" => json!({"rpcError": {"code": -32603, "message": "store unavailable"}}),
+            _ => catalog(method, params),
+        }
+    }
+
+    /// A switch whose recorded model cannot be read leaves the session where
+    /// it was rather than resume the target on a leftover model.
+    #[tokio::test]
+    async fn session_switch_stays_put_when_the_session_cannot_be_inspected() {
+        let mut session = Session { id: Some("old".into()), ..Session::default() };
+        session.choose_model("local/qwen".into());
+        drive(inspect_fails, &mut session, vec![Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into())]).await;
+        assert_eq!(session.id.as_deref(), Some("old"));
+        assert_eq!(session.model.as_deref(), Some("local/qwen"));
     }
 
     /// A recorded model that is gone or unpriced refuses the switch rather

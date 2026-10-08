@@ -35,6 +35,10 @@ pub struct Session {
     /// The operator named the model with `--model`; a resumed session's
     /// recorded model does not replace it at startup.
     pub model_pinned: bool,
+    /// The configured default (`DYFJ_WORKBENCH_MODEL`), or `None` for the
+    /// runtime's. A switch to a session with no recorded model runs on it,
+    /// not on a model chosen for the session switched away from.
+    pub default_model: Option<String>,
     /// Fast speed tier for models that advertise it. `None` sends nothing.
     pub fast: Option<bool>,
     /// Per-turn paid opt-in. The engine still decides; without it, a hosted
@@ -58,7 +62,11 @@ impl Session {
     pub fn turn_body(&self, prompt: &str, turn_id: &str) -> Value {
         let mut body = json!({"prompt": prompt, "mode": "turn", "turnId": turn_id});
         let mut routing = Map::new();
-        if let Some(model) = &self.model {
+        // A restored model is the runtime's to route: a resumed turn that
+        // names no model runs on the session's recorded one and reports the
+        // route as `session_model`. Sending it would claim the operator chose
+        // it.
+        if let Some(model) = self.model.as_ref().filter(|_| self.model_origin != ModelOrigin::Restored) {
             routing.insert("modelId".into(), Value::String(model.clone()));
         }
         if let Some(fast) = self.fast {
@@ -124,8 +132,9 @@ impl Session {
 
     /// Point the session at another runtime session and its recorded model.
     /// Spend and turn counts restart, because they describe what happened in
-    /// this REPL. A model chosen for the previous session does not carry
-    /// over a recorded one: the target's history was built on its own.
+    /// this REPL. A model chosen for the previous session never carries over:
+    /// the target runs on its recorded model, or, with none recorded, on the
+    /// configured default.
     pub fn switch_to(&mut self, id: String, workspace: Option<String>, recorded: Option<String>) {
         self.id = Some(id);
         self.workspace = workspace;
@@ -134,6 +143,8 @@ impl Session {
         self.last_model = None;
         self.last_command = None;
         self.model_pinned = false;
+        self.model = self.default_model.clone();
+        self.model_origin = ModelOrigin::Operator;
         self.restore_model(recorded);
     }
 }
@@ -217,10 +228,24 @@ mod tests {
         assert_eq!(session.workspace.as_deref(), Some("/elsewhere"));
         assert_eq!(session.spend_usd, 0.0);
         assert_eq!(session.turns, 0);
-        // Nothing recorded: the current choice stands, and the posture says
-        // the session had none.
-        assert_eq!(session.model.as_deref(), Some("kept"));
         assert_eq!(session.model_origin, ModelOrigin::Unrecorded);
+    }
+
+    /// A target with no recorded model runs on the configured default, not
+    /// on a model chosen or restored for the session switched away from.
+    #[test]
+    fn switching_to_an_unrecorded_session_drops_the_previous_sessions_model() {
+        let mut chosen = Session { default_model: Some("env-default".into()), ..Session::default() };
+        chosen.choose_model("chosen-for-old".into());
+        chosen.switch_to("new".into(), None, None);
+        assert_eq!(chosen.model.as_deref(), Some("env-default"));
+        assert_eq!(chosen.turn_body("hi", "t")["routingOptions"]["modelId"], "env-default");
+
+        let mut restored = Session::default();
+        restored.switch_to("old".into(), None, Some("recorded-for-old".into()));
+        restored.switch_to("new".into(), None, None);
+        assert_eq!(restored.model, None, "the runtime's default");
+        assert!(restored.turn_body("hi", "t").get("routingOptions").is_none());
     }
 
     /// The target session's history was built on its recorded model, so a
@@ -233,8 +258,11 @@ mod tests {
         assert_eq!(session.model.as_deref(), Some("claude-sonnet-5"));
         assert_eq!(session.model_origin, ModelOrigin::Restored);
         assert!(!session.model_pinned);
+        // The runtime restores it from the log and labels the route; the
+        // request names only the session.
+        session.fast = Some(true);
         let body = session.turn_body("hi", "t-1");
-        assert_eq!(body["routingOptions"]["modelId"], "claude-sonnet-5");
+        assert_eq!(body["routingOptions"], json!({"fast": true}));
         assert_eq!(body["sessionId"], "new");
     }
 
