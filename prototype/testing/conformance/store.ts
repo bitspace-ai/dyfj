@@ -324,6 +324,36 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   );
 
   run(
+    "latestSelectedModel names the session's newest model_selected model",
+    async (store) => {
+      assertStrictEquals(await store.events.latestSelectedModel("S1"), null);
+      const selected = (model: string | null, session = "S1") =>
+        event({
+          session_id: session,
+          event_type: "model_selected",
+          action: "select",
+          resource: model ?? "none",
+          model_id: model,
+        });
+      await commitEvents(store, selected("first"));
+      await subject.tick();
+      await commitEvents(store, selected("second"));
+      await subject.tick();
+      // Newer events of other types, other sessions, and a selection with
+      // no model do not count.
+      await commitEvents(
+        store,
+        event({ event_type: "model_response", model_id: "responder" }),
+        selected("elsewhere", "S2"),
+        selected(null),
+      );
+      assertEquals(await store.events.latestSelectedModel("S1"), "second");
+      assertEquals(await store.events.latestSelectedModel("S2"), "elsewhere");
+      assertStrictEquals(await store.events.latestSelectedModel("S3"), null);
+    },
+  );
+
+  run(
     "bySession orders, limits, filters by event and scopes to the session",
     async (store) => {
       const first = event();
@@ -522,7 +552,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     assertEquals(Object.keys(store.journal).filter((k) => k !== "commit"), []);
     assertEquals(
       Object.keys(store.events).sort(),
-      ["bySession", "countBySession", "exists"],
+      ["bySession", "countBySession", "exists", "latestSelectedModel"],
     );
     // Appending an existing event id is rejected, not an overwrite.
     const original = event({ content: "original" });

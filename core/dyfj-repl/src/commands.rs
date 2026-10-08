@@ -10,7 +10,7 @@
 
 use crate::approval::{self, visible};
 use crate::client::{Client, Incoming, Verdict};
-use crate::session::Session;
+use crate::session::{ModelOrigin, Session};
 use crate::terminal::Ask;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -333,10 +333,41 @@ pub fn model_refusal(rows: &[Value], slug: &str) -> Option<String> {
     }
 }
 
-/// Check a `--model` choice against the runtime's catalog before the first
-/// prompt, so a bad slug is refused at launch rather than after a request
-/// has been typed. `false` means refused, with the reason and the routable
-/// models already printed. A catalog that cannot be read is not a refusal.
+/// Why a resumed session's recorded model cannot be used, or `None` when it
+/// can. Resuming on a different model is the operator's call, never a silent
+/// fallback, so the refusal says how to make it.
+pub fn recorded_model_refusal(rows: &[Value], slug: &str) -> Option<String> {
+    let why = match find_row(rows, Some(slug)) {
+        None => "it is no longer in the catalog",
+        Some(row) if row.get("routable").and_then(Value::as_bool) == Some(false) => {
+            "it is unpriced"
+        }
+        Some(_) => return None,
+    };
+    Some(format!(
+        "this session last ran on \"{}\", which is not routable: {why}; \
+         resume it on another model with --model <slug>",
+        visible(slug)
+    ))
+}
+
+/// The model a runtime session last ran on, from `sessions/inspect`. `None`
+/// when it has none recorded, or when the runtime could not say (reported).
+pub async fn recorded_model(client: &Client, id: &str) -> Option<String> {
+    match client.request("sessions/inspect", json!({"sessionId": id})).await {
+        Ok(v) => v.get("model").and_then(Value::as_str).map(str::to_string),
+        Err(err) => {
+            error_line("could not read this session's recorded model", &err);
+            None
+        }
+    }
+}
+
+/// Check the startup model, a `--model` choice or a resumed session's
+/// recorded one, against the runtime's catalog before the first prompt, so
+/// it is refused at launch rather than after a request has been typed.
+/// `false` means refused, with the reason and the routable models already
+/// printed. A catalog that cannot be read is not a refusal.
 pub async fn startup_model_ok(client: &Client, session: &Session) -> bool {
     let Some(slug) = &session.model else {
         return true;
@@ -344,7 +375,11 @@ pub async fn startup_model_ok(client: &Client, session: &Session) -> bool {
     let Some(rows) = list_models(client).await else {
         return true;
     };
-    let Some(refusal) = model_refusal(&rows, slug) else {
+    let refusal = match session.model_origin {
+        ModelOrigin::Restored => recorded_model_refusal(&rows, slug),
+        _ => model_refusal(&rows, slug),
+    };
+    let Some(refusal) = refusal else {
         return true;
     };
     eprintln!("{refusal}");
@@ -520,6 +555,9 @@ fn posture(session: &Session, rows: &[Value]) -> String {
     match &session.model {
         Some(slug) => {
             parts.push(visible(slug));
+            if session.model_origin == ModelOrigin::Restored {
+                parts.push("restored from session".into());
+            }
             if let Some(row) = rows.iter().find(|r| str_field(r, "slug") == slug) {
                 if let Some(t) = row.get("tier").and_then(Value::as_i64) {
                     parts.push(format!("tier {t}"));
@@ -532,6 +570,9 @@ fn posture(session: &Session, rows: &[Value]) -> String {
             }
         }
         None => parts.push("runtime default model".into()),
+    }
+    if session.model_origin == ModelOrigin::Unrecorded {
+        parts.push("no recorded model for this session".into());
     }
     if session.fast == Some(true) {
         parts.push("fast".into());
@@ -587,7 +628,7 @@ async fn model(
                 visible(&slug)
             );
         }
-        session.model = Some(slug);
+        session.choose_model(slug);
     }
     if let Some(f) = fast {
         session.fast = Some(f);
@@ -672,6 +713,7 @@ async fn session_list(client: &Client) {
 
 async fn session_switch(client: &Client, session: &mut Session, id: String) {
     let mut workspace = None;
+    let mut recorded = None;
     match client
         .request("sessions/inspect", json!({"sessionId": id}))
         .await
@@ -684,11 +726,30 @@ async fn session_switch(client: &Client, session: &mut Session, id: String) {
                 .get("workspace")
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            recorded = v.get("model").and_then(Value::as_str).map(str::to_string);
         }
         Err(err) => error_line("could not inspect the session", &err),
     }
+    // Refuse before switching: once switched, the next turn would run the
+    // session's history on whatever model is left over.
+    let rows = match &recorded {
+        Some(_) => list_models(client).await,
+        None => None,
+    };
+    if let (Some(slug), Some(rows)) = (&recorded, &rows)
+        && let Some(refusal) = recorded_model_refusal(rows, slug)
+    {
+        eprintln!("not switched: {refusal}");
+        eprintln!("available:");
+        for line in format_models(rows) {
+            eprintln!("{line}");
+        }
+        eprintln!("to resume it: dyfj-repl --session {} --model <slug>", visible(&id));
+        return;
+    }
     eprintln!("switched to session: {}", visible(&id));
-    session.switch_to(id, workspace);
+    session.switch_to(id, workspace, recorded);
+    eprintln!("{}", posture(session, rows.as_deref().unwrap_or(&[])));
 }
 
 async fn friction(
@@ -967,7 +1028,7 @@ mod tests {
 mod run_tests {
     use super::{Command, Prompter, run, startup_model_ok};
     use crate::client::{Client, Incoming};
-    use crate::session::Session;
+    use crate::session::{ModelOrigin, Session};
     use crate::terminal::{Ask, ReadOutcome};
     use serde_json::{Value, json};
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -1112,6 +1173,75 @@ mod run_tests {
         assert_eq!(seen[0]["params"], json!({"sessionId": id}));
         assert_eq!(session.id.as_deref(), Some(id));
         assert_eq!(session.workspace.as_deref(), Some("/work/projects/dyfj"));
+    }
+
+    /// The catalog, with `sessions/inspect` reporting the model the session
+    /// last ran on.
+    fn recorded(model: &'static str) -> impl Fn(&str, &Value) -> Value {
+        move |method, params| match method {
+            "sessions/inspect" => json!({"exists": true, "workspace": "/w", "model": model}),
+            _ => catalog(method, params),
+        }
+    }
+    fn recorded_hosted(method: &str, params: &Value) -> Value {
+        recorded("z-ai/glm-5.2")(method, params)
+    }
+    fn recorded_gone(method: &str, params: &Value) -> Value {
+        recorded("gone/model")(method, params)
+    }
+    fn recorded_unpriced(method: &str, params: &Value) -> Value {
+        recorded("unpriced/x")(method, params)
+    }
+
+    /// The target session's history was built on its recorded model, so the
+    /// switch routes the next turn there, over the model chosen before.
+    #[tokio::test]
+    async fn session_switch_restores_the_target_sessions_model() {
+        let mut session = Session::default();
+        session.choose_model("local/qwen".into());
+        let id = "01J9ZQ4W8X6V5T3R2P1N0M9K8H";
+        let seen = drive(recorded_hosted, &mut session, vec![Command::SessionSwitch(id.into())]).await;
+        assert_eq!(methods(&seen), ["sessions/inspect", "models/list"]);
+        assert_eq!(session.id.as_deref(), Some(id));
+        assert_eq!(session.model.as_deref(), Some("z-ai/glm-5.2"));
+        assert_eq!(session.model_origin, ModelOrigin::Restored);
+        assert_eq!(session.turn_body("hi", "t")["routingOptions"]["modelId"], "z-ai/glm-5.2");
+    }
+
+    /// A recorded model that is gone or unpriced refuses the switch rather
+    /// than run the session's history on whatever model is left over.
+    #[tokio::test]
+    async fn session_switch_refuses_an_unroutable_recorded_model() {
+        for answer in [recorded_gone as Answer, recorded_unpriced] {
+            let mut session = Session { id: Some("old".into()), ..Session::default() };
+            session.choose_model("local/qwen".into());
+            drive(answer, &mut session, vec![Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into())]).await;
+            assert_eq!(session.id.as_deref(), Some("old"), "not switched");
+            assert_eq!(session.model.as_deref(), Some("local/qwen"));
+        }
+    }
+
+    /// `--session` reads the recorded model; startup then refuses one that is
+    /// no longer routable, as it refuses an unknown `--model`.
+    #[tokio::test]
+    async fn startup_restores_the_recorded_model_and_refuses_it_when_unroutable() {
+        for (answer, slug, ok) in [
+            (recorded_hosted as Answer, "z-ai/glm-5.2", true),
+            (recorded_gone, "gone/model", false),
+        ] {
+            let (client, _incoming, _log, server) = fake_runtime(answer);
+            let mut session = Session { id: Some("S1".into()), ..Session::default() };
+            session.restore_model(super::recorded_model(&client, "S1").await);
+            assert_eq!(session.model.as_deref(), Some(slug));
+            assert_eq!(session.model_origin, ModelOrigin::Restored);
+            assert_eq!(startup_model_ok(&client, &session).await, ok, "{slug}");
+            server.abort();
+            drop(client);
+        }
+        assert!(
+            super::recorded_model_refusal(&[], "gone/model").unwrap().contains("--model <slug>"),
+            "the refusal says how to resume on another model"
+        );
     }
 
     /// The runtime asks for approval while `friction/post` is in flight; the

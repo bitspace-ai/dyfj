@@ -77,6 +77,7 @@ function eventsReturning(
   return {
     exists: () => Promise.resolve(false),
     countBySession: () => Promise.resolve(rows.length),
+    latestSelectedModel: () => Promise.resolve(null),
     bySession: (query) => {
       calls.push(query);
       return Promise.resolve(rows.map((row) => ({ ...row })) as TextRow[]);

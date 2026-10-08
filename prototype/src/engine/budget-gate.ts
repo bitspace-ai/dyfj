@@ -21,6 +21,10 @@ import { writeModelSelectedEvent } from "../store/mod.ts";
 import { writeMaybe } from "./event-writes.ts";
 import { confirmPaidRoute, selectModelRoute } from "./route.ts";
 import { emitRuntimeEvent } from "./runtime-events.ts";
+import {
+  explainSessionModelFailure,
+  sessionRouteReason,
+} from "./session-model.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
 import type { NativeTurnPorts, TurnState } from "./turn-state.ts";
 
@@ -40,14 +44,16 @@ export async function budgetGate(
   ports: NativeTurnPorts,
 ): Promise<TurnRoute> {
   const { session } = state;
-  const { models, selection, routingReason } = await selectModelRoute(
-    ports.store.models,
-    {
-      mode: session.mode,
-      routingOptions: input.routingOptions,
-      defaultCompanionModel: input.defaultCompanionModel,
-    },
-  );
+  const { models, selection, routingReason: selectedReason } =
+    await selectModelRoute(
+      ports.store.models,
+      {
+        mode: session.mode,
+        routingOptions: input.routingOptions,
+        defaultCompanionModel: input.defaultCompanionModel,
+      },
+    ).catch((error) => explainSessionModelFailure(input, error));
+  const routingReason = sessionRouteReason(input, selectedReason);
   const selected = selection.selected;
   state.selectedForReceipt = {
     displayName: selected.displayName,

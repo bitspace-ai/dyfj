@@ -122,7 +122,11 @@ internal move.
      level).
   3. Mutating tool under `strict`, with the non-interactive client rejecting.
   4. `bash` always asks; approved via the scripted approver.
-  5. Continue an existing session (history projection).
+  5. Continue an existing session (history projection). The resumed turn
+     names no model, so it runs on the session's recorded model and reports
+     the route reason `session_model`; scenarios 05, 10 (whose
+     `sessions/inspect` also reports the recorded model) and 11 (which shares
+     scenario 05's session row) were re-snapshotted under that decision.
   6. A model with a pricing row crossing the session envelope, non-interactive.
      Expect fail-closed.
      - _Working thesis:_ a loopback model with a price row exercises the paid

@@ -128,6 +128,11 @@ export interface EventReader {
    * (`tool_arguments`, `runner_capabilities`) are rendered as JSON text.
    */
   bySession(query: SessionEventsQuery): Promise<TextRow[]>;
+  /**
+   * The model the session's latest `model_selected` event names, or null when
+   * it has none. The model a session last routed to, read from the log.
+   */
+  latestSelectedModel(sessionId: string): Promise<string | null>;
 }
 
 export interface SessionReader {

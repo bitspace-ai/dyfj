@@ -103,6 +103,7 @@ function eventsReturning(rows: Record<string, unknown>[]): EventReader {
   return {
     exists: () => Promise.resolve(false),
     countBySession: () => Promise.resolve(rows.length),
+    latestSelectedModel: () => Promise.resolve(null),
     bySession: () =>
       Promise.resolve(rows.map((row) => ({ ...row })) as TextRow[]),
   };

@@ -26,6 +26,7 @@ import {
 } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
 import { routeReasonForMode } from "./route.ts";
+import { sessionRouteReason } from "./session-model.ts";
 import type {
   NativeWorkbenchRuntimeResult,
   WorkbenchRuntimeInput,
@@ -90,7 +91,7 @@ export async function completeTurn(
     api: turn.model.api,
   };
   state.routingReason = routeReasonForMode(
-    turn.selection.reason,
+    sessionRouteReason(input, turn.selection.reason),
     turn.model.tier,
     isNextWork,
   );

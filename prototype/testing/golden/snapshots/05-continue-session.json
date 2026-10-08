@@ -15,7 +15,7 @@
         "traceId": "<TRACE:1>",
         "stopReason": "stop",
         "text": "History seen: user:[golden:s1] Say hello as JSON. | assistant:Golden reply (s1). | user:[golden:s5] What did we say before?",
-        "receipt": "Workbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   default\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  10 in, 5 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 0/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
+        "receipt": "Workbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   session_model\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  10 in, 5 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 0/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
         "model": {
           "displayName": "Golden Local",
           "slug": "golden-local",
@@ -24,7 +24,7 @@
           "tier": 0
         },
         "route": {
-          "reason": "default"
+          "reason": "session_model"
         },
         "cost": {
           "estimatedUsd": 0,
@@ -67,7 +67,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s5] What did we say before?\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   default\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  10 in, 5 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 0/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s5] What did we say before?\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   session_model\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  10 in, 5 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 0/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }
@@ -186,7 +186,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
-        "content": "{\"selected\":\"golden-local\",\"considered\":[\"golden-local\",\"golden-small\"],\"reason\":\"default\"}",
+        "content": "{\"selected\":\"golden-local\",\"considered\":[],\"reason\":\"session_model\"}",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,

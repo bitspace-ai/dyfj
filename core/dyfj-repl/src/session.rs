@@ -1,12 +1,27 @@
 //! What one REPL session carries from turn to turn.
 //!
 //! The runtime owns the conversation; this is only the client's half of it:
-//! the session id the runtime handed back, the routing the operator chose,
-//! paid consent, and the running spend shown on the receipt line. It mirrors
+//! the session id the runtime handed back, the routing the operator chose or
+//! the resumed session recorded, paid consent, and the running spend shown on
+//! the receipt line. It mirrors
 //! what the TypeScript REPL sends (`buildTurnBody` in `prototype/src/cli/
 //! turn-client.ts`), so either front-end produces the same turn request.
 
 use serde_json::{Map, Value, json};
+
+/// Where the session's model came from, so the posture line can say so.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ModelOrigin {
+    /// The operator's: `--model`, `DYFJ_WORKBENCH_MODEL`, `/model`, or none
+    /// (the runtime's default).
+    #[default]
+    Operator,
+    /// The model the resumed session last ran on, as the runtime recorded it.
+    Restored,
+    /// A resumed session the runtime holds no model for (one that predates
+    /// recording it, or never routed a native turn).
+    Unrecorded,
+}
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Session {
@@ -15,6 +30,11 @@ pub struct Session {
     pub id: Option<String>,
     /// Explicit model choice. `None` lets the runtime pick its default.
     pub model: Option<String>,
+    /// Where `model` came from.
+    pub model_origin: ModelOrigin,
+    /// The operator named the model with `--model`; a resumed session's
+    /// recorded model does not replace it at startup.
+    pub model_pinned: bool,
     /// Fast speed tier for models that advertise it. `None` sends nothing.
     pub fast: Option<bool>,
     /// Per-turn paid opt-in. The engine still decides; without it, a hosted
@@ -79,21 +99,48 @@ impl Session {
         self.turns += 1;
     }
 
-    /// Point the session at another runtime session. Spend and turn counts
-    /// restart, because they describe what happened in this REPL.
-    pub fn switch_to(&mut self, id: String, workspace: Option<String>) {
+    /// Take a resumed session's recorded model, as `sessions/inspect`
+    /// reports it, unless `--model` named one. With nothing recorded the
+    /// operator's choice, or the runtime's default, stands.
+    pub fn restore_model(&mut self, recorded: Option<String>) {
+        if self.model_pinned {
+            return;
+        }
+        match recorded {
+            Some(slug) => {
+                self.model = Some(slug);
+                self.model_origin = ModelOrigin::Restored;
+            }
+            None => self.model_origin = ModelOrigin::Unrecorded,
+        }
+    }
+
+    /// The operator chose `slug` with `/model`; the next turn records it.
+    pub fn choose_model(&mut self, slug: String) {
+        self.model = Some(slug);
+        self.model_origin = ModelOrigin::Operator;
+        self.model_pinned = true;
+    }
+
+    /// Point the session at another runtime session and its recorded model.
+    /// Spend and turn counts restart, because they describe what happened in
+    /// this REPL. A model chosen for the previous session does not carry
+    /// over a recorded one: the target's history was built on its own.
+    pub fn switch_to(&mut self, id: String, workspace: Option<String>, recorded: Option<String>) {
         self.id = Some(id);
         self.workspace = workspace;
         self.spend_usd = 0.0;
         self.turns = 0;
         self.last_model = None;
         self.last_command = None;
+        self.model_pinned = false;
+        self.restore_model(recorded);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Session;
+    use super::{ModelOrigin, Session};
     use serde_json::json;
 
     #[test]
@@ -165,12 +212,60 @@ mod tests {
             model: Some("kept".into()),
             ..Session::default()
         };
-        session.switch_to("new".into(), Some("/elsewhere".into()));
+        session.switch_to("new".into(), Some("/elsewhere".into()), None);
         assert_eq!(session.id.as_deref(), Some("new"));
         assert_eq!(session.workspace.as_deref(), Some("/elsewhere"));
         assert_eq!(session.spend_usd, 0.0);
         assert_eq!(session.turns, 0);
-        // Routing is the operator's choice, not the session's history.
+        // Nothing recorded: the current choice stands, and the posture says
+        // the session had none.
         assert_eq!(session.model.as_deref(), Some("kept"));
+        assert_eq!(session.model_origin, ModelOrigin::Unrecorded);
+    }
+
+    /// The target session's history was built on its recorded model, so a
+    /// switch routes there even over a model chosen for the previous one.
+    #[test]
+    fn switching_restores_the_target_sessions_recorded_model() {
+        let mut session = Session::default();
+        session.choose_model("local/qwen".into());
+        session.switch_to("new".into(), None, Some("claude-sonnet-5".into()));
+        assert_eq!(session.model.as_deref(), Some("claude-sonnet-5"));
+        assert_eq!(session.model_origin, ModelOrigin::Restored);
+        assert!(!session.model_pinned);
+        let body = session.turn_body("hi", "t-1");
+        assert_eq!(body["routingOptions"]["modelId"], "claude-sonnet-5");
+        assert_eq!(body["sessionId"], "new");
+    }
+
+    /// `--model` wins over the recorded model at startup; the environment's
+    /// model is a default, and does not.
+    #[test]
+    fn a_pinned_model_survives_restore_and_an_environment_model_does_not() {
+        let mut pinned = Session { model: Some("flag".into()), model_pinned: true, ..Session::default() };
+        pinned.restore_model(Some("recorded".into()));
+        assert_eq!(pinned.model.as_deref(), Some("flag"));
+        assert_eq!(pinned.model_origin, ModelOrigin::Operator);
+
+        let mut from_env = Session { model: Some("env".into()), ..Session::default() };
+        from_env.restore_model(Some("recorded".into()));
+        assert_eq!(from_env.model.as_deref(), Some("recorded"));
+        assert_eq!(from_env.model_origin, ModelOrigin::Restored);
+
+        let mut unrecorded = Session::default();
+        unrecorded.restore_model(None);
+        assert_eq!(unrecorded.model, None);
+        assert_eq!(unrecorded.model_origin, ModelOrigin::Unrecorded);
+    }
+
+    /// A `/model` change replaces a restored model and is what the next turn
+    /// sends, so the runtime records it.
+    #[test]
+    fn choosing_a_model_replaces_a_restored_one() {
+        let mut session = Session::default();
+        session.switch_to("S".into(), None, Some("recorded".into()));
+        session.choose_model("chosen".into());
+        assert_eq!(session.model_origin, ModelOrigin::Operator);
+        assert_eq!(session.turn_body("hi", "t")["routingOptions"]["modelId"], "chosen");
     }
 }

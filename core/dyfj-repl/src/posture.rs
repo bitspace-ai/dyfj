@@ -5,7 +5,7 @@
 //! when this front-end was first driven by hand.
 
 use crate::approval::visible;
-use crate::session::Session;
+use crate::session::{ModelOrigin, Session};
 use serde_json::Value;
 
 /// Render the posture from a `runtime/status` result and the choices the
@@ -18,10 +18,12 @@ pub fn line(status: &Value, session: &Session, socket: &str) -> String {
 
     let default = runtime.get("defaultTurnModel");
     let default_slug = default.and_then(|m| m.get("slug")).and_then(Value::as_str);
+    let restored = session.model_origin == ModelOrigin::Restored;
     if let Some(chosen) = session.model.as_deref().filter(|m| Some(*m) != default_slug) {
         // The status describes only the default model, so a different choice
         // is named without a tier or locality this line could not vouch for.
-        parts.push(format!("{} (chosen)", visible(chosen)));
+        let origin = if restored { "restored from session" } else { "chosen" };
+        parts.push(format!("{} ({origin})", visible(chosen)));
     } else if let Some(model) = default {
         let slug = model.get("slug").and_then(Value::as_str).unwrap_or("unknown model");
         parts.push(visible(slug));
@@ -33,6 +35,15 @@ pub fn line(status: &Value, session: &Session, socket: &str) -> String {
             Some(false) => parts.push("hosted".into()),
             None => {}
         }
+        if restored {
+            parts.push("restored from session".into());
+        }
+    }
+    // A resumed session with no recorded model runs on the default, as every
+    // resume did before the runtime recorded one; say so rather than imply
+    // the default is the model its history was built on.
+    if session.model_origin == ModelOrigin::Unrecorded {
+        parts.push("no recorded model for this session".into());
     }
     // Both states are shown, as the TypeScript posture line shows them: the
     // default of paid off is the one an operator most needs to see, because
@@ -156,6 +167,32 @@ mod tests {
         let same = Session { model: Some("local/qwen".into()), ..Session::default() };
         let rendered = line(&status, &same, "/tmp/s.sock");
         assert!(rendered.contains("local/qwen · tier 0 · local"), "{rendered}");
+    }
+
+    /// A resumed session names the model it was restored to, whether or not
+    /// that is the runtime's default; one with nothing recorded says so.
+    #[test]
+    fn a_resumed_session_names_its_restored_model_or_its_absence() {
+        let status = json!({"runtime": {
+            "defaultTurnModel": {"slug": "local/qwen", "tier": 0, "local": true}
+        }});
+        let mut hosted = Session::default();
+        hosted.restore_model(Some("claude-sonnet-5".into()));
+        let rendered = line(&status, &hosted, "/tmp/s.sock");
+        assert!(rendered.contains("claude-sonnet-5 (restored from session)"), "{rendered}");
+        assert!(!rendered.contains("local/qwen"), "{rendered}");
+
+        let mut local = Session::default();
+        local.restore_model(Some("local/qwen".into()));
+        let rendered = line(&status, &local, "/tmp/s.sock");
+        assert!(rendered.contains("local/qwen · tier 0 · local · restored from session"), "{rendered}");
+
+        let mut unrecorded = Session::default();
+        unrecorded.restore_model(None);
+        let rendered = line(&status, &unrecorded, "/tmp/s.sock");
+        assert!(rendered.contains("local/qwen · tier 0 · local"), "{rendered}");
+        assert!(rendered.contains("no recorded model for this session"), "{rendered}");
+        assert!(!rendered.contains("restored"), "{rendered}");
     }
 
     /// A runtime that stops reporting a field must not cost a failed startup.

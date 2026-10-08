@@ -19,6 +19,7 @@ function handlers(overrides: Partial<SessionsHandlerDeps> = {}) {
     fetchSessionRecord: () => Promise.resolve(null),
     fetchSessionWorkspaceRecord: () =>
       Promise.resolve({ exists: false, workspace: null }),
+    fetchSessionModel: () => Promise.resolve(null),
     countSessionEvents: () => Promise.resolve(0),
     ...overrides,
   });
@@ -39,7 +40,7 @@ Deno.test("sessions/list rejects a non-positive limit", async () => {
   });
 });
 
-Deno.test("sessions/inspect returns session summary, workspace, and event counts", async () => {
+Deno.test("sessions/inspect returns session summary, workspace, recorded model, and event counts", async () => {
   const session: WorkbenchSessionSummary = {
     sessionId: "01TEST_SESSION",
     slug: "workbench-01test_session",
@@ -55,6 +56,7 @@ Deno.test("sessions/inspect returns session summary, workspace, and event counts
       fetchSessionRecord: () => Promise.resolve(session),
       fetchSessionWorkspaceRecord: () =>
         Promise.resolve({ exists: true, workspace: "/workspaces/project" }),
+      fetchSessionModel: () => Promise.resolve("claude-sonnet-5"),
       countSessionEvents: () => Promise.resolve(1),
     }),
     "sessions/inspect",
@@ -63,6 +65,7 @@ Deno.test("sessions/inspect returns session summary, workspace, and event counts
   assertEquals(result, {
     session,
     workspace: "/workspaces/project",
+    model: "claude-sonnet-5",
     exists: true,
     eventCount: 1,
   });

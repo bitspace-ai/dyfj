@@ -1171,6 +1171,7 @@
           "updatedAt": "<TIMESTAMP js-date-string>"
         },
         "workspace": "<TMP>/workspace",
+        "model": "golden-local",
         "exists": true,
         "eventCount": 12
       }
@@ -1564,7 +1565,7 @@
             "modelId": "golden-local",
             "provider": "mlx-lm",
             "api": "openai-completions",
-            "content": "{\"selected\":\"golden-local\",\"considered\":[\"golden-local\",\"golden-small\"],\"reason\":\"default\"}",
+            "content": "{\"selected\":\"golden-local\",\"considered\":[],\"reason\":\"session_model\"}",
             "stopReason": null,
             "tokensInput": null,
             "tokensOutput": null,

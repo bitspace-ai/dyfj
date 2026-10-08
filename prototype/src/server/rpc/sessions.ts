@@ -1,5 +1,5 @@
 // The `sessions` namespace: the bounded, activity-ordered session list and
-// one session's summary, workspace and event count.
+// one session's summary, workspace, recorded model and event count.
 
 import {
   compareSessionActivity,
@@ -29,6 +29,8 @@ export interface SessionsHandlerDeps {
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
   fetchSessionWorkspaceRecord: FetchSessionWorkspaceRecord;
+  /** The model the session last routed to, from its events; null if none. */
+  fetchSessionModel: (input: { sessionId: string }) => Promise<string | null>;
   countSessionEvents: (input: { sessionId: string }) => Promise<number>;
 }
 
@@ -132,14 +134,16 @@ export function buildSessionsHandlers(deps: SessionsHandlerDeps): RpcHandlers {
         required: true,
         maxLen: 256,
       })!;
-      const [session, workspaceRec, eventCount] = await Promise.all([
+      const [session, workspaceRec, model, eventCount] = await Promise.all([
         deps.fetchSessionRecord({ sessionId }),
         deps.fetchSessionWorkspaceRecord({ sessionId }),
+        deps.fetchSessionModel({ sessionId }),
         deps.countSessionEvents({ sessionId }),
       ]);
       return {
         session,
         workspace: workspaceRec.workspace,
+        model,
         exists: session !== null || workspaceRec.exists,
         eventCount,
       };
