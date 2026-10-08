@@ -935,6 +935,25 @@ describe("an invocation the client's parser rejects never triggers autostart", (
     const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["--socket"]);
     assertStrictEquals(autostart, "no");
   });
+  it("a later non-empty --socket clears an earlier empty --socket", async () => {
+    // "--socket '' --socket /tmp/x.sock" — empty first, then value: last-wins
+    // clears emptiness, so autostart stays yes.
+    const { autostart, sock } = await dryRun(
+      { HOME: FAKE_HOME },
+      ["--socket", "", "--socket", "/tmp/x.sock"],
+    );
+    assertStrictEquals(autostart, "yes");
+    assertStrictEquals(sock, "/tmp/x.sock");
+  });
+  it("--socket '' last wins declines autostart", async () => {
+    // "--socket /tmp/x.sock --socket ''" — value first, then empty: last-wins
+    // emptiness, so autostart declines.
+    const { autostart } = await dryRun(
+      { HOME: FAKE_HOME },
+      ["--socket", "/tmp/x.sock", "--socket", ""],
+    );
+    assertStrictEquals(autostart, "no");
+  });
   it("a bare -p declines autostart", async () => {
     const { autostart } = await dryRun({ HOME: FAKE_HOME }, ["-p"]);
     assertStrictEquals(autostart, "no");
@@ -1552,5 +1571,32 @@ describe("compile-cli grant construction", () => {
     const { code, err } = await compileWithHome("relative/home");
     assertNotStrictEquals(code, 0);
     assertStringIncludes(err, "absolute home path");
+  });
+});
+
+describe("HOME=/ produces a single-slash runtime log path", () => {
+  it("a root HOME does not produce a double-slash log path in dry-run output", async () => {
+    const proc = new Deno.Command(BASH, {
+      args: [LAUNCHER],
+      env: {
+        DYFJ_LAUNCHER_DRY_RUN: "1",
+        DENO_DIR: realDenoDir(),
+        DYFJ_CODEX_TOOLCHAIN_PATH: "",
+        DYFJ_CODEX_RUSTUP_HOME: "",
+        HOME: "/",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    });
+    const { code, stdout, stderr } = await proc.output();
+    assertStrictEquals(code, 0);
+    const text = new TextDecoder().decode(stdout).trim();
+    const logMatch = text.match(/log=(\S+)/);
+    const log = logMatch?.[1];
+    // When HOME=/, runtime_log_path yields /.dyfj/log/... (home="" so
+    // printf produces a single leading slash).  Assert the log field starts
+    // with /.dyfj/log/ and not //.
+    assertStrictEquals(log?.startsWith("/.dyfj/log/"), true);
+    assertStrictEquals(log?.startsWith("//"), false);
   });
 });
