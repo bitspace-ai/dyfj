@@ -1983,3 +1983,7 @@ Document revisions only. Code and behavior changes are tracked in
   turn naming no model runs on the recorded model or refuses; and the
   interactive-terminal and runtime-status passages say `--session` and
   `/session switch` resume a session on the model it last ran on.
+- 2026-10-09 - AGENTS.md gains a "Rooms" pointer to `docs/agents/rooms.md`,
+  which states the seats (implementer, reviewer, coordinator, maintainer), the
+  maintainer's exclusive acts, and the nine rules every agent follows from
+  issue to merge.
