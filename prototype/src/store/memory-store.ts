@@ -152,6 +152,25 @@ function renderRow(row: Row, columns: readonly string[]): TextRow {
   return out;
 }
 
+/** Stop reasons of a provider call that ran to a response. */
+const COMPLETED_STOP_REASONS: ReadonlySet<string> = new Set([
+  "stop",
+  "length",
+  "tool_use",
+]);
+
+/**
+ * A provider call, or a turn's model response, that ran a native model to a
+ * completed response.
+ */
+function isCompletedModelCall(row: Row): boolean {
+  return (row.event_type === "provider_call" ||
+    row.event_type === "model_response") &&
+    COMPLETED_STOP_REASONS.has(String(row.stop_reason)) &&
+    row.provider_call_purpose !== "context_compression" &&
+    typeof row.model_id === "string" && row.model_id !== "";
+}
+
 /** `created_at`, then insertion order, then `event_id`, ascending. */
 function compareEventOrder(a: StampedEvent, b: StampedEvent): number {
   return (a.row.created_at as Date).getTime() -
@@ -697,16 +716,22 @@ export class MemoryStore implements Store {
           return Promise.reject(error);
         }
       },
-      latestSelectedModel: (sessionId) => {
+      latestRun: (sessionId) => {
         const latest = this.#tables.events
           .filter((e) =>
             e.row.session_id === sessionId &&
-            e.row.event_type === "model_selected" &&
-            typeof e.row.model_id === "string" && e.row.model_id !== ""
+            (isCompletedModelCall(e.row) ||
+              e.row.event_type === "agent_response")
           )
           .sort((a, b) => compareEventOrder(b, a))[0];
+        if (latest === undefined) return Promise.resolve(null);
         return Promise.resolve(
-          latest === undefined ? null : String(latest.row.model_id),
+          latest.row.event_type === "agent_response"
+            ? {
+              kind: "runner",
+              profile: String(latest.row.runner_profile ?? ""),
+            }
+            : { kind: "model", slug: String(latest.row.model_id) },
         );
       },
     };

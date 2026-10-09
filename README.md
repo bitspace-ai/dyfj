@@ -808,11 +808,14 @@ the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
 (and so the launcher's autostart check) sends first; it loads no models and
 queries no Dolt state.
 `sessions/inspect` returns one session's record, workspace, recorded model (the
-model its latest `model_selected` event names, or null), and event count.
+model of its latest completed `provider_call` or `model_response`, compression
+calls excluded, or null), the external-agent runner profile when a later `agent_response` shows
+its latest turn ran on one (else null), and event count.
 A turn that names an existing session and no model, tier or hint of its own
 runs on that recorded model, with the route reason `session_model`; a recorded
-model that is no longer routable refuses the turn rather than falling back to
-the configured default.
+model that is no longer routable, or a session whose latest turn ran on an
+external-agent runner, refuses the turn rather than falling back to the
+configured default or an older model.
 `ideas/mark` records a candidate idea against a session, optionally anchored to
 one of its events, and `packets/draft` drafts a work packet (title, source
 context, operator intent, proposed acceptance criteria, verifier provenance)
@@ -1973,3 +1976,10 @@ Document revisions only. Code and behavior changes are tracked in
   `@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner pins the
   adapter version in code and bot bumps cannot pass the gate; the adapter is
   upgraded deliberately when external-agent work resumes.
+- 2026-10-09 - The UDS-seam section says `sessions/inspect` reports a session's
+  recorded model (the model of its latest completed provider call or model
+  response) and, when
+  its latest turn ran on an external-agent runner, that runner; that a resumed
+  turn naming no model runs on the recorded model or refuses; and the
+  interactive-terminal and runtime-status passages say `--session` and
+  `/session switch` resume a session on the model it last ran on.

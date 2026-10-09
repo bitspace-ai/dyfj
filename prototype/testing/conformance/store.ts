@@ -324,32 +324,88 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   );
 
   run(
-    "latestSelectedModel names the session's newest model_selected model",
+    "latestRun names the session's newest completed model call or runner turn",
     async (store) => {
-      assertStrictEquals(await store.events.latestSelectedModel("S1"), null);
-      const selected = (model: string | null, session = "S1") =>
+      assertStrictEquals(await store.events.latestRun("S1"), null);
+      const call = (
+        model: string | null,
+        fields: Partial<EventInsert> = {},
+      ) =>
         event({
-          session_id: session,
-          event_type: "model_selected",
-          action: "select",
+          event_type: "provider_call",
+          action: "invoke",
           resource: model ?? "none",
           model_id: model,
+          provider_call_order: 1,
+          provider_call_purpose: "initial",
+          stop_reason: "stop",
+          ...fields,
         });
-      await commitEvents(store, selected("first"));
+      await commitEvents(store, call("first"));
       await subject.tick();
-      await commitEvents(store, selected("second"));
+      await commitEvents(store, call("tool-step", { stop_reason: "tool_use" }));
       await subject.tick();
-      // Newer events of other types, other sessions, and a selection with
-      // no model do not count.
+      // A call cut off at its output limit still ran on its model.
+      await commitEvents(store, call("second", { stop_reason: "length" }));
+      await subject.tick();
+      // Newer events that do not show the session running on a model: a
+      // selection, a failed or undispatched call, a compression call, a call
+      // with no model, and another session's call.
       await commitEvents(
         store,
-        event({ event_type: "model_response", model_id: "responder" }),
-        selected("elsewhere", "S2"),
-        selected(null),
+        event({
+          event_type: "model_selected",
+          action: "select",
+          model_id: "selected-only",
+        }),
+        call("failed", { stop_reason: "error" }),
+        call("undispatched", { stop_reason: "aborted" }),
+        call("compressor", { provider_call_purpose: "context_compression" }),
+        call(null),
+        call("elsewhere", { session_id: "S2" }),
       );
-      assertEquals(await store.events.latestSelectedModel("S1"), "second");
-      assertEquals(await store.events.latestSelectedModel("S2"), "elsewhere");
-      assertStrictEquals(await store.events.latestSelectedModel("S3"), null);
+      assertEquals(await store.events.latestRun("S1"), {
+        kind: "model",
+        slug: "second",
+      });
+      assertEquals(await store.events.latestRun("S2"), {
+        kind: "model",
+        slug: "elsewhere",
+      });
+      assertStrictEquals(await store.events.latestRun("S3"), null);
+      // A turn's completed model response counts even without a matching
+      // provider_call (whose write is best-effort); a cancelled one does not.
+      await subject.tick();
+      const response = (model: string, stop_reason: "stop" | "aborted") =>
+        event({
+          event_type: "model_response",
+          action: "invoke",
+          resource: model,
+          model_id: model,
+          stop_reason,
+        });
+      await commitEvents(store, response("responded", "stop"));
+      await subject.tick();
+      await commitEvents(store, response("cancelled", "aborted"));
+      assertEquals(await store.events.latestRun("S1"), {
+        kind: "model",
+        slug: "responded",
+      });
+      // A later external-agent turn names its runner instead.
+      await subject.tick();
+      await commitEvents(
+        store,
+        event({
+          event_type: "agent_response",
+          action: "invoke",
+          runner_kind: "external_agent",
+          runner_profile: "fixture",
+        }),
+      );
+      assertEquals(await store.events.latestRun("S1"), {
+        kind: "runner",
+        profile: "fixture",
+      });
     },
   );
 
@@ -552,7 +608,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     assertEquals(Object.keys(store.journal).filter((k) => k !== "commit"), []);
     assertEquals(
       Object.keys(store.events).sort(),
-      ["bySession", "countBySession", "exists", "latestSelectedModel"],
+      ["bySession", "countBySession", "exists", "latestRun"],
     );
     // Appending an existing event id is rejected, not an overwrite.
     const original = event({ content: "original" });

@@ -3,6 +3,7 @@
 
 import {
   compareSessionActivity,
+  type SessionLastRun,
   type WorkbenchProjectSessions,
   type WorkbenchSessionSummary,
 } from "../../store/mod.ts";
@@ -29,8 +30,10 @@ export interface SessionsHandlerDeps {
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
   fetchSessionWorkspaceRecord: FetchSessionWorkspaceRecord;
-  /** The model the session last routed to, from its events; null if none. */
-  fetchSessionModel: (input: { sessionId: string }) => Promise<string | null>;
+  /** What the session last ran on, from its events; null if it never ran. */
+  fetchSessionLastRun: (
+    input: { sessionId: string },
+  ) => Promise<SessionLastRun | null>;
   countSessionEvents: (input: { sessionId: string }) => Promise<number>;
 }
 
@@ -134,16 +137,19 @@ export function buildSessionsHandlers(deps: SessionsHandlerDeps): RpcHandlers {
         required: true,
         maxLen: 256,
       })!;
-      const [session, workspaceRec, model, eventCount] = await Promise.all([
+      const [session, workspaceRec, lastRun, eventCount] = await Promise.all([
         deps.fetchSessionRecord({ sessionId }),
         deps.fetchSessionWorkspaceRecord({ sessionId }),
-        deps.fetchSessionModel({ sessionId }),
+        deps.fetchSessionLastRun({ sessionId }),
         deps.countSessionEvents({ sessionId }),
       ]);
       return {
         session,
         workspace: workspaceRec.workspace,
-        model,
+        // The native model the session last ran on, or the external-agent
+        // runner profile when its latest turn ran on one; one is null.
+        model: lastRun?.kind === "model" ? lastRun.slug : null,
+        runner: lastRun?.kind === "runner" ? lastRun.profile : null,
         exists: session !== null || workspaceRec.exists,
         eventCount,
       };

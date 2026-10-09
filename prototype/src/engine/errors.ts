@@ -64,9 +64,9 @@ export class PaidEscalationDeclinedError extends DomainError {
 }
 
 /**
- * A resumed turn named no model, and the model its session last routed to
- * can no longer be routed: it left the catalog, was deactivated, or lost its
- * pricing. The turn refuses rather than falling back to the configured
+ * A resumed turn named no model, and the model its session last ran on (its
+ * latest completed provider call or model response) can no longer be
+ * routed: it left the catalog, was deactivated, or lost its pricing. The turn refuses rather than falling back to the configured
  * default, whose window the session's history may not fit.
  */
 export class SessionModelUnavailableError extends DomainError {
@@ -81,6 +81,24 @@ export class SessionModelUnavailableError extends DomainError {
     );
     this.slug = safeSlug;
     this.name = "SessionModelUnavailableError";
+  }
+}
+
+/**
+ * A resumed turn named no model, and its session last ran on an external
+ * agent runner, whose own model the log does not record. The turn refuses
+ * rather than route the runner's conversation to an older native model.
+ */
+export class SessionRunnerNotRestorableError extends DomainError {
+  constructor(public readonly profile: string) {
+    const safeProfile = sanitizeBoundaryText(profile, MAX_REASON_FIELD_BYTES);
+    super(
+      `This session last ran on the external agent runner "${safeProfile}", ` +
+        `which cannot be resumed automatically; name a model or runner to ` +
+        `resume it on`,
+    );
+    this.profile = safeProfile;
+    this.name = "SessionRunnerNotRestorableError";
   }
 }
 
@@ -151,6 +169,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   [ContextWindowOverflowError, "ContextWindowOverflowError"],
   [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
   [SessionModelUnavailableError, "SessionModelUnavailableError"],
+  [SessionRunnerNotRestorableError, "SessionRunnerNotRestorableError"],
   [
     ContextCompressionPersistenceUncertainError,
     "ContextCompressionPersistenceUncertainError",

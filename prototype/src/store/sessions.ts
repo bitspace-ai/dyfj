@@ -1,5 +1,10 @@
 import type { WorkbenchSessionEvent } from "../contract/mod.ts";
-import type { EventReader, Journal, SessionReader } from "./port.ts";
+import type {
+  EventReader,
+  Journal,
+  SessionLastRun,
+  SessionReader,
+} from "./port.ts";
 
 export interface WorkbenchSessionContentInput {
   mode: string;
@@ -103,14 +108,15 @@ export async function fetchWorkbenchSessionWorkspaceRecord(
 }
 
 /**
- * The model a session last routed to: the model its latest `model_selected`
- * event names, or null when it has none. The event log is the record; a
- * resumed turn that names no model of its own routes to this one.
+ * What a session last ran on: the model of its latest completed provider
+ * call, or the runner profile of a later external-agent turn; null when it
+ * never ran. The event log is the record; a resumed turn that names no model
+ * of its own routes to a recorded model, and refuses after a runner.
  */
-export async function fetchWorkbenchSessionModel(
+export async function fetchWorkbenchSessionLastRun(
   input: { sessionId: string; events: EventReader },
-): Promise<string | null> {
-  return await input.events.latestSelectedModel(input.sessionId);
+): Promise<SessionLastRun | null> {
+  return await input.events.latestRun(input.sessionId);
 }
 
 export async function fetchWorkbenchSessionRecord(
