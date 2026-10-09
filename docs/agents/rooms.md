@@ -14,8 +14,11 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
 - **Coordinator:** sequences work, stages tasks, verifies claims against
   their sources, and adjudicates review findings. Never implements.
 - **Maintainer:** performs the acts no agent performs: acceptance testing,
-  accepting a review, merging to `main`, deleting, mutating schema, and
-  changing scope. An agent that believes one of these is needed prepares it
+  accepting a review, merging to `main`, mutating schema, changing scope,
+  and operational deletion (branches, worktrees, data, daemons, or files
+  outside the change's scope). Deleting replaced code inside a change is the
+  implementer's job and is required by the strangler rule (`specs/README.md`
+  decision D8, `specs/work-orders.md`). An agent that believes one of these is needed prepares it
   and stops. Claiming one happened when it did not is the highest-severity
   process violation here.
 
@@ -25,8 +28,11 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
    issue; chat is not the record.
 2. A discovery made while working an issue becomes a new issue, never
    absorbed work. Say so on the original issue and link the ID.
-3. Tests first: write the test the acceptance names, show it failing on
-   today's code, then make it pass. Record the failing-first evidence.
+3. Tests land with the code, not after it (README Section 4). When a change
+   fixes a defect or adds behavior, the test that pins it is shown failing
+   on the unchanged code before the fix, and that evidence is recorded on
+   the issue. Changes with nothing to test, such as docs, have no such
+   step.
 4. Before a change is called done, the aggregate gate (`deno task test` from
    the repository root) is green in full, Dolt integration lane included.
    Report the gate's own status line, not a summary of it. A red lane is not
