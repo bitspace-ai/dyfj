@@ -129,12 +129,14 @@ export interface EventReader {
    */
   bySession(query: SessionEventsQuery): Promise<TextRow[]>;
   /**
-   * What the session last ran on, or null when it never ran: the newer of
-   * its latest `provider_call` that completed (stop reason `stop`, `length`
-   * or `tool_use`; compression calls excluded), which names a native model,
-   * and its latest `agent_response`, which names an external-agent runner
-   * profile. A model a turn only selected, or whose call failed or never
-   * dispatched, does not count.
+   * What the session last ran on, or null when it never ran: the newest of
+   * its completed `provider_call` (compression calls excluded) and
+   * `model_response` events (stop reason `stop`, `length` or `tool_use`),
+   * which name a native model, and its `agent_response` events, which name
+   * an external-agent runner profile. `model_response` is an integrity
+   * write, so a completed turn is found even when its best-effort
+   * `provider_call` write was skipped. A model a turn only selected, or
+   * whose call failed, never dispatched or was cancelled, does not count.
    */
   latestRun(sessionId: string): Promise<SessionLastRun | null>;
 }

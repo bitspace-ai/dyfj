@@ -159,9 +159,13 @@ const COMPLETED_STOP_REASONS: ReadonlySet<string> = new Set([
   "tool_use",
 ]);
 
-/** A provider call that ran a native model to a response. */
+/**
+ * A provider call, or a turn's model response, that ran a native model to a
+ * completed response.
+ */
 function isCompletedModelCall(row: Row): boolean {
-  return row.event_type === "provider_call" &&
+  return (row.event_type === "provider_call" ||
+    row.event_type === "model_response") &&
     COMPLETED_STOP_REASONS.has(String(row.stop_reason)) &&
     row.provider_call_purpose !== "context_compression" &&
     typeof row.model_id === "string" && row.model_id !== "";

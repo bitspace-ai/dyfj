@@ -127,7 +127,7 @@ export function doltEventReader(pool: DoltSelect): EventReader {
         pool,
         "SELECT event_type, model_id, runner_profile FROM events " +
           "WHERE session_id = ? AND (" +
-          "(event_type = 'provider_call' " +
+          "(event_type IN ('provider_call', 'model_response') " +
           "AND stop_reason IN ('stop', 'length', 'tool_use') " +
           "AND (provider_call_purpose IS NULL " +
           "OR provider_call_purpose <> 'context_compression') " +

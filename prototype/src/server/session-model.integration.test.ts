@@ -22,9 +22,13 @@ import {
   type EngineRun,
   engineServices,
   LOCAL_MODEL,
+  patchStore,
 } from "../../testing/builders/engine.ts";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
-import { runWorkbenchRuntime } from "../engine/mod.ts";
+import {
+  runWorkbenchRuntime,
+  type WorkbenchRuntimeServices,
+} from "../engine/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
 import {
   agentResponseEvent,
@@ -60,6 +64,7 @@ async function withServer(
   body: (
     client: Awaited<ReturnType<typeof connectUnixClient>>,
   ) => Promise<void>,
+  services: WorkbenchRuntimeServices = run.services,
 ): Promise<void> {
   const socketPath = udsTestSocket("server-session-model");
   await Deno.remove(socketPath).catch(() => {});
@@ -68,7 +73,7 @@ async function withServer(
     env: run.env,
     // The configured default: what a resumed session fell back to before.
     defaultCompanionModel: LOCAL_MODEL.slug,
-    runRuntime: (input) => runWorkbenchRuntime(input, run.services),
+    runRuntime: (input) => runWorkbenchRuntime(input, services),
   });
   try {
     const client = await connectUnixClient(server.socketPath);
@@ -200,6 +205,53 @@ for (
     });
   });
 }
+
+Deno.test("a turn whose provider_call write was skipped is still the one a resume restores", async () => {
+  const run = engineServices(
+    [
+      chatReply({ content: "on local" }),
+      chatReply({ content: "on other" }),
+      chatReply({ content: "resumed" }),
+    ],
+    { models: [LOCAL_MODEL, OTHER_MODEL] },
+  );
+  // provider_call is a best-effort write: reject it for the second turn only.
+  let rejectProviderCalls = false;
+  const journal = {
+    commit: (...args: Parameters<typeof run.store.journal.commit>) => {
+      if (
+        rejectProviderCalls &&
+        args[0].events.some((e) => e.event_type === "provider_call")
+      ) {
+        return Promise.reject(new Error("write rejected"));
+      }
+      return run.store.journal.commit(...args);
+    },
+  };
+  const services = {
+    ...run.services,
+    store: patchStore(run.store, { journal }),
+  };
+  await withServer(run, async (client) => {
+    const first = await client.request("turn", {
+      prompt: "start locally",
+      routingOptions: { modelId: LOCAL_MODEL.slug },
+    }) as TurnReply;
+    rejectProviderCalls = true;
+    const second = await client.request("turn", {
+      prompt: "move to the other model",
+      sessionId: first.sessionId,
+      routingOptions: { modelId: OTHER_MODEL.slug },
+    }) as TurnReply;
+    assertEquals(second.model.slug, OTHER_MODEL.slug);
+    rejectProviderCalls = false;
+    const resumed = await client.request("turn", {
+      prompt: "carry on",
+      sessionId: first.sessionId,
+    }) as TurnReply;
+    assertEquals(resumed.model.slug, OTHER_MODEL.slug);
+  }, services);
+});
 
 Deno.test("a bare resume after an external-agent turn refuses instead of routing to the older native model", async () => {
   const run = engineServices(

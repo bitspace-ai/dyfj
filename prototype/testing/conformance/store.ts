@@ -373,6 +373,24 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         slug: "elsewhere",
       });
       assertStrictEquals(await store.events.latestRun("S3"), null);
+      // A turn's completed model response counts even without a matching
+      // provider_call (whose write is best-effort); a cancelled one does not.
+      await subject.tick();
+      const response = (model: string, stop_reason: "stop" | "aborted") =>
+        event({
+          event_type: "model_response",
+          action: "invoke",
+          resource: model,
+          model_id: model,
+          stop_reason,
+        });
+      await commitEvents(store, response("responded", "stop"));
+      await subject.tick();
+      await commitEvents(store, response("cancelled", "aborted"));
+      assertEquals(await store.events.latestRun("S1"), {
+        kind: "model",
+        slug: "responded",
+      });
       // A later external-agent turn names its runner instead.
       await subject.tick();
       await commitEvents(

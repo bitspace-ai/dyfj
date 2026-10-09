@@ -65,8 +65,8 @@ export class PaidEscalationDeclinedError extends DomainError {
 
 /**
  * A resumed turn named no model, and the model its session last ran on (its
- * latest completed provider call) can no longer be routed: it left the catalog, was deactivated, or lost its
- * pricing. The turn refuses rather than falling back to the configured
+ * latest completed provider call or model response) can no longer be
+ * routed: it left the catalog, was deactivated, or lost its pricing. The turn refuses rather than falling back to the configured
  * default, whose window the session's history may not fit.
  */
 export class SessionModelUnavailableError extends DomainError {
