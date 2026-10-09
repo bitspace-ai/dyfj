@@ -351,14 +351,33 @@ pub fn recorded_model_refusal(rows: &[Value], slug: &str) -> Option<String> {
     ))
 }
 
-/// The model a runtime session last ran on, from `sessions/inspect`. `None`
-/// when it has none recorded, or when the runtime could not say (reported).
-pub async fn recorded_model(client: &Client, id: &str) -> Option<String> {
+/// The model a runtime session last ran on, from a `sessions/inspect`
+/// result: `Ok(None)` when it has none recorded. `Err` with the refusal when
+/// its latest turn ran on an external-agent runner, whose model the runtime
+/// does not record; the runtime refuses such a resume too.
+pub fn recorded_from(inspected: &Value) -> Result<Option<String>, String> {
+    let text = |key: &str| inspected.get(key).and_then(Value::as_str).map(str::to_string);
+    match text("runner") {
+        Some(runner) => Err(format!(
+            "this session last ran on the external agent runner \"{}\", whose \
+             model is not recorded; name one with --model <slug>",
+            visible(&runner)
+        )),
+        None => Ok(text("model")),
+    }
+}
+
+/// The model a runtime session last ran on, from `sessions/inspect`:
+/// `Ok(None)` when it has none recorded. `Err` (already reported) when the
+/// runtime could not say, or when the session last ran on a runner. Neither
+/// is the same as having none: a caller that treated them so would run the
+/// session's history on another model.
+pub async fn recorded_model(client: &Client, id: &str) -> Result<Option<String>, ()> {
     match client.request("sessions/inspect", json!({"sessionId": id})).await {
-        Ok(v) => v.get("model").and_then(Value::as_str).map(str::to_string),
+        Ok(v) => recorded_from(&v).map_err(|refusal| eprintln!("{refusal}")),
         Err(err) => {
             error_line("could not read this session's recorded model", &err);
-            None
+            Err(())
         }
     }
 }
@@ -727,9 +746,15 @@ async fn session_switch(client: &Client, session: &mut Session, id: String) {
     if inspected.get("exists").and_then(Value::as_bool) == Some(false) {
         eprintln!("warning: the runtime has no session {}", visible(&id));
     }
-    let text = |key: &str| inspected.get(key).and_then(Value::as_str).map(str::to_string);
-    let workspace = text("workspace");
-    let recorded = text("model");
+    let workspace = inspected.get("workspace").and_then(Value::as_str).map(str::to_string);
+    let recorded = match recorded_from(&inspected) {
+        Ok(recorded) => recorded,
+        Err(refusal) => {
+            eprintln!("not switched: {refusal}");
+            eprintln!("to resume it: dyfj-repl --session {} --model <slug>", visible(&id));
+            return;
+        }
+    };
     // Refuse before switching: once switched, the next turn would run the
     // session's history on whatever model is left over.
     let rows = match &recorded {
@@ -1220,6 +1245,44 @@ mod run_tests {
         }
     }
 
+    /// An inspection error is not "nothing recorded": startup must not take
+    /// it as leave to send the configured model.
+    #[tokio::test]
+    async fn an_inspection_error_is_not_an_unrecorded_session() {
+        let (client, _incoming, _log, server) = fake_runtime(inspect_fails);
+        assert_eq!(super::recorded_model(&client, "S1").await, Err(()));
+        server.abort();
+        drop(client);
+    }
+
+    fn recorded_runner(method: &str, params: &Value) -> Value {
+        match method {
+            "sessions/inspect" => json!({"exists": true, "workspace": "/w", "model": null, "runner": "fixture"}),
+            _ => catalog(method, params),
+        }
+    }
+
+    /// A session whose latest turn ran on an external-agent runner has no
+    /// recorded model to restore: startup and switch both refuse it rather
+    /// than run its history on a leftover or older native model.
+    #[tokio::test]
+    async fn a_session_that_last_ran_on_a_runner_is_not_resumed_without_a_model() {
+        let (client, _incoming, _log, server) = fake_runtime(recorded_runner);
+        assert_eq!(super::recorded_model(&client, "S1").await, Err(()));
+        server.abort();
+        drop(client);
+
+        let mut session = Session { id: Some("old".into()), ..Session::default() };
+        session.choose_model("local/qwen".into());
+        drive(recorded_runner, &mut session, vec![Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into())]).await;
+        assert_eq!(session.id.as_deref(), Some("old"), "not switched");
+        assert!(
+            super::recorded_from(&json!({"model": null, "runner": "fixture"}))
+                .unwrap_err()
+                .contains("--model <slug>")
+        );
+    }
+
     /// A switch whose recorded model cannot be read leaves the session where
     /// it was rather than resume the target on a leftover model.
     #[tokio::test]
@@ -1254,7 +1317,7 @@ mod run_tests {
         ] {
             let (client, _incoming, _log, server) = fake_runtime(answer);
             let mut session = Session { id: Some("S1".into()), ..Session::default() };
-            session.restore_model(super::recorded_model(&client, "S1").await);
+            session.restore_model(super::recorded_model(&client, "S1").await.unwrap());
             assert_eq!(session.model.as_deref(), Some(slug));
             assert_eq!(session.model_origin, ModelOrigin::Restored);
             assert_eq!(startup_model_ok(&client, &session).await, ok, "{slug}");

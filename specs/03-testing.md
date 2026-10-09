@@ -125,7 +125,7 @@ internal move.
   5. Continue an existing session (history projection). The resumed turn
      names no model, so it runs on the session's recorded model and reports
      the route reason `session_model`; scenarios 05, 10 (whose
-     `sessions/inspect` also reports the recorded model) and 11 (which shares
+     `sessions/inspect` also reports the recorded model and runner) and 11 (which shares
      scenario 05's session row) were re-snapshotted under that decision.
   6. A model with a pricing row crossing the session envelope, non-interactive.
      Expect fail-closed.

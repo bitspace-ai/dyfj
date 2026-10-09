@@ -19,7 +19,7 @@ function handlers(overrides: Partial<SessionsHandlerDeps> = {}) {
     fetchSessionRecord: () => Promise.resolve(null),
     fetchSessionWorkspaceRecord: () =>
       Promise.resolve({ exists: false, workspace: null }),
-    fetchSessionModel: () => Promise.resolve(null),
+    fetchSessionLastRun: () => Promise.resolve(null),
     countSessionEvents: () => Promise.resolve(0),
     ...overrides,
   });
@@ -56,7 +56,8 @@ Deno.test("sessions/inspect returns session summary, workspace, recorded model, 
       fetchSessionRecord: () => Promise.resolve(session),
       fetchSessionWorkspaceRecord: () =>
         Promise.resolve({ exists: true, workspace: "/workspaces/project" }),
-      fetchSessionModel: () => Promise.resolve("claude-sonnet-5"),
+      fetchSessionLastRun: () =>
+        Promise.resolve({ kind: "model", slug: "claude-sonnet-5" }),
       countSessionEvents: () => Promise.resolve(1),
     }),
     "sessions/inspect",
@@ -66,6 +67,7 @@ Deno.test("sessions/inspect returns session summary, workspace, recorded model, 
     session,
     workspace: "/workspaces/project",
     model: "claude-sonnet-5",
+    runner: null,
     exists: true,
     eventCount: 1,
   });
@@ -77,4 +79,17 @@ Deno.test("sessions/inspect rejects C1 control characters in identifiers", async
   });
   assertEquals(error.code, RpcErrorCode.invalidParams);
   assertStringIncludes(error.message, "cannot contain control characters");
+});
+
+Deno.test("sessions/inspect names the runner when the session last ran on one", async () => {
+  const result = await callRpc(
+    handlers({
+      fetchSessionLastRun: () =>
+        Promise.resolve({ kind: "runner", profile: "codex-chatgpt" }),
+    }),
+    "sessions/inspect",
+    { sessionId: "01TEST_SESSION" },
+  ) as { model: string | null; runner: string | null };
+  assertEquals(result.model, null);
+  assertEquals(result.runner, "codex-chatgpt");
 });

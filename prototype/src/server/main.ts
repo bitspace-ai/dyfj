@@ -31,10 +31,11 @@ import {
   DoltStore,
   type EventInsert,
   fetchWorkbenchSessionEvents,
-  fetchWorkbenchSessionModel,
+  fetchWorkbenchSessionLastRun,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
+  type SessionLastRun,
   type Store,
   type WorkbenchProjectSessions,
   type WorkbenchSessionSummary,
@@ -121,9 +122,9 @@ export interface WorkbenchUnixServerOptions {
   countSessionEvents?: (
     input: { sessionId: string },
   ) => Promise<number>;
-  fetchSessionModel?: (
+  fetchSessionLastRun?: (
     input: { sessionId: string },
-  ) => Promise<string | null>;
+  ) => Promise<SessionLastRun | null>;
   fetchSessionRecord?: (
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
@@ -249,9 +250,9 @@ function buildHandlers(
         ...input,
         sessions: store().sessions,
       }));
-  const fetchSessionModel = options.fetchSessionModel ??
+  const fetchSessionLastRun = options.fetchSessionLastRun ??
     ((input: { sessionId: string }) =>
-      fetchWorkbenchSessionModel({ ...input, events: store().events }));
+      fetchWorkbenchSessionLastRun({ ...input, events: store().events }));
   const countSessionEvents = options.countSessionEvents ??
     ((input: { sessionId: string }) =>
       countWorkbenchSessionEvents({ ...input, events: store().events }));
@@ -272,7 +273,7 @@ function buildHandlers(
       listSessions,
       fetchSessionRecord,
       fetchSessionWorkspaceRecord,
-      fetchSessionModel,
+      fetchSessionLastRun,
       countSessionEvents,
     }),
     ...buildEventsHandlers({ fetchSessionEvents }),

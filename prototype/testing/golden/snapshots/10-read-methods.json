@@ -1172,6 +1172,7 @@
         },
         "workspace": "<TMP>/workspace",
         "model": "golden-local",
+        "runner": null,
         "exists": true,
         "eventCount": 12
       }

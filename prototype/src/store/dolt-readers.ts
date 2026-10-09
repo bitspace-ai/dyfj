@@ -122,16 +122,25 @@ export function doltEventReader(pool: DoltSelect): EventReader {
       return Number.isNaN(count) ? 0 : count;
     },
     bySession: (query) => eventsBySession(pool, query),
-    async latestSelectedModel(sessionId) {
+    async latestRun(sessionId) {
       const rows = await queryText(
         pool,
-        "SELECT model_id FROM events WHERE session_id = ? " +
-          "AND event_type = 'model_selected' AND model_id IS NOT NULL " +
-          "AND model_id <> '' " +
+        "SELECT event_type, model_id, runner_profile FROM events " +
+          "WHERE session_id = ? AND (" +
+          "(event_type = 'provider_call' " +
+          "AND stop_reason IN ('stop', 'length', 'tool_use') " +
+          "AND (provider_call_purpose IS NULL " +
+          "OR provider_call_purpose <> 'context_compression') " +
+          "AND model_id IS NOT NULL AND model_id <> '') " +
+          "OR event_type = 'agent_response') " +
           "ORDER BY created_at DESC, event_id DESC LIMIT 1;",
         [sessionId],
       );
-      return rows[0]?.model_id || null;
+      const row = rows[0];
+      if (row === undefined) return null;
+      return row.event_type === "agent_response"
+        ? { kind: "runner", profile: row.runner_profile ?? "" }
+        : { kind: "model", slug: row.model_id! };
     },
   };
 }

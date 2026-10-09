@@ -1,9 +1,18 @@
-import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "@std/assert";
 import {
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
 } from "../providers/mod.ts";
-import { SessionModelUnavailableError } from "./errors.ts";
+import type { SessionLastRun } from "../store/mod.ts";
+import {
+  SessionModelUnavailableError,
+  SessionRunnerNotRestorableError,
+} from "./errors.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
 import {
   explainSessionModelFailure,
@@ -11,11 +20,14 @@ import {
   withSessionModel,
 } from "./session-model.ts";
 
-const recorded = (slug: string | null) => ({
+const recorded = (slug: string | null, runner?: string) => ({
   calls: [] as string[],
-  latestSelectedModel(sessionId: string) {
+  latestRun(sessionId: string): Promise<SessionLastRun | null> {
     this.calls.push(sessionId);
-    return Promise.resolve(slug);
+    if (runner !== undefined) {
+      return Promise.resolve({ kind: "runner", profile: runner });
+    }
+    return Promise.resolve(slug === null ? null : { kind: "model", slug });
   },
 });
 
@@ -93,5 +105,23 @@ Deno.test("a routing failure on the recorded model names it; others pass through
         new WorkbenchModelNotFoundError("x"),
       ),
     WorkbenchModelNotFoundError,
+  );
+});
+
+Deno.test("a session that last ran on an external-agent runner refuses a bare resume", async () => {
+  await assertRejects(
+    () =>
+      withSessionModel(
+        turn({ sessionId: "S1" }),
+        recorded(null, "codex-chatgpt"),
+      ),
+    SessionRunnerNotRestorableError,
+    "codex-chatgpt",
+  );
+  // An explicit model is the operator's choice and needs no lookup.
+  const explicit = turn({ sessionId: "S1", routingOptions: { modelId: "m" } });
+  assertStrictEquals(
+    await withSessionModel(explicit, recorded(null, "codex-chatgpt")),
+    explicit,
   );
 });

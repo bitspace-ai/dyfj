@@ -171,9 +171,17 @@ async fn main() -> Result<()> {
     println!("dyfj — Ctrl-C cancels a turn, Ctrl-D quits, /help lists commands");
     // A resumed session's history was built on the model it last ran on;
     // resuming it on another could overflow that model's window.
-    if let Some(id) = session.id.clone() {
-        let recorded = commands::recorded_model(&client, &id).await;
-        session.restore_model(recorded);
+    // `--model` names the model outright, so the recorded one is not needed;
+    // otherwise a session whose recorded model cannot be read is refused,
+    // because sending the configured model would run its history elsewhere.
+    if let Some(id) = session.id.clone().filter(|_| !session.model_pinned) {
+        match commands::recorded_model(&client, &id).await {
+            Ok(recorded) => session.restore_model(recorded),
+            Err(()) => {
+                eprintln!("not resumed: name a model with --model <slug>");
+                std::process::exit(2);
+            }
+        }
     }
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a

@@ -85,6 +85,24 @@ export class SessionModelUnavailableError extends DomainError {
 }
 
 /**
+ * A resumed turn named no model, and its session last ran on an external
+ * agent runner, whose own model the log does not record. The turn refuses
+ * rather than route the runner's conversation to an older native model.
+ */
+export class SessionRunnerNotRestorableError extends DomainError {
+  constructor(public readonly profile: string) {
+    const safeProfile = sanitizeBoundaryText(profile, MAX_REASON_FIELD_BYTES);
+    super(
+      `This session last ran on the external agent runner "${safeProfile}", ` +
+        `which cannot be resumed automatically; name a model or runner to ` +
+        `resume it on`,
+    );
+    this.profile = safeProfile;
+    this.name = "SessionRunnerNotRestorableError";
+  }
+}
+
+/**
  * The compression event's write was rejected AND the follow-up probe that would
  * say whether the row is nonetheless durable also failed. Neither continuing
  * uncompressed nor adopting the summary is safe under that uncertainty — one
@@ -151,6 +169,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   [ContextWindowOverflowError, "ContextWindowOverflowError"],
   [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
   [SessionModelUnavailableError, "SessionModelUnavailableError"],
+  [SessionRunnerNotRestorableError, "SessionRunnerNotRestorableError"],
   [
     ContextCompressionPersistenceUncertainError,
     "ContextCompressionPersistenceUncertainError",

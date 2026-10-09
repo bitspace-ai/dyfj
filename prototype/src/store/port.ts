@@ -129,11 +129,20 @@ export interface EventReader {
    */
   bySession(query: SessionEventsQuery): Promise<TextRow[]>;
   /**
-   * The model the session's latest `model_selected` event names, or null when
-   * it has none. The model a session last routed to, read from the log.
+   * What the session last ran on, or null when it never ran: the newer of
+   * its latest `provider_call` that completed (stop reason `stop`, `length`
+   * or `tool_use`; compression calls excluded), which names a native model,
+   * and its latest `agent_response`, which names an external-agent runner
+   * profile. A model a turn only selected, or whose call failed or never
+   * dispatched, does not count.
    */
-  latestSelectedModel(sessionId: string): Promise<string | null>;
+  latestRun(sessionId: string): Promise<SessionLastRun | null>;
 }
+
+/** What a session last ran on: a native model, or an external-agent runner. */
+export type SessionLastRun =
+  | { kind: "model"; slug: string }
+  | { kind: "runner"; profile: string };
 
 export interface SessionReader {
   /** `{ workspace }` for a session, or null when there is no such session. */

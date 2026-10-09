@@ -808,11 +808,14 @@ the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
 (and so the launcher's autostart check) sends first; it loads no models and
 queries no Dolt state.
 `sessions/inspect` returns one session's record, workspace, recorded model (the
-model its latest `model_selected` event names, or null), and event count.
+model of its latest completed `provider_call`, compression calls excluded, or
+null), the external-agent runner profile when a later `agent_response` shows
+its latest turn ran on one (else null), and event count.
 A turn that names an existing session and no model, tier or hint of its own
 runs on that recorded model, with the route reason `session_model`; a recorded
-model that is no longer routable refuses the turn rather than falling back to
-the configured default.
+model that is no longer routable, or a session whose latest turn ran on an
+external-agent runner, refuses the turn rather than falling back to the
+configured default or an older model.
 `ideas/mark` records a candidate idea against a session, optionally anchored to
 one of its events, and `packets/draft` drafts a work packet (title, source
 context, operator intent, proposed acceptance criteria, verifier provenance)
