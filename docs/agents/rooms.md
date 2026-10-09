@@ -14,11 +14,16 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
 - **Coordinator:** sequences work, stages tasks, verifies claims against
   their sources, and adjudicates review findings. Never implements.
 - **Maintainer:** performs the acts no agent performs: acceptance testing,
-  accepting a review, merging to `main`, mutating schema, changing scope,
-  and operational deletion (branches, worktrees, data, daemons, or files
-  outside the change's scope). Deleting replaced code inside a change is the
-  implementer's job and is required by the strangler rule (`specs/README.md`
-  decision D8, `specs/work-orders.md`). An agent that believes one of these is needed prepares it
+  accepting a review, merging to `main`, changing scope, operational
+  deletion (branches, worktrees, data, daemons, or files outside the
+  change's scope), and operational mutation of a live operator database
+  (applying DDL or correcting data on a running instance). Deleting
+  replaced code inside a change is the implementer's job under the
+  strangler rule (`specs/README.md` decision D8, `specs/work-orders.md`).
+  Writing an approved schema change as a forward migration, folded into the
+  current schema per `schema/migrations/README.md`, is implementer work; an
+  unapproved DDL change is a stop-and-ask, per the work orders' standing
+  rules. An agent that believes one of these is needed prepares it
   and stops. Claiming one happened when it did not is the highest-severity
   process violation here.
 
