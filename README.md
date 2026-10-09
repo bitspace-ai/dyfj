@@ -1235,7 +1235,11 @@ Dependabot proposes weekly update PRs for three surfaces, configured in
 `.github/dependabot.yml`: the Deno workspace under `prototype/` (its `deno.json`
 imports and `deno.lock`), the Rust crate set under `core/` (`Cargo.toml` and
 `Cargo.lock`), and the digest-pinned workflow actions under
-`.github/workflows/`.
+`.github/workflows/`. One Deno package is excluded by an `ignore` rule:
+`@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner asserts an
+exact adapter version at launch and two test fixtures pin the same string, so a
+bot bump cannot pass the gate; that adapter is upgraded deliberately, pin and
+fixtures together, when external-agent work resumes.
 
 The pins Dependabot does not cover are the Rust toolchain channel in
 `core/rust-toolchain.toml`, and the exact Deno/Dolt archive versions plus their
@@ -1965,3 +1969,7 @@ Document revisions only. Code and behavior changes are tracked in
   operator-configured default route rather than one named hosted provider
   (`specs/README.md` decision D31, which supersedes that part of D29 and keeps
   its ACP deferral).
+- 2026-10-09 - The dependency-updates section records that Dependabot ignores
+  `@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner pins the
+  adapter version in code and bot bumps cannot pass the gate; the adapter is
+  upgraded deliberately when external-agent work resumes.

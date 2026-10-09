@@ -369,6 +369,12 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Dependabot no longer proposes bumps for `@agentclientprotocol/codex-acp`.**
+  The `codex-chatgpt` runner asserts an exact adapter version at launch and
+  two test fixtures pin the same string, so a bot bump of that package alone
+  cannot pass the gate. External-agent work is deferred; the adapter is
+  upgraded deliberately, pin and fixtures together, when it resumes. The other
+  Deno, Cargo and workflow-action surfaces are unchanged.
 - **The Rust REPL restores the whole terminal, not a subset of its flags.** On
   exit and on panic it now replays the termios captured before rustyline took
   the terminal, comparing every field (including `c_line` on Linux) rather than
