@@ -343,7 +343,10 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         });
       await commitEvents(store, call("first"));
       await subject.tick();
-      await commitEvents(store, call("second", { stop_reason: "tool_use" }));
+      await commitEvents(store, call("tool-step", { stop_reason: "tool_use" }));
+      await subject.tick();
+      // A call cut off at its output limit still ran on its model.
+      await commitEvents(store, call("second", { stop_reason: "length" }));
       await subject.tick();
       // Newer events that do not show the session running on a model: a
       // selection, a failed or undispatched call, a compression call, a call

@@ -1976,3 +1976,9 @@ Document revisions only. Code and behavior changes are tracked in
   `@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner pins the
   adapter version in code and bot bumps cannot pass the gate; the adapter is
   upgraded deliberately when external-agent work resumes.
+- 2026-10-09 - The UDS-seam section says `sessions/inspect` reports a session's
+  recorded model (the model of its latest completed provider call) and, when
+  its latest turn ran on an external-agent runner, that runner; that a resumed
+  turn naming no model runs on the recorded model or refuses; and the
+  interactive-terminal and runtime-status passages say `--session` and
+  `/session switch` resume a session on the model it last ran on.

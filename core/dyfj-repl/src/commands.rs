@@ -352,18 +352,32 @@ pub fn recorded_model_refusal(rows: &[Value], slug: &str) -> Option<String> {
 }
 
 /// The model a runtime session last ran on, from a `sessions/inspect`
-/// result: `Ok(None)` when it has none recorded. `Err` with the refusal when
-/// its latest turn ran on an external-agent runner, whose model the runtime
-/// does not record; the runtime refuses such a resume too.
+/// result: `Ok(None)` only when `model` is an explicit null. `Err` with the
+/// refusal when its latest turn ran on an external-agent runner, whose model
+/// the runtime does not record (the runtime refuses such a resume too), or
+/// when the reply does not have that shape: a runtime too old to report the
+/// model, or a malformed reply, says nothing about what the session ran on.
 pub fn recorded_from(inspected: &Value) -> Result<Option<String>, String> {
-    let text = |key: &str| inspected.get(key).and_then(Value::as_str).map(str::to_string);
-    match text("runner") {
-        Some(runner) => Err(format!(
-            "this session last ran on the external agent runner \"{}\", whose \
-             model is not recorded; name one with --model <slug>",
-            visible(&runner)
-        )),
-        None => Ok(text("model")),
+    let unknown = || {
+        "this runtime did not report the session's model; \
+         name one with --model <slug>"
+            .to_string()
+    };
+    match inspected.get("runner") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(runner)) => {
+            return Err(format!(
+                "this session last ran on the external agent runner \"{}\", whose \
+                 model is not recorded; name one with --model <slug>",
+                visible(runner)
+            ));
+        }
+        Some(_) => return Err(unknown()),
+    }
+    match inspected.get("model") {
+        Some(Value::Null) => Ok(None),
+        Some(Value::String(model)) => Ok(Some(model.clone())),
+        _ => Err(unknown()),
     }
 }
 
@@ -1159,7 +1173,7 @@ mod run_tests {
                 {"slug": "unpriced/x", "routable": false, "modality": "aggregator-hosted"}
             ]}),
             "runtime/status" => json!({"runtime": {"defaultTurnModel": {"slug": "z-ai/glm-5.2"}}}),
-            "sessions/inspect" => json!({"exists": true, "workspace": "/work/projects/dyfj"}),
+            "sessions/inspect" => json!({"exists": true, "workspace": "/work/projects/dyfj", "model": null, "runner": null}),
             "friction/post" => json!({"firstLine": "friction posted", "commentId": "c1"}),
             "ideas/mark" => json!({"idea": {"ideaId": "i1", "label": "x"}}),
             _ => json!({}),
@@ -1281,6 +1295,25 @@ mod run_tests {
                 .unwrap_err()
                 .contains("--model <slug>")
         );
+    }
+
+    /// Only an explicit null means "nothing recorded". A missing or
+    /// mistyped field (an older runtime, a malformed reply) is unknown, and
+    /// must not resume on the configured model.
+    #[test]
+    fn only_an_explicit_null_reads_as_no_recorded_model() {
+        use super::recorded_from;
+        assert_eq!(recorded_from(&json!({"model": null, "runner": null})), Ok(None));
+        assert_eq!(recorded_from(&json!({"model": "m"})), Ok(Some("m".into())));
+        for reply in [
+            json!({}),
+            json!({"workspace": "/w"}),
+            json!({"model": 7}),
+            json!({"model": "m", "runner": 7}),
+            json!("not an object"),
+        ] {
+            assert!(recorded_from(&reply).is_err(), "{reply}");
+        }
     }
 
     /// A switch whose recorded model cannot be read leaves the session where

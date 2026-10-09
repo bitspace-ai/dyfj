@@ -17,7 +17,7 @@ README are tracked separately in its Revision history section.
   it to the default model, whose window a history built on a hosted model can
   overflow on the first prompt. Every provider call is already recorded as a
   `provider_call` event; the engine now reads the model of the session's
-  latest completed one (a new `EventReader.latestRunModel`, no schema change
+  latest completed one (a new `EventReader.latestRun`, no schema change
   and no new write path) and routes a resumed turn that names no model, tier
   or hint of its own to it, with the route reason `session_model`. A model a
   turn only selected does not count: a turn whose provider call failed, or
