@@ -807,7 +807,12 @@ for `dyfj stop`; the narrow operator-approved `friction/post` method;
 the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
 (and so the launcher's autostart check) sends first; it loads no models and
 queries no Dolt state.
-`sessions/inspect` returns one session's record, workspace, and event count.
+`sessions/inspect` returns one session's record, workspace, recorded model (the
+model its latest `model_selected` event names, or null), and event count.
+A turn that names an existing session and no model, tier or hint of its own
+runs on that recorded model, with the route reason `session_model`; a recorded
+model that is no longer routable refuses the turn rather than falling back to
+the configured default.
 `ideas/mark` records a candidate idea against a session, optionally anchored to
 one of its events, and `packets/draft` drafts a work packet (title, source
 context, operator intent, proposed acceptance criteria, verifier provenance)
@@ -1319,7 +1324,10 @@ prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
 Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
 and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
 `/idea`, and it refuses an unknown or unroutable `--model` before the first
-prompt. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
+prompt. `--session` and `/session switch` resume a session on the model it last
+ran on (an explicit `--model` still wins at startup), name it on the posture
+line, and refuse a recorded model that is no longer routable; a session with no
+recorded model resumes on the configured default, and the posture line says so. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
 available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
 prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
@@ -1417,7 +1425,8 @@ Things that exist as boxes on a diagram.
 - **Session/State Persistence & Lifecycle.** Full thread storage (messages, tool
   results, artifacts) with resume, rewind, fork. Sessions outlive harnesses.
   _Runtime status: partly implemented. Sessions and their events persist in
-  Dolt, and `--session` resumes a session; rewind and fork are not
+  Dolt, and `--session` resumes a session on the model it last ran on; rewind
+  and fork are not
   implemented, and artifacts are not stored._
 - **Inter-Agent Contracts & Capability Discovery.** Bilateral registration:
   agents advertise capabilities, agents declare needs, the substrate matches

@@ -11,6 +11,28 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A resumed session comes back on the model it last ran on, not the
+  configured default.** The model choice lived only in the REPL client, so
+  `dyfj --session <id>` restored a session's workspace and history but routed
+  it to the default model, whose window a history built on a hosted model can
+  overflow on the first prompt. Every native turn already records the model it
+  routed to as a `model_selected` event; the engine now reads the session's
+  latest one (a new `EventReader.latestSelectedModel`, no schema change and no
+  new write path) and routes a resumed turn that names no model, tier or hint
+  of its own to it, with the route reason `session_model`. A recorded model
+  that is no longer routable (left the catalog, deactivated or unpriced) fails
+  the turn with a message naming it, instead of falling back.
+  `sessions/inspect` now reports the recorded model. The Rust REPL restores it
+  on `--session` and `/session switch`, names it on the posture line
+  (`restored from session`) and leaves the routing to the runtime so the
+  receipt reports `session_model`, refuses an unroutable one at startup or at
+  the switch with the available models listed, never carries a model chosen
+  for one session into another, and lets an explicit `--model` win;
+  a session with no recorded model resumes on the default and the posture line
+  says so. Sessions created before this change are restored too, because their
+  turns already wrote the event. Golden scenarios 05, 10 and 11 were
+  re-snapshotted for the new route reason and `sessions/inspect` field.
+
 - **`--socket` validity now uses last-wins semantics.** An empty `--socket` no
   longer permanently invalidates the invocation; only the final `--socket`
   value determines whether `LAUNCHER_ARGS_INVALID` is set.

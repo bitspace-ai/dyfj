@@ -102,6 +102,17 @@ export async function fetchWorkbenchSessionWorkspaceRecord(
   };
 }
 
+/**
+ * The model a session last routed to: the model its latest `model_selected`
+ * event names, or null when it has none. The event log is the record; a
+ * resumed turn that names no model of its own routes to this one.
+ */
+export async function fetchWorkbenchSessionModel(
+  input: { sessionId: string; events: EventReader },
+): Promise<string | null> {
+  return await input.events.latestSelectedModel(input.sessionId);
+}
+
 export async function fetchWorkbenchSessionRecord(
   input: { sessionId: string; sessions: SessionReader },
 ): Promise<WorkbenchSessionSummary | null> {

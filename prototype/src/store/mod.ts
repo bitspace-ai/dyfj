@@ -48,6 +48,7 @@ export {
   createWorkbenchSession,
   type CreateWorkbenchSessionInput,
   fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionModel,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspace,
   fetchWorkbenchSessionWorkspaceRecord,

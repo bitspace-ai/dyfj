@@ -122,6 +122,17 @@ export function doltEventReader(pool: DoltSelect): EventReader {
       return Number.isNaN(count) ? 0 : count;
     },
     bySession: (query) => eventsBySession(pool, query),
+    async latestSelectedModel(sessionId) {
+      const rows = await queryText(
+        pool,
+        "SELECT model_id FROM events WHERE session_id = ? " +
+          "AND event_type = 'model_selected' AND model_id IS NOT NULL " +
+          "AND model_id <> '' " +
+          "ORDER BY created_at DESC, event_id DESC LIMIT 1;",
+        [sessionId],
+      );
+      return rows[0]?.model_id || null;
+    },
   };
 }
 

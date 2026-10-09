@@ -88,7 +88,7 @@ usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--session <id>] [--
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
-  --session <id>    resume a runtime session
+  --session <id>    resume a runtime session, on the model it last ran on unless --model names one
   --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
 
 /// Build the starting session from the command line and environment.
@@ -101,6 +101,7 @@ fn parse_args(
     let set = |key: &str| env(key).filter(|value| !value.is_empty());
     let mut session = Session {
         model: set("DYFJ_WORKBENCH_MODEL"),
+        default_model: set("DYFJ_WORKBENCH_MODEL"),
         workspace: set("DYFJ_WORKSPACE").or(cwd),
         ..Session::default()
     };
@@ -116,7 +117,10 @@ fn parse_args(
             "-h" | "--help" => return Ok(None),
             "--approve-paid" => session.approve_paid = true,
             "--fast" => session.fast = Some(true),
-            "--model" => session.model = Some(value("--model")?),
+            "--model" => {
+                session.model = Some(value("--model")?);
+                session.model_pinned = true;
+            }
             "--workspace" => session.workspace = Some(value("--workspace")?),
             "--session" => {
                 let reference = value("--session")?;
@@ -165,6 +169,12 @@ async fn main() -> Result<()> {
         .with_context(|| format!("no runtime at {socket}; start it with `dyfj start`"))?;
 
     println!("dyfj — Ctrl-C cancels a turn, Ctrl-D quits, /help lists commands");
+    // A resumed session's history was built on the model it last ran on;
+    // resuming it on another could overflow that model's window.
+    if let Some(id) = session.id.clone() {
+        let recorded = commands::recorded_model(&client, &id).await;
+        session.restore_model(recorded);
+    }
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
@@ -677,6 +687,7 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(session.model.as_deref(), Some("z-ai/glm-5.2"));
+        assert!(session.model_pinned, "--model wins over a resumed session's model");
         assert!(session.approve_paid);
         assert_eq!(session.fast, Some(true));
         assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
@@ -708,6 +719,7 @@ mod tests {
             .unwrap();
         assert_eq!(from_env.workspace.as_deref(), Some("/env-ws"));
         assert_eq!(from_env.model.as_deref(), Some("env-model"));
+        assert!(!from_env.model_pinned, "the environment's model is a default");
 
         let flag = super::parse_args(
             &args(&["--workspace", "/flag"]),

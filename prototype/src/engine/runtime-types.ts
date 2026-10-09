@@ -171,6 +171,11 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    */
   defaultCompanionModel?: string | null;
   /**
+   * Set by the engine, never by a caller: the session's recorded model this
+   * resumed turn was routed to because it named none (`session-model.ts`).
+   */
+  restoredSessionModel?: string;
+  /**
    * Operator permission posture from config ("strict" | "operator"), resolved at
    * the boundary. The core reads only this field (default "strict"); the command
    * policy uses it together with the loopback transport to decide whether

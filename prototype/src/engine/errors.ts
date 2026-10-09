@@ -64,6 +64,27 @@ export class PaidEscalationDeclinedError extends DomainError {
 }
 
 /**
+ * A resumed turn named no model, and the model its session last routed to
+ * can no longer be routed: it left the catalog, was deactivated, or lost its
+ * pricing. The turn refuses rather than falling back to the configured
+ * default, whose window the session's history may not fit.
+ */
+export class SessionModelUnavailableError extends DomainError {
+  constructor(
+    public readonly slug: string,
+    public readonly why: "not in the catalog" | "unpriced",
+  ) {
+    const safeSlug = sanitizeBoundaryText(slug, MAX_REASON_FIELD_BYTES);
+    super(
+      `This session last ran on "${safeSlug}", which is no longer routable ` +
+        `(${why}); name a model to resume it on`,
+    );
+    this.slug = safeSlug;
+    this.name = "SessionModelUnavailableError";
+  }
+}
+
+/**
  * The compression event's write was rejected AND the follow-up probe that would
  * say whether the row is nonetheless durable also failed. Neither continuing
  * uncompressed nor adopting the summary is safe under that uncertainty — one
@@ -129,6 +150,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   [RunawayAnomalyHaltError, "RunawayAnomalyHaltError"],
   [ContextWindowOverflowError, "ContextWindowOverflowError"],
   [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
+  [SessionModelUnavailableError, "SessionModelUnavailableError"],
   [
     ContextCompressionPersistenceUncertainError,
     "ContextCompressionPersistenceUncertainError",

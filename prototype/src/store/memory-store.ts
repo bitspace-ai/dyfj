@@ -152,6 +152,14 @@ function renderRow(row: Row, columns: readonly string[]): TextRow {
   return out;
 }
 
+/** `created_at`, then insertion order, then `event_id`, ascending. */
+function compareEventOrder(a: StampedEvent, b: StampedEvent): number {
+  return (a.row.created_at as Date).getTime() -
+      (b.row.created_at as Date).getTime() ||
+    (a.seq !== null && b.seq !== null ? a.seq - b.seq : 0) ||
+    compareText(String(a.row.event_id), String(b.row.event_id));
+}
+
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -675,14 +683,7 @@ export class MemoryStore implements Store {
               e.row.session_id === query.sessionId &&
               (!query.eventId || e.row.event_id === query.eventId)
             )
-            .sort((a, b) =>
-              direction * (
-                (a.row.created_at as Date).getTime() -
-                  (b.row.created_at as Date).getTime() ||
-                (a.seq !== null && b.seq !== null ? a.seq - b.seq : 0) ||
-                compareText(String(a.row.event_id), String(b.row.event_id))
-              )
-            )
+            .sort((a, b) => direction * compareEventOrder(a, b))
             .slice(0, query.limit)
             .map((e) => {
               const out: TextRow = {};
@@ -695,6 +696,18 @@ export class MemoryStore implements Store {
         } catch (error) {
           return Promise.reject(error);
         }
+      },
+      latestSelectedModel: (sessionId) => {
+        const latest = this.#tables.events
+          .filter((e) =>
+            e.row.session_id === sessionId &&
+            e.row.event_type === "model_selected" &&
+            typeof e.row.model_id === "string" && e.row.model_id !== ""
+          )
+          .sort((a, b) => compareEventOrder(b, a))[0];
+        return Promise.resolve(
+          latest === undefined ? null : String(latest.row.model_id),
+        );
       },
     };
   }

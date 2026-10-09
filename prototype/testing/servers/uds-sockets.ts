@@ -30,6 +30,7 @@ export const UDS_TEST_SOCKETS = [
   "server-unknown-method",
   "server-console-canary",
   "server-events-asof",
+  "server-session-model",
   "cli-stop-live",
   "cli-stop-fails",
   "cli-stop-missing",

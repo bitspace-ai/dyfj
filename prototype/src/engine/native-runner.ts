@@ -8,6 +8,10 @@ import { processEnv } from "../config/mod.ts";
 import { createCommandRegistry } from "../tools/mod.ts";
 import type { ObservedCallContext } from "./observed-call.ts";
 import { resolveRoute } from "./route.ts";
+import {
+  explainSessionModelFailure,
+  withSessionModel,
+} from "./session-model.ts";
 import type {
   ExternalAgentRunner,
   NativeWorkbenchRuntimeResult,
@@ -53,10 +57,13 @@ export function runWorkbenchRuntime(
   services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult>;
 export async function runWorkbenchRuntime(
-  runtimeInput: WorkbenchRuntimeInput,
+  requested: WorkbenchRuntimeInput,
   services: WorkbenchRuntimeServices,
 ): Promise<WorkbenchRuntimeResult> {
-  const route = await resolveRoute(runtimeInput, services.store.models);
+  const runtimeInput = await withSessionModel(requested, services.store.events);
+  const route = await resolveRoute(runtimeInput, services.store.models).catch(
+    (error) => explainSessionModelFailure(runtimeInput, error),
+  );
   if (route.runner === "acp") {
     return await requireExternalAgentRunner(services).run({
       ...runtimeInput,
