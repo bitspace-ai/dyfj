@@ -9,6 +9,13 @@ updates:
     directory: "/prototype"
     schedule:
       interval: "weekly"
+    # The codex-chatgpt runner asserts an exact adapter version at launch
+    # (CODEX_ACP_VERSION in prototype/src/external-agent-runtime.ts) and two
+    # test fixtures pin the same string, so a bot bump of this package cannot
+    # pass the gate. External-agent (ACP) work is deferred; the adapter is
+    # upgraded deliberately, with the pin and fixtures, when that resumes.
+    ignore:
+      - dependency-name: "@agentclientprotocol/codex-acp"
   # The Rust substrate's crates are declared in core/Cargo.toml and locked by
   # the committed core/Cargo.lock.
   - package-ecosystem: "cargo"
