@@ -202,7 +202,7 @@
     "@agentclientprotocol/sdk": "npm:@agentclientprotocol/sdk@1.4.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing": "jsr:@std/testing@1.0.21",
-    "@modelcontextprotocol/client": "npm:@modelcontextprotocol/client@2.1.0",
+    "@modelcontextprotocol/client": "npm:@modelcontextprotocol/client@2.3.1",
     "@modelcontextprotocol/server": "npm:@modelcontextprotocol/server@2.3.1",
     "@modelcontextprotocol/server/stdio": "npm:@modelcontextprotocol/server@2.3.1/stdio",
     "@std/toml": "jsr:@std/toml@1.0.11",

@@ -25,7 +25,7 @@
     "jsr:@std/toml@1.0.11": "1.0.11",
     "npm:@agentclientprotocol/codex-acp@1.11.0": "1.11.0",
     "npm:@agentclientprotocol/sdk@1.4.0": "1.4.0_zod@4.6.5",
-    "npm:@modelcontextprotocol/client@2.1.0": "2.1.0",
+    "npm:@modelcontextprotocol/client@2.3.1": "2.3.1",
     "npm:@modelcontextprotocol/server@2.3.1": "2.3.1",
     "npm:mysql2@3.24.4": "3.24.4_@types+node@26.5.1",
     "npm:ulid@3.0.2": "3.0.2",
@@ -142,21 +142,15 @@
         "zod"
       ]
     },
-    "@modelcontextprotocol/client@2.1.0": {
-      "integrity": "sha512-mDVhoy5WjDb0U+4dQPzLcciC2erSex/GRVQqnoZdiuMoE3YiTZdiS7ezNcFwX4XEOWOaj7jZr0kLYnILnL8orA==",
+    "@modelcontextprotocol/client@2.3.1": {
+      "integrity": "sha512-mIGZXpHsjnZ6lD+gD/WCMpR5k8yVQQ8nNFH1N0Srf7AvnwTUMYD6pvTY8ng2+He5FfV7YMZLmrjL7cLa/cc3dQ==",
       "dependencies": [
-        "@modelcontextprotocol/core@2.1.0",
+        "@modelcontextprotocol/core",
         "cross-spawn",
         "eventsource",
         "eventsource-parser",
         "jose",
         "pkce-challenge",
-        "zod"
-      ]
-    },
-    "@modelcontextprotocol/core@2.1.0": {
-      "integrity": "sha512-YdFj5gMRHr0gYNAhTbQDgjLHiEJdIAUYxomhKseUNye7ZGlISQmUoLh2sveFFCiQ7j2YMffT1kgSND0FSfIFjQ==",
-      "dependencies": [
         "zod"
       ]
     },
@@ -169,7 +163,7 @@
     "@modelcontextprotocol/server@2.3.1": {
       "integrity": "sha512-e59MfWuSssj6DoQ96JCTqdW1AXT5/XtnTl0WWd6MU1Ka434fFUGGosCLJbGNySDhHGvxQWoRWK137FXYFkYNWw==",
       "dependencies": [
-        "@modelcontextprotocol/core@2.3.1",
+        "@modelcontextprotocol/core",
         "zod"
       ]
     },
@@ -441,7 +435,7 @@
       "jsr:@std/toml@1.0.11",
       "npm:@agentclientprotocol/codex-acp@1.11.0",
       "npm:@agentclientprotocol/sdk@1.4.0",
-      "npm:@modelcontextprotocol/client@2.1.0",
+      "npm:@modelcontextprotocol/client@2.3.1",
       "npm:@modelcontextprotocol/server@2.3.1",
       "npm:mysql2@3.24.4",
       "npm:ulid@3.0.2",
