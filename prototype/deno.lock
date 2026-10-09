@@ -27,7 +27,7 @@
     "npm:@agentclientprotocol/sdk@1.4.0": "1.4.0_zod@4.6.5",
     "npm:@modelcontextprotocol/client@2.3.1": "2.3.1",
     "npm:@modelcontextprotocol/server@2.3.1": "2.3.1",
-    "npm:mysql2@3.24.4": "3.24.4_@types+node@26.5.1",
+    "npm:mysql2@3.24.5": "3.24.5_@types+node@26.6.5",
     "npm:ulid@3.0.2": "3.0.2",
     "npm:zod@4.6.5": "4.6.5"
   },
@@ -209,8 +209,8 @@
       "os": ["win32"],
       "cpu": ["x64"]
     },
-    "@types/node@26.5.1": {
-      "integrity": "sha512-CzNm2FezW4VR/LjG6yUdiEgLE/rAQ9Slj5gCu/C2VrdcW7I0ahNZ8DRbHT7zOZ6r3ONgd/bsQIeSaoDGrd1C6g==",
+    "@types/node@26.6.5": {
+      "integrity": "sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==",
       "dependencies": [
         "undici-types"
       ]
@@ -304,8 +304,8 @@
     "lru.min@1.1.5": {
       "integrity": "sha512-5J9ysMYUpYIg9RF2vJpy9SinEmSviFSe0GyPpCQ4L5QSkLAgeLXlTAOu2ZwWUU5m+0SBl6gUU1R1ZQB3aKypfA=="
     },
-    "mysql2@3.24.4_@types+node@26.5.1": {
-      "integrity": "sha512-A2olluVlj0mvgyIRRISMEzXc51m+21mRtcMVjJyIpt2GG98+XrC9m9HzsqcMsX2LcnfccJvY5NB22g8fENBnOA==",
+    "mysql2@3.24.5_@types+node@26.6.5": {
+      "integrity": "sha512-X6Ujsr2QSkkLpkQGjxzpKRAPn9nu4axpR63ntBzquFVEvPOArgbUQ1sJjFKI7hnaYtiVZxa17Z7q18KSubW0IQ==",
       "dependencies": [
         "@types/node",
         "aws-ssl-profiles",
@@ -361,8 +361,8 @@
     "shebang-regex@3.0.0": {
       "integrity": "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="
     },
-    "sql-escaper@1.5.1": {
-      "integrity": "sha512-4toX5E1fQbBrpfXidaHnF0669nkAdETeIPTs2SUjxxD7RRIs9ICG4gtpmfc68JCEKehsdwLFqBu9VlQqZ1P1gg=="
+    "sql-escaper@1.5.2": {
+      "integrity": "sha512-6CKD38c31SENivxOADeMNLdukOnUxUcflKtzVWzace7Riv1v7cAEym5Cx9Q7gYZ3ezIJI7ZpqecQq8cqNeSSFg=="
     },
     "ulid@3.0.2": {
       "integrity": "sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==",
@@ -437,7 +437,7 @@
       "npm:@agentclientprotocol/sdk@1.4.0",
       "npm:@modelcontextprotocol/client@2.3.1",
       "npm:@modelcontextprotocol/server@2.3.1",
-      "npm:mysql2@3.24.4",
+      "npm:mysql2@3.24.5",
       "npm:ulid@3.0.2",
       "npm:zod@4.6.5"
     ]

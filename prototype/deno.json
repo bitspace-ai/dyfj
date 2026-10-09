@@ -206,8 +206,8 @@
     "@modelcontextprotocol/server": "npm:@modelcontextprotocol/server@2.3.1",
     "@modelcontextprotocol/server/stdio": "npm:@modelcontextprotocol/server@2.3.1/stdio",
     "@std/toml": "jsr:@std/toml@1.0.11",
-    "mysql2": "npm:mysql2@3.24.4",
-    "mysql2/promise": "npm:mysql2@3.24.4/promise",
+    "mysql2": "npm:mysql2@3.24.5",
+    "mysql2/promise": "npm:mysql2@3.24.5/promise",
     "ulid": "npm:ulid@3.0.2",
     "zod": "npm:zod@4.6.5"
   },
