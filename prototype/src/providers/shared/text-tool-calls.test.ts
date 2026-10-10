@@ -138,6 +138,33 @@ describe("detectUnparsedToolCallMarkup", () => {
     );
   });
 
+  it("counts one function element once, however many wrappers enclose it", () => {
+    const block = "<tool_call><function=x></function></tool_call>";
+    assertEquals(
+      detectUnparsedToolCallMarkup(`<tool_call>${block}</tool_call>`),
+      {
+        count: 1,
+        countIsLowerBound: false,
+      },
+    );
+    assertEquals(
+      detectUnparsedToolCallMarkup(
+        `<tool_call>${block}</function></tool_call>`,
+      ),
+      { count: 1, countIsLowerBound: false },
+    );
+    assertEquals(detectUnparsedToolCallMarkup(`${block} ${block}`), {
+      count: 2,
+      countIsLowerBound: false,
+    });
+    assertEquals(
+      detectUnparsedToolCallMarkup(
+        `<tool_call>${block}<function=y></function></tool_call>`,
+      ),
+      { count: 2, countIsLowerBound: false },
+    );
+  });
+
   it("keeps a balanced wrapper without a function element as prose", () => {
     assertStrictEquals(
       detectUnparsedToolCallMarkup("<tool_call></tool_call>"),

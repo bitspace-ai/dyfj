@@ -73,8 +73,9 @@ export function detectUnparsedToolCallMarkup(
   const openWrappers: number[] = [];
   let completeBlockCount = 0;
   let latestFunctionOpening = -1;
-  // The latest function opening a `</function>` has followed. A closed
-  // wrapper is a complete block when this lies inside it.
+  // The latest function opening a `</function>` has followed and no block
+  // has counted yet. A closed wrapper is a complete block when this lies
+  // inside it.
   let latestClosedFunctionOpening = -1;
   let openingAt = text.indexOf(UNPARSED_TOOL_CALL_OPENING);
   let closingAt = text.indexOf(UNPARSED_TOOL_CALL_CLOSING);
@@ -100,6 +101,12 @@ export function detectUnparsedToolCallMarkup(
         wrapperAt !== undefined && latestClosedFunctionOpening > wrapperAt
       ) {
         completeBlockCount += 1;
+        // Counting consumes the function element, so an enclosing wrapper,
+        // or a later stray `</function>`, cannot count it again.
+        if (latestFunctionOpening === latestClosedFunctionOpening) {
+          latestFunctionOpening = -1;
+        }
+        latestClosedFunctionOpening = -1;
       }
       closingAt = text.indexOf(
         UNPARSED_TOOL_CALL_CLOSING,
