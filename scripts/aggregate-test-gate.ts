@@ -684,9 +684,9 @@ export function productionLanes(
       cwd: root,
     },
     {
-      // Runtime-neutrality ratchet (decision D32): counts Deno host-API
-      // references in tracked TypeScript against a committed, shrink-only
-      // list. Also under the aggregate check id. The lane names `git`
+      // Runtime-neutrality ratchet (decision D32): counts references to the
+      // host runtime's global object in tracked TypeScript against a
+      // committed, shrink-only list. Also under the aggregate check id. The lane names `git`
       // (tracked-file listing) and `NODE_V8_COVERAGE`, the one variable the
       // runtime's node:child_process shim reads on spawn (the grant goes away
       // with the runtime); it needs no write, net or run grant beyond that.

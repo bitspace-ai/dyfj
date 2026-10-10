@@ -1191,15 +1191,16 @@ baseline with
 
 `runtime.neutral` (`scripts/runtime-neutral.ts`, reported under
 `test.aggregate`) is the ratchet for the move of the TypeScript tier from Deno
-to Node.js (decision D32). It counts the literal text of a Deno API reference,
-comments included, in every git-tracked `.ts` file and compares each file's
-count to `scripts/runtime-neutral-exceptions.json`, one `{path, count, reason}`
+to Node.js (decision D32). It counts each whole-word `Deno`
+(identifier boundaries, comments and strings included) in every git-tracked
+`.ts` file, so a member access, an optional chain, an index, a value passed on,
+a destructuring and an alias all count, and compares each file's count to `scripts/runtime-neutral-exceptions.json`, one `{path, count, reason}`
 entry per file with references. The ratchet is exact. The lane fails on a file
 with references and no entry, on a count above its entry, on a count below its
 entry (the entry must be lowered in the same change, so a port leaf's drop
 shows in its diff), on an entry whose file is gone or has no references, and on
 a malformed or duplicate entry. It prints one report line on every run, for
-example `runtime.neutral: 3120 Deno. references in 244 files`. When no
+example `runtime.neutral: 3225 Deno references in 253 files`. When no
 reference remains the list is `[]`, and any new reference fails for want of an
 entry. The lane and its test are written to `node:` builtins only. It needs
 read access to the repository, `git`, and the one environment variable the Deno
@@ -2013,5 +2014,5 @@ Document revisions only. Code and behavior changes are tracked in
   testing spec still describe Deno and are amended by the changes that make
   the move true, not ahead of them.
 - 2026-10-10 - Validation guidance documents the `runtime.neutral` gate lane,
-  the exact ratchet on Deno host-API references in tracked TypeScript that
+  the exact ratchet on whole-word `Deno` references in tracked TypeScript that
   tracks the move to Node.js under decision D32.

@@ -1,5 +1,5 @@
 // Tests for the `runtime.neutral` lane. Written to `node:` builtins only, as
-// the lane is, so this file adds no reference to the runtime it measures.
+// the lane is, so this file names the measured word nowhere in its own text.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -20,9 +20,9 @@ import {
   runtimeNeutralViolations,
 } from "./runtime-neutral.ts";
 
-// The text the lane counts, built so this file never contains it itself.
-const NEEDLE = ["Deno", "."].join("");
-const call = (n: number) => `${NEEDLE}cwd();\n`.repeat(n);
+// The word the lane counts, built so this file never contains it itself.
+const WORD = ["De", "no"].join("");
+const call = (n: number) => `${WORD}.cwd();\n`.repeat(n);
 
 const entry = (path: string, count: number, reason = "host API under S1") => ({
   path,
@@ -31,15 +31,47 @@ const entry = (path: string, count: number, reason = "host API under S1") => ({
 });
 
 describe("countReferences", () => {
-  it("counts every occurrence, comments included", () => {
-    const source = `${call(2)}// ${NEEDLE}readTextFile is mentioned here\n` +
-      `/* ${NEEDLE}env */\nconst s = "${NEEDLE}";\n`;
+  it("counts every occurrence, comments and strings included", () => {
+    const source = `${call(2)}// ${WORD}.readTextFile is mentioned here\n` +
+      `/* ${WORD}.env */\nconst s = "${WORD}";\n`;
     assert.equal(countReferences(source), 5);
   });
 
-  it("does not count the bare word or a different identifier", () => {
-    assert.equal(countReferences("const Deno = 1; Denoise.y; Deno, x"), 0);
-    assert.equal(countReferences("Deno is a runtime"), 0);
+  it("counts each way the host object is reached", () => {
+    const forms = [
+      `globalThis.${WORD}?.x`,
+      `(globalThis as any).${WORD}?.resolveDns`,
+      `${WORD}["env"]`,
+      `${WORD}?.env`,
+      `stub(${WORD}, "x")`,
+      `fn.bind(${WORD})`,
+      `const { env } = ${WORD}`,
+      `const d = ${WORD}`,
+      `${WORD}`,
+      `${WORD} is a runtime`,
+    ];
+    for (const form of forms) {
+      assert.equal(countReferences(form), 1, form);
+    }
+  });
+
+  it("counts the whole word only, not a longer identifier", () => {
+    assert.equal(
+      countReferences(`const ${WORD} = 1; ${WORD}ise.y; ${WORD}, x`),
+      2,
+    );
+    for (const longer of [
+      `${WORD}ise`,
+      `my${WORD}`,
+      `_${WORD}`,
+      `${WORD}_x`,
+      `$${WORD}`,
+      `${WORD}$`,
+      `${WORD}9`,
+      `x.${WORD.toLowerCase()}`,
+    ]) {
+      assert.equal(countReferences(longer), 0, longer);
+    }
   });
 });
 
@@ -151,7 +183,14 @@ describe("formatReport", () => {
     const counts = new Map([["a.ts", 3], ["b.ts", 0], ["c.ts", 2]]);
     assert.equal(
       formatReport(counts),
-      `runtime.neutral: 5 ${NEEDLE} references in 2 files`,
+      `runtime.neutral: 5 ${WORD} references in 2 files`,
+    );
+  });
+
+  it("says file, not files, when exactly one has references", () => {
+    assert.equal(
+      formatReport(new Map([["a.ts", 4], ["b.ts", 0]])),
+      `runtime.neutral: 4 ${WORD} references in 1 file`,
     );
   });
 });
@@ -200,7 +239,7 @@ describe("checkRuntimeNeutral", () => {
         assert.deepEqual(result.errors, []);
         assert.equal(
           result.report,
-          `runtime.neutral: 3 ${NEEDLE} references in 2 files`,
+          `runtime.neutral: 3 ${WORD} references in 2 files`,
         );
       },
     );
@@ -213,7 +252,7 @@ describe("checkRuntimeNeutral", () => {
       assert.match(result.errors[0], /src\/a\.ts/);
       assert.equal(
         result.report,
-        `runtime.neutral: 1 ${NEEDLE} references in 1 files`,
+        `runtime.neutral: 1 ${WORD} references in 1 file`,
       );
     });
   });
@@ -225,7 +264,7 @@ describe("checkRuntimeNeutral", () => {
       assert.deepEqual(result.errors, []);
       assert.equal(
         result.report,
-        `runtime.neutral: 0 ${NEEDLE} references in 0 files`,
+        `runtime.neutral: 0 ${WORD} references in 0 files`,
       );
     });
   });

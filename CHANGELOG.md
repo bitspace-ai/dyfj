@@ -145,20 +145,22 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
-- **A `runtime.neutral` gate lane ratchets references to the Deno host API
+- **A `runtime.neutral` gate lane ratchets references to the `Deno` global
   down to zero.** Decision D32 moves the TypeScript tier from Deno to Node.js
   on a `node:`-only API surface, and nothing yet measured that progress or
   stopped a new branch adding a reference. `scripts/runtime-neutral.ts`
-  counts the literal text of a Deno API reference, comments included, in every
-  git-tracked `.ts` file and compares each file to the committed
+  counts each whole-word `Deno` (identifier boundaries, comments and strings
+  included) in every git-tracked `.ts` file, so a member access, an optional
+  chain, an index, a value passed on, a destructuring and an alias all count,
+  and compares each file to the committed
   `scripts/runtime-neutral-exceptions.json` (`path`, `count`, `reason`). The
   ratchet is exact: a file with references and no entry, a count above its
   entry, a count below it (the entry must be lowered in the same change), an
   entry for a file that is gone or has no references, and a malformed or
   duplicate entry all fail. It prints one report line on every run and is
   reported under `test.aggregate`, so the receipt check ids are unchanged; it
-  is in the `test:fast` subset beside `arch.imports`. The baseline is 3,120
-  references in 244 files, all recorded in the list; later port leaves lower
+  is in the `test:fast` subset beside `arch.imports`. The baseline is 3,225
+  references in 253 files, all recorded in the list; later port leaves lower
   their files' entries, and once none remain the list is `[]`. The lane and
   its test use `node:` builtins only, so they add no reference and need no
   change when the gate itself is ported.

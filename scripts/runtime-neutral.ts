@@ -1,16 +1,19 @@
-// The `runtime.neutral` gate lane: a ratchet on references to the Deno host
-// API in tracked TypeScript, so the port to Node (decision D32) shows its
-// progress and nothing new takes a dependency on the runtime being replaced.
+// The `runtime.neutral` gate lane: a ratchet on references to the host
+// runtime being replaced in tracked TypeScript, so the port to Node (decision
+// D32) shows its progress and nothing new takes a dependency on that runtime.
 //
-// It counts the literal text of a Deno API reference (comments included, to
-// match `rg`) in every git-tracked `.ts` file and compares each file's count
-// to the committed `scripts/runtime-neutral-exceptions.json`. The ratchet is
-// exact: a count above its entry fails, and so does one below it, so a port
-// leaf lowers the entry in the same change and its diff shows the drop. Once
-// no file has a reference the list is `[]` and any new reference has no entry.
+// It counts each whole-word occurrence of the runtime's global object, in
+// comments and strings too, in every git-tracked `.ts` file. Matching the word
+// at identifier boundaries, not a call shape, counts every way the object is
+// reached: a member access, an optional chain, an index, a value passed on,
+// a destructuring or an alias. Each file's count is compared to the committed
+// `scripts/runtime-neutral-exceptions.json`. The ratchet is exact: a count
+// above its entry fails, and so does one below it, so a port leaf lowers the
+// entry in the same change and its diff shows the drop. Once no file has a
+// reference the list is `[]` and any new reference has no entry.
 //
 // Written to `node:` builtins only, so it adds no reference of its own and
-// runs unchanged on either runtime.
+// runs unchanged on either runtime. Its own files never contain the word.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,9 +23,9 @@ import { fileURLToPath } from "node:url";
 export const LABEL = "runtime.neutral";
 export const EXCEPTIONS_PATH = "scripts/runtime-neutral-exceptions.json";
 
-// Assembled so this file does not contain the text it counts.
-const RUNTIME = "Deno";
-const REFERENCE = new RegExp(`${RUNTIME}\\.`, "g");
+// Assembled so this file does not contain the word it counts.
+const RUNTIME = ["De", "no"].join("");
+const REFERENCE = new RegExp(`(?<![\\w$])${RUNTIME}(?![\\w$])`, "g");
 
 /** One entry of `scripts/runtime-neutral-exceptions.json`. */
 export interface RuntimeNeutralException {
@@ -77,7 +80,7 @@ export function runtimeNeutralViolations(
     if (count === 0) continue;
     if (entry === undefined) {
       errors.push(
-        `${path}: ${count} ${RUNTIME}. references and no entry in ` +
+        `${path}: ${count} ${RUNTIME} references and no entry in ` +
           `${EXCEPTIONS_PATH}; use the node: API instead`,
       );
     } else if (count > entry.count) {
@@ -109,7 +112,8 @@ export function formatReport(counts: ReadonlyMap<string, number>): string {
     total += count;
     if (count > 0) files += 1;
   }
-  return `${LABEL}: ${total} ${RUNTIME}. references in ${files} files`;
+  const noun = files === 1 ? "file" : "files";
+  return `${LABEL}: ${total} ${RUNTIME} references in ${files} ${noun}`;
 }
 
 function trackedTypeScript(root: string): string[] {
