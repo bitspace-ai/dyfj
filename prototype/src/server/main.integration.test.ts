@@ -7,7 +7,7 @@ import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import type { WorkbenchRuntimeResult } from "../engine/mod.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { MemoryStore } from "../store/mod.ts";
-import { JsonRpcPeer, RpcErrorCode } from "../transport/mod.ts";
+import { JsonRpcPeer, nodeSocketHost, RpcErrorCode } from "../transport/mod.ts";
 import {
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
@@ -50,10 +50,7 @@ async function startServer(
 }
 
 async function dial(server: WorkbenchUnixServer) {
-  const conn = await Deno.connect({
-    transport: "unix",
-    path: server.socketPath,
-  });
+  const conn = await nodeSocketHost.connect(server.socketPath);
   const peer = new JsonRpcPeer(conn, { handlers: {} });
   const loop = peer.run();
   return {

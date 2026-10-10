@@ -2,8 +2,10 @@
 // Engine-free: imports only the protocol core + peer, never the runtime — so the
 // client binary stays small and can migrate to Rust under the same contract.
 
+import type { SocketHost } from "./connection.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
+import { nodeSocketHost } from "./node-socket.ts";
 
 export interface UnixClient {
   request(
@@ -34,6 +36,8 @@ export interface UnixClientOptions {
   onApproval?: (
     request: unknown,
   ) => Promise<ToolApprovalVerdict> | ToolApprovalVerdict;
+  /** The socket implementation; defaults to the node:net adapter. */
+  host?: SocketHost;
 }
 
 export async function connectUnixClient(
@@ -56,42 +60,10 @@ export async function connectUnixClient(
   if (onApproval) {
     handlers.approval = (params) => onApproval(params);
   }
-  let conn: Deno.Conn;
-  if (signal) {
-    let onAbort: (() => void) | undefined;
-    let aborted = false;
-    const connPromise = Deno.connect({ transport: "unix", path: socketPath });
-    // If the abort promise wins the race, close any connection that settles later
-    connPromise.then(
-      (c) => {
-        if (aborted) {
-          try {
-            c.close();
-          } catch {
-            // Already closed
-          }
-        }
-      },
-      () => {},
-    );
-    const abortPromise = new Promise<never>((_, reject) => {
-      onAbort = () => {
-        aborted = true;
-        reject(
-          signal.reason ??
-            new DOMException("The operation was aborted", "AbortError"),
-        );
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-    });
-    try {
-      conn = await Promise.race([connPromise, abortPromise]);
-    } finally {
-      if (onAbort) signal.removeEventListener("abort", onAbort);
-    }
-  } else {
-    conn = await Deno.connect({ transport: "unix", path: socketPath });
-  }
+  const conn = await (options.host ?? nodeSocketHost).connect(
+    socketPath,
+    signal,
+  );
   const peer = new JsonRpcPeer(conn, { handlers });
   void peer.run();
   return {

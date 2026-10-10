@@ -691,7 +691,7 @@
   },
   {
     "path": "prototype/src/server/main.integration.test.ts",
-    "count": 9,
+    "count": 8,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -891,17 +891,17 @@
   },
   {
     "path": "prototype/src/transport/jsonrpc-peer.test.ts",
-    "count": 27,
+    "count": 21,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/jsonrpc-peer.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/transport/jsonrpc.test.ts",
     "count": 17,
+    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+  },
+  {
+    "path": "prototype/src/transport/node-socket.integration.test.ts",
+    "count": 12,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -911,7 +911,7 @@
   },
   {
     "path": "prototype/src/transport/uds-client.integration.test.ts",
-    "count": 10,
+    "count": 9,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -920,29 +920,14 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/transport/uds-client.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/transport/uds-listener.integration.test.ts",
-    "count": 26,
+    "count": 25,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-listener.ts",
-    "count": 9,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/transport/uds-path.test.ts",
     "count": 4,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-path.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/testing/builders/engine.ts",
@@ -1166,7 +1151,7 @@
   },
   {
     "path": "scripts/arch-imports.test.ts",
-    "count": 72,
+    "count": 74,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

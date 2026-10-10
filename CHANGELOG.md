@@ -143,6 +143,27 @@ README are tracked separately in its Revision history section.
   window could not hold the fixed request prefix, which only the fake model
   server had let pass.
 
+### Changed
+
+- **The Unix-socket JSON-RPC transport runs on `node:net` behind a
+  `ByteConnection` port.** Part of the move of the TypeScript tier to Node.js
+  (decision D32). `transport/connection.ts` names what the peer, client and
+  listener need from a socket: `read()` returns the next chunk or null at end
+  of stream, `write()` resolves once every byte is accepted, `close()` is
+  idempotent, and `SocketHost` dials and binds a path. The one adapter,
+  `transport/node-socket.ts`, is the only module that imports `node:net`
+  (`scripts/arch-layers.json` now confines the package to `transport/`). Every
+  socket opens with `allowHalfOpen`, so a request that arrives just before the
+  client's FIN is still answered. The peer no longer owns a read buffer or a
+  partial-write loop, and socket-file hygiene and the 0700 socket directory use
+  `node:fs`. The wire, the socket path, the grants and the lane flags are
+  unchanged. One visible difference: a missing socket now fails with an error
+  whose `code` is `ENOENT` (message `connect ENOENT <path>`), which the CLI's
+  existing "runtime not reachable" check already matches. `runtime.neutral`
+  drops from 3,225 references in 253 files to 3,214 in 250: the four transport
+  source files leave the list, and the new adapter test and the lowered peer
+  fakes account for the rest.
+
 ### Added
 
 - **A `runtime.neutral` gate lane ratchets references to the `Deno` global

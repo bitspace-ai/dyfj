@@ -1,5 +1,4 @@
 import {
-  assert,
   assertEquals,
   assertInstanceOf,
   assertRejects,
@@ -193,5 +192,5 @@ Deno.test("connectUnixClient rejects when nothing is listening at the path", asy
   const socketPath = udsTestSocket("client-missing");
   await removeIfPresent(socketPath);
   const err = await rejection(connectUnixClient(socketPath));
-  assert(err instanceof Deno.errors.NotFound, String(err));
+  assertEquals((err as { code?: string }).code, "ENOENT", String(err));
 });
