@@ -17,7 +17,9 @@ issue.
 
 - **Find ready work / what's assigned**: query Linear via the `linear` skill.
 - **Create / claim an issue**: for non-trivial work, create or claim a `BIT-###`
-  issue before editing. One claimed issue per session.
+  issue before editing. One claimed issue per session. Work whose natural home
+  is a parent or milestone issue (a decision record, a doc change for a track)
+  gets its own child issue, and its pull request names that child.
 - **Record progress / comment**: post progress, blockers, and evidence to the
   issue, not to chat.
 - **Close**: close the issue with a summary when the work is done.
@@ -33,9 +35,16 @@ Read the `BIT-###` issue via the `linear` skill.
 ## Boundary rules (from AGENTS.md)
 
 - **Tracker IDs are workflow metadata, never the why.** A `BIT-###` ID may appear
-  anywhere it helps — branch names, commit messages, PR titles/descriptions, code
-  comments, and other durable content — but it accompanies the *why*, never
-  replaces it.
+  anywhere it helps — commit messages, code comments, and other durable content,
+  and the branch name, title and description of the pull request that delivers
+  the issue — but it accompanies the *why*, never replaces it.
+- **A pull request names only the ID of the issue it delivers**, in its branch
+  name, title and description. Refer to any other issue — a parent, a
+  milestone, a neighbouring change — in words, without its ID, because the
+  tracker's GitHub integration closes every issue whose ID is in a merged pull
+  request's branch name or title, or follows a closing word (close, fix,
+  resolve, complete, implement, in any form) in its description. Commit
+  messages and code comments are not affected by this limit.
 - **Never a private tracker link in a public artifact.** Refer to work by its
   `BIT-###` ID, never by a Linear URL or other deep link a public reader cannot
   open.
