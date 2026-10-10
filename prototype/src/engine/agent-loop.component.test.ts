@@ -464,6 +464,36 @@ Deno.test("emits and persists content-free unparsed-markup metadata before compl
   );
 });
 
+Deno.test("flags a complete textual tool call the forced conclusion cannot run", async () => {
+  // Stored reply from a local-model turn (BIT-564): after a repeated call the
+  // loop forced a conclusion, which offers no tools, and the model answered
+  // with a complete textual call that nothing ran or flagged.
+  const block = "<tool_call>\n<function=read_file>\n" +
+    "<parameter=path>\nREADME.md\n</parameter>\n</function>\n</tool_call>";
+  const repeat = toolReply([LIST("c")]);
+  const loop = await loopTurn([repeat, repeat, chatReply({ content: block })]);
+  assertEquals(requestBody(loop.run.transport.requests[2]).tools, undefined);
+  assertEquals(loop.result?.text, block);
+  const warning = loop.frames.find((f) =>
+    f.type === "unparsedToolCallMarkupDetected"
+  );
+  assertEquals(warning, {
+    type: "unparsedToolCallMarkupDetected",
+    sessionId: loop.result!.sessionId,
+    count: 1,
+    countIsLowerBound: false,
+  });
+  assert(
+    loop.frames.indexOf(warning!) <
+      loop.frames.findIndex((f) => f.type === "turnCompleted"),
+  );
+  const forced = (await rows(loop)).find((row) =>
+    row.event_type === "provider_call" &&
+    row.provider_call_purpose === "forced_conclusion"
+  );
+  assertObjectMatch(forced!, { unparsed_tool_call_count: "1" });
+});
+
 Deno.test("fails instead of completing when the unparsed-markup warning cannot be delivered", async () => {
   const seen: string[] = [];
   const loop = await quietly(() =>

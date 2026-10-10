@@ -114,10 +114,10 @@ export function formatRuntimeEvent(
       ? event.count
       : null;
     const amount = count === null
-      ? "an unknown number of unmatched openings"
+      ? "an unknown number of unrun tool calls"
       : `${
         event.countIsLowerBound === true ? "at least " : ""
-      }${count} unmatched opening(s)`;
+      }${count} unrun tool call(s)`;
     return `WARNING: unparsed tool-call markup was present (${amount}); ` +
       "no tools were executed from it";
   }

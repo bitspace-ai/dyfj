@@ -88,9 +88,17 @@ export interface WorkbenchTurnResult {
   timings: WorkbenchCallTimings;
   /** Present only when cancellation won before any provider request began. */
   requestDispatched?: false;
-  /** Safe metadata for repeated unmatched textual tool-call wrapper openings. */
+  /**
+   * Safe metadata for textual tool-call markup left in the text that ran no
+   * tool: function elements in complete blocks recovery did not run, plus
+   * repeated unmatched wrapper openings.
+   */
   unparsedToolCallMarkup?: {
-    /** Bounded count of unmatched exact `<tool_call>` openings. */
+    /**
+     * Bounded count of unrun function elements in complete `<tool_call>`
+     * blocks (each counted once, toward its innermost wrapper) plus unmatched
+     * exact `<tool_call>` openings (counted only when there are two or more).
+     */
     count: number;
     countIsLowerBound: boolean;
   };

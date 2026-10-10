@@ -11,6 +11,23 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A complete textual tool call that runs no tool now raises the unparsed
+  tool-call markup warning.** A local model can write a whole
+  `<tool_call><function=…>…</function></tool_call>` block as text. The
+  OpenAI-compatible adapter recovers such a block only when the request
+  offers that tool, and a forced conclusion (the step limit, or a step that
+  only repeated earlier calls) offers none, so the turn ended on the markup as
+  if it were an answer, with no warning: the warning counted only two or more
+  unmatched `<tool_call>` openings and assumed a complete block had been
+  recovered. It now also counts every function element of a complete block
+  left in the text after recovery, whether no tools were offered, the name was
+  not offered, or the arguments were unrecoverable; each element counts once,
+  toward its innermost wrapper, however the wrappers nest. A forced conclusion still runs no tool; the
+  operator is told one went unrun. A wrapper with no function element inside
+  stays prose. The count is still carried as `unparsedToolCallMarkup` and
+  recorded in `unparsed_tool_call_count` (no schema change), whose meaning
+  widens to unrun function elements plus unmatched openings, and the CLI warning now reads
+  "N unrun tool call(s)" instead of "N unmatched opening(s)".
 - **A resumed session comes back on the model it last ran on, not the
   configured default.** The model choice lived only in the REPL client, so
   `dyfj --session <id>` restored a session's workspace and history but routed
