@@ -4,8 +4,8 @@ import type { ByteConnection, ConnectionListener } from "./connection.ts";
 import { nodeSocketHost } from "./node-socket.ts";
 
 // The ByteConnection and SocketHost ports over a real Unix socket, through
-// the node:net adapter. The lane runs integration files one at a time, so
-// every case here borrows the one granted "peer" socket path in turn.
+// the node:net adapter. A file's cases run one at a time, so every case here
+// reuses the one granted "node-socket" path in turn.
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -20,7 +20,7 @@ async function removeIfPresent(path: string): Promise<void> {
 
 // A listening adapter and one accepted/dialed connection pair on it.
 async function connectPair() {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
   const accepted = listener.accept();
@@ -94,7 +94,7 @@ Deno.test("close() is idempotent, ends the stream and rejects later writes", asy
 });
 
 Deno.test("peer half-close: after the other side's FIN read() is null and a late reply still arrives", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
   try {
@@ -121,7 +121,7 @@ Deno.test("peer half-close: after the other side's FIN read() is null and a late
 });
 
 Deno.test("accept() resolves null once the listener is closed", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener: ConnectionListener = await nodeSocketHost.listen(path);
   const pending = listener.accept();
@@ -133,14 +133,14 @@ Deno.test("accept() resolves null once the listener is closed", async () => {
 });
 
 Deno.test("connect() to a missing socket rejects with ENOENT", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const error = await assertRejects(() => nodeSocketHost.connect(path));
   assertEquals((error as { code?: string }).code, "ENOENT");
 });
 
 Deno.test("connect() with an aborted signal rejects with the signal's reason", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const reason = new Error("stop");
   const error = await assertRejects(() =>
@@ -150,7 +150,7 @@ Deno.test("connect() with an aborted signal rejects with the signal's reason", a
 });
 
 Deno.test("connect() aborted while dialing closes the connection that settles later", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
   try {
@@ -169,7 +169,7 @@ Deno.test("connect() aborted while dialing closes the connection that settles la
 });
 
 Deno.test("listen() rejects when the path cannot be bound", async () => {
-  const path = udsTestSocket("peer");
+  const path = udsTestSocket("node-socket");
   await Deno.writeTextFile(path, "not a socket");
   try {
     await assertRejects(() => nodeSocketHost.listen(path));
