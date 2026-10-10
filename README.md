@@ -1087,7 +1087,8 @@ private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
 After the policy checks, the gate runs the retired-surface scan, the
-`arch.imports` module-boundary check, the source and test-file typechecks (both
+`arch.imports` module-boundary check, the `runtime.neutral` ratchet, the source
+and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
 non-integration, non-golden `Deno.test` file, run in parallel with the op and
@@ -1188,6 +1189,23 @@ reported name). After an intended reduction, regenerate the
 baseline with
 `deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
 
+`runtime.neutral` (`scripts/runtime-neutral.ts`, reported under
+`test.aggregate`) is the ratchet for the move of the TypeScript tier from Deno
+to Node.js (decision D32). It counts each whole-word `Deno`
+(identifier boundaries, comments and strings included) in every git-tracked
+`.ts` file, so a member access, an optional chain, an index, a value passed on,
+a destructuring and an alias all count, and compares each file's count to `scripts/runtime-neutral-exceptions.json`, one `{path, count, reason}`
+entry per file with references. The ratchet is exact. The lane fails on a file
+with references and no entry, on a count above its entry, on a count below its
+entry (the entry must be lowered in the same change, so a port leaf's drop
+shows in its diff), on an entry whose file is gone or has no references, and on
+a malformed or duplicate entry. It prints one report line on every run, for
+example `runtime.neutral: 3225 Deno references in 253 files`. When no
+reference remains the list is `[]`, and any new reference fails for want of an
+entry. The lane and its test are written to `node:` builtins only. It needs
+read access to the repository, `git`, and the one environment variable the Deno
+`node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
+
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
 on pull requests and pushes to `main`, with a read-only token, no secrets, and
@@ -1226,7 +1244,7 @@ Workflow-hygiene tests inside the gate assert those properties — including tha
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
 `deno task test:fast` runs every deterministic policy check (including
-`arch.imports`) plus the contract package checks, the source typecheck, and the
+`arch.imports` and `runtime.neutral`) plus the contract package checks, the source typecheck, and the
 `test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `deno task test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
@@ -1995,3 +2013,6 @@ Document revisions only. Code and behavior changes are tracked in
   records the alternatives considered. The run instructions, repo layout and
   testing spec still describe Deno and are amended by the changes that make
   the move true, not ahead of them.
+- 2026-10-10 - Validation guidance documents the `runtime.neutral` gate lane,
+  the exact ratchet on whole-word `Deno` references in tracked TypeScript that
+  tracks the move to Node.js under decision D32.
