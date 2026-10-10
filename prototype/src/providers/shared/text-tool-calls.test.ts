@@ -165,6 +165,42 @@ describe("detectUnparsedToolCallMarkup", () => {
     );
   });
 
+  it("counts each wrapper's own function elements, whatever their order", () => {
+    const outerFirst = "<tool_call><function=a></function>" +
+      "<tool_call><function=b></function></tool_call></tool_call>";
+    const innerFirst = "<tool_call><tool_call><function=a></function>" +
+      "</tool_call><function=b></function></tool_call>";
+    assertEquals(detectUnparsedToolCallMarkup(outerFirst), {
+      count: 2,
+      countIsLowerBound: false,
+    });
+    assertEquals(detectUnparsedToolCallMarkup(innerFirst), {
+      count: 2,
+      countIsLowerBound: false,
+    });
+    assertEquals(
+      detectUnparsedToolCallMarkup(
+        "<tool_call><function=a></function><function=b></function></tool_call>",
+      ),
+      { count: 2, countIsLowerBound: false },
+    );
+  });
+
+  it("does not count a function element that a wrapper close interrupts", () => {
+    assertStrictEquals(
+      detectUnparsedToolCallMarkup(
+        "<tool_call><function=x></tool_call></function></tool_call>",
+      ),
+      undefined,
+    );
+    assertStrictEquals(
+      detectUnparsedToolCallMarkup(
+        "<tool_call><tool_call><function=x></tool_call></function></tool_call>",
+      ),
+      undefined,
+    );
+  });
+
   it("keeps a balanced wrapper without a function element as prose", () => {
     assertStrictEquals(
       detectUnparsedToolCallMarkup("<tool_call></tool_call>"),

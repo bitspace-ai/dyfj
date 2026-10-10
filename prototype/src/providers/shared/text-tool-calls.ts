@@ -52,31 +52,29 @@ export const MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS = MAX_OPENAI_RESPONSE_BYTES;
  * Detect tool-call markup that remains in the text after textual-call
  * recovery, and so ran no tool. Two shapes count:
  *
- * - a complete block: a `<tool_call>` wrapper, closed, that encloses a
- *   `<function=NAME>` opening followed by `</function>`. Recovery removes
- *   every block it runs, so one left behind went unrun: no tools were
- *   offered (a forced conclusion), the name was not offered, or its
- *   arguments were unrecoverable;
+ * - a function element in a complete block: a `<function=NAME>` opening
+ *   followed by `</function>` inside a `<tool_call>` wrapper that then
+ *   closes. Recovery removes every block it runs, so an element left behind
+ *   went unrun: no tools were offered (a forced conclusion), the name was not
+ *   offered, or its arguments were unrecoverable;
  * - the degraded Qwen-compatible shape: at least two exact wrapper openings
  *   left unmatched by closings. One stray opening is not structural evidence.
  *
  * A balanced wrapper with no function element stays prose. Markers are
  * processed in order, so a closing matches only the latest preceding open
- * wrapper; leading closings cannot cancel later openings. Inputs beyond the
- * accepted-response bound are not prefix-classified; the whole-text scan is
- * linear and the reported count remains bounded.
+ * wrapper; leading closings cannot cancel later openings. Each open wrapper
+ * owns the function evidence found directly inside it, so an element counts
+ * once, toward the innermost wrapper, whatever the order of nesting; a
+ * function element a wrapper close interrupts counts nothing. Inputs beyond
+ * the accepted-response bound are not prefix-classified; the whole-text scan
+ * is linear and the reported count remains bounded.
  */
 export function detectUnparsedToolCallMarkup(
   text: string,
 ): WorkbenchTurnResult["unparsedToolCallMarkup"] {
   if (text.length > MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS) return undefined;
-  const openWrappers: number[] = [];
-  let completeBlockCount = 0;
-  let latestFunctionOpening = -1;
-  // The latest function opening a `</function>` has followed and no block
-  // has counted yet. A closed wrapper is a complete block when this lies
-  // inside it.
-  let latestClosedFunctionOpening = -1;
+  const openWrappers: OpenToolCallWrapper[] = [];
+  let unrunFunctionCount = 0;
   let openingAt = text.indexOf(UNPARSED_TOOL_CALL_OPENING);
   let closingAt = text.indexOf(UNPARSED_TOOL_CALL_CLOSING);
   let functionAt = text.indexOf(TEXT_FUNCTION_MARKER);
@@ -89,39 +87,32 @@ export function detectUnparsedToolCallMarkup(
       functionClosingAt,
     );
     if (at < 0) break;
+    const innermost = openWrappers.at(-1);
     if (at === openingAt) {
-      openWrappers.push(openingAt);
+      openWrappers.push({ functionPending: false, closedFunctions: 0 });
       openingAt = text.indexOf(
         UNPARSED_TOOL_CALL_OPENING,
         openingAt + UNPARSED_TOOL_CALL_OPENING.length,
       );
     } else if (at === closingAt) {
-      const wrapperAt = openWrappers.pop();
-      if (
-        wrapperAt !== undefined && latestClosedFunctionOpening > wrapperAt
-      ) {
-        completeBlockCount += 1;
-        // Counting consumes the function element, so an enclosing wrapper,
-        // or a later stray `</function>`, cannot count it again.
-        if (latestFunctionOpening === latestClosedFunctionOpening) {
-          latestFunctionOpening = -1;
-        }
-        latestClosedFunctionOpening = -1;
-      }
+      unrunFunctionCount += openWrappers.pop()?.closedFunctions ?? 0;
       closingAt = text.indexOf(
         UNPARSED_TOOL_CALL_CLOSING,
         closingAt + UNPARSED_TOOL_CALL_CLOSING.length,
       );
     } else if (at === functionAt) {
-      if (isTextFunctionOpening(text, functionAt)) {
-        latestFunctionOpening = functionAt;
+      if (innermost && isTextFunctionOpening(text, functionAt)) {
+        innermost.functionPending = true;
       }
       functionAt = text.indexOf(
         TEXT_FUNCTION_MARKER,
         functionAt + TEXT_FUNCTION_MARKER.length,
       );
     } else {
-      latestClosedFunctionOpening = latestFunctionOpening;
+      if (innermost?.functionPending) {
+        innermost.functionPending = false;
+        innermost.closedFunctions += 1;
+      }
       functionClosingAt = text.indexOf(
         TEXT_FUNCTION_CLOSING,
         functionClosingAt + TEXT_FUNCTION_CLOSING.length,
@@ -131,12 +122,20 @@ export function detectUnparsedToolCallMarkup(
   const unmatchedOpeningCount = openWrappers.length >= 2
     ? openWrappers.length
     : 0;
-  const count = completeBlockCount + unmatchedOpeningCount;
+  const count = unrunFunctionCount + unmatchedOpeningCount;
   if (count === 0) return undefined;
   return {
     count: Math.min(count, MAX_UNPARSED_TOOL_CALL_MARKERS),
     countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS,
   };
+}
+
+/** Function evidence owned by one open `<tool_call>` wrapper. */
+interface OpenToolCallWrapper {
+  /** A function opening seen inside this wrapper awaits its `</function>`. */
+  functionPending: boolean;
+  /** Function elements opened and closed directly inside this wrapper. */
+  closedFunctions: number;
 }
 
 function earliestMarker(...positions: number[]): number {
