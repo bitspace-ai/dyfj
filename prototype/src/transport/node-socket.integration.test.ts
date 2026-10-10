@@ -93,6 +93,40 @@ Deno.test("close() is idempotent, ends the stream and rejects later writes", asy
   assertEquals(await pair.server.read(), null);
 });
 
+Deno.test("close() drops bytes already buffered, so the next read() is null", async () => {
+  await using pair = await connectPair();
+  await pair.client.write(encode("buffered"));
+  // The socket reads on its own: give the bytes time to reach the queue.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  pair.server.close();
+  assertEquals(await pair.server.read().catch(() => null), null);
+});
+
+Deno.test("a pending read() resolves null when the connection is closed", async () => {
+  await using pair = await connectPair();
+  const pending = pair.server.read();
+  pair.server.close();
+  assertEquals(await pending.catch(() => null), null);
+});
+
+Deno.test("listener close() closes a connection nobody accepted, and accept() is then null", async () => {
+  const path = udsTestSocket("node-socket");
+  await removeIfPresent(path);
+  const listener = await nodeSocketHost.listen(path);
+  try {
+    const client = await nodeSocketHost.connect(path);
+    // The server side is queued, not accepted: give it time to arrive.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    listener.close();
+    assertEquals(await listener.accept(), null);
+    assertEquals(await client.read().catch(() => null), null);
+    client.close();
+  } finally {
+    listener.close();
+    await removeIfPresent(path);
+  }
+});
+
 Deno.test("peer half-close: after the other side's FIN read() is null and a late reply still arrives", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);

@@ -901,7 +901,7 @@
   },
   {
     "path": "prototype/src/transport/node-socket.integration.test.ts",
-    "count": 13,
+    "count": 16,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

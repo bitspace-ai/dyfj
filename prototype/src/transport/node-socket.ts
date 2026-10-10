@@ -18,7 +18,10 @@ class NodeConnection implements ByteConnection {
   readonly #socket: net.Socket;
   readonly #chunks: Uint8Array[] = [];
   #ended = false;
+  // The socket is gone, from either side: writes reject.
   #closed = false;
+  // close() was called here: nothing buffered may be read any more.
+  #released = false;
   #wake?: () => void;
 
   constructor(socket: net.Socket) {
@@ -55,6 +58,7 @@ class NodeConnection implements ByteConnection {
 
   async read(): Promise<Uint8Array | null> {
     for (;;) {
+      if (this.#released) return null;
       const chunk = this.#chunks.shift();
       if (chunk !== undefined) {
         if (this.#chunks.length === 0 && !this.#ended) this.#socket.resume();
@@ -75,9 +79,11 @@ class NodeConnection implements ByteConnection {
   }
 
   close(): void {
-    if (this.#closed) return;
+    if (this.#released) return;
+    this.#released = true;
     this.#closed = true;
     this.#ended = true;
+    this.#chunks.length = 0;
     this.#socket.destroy();
     this.#signal();
   }
@@ -110,9 +116,9 @@ class NodeListener implements ConnectionListener {
 
   async accept(): Promise<ByteConnection | null> {
     for (;;) {
+      if (this.#closed) return null;
       const conn = this.#accepted.shift();
       if (conn !== undefined) return conn;
-      if (this.#closed) return null;
       await new Promise<void>((resolve) => this.#wake = resolve);
     }
   }
