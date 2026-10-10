@@ -684,6 +684,27 @@ export function productionLanes(
       cwd: root,
     },
     {
+      // Runtime-neutrality ratchet (decision D32): counts Deno host-API
+      // references in tracked TypeScript against a committed, shrink-only
+      // list. Also under the aggregate check id. The lane names `git`
+      // (tracked-file listing) and `NODE_V8_COVERAGE`, the one variable the
+      // runtime's node:child_process shim reads on spawn (the grant goes away
+      // with the runtime); it needs no write, net or run grant beyond that.
+      label: "Runtime-neutral ratchet (runtime.neutral)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        "--allow-env=NODE_V8_COVERAGE",
+        `--allow-read=${root}`,
+        "--allow-run=git",
+        "scripts/runtime-neutral.ts",
+      ],
+      cwd: root,
+    },
+    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -698,7 +719,9 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "test",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
+        // NODE_V8_COVERAGE: read by the runtime's node:child_process shim on
+        // every spawn; it goes away with the runtime (decision D32).
+        "--allow-env=NODE_V8_COVERAGE,PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
         "--allow-read=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         `--allow-run=${denoExecutable},ln,git,/bin/bash`,
@@ -709,6 +732,7 @@ export function productionLanes(
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
         "scripts/arch-imports.test.ts",
+        "scripts/runtime-neutral.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
         "scripts/change-scope.test.ts",
@@ -947,6 +971,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Changed-shell parse check",
   "Dependency policy check",
   "Architecture import rules (arch.imports)",
+  "Runtime-neutral ratchet (runtime.neutral)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",
