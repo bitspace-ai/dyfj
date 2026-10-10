@@ -85,18 +85,9 @@ threat-model liability rather than a dependency concern.
 
 ## Consequences
 
-- The network allowlist is enforced in-process rather than by the runtime.
-  That holds against a misbehaving model and a careless operator; it does not
-  hold against a malicious dependency, which Deno's model did constrain. This
-  is a named regression. An OS-level sandbox around the server process is the
-  way to recover it and is tracked as follow-on work, not as a condition of the
-  move.
 - `node:test` has no op or resource sanitizers. A per-file check of active
   handles in the test-lane helper replaces them and is weaker.
   `specs/03-testing.md` §2 is amended to say so when the tests move.
-- Node's `--permission` follows symbolic links outside granted paths. The file
-  tools' lexical path checks and real-path resolution already address this and
-  are verified again when the launcher moves.
 - `deno check`, `deno info` and the `deno lint` plugin are replaced by
   `tsc --noEmit` and an import graph built with the TypeScript compiler API.
   The import map in `prototype/deno.json` becomes `package.json` and a
