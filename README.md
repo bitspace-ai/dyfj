@@ -1987,3 +1987,11 @@ Document revisions only. Code and behavior changes are tracked in
   which states the seats (implementer, reviewer, coordinator, maintainer), the
   maintainer's exclusive acts, and the nine rules every agent follows from
   issue to merge.
+- 2026-10-10 - `specs/README.md` records decision D32: the TypeScript tier moves
+  from Deno to Node.js LTS, written to the `node:` API surface only, delivered
+  as a strangler with the golden suite as the witness, with the capability
+  posture carried by Node's `--permission` flags and an in-process egress
+  grant; D6 is superseded. `docs/adr/0001-node-runtime-for-the-typescript-tier.md`
+  records the alternatives considered. The run instructions, repo layout and
+  testing spec still describe Deno and are amended by the changes that make
+  the move true, not ahead of them.
