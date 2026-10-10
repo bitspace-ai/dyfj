@@ -3,8 +3,12 @@
 // map. Engine-free: the caller supplies the handlers, so this module knows
 // nothing about the methods it serves.
 
+import { lstatSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
+import type { SocketHost } from "./connection.ts";
 import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
+import { nodeSocketHost } from "./node-socket.ts";
 
 export interface UnixJsonRpcServerOptions {
   /** Requests and notifications on every connection are dispatched here. */
@@ -13,6 +17,8 @@ export interface UnixJsonRpcServerOptions {
   onParseError?: JsonRpcPeerOptions["onParseError"];
   /** Passed to each connection's peer. */
   onRequestSettled?: JsonRpcPeerOptions["onRequestSettled"];
+  /** The socket implementation; defaults to the node:net adapter. */
+  host?: SocketHost;
 }
 
 export interface UnixJsonRpcServer {
@@ -32,25 +38,28 @@ export interface UnixJsonRpcServer {
  * keeps running (holding its Dolt pool) but becomes unreachable, and clients
  * silently land on whichever process bound last.
  */
-export async function assertSocketBindable(socketPath: string): Promise<void> {
-  let info: Deno.FileInfo;
+export async function assertSocketBindable(
+  socketPath: string,
+  host: SocketHost = nodeSocketHost,
+): Promise<void> {
+  let isSocket: boolean;
   try {
-    info = Deno.lstatSync(socketPath);
+    isSocket = lstatSync(socketPath).isSocket();
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return;
+    if ((err as { code?: string }).code === "ENOENT") return;
     throw err;
   }
-  if (!info.isSocket) {
+  if (!isSocket) {
     throw new Error(
       `refusing to bind: ${socketPath} exists and is not a socket`,
     );
   }
-  let live: Deno.UnixConn;
+  let live;
   try {
-    live = await Deno.connect({ transport: "unix", path: socketPath });
+    live = await host.connect(socketPath);
   } catch {
     // Nothing answered: a stale socket from an unclean exit. Clear it.
-    Deno.removeSync(socketPath);
+    rmSync(socketPath);
     return;
   }
   live.close();
@@ -67,19 +76,21 @@ export async function serveUnixJsonRpc(
   socketPath: string,
   options: UnixJsonRpcServerOptions,
 ): Promise<UnixJsonRpcServer> {
-  await assertSocketBindable(socketPath);
+  const host = options.host ?? nodeSocketHost;
+  await assertSocketBindable(socketPath, host);
 
-  const listener = Deno.listen({ transport: "unix", path: socketPath });
+  const listener = await host.listen(socketPath);
   const peers = new Set<JsonRpcPeer>();
 
   (async () => {
     for (;;) {
-      let conn: Deno.Conn;
+      let conn;
       try {
         conn = await listener.accept();
       } catch {
-        break; // listener closed
+        break; // listener failed
       }
+      if (conn === null) break; // listener closed
       const peer = new JsonRpcPeer(conn, {
         handlers: options.handlers,
         onParseError: options.onParseError,
@@ -109,7 +120,7 @@ export async function serveUnixJsonRpc(
         peers.clear();
       }
       try {
-        await Deno.remove(socketPath);
+        await rm(socketPath);
       } catch {
         // already gone
       }

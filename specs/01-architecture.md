@@ -279,6 +279,7 @@ consume it. This breaks the `mcp-tools ⇄ web-tools` cycle.
 | `ProcessSpawner` | `Deno.Command`                 | not faked. Tests that spawn processes are integration tier   |
 | `SecretResolver` | resolver command               | map                                                          |
 | `DnsResolver`    | `Deno.resolveDns`              | `ScriptedDnsResolver` (per-host answers, recorded lookups)   |
+| `ByteConnection` | `node:net` Unix socket through `SocketHost` and `ConnectionListener` (`transport/node-socket.ts`, the only `node:net` importer) | in-memory pair and scripted connections in the peer tests; real sockets in the integration tier |
 
 The filesystem is **not** a port: tests use real temp directories.
 
