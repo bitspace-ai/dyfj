@@ -160,7 +160,7 @@ README are tracked separately in its Revision history section.
   unchanged. One visible difference: a missing socket now fails with an error
   whose `code` is `ENOENT` (message `connect ENOENT <path>`), which the CLI's
   existing "runtime not reachable" check already matches. `runtime.neutral`
-  drops from 3,225 references in 253 files to 3,218 in 250: the four transport
+  drops from 3,225 references in 253 files to 3,219 in 250: the four transport
   source files leave the list, and the new adapter test and the lowered peer
   fakes account for the rest.
 

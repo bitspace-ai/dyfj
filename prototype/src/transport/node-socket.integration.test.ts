@@ -1,3 +1,4 @@
+import net from "node:net";
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import type { ByteConnection, ConnectionListener } from "./connection.ts";
@@ -150,6 +151,31 @@ Deno.test("peer half-close: after the other side's FIN read() is null and a late
     client.close();
   } finally {
     listener.close();
+    await removeIfPresent(path);
+  }
+});
+
+Deno.test("client-side half-close: after the server's FIN read() is null and the client can still write", async () => {
+  const path = udsTestSocket("node-socket");
+  await removeIfPresent(path);
+  // A plain node:net server that writes and then ends its side, as a server
+  // that answers and half-closes does, and keeps reading.
+  let received!: (text: string) => void;
+  const reply = new Promise<string>((resolve) => received = resolve);
+  const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+    socket.on("data", (chunk) => received(decode(chunk)));
+    socket.end(encode("hello"));
+  });
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  const client = await nodeSocketHost.connect(path);
+  try {
+    assertEquals(decode(await readAll(client, 5)), "hello");
+    assertEquals(await client.read(), null);
+    await client.write(encode("late reply"));
+    assertEquals(await reply, "late reply");
+  } finally {
+    client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await removeIfPresent(path);
   }
 });

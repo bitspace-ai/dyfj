@@ -97,6 +97,9 @@ class NodeListener implements ConnectionListener {
 
   constructor(server: net.Server) {
     this.#server = server;
+    // The server can close without close() here (a listen-side failure):
+    // a pending accept() must then end, not wait for a connection.
+    server.on("close", () => this.close());
     server.on("connection", (socket: net.Socket) => {
       const conn = new NodeConnection(socket);
       if (this.#closed) {

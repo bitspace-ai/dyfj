@@ -32,7 +32,10 @@ export interface ByteConnection {
 export interface ConnectionListener {
   /** The next accepted connection, or null once the listener is closed. */
   accept(): Promise<ByteConnection | null>;
-  /** Idempotent and never throws. Stops accepting; open connections stay open. */
+  /**
+   * Idempotent and never throws. Stops accepting. Connections already accepted
+   * stay open; connections that connected but were not yet accepted are closed.
+   */
   close(): void;
 }
 
