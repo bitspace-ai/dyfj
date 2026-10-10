@@ -3,9 +3,10 @@
  * `<tool_call><function=...>` markup instead of structured calls, and the
  * streaming-side helpers that withhold and strip that markup. Moved verbatim
  * from the single-file provider module with `export` keywords added; since
- * then `detectUnparsedToolCallMarkup` also counts complete blocks left unrun,
- * pinned by fixtures from captured model replies (BIT-564). Refactor it only
- * with fixture coverage from real captured model outputs.
+ * then `detectUnparsedToolCallMarkup` also counts function elements in
+ * complete blocks left unrun, pinned by fixtures from captured model replies
+ * (BIT-564). Refactor it only with fixture coverage from real captured model
+ * outputs.
  */
 import {
   canonicalJson,
