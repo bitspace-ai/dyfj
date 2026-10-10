@@ -49,7 +49,9 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
    finding is the thread, not a paraphrase. Distinguish verified, inherited
    and assumed. Report the failing half of a partial result unprompted.
 7. Commits state the why in public-safe prose. A tracker ID may appear; a
-   tracker link may not. No AI-tool attribution trailers. The changelog and
+   tracker link may not. A pull request's branch name, title and description
+   name only the ID of the issue it delivers (`docs/agents/issue-tracker.md`,
+   Boundary rules). No AI-tool attribution trailers. The changelog and
    the docs that describe the changed surface land in the same change.
 8. The interactive runtime under test is driven by the maintainer, not by
    an agent. An agent that needs a runtime step writes a labelled,
