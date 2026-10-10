@@ -2,9 +2,10 @@
  * Text tool-call extraction: recovering tool calls a model emitted as
  * `<tool_call><function=...>` markup instead of structured calls, and the
  * streaming-side helpers that withhold and strip that markup. Moved verbatim
- * from the single-file provider module; its only edits are `export`
- * keywords. Refactor it only with fixture coverage from real captured model
- * outputs.
+ * from the single-file provider module with `export` keywords added; since
+ * then `detectUnparsedToolCallMarkup` also counts complete blocks left unrun,
+ * pinned by fixtures from captured model replies (BIT-564). Refactor it only
+ * with fixture coverage from real captured model outputs.
  */
 import {
   canonicalJson,
@@ -35,6 +36,7 @@ const MAX_TEXT_TOOL_WRAPPER_WHITESPACE = 32;
 export const MAX_TEXT_TOOL_MARKUP_CANDIDATES = 64;
 export const TEXT_FUNCTION_MARKER = "<function=";
 export const TEXT_PARAMETER_MARKER = "<parameter=";
+const TEXT_FUNCTION_CLOSING = "</function>";
 const UNPARSED_TOOL_CALL_OPENING = "<tool_call>";
 const UNPARSED_TOOL_CALL_CLOSING = "</tool_call>";
 export const MAX_UNPARSED_TOOL_CALL_MARKERS = 64;
@@ -47,41 +49,125 @@ export const MAX_UNPARSED_TOOL_CALL_MARKERS = 64;
 export const MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS = MAX_OPENAI_RESPONSE_BYTES;
 
 /**
- * Detect the degraded Qwen-compatible shape that remains after textual-call
- * recovery: at least two exact wrapper openings left unmatched by closings.
- * One stray opening is not structural evidence, and balanced examples remain
- * prose. Markers are processed in order, so a closing matches only a preceding
- * opening; leading closings cannot cancel later openings. Inputs beyond the
- * accepted-response bound are not prefix-classified; the whole-text scan and
- * reported unmatched-opening count remain bounded.
+ * Detect tool-call markup that remains in the text after textual-call
+ * recovery, and so ran no tool. Two shapes count:
+ *
+ * - a complete block: a `<tool_call>` wrapper, closed, that encloses a
+ *   `<function=NAME>` opening followed by `</function>`. Recovery removes
+ *   every block it runs, so one left behind went unrun: no tools were
+ *   offered (a forced conclusion), the name was not offered, or its
+ *   arguments were unrecoverable;
+ * - the degraded Qwen-compatible shape: at least two exact wrapper openings
+ *   left unmatched by closings. One stray opening is not structural evidence.
+ *
+ * A balanced wrapper with no function element stays prose. Markers are
+ * processed in order, so a closing matches only the latest preceding open
+ * wrapper; leading closings cannot cancel later openings. Inputs beyond the
+ * accepted-response bound are not prefix-classified; the whole-text scan is
+ * linear and the reported count remains bounded.
  */
 export function detectUnparsedToolCallMarkup(
   text: string,
 ): WorkbenchTurnResult["unparsedToolCallMarkup"] {
   if (text.length > MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS) return undefined;
-  let unmatchedOpeningCount = 0;
+  const openWrappers: number[] = [];
+  let completeBlockCount = 0;
+  let latestFunctionOpening = -1;
+  // The latest function opening a `</function>` has followed. A closed
+  // wrapper is a complete block when this lies inside it.
+  let latestClosedFunctionOpening = -1;
   let openingAt = text.indexOf(UNPARSED_TOOL_CALL_OPENING);
   let closingAt = text.indexOf(UNPARSED_TOOL_CALL_CLOSING);
-  while (openingAt >= 0 || closingAt >= 0) {
-    if (openingAt >= 0 && (closingAt < 0 || openingAt < closingAt)) {
-      unmatchedOpeningCount += 1;
+  let functionAt = text.indexOf(TEXT_FUNCTION_MARKER);
+  let functionClosingAt = text.indexOf(TEXT_FUNCTION_CLOSING);
+  for (;;) {
+    const at = earliestMarker(
+      openingAt,
+      closingAt,
+      functionAt,
+      functionClosingAt,
+    );
+    if (at < 0) break;
+    if (at === openingAt) {
+      openWrappers.push(openingAt);
       openingAt = text.indexOf(
         UNPARSED_TOOL_CALL_OPENING,
         openingAt + UNPARSED_TOOL_CALL_OPENING.length,
       );
-    } else {
-      if (unmatchedOpeningCount > 0) unmatchedOpeningCount -= 1;
+    } else if (at === closingAt) {
+      const wrapperAt = openWrappers.pop();
+      if (
+        wrapperAt !== undefined && latestClosedFunctionOpening > wrapperAt
+      ) {
+        completeBlockCount += 1;
+      }
       closingAt = text.indexOf(
         UNPARSED_TOOL_CALL_CLOSING,
         closingAt + UNPARSED_TOOL_CALL_CLOSING.length,
       );
+    } else if (at === functionAt) {
+      if (isTextFunctionOpening(text, functionAt)) {
+        latestFunctionOpening = functionAt;
+      }
+      functionAt = text.indexOf(
+        TEXT_FUNCTION_MARKER,
+        functionAt + TEXT_FUNCTION_MARKER.length,
+      );
+    } else {
+      latestClosedFunctionOpening = latestFunctionOpening;
+      functionClosingAt = text.indexOf(
+        TEXT_FUNCTION_CLOSING,
+        functionClosingAt + TEXT_FUNCTION_CLOSING.length,
+      );
     }
   }
-  if (unmatchedOpeningCount < 2) return undefined;
+  const unmatchedOpeningCount = openWrappers.length >= 2
+    ? openWrappers.length
+    : 0;
+  const count = completeBlockCount + unmatchedOpeningCount;
+  if (count === 0) return undefined;
   return {
-    count: Math.min(unmatchedOpeningCount, MAX_UNPARSED_TOOL_CALL_MARKERS),
-    countIsLowerBound: unmatchedOpeningCount > MAX_UNPARSED_TOOL_CALL_MARKERS,
+    count: Math.min(count, MAX_UNPARSED_TOOL_CALL_MARKERS),
+    countIsLowerBound: count > MAX_UNPARSED_TOOL_CALL_MARKERS,
   };
+}
+
+function earliestMarker(...positions: number[]): number {
+  let earliest = -1;
+  for (const position of positions) {
+    if (position >= 0 && (earliest < 0 || position < earliest)) {
+      earliest = position;
+    }
+  }
+  return earliest;
+}
+
+/**
+ * Whether `<function=` at `at` opens a function element as recovery reads
+ * one: a non-empty name, bounded whitespace, then `>`. The name stops at `<`
+ * so that scans from successive markers never overlap.
+ */
+function isTextFunctionOpening(text: string, at: number): boolean {
+  const nameStart = at + TEXT_FUNCTION_MARKER.length;
+  let nameEnd = nameStart;
+  while (
+    nameEnd < text.length &&
+    text[nameEnd] !== ">" &&
+    text[nameEnd] !== "<" &&
+    text[nameEnd].trim().length > 0
+  ) {
+    nameEnd++;
+  }
+  if (nameEnd === nameStart) return false;
+  let openingEnd = nameEnd;
+  while (
+    openingEnd < text.length &&
+    openingEnd - nameEnd < MAX_TEXT_TOOL_WRAPPER_WHITESPACE &&
+    text[openingEnd].trim().length === 0
+  ) {
+    openingEnd++;
+  }
+  return text[openingEnd] === ">";
 }
 
 function exceedsTextToolMarkupCandidateLimit(

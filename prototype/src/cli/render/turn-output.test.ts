@@ -55,10 +55,24 @@ describe("formatRuntimeEvent", () => {
     const warning = formatRuntimeEvent(unparsedMarkupEvent());
     assertStrictEquals(
       warning,
-      "WARNING: unparsed tool-call markup was present (at least 64 unmatched opening(s)); " +
+      "WARNING: unparsed tool-call markup was present (at least 64 unrun tool call(s)); " +
         "no tools were executed from it",
     );
     assertNotMatch(warning, /edit_file|read_file|<tool_call>/);
+  });
+
+  it("words a single unrun tool-call block as a call, not an opening", () => {
+    const warning = formatRuntimeEvent({
+      ...unparsedMarkupEvent(),
+      count: 1,
+      countIsLowerBound: false,
+    });
+    assertStrictEquals(
+      warning,
+      "WARNING: unparsed tool-call markup was present (1 unrun tool call(s)); " +
+        "no tools were executed from it",
+    );
+    assertNotMatch(warning, /unmatched opening/);
   });
 
   it("renders negotiated memory-recall diagnostics from structured fields", () => {

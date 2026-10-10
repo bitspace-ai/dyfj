@@ -137,7 +137,7 @@ async function discloseUnparsedMarkup(
       ? `at least ${warningEvent.count}`
       : String(warningEvent.count);
     state.session.log(
-      `WARNING: unparsed tool-call markup was present (${amount} unmatched opening(s)); ` +
+      `WARNING: unparsed tool-call markup was present (${amount} unrun tool call(s)); ` +
         "no tools were executed from it",
     );
   }

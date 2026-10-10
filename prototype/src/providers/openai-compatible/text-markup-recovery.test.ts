@@ -457,3 +457,116 @@ describe("runWorkbenchTurn streaming", () => {
     assertStrictEquals(result.toolCalls, undefined);
   });
 });
+
+// Stored model text from local-model turns that ended on a complete textual
+// call the engine neither ran nor flagged (BIT-564). The first was the whole
+// reply to a forced conclusion, which offers no tools; the second followed a
+// `bash` result.
+const STORED_READ_FILE_REPLY = "<tool_call>\n<function=read_file>\n" +
+  "<parameter=path>\nCHANGELOG.md\n</parameter>\n" +
+  "<parameter=limit>\n200\n</parameter>\n" +
+  "<parameter=offset>\n401\n</parameter>\n</function>\n</tool_call>";
+const STORED_BASH_COMMAND =
+  "cd core && cargo test -p dyfj-repl rejected_friction_is_not_recorded 2>&1";
+const STORED_BASH_REPLY = "Hmm, 0 tests matched. The test name might not " +
+  "be filtering correctly. Let me check:\n\n<tool_call>\n<function=bash>\n" +
+  `<parameter=command>\n${STORED_BASH_COMMAND}\n</parameter>\n` +
+  "</function>\n</tool_call>";
+
+const tool = (name: string) => ({
+  name,
+  description: `${name} tool.`,
+  parameters: { type: "object" },
+});
+
+for (const streamed of [true, false]) {
+  const mode = streamed ? "streamed" : "buffered";
+  const reply = (content: string) =>
+    new ScriptedHttpTransport([{
+      respond: {
+        body: streamed
+          ? sse([
+            { choices: [{ delta: { content } }] },
+            { choices: [{ delta: {}, finish_reason: "stop" }] },
+          ])
+          : JSON.stringify({
+            choices: [{ message: { content }, finish_reason: "stop" }],
+          }),
+      },
+    }]);
+  const turn = (
+    transport: ScriptedHttpTransport,
+    tools: ReturnType<typeof tool>[] | undefined,
+  ) =>
+    runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "continue",
+      routing: { modelId: "gemma4:e2b" },
+      models,
+      ...(tools ? { tools } : {}),
+      ...(streamed ? { onTextDelta: () => {} } : {}),
+      fetchFn: transport.fetch,
+    });
+
+  describe(`unrun complete textual tool calls (${mode})`, () => {
+    it("flags a complete block when the request offers no tools", async () => {
+      const transport = reply(STORED_READ_FILE_REPLY);
+      const result = await turn(transport, undefined);
+      transport.assertDone();
+
+      assertStrictEquals(result.text, STORED_READ_FILE_REPLY);
+      assertStrictEquals(result.toolCalls, undefined);
+      assertEquals(result.unparsedToolCallMarkup, {
+        count: 1,
+        countIsLowerBound: false,
+      });
+    });
+
+    it("flags a complete block naming a tool that was not offered", async () => {
+      const transport = reply(STORED_BASH_REPLY);
+      const result = await turn(transport, [
+        tool("read_file"),
+        tool("edit_file"),
+      ]);
+      transport.assertDone();
+
+      assertStrictEquals(result.text, STORED_BASH_REPLY);
+      assertStrictEquals(result.toolCalls, undefined);
+      assertEquals(result.unparsedToolCallMarkup, {
+        count: 1,
+        countIsLowerBound: false,
+      });
+    });
+
+    it("recovers the same block when its tool is offered, without a warning", async () => {
+      const transport = reply(STORED_BASH_REPLY);
+      const result = await turn(transport, [tool("read_file"), tool("bash")]);
+      transport.assertDone();
+
+      assertEquals(result.toolCalls, [{
+        id: "text-tool-1",
+        name: "bash",
+        arguments: { command: STORED_BASH_COMMAND },
+      }]);
+      assertStrictEquals(result.unparsedToolCallMarkup, undefined);
+    });
+
+    it("flags only the unoffered block when an offered one is recovered", async () => {
+      const offered =
+        "<tool_call><function=read_file><parameter=path>README.md</parameter></function></tool_call>";
+      const transport = reply(`${offered}\n${STORED_BASH_REPLY}`);
+      const result = await turn(transport, [tool("read_file")]);
+      transport.assertDone();
+
+      assertEquals(result.toolCalls, [{
+        id: "text-tool-1",
+        name: "read_file",
+        arguments: { path: "README.md" },
+      }]);
+      assertEquals(result.unparsedToolCallMarkup, {
+        count: 1,
+        countIsLowerBound: false,
+      });
+    });
+  });
+}
