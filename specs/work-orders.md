@@ -40,11 +40,13 @@ Agents: read these before starting any WO.
    - Add a CHANGELOG `[Unreleased]` entry when anything observable changes. Pure
      internal moves need none.
    - Update any doc that describes a moved or renamed file.
-   - A tracker ID (`BIT-###`) may appear anywhere it helps — branch names,
-     commits, PRs, code, docs, and `specs/` — as long as it accompanies the why
-     rather than replacing it. The one hard limit: never a private tracker link
-     (a Linear URL or other deep link a public reader cannot open) in a public
-     artifact (AGENTS.md; `specs/README.md` D30).
+   - A tracker ID (`BIT-###`) may appear anywhere it helps — commits, code,
+     docs, and `specs/` — as long as it accompanies the why rather than
+     replacing it. A pull request names only the ID of the issue it delivers,
+     in its branch name, title and description; any other issue is referred to
+     in words (AGENTS.md; `specs/README.md` D33). The one hard limit: never a
+     private tracker link (a Linear URL or other deep link a public reader
+     cannot open) in a public artifact (AGENTS.md; `specs/README.md` D30).
 6. **Gate before push.**
    - `deno task test` is green locally.
    - The PR description lists the gate result, the `arch.imports` baseline

@@ -2016,7 +2016,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-10 - Validation guidance documents the `runtime.neutral` gate lane,
   the exact ratchet on whole-word `Deno` references in tracked TypeScript that
   tracks the move to Node.js under decision D32.
-- 2026-10-10 - AGENTS.md and `docs/agents/` state that a pull request names only
+- 2026-10-10 - AGENTS.md, `docs/agents/` and `specs/work-orders.md` state, and
+  `specs/README.md` records as D33, that a pull request names only
   the ID of the issue it delivers, in its branch name, title and description:
   the tracker's GitHub integration closes any issue whose ID is in a merged
   pull request's branch name or title, or follows a closing word in its
