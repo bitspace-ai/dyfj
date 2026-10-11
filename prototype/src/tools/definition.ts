@@ -157,7 +157,7 @@ export type CommandInvocationResult<TResult = unknown> =
     isError: true;
     reason: string;
     /**
-     * Set when the approver refused a call that needed approval: the verdict
+     * Set when a call that needed approval was not approved: the verdict
      * the runtime frame carries, so a client can render a refusal as one and
      * the loop can end tool use. Absent on every other result.
      */

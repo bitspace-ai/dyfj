@@ -186,6 +186,35 @@ describe("invokeCommand approval (ask) flow", () => {
     assertFalse(text.includes("/"));
   });
 
+  it("a refused command that defines its own event content keeps that content; the refusal is in the result", async () => {
+    const events: EventInsert[] = [];
+    const registry = createCommandRegistry([{
+      ...writeFileCommand(),
+      eventContent: (isError) =>
+        JSON.stringify({ outcome: isError ? "error" : "ok" }),
+    }]);
+    await invokeCommandWithEvent(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        writeEvent: (event) => {
+          events.push(event);
+        },
+      },
+      () => Promise.resolve({ decision: "deny", reason: "operator said no" }),
+    );
+    assertEquals(events.length, 1);
+    assertObjectMatch(events[0], {
+      action: "deny",
+      authz_basis: "policy:deny:approval-denied",
+      tool_is_error: true,
+      tool_result: approvalDeniedReason("write_file", "operator said no"),
+      content: JSON.stringify({ outcome: "error" }),
+    });
+  });
+
   it("a call that needed no approval carries no approval verdict", async () => {
     const registry = createCommandRegistry([
       writeFileCommand(() => "ran"),

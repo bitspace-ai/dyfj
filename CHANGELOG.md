@@ -145,7 +145,7 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **A tool call the approver refuses reaches the model as a refusal, and tool
+- **A tool call that is not approved reaches the model as a refusal, and tool
   use ends for that turn.** Before, the model received exactly the client's
   reason, `operator declined`, which reads like what a command printed; on
   the local route nothing marked it as an error, so the model drew conclusions
@@ -164,8 +164,12 @@ README are tracked separately in its Revision history section.
   (the time on it is the approval wait), and the TypeScript CLI as
   `⊘ <tool> not approved`; a real failure still renders as a failure. The
   durable `tool_call` event keeps `action: "deny"` and `authz_basis:
-  "policy:deny:approval-denied"`, and its `tool_result` and `content` carry the
-  refusal. Golden scenario `03-strict-mutation-rejected` is re-snapshotted for
+  "policy:deny:approval-denied"`, and its `tool_result` carries the refusal; so
+  does its `content`, except for a tool that defines its own event content (the
+  connector tools), which keeps that provenance text and shows the denial in
+  `action` and `tool_result`. The concluding call is final: a tool call it still
+  asks for is dropped, so a model that ignores the instruction cannot raise
+  another approval. Golden scenario `03-strict-mutation-rejected` is re-snapshotted for
   this (the refusal text in its text, event content and tool result, and its
   second provider call is now a `forced_conclusion`), and `13-bash-denied` is
   added (`specs/03-testing.md` §4).

@@ -297,6 +297,38 @@ describe("a denied approval", () => {
   });
 });
 
+describe("after a denied approval", () => {
+  it("a no-tools conclusion that still asks for a tool call runs nothing and raises no approval", async () => {
+    const approvals: string[] = [];
+    const loop = await loopTurn([
+      toolReply([WRITE("c1", "a.txt")]),
+      // The model ignores the instruction and asks for another call anyway.
+      toolReply([WRITE("c2", "b.txt")], "I will try again."),
+      chatReply({ content: "unused: the loop must not ask a third time" }),
+    ], {
+      prompt: "write a file",
+      approver: {
+        confirmToolApproval: (request) => {
+          approvals.push(request.callId);
+          return Promise.resolve({
+            decision: "deny",
+            reason: "operator declined",
+          });
+        },
+      },
+    });
+    assertEquals(loop.error, null);
+    assertEquals(approvals, ["c1"]);
+    assertEquals(loop.run.transport.requests.length, 2);
+    assertEquals(
+      loop.frames.filter((f) => f.type === "toolCallCompleted").length,
+      1,
+    );
+    assertEquals(loop.result?.stopReason, "stop");
+    assertEquals(loop.result?.text, "I will try again.");
+  });
+});
+
 const CONCLUSION_FAILED =
   "The no-tools conclusion after the tool-step limit could not be completed.";
 

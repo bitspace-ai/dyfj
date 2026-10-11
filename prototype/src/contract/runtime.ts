@@ -218,7 +218,7 @@ export type WorkbenchRuntimeEvent =
     errorName?: string;
     errorMessage?: string;
     /**
-     * Present when the call did not run because the approver refused it. A
+     * Present when the call did not run because it was not approved. A
      * client renders that as a refusal, not as a failed command; the duration
      * is then the approval wait, not execution.
      */

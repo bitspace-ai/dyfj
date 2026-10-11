@@ -252,7 +252,7 @@ export interface ToolResultSummary {
   result: string;
   /** The result's original length when the engine cut it to fit the window. */
   trimmedFrom?: number;
-  /** The approver refused the call, so it did not run. */
+  /** The call was not approved, so it did not run. */
   approvalDenied?: true;
 }
 

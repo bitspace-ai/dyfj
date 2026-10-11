@@ -31,11 +31,12 @@ export interface CommandEventContext {
 }
 
 /**
- * What the model reads in place of a tool result when the approver refused the
- * call. It leads with a class the model can recognise (`approval_denied`) and
- * says plainly that the command did not run, so the text cannot be taken for
- * the command's output, and it tells the model not to retry. `reason` is what
- * the approver gave; it names no path of its own. "Not approved" and not "the
+ * What the model reads in place of a tool result when the call was not
+ * approved. It leads with a class the model can recognise (`approval_denied`)
+ * and says plainly that the command did not run, so the text cannot be taken
+ * for the command's output, and it tells the model not to retry. `reason` is
+ * what the approval path gave (an operator's answer, or that no terminal was
+ * available); it names no path of its own. "Not approved" and not "the
  * operator declined", because with no terminal nobody declined anything.
  */
 export function approvalDeniedReason(

@@ -116,11 +116,32 @@ export async function agentLoop(
       break;
     }
     result = await followUp(turn, result, messages, step, streaming);
+    // A concluding call sent because a tool call was not approved is the
+    // last word of the turn: whatever tool call it still carries is dropped,
+    // so a model that ignores the instruction cannot raise another approval.
+    if (step.approvalDenied) result = withoutToolCalls(session, result);
     captureTurnState(state, result);
     result = abortedIfCancelled(turn, result);
   }
   result = abortedIfCancelled(turn, result);
   return { result, streamedText: streaming.streamedText };
+}
+
+/**
+ * The result with its tool calls dropped, and how many were, logged. The turn
+ * ends here, so its stop reason is the ordinary `stop`, not the provider's
+ * `tool_use` for calls that will never run.
+ */
+function withoutToolCalls(
+  session: TurnState["session"],
+  result: LoopTurnResult,
+): LoopTurnResult {
+  const dropped = result.toolCalls?.length ?? 0;
+  if (dropped === 0) return result;
+  session.log(
+    `Dropped ${dropped} tool call(s) requested after a tool call was not approved.`,
+  );
+  return { ...result, toolCalls: undefined, stopReason: "stop" };
 }
 
 /** The call parameters every loop call shares. */
@@ -165,7 +186,7 @@ interface ToolStep {
   stepResults: ToolResultSummary[];
   /** Every call in the step repeats one already made this turn. */
   allRepeats: boolean;
-  /** The approver refused at least one call in the step. */
+  /** At least one call in the step was not approved. */
   approvalDenied: boolean;
 }
 
@@ -362,7 +383,7 @@ function startCommand(
 /**
  * Append the step to the transcript and make the next call: a normal
  * follow-up, or — at the step cap, when the model repeated itself, or when the
- * approver refused a call in the step — a forced conclusion with tools
+ * a call in the step was not approved — a forced conclusion with tools
  * dropped.
  */
 async function followUp(
@@ -436,7 +457,7 @@ async function followUp(
 /**
  * The request that follows a tool step: a forced conclusion (the longer
  * instruction, no tool definitions) at the step cap, when the whole step
- * repeated earlier calls, or when the approver refused a call in the step
+ * repeated earlier calls, or when a call in the step was not approved
  * (the operator is handed control back), else the ordinary gather call. One decision, read
  * both where the step's results are bounded and where the follow-up is sent,
  * so the results are sized against the request that actually goes out.
