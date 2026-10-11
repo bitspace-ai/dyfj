@@ -2032,3 +2032,6 @@ Document revisions only. Code and behavior changes are tracked in
   states its grounds for declining Bun as cited facts. The `node:net` importer
   claims now separate today's sole importer from the boundary the import rule
   enforces.
+- 2026-10-11 - D32 and ADR 0001 qualify runtime portability: source and tests
+  carry over to another Node-compatible runtime without a port, while the
+  launcher's capability grants are runtime-specific.
