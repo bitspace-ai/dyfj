@@ -5,6 +5,7 @@
  * connector.
  */
 
+import { writeSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import process from "node:process";
 import type { connectUnixClient } from "../transport/mod.ts";
@@ -32,9 +33,13 @@ export interface TurnInterruptSource {
   remove(handler: () => void): void;
 }
 
-export const denoTurnInterruptSource: TurnInterruptSource = {
-  add: (handler) => Deno.addSignalListener("SIGINT", handler),
-  remove: (handler) => Deno.removeSignalListener("SIGINT", handler),
+export const processSigintSource: TurnInterruptSource = {
+  add: (handler) => {
+    process.on("SIGINT", handler);
+  },
+  remove: (handler) => {
+    process.off("SIGINT", handler);
+  },
 };
 
 interface QuestionReadline {
@@ -74,8 +79,8 @@ export function selectTurnInterruptSource(
 /**
  * Read one line, resolving null on EOF. On Ctrl-D readline emits "close" but the
  * pending `question` promise never settles, so race it against "close" —
- * otherwise the REPL's await hangs and Deno reports a never-resolved top-level
- * await instead of exiting cleanly.
+ * otherwise the REPL's await hangs and the runtime reports a never-resolved
+ * top-level await instead of exiting cleanly.
  */
 export function readLineOrNull(
   rl: QuestionReadline,
@@ -98,26 +103,83 @@ export function readLineOrNull(
   });
 }
 
+/** Write `length` bytes of `bytes` from `offset` to `fd`; returns the count written. */
+export type FdWriter = (
+  fd: number,
+  bytes: Uint8Array,
+  offset: number,
+  length: number,
+) => number;
+
+const pauseCell = new Int32Array(new SharedArrayBuffer(4));
+const EAGAIN_PAUSE_MS = 5;
+
+function pauseBriefly(): void {
+  Atomics.wait(pauseCell, 0, 0, EAGAIN_PAUSE_MS);
+}
+
+/**
+ * Write every byte of `bytes` to `fd` synchronously. One `writeSync` may write
+ * fewer bytes than asked (a slow pipe under Node writes one pipe buffer), and a
+ * non-blocking descriptor may report EAGAIN; either way, wait briefly and write
+ * the rest.
+ */
+export function writeAll(
+  fd: number,
+  bytes: Uint8Array,
+  write: FdWriter = writeSync,
+  pause: () => void = pauseBriefly,
+): void {
+  let offset = 0;
+  while (offset < bytes.length) {
+    let written: number;
+    try {
+      written = write(fd, bytes, offset, bytes.length - offset);
+    } catch (error) {
+      if ((error as { code?: unknown } | null)?.code !== "EAGAIN") throw error;
+      written = 0;
+    }
+    if (written === 0) pause();
+    offset += written;
+  }
+}
+
+const lineEncoder = new TextEncoder();
+
+/**
+ * Write `line` and a newline to `fd` through `writeAll`. `console.error` is
+ * asynchronous on a POSIX pipe under Node, so an immediate `process.exit`
+ * could drop the end of a long line.
+ */
+export function writeLine(
+  fd: number,
+  line: string,
+  write: FdWriter = writeSync,
+  pause: () => void = pauseBriefly,
+): void {
+  writeAll(fd, lineEncoder.encode(`${line}\n`), write, pause);
+}
+
 export function realIo(): Io {
   const encoder = new TextEncoder();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const inputIsTerminal = Deno.stdin.isTerminal();
-  const outputIsTerminal = Deno.stdout.isTerminal();
+  const inputIsTerminal = process.stdin.isTTY === true;
+  const outputIsTerminal = process.stdout.isTTY === true;
   return {
     out: (text) => {
-      Deno.stdout.writeSync(encoder.encode(text));
+      writeAll(process.stdout.fd, encoder.encode(text));
     },
-    err: (line) => console.error(line),
+    err: (line) => writeLine(process.stderr.fd, line),
     errRaw: (text) => {
-      Deno.stderr.writeSync(encoder.encode(text));
+      writeAll(process.stderr.fd, encoder.encode(text));
     },
-    errIsTerminal: Deno.stderr.isTerminal(),
+    errIsTerminal: process.stderr.isTTY === true,
     readLine: (prompt, signal) => readLineOrNull(rl, prompt, signal),
     turnInterrupts: selectTurnInterruptSource(
       inputIsTerminal,
       outputIsTerminal,
       readlineTurnInterruptSource(rl),
-      denoTurnInterruptSource,
+      processSigintSource,
     ),
     close: () => rl.close(),
   };

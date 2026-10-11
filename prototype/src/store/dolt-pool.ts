@@ -68,7 +68,7 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
  * at boot needs no running server.
  */
 export function createDoltPool(config: DoltConnectionConfig): DoltPool {
-  // Deno's npm declaration bridge drops mysql2's mixed-in promise methods.
+  // The runtime's npm declaration bridge drops mysql2's mixed-in promise methods.
   return mysql.createPool({
     host: config.host,
     port: config.port,

@@ -18,6 +18,7 @@ import {
   createTurnOutputHandlers,
   formatRuntimeEvent,
   handleTurnRuntimeEvent,
+  wrapColumns,
 } from "./turn-output.ts";
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
@@ -28,6 +29,20 @@ function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
     ...overrides,
   };
 }
+
+describe("wrapColumns", () => {
+  it("falls back to 80 when the width is unknown", () => {
+    assertStrictEquals(wrapColumns(undefined), 80);
+  });
+
+  it("falls back to 80 when a sizeless pty reports zero columns", () => {
+    assertStrictEquals(wrapColumns(0), 80);
+  });
+
+  it("caps a wide terminal at 100", () => {
+    assertStrictEquals(wrapColumns(140), 100);
+  });
+});
 
 describe("formatRuntimeEvent", () => {
   it("ignores routine non-tool lifecycle events", () => {

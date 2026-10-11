@@ -1,6 +1,6 @@
-// The real terminal adapter's readline pieces: EOF and abort handling, and
-// which Ctrl-C source a turn listens on.
-import { assertStrictEquals } from "@std/assert";
+// The real terminal adapter's pieces: readline EOF and abort handling, which
+// Ctrl-C source a turn listens on, and the synchronous write-all loop.
+import { assertEquals, assertStrictEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy } from "@std/testing/mock";
 import {
@@ -8,6 +8,8 @@ import {
   readlineTurnInterruptSource,
   selectTurnInterruptSource,
   type TurnInterruptSource,
+  writeAll,
+  writeLine,
 } from "./io.ts";
 
 describe("readLineOrNull", () => {
@@ -120,5 +122,73 @@ describe("readlineTurnInterruptSource", () => {
       selectTurnInterruptSource(false, true, readlineSource, signalSource),
       undefined,
     );
+  });
+});
+
+describe("writeAll", () => {
+  it("keeps writing after a partial write until every byte is out", () => {
+    const written: number[][] = [];
+    const write = (
+      _fd: number,
+      bytes: Uint8Array,
+      offset: number,
+      length: number,
+    ) => {
+      const n = written.length === 0 ? 2 : length;
+      written.push([...bytes.subarray(offset, offset + n)]);
+      return n;
+    };
+    writeAll(1, new Uint8Array([1, 2, 3, 4, 5]), write, () => {});
+    assertEquals(written, [[1, 2], [3, 4, 5]]);
+  });
+
+  it("pauses and retries when the descriptor reports EAGAIN", () => {
+    const written: number[][] = [];
+    const pause = spy(() => {});
+    let calls = 0;
+    const write = (
+      _fd: number,
+      bytes: Uint8Array,
+      offset: number,
+      length: number,
+    ) => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("resource temporarily unavailable"), {
+          code: "EAGAIN",
+        });
+      }
+      written.push([...bytes.subarray(offset, offset + length)]);
+      return length;
+    };
+    writeAll(2, new Uint8Array([7, 8, 9]), write, pause);
+    assertSpyCalls(pause, 1);
+    assertEquals(written, [[7, 8, 9]]);
+  });
+
+  it("writes nothing for an empty buffer", () => {
+    const write = spy(() => 0);
+    writeAll(1, new Uint8Array(0), write, () => {});
+    assertSpyCalls(write, 0);
+  });
+});
+
+describe("writeLine", () => {
+  it("writes the whole line and a newline, past a partial write", () => {
+    const written: number[] = [];
+    let calls = 0;
+    const write = (
+      _fd: number,
+      bytes: Uint8Array,
+      offset: number,
+      length: number,
+    ) => {
+      calls += 1;
+      const n = calls === 1 ? 1 : length;
+      written.push(...bytes.subarray(offset, offset + n));
+      return n;
+    };
+    writeLine(2, "oops", write, () => {});
+    assertEquals(new TextDecoder().decode(new Uint8Array(written)), "oops\n");
   });
 });

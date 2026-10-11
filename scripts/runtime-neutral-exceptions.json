@@ -250,11 +250,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/cli/io.ts",
-    "count": 8,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/cli/launcher/grants.integration.test.ts",
     "count": 19,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -271,16 +266,6 @@
   },
   {
     "path": "prototype/src/cli/launcher/runtime.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/main.ts",
-    "count": 5,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/render/turn-output.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
@@ -570,11 +555,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/kernel/bounded-regex.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/kernel/canonical-json.test.ts",
     "count": 8,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -610,11 +590,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/providers/shared/failure.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/server/console-canary.integration.test.ts",
     "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -633,11 +608,6 @@
     "path": "prototype/src/server/main.integration.test.ts",
     "count": 8,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/main.ts",
-    "count": 5,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/server/rpc/approval.test.ts",
@@ -683,11 +653,6 @@
     "path": "prototype/src/server/session-model.integration.test.ts",
     "count": 9,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/dolt-pool.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
