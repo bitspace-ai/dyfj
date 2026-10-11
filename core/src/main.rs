@@ -11,8 +11,8 @@ use dyfj_core::events::{self, Event};
 use sqlx::MySqlPool;
 
 fn make_session_start_event() -> Event {
-    let event_id = ulid::Ulid::new().to_string();
-    let session_id = ulid::Ulid::new().to_string();
+    let event_id = ulid::Ulid::generate().to_string();
+    let session_id = ulid::Ulid::generate().to_string();
     let trace_id = format!("{:032x}", rand::random::<u128>());
     let span_id = format!("{:016x}", rand::random::<u64>());
     let created_at = DateTime::<Utc>::from_timestamp_micros(Utc::now().timestamp_micros())
