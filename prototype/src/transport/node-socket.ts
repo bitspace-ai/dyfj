@@ -1,6 +1,6 @@
-// The node:net adapter for the connection ports: Unix-domain sockets. The one
-// module that imports node:net (scripts/arch-layers.json confines it to
-// transport/). A socket is push-style (events); the ports are pull-style, so
+// The node:net adapter for the connection ports: Unix-domain sockets. Today the
+// only non-test module that imports node:net; scripts/arch-layers.json confines
+// the package to transport/. A socket is push-style (events); the ports are pull-style, so
 // each connection keeps a queue and pauses the socket while a chunk waits.
 //
 // Every socket opens with allowHalfOpen: true, at both ends. With the default,

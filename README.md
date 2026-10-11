@@ -2028,3 +2028,7 @@ Document revisions only. Code and behavior changes are tracked in
   approved reaches the model as an `approval_denied` refusal and ends tool use
   for that turn (the model's concluding call is final), instead of a bare
   reason the model read as command output.
+- 2026-10-11 - D32 and ADR 0001 link Deno's own announcement, and the ADR
+  states its grounds for declining Bun as cited facts. The `node:net` importer
+  claims now separate today's sole importer from the boundary the import rule
+  enforces.

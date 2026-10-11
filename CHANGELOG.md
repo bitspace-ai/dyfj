@@ -216,8 +216,8 @@ README are tracked separately in its Revision history section.
   listener need from a socket: `read()` returns the next chunk or null at end
   of stream, `write()` resolves once every byte is accepted, `close()` is
   idempotent, and `SocketHost` dials and binds a path. The one adapter,
-  `transport/node-socket.ts`, is the only module that imports `node:net`
-  (`scripts/arch-layers.json` now confines the package to `transport/`). Every
+  `transport/node-socket.ts`, is the only non-test module that imports
+  `node:net` (`scripts/arch-layers.json` now confines the package to `transport/`). Every
   socket opens with `allowHalfOpen`, so a request that arrives just before the
   client's FIN is still answered. The peer no longer owns a read buffer or a
   partial-write loop, and socket-file hygiene and the 0700 socket directory use

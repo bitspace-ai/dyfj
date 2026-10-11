@@ -19,7 +19,8 @@ began. Deno plays three separable roles there:
    grants the launcher computes at start, which hold the loopback-only network
    posture, the pinned list of spawnable binaries and the environment allowlist.
 
-On 2026-10-09 Deno's maintainers announced that the runtime will receive
+On 2026-10-09 Deno's maintainers
+[announced](https://deno.com/blog/cloudflare) that the runtime will receive
 maintenance releases for one more year and that its development ends after
 that. A runtime that holds provider credentials and spawns tools cannot stay on
 an end-of-life interpreter, and every new test written to the Deno dialect
@@ -64,9 +65,12 @@ The TypeScript tier moves to Node.js on the active LTS line.
 
 **Bun.** Fast startup, TypeScript without flags, a Jest-shaped test runner that
 would take the bdd-style tests with little change, and a single-file compile.
-Declined as the commitment because it has no permission model at all and is a
-single-vendor runtime whose owner's stated interest is its own tooling, the
-shape of risk that just materialised with Deno. Writing to the `node:` surface
+Declined as the commitment because it has no permission model comparable to
+Deno's `--allow-*` flags or Node's `--permission`, and because it is a
+single-vendor runtime: since December 2025 it has been
+[owned by Anthropic](https://bun.com/blog/bun-joins-anthropic), which builds its
+own products on it. A runtime whose direction follows one company's product
+needs is the shape of risk that just materialised with Deno. Writing to the `node:` surface
 keeps it available later at near-zero cost, so choosing Node forecloses
 nothing.
 
