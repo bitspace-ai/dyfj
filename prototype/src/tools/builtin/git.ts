@@ -432,7 +432,7 @@ export async function executeGit(
   try {
     res = await runner(plan.argv, root, timeoutMs);
   } catch (err) {
-    // Message, not the spawn error object: Deno embeds the absolute path it
+    // Message, not the spawn error object: the runtime embeds the absolute path it
     // failed on, and this string reaches the durable transcript.
     return `error: cannot run git: ${(err as Error).message}`;
   }

@@ -981,6 +981,31 @@ Deno.test("the committed rules confine node:net to the transport unit", async ()
   ]);
 });
 
+Deno.test("the committed rules confine node:child_process to tools and the ACP runner", async () => {
+  const committed = JSON.parse(
+    await Deno.readTextFile(
+      fileURLToPath(new URL("./arch-layers.json", import.meta.url)),
+    ),
+  ) as LayerRules;
+  const result = await run({
+    [`${S}/tools/builtin/spawn.ts`]:
+      'import { spawn } from "node:child_process"; spawn;',
+    [`${S}/acp-client.ts`]:
+      'import { spawn } from "node:child_process"; spawn;',
+    [`${S}/runners/acp/spawn.ts`]:
+      'import { spawn } from "node:child_process"; spawn;',
+    [`${S}/engine/run.ts`]:
+      'import { spawn } from "node:child_process"; spawn;',
+    [`${S}/server/launch.ts`]:
+      'import { execFile } from "node:child_process"; execFile;',
+    [`${S}/engine/other.ts`]: 'import { join } from "node:path"; join;',
+  }, { rules: committed });
+  assertEquals(result.current.packages, [
+    `${S}/engine/run.ts: node:child_process`,
+    `${S}/server/launch.ts: node:child_process`,
+  ]);
+});
+
 Deno.test("an SQL write literal is a violation outside the journal and entrypoints", async () => {
   const result = await run({
     [`${S}/store/journal.ts`]:

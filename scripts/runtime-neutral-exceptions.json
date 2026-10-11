@@ -785,11 +785,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/builtin/bounded-process.ts",
-    "count": 14,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/tools/builtin/exec.integration.test.ts",
     "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -800,29 +795,14 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/builtin/file-access.ts",
-    "count": 16,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/tools/builtin/file-hardening.test.ts",
-    "count": 92,
+    "count": 89,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/builtin/file-read.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/builtin/file-search.ts",
-    "count": 7,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/builtin/file-write.ts",
-    "count": 9,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
+    "path": "prototype/src/tools/builtin/file-search.integration.test.ts",
+    "count": 4,
+    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/tools/builtin/file.test.ts",
@@ -830,19 +810,9 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/builtin/git.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/tools/builtin/root-anchors.test.ts",
     "count": 12,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/builtin/root-anchors.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/tools/conformance.test.ts",
@@ -1151,7 +1121,7 @@
   },
   {
     "path": "scripts/arch-imports.test.ts",
-    "count": 74,
+    "count": 76,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

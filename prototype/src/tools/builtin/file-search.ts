@@ -3,6 +3,8 @@
  * over the workspace, with the traversal and ceilings that bound it.
  */
 
+import type { Dirent } from "node:fs";
+import { opendir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   BoundedMatcher,
@@ -15,9 +17,11 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_ENTRIES,
   excludedSegment,
+  type FileStat,
   HARD_MAX_FILE_BYTES,
   isExcludedDirName,
   isWithinRoot,
+  lstatFile,
   readContainedFile,
   resolveWorkspacePath,
   rootStillAnchored,
@@ -46,8 +50,8 @@ import {
 // content it just read. What is actually enforced, and what is not:
 //
 //   - The walk refuses symlinks on sight and re-checks each directory with a
-//     no-follow stat before descending. That is NOT race-safe descent: Deno
-//     exposes no openat-style API, so recursion is ultimately by pathname and a
+//     no-follow stat before descending. That is NOT race-safe descent: the
+//     runtime exposes no openat-style API, so recursion is ultimately by pathname and a
 //     directory replaced between the check and the descent can still redirect
 //     the traversal. The guarantee is therefore enforced where it can be — at
 //     the point of use. Every emitted path is canonicalized and rejected if it
@@ -99,7 +103,7 @@ import {
 //     therefore reliable in one direction only, and that limit is the honest
 //     part: a note means something was left out; the absence of one means the
 //     search skipped nothing IT SAW. It is not proof the tree held still.
-//     Deno has no snapshotting or descriptor-relative directory read, so
+//     The runtime has no snapshotting or descriptor-relative directory read, so
 //     traversal walks a live filesystem by pathname — a directory replaced
 //     between the check and the descent moves content out of view without ever
 //     being observed, and nothing can count what was never enumerated. Content
@@ -284,17 +288,28 @@ async function* walkFiles(
   }
   const room = budget.cap - budget.visited;
   if (room <= 0) return;
-  // Stop consuming readDir at the remaining budget rather than buffering the
+  // Keep at most the remaining budget of entries rather than buffering the
   // directory and checking afterwards: one enormous flat directory would
   // otherwise allocate and sort without limit before the cap ever applied,
   // which is precisely what the cap exists to prevent. The consequence is that
-  // an overflowing directory keeps readDir order instead of sorted order —
+  // an overflowing directory keeps readdir order instead of sorted order —
   // output stops being deterministic exactly when it also stops being complete.
-  const entries: Deno.DirEntry[] = [];
+  // The directory handle is read to its end and only the first `room` entries
+  // are kept: the runtime's handle releases its descriptor on exhaustion, not
+  // when it is closed part-way, so stopping early would leave one open.
+  const entries: Dirent[] = [];
   try {
-    for await (const e of Deno.readDir(start)) {
-      entries.push(e);
-      if (entries.length >= room) break;
+    const dir = await opendir(start);
+    try {
+      for (;;) {
+        const e = await dir.read();
+        if (e === null) break;
+        if (entries.length < room) entries.push(e);
+      }
+    } finally {
+      // An exhausted handle is closed already, and closing it again reports
+      // that, which is not a failure to read the directory.
+      await dir.close().catch(() => {});
     }
   } catch {
     // Skipping an unreadable directory beats failing the whole search, but it
@@ -307,21 +322,21 @@ async function* walkFiles(
     if (budget.visited >= budget.cap) return;
     budget.visited++;
     const abs = resolve(start, entry.name);
-    if (entry.isSymlink) {
+    if (entry.isSymbolicLink()) {
       // Never follow: escape and cycle defense. Counted, because refusing to
       // look somewhere is an omission the caller has no way to anticipate.
       budget.skippedSymlinks++;
       continue;
     }
-    if (entry.isDirectory) {
+    if (entry.isDirectory()) {
       if (isExcludedDirName(entry.name)) continue;
       // DirEntry is a snapshot taken by readDir; re-check with a no-follow
       // stat, because the name may already point somewhere else by now. This
       // narrows the window before descending — it does not close it, which is
       // why emitted results are checked again at the point of use.
-      let current: Deno.FileInfo;
+      let current: FileStat;
       try {
-        current = await Deno.lstat(abs);
+        current = await lstatFile(abs);
       } catch {
         budget.unreadableDirs++;
         continue;
@@ -338,7 +353,7 @@ async function* walkFiles(
       ]);
       continue;
     }
-    if (!entry.isFile) {
+    if (!entry.isFile()) {
       budget.skippedNonRegular++;
       continue;
     }
@@ -724,7 +739,7 @@ export async function executeGlobFiles(
   let byteCapped = false;
   let escaped = 0;
   let excludedRaced = 0;
-  const realPath = options.realPath ?? Deno.realPath;
+  const realPath = options.realPath ?? ((p: string) => realpath(p));
   for await (
     const entry of walkFiles(rootReal, startReal, budget, 0, startSegments)
   ) {

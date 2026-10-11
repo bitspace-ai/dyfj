@@ -21,6 +21,7 @@
  * long as the engine process, whichever turn first touched the root.
  */
 
+import { lstat, realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 /** The anchored workspace root no longer matches what the path resolves to. */
@@ -50,17 +51,20 @@ export class RootAnchors {
   /** Anchor `root` on its first use, then verify it against that anchor. */
   async verify(root: string): Promise<string> {
     const key = resolve(root);
-    const real = await Deno.realPath(key);
-    const info = await Deno.lstat(real);
+    const real = await realpath(key);
+    const info = await lstat(real);
+    // A zero pair is a platform reporting no identity, not an identity.
+    const verifiable = info.dev !== 0 && info.ino !== 0;
+    const dev = verifiable ? info.dev : null;
+    const ino = verifiable ? info.ino : null;
     const anchor = this.#anchors.get(key);
     if (anchor === undefined) {
-      this.#anchors.set(key, { real, dev: info.dev, ino: info.ino });
+      this.#anchors.set(key, { real, dev, ino });
       return real;
     }
     const identityHolds = anchor.dev === null || anchor.ino === null
       ? anchor.real === real
-      : anchor.real === real && anchor.dev === info.dev &&
-        anchor.ino === info.ino;
+      : anchor.real === real && anchor.dev === dev && anchor.ino === ino;
     if (!identityHolds) {
       throw new WorkspaceRootChangedError();
     }
