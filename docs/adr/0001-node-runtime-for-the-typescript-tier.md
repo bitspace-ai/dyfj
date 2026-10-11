@@ -37,8 +37,12 @@ The TypeScript tier moves to Node.js on the active LTS line.
 
 - Source and tests use `node:` builtins and the declared ports only. No
   runtime-specific global (`Deno.*`, `Bun.*`) remains once the move completes.
-  The runtime is thereby a swappable component under stance #1: another
-  Node-compatible runtime is a flag, not a port.
+  The runtime's source is thereby a swappable component under stance #1:
+  source and tests would carry over to another Node-compatible runtime without
+  a port, to the extent that runtime implements the `node:` builtins they use.
+  The capability boundary would not. The launcher's grants are
+  written to the host runtime's permission flags, so any other runtime needs
+  its own boundary validated before it could replace Node.
 - Delivery is a strangler, never a cutover. Runtime source becomes
   runtime-neutral first, while still running on Deno, with the golden suite as
   the witness that behaviour did not change. Tests move by codemod to
@@ -70,9 +74,10 @@ Deno's `--allow-*` flags or Node's `--permission`, and because it is a
 single-vendor runtime: since December 2025 it has been
 [owned by Anthropic](https://bun.com/blog/bun-joins-anthropic), which builds its
 own products on it. A runtime whose direction follows one company's product
-needs is the shape of risk that just materialised with Deno. Writing to the `node:` surface
-keeps it available later at near-zero cost, so choosing Node forecloses
-nothing.
+needs is the shape of risk that just materialised with Deno. Writing to the
+`node:` surface keeps it available later without a source port, so choosing
+Node forecloses nothing in the source; the capability boundary is the part a
+later move would have to rebuild.
 
 **Move the engine server to Rust now.** Stance #3 says the code is going
 there, the REPL is already Rust, and the process seam is defined (D15,
