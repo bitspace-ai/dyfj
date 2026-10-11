@@ -145,6 +145,30 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **A tool call the approver refuses reaches the model as a refusal, and tool
+  use ends for that turn.** Before, the model received exactly the client's
+  reason, `operator declined`, which reads like what a command printed; on
+  the local route nothing marked it as an error, so the model drew conclusions
+  from it and kept issuing variants of the command, each raising another
+  approval. Now the result starts `approval_denied: this <tool> call was not
+  approved, so it did not run; this is not its output`, tells the model not to
+  retry it or a variant, and gives the reason. It says "not approved" and not
+  "the operator declined", because with no terminal nobody declined. A step in
+  which any call was refused is followed by the same no-tools concluding call
+  the loop already makes at the step limit and on a repeated step, with a third
+  reason, so every refusal hands control back to the operator; calls already
+  requested in that step still complete, and the stop reason stays `stop`.
+  `toolCallCompleted` gains an optional `verdict: "approval_denied"`, present
+  only on a refused call, so the bytes of every other frame are unchanged. The
+  Rust REPL renders it as `⊘ <tool> declined by the operator` with no duration
+  (the time on it is the approval wait), and the TypeScript CLI as
+  `⊘ <tool> not approved`; a real failure still renders as a failure. The
+  durable `tool_call` event keeps `action: "deny"` and `authz_basis:
+  "policy:deny:approval-denied"`, and its `tool_result` and `content` carry the
+  refusal. Golden scenario `03-strict-mutation-rejected` is re-snapshotted for
+  this (the refusal text in its text, event content and tool result, and its
+  second provider call is now a `forced_conclusion`), and `13-bash-denied` is
+  added (`specs/03-testing.md` §4).
 - **The configuration directory's environment, resolver spawn and file reads
   run on `node:` builtins.** Part of the move of the TypeScript tier to Node.js
   (decision D32). `processEnv` reads and writes `process.env`; the three

@@ -108,7 +108,7 @@ one-shot; the earlier standalone in-process workbench CLI and its
 JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
-escape hatch, and a bounded `git` tool), an operator-routed
+escape hatch, and a bounded `git` tool; a call the approver refuses reaches the model as an `approval_denied` refusal and ends tool use for that turn), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
 OpenRouter, Google Gemini, and xAI) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The

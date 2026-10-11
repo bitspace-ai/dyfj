@@ -138,6 +138,41 @@ describe("handleTurnRuntimeEvent", () => {
     assertEquals(stdout.length, 0);
   });
 
+  it("renders a refused call as a refusal, with no duration", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      {
+        type: "toolCallCompleted",
+        commandId: "bash",
+        callId: "c1",
+        isError: true,
+        durationMs: 163376,
+        verdict: "approval_denied",
+      },
+      output,
+      io,
+    );
+    assertEquals(stderr, ["  ⊘ bash not approved"]);
+  });
+
+  it("still renders a failed call as a failure, with its duration", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      {
+        type: "toolCallCompleted",
+        commandId: "bash",
+        callId: "c1",
+        isError: true,
+        durationMs: 40,
+      },
+      output,
+      io,
+    );
+    assertEquals(stderr, ["tool: bash failed (40ms)"]);
+  });
+
   it("flushes preserved partial text before the interrupted marker", () => {
     const writes: string[] = [];
     const io: Io = {

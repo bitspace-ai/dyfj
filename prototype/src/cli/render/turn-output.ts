@@ -131,6 +131,12 @@ export function formatRuntimeEvent(
     const commandId = typeof event.commandId === "string"
       ? event.commandId
       : "tool";
+    // A refused call never ran: say so, and show no duration (the time on it
+    // is the approval wait). This client may have no terminal, so nobody is
+    // said to have declined.
+    if (event.verdict === "approval_denied") {
+      return `  ⊘ ${commandId} not approved`;
+    }
     const duration = typeof event.durationMs === "number"
       ? ` (${event.durationMs}ms)`
       : "";

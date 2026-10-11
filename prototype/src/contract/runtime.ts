@@ -217,6 +217,12 @@ export type WorkbenchRuntimeEvent =
     durationMs: number;
     errorName?: string;
     errorMessage?: string;
+    /**
+     * Present when the call did not run because the approver refused it. A
+     * client renders that as a refusal, not as a failed command; the duration
+     * is then the approval wait, not execution.
+     */
+    verdict?: "approval_denied";
   }
   | {
     /** Bounded, content-free protocol evidence for one external recall connection. */

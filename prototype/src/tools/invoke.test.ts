@@ -14,6 +14,7 @@ import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
 import {
+  approvalDeniedReason,
   buildCommandToolCallEventPayload,
   EVENT_RESULT_MAX_BYTES,
   invokeCommand,
@@ -167,10 +168,34 @@ describe("invokeCommand approval (ask) flow", () => {
     assertObjectMatch(result, {
       decision: "deny",
       authzBasis: "policy:deny:approval-denied",
-      reason: "operator said no",
+      reason: approvalDeniedReason("write_file", "operator said no"),
       isError: true,
+      verdict: "approval_denied",
     });
     assertStrictEquals(ran, false);
+  });
+
+  it("a refusal reads as a refusal, names no path, and says the command did not run", () => {
+    const text = approvalDeniedReason("bash", "operator declined");
+    assertStrictEquals(
+      text,
+      "approval_denied: this bash call was not approved, so it did not run; " +
+        "this is not its output. Do not retry it or a variant of it. Ask the " +
+        "operator or take a different approach. Reason given: operator declined.",
+    );
+    assertFalse(text.includes("/"));
+  });
+
+  it("a call that needed no approval carries no approval verdict", async () => {
+    const registry = createCommandRegistry([
+      writeFileCommand(() => "ran"),
+    ]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    assertFalse("verdict" in result);
   });
 
   it("the approval request carries the tool identity and arguments", async () => {

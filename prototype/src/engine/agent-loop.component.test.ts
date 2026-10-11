@@ -12,6 +12,7 @@ import {
   assertObjectMatch,
   assertStringIncludes,
 } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
 import {
   chatReply,
@@ -207,6 +208,93 @@ Deno.test("agent loop forces a conclusion when the model repeats prior tool call
     "Workbench instruction: tool use ended because the model repeated prior tool calls.",
   );
   assertEquals(frames.some((f) => f.type === "toolStepLimitReached"), false);
+});
+
+// ─── a denied approval ends tool use for the turn ────────────────────────────
+
+/**
+ * A model that behaves as a real one would: while tools are offered it asks
+ * for another `write_file` (a variant of the refused call), and once none are
+ * offered it answers in text.
+ */
+function variantSeeking(): ScriptedExchange {
+  return {
+    respond: (request) => {
+      const reply = requestBody(request).tools !== undefined
+        ? toolReply([WRITE("c2", "b.txt")])
+        : chatReply({ content: "Understood; I will ask you instead." });
+      return new Response((reply.respond as { body: string }).body, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  };
+}
+
+describe("a denied approval", () => {
+  it("reaches the model as a refusal and ends tool use for the turn", async () => {
+    const approvals: string[] = [];
+    const loop = await loopTurn([
+      toolReply([WRITE("c1", "a.txt")]),
+      variantSeeking(),
+      variantSeeking(),
+      variantSeeking(),
+    ], {
+      prompt: "write a file",
+      approver: {
+        confirmToolApproval: (request) => {
+          approvals.push(request.callId);
+          return Promise.resolve({
+            decision: "deny",
+            reason: "operator declined",
+          });
+        },
+      },
+    });
+    assertEquals(loop.error, null);
+    // One approval was raised, the denial ended tool use, and the model was
+    // asked once more, with no tools: two provider requests in all.
+    assertEquals(approvals, ["c1"]);
+    assertEquals(loop.run.transport.requests.length, 2);
+    const concluding = loop.run.transport.requests[1];
+    assertEquals(requestBody(concluding).tools, undefined);
+    assertStringIncludes(
+      systemMessage(concluding),
+      "Workbench instruction: tool use ended because a tool call was not approved.",
+    );
+    // The tool message is a refusal the model cannot mistake for output.
+    const toolMessage = conversation(concluding).find((m) => m.role === "tool");
+    assertMatch(
+      toolMessage?.content ?? "",
+      /^approval_denied: this write_file call was not approved, so it did not run; this is not its output\. /,
+    );
+    assertStringIncludes(
+      toolMessage?.content ?? "",
+      "Reason given: operator declined",
+    );
+    // The frame carries the verdict; the stop reason is the ordinary one.
+    const completed = loop.frames.filter((f) => f.type === "toolCallCompleted");
+    assertEquals(completed.length, 1);
+    assertObjectMatch(completed[0], {
+      isError: true,
+      verdict: "approval_denied",
+    });
+    assertEquals(loop.result?.stopReason, "stop");
+    // The durable event holds the refusal, not stdout. Its `action` and
+    // `authz_basis` columns (golden scenario 13) are unchanged.
+    const toolRow = (await rows(loop)).find((row) =>
+      row.event_type === "tool_call"
+    );
+    assertObjectMatch(toolRow!, {
+      tool_name: "write_file",
+      tool_is_error: "1",
+    });
+    assertMatch(String(toolRow!.tool_result), /^approval_denied: /);
+    assertMatch(
+      String(toolRow!.content),
+      /^write_file denied: approval_denied: /,
+    );
+  });
 });
 
 const CONCLUSION_FAILED =

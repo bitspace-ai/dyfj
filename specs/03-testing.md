@@ -121,6 +121,9 @@ internal move.
   2. Multi-step turn with `read_file` then an answer (`operator` permission
      level).
   3. Mutating tool under `strict`, with the non-interactive client rejecting.
+     The refusal reaches the model as an `approval_denied:` message and the
+     turn's second provider call is a forced conclusion; scenario 03 was
+     re-snapshotted under that decision (below, scenario 13).
   4. `bash` always asks; approved via the scripted approver.
   5. Continue an existing session (history projection). The resumed turn
      names no model, so it runs on the session's recorded model and reports
@@ -148,6 +151,13 @@ internal move.
       the padding sized to cross the trigger on the fourth turn, when
       request fitting landed; scenarios 10 and 12 were re-snapshotted under
       that decision.
+  13. `bash` denied by the scripted approver: the model receives an
+      `approval_denied:` refusal, the `toolCallCompleted` frame carries
+      `verdict: "approval_denied"`, the `tool_call` event keeps its `deny`
+      action, and tool use ends for the turn (the second provider call is a
+      forced conclusion). Added with the decision that a refused approval
+      hands control back to the operator; scenario 03 goes through the same
+      path and was re-snapshotted under it.
 - **Hosted adapters are outside the golden suite** (Anthropic, OpenAI,
   OpenRouter, Gemini, xAI). Their base URLs are pinned to real HTTPS hosts. They
   are pinned instead by the provider conformance kit (§5), using recorded

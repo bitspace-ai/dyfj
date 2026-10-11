@@ -156,6 +156,12 @@ export type CommandInvocationResult<TResult = unknown> =
     authzBasis: string;
     isError: true;
     reason: string;
+    /**
+     * Set when the approver refused a call that needed approval: the verdict
+     * the runtime frame carries, so a client can render a refusal as one and
+     * the loop can end tool use. Absent on every other result.
+     */
+    verdict?: "approval_denied";
   };
 
 /** A mutating tool call awaiting operator approval. Serializable for the wire. */
