@@ -8,9 +8,13 @@
  * ceilings live with the tool that enforces them.
  */
 
-import type { Stats } from "node:fs";
 import { type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import {
+  type FileStat,
+  fileStat,
+  hasVerifiableIdentity,
+} from "../../kernel/mod.ts";
 import {
   type WorkspaceRoot,
   WorkspaceRootChangedError,
@@ -74,33 +78,6 @@ export function safeErrorReason(err: unknown): string {
   return "unavailable";
 }
 
-/**
- * What the file tools read from a stat, in one shape: the kind of entry, its
- * size and modification time, and the (device, inode) pair that identifies it.
- */
-export interface FileStat {
-  isFile: boolean;
-  isDirectory: boolean;
-  isSymlink: boolean;
-  size: number;
-  mtimeMs: number;
-  dev: number;
-  ino: number;
-}
-
-/** The shared stat shape of a `node:fs` `Stats`. */
-export function fileStat(stats: Stats): FileStat {
-  return {
-    isFile: stats.isFile(),
-    isDirectory: stats.isDirectory(),
-    isSymlink: stats.isSymbolicLink(),
-    size: stats.size,
-    mtimeMs: stats.mtimeMs,
-    dev: stats.dev,
-    ino: stats.ino,
-  };
-}
-
 /** `lstat` (no-follow) in the shared shape. */
 export async function lstatFile(path: string): Promise<FileStat> {
   return fileStat(await lstat(path));
@@ -109,18 +86,6 @@ export async function lstatFile(path: string): Promise<FileStat> {
 /** `stat` (follows symlinks) in the shared shape. */
 export async function statFile(path: string): Promise<FileStat> {
   return fileStat(await stat(path));
-}
-
-/**
- * Whether a stat's (device, inode) pair can be compared at all. A platform
- * that reports no identity reports zero, and a zero pair would compare equal
- * across different files, so it counts as unverifiable and the read is
- * refused rather than trusted.
- */
-export function hasVerifiableIdentity(
-  info: Pick<FileStat, "dev" | "ino">,
-): boolean {
-  return info.dev !== 0 && info.ino !== 0;
 }
 
 /**

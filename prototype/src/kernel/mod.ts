@@ -2,7 +2,7 @@
  * kernel/ — layer L0: pure, shared helpers with one implementation each.
  *
  * Responsibility: UTF-8 byte bounding, code-point prefixes, terminal escape
- * stripping, boundary-text sanitizing, ULID/trace/span IDs, canonical JSON,
+ * stripping, boundary-text sanitizing, the shared file-stat shape, ULID/trace/span IDs, canonical JSON,
  * the time-bounded regex matcher, lexical path checks, and the `Clock` port
  * with its system adapter. Helpers here hold no runtime policy: callers choose
  * limits, markers, and error types.
@@ -27,6 +27,7 @@ export {
   MAX_CANONICAL_JSON_ENTRIES,
 } from "./canonical-json.ts";
 export { type Clock, systemClock } from "./clock.ts";
+export { type FileStat, fileStat, hasVerifiableIdentity } from "./file-stat.ts";
 export { takeCodePointPrefix } from "./code-points.ts";
 export { generateSpanId, generateTraceId, generateULID } from "./ids.ts";
 export { hasDotPathComponent } from "./lexical-path.ts";

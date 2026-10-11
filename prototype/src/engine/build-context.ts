@@ -8,6 +8,7 @@
  * It writes into the turn's state as it goes, so a turn that fails partway
  * still reports the context sources it had loaded.
  */
+import { realpath, stat } from "node:fs/promises";
 import { generateSpanId, generateULID } from "../kernel/mod.ts";
 import { memoryClearanceFor, toolCallEvent } from "../store/mod.ts";
 import {
@@ -139,9 +140,9 @@ async function resolveWorkspace(state: TurnState): Promise<void> {
   }
   if (session.honoredWorkspace) {
     try {
-      const real = await Deno.realPath(session.honoredWorkspace);
-      const rootInfo = await Deno.stat(real);
-      if (rootInfo.isDirectory) {
+      const real = await realpath(session.honoredWorkspace);
+      const rootInfo = await stat(real);
+      if (rootInfo.isDirectory()) {
         state.workspaceRoot = real;
         state.workspaceRootIdentity = { dev: rootInfo.dev, ino: rootInfo.ino };
       } else {

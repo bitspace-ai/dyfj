@@ -371,13 +371,8 @@
   },
   {
     "path": "prototype/src/context/repo-context.test.ts",
-    "count": 80,
+    "count": 76,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/repo-context.ts",
-    "count": 22,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/context/request-fit.test.ts",
@@ -388,11 +383,6 @@
     "path": "prototype/src/contract/runtime.test.ts",
     "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/contract/runtime.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/contract/turn.test.ts",
@@ -423,11 +413,6 @@
     "path": "prototype/src/engine/build-context.test.ts",
     "count": 24,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/engine/build-context.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/engine/compression.component.test.ts",
@@ -488,11 +473,6 @@
     "path": "prototype/src/engine/open-session.test.ts",
     "count": 10,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/engine/open-session.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/engine/provider-failure.component.test.ts",
