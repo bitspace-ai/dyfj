@@ -8,6 +8,7 @@
  * session row itself is written by `recordNewSession` once the context
  * sources it lists are known.
  */
+import process from "node:process";
 import {
   generateSpanId,
   generateTraceId,
@@ -162,7 +163,7 @@ export async function openSession(
   const authContext = input.authContext ?? LOCAL_AUTH_CONTEXT;
   // DYFJ_ROOT is resolved at the boundary; the core only falls back to the
   // process cwd when no root was supplied.
-  const fallbackRoot = input.rootOverride ?? Deno.cwd();
+  const fallbackRoot = input.rootOverride ?? process.cwd();
   const workspace = await requestedWorkspace(
     input,
     sessionId,

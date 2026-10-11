@@ -8,6 +8,7 @@ import { opendir, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import {
   BoundedMatcher,
+  type FileStat,
   RegexBudgetExceeded,
   RegexUnavailable,
 } from "../../kernel/mod.ts";
@@ -17,7 +18,6 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_ENTRIES,
   excludedSegment,
-  type FileStat,
   HARD_MAX_FILE_BYTES,
   isExcludedDirName,
   isWithinRoot,

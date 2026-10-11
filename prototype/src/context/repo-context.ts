@@ -1,6 +1,13 @@
-import { type Env, processEnv } from "../config/mod.ts";
+import { type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import process from "node:process";
+import { type Env, processEnv } from "../config/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
+import {
+  type FileStat,
+  fileStat,
+  hasVerifiableIdentity,
+} from "../kernel/mod.ts";
 
 export interface ContextSource {
   kind: "file" | "command";
@@ -252,16 +259,27 @@ export const AGENTS_INSTRUCTIONS_TOKEN_LIMIT = 4_000;
 // boundary cannot survive, because the token truncation slices far below it.
 export const AGENTS_INSTRUCTIONS_MAX_READ_BYTES = 64 * 1024;
 
+/** A filesystem error that says the path does not exist. */
+function isNotFound(err: unknown): boolean {
+  return typeof err === "object" && err !== null &&
+    (err as { code?: unknown }).code === "ENOENT";
+}
+
 async function readBoundedTextFrom(
-  file: Deno.FsFile,
+  file: FileHandle,
   maxBytes: number,
 ): Promise<string> {
   const buf = new Uint8Array(maxBytes);
   let filled = 0;
   while (filled < buf.length) {
-    const n = await file.read(buf.subarray(filled));
-    if (n === null) break;
-    filled += n;
+    const { bytesRead } = await file.read(
+      buf,
+      filled,
+      buf.length - filled,
+      null,
+    );
+    if (bytesRead === 0) break;
+    filled += bytesRead;
   }
   return new TextDecoder("utf-8").decode(buf.subarray(0, filled));
 }
@@ -301,10 +319,11 @@ async function readBoundedTextFrom(
 //   bound is flagged as truncation in its own right: when the clipped window
 //   ends in a whitespace run, the token slice and `trimEnd()` alone would
 //   report the full file while content past the bound was dropped.
-export interface WorkspaceRootIdentity {
-  dev: number | null;
-  ino: number | null;
-}
+/**
+ * The (device, inode) pair that anchors the workspace root. A zero in either
+ * field means the platform reports no identity, and the loaders refuse it.
+ */
+export type WorkspaceRootIdentity = Pick<FileStat, "dev" | "ino">;
 
 export async function loadAgentsInstructions(
   startDir: string,
@@ -316,7 +335,7 @@ export async function loadAgentsInstructions(
   // mis-resolved workspace look like "this workspace has no instructions".
   let root: string;
   try {
-    root = await Deno.realPath(startDir);
+    root = await realpath(startDir);
   } catch (err) {
     console.warn(
       `AGENTS.md skipped: workspace root not resolvable: ${
@@ -332,13 +351,13 @@ export async function loadAgentsInstructions(
   // after the read; identity unavailable fails closed like the leaf check.
   let anchor: WorkspaceRootIdentity;
   try {
-    const rootInfo = await Deno.stat(root);
+    const rootInfo = fileStat(await stat(root));
     if (!rootInfo.isDirectory) {
       console.warn("AGENTS.md skipped: workspace root is not a directory");
       return null;
     }
     anchor = selectionIdentity ?? { dev: rootInfo.dev, ino: rootInfo.ino };
-    if (anchor.dev === null || anchor.ino === null) {
+    if (!hasVerifiableIdentity(anchor)) {
       console.warn(
         "AGENTS.md skipped: workspace root identity unavailable on this platform",
       );
@@ -359,9 +378,9 @@ export async function loadAgentsInstructions(
     return null;
   }
   const candidate = path.join(root, "AGENTS.md");
-  let checked: Deno.FileInfo;
+  let checked: FileStat;
   try {
-    checked = await Deno.lstat(candidate);
+    checked = fileStat(await lstat(candidate));
     if (!checked.isFile) {
       // A symlink (or anything else non-regular) named AGENTS.md could point
       // outside the workspace; refusing it keeps discovery contained and the
@@ -372,12 +391,12 @@ export async function loadAgentsInstructions(
       return null;
     }
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return null;
+    if (isNotFound(err)) return null;
     console.warn(`AGENTS.md discovery failed: ${summarizeError(err)}`);
     return null;
   }
   try {
-    const file = await Deno.open(candidate, { read: true });
+    const file = await open(candidate, "r");
     let body: string;
     let readClipped: boolean;
     try {
@@ -388,8 +407,8 @@ export async function loadAgentsInstructions(
       // HANDLE's identity (device + inode) must match what lstat checked,
       // or the file is refused. Identity unavailable (non-POSIX) also
       // refuses — fail closed rather than read an unverified file.
-      const opened = await file.stat();
-      if (checked.dev === null || checked.ino === null) {
+      const opened = fileStat(await file.stat());
+      if (!hasVerifiableIdentity(checked)) {
         console.warn(
           "AGENTS.md skipped: file identity unavailable on this platform",
         );
@@ -411,7 +430,7 @@ export async function loadAgentsInstructions(
         AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
       );
     } finally {
-      file.close();
+      await file.close();
     }
     // Re-verify the root anchor after the read: a root or ancestor swap
     // that persisted across the load window resolves this pathname to a
@@ -419,7 +438,7 @@ export async function loadAgentsInstructions(
     // transient swap that reverted in between remains undetectable without
     // an atomic directory-relative open (see the contract comment above).
     try {
-      const rootAfter = await Deno.stat(root);
+      const rootAfter = fileStat(await stat(root));
       if (rootAfter.dev !== anchor.dev || rootAfter.ino !== anchor.ino) {
         console.warn(
           "AGENTS.md skipped: workspace root changed during the read",
@@ -458,13 +477,15 @@ export async function loadAgentsInstructions(
   }
 }
 
-export async function findRepoRoot(startDir = Deno.cwd()): Promise<string> {
+export async function findRepoRoot(
+  startDir = process.cwd(),
+): Promise<string> {
   let current = path.resolve(startDir);
   while (true) {
     try {
-      const agents = await Deno.stat(path.join(current, "AGENTS.md"));
-      const readme = await Deno.stat(path.join(current, "README.md"));
-      if (agents.isFile && readme.isFile) return current;
+      const agents = await stat(path.join(current, "AGENTS.md"));
+      const readme = await stat(path.join(current, "README.md"));
+      if (agents.isFile() && readme.isFile()) return current;
     } catch {
       // Keep walking.
     }
@@ -486,8 +507,8 @@ export async function loadAskRepoContext(options: {
   env?: Env;
 } = {}): Promise<LoadedRepoContext> {
   const selectedRoot = options.repoRoot ?? await findRepoRoot();
-  const repoRoot = await Deno.realPath(selectedRoot);
-  const rootInfo = await Deno.stat(repoRoot);
+  const repoRoot = await realpath(selectedRoot);
+  const rootInfo = fileStat(await stat(repoRoot));
   if (!rootInfo.isDirectory) {
     throw new Error("selected workspace is not a directory");
   }
@@ -496,7 +517,7 @@ export async function loadAskRepoContext(options: {
     ino: rootInfo.ino,
   };
   if (
-    rootIdentity.dev === null || rootIdentity.ino === null ||
+    !hasVerifiableIdentity(rootIdentity) ||
     rootInfo.dev !== rootIdentity.dev || rootInfo.ino !== rootIdentity.ino
   ) {
     throw new Error("selected workspace identity is unavailable or changed");
@@ -604,9 +625,9 @@ export async function loadAskRepoContext(options: {
     });
   }
 
-  let rootAfter: Deno.FileInfo;
+  let rootAfter: FileStat;
   try {
-    rootAfter = await Deno.stat(repoRoot);
+    rootAfter = fileStat(await stat(repoRoot));
   } catch {
     throw new WorkspaceContextRootChangedError();
   }
@@ -743,11 +764,11 @@ async function readWorkspaceContextFile(
   rootIdentity: WorkspaceRootIdentity,
 ): Promise<WorkspaceContextFile | null> {
   const candidate = path.join(repoRoot, relativePath);
-  let checked: Deno.FileInfo;
+  let checked: FileStat;
   try {
-    checked = await Deno.lstat(candidate);
+    checked = fileStat(await lstat(candidate));
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return null;
+    if (isNotFound(err)) return null;
     console.warn(`${relativePath} context skipped: ${summarizeError(err)}`);
     return null;
   }
@@ -757,12 +778,12 @@ async function readWorkspaceContextFile(
   }
 
   try {
-    const file = await Deno.open(candidate, { read: true });
+    const file = await open(candidate, "r");
     let body: string;
     let clipped: boolean;
     try {
-      const opened = await file.stat();
-      if (checked.dev === null || checked.ino === null) {
+      const opened = fileStat(await file.stat());
+      if (!hasVerifiableIdentity(checked)) {
         console.warn(
           `${relativePath} context skipped: file identity unavailable`,
         );
@@ -778,19 +799,19 @@ async function readWorkspaceContextFile(
         AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
       );
     } finally {
-      file.close();
+      await file.close();
     }
 
-    if (await Deno.realPath(candidate) !== candidate) {
+    if (await realpath(candidate) !== candidate) {
       console.warn(
         `${relativePath} context skipped: path escapes the workspace root`,
       );
       return null;
     }
 
-    let rootAfter: Deno.FileInfo;
+    let rootAfter: FileStat;
     try {
-      rootAfter = await Deno.stat(repoRoot);
+      rootAfter = fileStat(await stat(repoRoot));
     } catch {
       throw new WorkspaceContextRootChangedError();
     }

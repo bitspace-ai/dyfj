@@ -21,10 +21,12 @@ import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { open } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import {
-  excludedSegment,
   type FileStat,
   fileStat,
   hasVerifiableIdentity,
+} from "../../kernel/mod.ts";
+import {
+  excludedSegment,
   safeErrorReason,
   sameFileVersion,
   sanitizeOutputPathField,

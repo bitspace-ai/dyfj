@@ -1,3 +1,4 @@
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   assert,
@@ -522,11 +523,11 @@ Deno.test("loadAgentsInstructions: a root whose identity differs from the select
       path.join(dir, "AGENTS.md"),
       "# Swapped-in rules — must not load\n",
     );
-    const real = await Deno.stat(await Deno.realPath(dir));
+    const real = await stat(await realpath(dir));
     using warn = stub(console, "warn");
     const result = await loadAgentsInstructions(dir, {
       dev: real.dev,
-      ino: real.ino === null ? 1 : real.ino + 1,
+      ino: real.ino + 1,
     });
     assertStrictEquals(result, null);
     assertSpyCalls(warn, 1);
@@ -540,11 +541,11 @@ Deno.test("loadAgentsInstructions: a root whose identity differs from the select
   }
 });
 
-Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a null-identity anchor fails closed", async () => {
+Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a zero-identity anchor fails closed", async () => {
   const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc2-" });
   try {
     await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
-    const real = await Deno.stat(await Deno.realPath(dir));
+    const real = await stat(await realpath(dir));
 
     const loaded = await loadAgentsInstructions(dir, {
       dev: real.dev,
@@ -554,7 +555,7 @@ Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a
 
     using warn = stub(console, "warn");
     assertStrictEquals(
-      await loadAgentsInstructions(dir, { dev: null, ino: null }),
+      await loadAgentsInstructions(dir, { dev: 0, ino: 0 }),
       null,
     );
     assertSpyCalls(warn, 1);

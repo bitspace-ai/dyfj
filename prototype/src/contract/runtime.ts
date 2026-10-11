@@ -96,7 +96,8 @@ export interface WorkbenchRuntimeRequest {
   /**
    * Server/workspace root the read-only file tools fall back to when no loopback
    * workspace is bound. Lifted to the boundary: entrypoints pass
-   * DYFJ_ROOT; the core falls back to Deno.cwd() when this is absent.
+   * DYFJ_ROOT; the core falls back to the process working directory when this
+   * is absent.
    */
   rootOverride?: string;
 }
