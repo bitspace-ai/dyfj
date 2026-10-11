@@ -31,6 +31,13 @@ README are tracked separately in its Revision history section.
   produced no decision. During `/friction`, Ctrl-C at the approval prompt
   denies that approval and later ones for the command, and waits for the
   runtime to settle the post.
+- **The Rust REPL prints a turn receipt's safety warning.** The runtime puts
+  a skipped-event-write warning in the receipt string, beside the answer
+  text. The REPL read the answer and dropped that string, so a turn whose
+  audit records were not all written showed its answer with no warning.
+  Lines in that string that begin with `WARNING:` are now printed,
+  sanitized, whether the answer streamed or arrived only with the receipt.
+  Event writes stay best-effort.
 - **The CLI wraps at 80 columns on a terminal that reports no width.** A pty
   with no size set reports 0 columns, and the markdown renderer took the smaller
   of that and 100, so a turn's text wrapped at zero columns. An unknown width
