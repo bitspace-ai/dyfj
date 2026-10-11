@@ -83,6 +83,17 @@
       "name": "node:net",
       "allowedUnits": ["transport"],
       "entrypoints": []
+    },
+    {
+      "$comment": "node:child_process starts processes. Only tools/ (the bounded runner in tools/builtin/bounded-process.ts) and runners/acp (the ACP runner) may import it, so every spawn goes through one of those two places. The ACP runner imports it today; the move of the runners narrows this rule to tools/.",
+      "name": "node:child_process",
+      "allowedUnits": ["tools", "runners/acp"],
+      "entrypoints": [
+        {
+          "path": "prototype/src/acp-client.ts",
+          "justification": "The ACP runner starts and signals its agent child here. The module has not moved into runners/acp yet (the files map above names it by path, which carries no unit exemption), so it is named until the runners move."
+        }
+      ]
     }
   ],
   "sqlWrites": {

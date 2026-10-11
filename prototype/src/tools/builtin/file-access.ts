@@ -8,6 +8,8 @@
  * ceilings live with the tool that enforces them.
  */
 
+import type { Stats } from "node:fs";
+import { type FileHandle, lstat, open, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   type WorkspaceRoot,
@@ -26,28 +28,99 @@ export const DEFAULT_MAX_ENTRIES = 500;
 export const HARD_MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 /**
+ * The `code` of a filesystem error (`ENOENT`, `EACCES`, ...), or undefined for
+ * anything that carries none.
+ */
+export function errorCode(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+/**
  * A stable, path-free description of a filesystem failure.
  *
- * Deno's exception messages embed the absolute path they failed on — home
- * directory, username, workspace layout. These executors hand their result to
- * the model AND to the durable event transcript, so passing the raw message
- * through publishes private paths on every missing file. The caller already
- * knows which workspace-relative path it asked about; the class of failure is
- * the only part worth adding.
+ * The runtime's exception messages embed the absolute path they failed on —
+ * home directory, username, workspace layout. These executors hand their
+ * result to the model AND to the durable event transcript, so passing the raw
+ * message through publishes private paths on every missing file. The caller
+ * already knows which workspace-relative path it asked about; the class of
+ * failure is the only part worth adding, and it is read from the error's
+ * `code`, never from its message.
  */
 export function safeErrorReason(err: unknown): string {
   if (err instanceof WorkspaceRootChangedError) {
     return "workspace root identity changed";
   }
-  if (err instanceof Deno.errors.NotFound) return "not found";
-  if (err instanceof Deno.errors.PermissionDenied) return "permission denied";
-  if (err instanceof Deno.errors.NotADirectory) return "not a directory";
-  if (err instanceof Deno.errors.IsADirectory) return "is a directory";
-  if (err instanceof Deno.errors.NotCapable) {
+  switch (errorCode(err)) {
+    case "ENOENT":
+      return "not found";
+    case "EACCES":
+    case "EPERM":
+      return "permission denied";
+    case "ENOTDIR":
+      return "not a directory";
+    case "EISDIR":
+      return "is a directory";
+    case "ELOOP":
+      return "symlink loop";
+    case "ERR_ACCESS_DENIED":
+      return "not permitted by the runtime sandbox";
+  }
+  // A sandbox refusal can arrive as a named error with no code.
+  if (err instanceof Error && err.name === "NotCapable") {
     return "not permitted by the runtime sandbox";
   }
-  if (err instanceof Deno.errors.FilesystemLoop) return "symlink loop";
   return "unavailable";
+}
+
+/**
+ * What the file tools read from a stat, in one shape: the kind of entry, its
+ * size and modification time, and the (device, inode) pair that identifies it.
+ */
+export interface FileStat {
+  isFile: boolean;
+  isDirectory: boolean;
+  isSymlink: boolean;
+  size: number;
+  mtimeMs: number;
+  dev: number;
+  ino: number;
+}
+
+/** The shared stat shape of a `node:fs` `Stats`. */
+export function fileStat(stats: Stats): FileStat {
+  return {
+    isFile: stats.isFile(),
+    isDirectory: stats.isDirectory(),
+    isSymlink: stats.isSymbolicLink(),
+    size: stats.size,
+    mtimeMs: stats.mtimeMs,
+    dev: stats.dev,
+    ino: stats.ino,
+  };
+}
+
+/** `lstat` (no-follow) in the shared shape. */
+export async function lstatFile(path: string): Promise<FileStat> {
+  return fileStat(await lstat(path));
+}
+
+/** `stat` (follows symlinks) in the shared shape. */
+export async function statFile(path: string): Promise<FileStat> {
+  return fileStat(await stat(path));
+}
+
+/**
+ * Whether a stat's (device, inode) pair can be compared at all. A platform
+ * that reports no identity reports zero, and a zero pair would compare equal
+ * across different files, so it counts as unverifiable and the read is
+ * refused rather than trusted.
+ */
+export function hasVerifiableIdentity(
+  info: Pick<FileStat, "dev" | "ino">,
+): boolean {
+  return info.dev !== 0 && info.ino !== 0;
 }
 
 /**
@@ -114,11 +187,10 @@ export function resolveWorkspacePath(root: string, p: string): string {
  * note is directly testable rather than only reachable through a real race.
  */
 export function sameFileVersion(
-  before: Deno.FileInfo,
-  after: Deno.FileInfo,
+  before: FileStat,
+  after: FileStat,
 ): boolean {
-  return before.size === after.size &&
-    before.mtime?.getTime() === after.mtime?.getTime();
+  return before.size === after.size && before.mtimeMs === after.mtimeMs;
 }
 
 /**
@@ -141,7 +213,7 @@ export function sameFileVersion(
  * prevented from wandering, but nothing that wandered is returned.
  *
  * Limits worth stating plainly: inode reuse could in principle defeat the
- * comparison, and platforms that report a null `ino`/`dev` (Windows) cannot be
+ * comparison, and platforms that report a zero `ino`/`dev` (Windows) cannot be
  * verified at all — those are refused rather than read on trust.
  */
 export async function readContainedFile(
@@ -166,16 +238,16 @@ export async function readContainedFile(
     changed?: boolean;
   }
 > {
-  const realPath = options.realPath ?? Deno.realPath;
-  let before: Deno.FileInfo;
+  const realPath = options.realPath ?? ((p: string) => realpath(p));
+  let before: FileStat;
   try {
-    before = await Deno.lstat(abs);
+    before = await lstatFile(abs);
   } catch (err) {
     return { ok: false, reason: safeErrorReason(err) };
   }
   if (before.isSymlink) return { ok: false, reason: "path is a symlink" };
   if (!before.isFile) return { ok: false, reason: "not a regular file" };
-  if (before.ino === null || before.dev === null) {
+  if (!hasVerifiableIdentity(before)) {
     return {
       ok: false,
       reason: "cannot verify file identity on this platform",
@@ -188,14 +260,14 @@ export async function readContainedFile(
       oversized: true,
     };
   }
-  let file: Deno.FsFile;
+  let file: FileHandle;
   try {
-    file = await Deno.open(abs, { read: true });
+    file = await open(abs, "r");
   } catch (err) {
     return { ok: false, reason: safeErrorReason(err) };
   }
   try {
-    const after = await file.stat();
+    const after = fileStat(await file.stat());
     if (
       !after.isFile || after.ino !== before.ino || after.dev !== before.dev
     ) {
@@ -222,7 +294,7 @@ export async function readContainedFile(
         };
       }
     }
-    const canonicalInfo = await Deno.lstat(canonical);
+    const canonicalInfo = await lstatFile(canonical);
     if (
       canonicalInfo.ino !== after.ino || canonicalInfo.dev !== after.dev
     ) {
@@ -231,11 +303,16 @@ export async function readContainedFile(
     const bytes = new Uint8Array(after.size);
     let read = 0;
     while (read < bytes.length) {
-      const n = await file.read(bytes.subarray(read));
-      if (n === null) break;
-      read += n;
+      const { bytesRead } = await file.read(
+        bytes,
+        read,
+        bytes.length - read,
+        read,
+      );
+      if (bytesRead === 0) break;
+      read += bytesRead;
     }
-    const settled = await file.stat();
+    const settled = fileStat(await file.stat());
     if (!sameFileVersion(after, settled)) {
       return { ok: false, reason: "changed while being read", changed: true };
     }
@@ -247,7 +324,7 @@ export async function readContainedFile(
   } catch (err) {
     return { ok: false, reason: safeErrorReason(err) };
   } finally {
-    file.close();
+    await file.close().catch(() => {});
   }
 }
 
@@ -263,7 +340,7 @@ export async function containedRealPath(
   abs: string,
 ): Promise<string | null> {
   const rootReal = await workspace.verify();
-  const targetReal = await Deno.realPath(abs);
+  const targetReal = await realpath(abs);
   return isWithinRoot(rootReal, targetReal) ? targetReal : null;
 }
 

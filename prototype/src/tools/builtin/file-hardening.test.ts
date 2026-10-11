@@ -18,9 +18,13 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { open } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import {
   excludedSegment,
+  type FileStat,
+  fileStat,
+  hasVerifiableIdentity,
   safeErrorReason,
   sameFileVersion,
   sanitizeOutputPathField,
@@ -465,14 +469,38 @@ describe("errors never carry an absolute path to the model", () => {
   // Assembled at runtime so the public-boundary scan never matches this
   // fixture as a home-directory path in tracked source.
   const privateHome = ["", "Users", "someone"].join("/");
+  // A filesystem error as the file API throws it: an Error whose `code` names
+  // the class and whose message embeds the failing path.
+  const errno = (code: string, name = "Error") =>
+    Object.assign(new Error(`${code}: ${privateHome}/x`), { code, name });
   it("known failure classes map to path-free text", () => {
+    assertStrictEquals(safeErrorReason(errno("ENOENT")), "not found");
     assertStrictEquals(
-      safeErrorReason(new Deno.errors.NotFound(`${privateHome}/x`)),
-      "not found",
-    );
-    assertStrictEquals(
-      safeErrorReason(new Deno.errors.PermissionDenied(`${privateHome}/x`)),
+      safeErrorReason(errno("EACCES")),
       "permission denied",
+    );
+  });
+  it("every documented code maps to its reason", () => {
+    const expected: Array<[Error, string]> = [
+      [errno("ENOENT"), "not found"],
+      [errno("EACCES"), "permission denied"],
+      [errno("EPERM"), "permission denied"],
+      [errno("ENOTDIR"), "not a directory"],
+      [errno("EISDIR"), "is a directory"],
+      [errno("ELOOP"), "symlink loop"],
+      [errno("ERR_ACCESS_DENIED"), "not permitted by the runtime sandbox"],
+      [errno("EIO"), "unavailable"],
+    ];
+    for (const [error, reason] of expected) {
+      assertStrictEquals(safeErrorReason(error), reason, String(error));
+    }
+    // A sandbox refusal carries a name and no code.
+    const sandbox = Object.assign(new Error(`${privateHome}/x`), {
+      name: "NotCapable",
+    });
+    assertStrictEquals(
+      safeErrorReason(sandbox),
+      "not permitted by the runtime sandbox",
     );
   });
   it("an unrecognized error does not leak its message", () => {
@@ -533,21 +561,21 @@ describe("a file changed mid-read is reported, not returned torn", () => {
     // would produce them.
     const path = `${croot}/growing.txt`;
     await Deno.writeTextFile(path, "needle\n");
-    const file = await Deno.open(path, { read: true });
-    const before = await file.stat();
+    const file = await open(path, "r");
+    const before = fileStat(await file.stat());
     await Deno.writeTextFile(path, "needle\nmore\n");
-    const after = await file.stat();
-    file.close();
+    const after = fileStat(await file.stat());
+    await file.close();
     assertStrictEquals(sameFileVersion(before, after), false);
   });
 
   it("an unchanged file passes the version check", async () => {
     const path = `${croot}/still.txt`;
     await Deno.writeTextFile(path, "needle\n");
-    const file = await Deno.open(path, { read: true });
-    const before = await file.stat();
-    const after = await file.stat();
-    file.close();
+    const file = await open(path, "r");
+    const before = fileStat(await file.stat());
+    const after = fileStat(await file.stat());
+    await file.close();
     assertStrictEquals(sameFileVersion(before, after), true);
   });
 
@@ -555,10 +583,37 @@ describe("a file changed mid-read is reported, not returned torn", () => {
     // The documented residual: an in-place edit of identical length whose mtime
     // is unchanged is invisible here. Asserted so the limitation cannot quietly
     // become a stronger claim.
-    const stamp = new Date(1_000_000);
-    const a = { size: 10, mtime: stamp } as Deno.FileInfo;
-    const b = { size: 10, mtime: new Date(1_000_000) } as Deno.FileInfo;
+    const a = { size: 10, mtimeMs: 1_000_000 } as FileStat;
+    const b = { size: 10, mtimeMs: 1_000_000 } as FileStat;
     assertStrictEquals(sameFileVersion(a, b), true);
+  });
+});
+
+describe("file identity", () => {
+  const stat = (dev: number, ino: number) => ({ dev, ino }) as FileStat;
+  it("a real file reports a verifiable identity", async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${root}/f.txt`, "x\n");
+      const file = await open(`${root}/f.txt`, "r");
+      const info = fileStat(await file.stat());
+      await file.close();
+      assertGreater(info.ino, 0);
+      assertGreater(info.dev, 0);
+      assertStrictEquals(info.isFile, true);
+      assertStrictEquals(info.isDirectory, false);
+      assertStrictEquals(info.isSymlink, false);
+      assertStrictEquals(info.size, 2);
+      assertStrictEquals(hasVerifiableIdentity(info), true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  it("a zero dev or ino cannot be verified, so the read fails closed", () => {
+    assertStrictEquals(hasVerifiableIdentity(stat(0, 5)), false);
+    assertStrictEquals(hasVerifiableIdentity(stat(5, 0)), false);
+    assertStrictEquals(hasVerifiableIdentity(stat(0, 0)), false);
+    assertStrictEquals(hasVerifiableIdentity(stat(7, 9)), true);
   });
 });
 

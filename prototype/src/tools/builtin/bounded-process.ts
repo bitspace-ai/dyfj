@@ -16,11 +16,11 @@
  *   never presented as if it completed.
  * - At the deadline the group is stopped the way the aggregate gate tears down
  *   a test lane: SIGTERM, a short grace that ends as soon as the group is
- *   empty, then SIGKILL to whatever is left. Signalling a group needs
- *   `Deno.kill`, which needs unscoped run permission the runtime does not
- *   hold, so a short-lived child of the running Deno executable carries the
- *   signals. Its program is code-authored, with only a validated numeric group
- *   id and fixed bounds substituted in, and its streams are discarded.
+ *   empty, then SIGKILL to whatever is left. Each step is one run of
+ *   `/bin/kill` addressed at the negated group id, as the ACP runner signals
+ *   its agent's group: a numeric id validated here and fixed arguments, with
+ *   its streams discarded. Liveness is `kill -0`, so a group whose members
+ *   are all unreaped zombies still reads as present until they are reaped.
  * - After the stop, the pipes get a bounded drain. A process that left the
  *   group (`setsid`, `setpgrp`) cannot be signalled through it and may still
  *   hold the pipes; the call returns anyway and reports that.
@@ -39,11 +39,16 @@
  * that memory is separate work.
  */
 
+import { type ChildProcess, spawn } from "node:child_process";
+import { constants as osConstants } from "node:os";
+import process from "node:process";
+import type { Readable } from "node:stream";
+
 /** How a timed-out command's process group ended up after the stop. */
 export type GroupStop =
   /** Nothing live is left in the group. */
   | "stopped"
-  /** A non-zombie group member was still present after SIGKILL. */
+  /** A group member was still present after SIGKILL and its settle bound. */
   | "survived"
   /** The group could not be signalled; only the direct child was killed. */
   | "unavailable";
@@ -101,95 +106,132 @@ const DEFAULT_DRAIN_MS = 1_000;
 // After SIGKILL, how long the group may take to empty before a member that is
 // still present counts as a survivor.
 const KILL_SETTLE_MS = 500;
-// Headroom for the signalling child's own startup; a hung signaller must not
-// hold the call open either.
+// How often the group is probed for members while waiting for it to empty.
+const PROBE_INTERVAL_MS = 25;
+// Headroom for one signal run's own startup; a hung `/bin/kill` must not hold
+// the call open either.
 const STOPPER_STARTUP_MS = 5_000;
-const SURVIVED_EXIT = 3;
+const KILL_COMMAND = "/bin/kill";
 
 function isSignallableGroup(group: number): boolean {
   return Number.isSafeInteger(group) && group > 1;
 }
 
+/** The signal a stop step sends: TERM, KILL, or "0" for the liveness probe. */
+export type GroupSignal = "TERM" | "KILL" | "0";
+
 /**
- * The code-authored stop program. Liveness is a SIGCONT probe confirmed by
- * `ps`: a group whose members are all unreaped zombies still accepts a signal,
- * and a zombie is not a survivor. When `ps` is unavailable the probe assumes
- * the member is live, so a survivor is never reported as stopped.
+ * The argument list for one `/bin/kill` step against a process group. The
+ * group id is validated (an integer above 1, never "all processes" or the
+ * caller's own group) and goes after `--`, so it can only be read as a target.
  */
-export function groupStopProgram(group: number, graceMs: number): string {
+export function groupSignalArgs(group: number, signal: GroupSignal): string[] {
   if (!isSignallableGroup(group)) {
     throw new RangeError("process group id must be an integer above 1");
   }
-  const grace = Math.max(0, Math.round(graceMs));
-  return [
-    `const group = ${group};`,
-    `const signal = (name) => {`,
-    `  try { Deno.kill(-group, name); return true; }`,
-    `  catch (error) { return !(error instanceof Deno.errors.NotFound); }`,
-    `};`,
-    `const live = async () => {`,
-    `  if (!signal("SIGCONT")) return false;`,
-    `  try {`,
-    `    const out = await new Deno.Command("/bin/ps", {`,
-    `      args: ["-A", "-o", "pgid=,stat="],`,
-    `      stdin: "null", stdout: "piped", stderr: "null",`,
-    `    }).output();`,
-    `    if (!out.success) return true;`,
-    `    return new TextDecoder().decode(out.stdout).split("\\n").some((line) => {`,
-    `      const [pgid, stat] = line.trim().split(/\\s+/);`,
-    `      return Number(pgid) === group && stat !== undefined &&`,
-    `        !stat.startsWith("Z");`,
-    `    });`,
-    `  } catch { return true; }`,
-    `};`,
-    `const emptiesWithin = async (ms) => {`,
-    `  const end = Date.now() + ms;`,
-    `  for (;;) {`,
-    `    if (!(await live())) return true;`,
-    `    if (Date.now() >= end) return false;`,
-    `    await new Promise((resolve) => setTimeout(resolve, 25));`,
-    `  }`,
-    `};`,
-    `if (!signal("SIGTERM")) Deno.exit(0);`,
-    `if (await emptiesWithin(${grace})) Deno.exit(0);`,
-    `signal("SIGKILL");`,
-    `Deno.exit((await emptiesWithin(${KILL_SETTLE_MS})) ? 0 : ${SURVIVED_EXIT});`,
-  ].join("\n");
+  return signal === "0"
+    ? ["-0", "--", `-${group}`]
+    : ["-s", signal, "--", `-${group}`];
 }
 
-/** Default stopper: run the stop program in a child of the running Deno. */
-export const stopProcessGroup: GroupStopper = async (group, graceMs) => {
-  if (!isSignallableGroup(group)) return "unavailable";
-  let signaller: Deno.ChildProcess;
-  try {
-    signaller = new Deno.Command(Deno.execPath(), {
-      args: ["eval", "--allow-run", groupStopProgram(group, graceMs)],
-      clearEnv: true,
-      env: {},
-      stdin: "null",
-      stdout: "null",
-      stderr: "null",
-    }).spawn();
-  } catch {
-    return "unavailable";
-  }
-  const bound = Math.max(0, graceMs) + KILL_SETTLE_MS + STOPPER_STARTUP_MS;
-  const status = await settleWithin(signaller.status, bound);
-  if (status === undefined) {
+/**
+ * What one `/bin/kill` run reported. `gone` is "no such process": the group
+ * has no members. `failed` is any other refusal or a run that outlived its
+ * bound. `unavailable` is a run that could not start at all.
+ */
+export type SignalOutcome = "delivered" | "gone" | "failed" | "unavailable";
+
+/** Port: run `/bin/kill` with these arguments and report the outcome. */
+export type SignalRunner = (args: string[]) => Promise<SignalOutcome>;
+
+/** Default signal runner: `/bin/kill`, spawned through `node:child_process`. */
+export const runKill: SignalRunner = (args) =>
+  new Promise<SignalOutcome>((resolve) => {
+    let child: ChildProcess;
     try {
-      signaller.kill("SIGKILL");
+      child = spawn(KILL_COMMAND, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+        env: { LC_ALL: "C" },
+      });
     } catch {
-      // It exited at the bound.
+      resolve("unavailable");
+      return;
     }
-    // Its eventual exit is observed, not awaited: a signaller stuck in
-    // uninterruptible I/O must not hold the timeout path open.
-    signaller.status.catch(() => undefined);
-    return "unavailable";
-  }
-  if (status.code === 0) return "stopped";
-  if (status.code === SURVIVED_EXIT) return "survived";
-  return "unavailable";
-};
+    let detail = "";
+    child.stderr?.on("data", (chunk: Uint8Array) => {
+      if (detail.length < 256) detail += new TextDecoder().decode(chunk);
+    });
+    let settled = false;
+    const finish = (outcome: SignalOutcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // It exited at the bound.
+      }
+      finish("failed");
+    }, STOPPER_STARTUP_MS);
+    child.once("error", () => finish("unavailable"));
+    child.once("close", (code) => {
+      if (code === 0) finish("delivered");
+      else finish(detail.includes("No such process") ? "gone" : "failed");
+    });
+  });
+
+export interface GroupStopperTuning {
+  /** How often the group is probed while waiting for it to empty. */
+  pollMs?: number;
+  /** How long the group may take to empty after SIGKILL. */
+  killSettleMs?: number;
+}
+
+/**
+ * Build a group stopper over a signal runner: SIGTERM, probe until the group
+ * is empty or the grace ends, then SIGKILL and probe for the settle bound.
+ * Only a probe that reports "no such process" counts as empty, so a probe that
+ * fails or cannot run never reports a survivor as stopped. A runner that
+ * cannot start at all, or that throws, makes the group unavailable.
+ */
+export function createGroupStopper(
+  run: SignalRunner,
+  tuning: GroupStopperTuning = {},
+): GroupStopper {
+  const pollMs = Math.max(1, tuning.pollMs ?? PROBE_INTERVAL_MS);
+  const killSettleMs = tuning.killSettleMs ?? KILL_SETTLE_MS;
+  return async (group, graceMs) => {
+    if (!isSignallableGroup(group)) return "unavailable";
+    const probeArgs = groupSignalArgs(group, "0");
+    const emptiesWithin = async (ms: number): Promise<boolean> => {
+      const end = Date.now() + ms;
+      for (;;) {
+        if ((await run(probeArgs)) === "gone") return true;
+        if (Date.now() >= end) return false;
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+    };
+    const steps = async (): Promise<GroupStop> => {
+      const term = await run(groupSignalArgs(group, "TERM"));
+      if (term === "unavailable") return "unavailable";
+      if (term === "gone") return "stopped";
+      if (await emptiesWithin(Math.max(0, graceMs))) return "stopped";
+      const kill = await run(groupSignalArgs(group, "KILL"));
+      if (kill === "unavailable") return "unavailable";
+      if (kill === "gone") return "stopped";
+      return (await emptiesWithin(killSettleMs)) ? "stopped" : "survived";
+    };
+    const bound = Math.max(0, graceMs) + killSettleMs + STOPPER_STARTUP_MS;
+    const result = await settleWithin(steps(), bound);
+    return result ?? "unavailable";
+  };
+}
+
+/** Default stopper: `/bin/kill` steps through `node:child_process`. */
+export const stopProcessGroup: GroupStopper = createGroupStopper(runKill);
 
 async function settleWithin<T>(
   promise: Promise<T>,
@@ -217,30 +259,25 @@ interface Collector {
   text(): string;
 }
 
-function collect(stream: ReadableStream<Uint8Array>): Collector {
-  const reader = stream.getReader();
+function collect(stream: Readable): Collector {
   const chunks: Uint8Array[] = [];
   let frozen = false;
-  const done = (async () => {
-    try {
-      for (;;) {
-        const next = await reader.read();
-        if (next.done) return;
-        if (!frozen) chunks.push(next.value);
-      }
-    } catch {
-      // A cancelled or failed read ends collection; what was kept stands.
-    } finally {
-      reader.releaseLock();
-    }
-  })();
+  const done = new Promise<void>((resolve) => {
+    // A cancelled or failed read ends collection; what was kept stands.
+    stream.once("end", () => resolve());
+    stream.once("close", () => resolve());
+    stream.once("error", () => resolve());
+  });
+  stream.on("data", (chunk: Uint8Array) => {
+    if (!frozen) chunks.push(chunk);
+  });
   return {
     done,
     freeze: () => {
       frozen = true;
     },
     cancel: async () => {
-      await reader.cancel().catch(() => undefined);
+      stream.destroy();
       await done;
     },
     text: () => {
@@ -254,6 +291,39 @@ function collect(stream: ReadableStream<Uint8Array>): Collector {
       return new TextDecoder().decode(bytes);
     },
   };
+}
+
+interface ExitStatus {
+  code: number | null;
+  signal: string | null;
+}
+
+/**
+ * The command's exit, taken from the `exit` event and not `close`: `close`
+ * waits for the output pipes, and a descendant can hold those open long after
+ * the command is gone. A signal death carries the shell convention's
+ * 128 + signal number in `code`, as `signal` names it.
+ */
+function exitStatus(child: ChildProcess): Promise<ExitStatus> {
+  return new Promise((resolve) => {
+    child.once("exit", (code, signal) => {
+      const number = signal === null
+        ? undefined
+        : (osConstants.signals as Record<string, number>)[signal];
+      resolve({
+        code: code ?? (number === undefined ? null : 128 + number),
+        signal,
+      });
+    });
+  });
+}
+
+/** Resolves once the command has started; rejects when it cannot. */
+function started(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", reject);
+  });
 }
 
 /**
@@ -270,28 +340,29 @@ export async function runBounded(
   const stopGroup = options.stopGroup ?? stopProcessGroup;
   // Windows has no POSIX process groups; there only the direct child is
   // killed and the result says so.
-  const useGroup = Deno.build.os !== "windows";
-  const child = new Deno.Command(request.command, {
-    args: [...request.args],
+  const useGroup = process.platform !== "win32";
+  const child = spawn(request.command, [...request.args], {
     cwd: request.cwd,
-    clearEnv: true,
     env: request.env,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
+    stdio: ["ignore", "pipe", "pipe"],
     // Own process group: the leader's pid is the group id the stop signals.
     detached: useGroup,
-  }).spawn();
-  const group = useGroup && isSignallableGroup(child.pid)
+  });
+  await started(child);
+  // Later errors (a failed kill) have no caller to tell.
+  child.on("error", () => {});
+  const group = useGroup && child.pid !== undefined &&
+      isSignallableGroup(child.pid)
     ? child.pid
     : undefined;
-  const stdout = collect(child.stdout);
-  const stderr = collect(child.stderr);
+  const exited = exitStatus(child);
+  const stdout = collect(child.stdout!);
+  const stderr = collect(child.stderr!);
   const outputClosed = Promise.all([stdout.done, stderr.done]);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const finishedFirst = await Promise.race([
-    Promise.all([child.status, outputClosed]).then(() => true),
+    Promise.all([exited, outputClosed]).then(() => true),
     new Promise<false>((resolve) => {
       timer = setTimeout(() => resolve(false), request.timeoutMs);
     }),
@@ -299,7 +370,7 @@ export async function runBounded(
   clearTimeout(timer);
 
   if (finishedFirst) {
-    const status = await child.status;
+    const status = await exited;
     return {
       code: status.code,
       signal: status.signal,
@@ -327,10 +398,9 @@ export async function runBounded(
     // Already exited.
   }
   // Bounded as well: a leader in uninterruptible I/O can outlive SIGKILL for
-  // as long as the I/O takes, and its status promise stays pending with it.
+  // as long as the I/O takes, and its exit event stays pending with it.
   // Its exit is then observed, not awaited, and the result says so.
-  const status = await settleWithin(child.status, KILL_SETTLE_MS);
-  if (status === undefined) child.status.catch(() => undefined);
+  const status = await settleWithin(exited, KILL_SETTLE_MS);
   const closed = (await settleWithin(outputClosed.then(() => true), drainMs)) ??
     false;
   if (!closed) await Promise.all([stdout.cancel(), stderr.cancel()]);

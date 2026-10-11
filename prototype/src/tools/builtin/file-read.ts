@@ -3,6 +3,7 @@
  * the workspace root. Both return an `error: …` string rather than throwing.
  */
 
+import { readdir } from "node:fs/promises";
 import { clipToUtf8Bytes } from "../../kernel/mod.ts";
 import type { WorkspaceRoot } from "./root-anchors.ts";
 import {
@@ -15,6 +16,7 @@ import {
   rootStillAnchored,
   safeErrorReason,
   sanitizeOutputText,
+  statFile,
 } from "./file-access.ts";
 
 /**
@@ -61,7 +63,7 @@ export async function executeReadFile(
     if (target === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
-    const info = await Deno.stat(target);
+    const info = await statFile(target);
     if (info.isDirectory) {
       return `error: ${sanitizeOutputText(p)} is a directory; use list_files`;
     }
@@ -182,8 +184,8 @@ export async function executeListFiles(
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     const entries: string[] = [];
-    for await (const entry of Deno.readDir(target)) {
-      entries.push(entry.isDirectory ? `${entry.name}/` : entry.name);
+    for (const entry of await readdir(target, { withFileTypes: true })) {
+      entries.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
     }
     const rootLost = await rootStillAnchored(workspace);
     if (rootLost !== null) return rootLost;

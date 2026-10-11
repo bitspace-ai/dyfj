@@ -5,14 +5,18 @@
  * resolves somewhere the operator did not see.
  */
 
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { WorkspaceRoot } from "./root-anchors.ts";
 import {
   containedRealPath,
+  errorCode,
   isWithinRoot,
+  lstatFile,
   resolveWorkspacePath,
   safeErrorReason,
   sanitizeOutputText,
+  statFile,
 } from "./file-access.ts";
 
 /**
@@ -20,7 +24,7 @@ import {
  * overwriting it. Containment is checked against the REAL parent directory
  * (defeating a symlinked parent), and write_file refuses to write through a
  * symlink at the target path — a dangling in-root symlink could point outside
- * the root and `writeTextFile` would follow it (CWE-59). The parent directory
+ * the root and a plain write would follow it (CWE-59). The parent directory
  * must already exist. This is a mutating tool; the command policy routes it
  * through operator approval, so the executor itself never runs unapproved.
  */
@@ -29,9 +33,9 @@ export async function executeWriteFile(
   p: string,
   content: string,
   // Injectable for tests: the scoped test sandbox forbids creating real symlinks
-  // (Deno.symlink needs unscoped read+write), so the no-follow guard is exercised
+  // (making one needs unscoped read+write), so the no-follow guard is exercised
   // with a fake lstat. The real OS symlink-follow escape is Codex-PoC-verified.
-  lstat: (path: string) => Promise<{ isSymlink: boolean }> = Deno.lstat,
+  lstat: (path: string) => Promise<{ isSymlink: boolean }> = lstatFile,
 ): Promise<string> {
   const root = workspace.path;
   let abs: string;
@@ -43,14 +47,14 @@ export async function executeWriteFile(
   }
   try {
     const rootReal = await workspace.verify();
-    const parentReal = await Deno.realPath(dirname(abs));
+    const parentReal = await realpath(dirname(abs));
     if (!isWithinRoot(rootReal, parentReal)) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
     // Refuse to write through a symlink at the target path: write_file never
     // follows symlinks. lstat (no-follow) detects a symlink even when it dangles
     // — realPath(abs) fails on a dangling link, so the old "target missing"
-    // branch would have let writeTextFile follow it outside the root (CWE-59).
+    // branch would have let the write follow it outside the root (CWE-59).
     try {
       const targetInfo = await lstat(abs);
       if (targetInfo.isSymlink) {
@@ -59,14 +63,14 @@ export async function executeWriteFile(
         }`;
       }
     } catch (err) {
-      if (!(err instanceof Deno.errors.NotFound)) {
+      if (errorCode(err) !== "ENOENT") {
         return `error: cannot write ${sanitizeOutputText(p)}: ${
           safeErrorReason(err)
         }`;
       }
       // NotFound — the target does not exist yet; the parent containment governs.
     }
-    await Deno.writeTextFile(abs, content);
+    await writeFile(abs, content, "utf8");
     // Non-content-derived result: no exact length, which would otherwise persist
     // a payload-size signal into the event log + session replay (CWE-532).
     return `wrote ${sanitizeOutputText(p)}`;
@@ -91,7 +95,7 @@ export async function executeEditFile(
   p: string,
   oldString: string,
   newString: string,
-  lstat: (path: string) => Promise<{ isSymlink: boolean }> = Deno.lstat,
+  lstat: (path: string) => Promise<{ isSymlink: boolean }> = lstatFile,
 ): Promise<string> {
   const root = workspace.path;
   if (oldString === "") {
@@ -113,13 +117,13 @@ export async function executeEditFile(
     if (target === null) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
     }
-    const info = await Deno.stat(target);
+    const info = await statFile(target);
     if (info.isDirectory) {
       return `error: ${sanitizeOutputText(p)} is a directory`;
     }
-    text = await Deno.readTextFile(target);
+    text = await readFile(target, "utf8");
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) {
+    if (errorCode(err) === "ENOENT") {
       return `error: cannot edit ${sanitizeOutputText(p)}: file not found`;
     }
     return `error: cannot read ${sanitizeOutputText(p)}: ${

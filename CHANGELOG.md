@@ -145,6 +145,24 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The builtin tools' process spawning and file access run on `node:`
+  builtins.** Part of the move of the TypeScript tier to Node.js (decision
+  D32). `bash` and `git` start their command with `node:child_process` in its
+  own process group, and at a timeout the group is stopped with three kinds of
+  `/bin/kill` run, as the ACP runner signals its agent's group: TERM, a probe
+  (`kill -0`) through the grace, then KILL. The short-lived helper process that
+  carried the signals is gone. The file tools read, list, search and write
+  through `node:fs/promises`, with one shared stat shape (`FileStat`) and error
+  reasons chosen from the error's `code`; a device or inode of zero counts as
+  an identity that cannot be verified, so the read is refused as before. The
+  tools' limits, the exclusion contract, the status lines and the
+  path-free error text are unchanged. Visible differences: a command that
+  cannot be started reports Node's message (for example `spawn bash ENOENT`),
+  and a group made only of unreaped zombies at the settle bound now reads as
+  still present, for the milliseconds until they are reaped, where it read
+  "stopped". `node:child_process` is confined to `tools/` and the ACP runner by
+  `scripts/arch-layers.json`. `runtime.neutral` drops by the seven builtin
+  files' references (51); the lane's totals are in the pull request.
 - **The Unix-socket JSON-RPC transport runs on `node:net` behind a
   `ByteConnection` port.** Part of the move of the TypeScript tier to Node.js
   (decision D32). `transport/connection.ts` names what the peer, client and
