@@ -71,8 +71,8 @@ export interface SecretsConfig {
   env: Readonly<Record<string, string>>;
   /**
    * Names of AMBIENT env vars to forward from the runtime into the resolver's
-   * otherwise-isolated environment (the resolver spawns with `clearEnv`, seeing
-   * only a minimal base + these + `env`). This is how a launch-scope resolver
+   * otherwise-isolated environment (the resolver spawns with a replaced
+   * environment, seeing only a minimal base + these + `env`). This is how a launch-scope resolver
    * secret (e.g. a service-account token) reaches the resolver without the
    * resolver also inheriting the runtime's provider keys / database password /
    * memory token. Same denylist + declared-secret rules as `[secrets.env]`.

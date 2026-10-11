@@ -550,4 +550,16 @@ describe("runSecretCommand when the command cannot start", () => {
     assertFalse((res.reason ?? "").includes("timed out"));
     assertEquals(elapsed < 2_000, true, `took ${Math.round(elapsed)}ms`);
   });
+
+  it("returns a fresh failure each time, so one caller cannot alter the next", async () => {
+    const command = [["", "no", "such", "resolver-xyz", "op"].join("/")];
+    const first = await runSecretCommand(command, "pointer", 5_000);
+    (first as { reason?: string }).reason = "mutated";
+    const second = await runSecretCommand(command, "pointer", 5_000);
+    assertStrictEquals(
+      second.reason,
+      "cannot run the resolver command (not found or not permitted)",
+    );
+    assertNotStrictEquals(second, first);
+  });
 });

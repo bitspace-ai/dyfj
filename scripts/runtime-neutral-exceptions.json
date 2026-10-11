@@ -341,7 +341,7 @@
   },
   {
     "path": "prototype/src/config/workbench.test.ts",
-    "count": 23,
+    "count": 24,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

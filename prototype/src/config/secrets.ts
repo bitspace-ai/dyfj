@@ -83,15 +83,16 @@ export function unavailableSecretPointers(
 }
 
 /**
- * The reason when the resolver cannot start (no run permission for it, or no
- * such binary). Deliberately value-free and PATH-FREE: the runtime's own error
- * text names the configured, possibly absolute and operator-private, resolver
- * path, which must never reach a log or a returned reason.
+ * The failure for a resolver that cannot start (no run permission for it, or
+ * no such binary). Deliberately value-free and PATH-FREE: the runtime's own
+ * error text names the configured, possibly absolute and operator-private,
+ * resolver path, which must never reach a log or a returned reason. A fresh
+ * object per failure, so no caller can alter what the next one receives.
  */
-const UNRUNNABLE: SecretCommandResult = {
+const unrunnable = () => ({
   ok: false,
   reason: "cannot run the resolver command (not found or not permitted)",
-};
+});
 
 const MAX_RESOLVER_FOLLOWERS = 8;
 
@@ -128,7 +129,7 @@ export type RunSecretCommand = (
   command: readonly string[],
   pointer: string,
   timeoutMs: number,
-  /** The COMPLETE environment for the child (spawned with clearEnv). */
+  /** The COMPLETE environment for the child (it replaces the inherited one). */
   env?: Readonly<Record<string, string>>,
 ) => Promise<SecretCommandResult>;
 
@@ -165,7 +166,7 @@ function readAmbient(env: MutableEnv, name: string): string | undefined {
 /**
  * Build the resolver's ISOLATED environment: the minimal base plus the
  * operator's `inheritEnv` forward-list (both read from the ambient env), with
- * `[secrets.env]` literals merged on top. The resolver spawns with `clearEnv`,
+ * `[secrets.env]` literals merged on top. The resolver spawns with this as its whole environment,
  * so it sees ONLY this — never the runtime's other secrets. Trusting a command
  * to resolve one pointer does not require handing it every credential the
  * runtime holds; a compromised or misconfigured resolver's blast radius is
@@ -219,7 +220,7 @@ export const runSecretCommand: RunSecretCommand = (
         stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
-      resolve(UNRUNNABLE);
+      resolve(unrunnable());
       return;
     }
 
@@ -253,7 +254,7 @@ export const runSecretCommand: RunSecretCommand = (
     // A spawn that fails does not throw under the runtime: it arrives here as
     // an `error` event (no run permission for the binary, or no such binary).
     // Its message names the configured resolver path, so it is discarded.
-    child.once("error", () => finish(UNRUNNABLE));
+    child.once("error", () => finish(unrunnable()));
 
     child.once("close", (code, signal) => {
       if (signal !== null) {
@@ -307,7 +308,7 @@ export const runSecretCommand: RunSecretCommand = (
  *
  * Values are written back only AFTER every resolution settles, so no resolver is
  * ever handed a secret THIS pass resolved. Each spawn also runs in an ISOLATED
- * environment (`clearEnv` + `buildResolverEnv`): only a minimal non-secret base,
+ * environment (the replaced child environment from `buildResolverEnv`): only a minimal non-secret base,
  * the operator's `inherit_env` forward-list, and `[secrets.env]` — never the
  * runtime's other provider keys, database password, or memory token.
  */

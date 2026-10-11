@@ -166,6 +166,22 @@ const table = (t: Record<string, unknown>) => () => t;
     }
   });
 
+  Deno.test("loadConfig: a read error with a code names that code, not its message", async () => {
+    // The message repeats the path; the label must carry the code only.
+    const denied = () =>
+      Promise.reject(
+        Object.assign(new Error("EACCES: permission denied, open '/x/y'"), {
+          code: "EACCES",
+        }),
+      );
+    const message =
+      ((await assertRejects(() =>
+        loadConfig({ env: env(HOME), readTextFile: denied })
+      )) as Error).message;
+    assertMatch(message, /cannot read config\.toml \(EACCES\)/);
+    assertFalse(message.includes("/x/y"));
+  });
+
   Deno.test("loadConfig: a non-NotFound read error surfaces as a config error", async () => {
     const denied = () => Promise.reject(new Error("EACCES"));
     assertMatch(
