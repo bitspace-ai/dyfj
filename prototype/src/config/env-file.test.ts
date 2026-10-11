@@ -94,7 +94,10 @@ Deno.test("readLauncherEnvVar: an unreadable .env yields undefined", async () =>
   const value = await readLauncherEnvVar(
     "/proto",
     "DYFJ_ROOT",
-    () => Promise.reject(new Deno.errors.NotFound()),
+    () =>
+      Promise.reject(
+        Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
+      ),
     new MapEnv(),
   );
   assertStrictEquals(value, undefined);

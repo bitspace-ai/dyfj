@@ -273,7 +273,7 @@ consume it. This breaks the `mcp-tools ⇄ web-tools` cycle.
 | `HttpTransport`  | `fetch` with header deadline   | scripted transport (request assertions + recorded responses) |
 | `Clock`          | system                         | manual clock                                                 |
 | `IdSource`       | ULID                           | sequential                                                   |
-| `Env`            | `Deno.env`                     | map                                                          |
+| `Env`            | `process.env` (`config/env.ts`) | map                                                          |
 | `Approver`       | JSON-RPC server→client request | scripted verdicts                                            |
 | `FrameSink`      | JSON-RPC `stream` notification | recording sink                                               |
 | `ProcessSpawner` | `node:child_process` (`tools/builtin/bounded-process.ts`; the group stop signals through `/bin/kill`) | not faked. Tests that spawn processes are integration tier   |

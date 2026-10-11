@@ -20,7 +20,10 @@ const HOME = { HOME: "/h" };
 // Assembled at runtime so the public-boundary scan never matches these
 // fixtures as home-directory paths in tracked source.
 const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
-const notFound = () => Promise.reject(new Deno.errors.NotFound());
+const notFound = () =>
+  Promise.reject(
+    Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
+  );
 const present = () =>
   Promise.resolve("(toml text — parsed by the injected parser)");
 // Inject the parsed table directly: these test the precedence/validation
@@ -148,6 +151,37 @@ const table = (t: Record<string, unknown>) => () => t;
     );
   });
 
+  Deno.test("loadConfig: a missing config.toml yields the defaults through the default reader", async () => {
+    // No reader is injected: the real file read runs on a directory that holds
+    // no config.toml, and its not-found error must read as "no file".
+    const dir = await Deno.makeTempDir();
+    try {
+      const config = await loadConfig({
+        env: { get: (key) => (key === "DYFJ_ROOT" ? dir : undefined) },
+        parseToml: () => ({}),
+      });
+      assertEquals(config, CONFIG_DEFAULTS);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  Deno.test("loadConfig: a read error with a code names that code, not its message", async () => {
+    // The message repeats the path; the label must carry the code only.
+    const denied = () =>
+      Promise.reject(
+        Object.assign(new Error("EACCES: permission denied, open '/x/y'"), {
+          code: "EACCES",
+        }),
+      );
+    const message =
+      ((await assertRejects(() =>
+        loadConfig({ env: env(HOME), readTextFile: denied })
+      )) as Error).message;
+    assertMatch(message, /cannot read config\.toml \(EACCES\)/);
+    assertFalse(message.includes("/x/y"));
+  });
+
   Deno.test("loadConfig: a non-NotFound read error surfaces as a config error", async () => {
     const denied = () => Promise.reject(new Error("EACCES"));
     assertMatch(
@@ -231,7 +265,9 @@ const table = (t: Record<string, unknown>) => () => t;
               key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "-2" : undefined,
           },
           readTextFile: async () => {
-            throw new Deno.errors.NotFound();
+            throw Object.assign(new Error("ENOENT: no such file"), {
+              code: "ENOENT",
+            });
           },
           parseToml: () => ({}),
         })

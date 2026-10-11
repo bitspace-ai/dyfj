@@ -5,9 +5,9 @@
  * Keep the schema FLAT / SECTIONED; TOML clunks on deep nesting.
  *
  * The TOML parser (@std/toml) is imported lazily: the module must load under the
- * node-based test runner, which can't resolve Deno jsr specifiers — and the
- * parser only runs when a real config file is read under Deno. Node-runner
- * tests inject a parser; a Deno integration test covers the real TOML parser.
+ * node-based test runner, which can't resolve jsr specifiers — and the parser
+ * only runs when a real config file is read under the runtime. Node-runner
+ * tests inject a parser; an integration test covers the real TOML parser.
  */
 
 import { type Env, processEnv } from "./env.ts";
@@ -55,6 +55,13 @@ export async function defaultParseToml(
   return parse(raw) as Record<string, unknown>;
 }
 
+/** The `code` of a filesystem error (`ENOENT`, `EACCES`, ...), if it has one. */
+function errorCode(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
 export async function readConfigFile(
   path: string,
   readTextFile: (path: string) => Promise<string>,
@@ -64,10 +71,12 @@ export async function readConfigFile(
   try {
     raw = await readTextFile(path);
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return null; // no file → defaults
+    if (errorCode(err) === "ENOENT") return null; // no file → defaults
     // Path-free: the error category, not the raw message (which repeats the path).
     throw new Error(
-      `config: cannot read ${configLabel(path)} (${(err as Error).name})`,
+      `config: cannot read ${configLabel(path)} (${
+        errorCode(err) ?? (err as Error).name
+      })`,
     );
   }
   try {

@@ -323,7 +323,10 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   Deno.test("loadSecretsConfig: shares the file read; a missing file yields null", async () => {
     const cfg = await loadSecretsConfig({
       env: { get: (k) => (k === "HOME" ? "/h" : undefined) },
-      readTextFile: () => Promise.reject(new Deno.errors.NotFound()),
+      readTextFile: () =>
+        Promise.reject(
+          Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
+        ),
     });
     assertStrictEquals(cfg, null);
   });

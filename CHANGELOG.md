@@ -145,6 +145,25 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The configuration directory's environment, resolver spawn and file reads
+  run on `node:` builtins.** Part of the move of the TypeScript tier to Node.js
+  (decision D32). `processEnv` reads and writes `process.env`; the three
+  config loaders and the nameserver reader share one default text-file reader
+  (`readTextFile`, from `node:fs/promises`), and a missing `config.toml` is
+  recognised by the error's `code` (`ENOENT`), so an injected reader that
+  throws a Deno `NotFound` keeps working. The secrets resolver starts its
+  command with `node:child_process` under the same isolated environment. A
+  command that cannot start, because it is missing or not permitted, still
+  reads "cannot run the resolver command (not found or not permitted)" at once
+  and never carries the configured path: the runtime reports that failure as an
+  event and not as a thrown error, so the runner now handles the event instead
+  of waiting for its timeout. A resolver killed by a signal reads "resolver was
+  killed by <signal>". The "cannot read config" label names the error's `code`
+  (for example `EACCES`) when it has one. `node:child_process` is now also
+  allowed in `config/` by `scripts/arch-layers.json`. The boot summary, the
+  grants and the config surface are unchanged. `runtime.neutral` drops by the
+  eight `config/` files' references (23); the lane's totals are in the pull
+  request.
 - **The builtin tools' process spawning and file access run on `node:`
   builtins.** Part of the move of the TypeScript tier to Node.js (decision
   D32). `bash` and `git` start their command with `node:child_process` in its

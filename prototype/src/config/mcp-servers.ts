@@ -3,6 +3,7 @@
  */
 
 import { processEnv } from "./env.ts";
+import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 import {
   configFilePath,
@@ -428,7 +429,7 @@ export async function loadMcpServersConfig(
   secrets?: SecretsConfig | null,
 ): Promise<McpHttpServerConfig[]> {
   const env = deps.env ?? processEnv;
-  const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+  const readTextFile = deps.readTextFile ?? defaultReadTextFile;
   const parseToml = deps.parseToml ?? defaultParseToml;
   const path = configFilePath(env);
   const table = await readConfigFile(path, readTextFile, parseToml);

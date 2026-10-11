@@ -981,13 +981,15 @@ Deno.test("the committed rules confine node:net to the transport unit", async ()
   ]);
 });
 
-Deno.test("the committed rules confine node:child_process to tools and the ACP runner", async () => {
+Deno.test("the committed rules confine node:child_process to tools, config and the ACP runner", async () => {
   const committed = JSON.parse(
     await Deno.readTextFile(
       fileURLToPath(new URL("./arch-layers.json", import.meta.url)),
     ),
   ) as LayerRules;
   const result = await run({
+    [`${S}/config/resolver.ts`]:
+      'import { spawn } from "node:child_process"; spawn;',
     [`${S}/tools/builtin/spawn.ts`]:
       'import { spawn } from "node:child_process"; spawn;',
     [`${S}/acp-client.ts`]:
