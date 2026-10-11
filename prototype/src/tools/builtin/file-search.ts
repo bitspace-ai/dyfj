@@ -272,8 +272,9 @@ interface WalkEntry {
 /**
  * Yield walked files under `start`, depth-first and sorted for deterministic
  * output. Symlinks are never followed. `budget.visited` counts every entry
- * seen — directories included — so the cap bounds the walk itself and not
- * merely the files it yields.
+ * kept — directories included — so the cap bounds the entries the walk keeps
+ * and descends into, not merely the files it yields. Each directory handle is
+ * still read to its end (see below), so the cap does not bound the reads.
  */
 async function* walkFiles(
   rootReal: string,

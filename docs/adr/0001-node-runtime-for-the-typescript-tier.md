@@ -19,7 +19,8 @@ began. Deno plays three separable roles there:
    grants the launcher computes at start, which hold the loopback-only network
    posture, the pinned list of spawnable binaries and the environment allowlist.
 
-On 2026-10-09 Deno's maintainers announced that the runtime will receive
+On 2026-10-09 Deno's maintainers
+[announced](https://deno.com/blog/cloudflare) that the runtime will receive
 maintenance releases for one more year and that its development ends after
 that. A runtime that holds provider credentials and spawns tools cannot stay on
 an end-of-life interpreter, and every new test written to the Deno dialect
