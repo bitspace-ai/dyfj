@@ -12,9 +12,9 @@
  * Matching therefore runs in a Worker, whose only job is that it can be
  * terminated. The budget — not the pattern — is what bounds the cost.
  *
- * This is NOT a permission sandbox. Deno's `deno.permissions` worker option
- * still requires --unstable-worker-options, so the worker inherits the host's
- * permissions. What it runs is therefore the thing that matters, and it runs a
+ * This is NOT a permission sandbox. The runtime's per-worker permissions
+ * option (`deno.permissions`) still requires --unstable-worker-options, so the
+ * worker inherits the host's permissions. What it runs is therefore the thing that matters, and it runs a
  * source string embedded below — not a file on disk that an approved workspace
  * edit could rewrite between searches. `specifier` overrides that for tests
  * only; anything passed there runs with the same inherited permissions, so do

@@ -19,6 +19,7 @@
  * Allowed dependencies: every lower layer. Nothing imports `server/`.
  */
 
+import process from "node:process";
 import {
   defaultLocalWorkbenchModels,
   loadWorkbenchModelsWithLocalDefaults,
@@ -379,7 +380,7 @@ export async function serveWorkbenchUnix(
 // columns, and serve over the default per-user socket until stopped.
 async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
-  const autostarted = Deno.args.includes("--autostarted");
+  const autostarted = process.argv.slice(2).includes("--autostarted");
   ensureSocketDir(socketPath);
 
   // Engine config (defaults → ~/.dyfj/config.toml → env), resolved once at the
@@ -435,8 +436,12 @@ async function main(): Promise<void> {
   installRuntimeSigintHandler(
     autostarted,
     async () => await (await closeServerReady)(),
-    { add: (handler) => Deno.addSignalListener("SIGINT", handler) },
-    Deno.exit,
+    {
+      add: (handler) => {
+        process.on("SIGINT", handler);
+      },
+    },
+    (code) => process.exit(code),
   );
 
   let serverInstance:
@@ -460,7 +465,11 @@ async function main(): Promise<void> {
     try {
       await closeRuntime(options);
     } catch (error) {
-      if (!(error instanceof Deno.errors.BadResource)) {
+      // A closed-resource error from the runtime's own handles is tolerated.
+      // The node:net listener swallows its own close errors, so only a runtime
+      // resource elsewhere in the close path (the runners) can raise it. The
+      // runner leaf of the Node runtime track removes this branch.
+      if (!(error instanceof Error && error.name === "BadResource")) {
         // The server's close failure is the one to report.
         await closeStore().catch(() => {});
         throw error;
@@ -481,7 +490,7 @@ async function main(): Promise<void> {
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       onStopComplete: (code) => {
-        Deno.exit(code);
+        process.exit(code);
       },
     });
     serverInstance = server;

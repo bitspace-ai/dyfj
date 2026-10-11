@@ -11,6 +11,11 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The CLI wraps at 80 columns on a terminal that reports no width.** A pty
+  with no size set reports 0 columns, and the markdown renderer took the smaller
+  of that and 100, so a turn's text wrapped at zero columns. An unknown width
+  and a zero width now both fall back to 80; a wider terminal is still capped
+  at 100. The width now comes from `process.stdout.columns`.
 - **A complete textual tool call that runs no tool now raises the unparsed
   tool-call markup warning.** A local model can write a whole
   `<tool_call><function=…>…</function></tool_call>` block as text. The
@@ -145,6 +150,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The CLI and the server's process surface run on `node:process`.** Part of
+  the move of the TypeScript tier to Node.js (decision D32). The CLI and the
+  runtime read their arguments from `process.argv`, the working directory from
+  `process.cwd()`, terminal detection from `isTTY`, and exit with
+  `process.exit`; Ctrl-C is handled with `process.on("SIGINT")`, and the
+  client's signal source is renamed `processSigintSource`. The CLI's
+  synchronous stdout and stderr writes go through a write-all loop over
+  `node:fs` `writeSync` that writes the rest after a partial write and waits
+  briefly on `EAGAIN`, because under Node one write to a slow pipe can take
+  only one pipe buffer; output under Deno is unchanged. The server's shutdown
+  still tolerates a closed-resource error from the close path, now matched by
+  the error's name. Grants and lane flags are unchanged. `runtime.neutral`
+  drops by the seven files' references (23); the lane's totals are in the pull
+  request.
 - **A tool call that is not approved reaches the model as a refusal, and tool
   use ends for that turn.** Before, the model received exactly the client's
   reason, `operator declined`, which reads like what a command printed; on

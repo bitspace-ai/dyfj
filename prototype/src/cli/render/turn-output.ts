@@ -3,17 +3,19 @@
  * runtime events as status lines on stderr.
  */
 
+import process from "node:process";
 import { isSupersedingRetryStarted } from "../../contract/mod.ts";
 import type { CliConfig } from "../args.ts";
 import type { Io } from "../io.ts";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
 
-function terminalColumns(): number {
-  try {
-    return Math.min(Deno.consoleSize()?.columns ?? 80, 100);
-  } catch {
-    return 80;
-  }
+/**
+ * The markdown wrap width for a terminal `columns` reading, capped at 100. An
+ * unknown width falls back to 80, and so does zero: a pty with no size set
+ * reports 0 columns.
+ */
+export function wrapColumns(columns: number | undefined): number {
+  return Math.min(columns || 80, 100);
 }
 
 /** Wrap streamed turn text with line-buffered markdown rendering. */
@@ -35,7 +37,7 @@ export function createTurnOutputHandlers(
   const renderer = createStreamingMarkdownRenderer({
     out: (text) => io.out(text),
     color: config.color,
-    columns: terminalColumns(),
+    columns: wrapColumns(process.stdout.columns),
     ...writeLifecycle,
   });
   return {

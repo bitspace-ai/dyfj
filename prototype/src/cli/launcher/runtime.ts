@@ -10,7 +10,7 @@ import {
   secretsRunGrant,
 } from "../../config/mod.ts";
 import type { CliConfig } from "../args.ts";
-import { denoTurnInterruptSource } from "../io.ts";
+import { processSigintSource } from "../io.ts";
 import {
   buildServeUnixArgs,
   nodeRunGrant,
@@ -115,7 +115,7 @@ export async function startLocalRuntime(
   // Autostarted supervisor and server share the client's terminal process
   // group. Both must survive the SIGINT that the client converts into cancel.
   const ignoreSigint = () => {};
-  if (autostarted) denoTurnInterruptSource.add(ignoreSigint);
+  if (autostarted) processSigintSource.add(ignoreSigint);
   try {
     const child = new Deno.Command(command, {
       args: buildServeUnixArgs(
@@ -136,6 +136,6 @@ export async function startLocalRuntime(
     const status = await child.status;
     return status.code;
   } finally {
-    if (autostarted) denoTurnInterruptSource.remove(ignoreSigint);
+    if (autostarted) processSigintSource.remove(ignoreSigint);
   }
 }

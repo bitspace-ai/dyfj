@@ -14,6 +14,7 @@
  * `dyfj start` to foreground the local UDS runtime.
  */
 
+import process from "node:process";
 import { processEnv } from "../config/mod.ts";
 import { connectUnixClient } from "../transport/mod.ts";
 import { runRepl } from "../cli.ts";
@@ -53,10 +54,10 @@ export async function main(argv: string[], io: Io): Promise<number> {
   const config = resolveConfig(
     parsed.overrides,
     processEnv,
-    Deno.stdout.isTerminal(),
-    Deno.cwd(),
+    process.stdout.isTTY === true,
+    process.cwd(),
   );
-  const interactive = Deno.stdin.isTerminal();
+  const interactive = process.stdin.isTTY === true;
   if (parsed.command === "exec") {
     return await runExec(
       parsed.prompt!,
@@ -92,7 +93,7 @@ export async function main(argv: string[], io: Io): Promise<number> {
 
 if (import.meta.main) {
   const io = realIo();
-  const code = await main(Deno.args, io);
+  const code = await main(process.argv.slice(2), io);
   io.close();
-  Deno.exit(code);
+  process.exit(code);
 }

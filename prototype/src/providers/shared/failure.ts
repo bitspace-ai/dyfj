@@ -166,14 +166,14 @@ export type FetchFailureReason =
   | "redirect";
 
 // What the runtime's `fetch` says when nothing answers. The messages are the
-// runtime's (Deno's reqwest-backed client, or a Node-style code), not the
+// runtime's (a reqwest-backed client, or a Node-style code), not the
 // provider's, and they are still matched rather than relayed.
 const REFUSED_MARKERS =
   /connection refused|econnrefused|os error 61\b|os error 111\b/i;
 const DNS_MARKERS =
   /dns error|failed to lookup address|enotfound|eai_again|nodename nor servname|name or service not known|no such host/i;
-// The runtime's own diagnostic for a redirect it refused to follow (Deno:
-// "Encountered redirect while redirect mode is set to 'error'"; undici:
+// The runtime's own diagnostic for a redirect it refused to follow (the
+// reqwest-backed client: "Encountered redirect while redirect mode is set to 'error'"; undici:
 // "unexpected redirect"). Anchored to the diagnostic, never the bare word:
 // connection errors quote the request URL, which may contain it.
 const REDIRECT_MARKERS =
