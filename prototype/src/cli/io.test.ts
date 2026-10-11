@@ -9,6 +9,7 @@ import {
   selectTurnInterruptSource,
   type TurnInterruptSource,
   writeAll,
+  writeLine,
 } from "./io.ts";
 
 describe("readLineOrNull", () => {
@@ -169,5 +170,25 @@ describe("writeAll", () => {
     const write = spy(() => 0);
     writeAll(1, new Uint8Array(0), write, () => {});
     assertSpyCalls(write, 0);
+  });
+});
+
+describe("writeLine", () => {
+  it("writes the whole line and a newline, past a partial write", () => {
+    const written: number[] = [];
+    let calls = 0;
+    const write = (
+      _fd: number,
+      bytes: Uint8Array,
+      offset: number,
+      length: number,
+    ) => {
+      calls += 1;
+      const n = calls === 1 ? 1 : length;
+      written.push(...bytes.subarray(offset, offset + n));
+      return n;
+    };
+    writeLine(2, "oops", write, () => {});
+    assertEquals(new TextDecoder().decode(new Uint8Array(written)), "oops\n");
   });
 });

@@ -144,6 +144,22 @@ export function writeAll(
   }
 }
 
+const lineEncoder = new TextEncoder();
+
+/**
+ * Write `line` and a newline to `fd` through `writeAll`. `console.error` is
+ * asynchronous on a POSIX pipe under Node, so an immediate `process.exit`
+ * could drop the end of a long line.
+ */
+export function writeLine(
+  fd: number,
+  line: string,
+  write: FdWriter = writeSync,
+  pause: () => void = pauseBriefly,
+): void {
+  writeAll(fd, lineEncoder.encode(`${line}\n`), write, pause);
+}
+
 export function realIo(): Io {
   const encoder = new TextEncoder();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
@@ -153,7 +169,7 @@ export function realIo(): Io {
     out: (text) => {
       writeAll(process.stdout.fd, encoder.encode(text));
     },
-    err: (line) => console.error(line),
+    err: (line) => writeLine(process.stderr.fd, line),
     errRaw: (text) => {
       writeAll(process.stderr.fd, encoder.encode(text));
     },

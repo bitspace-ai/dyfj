@@ -156,10 +156,12 @@ README are tracked separately in its Revision history section.
   `process.cwd()`, terminal detection from `isTTY`, and exit with
   `process.exit`; Ctrl-C is handled with `process.on("SIGINT")`, and the
   client's signal source is renamed `processSigintSource`. The CLI's
-  synchronous stdout and stderr writes go through a write-all loop over
-  `node:fs` `writeSync` that writes the rest after a partial write and waits
-  briefly on `EAGAIN`, because under Node one write to a slow pipe can take
-  only one pipe buffer; output under Deno is unchanged. The server's shutdown
+  stdout and stderr writes, its status and error lines included, go through a
+  synchronous write-all loop over `node:fs` `writeSync` that writes the rest
+  after a partial write and waits briefly on `EAGAIN`, because under Node one
+  write to a slow pipe can take only one pipe buffer, and `console.error` to a
+  pipe is asynchronous and can be cut off by `process.exit`; output under Deno
+  is unchanged. The server's shutdown
   still tolerates a closed-resource error from the close path, now matched by
   the error's name. Grants and lane flags are unchanged. `runtime.neutral`
   drops by the seven files' references (23); the lane's totals are in the pull
