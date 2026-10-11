@@ -800,6 +800,11 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
+    "path": "prototype/src/tools/builtin/file-search.integration.test.ts",
+    "count": 4,
+    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+  },
+  {
     "path": "prototype/src/tools/builtin/file.test.ts",
     "count": 40,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."

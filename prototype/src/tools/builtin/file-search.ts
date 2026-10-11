@@ -353,7 +353,7 @@ async function* walkFiles(
       ]);
       continue;
     }
-    if (!entry.isFile) {
+    if (!entry.isFile()) {
       budget.skippedNonRegular++;
       continue;
     }

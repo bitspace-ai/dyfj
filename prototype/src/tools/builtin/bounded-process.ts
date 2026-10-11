@@ -142,11 +142,22 @@ export function groupSignalArgs(group: number, signal: GroupSignal): string[] {
 export type SignalOutcome = "delivered" | "gone" | "failed" | "unavailable";
 
 /** Port: run `/bin/kill` with these arguments and report the outcome. */
-export type SignalRunner = (args: string[]) => Promise<SignalOutcome>;
+export type SignalRunner = (
+  args: string[],
+  signal?: AbortSignal,
+) => Promise<SignalOutcome>;
 
-/** Default signal runner: `/bin/kill`, spawned through `node:child_process`. */
-export const runKill: SignalRunner = (args) =>
+/**
+ * Default signal runner: `/bin/kill`, spawned through `node:child_process`. An
+ * abort kills a run still in flight and reports it failed; an already-aborted
+ * signal starts nothing.
+ */
+export const runKill: SignalRunner = (args, signal) =>
   new Promise<SignalOutcome>((resolve) => {
+    if (signal?.aborted) {
+      resolve("failed");
+      return;
+    }
     let child: ChildProcess;
     try {
       child = spawn(KILL_COMMAND, args, {
@@ -166,16 +177,19 @@ export const runKill: SignalRunner = (args) =>
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      signal?.removeEventListener("abort", giveUp);
       resolve(outcome);
     };
-    const timer = setTimeout(() => {
+    const giveUp = () => {
       try {
         child.kill("SIGKILL");
       } catch {
         // It exited at the bound.
       }
       finish("failed");
-    }, STOPPER_STARTUP_MS);
+    };
+    const timer = setTimeout(giveUp, STOPPER_STARTUP_MS);
+    signal?.addEventListener("abort", giveUp, { once: true });
     child.once("error", () => finish("unavailable"));
     child.once("close", (code) => {
       if (code === 0) finish("delivered");
@@ -186,6 +200,8 @@ export const runKill: SignalRunner = (args) =>
 export interface GroupStopperTuning {
   /** How often the group is probed while waiting for it to empty. */
   pollMs?: number;
+  /** How long a single signal run may take to start and finish. */
+  startupMs?: number;
   /** How long the group may take to empty after SIGKILL. */
   killSettleMs?: number;
 }
@@ -203,30 +219,42 @@ export function createGroupStopper(
 ): GroupStopper {
   const pollMs = Math.max(1, tuning.pollMs ?? PROBE_INTERVAL_MS);
   const killSettleMs = tuning.killSettleMs ?? KILL_SETTLE_MS;
+  const startupMs = tuning.startupMs ?? STOPPER_STARTUP_MS;
   return async (group, graceMs) => {
     if (!isSignallableGroup(group)) return "unavailable";
     const probeArgs = groupSignalArgs(group, "0");
+    // Tripped at the bound: the stopper has reported, so nothing it started may
+    // signal afterwards, when the group id could belong to another process.
+    const given = new AbortController();
+    const send = (args: string[]): Promise<SignalOutcome> =>
+      given.signal.aborted
+        ? Promise.resolve("failed")
+        : run(args, given.signal);
     const emptiesWithin = async (ms: number): Promise<boolean> => {
       const end = Date.now() + ms;
       for (;;) {
-        if ((await run(probeArgs)) === "gone") return true;
+        if (given.signal.aborted) return false;
+        if ((await send(probeArgs)) === "gone") return true;
         if (Date.now() >= end) return false;
         await new Promise((resolve) => setTimeout(resolve, pollMs));
       }
     };
     const steps = async (): Promise<GroupStop> => {
-      const term = await run(groupSignalArgs(group, "TERM"));
+      const term = await send(groupSignalArgs(group, "TERM"));
       if (term === "unavailable") return "unavailable";
       if (term === "gone") return "stopped";
       if (await emptiesWithin(Math.max(0, graceMs))) return "stopped";
-      const kill = await run(groupSignalArgs(group, "KILL"));
+      const kill = await send(groupSignalArgs(group, "KILL"));
       if (kill === "unavailable") return "unavailable";
       if (kill === "gone") return "stopped";
       return (await emptiesWithin(killSettleMs)) ? "stopped" : "survived";
     };
-    const bound = Math.max(0, graceMs) + killSettleMs + STOPPER_STARTUP_MS;
-    const result = await settleWithin(steps(), bound);
-    return result ?? "unavailable";
+    const bound = Math.max(0, graceMs) + killSettleMs + startupMs;
+    try {
+      return (await settleWithin(steps(), bound)) ?? "unavailable";
+    } finally {
+      given.abort();
+    }
   };
 }
 

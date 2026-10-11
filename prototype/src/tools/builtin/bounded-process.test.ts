@@ -113,6 +113,28 @@ describe("createGroupStopper", () => {
     assertEquals(kill.calls, ["TERM"]);
   });
 
+  it("signals nothing once it has given up, even if a run outlives the bound", async () => {
+    // The first run (TERM) hangs past the stopper's whole bound, then reports
+    // success: the steps behind it must not go on to probe or send KILL, which
+    // could land on a group id the system has since reused.
+    const calls: string[] = [];
+    const run: SignalRunner = async (args) => {
+      calls.push(args[0] === "-0" ? "0" : args[1]);
+      if (calls.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 120));
+      }
+      return "delivered";
+    };
+    const stop = createGroupStopper(run, {
+      pollMs: 5,
+      killSettleMs: 10,
+      startupMs: 10,
+    });
+    assertStrictEquals(await stop(4242, 0), "unavailable");
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assertEquals(calls, ["TERM"]);
+  });
+
   it("is unavailable for a group id it must not signal, without spawning", async () => {
     const kill = scripted({});
     const stop = createGroupStopper(kill.run);
