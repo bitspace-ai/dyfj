@@ -382,8 +382,8 @@ function startCommand(
 
 /**
  * Append the step to the transcript and make the next call: a normal
- * follow-up, or — at the step cap, when the model repeated itself, or when the
- * a call in the step was not approved — a forced conclusion with tools
+ * follow-up, or — at the step cap, when the model repeated itself, or when a
+ * call in the step was not approved — a forced conclusion with tools
  * dropped.
  */
 async function followUp(
