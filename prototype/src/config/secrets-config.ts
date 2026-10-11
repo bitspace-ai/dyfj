@@ -4,6 +4,7 @@
  */
 
 import { processEnv } from "./env.ts";
+import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import { declaredSecretEnvVars } from "./schema.ts";
 import {
   configFilePath,
@@ -36,7 +37,7 @@ const SECRETS_ENV_DENYLIST: ReadonlySet<string> = new Set([
 
 /**
  * A literal Unix environment-variable name. `inherit_env` names are serialized
- * into the runtime's `--allow-env`, where a metacharacter like `*` is a Deno
+ * into the runtime's `--allow-env`, where a metacharacter like `*` is a
  * WILDCARD granting the whole environment — so only exact identifiers are
  * allowed. `[secrets.env]` keys are held to the same shape for good measure.
  */
@@ -226,7 +227,7 @@ function parseInheritEnv(
       );
     }
     if (!ENV_VAR_NAME.test(name)) {
-      // Reject metacharacters (e.g. `*`) that Deno's --allow-env would treat
+      // Reject metacharacters (e.g. `*`) that the runtime's --allow-env would treat
       // as a wildcard granting the whole environment.
       throw new Error(
         `config: [secrets].inherit_env entry ${JSON.stringify(name)} is not ` +
@@ -339,7 +340,7 @@ export async function loadSecretsConfig(
   deps: LoadConfigDeps = {},
 ): Promise<SecretsConfig | null> {
   const env = deps.env ?? processEnv;
-  const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+  const readTextFile = deps.readTextFile ?? defaultReadTextFile;
   const parseToml = deps.parseToml ?? defaultParseToml;
   const path = configFilePath(env);
   const table = await readConfigFile(path, readTextFile, parseToml);

@@ -54,6 +54,17 @@ describe("runSecretCommand (real subprocess)", () => {
     assertMatch(res.reason ?? "", /empty/);
   });
 
+  it("names the signal when the resolver is killed by one, without captured output", async () => {
+    const res = await runSecretCommand(
+      ["bash", "-c", "printf SHOULD_NOT_LEAK >&2; kill -KILL $$"],
+      "op://v/x/credential",
+      2000,
+      PATH_ENV,
+    );
+    assertStrictEquals(res.ok, false);
+    assertStrictEquals(res.reason, "resolver was killed by SIGKILL");
+  });
+
   it("reports the exit code on a non-zero exit (no captured output)", async () => {
     const res = await runSecretCommand(
       ["bash", "-c", "printf SHOULD_NOT_LEAK >&2; exit 4"],

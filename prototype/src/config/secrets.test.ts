@@ -13,6 +13,7 @@ import {
   resolveSecrets,
   resolveSecretsIntoEnv,
   type RunSecretCommand,
+  runSecretCommand,
   type SecretCommandResult,
   secretsRunGrant,
   unavailableSecretPointers,
@@ -527,5 +528,26 @@ describe("unavailableSecretPointers", () => {
         { name: "linear", reason: "skipped: session probe did not resolve" },
       ],
     );
+  });
+});
+
+describe("runSecretCommand when the command cannot start", () => {
+  // The unit lane holds no run grant, so every spawn is refused by the
+  // runtime; a missing binary fails the same way. Either way the answer must
+  // be the value-free reason at once, not a wait for the timeout, and the
+  // refusal's own text (which names the path) must not reach it.
+  it("reports the value-free reason at once, not a timeout, and leaks no path", async () => {
+    const privatePath = ["", "no", "such", "resolver-xyz", "op"].join("/");
+    const started = performance.now();
+    const res = await runSecretCommand([privatePath, "read"], "pointer", 5_000);
+    const elapsed = performance.now() - started;
+    assertStrictEquals(res.ok, false);
+    assertStrictEquals(
+      res.reason,
+      "cannot run the resolver command (not found or not permitted)",
+    );
+    assertFalse((res.reason ?? "").includes("resolver-xyz"));
+    assertFalse((res.reason ?? "").includes("timed out"));
+    assertEquals(elapsed < 2_000, true, `took ${Math.round(elapsed)}ms`);
   });
 });

@@ -24,6 +24,7 @@
  *     must never carry the value into a log).
  */
 
+import { type ChildProcess, spawn } from "node:child_process";
 import { type MutableEnv, processEnv } from "./env.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
@@ -80,6 +81,17 @@ export function unavailableSecretPointers(
       })),
   ];
 }
+
+/**
+ * The reason when the resolver cannot start (no run permission for it, or no
+ * such binary). Deliberately value-free and PATH-FREE: the runtime's own error
+ * text names the configured, possibly absolute and operator-private, resolver
+ * path, which must never reach a log or a returned reason.
+ */
+const UNRUNNABLE: SecretCommandResult = {
+  ok: false,
+  reason: "cannot run the resolver command (not found or not permitted)",
+};
 
 const MAX_RESOLVER_FOLLOWERS = 8;
 
@@ -174,99 +186,101 @@ export function buildResolverEnv(
   return result;
 }
 
-/** Sentinel raced against the resolver's output to enforce the timeout. */
-const TIMEOUT = Symbol("secret-resolver-timeout");
-
 /**
  * Default resolver runner: spawn `command[0]` with the remaining argv plus the
  * pointer as the final argument. stdin is closed so a command that would prompt
- * cannot read a response, and the timeout is enforced by RACING the output
- * against a timer rather than merely killing the child and awaiting it: a
+ * cannot read a response, and the timeout is enforced by RACING the child's
+ * close against a timer rather than merely killing the child and waiting: a
  * resolver that spawns a descendant holding the piped stdout/stderr fds could
- * keep `child.output()` pending past a SIGKILL of the parent, so on timeout we
- * kill, stop awaiting the output, and return — the boot is never held hostage
- * to a stuck resolver. Only a clean exit with non-empty stdout yields a value;
- * everything else is a value-free failure reason.
+ * keep the child's streams open past a SIGKILL of the parent, so on timeout we
+ * kill, stop waiting, and return — the boot is never held hostage to a stuck
+ * resolver. Only a clean exit with non-empty stdout yields a value; everything
+ * else is a value-free failure reason.
  */
-export const runSecretCommand: RunSecretCommand = async (
+export const runSecretCommand: RunSecretCommand = (
   command,
   pointer,
   timeoutMs,
   env,
-) => {
-  const [bin, ...rest] = command;
-  const args = [...rest, pointer];
+) =>
+  new Promise<SecretCommandResult>((resolve) => {
+    const [bin, ...rest] = command;
+    const args = [...rest, pointer];
 
-  let child: Deno.ChildProcess;
-  try {
-    child = new Deno.Command(bin, {
-      args,
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
+    let child: ChildProcess;
+    try {
       // ISOLATED environment: the resolver sees ONLY the explicit env passed
       // here (a minimal non-secret base + inherit_env + [secrets.env]), never
-      // the runtime's other secrets. `clearEnv` is what enforces the least-
-      // privilege boundary; the caller builds the env via buildResolverEnv.
-      clearEnv: true,
-      env: env ?? {},
-    }).spawn();
-  } catch {
-    // NotCapable (no --allow-run for this binary) or the binary is missing.
-    // Deliberately value-free and PATH-FREE: the raw exception text can contain
-    // the configured (possibly absolute, operator-private) resolver path, which
-    // must never reach a log or a returned reason.
-    return {
-      ok: false,
-      reason: "cannot run the resolver command (not found or not permitted)",
-    };
-  }
-
-  const outputPromise = child.output();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<typeof TIMEOUT>((resolve) => {
-    timer = setTimeout(() => resolve(TIMEOUT), timeoutMs);
-  });
-
-  let outcome: Deno.CommandOutput | typeof TIMEOUT;
-  try {
-    outcome = await Promise.race([outputPromise, timeoutPromise]);
-  } catch {
-    clearTimeout(timer);
-    // Value-free and path-free (see the spawn catch above).
-    return { ok: false, reason: "resolver command failed before returning" };
-  }
-
-  if (outcome === TIMEOUT) {
-    try {
-      child.kill("SIGKILL");
+      // the runtime's other secrets. Replacing the environment outright is what
+      // enforces the least-privilege boundary; the caller builds the env via
+      // buildResolverEnv.
+      child = spawn(bin, args, {
+        env: { ...(env ?? {}) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } catch {
-      // Already exited between the race settling and this firing.
+      resolve(UNRUNNABLE);
+      return;
     }
-    // Do NOT await outputPromise — a pipe-holding descendant could keep it
-    // pending. Swallow its eventual settlement so it can't surface as an
-    // unhandled rejection.
-    outputPromise.catch(() => {});
-    return {
-      ok: false,
-      reason: `timed out after ${timeoutMs}ms (locked or unavailable)`,
+
+    let settled = false;
+    const finish = (result: SecretCommandResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(result);
     };
-  }
-  clearTimeout(timer);
 
-  const output = outcome;
-  if (!output.success) {
-    // Surface the exit status only — never captured stdout/stderr, which could
-    // carry the value.
-    return { ok: false, reason: `resolver exited with code ${output.code}` };
-  }
+    const chunks: Uint8Array[] = [];
+    child.stdout?.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+    // Captured stderr is never used (it could echo the pointer): drain it.
+    child.stderr?.resume();
 
-  const value = new TextDecoder().decode(output.stdout).trim();
-  if (value.length === 0) {
-    return { ok: false, reason: "resolver returned an empty value" };
-  }
-  return { ok: true, value };
-};
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // Already exited between the timer firing and this running.
+      }
+      // Do NOT wait for the streams — a pipe-holding descendant could keep
+      // them open.
+      finish({
+        ok: false,
+        reason: `timed out after ${timeoutMs}ms (locked or unavailable)`,
+      });
+    }, timeoutMs);
+
+    // A spawn that fails does not throw under the runtime: it arrives here as
+    // an `error` event (no run permission for the binary, or no such binary).
+    // Its message names the configured resolver path, so it is discarded.
+    child.once("error", () => finish(UNRUNNABLE));
+
+    child.once("close", (code, signal) => {
+      if (signal !== null) {
+        finish({ ok: false, reason: `resolver was killed by ${signal}` });
+        return;
+      }
+      if (code !== 0) {
+        // Surface the exit status only — never captured stdout/stderr, which
+        // could carry the value.
+        finish({ ok: false, reason: `resolver exited with code ${code}` });
+        return;
+      }
+      const size = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+      const bytes = new Uint8Array(size);
+      let offset = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      const value = new TextDecoder().decode(bytes).trim();
+      if (value.length === 0) {
+        finish({ ok: false, reason: "resolver returned an empty value" });
+        return;
+      }
+      finish({ ok: true, value });
+    });
+  });
 
 /**
  * Resolve environment pointers into `env` and named pointers into the private

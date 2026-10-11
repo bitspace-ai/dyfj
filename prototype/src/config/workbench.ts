@@ -14,6 +14,7 @@
  */
 
 import { processEnv } from "./env.ts";
+import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import {
   type PermissionLevel,
   schemaBooleanDefault,
@@ -113,7 +114,7 @@ export async function loadConfig(
   deps: LoadConfigDeps = {},
 ): Promise<WorkbenchConfig> {
   const env = deps.env ?? processEnv;
-  const readTextFile = deps.readTextFile ?? Deno.readTextFile;
+  const readTextFile = deps.readTextFile ?? defaultReadTextFile;
   const parseToml = deps.parseToml ?? defaultParseToml;
   const path = configFilePath(env);
 

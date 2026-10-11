@@ -21,7 +21,7 @@ const INVALID_DOLT_PORT_DIAGNOSTIC =
   "invalid DOLT_PORT: must be a decimal integer between 1 and 65535";
 
 /**
- * Validate DOLT_PORT before it enters any Deno network grant.
+ * Validate DOLT_PORT before it enters any network grant.
  *
  * Accepts:
  *  - undefined, null, or omitted: defaults to 3306.
@@ -64,7 +64,7 @@ export function validateDoltPort(rawPort?: unknown): number {
 }
 
 /**
- * Build the exact loopback --allow-net Deno grant for the Dolt MCP server child.
+ * Build the exact loopback --allow-net grant for the Dolt MCP server child.
  */
 export function buildDoltAllowNetGrant(rawPort?: unknown): string {
   const port = validateDoltPort(rawPort);

@@ -1,8 +1,8 @@
 /**
  * Launch-resolved `--allow-net` grants for the system's DNS nameservers.
  *
- * `Deno.resolveDns` checks net permission against every nameserver it will
- * query, not against the name being looked up, so the engine can resolve a
+ * The runtime's DNS resolver checks net permission against every nameserver it
+ * will query, not against the name being looked up, so the engine can resolve a
  * hostname only when each configured nameserver is granted as `<ip>:53`. The
  * web tools' address check refuses a target it cannot resolve, so `dyfj start`
  * (and `deno task serve-unix`, through `scripts/serve-unix-net-flag.ts`) reads
@@ -11,10 +11,12 @@
  * never belong in the committed permission profile.
  *
  * A `nameserver` entry that is not a plain IP literal (for example a scoped
- * IPv6 address such as `fe80::1%eth0`, which a Deno grant cannot express) gets
+ * IPv6 address such as `fe80::1%eth0`, which the runtime's grant cannot express) gets
  * no grant. Lookups through that resolver then fail, and the address check
  * refuses the target.
  */
+
+import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 
 export const RESOLV_CONF_PATH = "/etc/resolv.conf";
 
@@ -60,7 +62,7 @@ export function nameserverNetGrants(resolvConf: string): string[] {
  * check refuses the hostname targets it then cannot resolve.
  */
 export async function readNameserverNetGrants(
-  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
 ): Promise<string[]> {
   try {
     return nameserverNetGrants(await readTextFile(RESOLV_CONF_PATH));

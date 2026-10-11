@@ -301,7 +301,7 @@
   },
   {
     "path": "prototype/src/config/env-file.test.ts",
-    "count": 9,
+    "count": 8,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -310,34 +310,14 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/config/env.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/mcp-net-grants.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/config/mcp-servers.test.ts",
     "count": 13,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/config/mcp-servers.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/config/nameservers.test.ts",
-    "count": 7,
+    "count": 6,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/nameservers.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/config/schema.test.ts",
@@ -346,13 +326,8 @@
   },
   {
     "path": "prototype/src/config/secrets-config.test.ts",
-    "count": 23,
+    "count": 22,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/secrets-config.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/config/secrets.integration.test.ts",
@@ -360,29 +335,14 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/config/secrets.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/config/toml.test.ts",
     "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/config/toml.ts",
-    "count": 4,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/config/workbench.test.ts",
-    "count": 22,
+    "count": 23,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/workbench.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/context/compression.test.ts",
