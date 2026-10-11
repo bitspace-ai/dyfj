@@ -150,6 +150,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The web tools' DNS lookups go through a `node:dns` `Resolver`, and the
+  `serve-unix` profile grants `sys` `networkInterfaces`.** Part of the move of
+  the TypeScript tier to Node.js (decision D32). The `DnsResolver` port's real
+  adapter (`src/tools/web/dns.ts`) now makes a `Resolver` per lookup on the
+  system's default nameservers, so an abort cancels only that lookup, and it
+  reads those nameservers before querying: a process that may not read them
+  reports the resolver unavailable, as before. Reading them needs the
+  `networkInterfaces` system-information grant, which the `serve-unix`
+  profile, and so `dyfj start`, now carries; the test profile already did.
+  The integration lane's grants are unchanged. One message can change: under
+  `serve-unix`, a nameserver missing from the launch-time net grants (for
+  example, `/etc/resolv.conf` changed after the runtime started) now reads
+  "DNS lookup failed" rather than "unavailable"; the address check refuses the
+  target either way. `runtime.neutral` drops by the file's seven references;
+  the lane's totals are in the pull request.
 - **The CLI and the server's process surface run on `node:process`.** Part of
   the move of the TypeScript tier to Node.js (decision D32). The CLI and the
   runtime read their arguments from `process.argv`, the working directory from

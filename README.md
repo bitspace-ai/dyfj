@@ -696,7 +696,9 @@ fetch tool. A hostname passes only when its A and AAAA lookups both answer
 (either may have no records), together they return at least one address, and
 none of those is private, loopback or internal; a public IP literal needs no
 lookup. Both `dyfj start` and `deno task serve-unix` grant the engine DNS
-access to the nameservers in `/etc/resolv.conf` for these lookups. Per turn, at
+access to the nameservers in `/etc/resolv.conf` for these lookups, and the
+`serve-unix` profile grants the `networkInterfaces` system information the
+resolver reads to find them. Per turn, at
 most 3 searches and 5 fetches run, returned text is capped at 40,000 characters
 per fetch and 100,000 per turn, and results are framed as untrusted external
 data.
@@ -2035,3 +2037,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-11 - D32 and ADR 0001 qualify runtime portability: source and tests
   carry over to another Node-compatible runtime without a port, while the
   launcher's capability grants are runtime-specific.
+- 2026-10-11 - The web tools section names the `networkInterfaces` system
+  grant the `serve-unix` profile gives the engine's DNS lookups, and
+  `specs/01-architecture.md` §5.6 names the `node:dns` `Resolver` as the
+  `DnsResolver` port's real adapter.

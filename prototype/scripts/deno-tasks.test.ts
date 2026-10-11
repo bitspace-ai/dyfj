@@ -43,8 +43,11 @@ describe("runtime lifecycle commands", () => {
     assertArrayIncludes(parsed.permissions["serve-unix"].run as string[], [
       "/bin/kill",
     ]);
+    // networkInterfaces: the DNS adapter reads the system's default
+    // nameservers before each lookup (`src/tools/web/dns.ts`).
     assertArrayIncludes(parsed.permissions["serve-unix"].sys as string[], [
       "uid",
+      "networkInterfaces",
     ]);
     assertArrayIncludes(parsed.permissions["test"].run as string[], [
       "/bin/bash",
