@@ -17,8 +17,9 @@ use tokio::sync::mpsc;
 
 /// The terminal side a command needs: the input reader and the runtime's
 /// message channel, for approvals raised mid-request, and the operator's
-/// Ctrl-C. A command waits on the runtime in cooked mode, as a turn does, so
-/// Ctrl-C arrives as a SIGINT; left unread, it would cancel the next turn.
+/// Ctrl-C. While a command waits on the runtime in cooked mode, Ctrl-C arrives
+/// as a SIGINT; left unread, it would cancel the next turn. During an approval
+/// read it arrives as readline's Interrupted instead.
 pub struct Prompter<'a> {
     pub input: &'a mpsc::Sender<Ask>,
     pub incoming: &'a mut mpsc::Receiver<Incoming>,
@@ -468,8 +469,24 @@ async fn request_answering_approvals(
                     let _ = respond.send(Verdict::deny("operator interrupted the command"));
                 }
                 Some(Incoming::Approval { params, respond }) => {
-                    let verdict = approval::ask(prompter.input, &params).await;
-                    let _ = respond.send(verdict);
+                    match approval::ask(prompter.input, &params).await {
+                        approval::Outcome::Verdict(verdict) => {
+                            let _ = respond.send(verdict);
+                        }
+                        // No turn is running, so Ctrl-C cannot cancel one. Deny
+                        // this approval and the ones that follow, as a SIGINT
+                        // while the command waits does.
+                        approval::Outcome::Cancelled => {
+                            if !abandoned {
+                                abandoned = true;
+                                eprintln!(
+                                    "\ninterrupted: denying anything it asks to approve, \
+                                     and waiting for the runtime to settle it"
+                                );
+                            }
+                            let _ = respond.send(Verdict::deny("operator interrupted the command"));
+                        }
+                    }
                 }
                 // No turn is running, so a stray frame has nothing to render into.
                 Some(Incoming::Stream(_)) => {}

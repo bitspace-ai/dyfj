@@ -37,6 +37,8 @@ Commands are recognised only when typed alone on one line, so a pasted block tha
 - `/idea mark <label>` and `/idea list` mark and list ideas for the current session.
 - `/help` lists them; `/quit`, `/exit` or Ctrl-D leave. Ctrl-C while a read-only command waits on the runtime abandons that command, as it cancels a turn. The two writes wait instead: during `/friction` it denies any approval the post then asks for and waits for the runtime to settle it, so the abandoned write cannot be approved later, and `/idea mark` waits for the runtime to record the idea, so a retry cannot record it twice. `/friction`'s context names the previous slash command only when no turn came between them.
 
+During a turn, `n` at `approve? [y/N]` denies that call. Ctrl-C at that prompt cancels the turn through `turn/cancel` and returns to the prompt. Ctrl-D or a lost terminal denies the call and does not describe it as the operator's decline. A call the runtime reports as `approval_denied` is shown as `⊘ <tool> not approved`.
+
 External-runner (ACP) receipts are named rather than rendered; that route is deferred for daily use and stays in the TypeScript client.
 
 `cargo run` requires `DATABASE_URL` and a running Dolt SQL server. It inserts one `session_start` event, reads it back, and prints a match result. The ignored integration tests exercise the same live-Dolt path:

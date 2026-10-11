@@ -200,11 +200,13 @@ async fn main() -> Result<()> {
     }
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
-    // than a choice. At the prompt rustyline holds the terminal in raw mode
-    // with ISIG cleared, so Ctrl-C is a byte it reports as Interrupted. While a
-    // turn streams no readline is active, rustyline has restored cooked mode,
-    // and Ctrl-C is a real SIGINT. Each mechanism is live exactly when the
-    // other is not, so they never compete for the same keypress.
+    // than a choice. While rustyline is reading — the prompt, or an approval —
+    // it holds the terminal in raw mode with ISIG cleared, so Ctrl-C is a byte
+    // it reports as Interrupted. While a turn streams and no read is active,
+    // rustyline has restored cooked mode, and Ctrl-C is a real SIGINT. An
+    // approval read's Interrupted cancels the turn the same way that SIGINT
+    // does. The two are live at different times, so they do not both see one
+    // keypress.
     let mut sigint = signal(SignalKind::interrupt())
         .context("install SIGINT handler")?;
     // Forwarded into a channel so commands can take interrupts from a test as
@@ -379,8 +381,28 @@ async fn run_turn(
                         // approval is not surfaced until the operator answers
                         // — the prompt stays up either way, so spawning bought
                         // no earlier warning, only the lifetime problems.
-                        let verdict = approval::ask(input, &params).await;
-                        let _ = respond.send(verdict);
+                        //
+                        // Ctrl-C here is readline's Interrupted, not the
+                        // SIGINT branch below: rustyline has cleared ISIG for
+                        // the read. Cancel this turn and answer `abort`, so
+                        // the runtime does not record a denial.
+                        match approval::ask(input, &params).await {
+                            approval::Outcome::Verdict(verdict) => {
+                                let _ = respond.send(verdict);
+                            }
+                            approval::Outcome::Cancelled => {
+                                let _ = respond.send(Verdict::abort());
+                                if give_up_or_cancel(
+                                    &mut cancelling,
+                                    client,
+                                    &turn_id,
+                                    incoming,
+                                    wrote_any,
+                                ) {
+                                    return;
+                                }
+                            }
+                        }
                     }
                     None => return,
                 }
@@ -391,29 +413,43 @@ async fn run_turn(
             // abandons the wait — the operator has asked twice, and a turn
             // that ignores a cancel should not hold the prompt.
             _ = interrupts.recv() => {
-                if cancelling {
-                    eprintln!("\ngiving up on the turn; it may still be running");
-                    if wrote_any {
-                        println!();
-                    }
-                    discard_abandoned_frames(incoming);
+                if give_up_or_cancel(&mut cancelling, client, &turn_id, incoming, wrote_any) {
                     return;
-                }
-                cancelling = true;
-                eprintln!("\ncancelling…");
-                // Do not await the cancel here. This branch is inside the
-                // select! that also renders frames, answers approvals and
-                // catches the next interrupt; awaiting would block all three
-                // until the runtime answers, and a runtime that never answers
-                // would make the promised second Ctrl-C unreachable.
-                if let Err(err) =
-                    client.send_without_waiting("turn/cancel", json!({"turnId": turn_id}))
-                {
-                    eprintln!("{}", runtime_error("cancel could not be sent", &err.to_string()));
                 }
             }
         }
     }
+}
+
+/// First Ctrl-C asks the runtime to stop and keeps waiting for the turn to
+/// settle. A second one stops waiting. Returns true when the caller should
+/// leave the turn.
+///
+/// The cancel is not awaited. This runs inside the select! that also renders
+/// frames, answers approvals and catches the next interrupt; awaiting would
+/// block all three until the runtime answers, and a runtime that never
+/// answers would make the second Ctrl-C unreachable.
+fn give_up_or_cancel(
+    cancelling: &mut bool,
+    client: &Client,
+    turn_id: &str,
+    incoming: &mut mpsc::Receiver<Incoming>,
+    wrote_any: bool,
+) -> bool {
+    if *cancelling {
+        eprintln!("\ngiving up on the turn; it may still be running");
+        if wrote_any {
+            println!();
+        }
+        discard_abandoned_frames(incoming);
+        return true;
+    }
+    *cancelling = true;
+    eprintln!("\ncancelling…");
+    if let Err(err) = client.send_without_waiting("turn/cancel", json!({"turnId": turn_id})) {
+        eprintln!("{}", runtime_error("cancel could not be sent", &err.to_string()));
+    }
+    false
 }
 
 /// Render everything currently queued when a turn completes.
@@ -765,6 +801,135 @@ mod tests {
             resolve_socket_path(env(&empty)).unwrap(),
             "/operator-home/.dyfj/run/workbench.sock"
         );
+    }
+
+    /// Two approvals during one turn. The terminal answers `n`, then Ctrl-C.
+    ///
+    /// `n` denies the first call. Ctrl-C sends `turn/cancel` for the turn this
+    /// REPL started and is not a second denial. The turn then settles, and a
+    /// later request still reaches the runtime. Approval requests carry no
+    /// turn id; the cancel uses the id from the turn request.
+    #[tokio::test]
+    async fn back_to_back_approvals_deny_on_n_and_cancel_on_ctrl_c() {
+        use crate::client::Client;
+        use crate::session::Session;
+        use crate::terminal::{Ask, ReadOutcome};
+        use std::sync::{Arc, Mutex};
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixStream;
+
+        let (client_side, server_side) = UnixStream::pair().unwrap();
+        let (client, mut incoming) = Client::over(client_side);
+        let log = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let seen = Arc::clone(&log);
+        let server = tokio::spawn(async move {
+            let (read, mut write) = server_side.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let mut turn_rpc_id = None;
+            let mut answers = 0;
+            let mut saw_cancel = false;
+            loop {
+                let Ok(Some(line)) = lines.next_line().await else { break };
+                let msg: serde_json::Value = serde_json::from_str(&line).unwrap();
+                seen.lock().unwrap().push(msg.clone());
+                let method = msg.get("method").and_then(serde_json::Value::as_str).unwrap_or("");
+                if method == "turn" {
+                    turn_rpc_id = Some(msg["id"].clone());
+                    let ask = serde_json::json!({
+                        "jsonrpc": "2.0", "id": "p1", "method": "approval",
+                        "params": {"commandId": "bash", "title": "bash", "arguments": {"command": "echo one"}}
+                    });
+                    write.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+                    continue;
+                }
+                if method == "turn/cancel" {
+                    saw_cancel = true;
+                    if answers >= 2 {
+                        let reply = serde_json::json!({
+                            "jsonrpc": "2.0", "id": turn_rpc_id.clone().unwrap(),
+                            "result": {"text": "", "stopReason": "aborted", "sessionId": "s1"}
+                        });
+                        write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    }
+                    continue;
+                }
+                if method == "runtime/status" {
+                    let reply = serde_json::json!({"jsonrpc": "2.0", "id": msg["id"], "result": {}});
+                    write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                    continue;
+                }
+                if msg.get("result").is_some() {
+                    answers += 1;
+                    if answers == 1 {
+                        let ask = serde_json::json!({
+                            "jsonrpc": "2.0", "id": "p2", "method": "approval",
+                            "params": {"commandId": "bash", "title": "bash", "arguments": {"command": "echo two"}}
+                        });
+                        write.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+                    } else if answers == 2 {
+                        let decision = msg["result"]["decision"].as_str().unwrap_or("");
+                        if decision == "deny" || saw_cancel {
+                            let reply = serde_json::json!({
+                                "jsonrpc": "2.0", "id": turn_rpc_id.clone().unwrap(),
+                                "result": {"text": "", "stopReason": "aborted", "sessionId": "s1"}
+                            });
+                            write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+                        }
+                    }
+                }
+            }
+        });
+
+        let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(4);
+        tokio::spawn(async move {
+            let mut scripted = vec![
+                ReadOutcome::Line("n".into()),
+                ReadOutcome::Interrupted,
+            ];
+            while let Some(ask) = input_rx.recv().await {
+                let respond = match ask {
+                    Ask::Prompt { respond } | Ask::Approval { respond, .. } => respond,
+                };
+                let next = scripted.remove(0);
+                let _ = respond.send(next);
+            }
+        });
+        let (_interrupt_tx, mut interrupts) = tokio::sync::mpsc::channel::<()>(1);
+        let mut session = Session::default();
+
+        super::run_turn(
+            &client,
+            &input_tx,
+            &mut incoming,
+            &mut interrupts,
+            "do the thing",
+            &mut session,
+        )
+        .await;
+        assert_eq!(session.turns, 1, "the settled turn is recorded on the session");
+
+        client
+            .request("runtime/status", serde_json::json!({}))
+            .await
+            .expect("the connection still accepts a request");
+
+        let seen = log.lock().unwrap().clone();
+        server.abort();
+        let turn_id = seen.iter().find(|m| m["method"] == "turn").unwrap()["params"]["turnId"].clone();
+        let denies: Vec<_> = seen.iter().filter(|m| m["result"]["decision"] == "deny").collect();
+        assert_eq!(
+            denies.len(),
+            1,
+            "n denies one call; Ctrl-C is not a second denial. seen={seen:?}"
+        );
+        assert_eq!(denies[0]["id"], "p1", "the denial is the call answered with n");
+        assert_eq!(denies[0]["result"]["reason"], "operator declined");
+        let aborts: Vec<_> = seen.iter().filter(|m| m["result"]["decision"] == "abort").collect();
+        assert_eq!(aborts.len(), 1, "Ctrl-C answers the second approval as a cancel. seen={seen:?}");
+        assert_eq!(aborts[0]["id"], "p2");
+        let cancels: Vec<_> = seen.iter().filter(|m| m["method"] == "turn/cancel").collect();
+        assert_eq!(cancels.len(), 1, "Ctrl-C sends turn/cancel. seen={seen:?}");
+        assert_eq!(cancels[0]["params"]["turnId"], turn_id);
     }
 }
 

@@ -2,11 +2,11 @@
 //!
 //! Fail-closed. A yes/no request is approved only by `y` or `yes`; a choice
 //! request is answered by a valid option number, which selects rather than
-//! approves. Everything else denies — a declined answer, an unparseable or
-//! out-of-range one, Ctrl-C, Ctrl-D, a failed input flush, and a terminal that
-//! has gone away.
+//! approves. Any other line denies. Ctrl-C does not deny: the caller cancels
+//! the turn. Ctrl-D, a failed read, and a terminal that has gone away deny,
+//! with a reason that does not say the operator declined.
 //!
-//! Delivery of that denial is the client's job, not this module's; see
+//! Delivery of that answer is the client's job, not this module's; see
 //! `client::answer_approval`, which reports a write it cannot complete rather
 //! than swallowing it.
 
@@ -14,6 +14,13 @@ use crate::client::Verdict;
 use crate::terminal::{Ask, ReadOutcome};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
+
+/// What `ask` learned from the operator.
+pub enum Outcome {
+    Verdict(Verdict),
+    /// Ctrl-C while the prompt was up. Not a decision on the call.
+    Cancelled,
+}
 
 /// Describe what is being approved, from whatever fields the request carries.
 ///
@@ -159,32 +166,34 @@ async fn spending(
     input: &mpsc::Sender<Ask>,
     params: &Value,
     authorises: &str,
-) -> Verdict {
+) -> Outcome {
     let message = params
         .get("message")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|message| !message.is_empty());
 
-    println!();
     let Some(message) = message else {
+        println!();
         println!("⚠  {}", visible(title_of(params)));
         println!("   this request's details could not be read, so it cannot be approved here");
-        return Verdict::deny("spending request details could not be read");
+        return Outcome::Verdict(Verdict::deny("spending request details could not be read"));
     };
 
-    println!("⚠  {}", visible(title_of(params)));
+    // Shown by the terminal thread after it discards queued input, so a
+    // keystroke typed once this text is visible is the answer.
+    let mut preamble = format!("\n⚠  {}\n", visible(title_of(params)));
     for line in message.lines() {
-        println!("   {}", visible(line));
+        preamble.push_str(&format!("   {}\n", visible(line)));
     }
-    println!("   approving authorises {authorises}");
+    preamble.push_str(&format!("   approving authorises {authorises}\n"));
     // The ordinary consent path, NOT a bare yes/no. A spending request can
     // carry `options` — a scoped authorisation rather than an open one — and
     // answering `y` to those would send `decision: "approve"`, broader consent
     // than any option the runtime offered and broader than the operator was
     // shown. The warning changes what is printed before the question; it does
     // not change what counts as an answer.
-    decide(input, params).await
+    decide(input, params, preamble).await
 }
 
 fn title_of(params: &Value) -> &str {
@@ -194,14 +203,13 @@ fn title_of(params: &Value) -> &str {
         .unwrap_or("approval request")
 }
 
-pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
+pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Outcome {
     if let Some(authorises) = spending_request(params) {
         return spending(input, params, authorises).await;
     }
 
-    println!();
-    println!("⚠  {}", describe(params));
-    decide(input, params).await
+    let preamble = format!("\n⚠  {}\n", describe(params));
+    decide(input, params, preamble).await
 }
 
 /// Turn the operator's answer into a verdict: an option number when the request
@@ -210,7 +218,7 @@ pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
 /// counts as consent does not depend on how the request was introduced — so a
 /// spending request that carries options is answered by choosing one, never by
 /// a bare yes.
-async fn decide(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
+async fn decide(input: &mpsc::Sender<Ask>, params: &Value, mut preamble: String) -> Outcome {
     // Present and non-null is the whole test. Enumerating shapes is what let
     // an options object through on one iteration and an empty array on the
     // next: any `options` the reader cannot turn into choices is a request
@@ -230,40 +238,46 @@ async fn decide(input: &mpsc::Sender<Ask>, params: &Value) -> Verdict {
     // array: an earlier version only recognised arrays, so an options object
     // still degraded to yes/no.
     if offers_options && choices.is_empty() {
-        println!("   the options on this request could not be read");
-        return Verdict::deny("options could not be read");
+        println!("{preamble}   the options on this request could not be read");
+        return Outcome::Verdict(Verdict::deny("options could not be read"));
     }
 
     if choices.is_empty() {
-        return yes_no(input).await;
+        return yes_no(input, &preamble).await;
     }
     for (index, (_, name)) in choices.iter().enumerate() {
-        println!("   {}. {}", index + 1, visible(name));
+        preamble.push_str(&format!("   {}. {}\n", index + 1, visible(name)));
     }
-    select(input, &choices).await
+    select(input, &preamble, &choices).await
 }
 
-async fn yes_no(input: &mpsc::Sender<Ask>) -> Verdict {
-    match read(input, "   approve? [y/N] ").await {
-        Some(answer) if is_yes(&answer) => Verdict::approve(),
-        Some(_) => Verdict::deny("operator declined"),
-        // Ctrl-C, Ctrl-D, or a terminal that went away. None of these is
-        // consent.
-        None => Verdict::deny("operator declined"),
+async fn yes_no(input: &mpsc::Sender<Ask>, preamble: &str) -> Outcome {
+    match read(input, preamble, "   approve? [y/N] ").await {
+        ReadResult::Line(answer) if is_yes(&answer) => Outcome::Verdict(Verdict::approve()),
+        ReadResult::Line(_) => Outcome::Verdict(Verdict::deny("operator declined")),
+        ReadResult::Cancelled => Outcome::Cancelled,
+        // Ctrl-D, a failed flush, or a terminal that went away. None of
+        // these is a decision the operator typed.
+        ReadResult::Unavailable => {
+            Outcome::Verdict(Verdict::deny("approval prompt was not answered"))
+        }
     }
 }
 
-async fn select(input: &mpsc::Sender<Ask>, choices: &[(String, String)]) -> Verdict {
+async fn select(input: &mpsc::Sender<Ask>, preamble: &str, choices: &[(String, String)]) -> Outcome {
     let prompt = format!("   select [1-{}] (default reject): ", choices.len());
-    match read(input, &prompt).await {
-        Some(answer) => match answer.trim().parse::<usize>() {
+    match read(input, preamble, &prompt).await {
+        ReadResult::Line(answer) => match answer.trim().parse::<usize>() {
             Ok(index) if index >= 1 && index <= choices.len() => {
-                Verdict::select(choices[index - 1].0.clone())
+                Outcome::Verdict(Verdict::select(choices[index - 1].0.clone()))
             }
             // An unparseable or out-of-range answer is not a choice.
-            _ => Verdict::deny("operator declined"),
+            _ => Outcome::Verdict(Verdict::deny("operator declined")),
         },
-        None => Verdict::deny("operator declined"),
+        ReadResult::Cancelled => Outcome::Cancelled,
+        ReadResult::Unavailable => {
+            Outcome::Verdict(Verdict::deny("approval prompt was not answered"))
+        }
     }
 }
 
@@ -271,22 +285,35 @@ fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
 }
 
-/// Ask the terminal thread for one line. `Ask::Approval` makes it discard
-/// input typed before the question appeared.
-async fn read(input: &mpsc::Sender<Ask>, question: &str) -> Option<String> {
+enum ReadResult {
+    Line(String),
+    /// Ctrl-C. The turn is still in flight; this is not a line.
+    Cancelled,
+    /// Ctrl-D, a failed read, or no terminal thread left to ask.
+    Unavailable,
+}
+
+/// Ask the terminal thread for one line. It discards input typed before the
+/// request is shown, then writes `preamble` and reads `question`.
+async fn read(input: &mpsc::Sender<Ask>, preamble: &str, question: &str) -> ReadResult {
     let (respond, answer) = oneshot::channel();
-    let ask = Ask::Approval { question: question.to_string(), respond };
+    let ask = Ask::Approval {
+        preamble: preamble.to_string(),
+        question: question.to_string(),
+        respond,
+    };
     if input.send(ask).await.is_err() {
-        return None;
+        return ReadResult::Unavailable;
     }
     match answer.await {
-        Ok(ReadOutcome::Line(line)) => Some(line),
-        Ok(ReadOutcome::Interrupted | ReadOutcome::Eof) => None,
+        Ok(ReadOutcome::Line(line)) => ReadResult::Line(line),
+        Ok(ReadOutcome::Interrupted) => ReadResult::Cancelled,
+        Ok(ReadOutcome::Eof) => ReadResult::Unavailable,
         Ok(ReadOutcome::Failed(err)) => {
             eprintln!("approval input failed: {err}");
-            None
+            ReadResult::Unavailable
         }
-        Err(_) => None,
+        Err(_) => ReadResult::Unavailable,
     }
 }
 
@@ -423,7 +450,7 @@ mod tests {
             }
         });
         let params = json!({"title": "Permission", "options": {"optionId": "allow-once"}});
-        let rendered = serde_json::to_string(&ask(&tx, &params).await).unwrap();
+        let rendered = verdict_json(ask(&tx, &params).await);
         assert!(rendered.contains("deny"), "expected a denial, got {rendered}");
     }
 
@@ -441,7 +468,7 @@ mod tests {
                 return ("prompted".into(), 1);
             }
         };
-        (serde_json::to_string(&verdict).unwrap(), rx.try_recv().is_ok() as usize)
+        (verdict_json(verdict), rx.try_recv().is_ok() as usize)
     }
 
     /// A request offering options none of which can be read must be refused,
@@ -508,7 +535,63 @@ mod tests {
                 let _ = respond.send(ReadOutcome::Line(reply));
             }
         });
-        serde_json::to_string(&ask(&tx, params).await).unwrap()
+        verdict_json(ask(&tx, params).await)
+    }
+
+    fn verdict_json(outcome: Outcome) -> String {
+        match outcome {
+            Outcome::Verdict(verdict) => serde_json::to_string(&verdict).unwrap(),
+            Outcome::Cancelled => "cancelled".into(),
+        }
+    }
+
+    /// The command travels with the read. The terminal thread writes that text
+    /// after discarding queued input, then takes the line.
+    #[tokio::test]
+    async fn an_n_denies_the_call_whose_command_is_on_that_read() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let params = json!({"title": "bash", "arguments": {"command": "echo one"}});
+        tokio::spawn(async move {
+            let Ask::Approval { preamble, question, respond } = rx.recv().await.unwrap() else {
+                panic!("expected an approval read");
+            };
+            assert!(
+                preamble.contains("echo one"),
+                "the command is not on this read: {preamble}"
+            );
+            assert!(question.contains("approve? [y/N]"), "{question}");
+            let _ = respond.send(ReadOutcome::Line("n".into()));
+        });
+        let rendered = verdict_json(ask(&tx, &params).await);
+        assert!(rendered.contains("deny"), "{rendered}");
+        assert!(rendered.contains("operator declined"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn ctrl_c_at_the_prompt_cancels_rather_than_denying() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let Ask::Approval { respond, .. } = rx.recv().await.unwrap() else {
+                panic!("expected an approval read");
+            };
+            let _ = respond.send(ReadOutcome::Interrupted);
+        });
+        assert!(matches!(ask(&tx, &json!({"title": "bash"})).await, Outcome::Cancelled));
+    }
+
+    #[tokio::test]
+    async fn a_closed_terminal_denies_without_saying_the_operator_declined() {
+        let (tx, mut rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let Ask::Approval { respond, .. } = rx.recv().await.unwrap() else {
+                panic!("expected an approval read");
+            };
+            let _ = respond.send(ReadOutcome::Eof);
+        });
+        let rendered = verdict_json(ask(&tx, &json!({"title": "bash"})).await);
+        assert!(rendered.contains("deny"), "{rendered}");
+        assert!(!rendered.contains("operator declined"), "{rendered}");
+        assert!(rendered.contains("approval prompt was not answered"), "{rendered}");
     }
 
     /// THE SPENDING BYPASS. A budget request that carries options was routed to

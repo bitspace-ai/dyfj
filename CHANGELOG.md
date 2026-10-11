@@ -11,6 +11,23 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Ctrl-C at the Rust REPL's approval prompt cancels the turn, and `n` denies that call.**
+  While an approval was being read, Ctrl-C was readline's interrupt and was
+  answered as a denial (`operator declined`). The keypress was not delivered as
+  SIGINT, because the read had cleared ISIG, so the turn's cancel path did not
+  run and the turn kept going. Ctrl-C now answers that approval with `abort`
+  and sends `turn/cancel` for the turn the REPL started, then waits for the
+  turn to settle and returns to the prompt. `n`, and any other line that is not
+  `y` or `yes`, denies that call. The request text is written after queued
+  input is discarded, so a keystroke typed once the command is on screen is not
+  flushed before the read. Ctrl-D and a lost terminal still deny, with the
+  reason `approval prompt was not answered`. A `toolCallCompleted` frame with
+  `verdict: "approval_denied"` is shown as `⊘ <tool> not approved`, replacing
+  the `declined by the operator` rendering in the tool-refusal note under
+  Changed: the frame does not say whether the operator declined or the prompt
+  produced no decision. During `/friction`, Ctrl-C at the approval prompt
+  denies that approval and later ones for the command, and waits for the
+  runtime to settle the post.
 - **The CLI wraps at 80 columns on a terminal that reports no width.** A pty
   with no size set reports 0 columns, and the markdown renderer took the smaller
   of that and 100, so a turn's text wrapped at zero columns. An unknown width

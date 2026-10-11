@@ -8,6 +8,7 @@
 use anyhow::Result;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::io::Write;
 use std::sync::OnceLock;
 use std::sync::mpsc as std_mpsc;
 use tokio::sync::{mpsc, oneshot};
@@ -16,18 +17,22 @@ use tokio::sync::{mpsc, oneshot};
 pub enum Ask {
     /// The ordinary prompt. History applies.
     Prompt { respond: oneshot::Sender<ReadOutcome> },
-    /// A mid-turn approval question. Input typed before this point is
-    /// discarded first, and the answer never enters history.
-    Approval { question: String, respond: oneshot::Sender<ReadOutcome> },
+    /// A mid-turn approval question. Input typed before the request is shown
+    /// is discarded, then `preamble` is written and `question` is read. The
+    /// answer never enters history.
+    Approval {
+        preamble: String,
+        question: String,
+        respond: oneshot::Sender<ReadOutcome>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ReadOutcome {
     Line(String),
-    /// Ctrl-C. At the ordinary prompt this clears the line. Inside an approval
-    /// read it denies that approval and does not cancel the turn — turn
-    /// cancellation is the SIGINT the main loop catches while no read is
-    /// active, which is a different path.
+    /// Ctrl-C. At the ordinary prompt this clears the line. During an approval
+    /// read, rustyline has cleared ISIG, so this is the turn's Ctrl-C: the
+    /// caller cancels the turn. It is not an answer to the question.
     Interrupted,
     /// Ctrl-D on an empty buffer.
     Eof,
@@ -232,7 +237,7 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                     let outcome = read(&mut editor, "dyfj> ", true);
                     let _ = respond.send(outcome);
                 }
-                Ask::Approval { question, respond } => {
+                Ask::Approval { preamble, question, respond } => {
                     // Consent requires an operator who can see the request.
                     // An earlier version treated a pipe as "nothing to flush,
                     // therefore safe" and read anyway; a later one checked the
@@ -256,6 +261,16 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                             "could not discard input typed before this prompt".into(),
                         ));
                         continue;
+                    }
+                    // Show the request only after the discard. Printing it
+                    // first dropped a keystroke typed once the command was
+                    // visible: the flush took it, and the read then saw an
+                    // empty line or waited. A keystroke in the gap between
+                    // this discard and the write below can still be read; the
+                    // request is not on screen during that gap.
+                    if !preamble.is_empty() {
+                        print!("{preamble}");
+                        let _ = std::io::stdout().flush();
                     }
                     let outcome = read(&mut editor, &question, false);
                     let _ = respond.send(outcome);
