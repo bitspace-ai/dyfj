@@ -51,6 +51,7 @@ export {
   redactToolCall,
 } from "./redaction.ts";
 export {
+  approvalDeniedReason,
   buildCommandToolCallEventPayload,
   type CommandEventContext,
   EVENT_RESULT_MAX_BYTES,

@@ -43,6 +43,15 @@ pub fn describe(event: &Value) -> Option<String> {
         }
         "toolCallCompleted" => {
             let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
+            // A call the operator refused never ran. It is shown as a
+            // refusal, not as a failed command, and without a duration: the
+            // time on it is the operator's deliberation, not execution.
+            if event.get("verdict").and_then(Value::as_str) == Some("approval_denied") {
+                return Some(format!(
+                    "  ⊘ {} declined by the operator",
+                    crate::approval::visible(name)
+                ));
+            }
             // isError is reported per call; a failed tool is the thing an
             // operator most needs to see in a long turn.
             let mark = if event.get("isError").and_then(Value::as_bool) == Some(true) {
@@ -148,6 +157,42 @@ mod tests {
             }))
             .as_deref(),
             Some("  ✓ list_files (11ms)")
+        );
+    }
+
+    /// A call the operator refused did not run: it is a refusal, not a failed
+    /// command, and its duration is the approval wait, so none is shown.
+    #[test]
+    fn renders_a_refused_call_as_a_refusal() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash",
+                "isError": true, "durationMs": 163376, "verdict": "approval_denied"
+            }))
+            .as_deref(),
+            Some("  ⊘ bash declined by the operator")
+        );
+    }
+
+    /// A real failure keeps its mark and duration, with or without any other
+    /// verdict value a later runtime might send.
+    #[test]
+    fn a_real_failure_still_renders_as_a_failure() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash",
+                "isError": true, "durationMs": 40
+            }))
+            .as_deref(),
+            Some("  ✗ bash (40ms)")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash",
+                "isError": true, "durationMs": 40, "verdict": "something_else"
+            }))
+            .as_deref(),
+            Some("  ✗ bash (40ms)")
         );
     }
 

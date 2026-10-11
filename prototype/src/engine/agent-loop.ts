@@ -116,11 +116,32 @@ export async function agentLoop(
       break;
     }
     result = await followUp(turn, result, messages, step, streaming);
+    // A concluding call sent because a tool call was not approved is the
+    // last word of the turn: whatever tool call it still carries is dropped,
+    // so a model that ignores the instruction cannot raise another approval.
+    if (step.approvalDenied) result = withoutToolCalls(session, result);
     captureTurnState(state, result);
     result = abortedIfCancelled(turn, result);
   }
   result = abortedIfCancelled(turn, result);
   return { result, streamedText: streaming.streamedText };
+}
+
+/**
+ * The result with its tool calls dropped, and how many were, logged. The turn
+ * ends here, so its stop reason is the ordinary `stop`, not the provider's
+ * `tool_use` for calls that will never run.
+ */
+function withoutToolCalls(
+  session: TurnState["session"],
+  result: LoopTurnResult,
+): LoopTurnResult {
+  const dropped = result.toolCalls?.length ?? 0;
+  if (dropped === 0) return result;
+  session.log(
+    `Dropped ${dropped} tool call(s) requested after a tool call was not approved.`,
+  );
+  return { ...result, toolCalls: undefined, stopReason: "stop" };
 }
 
 /** The call parameters every loop call shares. */
@@ -165,6 +186,8 @@ interface ToolStep {
   stepResults: ToolResultSummary[];
   /** Every call in the step repeats one already made this turn. */
   allRepeats: boolean;
+  /** At least one call in the step was not approved. */
+  approvalDenied: boolean;
 }
 
 /**
@@ -201,10 +224,12 @@ async function runToolStep(
     input.abortSignal?.aborted === true && result.stopReason !== "error";
   // Sized against the request the follow-up will actually send: a step
   // that ends tool use is followed by the forced conclusion, which carries
-  // the longer instruction and no tool definitions.
-  const next = nextRequestShape(state, allRepeats);
-  const requestSoFar = () =>
-    estimateRequest(turn, {
+  // the longer instruction and no tool definitions. A refusal is only known
+  // once its call has run, so the shape is read afresh each time.
+  let approvalDenied = false;
+  const requestSoFar = () => {
+    const next = nextRequestShape(state, allRepeats, approvalDenied);
+    return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
       messages: [
         ...messages,
@@ -212,10 +237,12 @@ async function runToolStep(
       ],
       tools: next.tools,
     });
+  };
   for (const [index, toolCall] of requestedToolCalls.entries()) {
     if (cancelled()) return "aborted";
     const summary = await invokeTool(turn, result, toolCall);
     if (summary === "aborted") return "aborted";
+    if (summary.approvalDenied === true) approvalDenied = true;
     stepResults.push(
       await boundToolResult(
         turn,
@@ -226,7 +253,7 @@ async function runToolStep(
     );
     if (cancelled()) return "aborted";
   }
-  return { requestedToolCalls, stepResults, allRepeats };
+  return { requestedToolCalls, stepResults, allRepeats, approvalDenied };
 }
 
 /**
@@ -269,16 +296,20 @@ async function invokeTool(
     const outcome = await commandOutcome;
     if (!outcome.ok) throw outcome.error;
     const commandResult = outcome.value;
+    const approvalDenied = "verdict" in commandResult &&
+      commandResult.verdict === "approval_denied";
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,
       isError: commandResult.isError,
       durationMs: ports.clock.now() - toolStartedAt,
+      ...(approvalDenied ? { verdict: "approval_denied" as const } : {}),
     });
     return {
       commandId: toolCall.name,
       callId: toolCall.id,
       isError: commandResult.isError,
       result: commandResultText(commandResult),
+      ...(approvalDenied ? { approvalDenied: true } : {}),
     };
   } catch (err) {
     if (input.abortSignal?.aborted && err === input.abortSignal.reason) {
@@ -351,8 +382,9 @@ function startCommand(
 
 /**
  * Append the step to the transcript and make the next call: a normal
- * follow-up, or — at the step cap or when the model repeated itself — a
- * forced conclusion with tools dropped.
+ * follow-up, or — at the step cap, when the model repeated itself, or when a
+ * call in the step was not approved — a forced conclusion with tools
+ * dropped.
  */
 async function followUp(
   turn: RoutedTurn,
@@ -366,11 +398,14 @@ async function followUp(
   const { atCap, forceConclude, systemPrompt, tools } = nextRequestShape(
     state,
     step.allRepeats,
+    step.approvalDenied,
   );
   if (forceConclude) {
     session.log(
       atCap
         ? `Reached the ${session.maxToolSteps}-step tool limit; forcing a concluding answer.`
+        : step.approvalDenied
+        ? "A tool call was not approved; forcing a concluding answer."
         : "Model repeated prior tool calls; forcing a concluding answer.",
     );
     if (atCap) {
@@ -421,14 +456,16 @@ async function followUp(
 
 /**
  * The request that follows a tool step: a forced conclusion (the longer
- * instruction, no tool definitions) at the step cap or when the whole step
- * repeated earlier calls, else the ordinary gather call. One decision, read
+ * instruction, no tool definitions) at the step cap, when the whole step
+ * repeated earlier calls, or when a call in the step was not approved
+ * (the operator is handed control back), else the ordinary gather call. One decision, read
  * both where the step's results are bounded and where the follow-up is sent,
  * so the results are sized against the request that actually goes out.
  */
 function nextRequestShape(
   state: TurnState,
   allRepeats: boolean,
+  approvalDenied: boolean,
 ): {
   atCap: boolean;
   forceConclude: boolean;
@@ -436,14 +473,18 @@ function nextRequestShape(
   tools: TurnState["commandTools"] | undefined;
 } {
   const atCap = state.toolSteps >= state.session.maxToolSteps;
-  const forceConclude = atCap || allRepeats;
+  const forceConclude = atCap || allRepeats || approvalDenied;
   return {
     atCap,
     forceConclude,
     systemPrompt: forceConclude
       ? forcedConclusionSystemPrompt(
         state.systemPrompt,
-        atCap ? "limit" : "repeated_tool_calls",
+        atCap
+          ? "limit"
+          : approvalDenied
+          ? "approval_denied"
+          : "repeated_tool_calls",
       )
       : state.systemPrompt,
     tools: forceConclude ? undefined : state.commandTools,
@@ -452,10 +493,12 @@ function nextRequestShape(
 
 function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
-  reason: "limit" | "repeated_tool_calls",
+  reason: "limit" | "repeated_tool_calls" | "approval_denied",
 ): string {
   const reasonText = reason === "limit"
     ? "tool use ended because the configured Workbench tool-step limit was reached"
+    : reason === "approval_denied"
+    ? "tool use ended because a tool call was not approved"
     : "tool use ended because the model repeated prior tool calls";
   return baseSystemPrompt + "\n\n" +
     `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +

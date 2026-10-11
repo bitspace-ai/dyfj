@@ -169,6 +169,14 @@ function goldenScript(request: ChatRequest): ModelReply {
           arguments: { command: "echo golden-bash-output" },
         }
         : { kind: "text", text: `Bash result:\n${toolResult}` };
+    case "s13":
+      return toolResult === undefined
+        ? {
+          kind: "tool",
+          tool: "bash",
+          arguments: { command: "echo golden-bash-denied" },
+        }
+        : { kind: "text", text: `Bash result:\n${toolResult}` };
     case "s5":
       return {
         kind: "text",
@@ -242,6 +250,7 @@ interface Scenario {
 }
 
 const approveAll = () => ({ decision: "approve" });
+const denyAll = () => ({ decision: "deny", reason: "operator declined" });
 
 /** One raw JSON-RPC turn on a fresh connection, with everything it received. */
 async function rpcTurn(
@@ -555,6 +564,17 @@ const SCENARIOS: Scenario[] = [
           )
         ),
       };
+    },
+  },
+  {
+    id: "13-bash-denied",
+    title: "a denied bash approval is a refusal and ends tool use for the turn",
+    async run(harness) {
+      return await rpcTurn(harness, {
+        prompt: "[golden:s13] Run the golden command.",
+        workspace: harness.workspace,
+        routingOptions: { modelId: LOCAL },
+      }, denyAll);
     },
   },
 ];

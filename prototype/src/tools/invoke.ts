@@ -30,6 +30,24 @@ export interface CommandEventContext {
   writeEvent: (event: EventInsert) => Promise<void> | void;
 }
 
+/**
+ * What the model reads in place of a tool result when the call was not
+ * approved. It leads with a class the model can recognise (`approval_denied`)
+ * and says plainly that the command did not run, so the text cannot be taken
+ * for the command's output, and it tells the model not to retry. `reason` is
+ * what the approval path gave (an operator's answer, or that no terminal was
+ * available); it names no path of its own. "Not approved" and not "the
+ * operator declined", because with no terminal nobody declined anything.
+ */
+export function approvalDeniedReason(
+  commandId: string,
+  reason: string,
+): string {
+  return `approval_denied: this ${commandId} call was not approved, so it ` +
+    "did not run; this is not its output. Do not retry it or a variant of " +
+    `it. Ask the operator or take a different approach. Reason given: ${reason}.`;
+}
+
 const denyToolApproval: ConfirmToolApproval = () =>
   Promise.resolve({
     decision: "deny",
@@ -82,8 +100,12 @@ export async function invokeCommand<TResult = unknown>(
       return {
         decision: "deny",
         authzBasis: "policy:deny:approval-denied",
-        reason: verdict.reason ?? "operator denied the tool call",
+        reason: approvalDeniedReason(
+          call.commandId,
+          verdict.reason ?? "operator denied the tool call",
+        ),
         isError: true,
+        verdict: "approval_denied",
       };
     }
     authzBasis = "policy:allow:operator-approved";

@@ -108,7 +108,7 @@ one-shot; the earlier standalone in-process workbench CLI and its
 JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
-escape hatch, and a bounded `git` tool), an operator-routed
+escape hatch, and a bounded `git` tool; a call that is not approved reaches the model as an `approval_denied` refusal and ends tool use for that turn), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
 OpenRouter, Google Gemini, and xAI) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The
@@ -2024,3 +2024,7 @@ Document revisions only. Code and behavior changes are tracked in
   description. A change whose natural home is a parent issue gets its own
   child issue. This narrows the 2026-10-04 entry's "anywhere it helps" for
   pull requests only.
+- 2026-10-11 - Status text describes approval refusal: a tool call that is not
+  approved reaches the model as an `approval_denied` refusal and ends tool use
+  for that turn (the model's concluding call is final), instead of a bare
+  reason the model read as command output.
