@@ -1,11 +1,12 @@
-// A bidirectional JSON-RPC 2.0 endpoint over a byte-stream connection — a Deno
-// UDS conn locally, a TCP/WebSocket conn remotely. Symmetric: both the
+// A bidirectional JSON-RPC 2.0 endpoint over a byte-stream connection — a
+// Unix-socket connection locally, a TCP/WebSocket one remotely. Symmetric: both the
 // server peer and the client peer use this. Each registers handlers for the
 // requests it answers and calls request()/notify() for the messages it
 // initiates. The server-initiated request() carries the mid-turn `approval`
 // round-trip for the approval keystone. Built on the pure jsonrpc.ts core.
 
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
+import type { ByteConnection } from "./connection.ts";
 import {
   classify,
   dispatchRequest,
@@ -22,10 +23,7 @@ import {
   RpcErrorCode,
   type RpcHandlers,
 } from "./jsonrpc.ts";
-import {
-  MAX_ERROR_SUMMARY_BYTES,
-  summarizeError,
-} from "../contract/mod.ts";
+import { MAX_ERROR_SUMMARY_BYTES, summarizeError } from "../contract/mod.ts";
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
@@ -49,7 +47,7 @@ interface Pending {
 }
 
 export class JsonRpcPeer {
-  readonly #conn: Deno.Conn;
+  readonly #conn: ByteConnection;
   readonly #handlers: RpcHandlers;
   readonly #decoder: FrameDecoder;
   readonly #onParseError?: (detail: string) => void;
@@ -65,7 +63,7 @@ export class JsonRpcPeer {
   readonly #inflight = new Set<Promise<void>>();
   #rpcContext?: RpcContext;
 
-  constructor(conn: Deno.Conn, options: JsonRpcPeerOptions = {}) {
+  constructor(conn: ByteConnection, options: JsonRpcPeerOptions = {}) {
     this.#conn = conn;
     this.#handlers = options.handlers ?? {};
     this.#onParseError = options.onParseError;
@@ -75,23 +73,11 @@ export class JsonRpcPeer {
     );
   }
 
-  // conn.write() may write fewer bytes than requested, so a large frame must be
-  // written in a loop — otherwise a big response is truncated on the wire and the
-  // peer's FrameDecoder waits forever for the missing newline.
-  async #writeAll(bytes: Uint8Array): Promise<void> {
-    let offset = 0;
-    while (offset < bytes.length) {
-      offset += await this.#conn.write(
-        offset === 0 ? bytes : bytes.subarray(offset),
-      );
-    }
-  }
-
   // Writes are serialized so concurrent notify()/request()/responses never
   // interleave partial frames on the wire.
   #write(message: JsonRpcMessage): Promise<void> {
     const bytes = encodeFrame(message);
-    const result = this.#writeChain.then(() => this.#writeAll(bytes));
+    const result = this.#writeChain.then(() => this.#conn.write(bytes));
     this.#writeChain = result.catch(() => {});
     return result;
   }
@@ -143,21 +129,20 @@ export class JsonRpcPeer {
 
   // Read loop; resolves when the connection closes.
   async run(): Promise<void> {
-    const buf = new Uint8Array(4096);
     const decoder = new TextDecoder();
     try {
       while (!this.#closed) {
-        let n: number | null;
+        let chunk: Uint8Array | null;
         try {
-          n = await this.#conn.read(buf);
+          chunk = await this.#conn.read();
         } catch {
           break; // connection closed under us
         }
-        if (n === null) break;
+        if (chunk === null) break;
         // { stream: true }: a multibyte UTF-8 sequence that straddles a read
         // boundary stays buffered in the decoder until its continuation bytes
         // arrive, instead of each half mangling to U+FFFD.
-        this.#feed(decoder.decode(buf.subarray(0, n), { stream: true }));
+        this.#feed(decoder.decode(chunk, { stream: true }));
       }
       // EOF flush: finalize the streaming decoder. If the connection ended
       // mid-character the buffered partial bytes become U+FFFD; lacking a frame
@@ -197,8 +182,7 @@ export class JsonRpcPeer {
   #context(): RpcContext {
     return this.#rpcContext ??= {
       notify: (method, params) => this.notify(method, params),
-      request: (method, params, signal) =>
-        this.request(method, params, signal),
+      request: (method, params, signal) => this.request(method, params, signal),
     };
   }
 

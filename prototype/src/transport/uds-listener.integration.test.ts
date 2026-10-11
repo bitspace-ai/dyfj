@@ -5,6 +5,7 @@ import {
 } from "../../testing/servers/uds-sockets.ts";
 import { fabricateStaleUdsSocket } from "../../testing/servers/listeners.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { nodeSocketHost } from "./node-socket.ts";
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
@@ -31,7 +32,7 @@ async function removeIfPresent(path: string): Promise<void> {
 // A raw client peer on a new connection; `closed` settles when its read loop
 // ends, and disposal closes it and waits for that.
 async function dial(socketPath: string, handlers: RpcHandlers = {}) {
-  const conn = await Deno.connect({ transport: "unix", path: socketPath });
+  const conn = await nodeSocketHost.connect(socketPath);
   const peer = new JsonRpcPeer(conn, { handlers });
   const loop = peer.run();
   return {

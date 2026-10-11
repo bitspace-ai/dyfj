@@ -1,8 +1,8 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import { assert, assertEquals, assertStrictEquals } from "@std/assert";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
-import { connectUdsPair } from "../../testing/servers/listeners.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
+import { nodeSocketHost } from "./node-socket.ts";
 
 // The duplex peer over a real Unix socket pair, where the kernel decides
 // write sizes and read boundaries. The protocol cases run over in-memory
@@ -13,7 +13,11 @@ async function connectPair(
   clientHandlers: RpcHandlers = {},
 ) {
   const sock = udsTestSocket("peer");
-  const { server: serverConn, client: clientConn } = await connectUdsPair(sock);
+  const listener = await nodeSocketHost.listen(sock);
+  const accepted = listener.accept();
+  const clientConn = await nodeSocketHost.connect(sock);
+  const serverConn = await accepted;
+  assert(serverConn !== null);
   const server = new JsonRpcPeer(serverConn, { handlers: serverHandlers });
   const client = new JsonRpcPeer(clientConn, { handlers: clientHandlers });
   const loops = Promise.all([server.run(), client.run()]);
@@ -23,6 +27,7 @@ async function connectPair(
     async [Symbol.asyncDispose]() {
       client.close();
       server.close();
+      listener.close();
       await loops;
       try {
         await Deno.remove(sock);

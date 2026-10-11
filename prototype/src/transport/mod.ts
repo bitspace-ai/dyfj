@@ -3,8 +3,9 @@
  *
  * Responsibility: the JSON-RPC codec (envelope types and builders, error
  * codes, newline-delimited framing, message classification), request
- * dispatch, the duplex connection peer, socket-path resolution, and the two
- * socket ends: the client connect (`connectUnixClient`) and the server
+ * dispatch, the duplex connection peer, the byte-stream connection ports and
+ * their node:net adapter (the only module that imports node:net), socket-path
+ * resolution, and the two socket ends: the client connect (`connectUnixClient`) and the server
  * bind/accept loop (`serveUnixJsonRpc`), and the request-parameter
  * sanitizers every method module runs its params through. Method handlers are
  * supplied by the caller; nothing here knows what a method does. The wire
@@ -46,6 +47,12 @@ export {
   sanitizeRpcIdentifier,
   sanitizeRpcString,
 } from "./rpc-params.ts";
+export type {
+  ByteConnection,
+  ConnectionListener,
+  SocketHost,
+} from "./connection.ts";
+export { nodeSocketHost } from "./node-socket.ts";
 export { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 export { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
 export {

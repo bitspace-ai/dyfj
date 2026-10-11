@@ -77,6 +77,12 @@
           "justification": "prototype/scripts/isolated-dolt-fixture.ts starts the isolated Dolt sql-server that the integration and golden lanes run against, probes it for readiness and seeds its fixture rows. It is test tooling that runs as its own process outside the runtime graph, which no runtime module may import."
         }
       ]
+    },
+    {
+      "$comment": "node:net is the socket API. Only transport/ (prototype/src/transport/node-socket.ts, behind the ByteConnection and SocketHost ports) may import it, so every byte stream the runtime opens goes through the port and no module holds a raw socket.",
+      "name": "node:net",
+      "allowedUnits": ["transport"],
+      "entrypoints": []
     }
   ],
   "sqlWrites": {

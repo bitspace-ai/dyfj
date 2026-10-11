@@ -7,6 +7,7 @@ import {
   assertStrictEquals,
   assertStringIncludes,
 } from "@std/assert";
+import type { ByteConnection } from "./connection.ts";
 import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import {
   encodeFrame,
@@ -22,13 +23,13 @@ import {
 
 // Unit tests for the duplex peer over in-memory connections. The peer takes
 // its connection as a constructor argument, so these stubs stand in for the
-// injected Deno.Conn; the real-socket cases are in
+// injected ByteConnection; the real-socket cases are in
 // jsonrpc-peer.integration.test.ts.
 
 // One end of an in-memory byte-stream pair. write() delivers to the other
-// end's read(); maxWrite caps the bytes one write() accepts, so a test can
-// force the short writes a real socket may perform. close() ends both reads.
-class MemoryConn {
+// end's read(); maxWrite caps the bytes delivered per chunk, so a test can
+// force the split reads a real socket may perform. close() ends both reads.
+class MemoryConn implements ByteConnection {
   other!: MemoryConn;
   readonly written: Uint8Array[] = [];
   #inbox: Uint8Array[] = [];
@@ -40,30 +41,25 @@ class MemoryConn {
     this.#maxWrite = maxWrite;
   }
 
-  async read(p: Uint8Array): Promise<number | null> {
+  async read(): Promise<Uint8Array | null> {
     for (;;) {
-      const chunk = this.#inbox[0];
-      if (chunk) {
-        const n = Math.min(chunk.length, p.length);
-        p.set(chunk.subarray(0, n));
-        if (n < chunk.length) this.#inbox[0] = chunk.subarray(n);
-        else this.#inbox.shift();
-        return n;
-      }
+      const chunk = this.#inbox.shift();
+      if (chunk) return chunk;
       if (this.#closed) return null;
       await new Promise<void>((resolve) => this.#wake = resolve);
     }
   }
 
-  write(p: Uint8Array): Promise<number> {
+  write(p: Uint8Array): Promise<void> {
     if (this.#closed || this.other.#closed) {
-      return Promise.reject(new Deno.errors.BadResource("closed"));
+      return Promise.reject(new Error("closed"));
     }
-    const n = Math.min(p.length, this.#maxWrite);
-    const bytes = p.slice(0, n);
-    this.written.push(bytes);
-    this.other.#deliver(bytes);
-    return Promise.resolve(n);
+    for (let offset = 0; offset < p.length; offset += this.#maxWrite) {
+      const bytes = p.slice(offset, offset + this.#maxWrite);
+      this.written.push(bytes);
+      this.other.#deliver(bytes);
+    }
+    return Promise.resolve();
   }
 
   close(): void {
@@ -98,8 +94,6 @@ function memoryConnPair(
   return [a, b];
 }
 
-const asConn = (conn: MemoryConn) => conn as unknown as Deno.Conn;
-
 // A connected client/server peer pair over an in-memory connection. The
 // returned close() ends both peers and waits for their read loops to finish.
 function connectPair(
@@ -112,11 +106,11 @@ function connectPair(
   },
 ) {
   const [serverConn, clientConn] = memoryConnPair(options?.maxWrite);
-  const server = new JsonRpcPeer(asConn(serverConn), {
+  const server = new JsonRpcPeer(serverConn, {
     handlers: serverHandlers,
     ...options?.server,
   });
-  const client = new JsonRpcPeer(asConn(clientConn), {
+  const client = new JsonRpcPeer(clientConn, {
     handlers: clientHandlers,
     ...options?.client,
   });
@@ -133,26 +127,16 @@ function connectPair(
   };
 }
 
-// A scripted inbound conn: read() serves the queued chunks in order, so a test
-// controls exactly where the byte stream splits — a real socket pair cannot
-// guarantee read-boundary placement. Honors the Deno.Reader contract: it never
-// writes past p.length, and a chunk larger than the caller's buffer is served
-// across successive reads rather than overflowing it.
-function scriptedConn(chunks: Uint8Array[]): Deno.Conn {
+// A scripted inbound conn: read() serves the queued chunks in order, one per
+// call, so a test controls exactly where the byte stream splits — a real
+// socket pair cannot guarantee read-boundary placement.
+function scriptedConn(chunks: Uint8Array[]): ByteConnection {
   const queue = chunks.map((c) => c);
   return {
-    read(p: Uint8Array): Promise<number | null> {
-      if (queue.length === 0) return Promise.resolve(null);
-      const chunk = queue[0];
-      const n = Math.min(chunk.length, p.length);
-      p.set(chunk.subarray(0, n));
-      if (n < chunk.length) queue[0] = chunk.subarray(n);
-      else queue.shift();
-      return Promise.resolve(n);
-    },
-    write: (p: Uint8Array) => Promise.resolve(p.length),
+    read: () => Promise.resolve(queue.shift() ?? null),
+    write: () => Promise.resolve(),
     close() {},
-  } as unknown as Deno.Conn;
+  };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<unknown> {
@@ -185,7 +169,7 @@ Deno.test("request frames on the wire are byte-identical to the literal frames",
   const sink = new MemoryConn();
   conn.other = sink;
   sink.other = conn;
-  const peer = new JsonRpcPeer(asConn(conn));
+  const peer = new JsonRpcPeer(conn);
   const calls: Array<[string, unknown]> = [
     ["approval", undefined],
     ["approval", { tool: "bash", command: "rm -rf build/" }],
@@ -365,20 +349,15 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
   // no timeout, so a throw after the pending entry is removed would be a
   // permanent hang for the caller.
   const [clientConn, rawConn] = memoryConnPair();
-  const client = new JsonRpcPeer(asConn(clientConn), { handlers: {} });
+  const client = new JsonRpcPeer(clientConn, { handlers: {} });
   const loop = client.run();
   try {
     const decoder = new FrameDecoder();
-    const buf = new Uint8Array(8192);
     const readRequestId = async (): Promise<unknown> => {
       while (true) {
-        const n = await rawConn.read(buf);
-        if (n === null) throw new Error("raw peer connection closed early");
-        for (
-          const frame of decoder.push(
-            new TextDecoder().decode(buf.subarray(0, n)),
-          )
-        ) {
+        const chunk = await rawConn.read();
+        if (chunk === null) throw new Error("raw peer connection closed early");
+        for (const frame of decoder.push(new TextDecoder().decode(chunk))) {
           if (frame.ok) return (frame.message as { id?: unknown }).id;
         }
       }

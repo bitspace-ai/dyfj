@@ -962,6 +962,25 @@ Deno.test("a confined package is a violation outside its units and entrypoints",
   assertSome(result.added, `package: ${S}/engine/static.ts: mysql2`);
 });
 
+Deno.test("the committed rules confine node:net to the transport unit", async () => {
+  const committed = JSON.parse(
+    await Deno.readTextFile(
+      fileURLToPath(new URL("./arch-layers.json", import.meta.url)),
+    ),
+  ) as LayerRules;
+  const result = await run({
+    [`${S}/transport/node-socket.ts`]: 'import net from "node:net"; net;',
+    [`${S}/engine/dial.ts`]: 'import net from "node:net"; net;',
+    [`${S}/server/listen.ts`]:
+      'import { createServer } from "node:net"; createServer;',
+    [`${S}/engine/other.ts`]: 'import { join } from "node:path"; join;',
+  }, { rules: committed });
+  assertEquals(result.current.packages, [
+    `${S}/engine/dial.ts: node:net`,
+    `${S}/server/listen.ts: node:net`,
+  ]);
+});
+
 Deno.test("an SQL write literal is a violation outside the journal and entrypoints", async () => {
   const result = await run({
     [`${S}/store/journal.ts`]:

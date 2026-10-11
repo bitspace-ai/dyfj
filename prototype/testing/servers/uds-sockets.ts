@@ -13,6 +13,7 @@ export const UDS_TEST_SOCKET_DIR_ENV = "DYFJ_UDS_TEST_SOCKET_DIR";
 
 export const UDS_TEST_SOCKETS = [
   "peer",
+  "node-socket",
   "client-roundtrip",
   "client-approval",
   "client-lifecycle",
