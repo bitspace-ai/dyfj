@@ -4,7 +4,7 @@
  * Responsibility: the JSON-RPC codec (envelope types and builders, error
  * codes, newline-delimited framing, message classification), request
  * dispatch, the duplex connection peer, the byte-stream connection ports and
- * their node:net adapter (the only module that imports node:net), socket-path
+ * their node:net adapter (today the only non-test node:net importer), socket-path
  * resolution, and the two socket ends: the client connect (`connectUnixClient`) and the server
  * bind/accept loop (`serveUnixJsonRpc`), and the request-parameter
  * sanitizers every method module runs its params through. Method handlers are
