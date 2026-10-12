@@ -214,6 +214,18 @@ describe("runAcpAgent", () => {
     );
   });
 
+  it("maps a probe child that cannot start to the fixed diagnostic", async () => {
+    // A NUL in the command makes the spawn throw synchronously.
+    const error = await assertRejectsWithFields(
+      assertProcessGroupSignaler("/bin/kill", 500, ["/bin/sle\0ep", "30"]),
+      { phase: "spawn" },
+    );
+    assertStrictEquals(
+      error.message,
+      "ACP process-group signaling is unavailable on this platform",
+    );
+  });
+
   it("rejects a signaler that cannot address a negative process group", async () => {
     const signaler = await tempPath();
     try {
@@ -230,6 +242,18 @@ describe("runAcpAgent", () => {
     } finally {
       await Deno.remove(signaler).catch(() => {});
     }
+  });
+
+  it("maps a signaler that cannot start to the fixed diagnostic", async () => {
+    const error = await assertRejectsWithFields(
+      runSignalCommand(
+        ["-0", "--", "-1"],
+        500,
+        "/private/tmp/dyfj-process-group-signaler-does-not-exist",
+      ),
+      { phase: "terminate" },
+    );
+    assertStrictEquals(error.message, "ACP process-group signaling failed");
   });
 
   it("distinguishes an absent process group from a signaling failure", async () => {

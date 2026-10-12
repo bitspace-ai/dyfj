@@ -141,7 +141,8 @@
         "bash",
         "deno",
         "git",
-        "/bin/kill"
+        "/bin/kill",
+        "/bin/sleep"
       ],
       "sys": [
         "uid",

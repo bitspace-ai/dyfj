@@ -185,11 +185,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/acp-client.ts",
-    "count": 9,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/acp-runner.integration.test.ts",
     "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -533,11 +528,6 @@
     "path": "prototype/src/external-agent-runtime.integration.test.ts",
     "count": 280,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/external-agent-runtime.ts",
-    "count": 42,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
     "path": "prototype/src/kernel/ansi.test.ts",

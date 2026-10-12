@@ -15,8 +15,7 @@ import {
   ActivePromptDeadline,
   drainStream,
   guardedProtocolInput,
-  processGroupSignalerEvalArgs,
-  processGroupSignalerEvalSource,
+  processGroupProbeArgv,
   resolveProtocolMessageLimit,
   resolveSessionUpdateLimit,
   runAcpAgent,
@@ -218,10 +217,8 @@ describe("guardedProtocolInput", () => {
 });
 
 describe("runAcpAgent", () => {
-  it("process-group signaler eval carries only the probe source", () => {
-    const source = processGroupSignalerEvalSource();
-    assertStrictEquals(source.includes(";void "), false);
-    assertEquals(processGroupSignalerEvalArgs(), ["eval", source]);
+  it("probes process-group signaling with a runtime-neutral child", () => {
+    assertEquals(processGroupProbeArgv(), ["/bin/sleep", "30"]);
   });
 
   it("cancels a stderr drain whose producer never closes", async () => {

@@ -924,8 +924,8 @@ fixture is protocol coverage, not evidence for a vendor agent or subscription
 route.
 
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
-systems where `/bin/kill` supports negative process-group signaling and the
-operator home is absolute and contains neither comma nor colon, through a local
+systems where `/bin/kill` supports negative process-group signaling, with
+`/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local
 stdio child using the community-maintained `@agentclientprotocol/codex-acp`
 adapter; subscription inference may use remote services. Sequential Workbench
 turns reuse the same live adapter process and ACP session under the same
@@ -1028,7 +1028,9 @@ pinned Codex adapter currently reports token/context usage on this subscription
 route but no currency cost, so the terminal receipt says
 `subscription quota (USD not reported)`. Workbench starts the adapter as a
 dedicated process group after verifying the exact negative-PGID signal syntax
-against an inert process group. If the adapter leader is still active,
+against an inert process group: a `/bin/sleep 30` child that the runtime starts
+in its own group and kills once the check has run, so the `serve-unix` spawn
+grant names `/bin/sleep` beside `/bin/kill`. If the adapter leader is still active,
 completion, error, timeout, and cancellation cleanup attempt to signal that
 group. Signal subprocesses, process-group polling, child-status waits, and
 stream-drain waits each have deadlines. A process-group termination failure is
@@ -2041,3 +2043,6 @@ Document revisions only. Code and behavior changes are tracked in
   grant the `serve-unix` profile gives the engine's DNS lookups, and
   `specs/01-architecture.md` §5.6 names the `node:dns` `Resolver` as the
   `DnsResolver` port's real adapter.
+- 2026-10-12 - The `--runner codex-chatgpt` and ACP containment passages name
+  `/bin/sleep` as the process-group probe child and its place beside
+  `/bin/kill` in the `serve-unix` spawn grant.

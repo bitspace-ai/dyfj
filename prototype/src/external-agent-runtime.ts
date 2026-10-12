@@ -9,6 +9,18 @@ import {
 import { processEnv } from "./config/mod.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
+import process from "node:process";
 import {
   type AcpExecutionProfile,
   type AcpPermissionVerdict,
@@ -98,7 +110,10 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
   }
   return {
     slug: "fixture",
-    command: Deno.execPath(),
+    // The argv below is the current runtime CLI's (`run --cached-only …`):
+    // the fixture agent is a script for that runtime. It changes when the
+    // fixture agent itself moves onto Node.
+    command: process.execPath,
     args: [
       "run",
       "--cached-only",
@@ -122,21 +137,21 @@ const CODEX_CHATGPT_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_ADAPTER_PACKAGE_METADATA_BYTES = 65_536;
 
 async function readBoundedTextFile(path: string, maxBytes: number) {
-  const file = await Deno.open(path, { read: true });
+  const file = await open(path, "r");
   try {
     const bytes = new Uint8Array(maxBytes + 1);
     let offset = 0;
     while (offset < bytes.length) {
-      const read = await file.read(bytes.subarray(offset));
-      if (read === null) break;
-      offset += read;
+      const { bytesRead } = await file.read(bytes.subarray(offset));
+      if (bytesRead === 0) break;
+      offset += bytesRead;
     }
     if (offset > maxBytes) throw new Error("file exceeds limit");
     return new TextDecoder("utf-8", { fatal: true }).decode(
       bytes.subarray(0, offset),
     );
   } finally {
-    file.close();
+    await file.close();
   }
 }
 
@@ -153,12 +168,12 @@ async function operatorAuthorizedExecutable(pathValue: string | undefined) {
     // DYFJ_NODE_PATH is operator-granted executable authority, not an
     // attestation of the selected binary's identity. Server profiles retain
     // read access; the standalone login task grants this selected path.
-    const info = await Deno.stat(pathValue);
+    const info = await stat(pathValue);
     if (
-      info.isFile &&
-      (Deno.build.os === "windows" || ((info.mode ?? 0) & 0o111) !== 0)
+      info.isFile() &&
+      (process.platform === "win32" || (info.mode & 0o111) !== 0)
     ) {
-      const canonical = await Deno.realPath(pathValue);
+      const canonical = await realpath(pathValue);
       if (canonical.includes(",") || canonical.includes(":")) {
         throw new Error("canonical path contains an unsupported delimiter");
       }
@@ -192,22 +207,20 @@ async function operatorAuthorizedToolchainDirectory(
   }
   try {
     const noFollowPath = pathValue.replace(/\/+$/, "");
-    const info = await Deno.lstat(noFollowPath);
-    if (info.isDirectory && !info.isSymlink) {
-      const canonical = await Deno.realPath(noFollowPath);
+    const info = await lstat(noFollowPath);
+    if (info.isDirectory() && !info.isSymbolicLink()) {
+      const canonical = await realpath(noFollowPath);
       if (canonical.includes(",") || canonical.includes(":")) {
         throw new Error("canonical path contains an unsupported delimiter");
       }
-      const canonicalInfo = await Deno.lstat(canonical);
+      const canonicalInfo = await lstat(canonical);
       if (
-        !canonicalInfo.isDirectory || canonicalInfo.isSymlink ||
-        (Deno.build.os !== "windows" &&
-          (canonicalInfo.uid !== Deno.uid() ||
-            ((canonicalInfo.mode ?? 0) & 0o100) === 0 ||
-            ((canonicalInfo.mode ?? 0) & 0o022) !== 0)) ||
-        (info.dev !== null && info.ino !== null &&
-          canonicalInfo.dev !== null && canonicalInfo.ino !== null &&
-          (canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino))
+        !canonicalInfo.isDirectory() || canonicalInfo.isSymbolicLink() ||
+        (process.platform !== "win32" &&
+          (canonicalInfo.uid !== process.getuid?.() ||
+            (canonicalInfo.mode & 0o100) === 0 ||
+            (canonicalInfo.mode & 0o022) !== 0)) ||
+        canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino
       ) {
         throw new Error("canonical directory authority changed");
       }
@@ -241,22 +254,20 @@ async function operatorAuthorizedRustupHomeDirectory(
   }
   try {
     const noFollowPath = pathValue.replace(/\/+$/, "");
-    const info = await Deno.lstat(noFollowPath);
-    if (info.isDirectory && !info.isSymlink) {
-      const canonical = await Deno.realPath(noFollowPath);
+    const info = await lstat(noFollowPath);
+    if (info.isDirectory() && !info.isSymbolicLink()) {
+      const canonical = await realpath(noFollowPath);
       if (canonical.includes(",") || canonical.includes(":")) {
         throw new Error("canonical path contains an unsupported delimiter");
       }
-      const canonicalInfo = await Deno.lstat(canonical);
+      const canonicalInfo = await lstat(canonical);
       if (
-        !canonicalInfo.isDirectory || canonicalInfo.isSymlink ||
-        (Deno.build.os !== "windows" &&
-          (canonicalInfo.uid !== Deno.uid() ||
-            ((canonicalInfo.mode ?? 0) & 0o700) !== 0o700 ||
-            ((canonicalInfo.mode ?? 0) & 0o022) !== 0)) ||
-        (info.dev !== null && info.ino !== null &&
-          canonicalInfo.dev !== null && canonicalInfo.ino !== null &&
-          (canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino))
+        !canonicalInfo.isDirectory() || canonicalInfo.isSymbolicLink() ||
+        (process.platform !== "win32" &&
+          (canonicalInfo.uid !== process.getuid?.() ||
+            (canonicalInfo.mode & 0o700) !== 0o700 ||
+            (canonicalInfo.mode & 0o022) !== 0)) ||
+        canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino
       ) {
         throw new Error("canonical directory authority changed");
       }
@@ -274,32 +285,32 @@ async function ensurePrivateDirectory(
 ): Promise<void> {
   let created = false;
   try {
-    await Deno.mkdir(path, { mode: 0o700 });
+    await mkdir(path, { mode: 0o700 });
     created = true;
   } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) throw error;
+    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
   }
-  const info = await Deno.lstat(path);
-  if (!info.isDirectory || info.isSymlink) {
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
     throw new DomainError("Codex ACP runner home is unavailable");
   }
   if (
-    !created && Deno.build.os !== "windows" &&
-    (info.uid !== Deno.uid() ||
-      ((info.mode ?? 0) & 0o022) !== 0)
+    !created && process.platform !== "win32" &&
+    (info.uid !== process.getuid?.() ||
+      (info.mode & 0o022) !== 0)
   ) {
     throw new DomainError("Codex ACP runner home is unavailable");
   }
-  if (created || enforceExistingMode) await Deno.chmod(path, 0o700);
+  if (created || enforceExistingMode) await chmod(path, 0o700);
 }
 
 async function requireOwnedDirectory(path: string): Promise<void> {
   try {
-    const info = await Deno.lstat(path);
+    const info = await lstat(path);
     if (
-      info.isDirectory && !info.isSymlink &&
-      (Deno.build.os === "windows" ||
-        (info.uid === Deno.uid() && ((info.mode ?? 0) & 0o022) === 0))
+      info.isDirectory() && !info.isSymbolicLink() &&
+      (process.platform === "win32" ||
+        (info.uid === process.getuid?.() && (info.mode & 0o022) === 0))
     ) return;
   } catch {
     // Use the fixed diagnostic below instead of disclosing the supplied path.
@@ -311,60 +322,37 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-async function writePrivateNodeShim(
-  directory: string,
-  nodePath: string,
+/**
+ * Write a private runner file atomically. The content goes to a new file,
+ * created exclusively under a random name beside the final one, so an
+ * existing file is never followed or reused; it is then given its mode and
+ * renamed into place. Any failure removes the temporary and reports the fixed
+ * diagnostic, which does not disclose the path.
+ */
+async function writePrivateFile(
+  path: string,
+  content: string,
+  mode: number,
+  diagnostic: string,
 ): Promise<void> {
-  let temporary: string | undefined;
+  const temporary = `${path}-${randomUUID()}`;
+  let created = false;
   try {
-    temporary = await Deno.makeTempFile({
-      dir: directory,
-      prefix: ".node-",
-    });
-    await Deno.writeTextFile(
-      temporary,
-      `#!/bin/sh\nexec ${shellSingleQuote(nodePath)} "$@"\n`,
-    );
-    await Deno.chmod(temporary, 0o700);
-    await Deno.rename(temporary, join(directory, "node"));
-  } catch {
-    if (temporary !== undefined) {
-      try {
-        await Deno.remove(temporary);
-      } catch {
-        // The rename may already have consumed the temporary path.
-      }
+    const file = await open(temporary, "wx", 0o600);
+    created = true;
+    try {
+      await file.writeFile(content);
+    } finally {
+      await file.close();
     }
-    throw new DomainError("Codex ACP private Node shim is unavailable");
-  }
-}
-
-async function writePrivateShellProfile(
-  isolatedHome: string,
-  fileName: ".bash_profile" | ".zprofile",
-  childPath: string,
-): Promise<void> {
-  let temporary: string | undefined;
-  try {
-    temporary = await Deno.makeTempFile({
-      dir: isolatedHome,
-      prefix: `${fileName}-`,
-    });
-    await Deno.writeTextFile(
-      temporary,
-      `export PATH=${shellSingleQuote(childPath)}\n`,
-    );
-    await Deno.chmod(temporary, 0o600);
-    await Deno.rename(temporary, join(isolatedHome, fileName));
+    await chmod(temporary, mode);
+    await rename(temporary, path);
   } catch {
-    if (temporary !== undefined) {
-      try {
-        await Deno.remove(temporary);
-      } catch {
-        // The rename may already have consumed the temporary path.
-      }
+    if (created) {
+      // The rename may already have consumed the temporary path.
+      await rm(temporary, { force: true }).catch(() => {});
     }
-    throw new DomainError("Codex ACP private shell profile is unavailable");
+    throw new DomainError(diagnostic);
   }
 }
 
@@ -382,7 +370,7 @@ export interface CodexChatGptProfileOptions {
 export async function bundledCodexExecutable(
   packageRoot: string,
 ): Promise<string> {
-  const resolvedPackageRoot = await Deno.realPath(packageRoot);
+  const resolvedPackageRoot = await realpath(packageRoot);
   const candidates = [
     join(
       resolvedPackageRoot,
@@ -402,11 +390,11 @@ export async function bundledCodexExecutable(
   ];
   for (const candidate of candidates) {
     try {
-      const resolved = await Deno.realPath(candidate);
-      const info = await Deno.stat(resolved);
+      const resolved = await realpath(candidate);
+      const info = await stat(resolved);
       if (
-        info.isFile &&
-        (Deno.build.os === "windows" || ((info.mode ?? 0) & 0o111) !== 0)
+        info.isFile() &&
+        (process.platform === "win32" || (info.mode & 0o111) !== 0)
       ) return resolved;
     } catch {
       // The exact package may be nested or hoisted; check both layouts.
@@ -459,7 +447,7 @@ export async function codexChatGptProfile(
   if (packageVersion !== CODEX_ACP_VERSION) {
     throw new DomainError("Pinned Codex ACP package version does not match");
   }
-  const adapterEntry = await Deno.realPath(
+  const adapterEntry = await realpath(
     join(packageRoot, "dist", "index.js"),
   );
   const nodePath = await operatorAuthorizedExecutable(
@@ -484,7 +472,12 @@ export async function codexChatGptProfile(
   await ensurePrivateDirectory(isolatedHome);
   await ensurePrivateDirectory(codexHome);
   await ensurePrivateDirectory(cargoHome);
-  await writePrivateNodeShim(runnerBin, nodePath);
+  await writePrivateFile(
+    join(runnerBin, "node"),
+    `#!/bin/sh\nexec ${shellSingleQuote(nodePath)} "$@"\n`,
+    0o700,
+    "Codex ACP private Node shim is unavailable",
+  );
 
   const childPath = [
     runnerBin,
@@ -492,8 +485,14 @@ export async function codexChatGptProfile(
     "/usr/bin",
     "/bin",
   ].join(":");
-  await writePrivateShellProfile(isolatedHome, ".zprofile", childPath);
-  await writePrivateShellProfile(isolatedHome, ".bash_profile", childPath);
+  for (const profileName of [".zprofile", ".bash_profile"]) {
+    await writePrivateFile(
+      join(isolatedHome, profileName),
+      `export PATH=${shellSingleQuote(childPath)}\n`,
+      0o600,
+      "Codex ACP private shell profile is unavailable",
+    );
+  }
   const codexConfig: Record<string, unknown> = {
     model: options.modelName ?? "gpt-5.6-terra",
     model_reasoning_effort: options.reasoningEffort ?? "medium",
@@ -995,10 +994,10 @@ async function resolveWorkspace(
   const selected = workspaceRootForTransport(
     requested,
     authContext.transport,
-  ) ?? input.rootOverride ?? Deno.cwd();
+  ) ?? input.rootOverride ?? process.cwd();
   try {
-    const resolved = await Deno.realPath(selected);
-    if ((await Deno.stat(resolved)).isDirectory) return resolved;
+    const resolved = await realpath(selected);
+    if ((await stat(resolved)).isDirectory()) return resolved;
   } catch {
     // The fixed error below must not disclose the selected host path.
   }
