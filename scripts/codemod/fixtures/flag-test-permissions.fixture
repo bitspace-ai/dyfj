@@ -1,16 +1,25 @@
-# A per-test permissions option belongs to the registration and the lane.
+# A per-test permissions option belongs to the registration and the lane. A
+# permissions key in other data is not flagged.
 rules:
 --- before
+Deno.test("data", () => {
+  const config = { permissions: { level: "strict" } };
+  void config;
+});
 Deno.test({
   name: "needs net",
   permissions: { net: true },
   fn: () => {},
 });
 --- after
+Deno.test("data", () => {
+  const config = { permissions: { level: "strict" } };
+  void config;
+});
 Deno.test({
   name: "needs net",
   permissions: { net: true },
   fn: () => {},
 });
 --- findings
-hand-review test-permissions 3
+hand-review test-permissions 7

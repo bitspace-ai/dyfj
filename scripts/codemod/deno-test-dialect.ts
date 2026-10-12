@@ -1896,6 +1896,35 @@ const hostPass: Pass = (src, ctx) => {
   return outcomes;
 };
 
+const REGISTRATION_CALLEE = new RegExp(
+  `(?:^|[^\\w$.])(?:${HOST}\\.test(?:\\.(?:only|ignore))?|describe|it|test|` +
+    `[\\w$]+\\.step)$`,
+);
+
+/**
+ * Whether `pos` is a key of the options object passed first to a test
+ * registration (`{ name, permissions, ... }`), not a key of other data.
+ */
+function inRegistrationOptions(src: Source, pos: number): boolean {
+  let depth = 0;
+  let open = -1;
+  for (let j = pos - 1; j >= 0 && open < 0; j--) {
+    if (!src.isCode(j)) continue;
+    const c = src.text[j];
+    if (")]}".includes(c)) depth++;
+    else if ("([{".includes(c)) {
+      if (depth === 0) open = c === "{" ? j : -2;
+      else depth--;
+    }
+  }
+  if (open < 0) return false;
+  const paren = prevNonSpace(src.text, open, src.mask);
+  if (src.text[paren] !== "(") return false;
+  return REGISTRATION_CALLEE.test(
+    src.text.slice(lineStart(src.text, paren), paren).trimEnd(),
+  );
+}
+
 /** Registration options that are reviewed by hand; never rewritten. */
 const optionPass: Pass = (src) => {
   const outcomes: Outcome[] = [];
@@ -1909,6 +1938,7 @@ const optionPass: Pass = (src) => {
       if (!src.isCode(pos) || isMember(src, pos)) continue;
       const p = prevNonSpace(src.text, pos, src.mask);
       if (!"{,".includes(src.text[p])) continue;
+      if (!inRegistrationOptions(src, pos)) continue;
       outcomes.push({ pos, flag, reason: FLAGS[flag] });
     }
   }
