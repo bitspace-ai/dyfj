@@ -18,9 +18,12 @@ README are tracked separately in its Revision history section.
   run and the turn kept going. Ctrl-C now answers that approval with `abort`
   and sends `turn/cancel` for the turn the REPL started, then waits for the
   turn to settle and returns to the prompt. `n`, and any other line that is not
-  `y` or `yes`, denies that call. The request text is written after queued
-  input is discarded, so a keystroke typed once the command is on screen is not
-  flushed before the read. Ctrl-D and a lost terminal still deny, with the
+  `y` or `yes`, denies that call. The request text is written and flushed,
+  then queued input is discarded, then the answer is read. A key typed before
+  the request is visible is not the answer. A key typed after the text is
+  shown and before that discard returns is dropped, and the operator retypes.
+  If the text cannot be flushed, the prompt is not read. Ctrl-D and a lost
+  terminal still deny, with the
   reason `approval prompt was not answered`. A `toolCallCompleted` frame with
   `verdict: "approval_denied"` is shown as `⊘ <tool> not approved`, replacing
   the `declined by the operator` rendering in the tool-refusal note under
@@ -477,9 +480,11 @@ README are tracked separately in its Revision history section.
   the request's details go somewhere the answering operator cannot see, so
   redirecting output would collect consent for a command, an amount and a limit
   that were never displayed. A line typed at the terminal while a turn is running does not answer
-  a later prompt either: pending input is discarded first, and if that discard
-  fails the prompt is not read at all and the request is denied, because a
-  warning would not stop the queued keystroke from answering. Approval arguments are shown in full rather than
+  a later prompt either: the request is written and flushed, then pending
+  input is discarded, and the answer is read after that. If showing the
+  request or discarding that input fails, the prompt is not read at all and
+  the request is denied, because a warning would not stop a queued keystroke
+  from answering. Approval arguments are shown in full rather than
   clipped, and control characters are replaced in the runtime-supplied text
   that reaches the terminal — approval titles and arguments, streamed answers,
   receipt text, tool names, error messages and the posture line — so neither

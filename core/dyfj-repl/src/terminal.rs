@@ -17,9 +17,11 @@ use tokio::sync::{mpsc, oneshot};
 pub enum Ask {
     /// The ordinary prompt. History applies.
     Prompt { respond: oneshot::Sender<ReadOutcome> },
-    /// A mid-turn approval question. Input typed before the request is shown
-    /// is discarded, then `preamble` is written and `question` is read. The
-    /// answer never enters history.
+    /// A mid-turn approval question. `preamble` is written and flushed, then
+    /// input still queued is discarded, then `question` is read. A key typed
+    /// before the preamble is visible is not the answer. A key typed after it
+    /// is shown and before the discard returns is dropped, and the operator
+    /// retypes. The answer never enters history.
     Approval {
         preamble: String,
         question: String,
@@ -252,8 +254,28 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                         ));
                         continue;
                     }
-                    // The flush failed on a real terminal, so input typed
-                    // before this request appeared may still be queued and
+                    // Show the request, then discard, then read. Discarding
+                    // first lets a key that arrives between the discard and
+                    // the write become the answer before the operator has
+                    // seen the request. Writing and flushing first closes
+                    // that window. A key typed after the preamble is visible
+                    // and before the discard returns is dropped; the operator
+                    // retypes. The two operations are not atomic, so keeping
+                    // every keystroke would again accept one typed before the
+                    // request was on screen. The question is painted by the
+                    // read below, after the discard.
+                    if !preamble.is_empty() {
+                        print!("{preamble}");
+                        if std::io::stdout().flush().is_err() {
+                            let _ = respond.send(ReadOutcome::Failed(
+                                "could not show the approval request before reading an answer"
+                                    .into(),
+                            ));
+                            continue;
+                        }
+                    }
+                    // The discard failed on a real terminal, so input typed
+                    // before this request was shown may still be queued and
                     // would answer it. Refuse to read; the caller turns a
                     // failure into a denial.
                     if !discard_pending_input() {
@@ -261,16 +283,6 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                             "could not discard input typed before this prompt".into(),
                         ));
                         continue;
-                    }
-                    // Show the request only after the discard. Printing it
-                    // first dropped a keystroke typed once the command was
-                    // visible: the flush took it, and the read then saw an
-                    // empty line or waited. A keystroke in the gap between
-                    // this discard and the write below can still be read; the
-                    // request is not on screen during that gap.
-                    if !preamble.is_empty() {
-                        print!("{preamble}");
-                        let _ = std::io::stdout().flush();
                     }
                     let outcome = read(&mut editor, &question, false);
                     let _ = respond.send(outcome);

@@ -180,8 +180,10 @@ async fn spending(
         return Outcome::Verdict(Verdict::deny("spending request details could not be read"));
     };
 
-    // Shown by the terminal thread after it discards queued input, so a
-    // keystroke typed once this text is visible is the answer.
+    // The terminal thread writes this and flushes it, then discards queued
+    // input, then reads the answer. A key typed before this text is visible
+    // is not the answer. A key typed after it is shown and before the discard
+    // returns is dropped.
     let mut preamble = format!("\n⚠  {}\n", visible(title_of(params)));
     for line in message.lines() {
         preamble.push_str(&format!("   {}\n", visible(line)));
@@ -293,8 +295,8 @@ enum ReadResult {
     Unavailable,
 }
 
-/// Ask the terminal thread for one line. It discards input typed before the
-/// request is shown, then writes `preamble` and reads `question`.
+/// Ask the terminal thread for one line. It writes `preamble` and flushes it,
+/// discards input still queued, then reads `question`.
 async fn read(input: &mpsc::Sender<Ask>, preamble: &str, question: &str) -> ReadResult {
     let (respond, answer) = oneshot::channel();
     let ask = Ask::Approval {
@@ -546,7 +548,7 @@ mod tests {
     }
 
     /// The command travels with the read. The terminal thread writes that text
-    /// after discarding queued input, then takes the line.
+    /// and flushes it, discards queued input, then takes the line.
     #[tokio::test]
     async fn an_n_denies_the_call_whose_command_is_on_that_read() {
         let (tx, mut rx) = mpsc::channel(1);
