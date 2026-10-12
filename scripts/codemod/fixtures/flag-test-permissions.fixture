@@ -1,0 +1,16 @@
+# A per-test permissions option belongs to the registration and the lane.
+rules:
+--- before
+Deno.test({
+  name: "needs net",
+  permissions: { net: true },
+  fn: () => {},
+});
+--- after
+Deno.test({
+  name: "needs net",
+  permissions: { net: true },
+  fn: () => {},
+});
+--- findings
+hand-review test-permissions 3

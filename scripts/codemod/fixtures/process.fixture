@@ -1,0 +1,35 @@
+# Process and environment reads onto node:process.
+rules: process.cwd, process.env, process.exec-path, process.platform, process.pid
+--- before
+Deno.test("process", () => {
+  const cwd = Deno.cwd();
+  const home = Deno.env.get("HOME");
+  const key = "DYFJ_X";
+  // A comment before a statement-level rewrite.
+  Deno.env.set(key, "1");
+  Deno.env.set("DYFJ_Y", "2");
+  Deno.env.delete("DYFJ_Y");
+  const has = Deno.env.has(key);
+  const exe = Deno.execPath();
+  const windows = Deno.build.os === "windows";
+  const pid = Deno.pid;
+  void [cwd, home, has, exe, windows, pid];
+});
+--- after
+import process from "node:process";
+
+Deno.test("process", () => {
+  const cwd = process.cwd();
+  const home = process.env.HOME;
+  const key = "DYFJ_X";
+  // A comment before a statement-level rewrite.
+  process.env[key] = "1";
+  process.env.DYFJ_Y = "2";
+  delete process.env.DYFJ_Y;
+  const has = process.env[key] !== undefined;
+  const exe = process.execPath;
+  const windows = process.platform === "win32";
+  const pid = process.pid;
+  void [cwd, home, has, exe, windows, pid];
+});
+--- findings

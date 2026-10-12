@@ -736,6 +736,8 @@ export function productionLanes(
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
         "scripts/change-scope.test.ts",
+        // Deleted with the test-dialect codemod once decision D32's S2 is done.
+        "scripts/codemod/deno-test-dialect.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the

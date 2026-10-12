@@ -1,0 +1,49 @@
+# Assertions whose node:assert/strict form is a rename of the callee.
+rules: assert.import, assert.ok, assert.equals, assert.strict-equals, assert.not-equals, assert.not-strict-equals, assert.match, assert.not-match, assert.object-match, assert.fail
+--- before
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertNotEquals,
+  assertNotMatch,
+  assertNotStrictEquals,
+  assertObjectMatch,
+  assertStrictEquals,
+  fail,
+} from "@std/assert";
+import { helper } from "./helper.ts";
+
+Deno.test("renames", () => {
+  assert(1 < 2, "ordered");
+  assertEquals({ a: 1 }, { a: 1 });
+  assertStrictEquals(
+    helper(),
+    1,
+  );
+  assertNotEquals([1], [2]);
+  assertNotStrictEquals(1, 2);
+  assertMatch("abc", /b/);
+  assertNotMatch("abc", /z/);
+  assertObjectMatch({ a: 1, b: 2 }, { a: 1 });
+  if (helper() > 1) fail("unreachable");
+});
+--- after
+import assert from "node:assert/strict";
+import { helper } from "./helper.ts";
+
+Deno.test("renames", () => {
+  assert.ok(1 < 2, "ordered");
+  assert.deepStrictEqual({ a: 1 }, { a: 1 });
+  assert.strictEqual(
+    helper(),
+    1,
+  );
+  assert.notDeepStrictEqual([1], [2]);
+  assert.notStrictEqual(1, 2);
+  assert.match("abc", /b/);
+  assert.doesNotMatch("abc", /z/);
+  assert.partialDeepStrictEqual({ a: 1, b: 2 }, { a: 1 });
+  if (helper() > 1) assert.fail("unreachable");
+});
+--- findings

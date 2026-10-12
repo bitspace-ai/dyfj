@@ -1,0 +1,32 @@
+# readDir in a for-of loop becomes readdir with file types; the entry's is*
+# fields become methods inside the loop body. Other forms are left.
+rules: fs.read-dir
+--- before
+Deno.test("readDir", async () => {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir("/tmp")) {
+    if (entry.isFile) names.push(entry.name);
+  }
+  for (const entry of Deno.readDirSync("/tmp")) {
+    if (entry.isDirectory) names.push(entry.name);
+  }
+  const all = [...Deno.readDirSync("/tmp")];
+  void all;
+});
+--- after
+import { readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+
+Deno.test("readDir", async () => {
+  const names: string[] = [];
+  for (const entry of await readdir("/tmp", { withFileTypes: true })) {
+    if (entry.isFile()) names.push(entry.name);
+  }
+  for (const entry of readdirSync("/tmp", { withFileTypes: true })) {
+    if (entry.isDirectory()) names.push(entry.name);
+  }
+  const all = [...Deno.readDirSync("/tmp")];
+  void all;
+});
+--- findings
+unconverted 12

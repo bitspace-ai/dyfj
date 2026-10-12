@@ -1,0 +1,22 @@
+# assertEquals on an Error is left for hand review: deepStrictEqual treats two
+# errors with the same message as equal, while the std assertion does not.
+rules: assert.equals
+--- before
+import { assertEquals } from "@std/assert";
+
+Deno.test("errors", () => {
+  const error = new Error("x");
+  assertEquals(error, new Error("x"));
+  assertEquals(1, 1);
+});
+--- after
+import assert from "node:assert/strict";
+import { assertEquals } from "@std/assert";
+
+Deno.test("errors", () => {
+  const error = new Error("x");
+  assertEquals(error, new Error("x"));
+  assert.deepStrictEqual(1, 1);
+});
+--- findings
+hand-review error-equality 6

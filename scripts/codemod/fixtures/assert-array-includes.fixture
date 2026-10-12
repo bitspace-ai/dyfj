@@ -1,0 +1,38 @@
+# assertArrayIncludes on a literal list of expected items: the assertion names
+# the items that are missing. Primitive items match with includes, other items
+# deeply, as std does. A computed list is left for hand review.
+rules: assert.array-includes
+--- before
+import { assertArrayIncludes } from "@std/assert";
+
+Deno.test("array includes", () => {
+  const stderr = ["a", "b"];
+  const item = { tags: ["x"] };
+  assertArrayIncludes(stderr, ["a"]);
+  assertArrayIncludes(parsed.permissions["serve-unix"].run as string[], [
+    "/bin/kill",
+    "/bin/sleep",
+  ]);
+  assertArrayIncludes(item.tags, ["x"], "tagged");
+  assertArrayIncludes(messages, [{ role: "tool", content: "" }]);
+  assertArrayIncludes(lines(), ["a"]);
+});
+--- after
+import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
+import { assertArrayIncludes } from "@std/assert";
+
+Deno.test("array includes", () => {
+  const stderr = ["a", "b"];
+  const item = { tags: ["x"] };
+  assert.deepStrictEqual(["a"].filter((item) => !stderr.includes(item)), []);
+  assert.deepStrictEqual([
+    "/bin/kill",
+    "/bin/sleep",
+  ].filter((item) => !(parsed.permissions["serve-unix"].run as string[]).includes(item)), []);
+  assert.deepStrictEqual(["x"].filter((entry) => !item.tags.includes(entry)), [], "tagged");
+  assert.deepStrictEqual([{ role: "tool", content: "" }].filter((item) => !messages.some((candidate) => isDeepStrictEqual(candidate, item))), []);
+  assertArrayIncludes(lines(), ["a"]);
+});
+--- findings
+unconverted 15

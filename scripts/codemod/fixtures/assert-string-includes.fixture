@@ -1,0 +1,28 @@
+# assertStringIncludes becomes assert.ok on includes, with a message that names
+# both strings: values for plain names, source text for anything evaluated.
+rules: assert.import, assert.string-includes
+--- before
+import { assertStringIncludes } from "@std/assert";
+
+Deno.test("includes", async () => {
+  const text = "a needle here";
+  const result = { stdout: "out" };
+  const expected = "ou";
+  assertStringIncludes(text, "needle");
+  assertStringIncludes(await read(), "needle", "custom");
+  assertStringIncludes(result.stdout, expected);
+  assertStringIncludes(await read(), `a ${expected}`);
+});
+--- after
+import assert from "node:assert/strict";
+
+Deno.test("includes", async () => {
+  const text = "a needle here";
+  const result = { stdout: "out" };
+  const expected = "ou";
+  assert.ok(text.includes("needle"), `expected ${JSON.stringify(text)} to include "needle"`);
+  assert.ok((await read()).includes("needle"), "custom");
+  assert.ok(result.stdout.includes(expected), `expected ${JSON.stringify(result.stdout)} to include ${JSON.stringify(expected)}`);
+  assert.ok((await read()).includes(`a ${expected}`), `expected await read() to include \`a \${expected}\``);
+});
+--- findings
