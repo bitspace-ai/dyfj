@@ -17,8 +17,9 @@ use tokio::sync::mpsc;
 
 /// The terminal side a command needs: the input reader and the runtime's
 /// message channel, for approvals raised mid-request, and the operator's
-/// Ctrl-C. A command waits on the runtime in cooked mode, as a turn does, so
-/// Ctrl-C arrives as a SIGINT; left unread, it would cancel the next turn.
+/// Ctrl-C. While a command waits on the runtime in cooked mode, Ctrl-C arrives
+/// as a SIGINT; left unread, it would cancel the next turn. During an approval
+/// read it arrives as readline's Interrupted instead.
 pub struct Prompter<'a> {
     pub input: &'a mpsc::Sender<Ask>,
     pub incoming: &'a mut mpsc::Receiver<Incoming>,
@@ -427,6 +428,35 @@ fn find_row<'a>(rows: &'a [Value], slug: Option<&str>) -> Option<&'a Value> {
     slug.and_then(|s| rows.iter().find(|r| str_field(r, "slug") == s))
 }
 
+/// Printed once when a command's approvals are abandoned. Later approvals of
+/// that command are denied without asking and without printing this again.
+fn note_approvals_abandoned() {
+    // The count is test-only. The notice goes to stderr, which other tests
+    // write too, so capturing the process stream would not be this command's
+    // own output. `#[tokio::test]` polls the command on the test thread.
+    #[cfg(test)]
+    ABANDON_NOTICES.with(|notices| notices.set(notices.get() + 1));
+    eprintln!(
+        "\ninterrupted: denying anything it asks to approve, \
+         and waiting for the runtime to settle it"
+    );
+}
+
+#[cfg(test)]
+thread_local! {
+    static ABANDON_NOTICES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_abandon_notices() {
+    ABANDON_NOTICES.with(|notices| notices.set(0));
+}
+
+#[cfg(test)]
+fn abandon_notices() -> usize {
+    ABANDON_NOTICES.with(|notices| notices.get())
+}
+
 /// Answer approvals the runtime raises while `method` is in flight. A
 /// `friction/post` write can need the operator's verdict before the runtime
 /// answers, and nothing else reads the channel between turns.
@@ -457,10 +487,7 @@ async fn request_answering_approvals(
             Some(()) = prompter.interrupts.recv() => {
                 if !abandoned {
                     abandoned = true;
-                    eprintln!(
-                        "\ninterrupted: denying anything it asks to approve, \
-                         and waiting for the runtime to settle it"
-                    );
+                    note_approvals_abandoned();
                 }
             }
             message = prompter.incoming.recv() => match message {
@@ -468,8 +495,21 @@ async fn request_answering_approvals(
                     let _ = respond.send(Verdict::deny("operator interrupted the command"));
                 }
                 Some(Incoming::Approval { params, respond }) => {
-                    let verdict = approval::ask(prompter.input, &params).await;
-                    let _ = respond.send(verdict);
+                    match approval::ask(prompter.input, &params).await {
+                        approval::Outcome::Verdict(verdict) => {
+                            let _ = respond.send(verdict);
+                        }
+                        // No turn is running, so Ctrl-C cannot cancel one. Deny
+                        // this approval and the ones that follow, as a SIGINT
+                        // while the command waits does.
+                        approval::Outcome::Cancelled => {
+                            if !abandoned {
+                                abandoned = true;
+                                note_approvals_abandoned();
+                            }
+                            let _ = respond.send(Verdict::deny("operator interrupted the command"));
+                        }
+                    }
                 }
                 // No turn is running, so a stray frame has nothing to render into.
                 Some(Incoming::Stream(_)) => {}
@@ -1412,6 +1452,116 @@ mod run_tests {
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert_eq!(seen[1]["id"], "a1");
         assert_eq!(seen[1]["result"]["decision"], "deny", "the terminal said y; Ctrl-C wins");
+    }
+
+    /// Ctrl-C at `/friction`'s approval prompt is readline's interrupt, not a
+    /// SIGINT on the channel. That approval is denied, and so is every later
+    /// approval of the same post, without a second prompt. The notice prints
+    /// once. Nothing is left on the interrupt channel, so the next command
+    /// still asks and can be approved.
+    #[tokio::test]
+    async fn ctrl_c_during_a_friction_approval_denies_the_rest_of_that_command() {
+        let (client_side, server_side) = UnixStream::pair().unwrap();
+        let (client, mut incoming) = Client::over(client_side);
+        let log = Log::default();
+        let seen = Arc::clone(&log);
+        let server = tokio::spawn(async move {
+            let (read, mut write) = server_side.into_split();
+            let mut lines = BufReader::new(read).lines();
+            let mut posts = 0usize;
+            let mut approval_id = 0usize;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let msg: Value = serde_json::from_str(&line).unwrap();
+                let method = msg["method"].as_str().unwrap_or("").to_string();
+                seen.lock().unwrap().push(msg.clone());
+                if method == "friction/post" {
+                    posts += 1;
+                    let approvals = if posts == 1 { 2 } else { 1 };
+                    for _ in 0..approvals {
+                        approval_id += 1;
+                        let ask = json!({
+                            "jsonrpc": "2.0",
+                            "id": format!("a{approval_id}"),
+                            "method": "approval",
+                            "params": {"commandId": "linear", "title": "Post a Linear comment"}
+                        });
+                        write.write_all(format!("{ask}\n").as_bytes()).await.unwrap();
+                        let verdict = lines.next_line().await.unwrap().unwrap();
+                        seen.lock().unwrap().push(serde_json::from_str(&verdict).unwrap());
+                    }
+                }
+                let result = catalog(&method, &msg["params"]);
+                let reply = json!({"jsonrpc": "2.0", "id": msg["id"], "result": result});
+                write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            }
+        });
+
+        let asks = Arc::new(Mutex::new(0usize));
+        let asked = Arc::clone(&asks);
+        let (input, mut input_rx) = mpsc::channel::<Ask>(4);
+        tokio::spawn(async move {
+            while let Some(ask) = input_rx.recv().await {
+                let n = {
+                    let mut count = asked.lock().unwrap();
+                    *count += 1;
+                    *count
+                };
+                let (Ask::Prompt { respond } | Ask::Approval { respond, .. }) = ask;
+                let outcome = if n == 1 {
+                    ReadOutcome::Interrupted
+                } else {
+                    ReadOutcome::Line("y".into())
+                };
+                let _ = respond.send(outcome);
+            }
+        });
+
+        let (_interrupt, mut interrupts) = mpsc::channel(4);
+        let mut session = Session { id: Some("S1".into()), ..Session::default() };
+        let friction = || Command::Friction {
+            severity: "minor".into(),
+            escaped: false,
+            text: "paste lost".into(),
+        };
+
+        super::reset_abandon_notices();
+        run(
+            friction(),
+            &client,
+            &mut session,
+            Prompter { input: &input, incoming: &mut incoming, interrupts: &mut interrupts },
+        )
+        .await;
+        assert_eq!(super::abandon_notices(), 1, "the interrupted notice prints once");
+        assert!(interrupts.try_recv().is_err(), "the interrupt stayed on the channel");
+
+        run(
+            friction(),
+            &client,
+            &mut session,
+            Prompter { input: &input, incoming: &mut incoming, interrupts: &mut interrupts },
+        )
+        .await;
+        assert_eq!(super::abandon_notices(), 1, "the next command must not repeat the notice");
+        assert!(interrupts.try_recv().is_err(), "an interrupt carried into the next command");
+        assert_eq!(
+            *asks.lock().unwrap(),
+            2,
+            "the interrupted post asks once; its later approval is denied without a prompt"
+        );
+
+        server.abort();
+        drop(client);
+        let seen = log.lock().unwrap().clone();
+        assert_eq!(seen.len(), 5, "{seen:?}");
+        for verdict in [&seen[1], &seen[2]] {
+            assert_eq!(verdict["result"]["decision"], "deny", "{verdict}");
+            assert_eq!(verdict["result"]["reason"], "operator interrupted the command", "{verdict}");
+        }
+        assert_eq!(seen[1]["id"], "a1");
+        assert_eq!(seen[2]["id"], "a2");
+        assert_eq!(seen[4]["id"], "a3");
+        assert_eq!(seen[4]["result"]["decision"], "approve", "the next command was asked and approved");
     }
 
     /// Ctrl-C during `/idea mark` does not abandon the write: the request

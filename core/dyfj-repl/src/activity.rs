@@ -43,12 +43,13 @@ pub fn describe(event: &Value) -> Option<String> {
         }
         "toolCallCompleted" => {
             let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
-            // A call the operator refused never ran. It is shown as a
-            // refusal, not as a failed command, and without a duration: the
-            // time on it is the operator's deliberation, not execution.
+            // The call was not approved, so it did not run. The frame does
+            // not say whether the operator declined or the prompt produced no
+            // decision, so this line claims neither. No duration: the time on
+            // it is the wait, not execution.
             if event.get("verdict").and_then(Value::as_str) == Some("approval_denied") {
                 return Some(format!(
-                    "  ⊘ {} declined by the operator",
+                    "  ⊘ {} not approved",
                     crate::approval::visible(name)
                 ));
             }
@@ -160,17 +161,18 @@ mod tests {
         );
     }
 
-    /// A call the operator refused did not run: it is a refusal, not a failed
-    /// command, and its duration is the approval wait, so none is shown.
+    /// A call that was not approved did not run. The line does not say the
+    /// operator declined: a failed prompt carries the same verdict. No
+    /// duration, because the time on it is the wait.
     #[test]
-    fn renders_a_refused_call_as_a_refusal() {
+    fn renders_an_unapproved_call_as_not_approved() {
         assert_eq!(
             describe(&json!({
                 "type": "toolCallCompleted", "commandId": "bash",
                 "isError": true, "durationMs": 163376, "verdict": "approval_denied"
             }))
             .as_deref(),
-            Some("  ⊘ bash declined by the operator")
+            Some("  ⊘ bash not approved")
         );
     }
 

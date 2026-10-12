@@ -8,6 +8,7 @@
 use anyhow::Result;
 use rustyline::DefaultEditor;
 use rustyline::error::ReadlineError;
+use std::io::Write;
 use std::sync::OnceLock;
 use std::sync::mpsc as std_mpsc;
 use tokio::sync::{mpsc, oneshot};
@@ -16,18 +17,24 @@ use tokio::sync::{mpsc, oneshot};
 pub enum Ask {
     /// The ordinary prompt. History applies.
     Prompt { respond: oneshot::Sender<ReadOutcome> },
-    /// A mid-turn approval question. Input typed before this point is
-    /// discarded first, and the answer never enters history.
-    Approval { question: String, respond: oneshot::Sender<ReadOutcome> },
+    /// A mid-turn approval question. `preamble` is written and flushed, then
+    /// input still queued is discarded, then `question` is read. A key typed
+    /// before the preamble is visible is not the answer. A key typed after it
+    /// is shown and before the discard returns is dropped, and the operator
+    /// retypes. The answer never enters history.
+    Approval {
+        preamble: String,
+        question: String,
+        respond: oneshot::Sender<ReadOutcome>,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub enum ReadOutcome {
     Line(String),
-    /// Ctrl-C. At the ordinary prompt this clears the line. Inside an approval
-    /// read it denies that approval and does not cancel the turn — turn
-    /// cancellation is the SIGINT the main loop catches while no read is
-    /// active, which is a different path.
+    /// Ctrl-C. At the ordinary prompt this clears the line. During an approval
+    /// read, rustyline has cleared ISIG, so this is the turn's Ctrl-C: the
+    /// caller cancels the turn. It is not an answer to the question.
     Interrupted,
     /// Ctrl-D on an empty buffer.
     Eof,
@@ -232,7 +239,7 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                     let outcome = read(&mut editor, "dyfj> ", true);
                     let _ = respond.send(outcome);
                 }
-                Ask::Approval { question, respond } => {
+                Ask::Approval { preamble, question, respond } => {
                     // Consent requires an operator who can see the request.
                     // An earlier version treated a pipe as "nothing to flush,
                     // therefore safe" and read anyway; a later one checked the
@@ -247,8 +254,28 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                         ));
                         continue;
                     }
-                    // The flush failed on a real terminal, so input typed
-                    // before this request appeared may still be queued and
+                    // Show the request, then discard, then read. Discarding
+                    // first lets a key that arrives between the discard and
+                    // the write become the answer before the operator has
+                    // seen the request. Writing and flushing first closes
+                    // that window. A key typed after the preamble is visible
+                    // and before the discard returns is dropped; the operator
+                    // retypes. The two operations are not atomic, so keeping
+                    // every keystroke would again accept one typed before the
+                    // request was on screen. The question is painted by the
+                    // read below, after the discard.
+                    if !preamble.is_empty() {
+                        print!("{preamble}");
+                        if std::io::stdout().flush().is_err() {
+                            let _ = respond.send(ReadOutcome::Failed(
+                                "could not show the approval request before reading an answer"
+                                    .into(),
+                            ));
+                            continue;
+                        }
+                    }
+                    // The discard failed on a real terminal, so input typed
+                    // before this request was shown may still be queued and
                     // would answer it. Refuse to read; the caller turns a
                     // failure into a denial.
                     if !discard_pending_input() {

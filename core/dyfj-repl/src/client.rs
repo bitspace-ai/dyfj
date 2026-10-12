@@ -63,6 +63,11 @@ impl Verdict {
     pub fn deny(reason: impl Into<String>) -> Self {
         Verdict::Decision { decision: "deny", reason: Some(reason.into()) }
     }
+    /// Ctrl-C at the approval prompt. The runtime treats `abort` as an
+    /// interrupted approval and stops the turn. It is not a denial.
+    pub fn abort() -> Self {
+        Verdict::Decision { decision: "abort", reason: None }
+    }
     pub fn select(option_id: impl Into<String>) -> Self {
         Verdict::Select { decision: "select", option_id: option_id.into() }
     }
