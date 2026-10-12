@@ -909,46 +909,49 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       const nodePath = `${root}/node`;
       await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
       await Deno.chmod(nodePath, 0o700);
-      const originalMakeTempFile = Deno.makeTempFile.bind(Deno);
-      // Each queued "reject" fails one makeTempFile call; any other call goes
-      // to the real implementation.
-      const plan: Array<"original" | "reject"> = [];
-      const makeTempFile = stub(
-        Deno,
-        "makeTempFile",
-        (options?: Deno.MakeTempOptions) =>
-          plan.shift() === "reject"
-            ? Promise.reject(new Error("private path leaked"))
-            : originalMakeTempFile(options),
+      // A non-empty directory squatting on a final name makes the rename
+      // fail after the temporary is written: the fixed diagnostic must not
+      // disclose the path, and the temporary must not be left behind.
+      const runnerRoot = `${home}/.dyfj/runner-homes/codex-chatgpt`;
+      const leftovers = async (directory: string, prefix: string) => {
+        const names: string[] = [];
+        for await (const entry of Deno.readDir(directory)) {
+          if (entry.name.startsWith(prefix)) names.push(entry.name);
+        }
+        return names;
+      };
+      await Deno.mkdir(`${runnerRoot}/bin/node/occupied`, {
+        recursive: true,
+        mode: 0o700,
+      });
+      await assertRejects(
+        () =>
+          codexChatGptProfile(Deno.cwd(), {
+            home,
+            prototypeRoot: root,
+            nodePath,
+          }),
+        Error,
+        "Codex ACP private Node shim is unavailable",
       );
-      try {
-        plan.push("reject");
-        await assertRejects(
-          () =>
-            codexChatGptProfile(Deno.cwd(), {
-              home,
-              prototypeRoot: root,
-              nodePath,
-            }),
-          Error,
-          "Codex ACP private Node shim is unavailable",
-        );
+      assertEquals(await leftovers(`${runnerRoot}/bin`, "node-"), []);
 
-        plan.length = 0;
-        plan.push("original", "reject");
-        await assertRejects(
-          () =>
-            codexChatGptProfile(Deno.cwd(), {
-              home,
-              prototypeRoot: root,
-              nodePath,
-            }),
-          Error,
-          "Codex ACP private shell profile is unavailable",
-        );
-      } finally {
-        makeTempFile.restore();
-      }
+      await Deno.remove(`${runnerRoot}/bin/node`, { recursive: true });
+      await Deno.mkdir(`${runnerRoot}/home/.zprofile/occupied`, {
+        recursive: true,
+        mode: 0o700,
+      });
+      await assertRejects(
+        () =>
+          codexChatGptProfile(Deno.cwd(), {
+            home,
+            prototypeRoot: root,
+            nodePath,
+          }),
+        Error,
+        "Codex ACP private shell profile is unavailable",
+      );
+      assertEquals(await leftovers(`${runnerRoot}/home`, ".zprofile-"), []);
     } finally {
       await Deno.remove(root, { recursive: true });
     }

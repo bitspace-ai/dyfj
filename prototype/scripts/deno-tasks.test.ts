@@ -40,8 +40,11 @@ describe("runtime lifecycle commands", () => {
     assertMatch(tasks["serve-unix"], /^deno run --no-prompt /);
     assertFalse(tasks["serve-unix"].includes("/bin/sh"));
     assertFalse(tasks["serve-unix"].includes("DYFJ_NODE_PATH"));
+    // /bin/sleep: the ACP runner's process-group probe child
+    // (`processGroupProbeArgv` in `src/acp-client.ts`).
     assertArrayIncludes(parsed.permissions["serve-unix"].run as string[], [
       "/bin/kill",
+      "/bin/sleep",
     ]);
     // networkInterfaces: the DNS adapter reads the system's default
     // nameservers before each lookup (`src/tools/web/dns.ts`).

@@ -150,6 +150,26 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The ACP runners run on `node:` builtins, and the `serve-unix` profile
+  grants `/bin/sleep`.** Part of the move of the TypeScript tier to Node.js
+  (decision D32). Before it spawns an agent, the runner checks that
+  `/bin/kill` can signal a negative process group by probing an inert child in
+  its own group. That child was the runtime itself running an `eval` script,
+  an argv only one runtime accepts; it is now `/bin/sleep 30`, which exits on
+  its own if the runtime dies mid-probe. The `serve-unix` spawn grant, and so
+  `dyfj start`, and the integration lane's run flags now name `/bin/sleep`;
+  without it the probe fails closed with "ACP process-group signaling is
+  unavailable", as before. The `/bin/kill` signaler spawns through
+  `node:child_process`; a signaler that cannot start now fails with the fixed
+  "ACP process-group signaling failed" diagnostic instead of the raw spawn
+  error. The Codex profile's executable, directory and ownership checks use
+  `node:fs/promises` and `process.getuid()`, and its private shim and shell
+  profiles are written to an exclusively created random sibling (`wx`, mode
+  `0600`) before the rename, as before with no existing file followed. The
+  fixture profile starts the fixture agent with `process.execPath` and keeps
+  the current runtime's `run --cached-only` argv until the fixture agent moves
+  onto Node. `runtime.neutral` drops by the two files' 51 references; the
+  lane's totals are in the pull request.
 - **The web tools' DNS lookups go through a `node:dns` `Resolver`, and the
   `serve-unix` profile grants `sys` `networkInterfaces`.** Part of the move of
   the TypeScript tier to Node.js (decision D32). The `DnsResolver` port's real

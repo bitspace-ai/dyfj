@@ -232,6 +232,18 @@ describe("runAcpAgent", () => {
     }
   });
 
+  it("maps a signaler that cannot start to the fixed diagnostic", async () => {
+    const error = await assertRejectsWithFields(
+      runSignalCommand(
+        ["-0", "--", "-1"],
+        500,
+        "/private/tmp/dyfj-process-group-signaler-does-not-exist",
+      ),
+      { phase: "terminate" },
+    );
+    assertStrictEquals(error.message, "ACP process-group signaling failed");
+  });
+
   it("distinguishes an absent process group from a signaling failure", async () => {
     assertStrictEquals(
       await runSignalCommand(

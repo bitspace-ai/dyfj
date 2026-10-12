@@ -19,7 +19,12 @@ import {
   type ExternalAgentCostBasis,
 } from "./contract/mod.ts";
 import { isAbsolute, win32 } from "node:path";
-import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import {
+  type ChildProcessByStdio,
+  type ChildProcessWithoutNullStreams,
+  spawn,
+} from "node:child_process";
+import process from "node:process";
 import { Readable, Writable } from "node:stream";
 
 export type AcpAuthenticationType =
@@ -360,22 +365,28 @@ export async function runSignalCommand(
   timeoutMs: number,
   command = "/bin/kill",
 ): Promise<boolean> {
-  const signaler = new Deno.Command(command, {
-    args,
-    stdout: "null",
-    stderr: "piped",
-    env: { LC_ALL: "C" },
-  }).spawn();
-  const diagnostic = collectBoundedReadable(signaler.stderr, 256);
-  const result = Promise.all([signaler.status, diagnostic.done]);
-  void result.catch(() => {});
+  const unavailable = () =>
+    new AcpRunnerError("ACP process-group signaling failed", "terminate");
+  let signaler: ChildProcessByStdio<null, null, Readable>;
   try {
-    const [status, detail] = await withTimeout(
-      result,
-      timeoutMs,
-      "terminate",
-    );
-    if (status.success) return true;
+    signaler = spawn(command, args, {
+      stdio: ["ignore", "ignore", "pipe"],
+      env: { LC_ALL: "C" },
+    });
+  } catch {
+    throw unavailable();
+  }
+  const diagnostic = collectBoundedStderr(signaler.stderr, 256);
+  // A command that cannot start arrives as an `error` event, not a throw.
+  const closed = new Promise<number | null>((resolve, reject) => {
+    signaler.once("error", () => reject(unavailable()));
+    signaler.once("close", (code) => resolve(code));
+  });
+  void closed.catch(() => {});
+  try {
+    const code = await withTimeout(closed, timeoutMs, "terminate");
+    if (code === 0) return true;
+    const detail = diagnostic.text();
     if (detail.includes("No such process")) return false;
     const summary = detail.trim().slice(0, 256);
     throw new AcpRunnerError(
@@ -390,59 +401,40 @@ export async function runSignalCommand(
     } catch {
       // The signal command may have exited at the timeout boundary.
     }
-    await withTimeout(
-      diagnostic.cancel(),
-      timeoutMs,
-      "terminate",
-    ).catch(() => {});
+    diagnostic.cancel();
     throw error;
   }
 }
 
-function collectBoundedReadable(
-  stream: ReadableStream<Uint8Array>,
+function collectBoundedStderr(
+  stream: Readable,
   maxBytes: number,
-): { done: Promise<string>; cancel: () => Promise<void> } {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+): { text: () => string; cancel: () => void } {
+  const decoder = new TextDecoder();
+  let detail = "";
   let bytes = 0;
-  let cancelled = false;
-  const cancel = async () => {
-    if (cancelled) return;
-    cancelled = true;
-    await reader.cancel().catch(() => {});
+  const cancel = () => {
+    stream.on("error", () => {});
+    stream.destroy();
   };
-  const done = (async () => {
-    try {
-      while (bytes < maxBytes) {
-        const result = await reader.read();
-        if (result.done) break;
-        const remaining = maxBytes - bytes;
-        const chunk = result.value.subarray(0, remaining);
-        chunks.push(chunk);
-        bytes += chunk.byteLength;
-        if (result.value.byteLength > remaining || bytes === maxBytes) {
-          await cancel();
-        }
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const collected = new Uint8Array(bytes);
-    let offset = 0;
-    for (const chunk of chunks) {
-      collected.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return new TextDecoder().decode(collected);
-  })();
-  return { done, cancel };
+  stream.on("data", (chunk: Uint8Array) => {
+    const remaining = maxBytes - bytes;
+    if (remaining <= 0) return;
+    const kept = chunk.subarray(0, remaining);
+    detail += decoder.decode(kept, { stream: true });
+    bytes += kept.byteLength;
+    if (chunk.byteLength >= remaining) cancel();
+  });
+  return {
+    text: () => detail + decoder.decode(),
+    cancel,
+  };
 }
 
 async function spawnAcpChild(
   profile: AcpExecutionProfile,
 ): Promise<ManagedAcpChild> {
-  const useProcessGroup = Deno.build.os !== "windows";
+  const useProcessGroup = process.platform !== "win32";
   if (!useProcessGroup && profile.slug === "codex-chatgpt") {
     throw new AcpRunnerError(
       "ACP process-group containment is unavailable on this platform",
@@ -551,19 +543,21 @@ function cancellableStdout(stdout: Readable): ReadableStream<Uint8Array> {
   });
 }
 
-export function processGroupSignalerEvalSource(): string {
-  return "const p=Deno.ppid;setInterval(()=>{if(Deno.ppid===1||Deno.ppid!==p)Deno.exit(1)},200);setInterval(()=>{},6e4)";
-}
-
-export function processGroupSignalerEvalArgs(): string[] {
-  return ["eval", processGroupSignalerEvalSource()];
+/**
+ * The inert child the process-group probe starts in its own group. It is a
+ * system binary rather than the runtime itself, so the probe needs no runtime
+ * flags, and it exits on its own if the runtime dies mid-probe.
+ */
+export function processGroupProbeArgv(): [string, ...string[]] {
+  return ["/bin/sleep", "30"];
 }
 
 export async function assertProcessGroupSignaler(
   command = "/bin/kill",
   timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
 ): Promise<void> {
-  const probe = spawn(Deno.execPath(), processGroupSignalerEvalArgs(), {
+  const [probeCommand, ...probeArgs] = processGroupProbeArgv();
+  const probe = spawn(probeCommand, probeArgs, {
     detached: true,
     env: {},
     stdio: ["ignore", "ignore", "ignore"],
@@ -643,13 +637,13 @@ function assertProfile(profile: AcpExecutionProfile): void {
   }
   if (
     !isAbsolute(profile.command) &&
-    !(Deno.build.os === "windows" && win32.isAbsolute(profile.command))
+    !(process.platform === "win32" && win32.isAbsolute(profile.command))
   ) {
     throw new AcpRunnerError("ACP profile command must be absolute", "spawn");
   }
   if (
     !isAbsolute(profile.workspace) &&
-    !(Deno.build.os === "windows" && win32.isAbsolute(profile.workspace))
+    !(process.platform === "win32" && win32.isAbsolute(profile.workspace))
   ) {
     throw new AcpRunnerError("ACP workspace must be absolute", "session");
   }
