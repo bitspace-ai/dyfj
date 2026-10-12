@@ -1126,7 +1126,8 @@ const assertionPass: Pass = (src, ctx) =>
     if (call.typeArgs) {
       return { pos, reason: `@std/assert ${symbol} with type arguments` };
     }
-    return convertAssertion(src, ctx, symbol, call);
+    return unusable(ctx, pos, "assert", "node:assert/strict") ??
+      convertAssertion(src, ctx, symbol, call);
   });
 
 // Mocks ----------------------------------------------------------------------
@@ -1156,6 +1157,8 @@ function convertMock(
     if (heldByUsing(src.text, pos)) {
       return { pos, flag: "using-mock", reason: FLAGS["using-mock"] };
     }
+    const blocked = unusable(ctx, pos, "mock", "node:test");
+    if (blocked) return blocked;
     if (symbol === "spy" && args.length <= 1) {
       return renameCallee(call, "mock.spy", "mock.fn", ["mock"]);
     }
@@ -1179,6 +1182,9 @@ function convertMock(
     return { pos, reason: `${symbol} with unexpected arguments` };
   }
   const target = args[0]?.text ?? "";
+  const blocked = unusable(ctx, pos, "assert", "node:assert/strict") ??
+    unusable(ctx, pos, "mock", "node:test");
+  if (blocked) return blocked;
   if (ctx.heldSpies.has(target)) {
     return {
       pos,
@@ -1260,6 +1266,8 @@ const mockPass: Pass = (src, ctx) =>
 /** `s.restore()` and `s.calls` on names bound to a converted spy or stub. */
 const spyMemberPass: Pass = (src, ctx) => {
   const outcomes: Outcome[] = [];
+  // The spies stay std ones when `mock` cannot be imported; so do their reads.
+  const blocked = !canUse(ctx, "mock", "node:test");
   for (const name of ctx.spies) {
     for (const pos of occurrences(src, name)) {
       const dot = nextNonSpace(src.text, pos + name.length);
@@ -1268,6 +1276,13 @@ const spyMemberPass: Pass = (src, ctx) => {
       if (!member) continue;
       const memberStart = dot + member[0].length - member[1].length;
       const memberEnd = dot + member[0].length;
+      if (blocked && (member[1] === "restore" || member[1] === "calls")) {
+        outcomes.push({
+          pos,
+          reason: "`mock` is already bound in this file; convert by hand",
+        });
+        continue;
+      }
       if (member[1] === "restore") {
         outcomes.push({
           pos,
