@@ -778,6 +778,9 @@ function insideImport(imports: ImportDecl[], pos: number): boolean {
   return imports.some((decl) => pos >= decl.start && pos < decl.end);
 }
 
+/** Names the rewrites import as a module's default export. */
+const DEFAULT_IMPORTS = new Set(["assert", "process"]);
+
 /**
  * Whether `name` may be imported from `module` without shadowing anything:
  * it is already imported from there, or the original file never uses it.
@@ -792,7 +795,14 @@ function canUse(ctx: Context, name: string, module: string): boolean {
     (decl.named ?? []).some((n) => n.local === name)
   );
   if (binder !== undefined) {
-    usable = binder.spec === module ||
+    // Reused only in the shape the rewrite emits: a default import for
+    // `assert` and `process`, an unaliased named import for the rest.
+    const shaped = DEFAULT_IMPORTS.has(name)
+      ? binder.defaultName === name
+      : (binder.named ?? []).some((n) =>
+        n.local === name && n.imported === name && !n.type
+      );
+    usable = (binder.spec === module && !binder.typeOnly && shaped) ||
       (name === "assert" && ctx.stdAssert.get("assert") === "assert");
   } else {
     const uses = occurrences(ctx.original, name).filter((pos) =>
