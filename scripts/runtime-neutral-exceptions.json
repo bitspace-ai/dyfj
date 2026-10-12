@@ -755,11 +755,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/web/dns.ts",
-    "count": 7,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/transport/jsonrpc-peer.integration.test.ts",
     "count": 4,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
