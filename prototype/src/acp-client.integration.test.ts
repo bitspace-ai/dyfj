@@ -214,6 +214,18 @@ describe("runAcpAgent", () => {
     );
   });
 
+  it("maps a probe child that cannot start to the fixed diagnostic", async () => {
+    // A NUL in the command makes the spawn throw synchronously.
+    const error = await assertRejectsWithFields(
+      assertProcessGroupSignaler("/bin/kill", 500, ["/bin/sle\0ep", "30"]),
+      { phase: "spawn" },
+    );
+    assertStrictEquals(
+      error.message,
+      "ACP process-group signaling is unavailable on this platform",
+    );
+  });
+
   it("rejects a signaler that cannot address a negative process group", async () => {
     const signaler = await tempPath();
     try {

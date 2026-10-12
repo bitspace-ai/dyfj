@@ -2043,3 +2043,6 @@ Document revisions only. Code and behavior changes are tracked in
   grant the `serve-unix` profile gives the engine's DNS lookups, and
   `specs/01-architecture.md` §5.6 names the `node:dns` `Resolver` as the
   `DnsResolver` port's real adapter.
+- 2026-10-12 - The `--runner codex-chatgpt` and ACP containment passages name
+  `/bin/sleep` as the process-group probe child and its place beside
+  `/bin/kill` in the `serve-unix` spawn grant.

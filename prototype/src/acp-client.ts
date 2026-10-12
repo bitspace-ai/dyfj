@@ -555,13 +555,25 @@ export function processGroupProbeArgv(): [string, ...string[]] {
 export async function assertProcessGroupSignaler(
   command = "/bin/kill",
   timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
+  probeArgv = processGroupProbeArgv(),
 ): Promise<void> {
-  const [probeCommand, ...probeArgs] = processGroupProbeArgv();
-  const probe = spawn(probeCommand, probeArgs, {
-    detached: true,
-    env: {},
-    stdio: ["ignore", "ignore", "ignore"],
-  });
+  const unavailable = () =>
+    new AcpRunnerError(
+      "ACP process-group signaling is unavailable on this platform",
+      "spawn",
+    );
+  const [probeCommand, ...probeArgs] = probeArgv;
+  let probe: ReturnType<typeof spawn>;
+  try {
+    // A child that cannot start may throw here or arrive as an `error` event.
+    probe = spawn(probeCommand, probeArgs, {
+      detached: true,
+      env: {},
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+  } catch {
+    throw unavailable();
+  }
   const probeStatus = new Promise<void>((resolve) => {
     probe.once("exit", () => resolve());
     probe.once("error", () => resolve());
@@ -578,22 +590,14 @@ export async function assertProcessGroupSignaler(
       throw new Error("signal probe failed");
     }
   } catch {
-    throw new AcpRunnerError(
-      "ACP process-group signaling is unavailable on this platform",
-      "spawn",
-    );
+    throw unavailable();
   } finally {
     try {
       probe.kill("SIGKILL");
     } catch {
       // The inert probe exited while its capability check was running.
     }
-    if (!(await settlesWithin(probeStatus, timeoutMs))) {
-      throw new AcpRunnerError(
-        "ACP process-group signaling is unavailable on this platform",
-        "spawn",
-      );
-    }
+    if (!(await settlesWithin(probeStatus, timeoutMs))) throw unavailable();
   }
 }
 
