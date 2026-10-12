@@ -71,12 +71,13 @@ describe("loadAskRepoContext", () => {
         path.join(outsideRoot, "workbench-mvp-loop.md"),
         "outside instructions must not load\n",
       );
+      // An explicit environment, so the spawn reads none from the process.
       const linked = spawnSync("ln", [
         "-s",
         "--",
         outsideRoot,
         path.join(selectedRoot, "notes"),
-      ]);
+      ], { env: {} });
       assert.ifError(linked.error);
       assert.strictEqual(linked.status, 0);
 
