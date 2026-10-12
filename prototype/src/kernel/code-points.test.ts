@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { takeCodePointPrefix } from "./code-points.ts";
 
 Deno.test("takeCodePointPrefix stops the iterator at the configured code-point budget", () => {
@@ -9,16 +9,19 @@ Deno.test("takeCodePointPrefix stops the iterator at the configured code-point b
       yield "A";
     }
   }
-  assertEquals(takeCodePointPrefix(gated(), 256).join(""), "A".repeat(256));
-  assertEquals(yielded, 256);
+  assert.deepStrictEqual(
+    takeCodePointPrefix(gated(), 256).join(""),
+    "A".repeat(256),
+  );
+  assert.deepStrictEqual(yielded, 256);
 });
 
 Deno.test("takeCodePointPrefix counts code points, not UTF-16 code units", () => {
-  assertEquals(takeCodePointPrefix("😀😀😀", 2), ["😀", "😀"]);
+  assert.deepStrictEqual(takeCodePointPrefix("😀😀😀", 2), ["😀", "😀"]);
 });
 
 Deno.test("takeCodePointPrefix returns everything when the source is shorter", () => {
-  assertEquals(takeCodePointPrefix("ab", 5), ["a", "b"]);
+  assert.deepStrictEqual(takeCodePointPrefix("ab", 5), ["a", "b"]);
 });
 
 Deno.test("takeCodePointPrefix returns nothing for a non-positive limit", () => {
@@ -27,7 +30,7 @@ Deno.test("takeCodePointPrefix returns nothing for a non-positive limit", () => 
     pulled = true;
     yield "A";
   }
-  assertEquals(takeCodePointPrefix(source(), 0), []);
-  assertEquals(takeCodePointPrefix("abc", -1), []);
-  assertEquals(pulled, false);
+  assert.deepStrictEqual(takeCodePointPrefix(source(), 0), []);
+  assert.deepStrictEqual(takeCodePointPrefix("abc", -1), []);
+  assert.deepStrictEqual(pulled, false);
 });

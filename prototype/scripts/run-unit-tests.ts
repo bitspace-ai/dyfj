@@ -4,7 +4,8 @@
 // `deno test --parallel`. Unit and component
 // tests may use port fakes and temp directories only, so the child gets read
 // access to the prototype and the temp roots, write access to the temp roots,
-// and no run, net, env, sys, or ffi grant. Sanitizers are on: in the pinned
+// env access to TMPDIR, TMP and TEMP only (node:os `tmpdir()` reads them),
+// and no run, net, sys, or ffi grant. Sanitizers are on: in the pinned
 // Deno (2.9.6) the op and resource sanitizers are opt-in, so the lane enables
 // them explicitly, and a test that leaks an async op, timer, or resource fails
 // at that test. A test may opt out only with a comment naming the leak and why
@@ -45,6 +46,7 @@ export function unitTestArgs(
     "--no-prompt",
     `--allow-read=.,${temp}`,
     `--allow-write=${temp}`,
+    "--allow-env=TMPDIR,TMP,TEMP",
     ...(filter === undefined ? [] : ["--filter", filter]),
     ...files,
   ];

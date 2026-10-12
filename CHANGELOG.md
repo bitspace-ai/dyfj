@@ -150,6 +150,18 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The unit test lane (`test.unit`) may read `TMPDIR`, `TMP` and `TEMP`.**
+  Part of the move of the TypeScript tier to Node.js (decision D32): the tests
+  are being rewritten onto `node:` builtins inside their existing
+  registrations, and a converted test makes its temp directory with
+  `node:os` `tmpdir()`, which reads those variables (`TMP` and `TEMP` when
+  `TMPDIR` is unset). The lane's child gains `--allow-env=TMPDIR,TMP,TEMP`
+  and nothing else; it still has no run or net grant, and the integration
+  lane already granted the same three. The first converted tests, `kernel/`
+  and `context/`, assert with `node:assert/strict` and mock with `node:test`;
+  `runtime.neutral` drops by the context files' 64 references (the kernel
+  files held only registrations), and the lane's totals are in the pull
+  request.
 - **The ACP runners run on `node:` builtins, and the `serve-unix` profile
   grants `/bin/sleep`.** Part of the move of the TypeScript tier to Node.js
   (decision D32). Before it spawns an agent, the runner checks that

@@ -345,13 +345,8 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/context/repo-context.integration.test.ts",
-    "count": 11,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/context/repo-context.test.ts",
-    "count": 76,
+    "count": 23,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
