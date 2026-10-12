@@ -37,8 +37,10 @@ README are tracked separately in its Revision history section.
   audit records were not all written showed its answer with no warning.
   Lines in that string that begin with `WARNING:` are now printed,
   sanitized, whether the answer streamed or arrived only with the receipt.
-  Event writes stay best-effort.
-- **The CLI wraps at 80 columns on a terminal that reports no width.** A pty
+  Event writes stay best-effort. The runtime builds the receipt before its
+  last session write, so a failure of that write is still not reported in
+  the receipt; the runtime's own diagnostic records it.
+  - **The CLI wraps at 80 columns on a terminal that reports no width.** A pty
   with no size set reports 0 columns, and the markdown renderer took the smaller
   of that and 100, so a turn's text wrapped at zero columns. An unknown width
   and a zero width now both fall back to 80; a wider terminal is still capped
