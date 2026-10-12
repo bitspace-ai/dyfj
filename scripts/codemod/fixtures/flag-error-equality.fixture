@@ -1,5 +1,6 @@
 # assertEquals on an Error is left for hand review: deepStrictEqual treats two
 # errors with the same message as equal, while the std assertion does not.
+# Names bound to a constructed Error count, whatever they are called.
 rules: assert.equals
 --- before
 import { assertEquals } from "@std/assert";
@@ -7,6 +8,9 @@ import { assertEquals } from "@std/assert";
 Deno.test("errors", () => {
   const error = new Error("x");
   assertEquals(error, new Error("x"));
+  const left = new Error("x");
+  const right = new TypeError("x");
+  assertEquals(left, right);
   assertEquals(1, 1);
 });
 --- after
@@ -16,7 +20,11 @@ import { assertEquals } from "@std/assert";
 Deno.test("errors", () => {
   const error = new Error("x");
   assertEquals(error, new Error("x"));
+  const left = new Error("x");
+  const right = new TypeError("x");
+  assertEquals(left, right);
   assert.deepStrictEqual(1, 1);
 });
 --- findings
 hand-review error-equality 6
+hand-review error-equality 9

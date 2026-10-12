@@ -717,6 +717,10 @@ interface Context {
   spies: Set<string>;
   /** Names held by `using`: left for hand review, with their assertions. */
   heldSpies: Set<string>;
+  /** Std locals the file also declares: shadowed somewhere, never rewritten. */
+  shadowed: Set<string>;
+  /** Names bound to a constructed Error (`const e = new Error(...)`). */
+  errorNames: Set<string>;
   /** The callee that joins paths, and whether it needs an import. */
   join?: { callee: string; needsImport: boolean };
   usable: Map<string, boolean>;
@@ -731,6 +735,45 @@ function stdBindings(imports: ImportDecl[], spec: RegExp): Map<string, string> {
   return bindings;
 }
 
+const DECLARING = new Set(["const", "let", "var", "function", "class"]);
+
+/**
+ * Whether the file declares `name` other than by its import: a variable,
+ * function or class, a typed parameter (or object key), or an untyped
+ * parameter of an arrow or function. Conservative: text rules cannot follow
+ * scopes, so any such declaration marks the import shadowed.
+ */
+function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
+  const { text } = src;
+  for (const pos of occurrences(src, name)) {
+    if (insideImport(imports, pos)) continue;
+    if (DECLARING.has(wordBefore(text, pos, src.mask).word)) return true;
+    const end = pos + name.length;
+    const next = nextNonSpace(text, end);
+    if (text[next] === ":" || text.startsWith("?:", next)) return true;
+    if (text.startsWith("=>", next)) return true;
+    const before = text[prevNonSpace(text, pos, src.mask)];
+    if (before !== "(" && before !== ",") continue;
+    let depth = 0;
+    let open = -1;
+    for (let j = pos - 1; j >= 0 && open < 0; j--) {
+      if (!src.isCode(j)) continue;
+      const c = text[j];
+      if (")]}".includes(c)) depth++;
+      else if ("([{".includes(c)) {
+        if (depth === 0) open = c === "(" ? j : -2;
+        else depth--;
+      }
+    }
+    if (open < 0) continue;
+    const close = matchBracket(src, open);
+    if (close < 0) continue;
+    if (/^\s*(?::[^=;{]+)?=>/.test(text.slice(close + 1))) return true;
+    if (/function\s*[\w$]*\s*$/.test(text.slice(0, open))) return true;
+  }
+  return false;
+}
+
 function makeContext(text: string): Context {
   const original = new Source(text);
   const imports = parseImports(original);
@@ -742,6 +785,8 @@ function makeContext(text: string): Context {
     stdTime: stdBindings(imports, STD_TIME),
     spies: new Set(),
     heldSpies: new Set(),
+    shadowed: new Set(),
+    errorNames: new Set(),
     usable: new Map(),
   };
   const mockLocals = [...ctx.stdMock].filter(([, symbol]) =>
@@ -753,6 +798,18 @@ function makeContext(text: string): Context {
         /(?:^|[^\w$])(const|let|var|using)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
           .exec(text.slice(lineStart(text, pos), pos));
       if (m) (m[1] === "using" ? ctx.heldSpies : ctx.spies).add(m[2]);
+    }
+  }
+  for (const bindings of [ctx.stdAssert, ctx.stdMock, ctx.stdTime]) {
+    for (const local of bindings.keys()) {
+      if (isDeclared(original, imports, local)) ctx.shadowed.add(local);
+    }
+  }
+  const errorBinding =
+    /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:new\s+)?[\w$.]*Error\s*\(/g;
+  for (const m of text.matchAll(errorBinding)) {
+    if (original.isCode(m.index! + m[0].indexOf(m[1]))) {
+      ctx.errorNames.add(m[1]);
     }
   }
   for (const decl of imports) {
@@ -802,8 +859,17 @@ function canUse(ctx: Context, name: string, module: string): boolean {
       : (binder.named ?? []).some((n) =>
         n.local === name && n.imported === name && !n.type
       );
+    // The std `assert` itself is replaced, but only if every use of it is a
+    // call (which always converts); a value use would keep it imported.
     usable = (binder.spec === module && !binder.typeOnly && shaped) ||
-      (name === "assert" && ctx.stdAssert.get("assert") === "assert");
+      (name === "assert" && ctx.stdAssert.get("assert") === "assert" &&
+        !ctx.shadowed.has("assert") &&
+        occurrences(ctx.original, name).every((pos) =>
+          insideImport(ctx.imports, pos) ||
+          ctx.original.text[
+              nextNonSpace(ctx.original.text, pos + name.length)
+            ] === "("
+        ));
   } else {
     const uses = occurrences(ctx.original, name).filter((pos) =>
       !insideImport(ctx.imports, pos)
@@ -886,15 +952,21 @@ const renameCallee = (
 function stdUses(
   src: Source,
   bindings: Map<string, string>,
-): { pos: number; symbol: string; call?: Call }[] {
+): { pos: number; local: string; symbol: string; call?: Call }[] {
   const imports = parseImports(src);
-  const uses: { pos: number; symbol: string; call?: Call }[] = [];
+  const uses: { pos: number; local: string; symbol: string; call?: Call }[] =
+    [];
   for (const [local, symbol] of bindings) {
     for (const pos of occurrences(src, local)) {
       if (insideImport(imports, pos)) continue;
       const after = nextNonSpace(src.text, pos + local.length);
       if (src.text[after] === ".") continue;
-      uses.push({ pos, symbol, call: callAt(src, pos, pos + local.length) });
+      uses.push({
+        pos,
+        local,
+        symbol,
+        call: callAt(src, pos, pos + local.length),
+      });
     }
   }
   return uses.sort((a, b) => a.pos - b.pos);
@@ -921,6 +993,12 @@ const COMPARISONS: Record<string, string> = {
   assertGreaterOrEqual: ">=",
 };
 
+const shadowedSkip = (pos: number, local: string): Skip => ({
+  pos,
+  reason: `\`${local}\` is also declared in this file, so some uses are ` +
+    "shadowed; convert by hand",
+});
+
 const ASSERT_SYMBOLS = new Set([
   ...Object.keys(ASSERT_RENAMES),
   ...Object.keys(COMPARISONS),
@@ -932,8 +1010,9 @@ const ASSERT_SYMBOLS = new Set([
   "assertRejects",
 ]);
 
-function looksLikeError(text: string): boolean {
-  return /\bnew\s+[\w$.]*Error\s*\(/.test(text) ||
+function looksLikeError(text: string, ctx: Context): boolean {
+  return ctx.errorNames.has(text) ||
+    /\bnew\s+[\w$.]*Error\s*\(/.test(text) ||
     /^[\w$.]*Error\s*\(/.test(text) ||
     /(?:^|\.)(?:err|error|cause|thrown|caught)$/i.test(text);
 }
@@ -966,7 +1045,7 @@ function convertAssertion(
   if (rename) {
     if (
       symbol === "assertEquals" &&
-      args.slice(0, 2).some((arg) => looksLikeError(arg.text))
+      args.slice(0, 2).some((arg) => looksLikeError(arg.text, ctx))
     ) {
       return {
         pos: call.start,
@@ -1126,7 +1205,8 @@ function convertAssertion(
 }
 
 const assertionPass: Pass = (src, ctx) =>
-  stdUses(src, ctx.stdAssert).map(({ pos, symbol, call }): Outcome => {
+  stdUses(src, ctx.stdAssert).map(({ pos, local, symbol, call }): Outcome => {
+    if (ctx.shadowed.has(local)) return shadowedSkip(pos, local);
     if (!ASSERT_SYMBOLS.has(symbol)) {
       return { pos, reason: `no rule for @std/assert ${symbol}` };
     }
@@ -1149,6 +1229,12 @@ const MOCK_SYMBOLS = new Set([
   "assertSpyCall",
 ]);
 
+/** The name a spy or stub at `pos` is bound to by `const|let|var`, if any. */
+function spyBinding(text: string, pos: number): string | undefined {
+  return /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
+    .exec(text.slice(lineStart(text, pos), pos))?.[1];
+}
+
 function heldByUsing(text: string, pos: number): boolean {
   return /\busing\s+[\w$]+\s*(?::[^=]+)?=\s*$/.test(
     text.slice(lineStart(text, pos), pos),
@@ -1169,6 +1255,14 @@ function convertMock(
     }
     const blocked = unusable(ctx, pos, "mock", "node:test");
     if (blocked) return blocked;
+    if (!spyBinding(src.text, pos)) {
+      return {
+        pos,
+        reason: `${symbol} is not bound to a name the tool can follow, so ` +
+          "its restore and call-record reads cannot be rewritten; convert " +
+          "by hand",
+      };
+    }
     if (symbol === "spy" && args.length <= 1) {
       return renameCallee(call, "mock.spy", "mock.fn", ["mock"]);
     }
@@ -1195,6 +1289,13 @@ function convertMock(
   const blocked = unusable(ctx, pos, "assert", "node:assert/strict") ??
     unusable(ctx, pos, "mock", "node:test");
   if (blocked) return blocked;
+  if (!ctx.heldSpies.has(target) && !ctx.spies.has(target)) {
+    return {
+      pos,
+      reason: `${symbol} on \`${target}\`, which is not a spy the tool ` +
+        "converted; convert by hand",
+    };
+  }
   if (ctx.heldSpies.has(target)) {
     return {
       pos,
@@ -1257,7 +1358,8 @@ function convertMock(
 }
 
 const mockPass: Pass = (src, ctx) =>
-  stdUses(src, ctx.stdMock).map(({ pos, symbol, call }): Outcome => {
+  stdUses(src, ctx.stdMock).map(({ pos, local, symbol, call }): Outcome => {
+    if (ctx.shadowed.has(local)) return shadowedSkip(pos, local);
     if (!MOCK_SYMBOLS.has(symbol)) {
       return { pos, reason: `no rule for @std/testing/mock ${symbol}` };
     }
