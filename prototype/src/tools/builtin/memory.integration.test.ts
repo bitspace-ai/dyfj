@@ -4,7 +4,7 @@
  * connection and every row asserted here.
  */
 
-import { assertMatch, assertStringIncludes } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { type DoltStore, MEMORY_VISIBILITY_ALL } from "../../store/mod.ts";
 import { openFixtureStore } from "../../../testing/dolt/fixture-sql.ts";
@@ -31,23 +31,39 @@ describe("memory lookup (integration)", () => {
         "fixture_feedback_shareable",
         MEMORY_VISIBILITY_ALL,
       );
-      assertStringIncludes(result, "Fixture Shareable Feedback");
-      assertStringIncludes(result, "shareable content");
-      assertStringIncludes(
-        await executeReadMemory(
+      assert.ok(
+        result.includes("Fixture Shareable Feedback"),
+        `expected ${
+          JSON.stringify(result)
+        } to include "Fixture Shareable Feedback"`,
+      );
+      assert.ok(
+        result.includes("shareable content"),
+        `expected ${JSON.stringify(result)} to include "shareable content"`,
+      );
+      assert.ok(
+        (await executeReadMemory(
           store.memories,
           "does-not-exist",
           MEMORY_VISIBILITY_ALL,
-        ),
-        "Memory not found",
+        )).includes("Memory not found"),
+        `expected await executeReadMemory(
+          store.memories,
+          "does-not-exist",
+          MEMORY_VISIBILITY_ALL,
+        ) to include "Memory not found"`,
       );
-      assertStringIncludes(
-        await executeReadMemory(
+      assert.ok(
+        (await executeReadMemory(
           store.memories,
           "' OR '1'='1",
           MEMORY_VISIBILITY_ALL,
-        ),
-        "Memory not found",
+        )).includes("Memory not found"),
+        `expected await executeReadMemory(
+          store.memories,
+          "' OR '1'='1",
+          MEMORY_VISIBILITY_ALL,
+        ) to include "Memory not found"`,
       );
     }));
 
@@ -58,23 +74,38 @@ describe("memory lookup (integration)", () => {
         "fixture_user_private",
         MEMORY_VISIBILITY_ALL,
       );
-      assertMatch(result, /^<untrusted-memory>/);
-      assertStringIncludes(result, "Fixture Private User");
-      assertStringIncludes(result, "private multiline");
+      assert.match(result, /^<untrusted-memory>/);
+      assert.ok(
+        result.includes("Fixture Private User"),
+        `expected ${JSON.stringify(result)} to include "Fixture Private User"`,
+      );
+      assert.ok(
+        result.includes("private multiline"),
+        `expected ${JSON.stringify(result)} to include "private multiline"`,
+      );
 
       const missing = await executeReadMemory(
         store.memories,
         "does-not-exist",
         MEMORY_VISIBILITY_ALL,
       );
-      assertStringIncludes(missing, "Memory not found");
-      assertStringIncludes(missing, "does-not-exist");
+      assert.ok(
+        missing.includes("Memory not found"),
+        `expected ${JSON.stringify(missing)} to include "Memory not found"`,
+      );
+      assert.ok(
+        missing.includes("does-not-exist"),
+        `expected ${JSON.stringify(missing)} to include "does-not-exist"`,
+      );
 
       const outside = await executeReadMemory(
         store.memories,
         "fixture_user_private",
         ["client_safe", "public"],
       );
-      assertStringIncludes(outside, "Memory not found");
+      assert.ok(
+        outside.includes("Memory not found"),
+        `expected ${JSON.stringify(outside)} to include "Memory not found"`,
+      );
     }));
 });
