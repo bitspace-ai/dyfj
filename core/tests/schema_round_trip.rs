@@ -44,7 +44,7 @@ async fn round_trip_session_start_event() -> Result<()> {
         .max_connections(1)
         .connect(&database_url)
         .await
-        .with_context(|| format!("connect to {database_url}"))?;
+        .context("connect to the database named by DATABASE_URL")?;
     sqlx::query("SET time_zone = '+02:00'")
         .execute(&pool)
         .await
