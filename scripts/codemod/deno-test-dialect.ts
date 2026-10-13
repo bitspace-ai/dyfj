@@ -2456,7 +2456,7 @@ const hostPass: Pass = (src, ctx) => {
       reason: `${HOST} is used as an object; convert by hand`,
     });
   }
-  // `globalThis.Deno` and `globalThis["Deno"]` (static key) alike.
+  // `globalThis.<host>` and `globalThis["<host>"]` (a static key) alike.
   const viaGlobal = new RegExp(
     `\\b(?:globalThis|window|self)\\s*(?:\\??\\.\\s*${HOST}(?![\\w$])|` +
       `(?:\\?\\.)?\\[\\s*(["'\`])${HOST}\\1\\s*\\])`,
