@@ -123,30 +123,44 @@ Deno.test("fails closed when an explicit ACP route has no runner bound", async (
 });
 
 Deno.test("fails closed when model selection routes to ACP with no runner bound", async () => {
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       dispatch({
         routingOptions: { modelId: "fixture" },
         trustWorkspaceInstructions: true,
-      }, { models: [ACP_FIXTURE] }), (error: unknown) => error instanceof DomainError && error.message.includes(NO_RUNNER));
+      }, { models: [ACP_FIXTURE] }),
+    (error: unknown) =>
+      error instanceof DomainError && error.message.includes(NO_RUNNER),
+  );
 });
 
 Deno.test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
   const runner = recordingRunner();
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       dispatch({
         runner: { kind: "acp", profile: "codex-chatgpt" },
         trustWorkspaceInstructions: false,
-      }, { runner }), (error: unknown) => error instanceof Error && error.message.includes("codex-chatgpt requires explicit workspace trust"));
+      }, { runner }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
+  );
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 
 Deno.test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
   const runner = recordingRunner();
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       dispatch({
         routingOptions: { modelId: CODEX_SOL.slug },
         trustWorkspaceInstructions: false,
-      }, { models: [CODEX_SOL], runner }), (error: unknown) => error instanceof Error && error.message.includes("codex-chatgpt requires explicit workspace trust"));
+      }, { models: [CODEX_SOL], runner }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
+  );
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 

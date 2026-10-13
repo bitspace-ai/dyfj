@@ -111,9 +111,12 @@ Deno.test("the injected transport, env and clock carry a whole native turn", asy
     "key-from-the-injected-env",
   );
   // Durations come from the injected clock: the reply advanced it 250ms.
-  assert.partialDeepStrictEqual(rows.find((row) => row.event_type === "session_end")!, {
-    duration_ms: "250",
-  });
+  assert.partialDeepStrictEqual(
+    rows.find((row) => row.event_type === "session_end")!,
+    {
+      duration_ms: "250",
+    },
+  );
 });
 
 Deno.test("memory recall is configured from the injected env", async () => {

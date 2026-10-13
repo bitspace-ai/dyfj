@@ -280,7 +280,10 @@ Deno.test("observedProviderCall writes the unparsed tool-call markup counts only
   await observedProviderCall(compression.context, compressionRequest);
   const row = compression.written[0];
   assert.deepStrictEqual("unparsed_tool_call_count" in row, false);
-  assert.deepStrictEqual("unparsed_tool_call_count_is_lower_bound" in row, false);
+  assert.deepStrictEqual(
+    "unparsed_tool_call_count_is_lower_bound" in row,
+    false,
+  );
   assert.partialDeepStrictEqual(row, {
     authz_basis: "policy:local-compression",
     provider_call_purpose: "context_compression",
@@ -401,7 +404,9 @@ Deno.test("observedProviderCall counts a failed event write and still records th
   assert.strictEqual(result.recorded, true);
   assert.deepStrictEqual(h.skipped, 1);
   assert.equal(warn.mock.callCount(), 1);
-  assert.deepStrictEqual(warn.mock.calls[0].arguments, ["Event write skipped: Error"]);
+  assert.deepStrictEqual(warn.mock.calls[0].arguments, [
+    "Event write skipped: Error",
+  ]);
   assert.deepStrictEqual(h.budget.totalCalls, 1);
 });
 
@@ -433,5 +438,8 @@ Deno.test("observedProviderCall defaults the provider session to the turn's sess
   request.params.fetchFn = transport.fetch;
   await observedProviderCall(h.context, request);
   transport.assertDone();
-  assert.deepStrictEqual(transport.requests[0].headers["x-grok-conv-id"], SESSION_ID);
+  assert.deepStrictEqual(
+    transport.requests[0].headers["x-grok-conv-id"],
+    SESSION_ID,
+  );
 });

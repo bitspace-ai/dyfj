@@ -10,7 +10,6 @@
  */
 import assert from "node:assert/strict";
 import { mock } from "node:test";
-import { stub } from "@std/testing/mock";
 import {
   type EngineRun,
   engineServices,
@@ -54,7 +53,7 @@ async function failingTurn(
   });
   const frames: WorkbenchRuntimeEvent[] = [];
   const log = mock.method(console, "log", () => {});
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   let thrown: unknown = null;
   try {
     await runTurn(run, {
@@ -69,7 +68,7 @@ async function failingTurn(
     thrown = err;
   } finally {
     log.mock.restore();
-    error.restore();
+    error.mock.restore();
   }
   assert.ok(thrown !== null, "the turn should have failed");
   const failed = frames.at(-1);
@@ -108,7 +107,10 @@ function assertReported(
   assert.deepStrictEqual(turn.failed.errorMessage, turn.operatorLine);
   assert.deepStrictEqual(turn.errorRow.content, turn.operatorLine);
   for (const text of expected.includes) {
-    assert.ok(turn.operatorLine.includes(text), `expected turn.operatorLine to include ${JSON.stringify(text)}`);
+    assert.ok(
+      turn.operatorLine.includes(text),
+      `expected turn.operatorLine to include ${JSON.stringify(text)}`,
+    );
   }
   for (const text of expected.excludes) {
     assert.deepStrictEqual(
@@ -157,7 +159,10 @@ Deno.test("a rate limit names the provider and says to wait or switch model", as
     includes: ["Rate limited", LOCAL_MODEL.provider, "HTTP 429", "/model"],
     excludes: [F.OPENAI_RATE_LIMIT.foreignText],
   });
-  assert.deepStrictEqual(turn.errorRow.provider_error_class, "ProviderRateLimitedError");
+  assert.deepStrictEqual(
+    turn.errorRow.provider_error_class,
+    "ProviderRateLimitedError",
+  );
 });
 
 Deno.test("a model the provider does not serve names the model and the registry row", async () => {
@@ -183,7 +188,10 @@ Deno.test("a refused connection names the provider and says to check the server"
     includes: ["unreachable", LOCAL_MODEL.provider, "refused", "base URL"],
     excludes: ["os error 61", "error sending request"],
   });
-  assert.deepStrictEqual(turn.errorRow.provider_error_class, "ProviderUnreachableError");
+  assert.deepStrictEqual(
+    turn.errorRow.provider_error_class,
+    "ProviderUnreachableError",
+  );
 });
 
 Deno.test("a request the provider refuses by size names the provider and says to shorten it", async () => {
@@ -218,7 +226,7 @@ Deno.test("a provider failure is a reported condition, not an unexpected error, 
   // The unexpected-error branch prints a class-only [turn-error] line to
   // the server console; a classified provider failure is expected and
   // already fully stated on the operator line.
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   try {
     const run = engineServices([{
       respond: { status: F.ANTHROPIC_AUTH.status, body: F.ANTHROPIC_AUTH.body },
@@ -232,7 +240,10 @@ Deno.test("a provider failure is a reported condition, not an unexpected error, 
       frames: { log: () => {} },
     }).catch(() => {});
   } finally {
-    error.restore();
+    error.mock.restore();
   }
-  assert.deepStrictEqual(error.calls.map((c) => String(c.args[0])), []);
+  assert.deepStrictEqual(
+    error.mock.calls.map((c) => String(c.arguments[0])),
+    [],
+  );
 });

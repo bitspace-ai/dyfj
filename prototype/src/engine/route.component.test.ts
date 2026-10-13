@@ -112,7 +112,8 @@ Deno.test("resolveRoute returns an explicit fixture runner without consent or ca
 
 Deno.test("resolveRoute rejects an explicit Codex ChatGPT runner without workspace trust, before consent", async () => {
   const confirm = consent({ decision: "approve" });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({
           runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -122,13 +123,18 @@ Deno.test("resolveRoute rejects an explicit Codex ChatGPT runner without workspa
           },
         }),
         catalog(LOCAL),
-      ), (error: unknown) => error instanceof DomainError && error.message.includes("codex-chatgpt requires explicit workspace trust"));
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
+  );
   assert.equal(confirm.mock.callCount(), 0);
 });
 
 Deno.test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner against the default limits", async () => {
   const confirm = consent({ decision: "deny", reason: "not today" });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({
           runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -140,26 +146,65 @@ Deno.test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner a
           },
         }),
         catalog(LOCAL),
-      ), (error: unknown) => error instanceof PaidEscalationDeclinedError && error.message.includes("Paid inference consent declined: not today"));
+      ),
+    (error: unknown) =>
+      error instanceof PaidEscalationDeclinedError &&
+      error.message.includes("Paid inference consent declined: not today"),
+  );
   assert.equal(confirm.mock.callCount(), 1);
   const banner = confirm.mock.calls[0].arguments[0];
-  assert.ok(banner.includes("Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)"), `expected ${JSON.stringify(banner)} to include "Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)"`);
-  assert.ok(banner.includes("Tier:            2"), `expected ${JSON.stringify(banner)} to include "Tier:            2"`);
-  assert.ok(banner.includes("Route:           explicit_runner"), `expected ${JSON.stringify(banner)} to include "Route:           explicit_runner"`);
-  assert.ok(banner.includes("Estimated cost:  $0.000000"), `expected ${JSON.stringify(banner)} to include "Estimated cost:  $0.000000"`);
-  assert.ok(banner.includes("Session spent:   $0.000000 / $2.000000"), `expected ${JSON.stringify(banner)} to include "Session spent:   $0.000000 / $2.000000"`);
-  assert.ok(banner.includes("Per-call limit:  $0.250000"), `expected ${JSON.stringify(banner)} to include "Per-call limit:  $0.250000"`);
+  assert.ok(
+    banner.includes(
+      "Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)",
+    ),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)"`,
+  );
+  assert.ok(
+    banner.includes("Tier:            2"),
+    `expected ${JSON.stringify(banner)} to include "Tier:            2"`,
+  );
+  assert.ok(
+    banner.includes("Route:           explicit_runner"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Route:           explicit_runner"`,
+  );
+  assert.ok(
+    banner.includes("Estimated cost:  $0.000000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Estimated cost:  $0.000000"`,
+  );
+  assert.ok(
+    banner.includes("Session spent:   $0.000000 / $2.000000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Session spent:   $0.000000 / $2.000000"`,
+  );
+  assert.ok(
+    banner.includes("Per-call limit:  $0.250000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Per-call limit:  $0.250000"`,
+  );
 });
 
 Deno.test("resolveRoute denies an explicit Codex ChatGPT runner when no consent handler is configured", async () => {
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({
           runner: { kind: "acp", profile: "codex-chatgpt" },
           trustWorkspaceInstructions: true,
         }),
         catalog(LOCAL),
-      ), (error: unknown) => error instanceof PaidEscalationDeclinedError && error.message.includes("no consent handler configured"));
+      ),
+    (error: unknown) =>
+      error instanceof PaidEscalationDeclinedError &&
+      error.message.includes("no consent handler configured"),
+  );
 });
 
 Deno.test("resolveRoute returns an approved explicit Codex ChatGPT runner", async () => {
@@ -220,7 +265,8 @@ Deno.test("resolveRoute routes a configured default ACP model and pins its slug"
 
 Deno.test("resolveRoute rejects a selected Codex ChatGPT model without workspace trust, before consent", async () => {
   const confirm = consent({ decision: "approve" });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({
           routingOptions: { modelId: CODEX_TERRA.slug },
@@ -229,13 +275,18 @@ Deno.test("resolveRoute rejects a selected Codex ChatGPT model without workspace
           },
         }),
         catalog(LOCAL, CODEX_TERRA),
-      ), (error: unknown) => error instanceof DomainError && error.message.includes("codex-chatgpt requires explicit workspace trust"));
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
+  );
   assert.equal(confirm.mock.callCount(), 0);
 });
 
 Deno.test("resolveRoute asks paid consent for a selected tier-2 ACP model with its selection reason", async () => {
   const confirm = consent({ decision: "escalate" });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({
           routingOptions: { modelId: CODEX_TERRA.slug },
@@ -245,11 +296,27 @@ Deno.test("resolveRoute asks paid consent for a selected tier-2 ACP model with i
           },
         }),
         catalog(LOCAL, CODEX_TERRA),
-      ), (error: unknown) => error instanceof PaidEscalationDeclinedError && error.message.includes("Paid inference escalation required"));
+      ),
+    (error: unknown) =>
+      error instanceof PaidEscalationDeclinedError &&
+      error.message.includes("Paid inference escalation required"),
+  );
   assert.equal(confirm.mock.callCount(), 1);
   const banner = confirm.mock.calls[0].arguments[0];
-  assert.ok(banner.includes("Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)"), `expected ${JSON.stringify(banner)} to include "Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)"`);
-  assert.ok(banner.includes("Route:           explicit_model_id"), `expected ${JSON.stringify(banner)} to include "Route:           explicit_model_id"`);
+  assert.ok(
+    banner.includes(
+      "Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)",
+    ),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)"`,
+  );
+  assert.ok(
+    banner.includes("Route:           explicit_model_id"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Route:           explicit_model_id"`,
+  );
 });
 
 Deno.test("resolveRoute returns an approved selected Codex ChatGPT model", async () => {
@@ -271,11 +338,16 @@ Deno.test("resolveRoute returns an approved selected Codex ChatGPT model", async
 });
 
 Deno.test("resolveRoute rejects an ACP model no runner profile serves", async () => {
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       resolveRoute(
         request({ routingOptions: { modelId: UNSUPPORTED_ACP.slug } }),
         catalog(LOCAL, UNSUPPORTED_ACP),
-      ), (error: unknown) => error instanceof DomainError && error.message.includes("Unsupported ACP runner: other-agent"));
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      error.message.includes("Unsupported ACP runner: other-agent"),
+  );
 });
 
 Deno.test("resolveRoute propagates a routing error for an unknown model", async () => {
@@ -339,8 +411,12 @@ Deno.test("selectModelRoute honors the configured default companion model", asyn
 });
 
 Deno.test("selectModelRoute fails a companion turn when the catalog cannot be loaded", async () => {
-  await assert.rejects(() =>
-      selectModelRoute(failingCatalog, { mode: "turn", routingOptions: {} }), (error: unknown) => error instanceof Error && error.message.includes("registry unavailable"));
+  await assert.rejects(
+    () =>
+      selectModelRoute(failingCatalog, { mode: "turn", routingOptions: {} }),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("registry unavailable"),
+  );
 });
 
 Deno.test("selectModelRoute falls back to the static local default for an ask turn", async () => {
@@ -356,7 +432,12 @@ Deno.test("selectModelRoute falls back to the static local default for an ask tu
     warn.mock.restore();
   }
   assert.equal(warn.mock.callCount(), 1);
-  assert.ok(String(warn.mock.calls[0].arguments[0]).includes("Model registry unavailable; using static local Tier 0 default"), `expected String(warn.calls[0].args[0]) to include "Model registry unavailable; using static local Tier 0 default"`);
+  assert.ok(
+    String(warn.mock.calls[0].arguments[0]).includes(
+      "Model registry unavailable; using static local Tier 0 default",
+    ),
+    `expected String(warn.calls[0].args[0]) to include "Model registry unavailable; using static local Tier 0 default"`,
+  );
 });
 
 Deno.test("selectModelRoute does not restore a built-in default the catalog marks inactive", async () => {
@@ -368,5 +449,8 @@ Deno.test("selectModelRoute does not restore a built-in default the catalog mark
     route.models.some((model) => model.slug === "qwen3.6:35b-a3b"),
     false,
   );
-  assert.deepStrictEqual(route.selection.selected.slug === "qwen3.6:35b-a3b", false);
+  assert.deepStrictEqual(
+    route.selection.selected.slug === "qwen3.6:35b-a3b",
+    false,
+  );
 });

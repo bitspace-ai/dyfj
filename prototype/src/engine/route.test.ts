@@ -41,14 +41,50 @@ Deno.test("formatMoney formats zero as an explicit dollar amount", () => {
 Deno.test("buildPaidEscalationPreflightBanner shows paid escalation call shape before inference", () => {
   const banner = buildPaidEscalationPreflightBanner(BASE_PREFLIGHT);
 
-  assert.ok(banner.includes("Paid inference preflight"), `expected ${JSON.stringify(banner)} to include "Paid inference preflight"`);
-  assert.ok(banner.includes("Model:           Claude Sonnet (claude-sonnet)"), `expected ${JSON.stringify(banner)} to include "Model:           Claude Sonnet (claude-sonnet)"`);
-  assert.ok(banner.includes("Tier:            1"), `expected ${JSON.stringify(banner)} to include "Tier:            1"`);
-  assert.ok(banner.includes("Route:           explicit_tier"), `expected ${JSON.stringify(banner)} to include "Route:           explicit_tier"`);
-  assert.ok(banner.includes("Estimated cost:  $0.012346"), `expected ${JSON.stringify(banner)} to include "Estimated cost:  $0.012346"`);
-  assert.ok(banner.includes("Session spent:   $0.050000 / $1.000000"), `expected ${JSON.stringify(banner)} to include "Session spent:   $0.050000 / $1.000000"`);
-  assert.ok(banner.includes("Session headroom: $0.950000"), `expected ${JSON.stringify(banner)} to include "Session headroom: $0.950000"`);
-  assert.ok(banner.includes("Per-call limit:  $0.100000"), `expected ${JSON.stringify(banner)} to include "Per-call limit:  $0.100000"`);
+  assert.ok(
+    banner.includes("Paid inference preflight"),
+    `expected ${JSON.stringify(banner)} to include "Paid inference preflight"`,
+  );
+  assert.ok(
+    banner.includes("Model:           Claude Sonnet (claude-sonnet)"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Model:           Claude Sonnet (claude-sonnet)"`,
+  );
+  assert.ok(
+    banner.includes("Tier:            1"),
+    `expected ${JSON.stringify(banner)} to include "Tier:            1"`,
+  );
+  assert.ok(
+    banner.includes("Route:           explicit_tier"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Route:           explicit_tier"`,
+  );
+  assert.ok(
+    banner.includes("Estimated cost:  $0.012346"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Estimated cost:  $0.012346"`,
+  );
+  assert.ok(
+    banner.includes("Session spent:   $0.050000 / $1.000000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Session spent:   $0.050000 / $1.000000"`,
+  );
+  assert.ok(
+    banner.includes("Session headroom: $0.950000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Session headroom: $0.950000"`,
+  );
+  assert.ok(
+    banner.includes("Per-call limit:  $0.100000"),
+    `expected ${
+      JSON.stringify(banner)
+    } to include "Per-call limit:  $0.100000"`,
+  );
 });
 
 Deno.test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", () => {

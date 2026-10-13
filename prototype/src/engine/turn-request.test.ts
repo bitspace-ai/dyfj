@@ -153,7 +153,9 @@ Deno.test("resolveTurnFromBody applies a budget override on loopback only", () =
 });
 
 Deno.test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
-  assert.deepStrictEqual(parseBudgetOverride([]), { error: "budget must be an object" });
+  assert.deepStrictEqual(parseBudgetOverride([]), {
+    error: "budget must be an object",
+  });
   assert.deepStrictEqual(parseBudgetOverride({ dailyLimitUsd: 1001 }), {
     error: "budget.dailyLimitUsd must be a positive number up to 1000",
   });
@@ -184,5 +186,7 @@ Deno.test("paidEscalationVerdict denies a loopback caller that did not opt in", 
     decision: "deny",
     reason: PAID_ESCALATION_NOT_APPROVED,
   });
-  assert.deepStrictEqual(paidEscalationVerdict(true, true), { decision: "approve" });
+  assert.deepStrictEqual(paidEscalationVerdict(true, true), {
+    decision: "approve",
+  });
 });

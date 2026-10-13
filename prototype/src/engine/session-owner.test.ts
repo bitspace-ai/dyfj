@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertNotEquals } from "@std/assert";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { SessionOwners, TurnTicket } from "./session-owner.ts";
@@ -57,7 +56,11 @@ Deno.test("a rejected turn releases the lock to the next same-session turn", asy
   const firstResult = owners.runTurn(SESSION, first.run);
   const secondResult = owners.runTurn(SESSION, second.run);
   first.fail(new Error("provider down"));
-  await assert.rejects(() => firstResult, (error: unknown) => error instanceof Error && error.message.includes("provider down"));
+  await assert.rejects(
+    () => firstResult,
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("provider down"),
+  );
   await drain();
   assert.deepStrictEqual(log, ["start first", "start second"]);
   second.finish();
@@ -113,7 +116,11 @@ Deno.test("a new session's id is allocated at admission, so a later turn naming 
   first.finish();
   assert.deepStrictEqual(await firstResult, "first");
   await drain();
-  assert.deepStrictEqual(log, ["start first", "second on same", "start second"]);
+  assert.deepStrictEqual(log, [
+    "start first",
+    "second on same",
+    "start second",
+  ]);
   second.finish();
   assert.deepStrictEqual(await secondResult, "second");
   await drain();
@@ -128,7 +135,7 @@ Deno.test("each new-session turn gets its own id", async () => {
     owners.runTurn(undefined, (id) => Promise.resolve(ids.push(id))),
   ]);
   assert.deepStrictEqual(ids.length, 2);
-  assertNotEquals(ids[0], ids[1]);
+  assert.notStrictEqual(ids[0], ids[1]);
 });
 
 Deno.test("an owner is dropped once its last turn settles, and a later turn starts fresh", async () => {

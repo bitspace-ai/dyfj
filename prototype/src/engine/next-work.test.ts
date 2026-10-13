@@ -12,11 +12,26 @@ Deno.test("buildNextWorkBrief: requests strict JSON for the next-work worklet wi
     prompt: "what should I work on next here?",
   });
 
-  assert.ok(brief.includes("worklet_id: next-work.v0"), `expected ${JSON.stringify(brief)} to include "worklet_id: next-work.v0"`);
-  assert.ok(brief.includes("context_profile: compact"), `expected ${JSON.stringify(brief)} to include "context_profile: compact"`);
-  assert.ok(brief.includes("Return strict JSON only"), `expected ${JSON.stringify(brief)} to include "Return strict JSON only"`);
-  assert.ok(brief.includes('"recommendation"'), `expected ${JSON.stringify(brief)} to include '"recommendation"'`);
-  assert.ok(brief.includes('"confidence"'), `expected ${JSON.stringify(brief)} to include '"confidence"'`);
+  assert.ok(
+    brief.includes("worklet_id: next-work.v0"),
+    `expected ${JSON.stringify(brief)} to include "worklet_id: next-work.v0"`,
+  );
+  assert.ok(
+    brief.includes("context_profile: compact"),
+    `expected ${JSON.stringify(brief)} to include "context_profile: compact"`,
+  );
+  assert.ok(
+    brief.includes("Return strict JSON only"),
+    `expected ${JSON.stringify(brief)} to include "Return strict JSON only"`,
+  );
+  assert.ok(
+    brief.includes('"recommendation"'),
+    `expected ${JSON.stringify(brief)} to include '"recommendation"'`,
+  );
+  assert.ok(
+    brief.includes('"confidence"'),
+    `expected ${JSON.stringify(brief)} to include '"confidence"'`,
+  );
 });
 
 Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result", () => {
@@ -48,10 +63,13 @@ Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result
 });
 
 Deno.test("validateNextWorkJson: rejects prose or incomplete JSON before trusting the model result", () => {
-  assert.deepStrictEqual(validateNextWorkJson("Work on the routing item next."), {
-    ok: false,
-    errors: ["model output was not strict JSON"],
-  });
+  assert.deepStrictEqual(
+    validateNextWorkJson("Work on the routing item next."),
+    {
+      ok: false,
+      errors: ["model output was not strict JSON"],
+    },
+  );
 
   const incomplete = validateNextWorkJson(JSON.stringify({
     worklet_id: "next-work.v0",

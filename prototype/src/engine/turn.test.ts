@@ -66,7 +66,7 @@ async function captureStderr<T>(
     const value = await run();
     return {
       value,
-      lines: error.calls.map((call) => call.args.join(" ")),
+      lines: error.mock.calls.map((call) => call.arguments.join(" ")),
     };
   } finally {
     error.mock.restore();
@@ -90,7 +90,8 @@ Deno.test("[case 5 boundary] empty-after-withholding history fails before runtim
     }]),
   });
   let runtimeCalled = false;
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       executeTurn(
         resolved({ prompt: "what did it find?", sessionId: SESSION_ID }),
         deps({
@@ -100,7 +101,13 @@ Deno.test("[case 5 boundary] empty-after-withholding history fails before runtim
             return Promise.reject(new Error("runtime must not start"));
           },
         }),
-      ), (error: unknown) => error instanceof Error && error.message.includes("Session history is empty after withholding unavailable tool evidence"));
+      ),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "Session history is empty after withholding unavailable tool evidence",
+      ),
+  );
   assert.strictEqual(runtimeCalled, false);
 });
 
@@ -336,10 +343,13 @@ Deno.test("executeTurn binds boundary config and the transport's paid verdict", 
   assert.deepStrictEqual(captured?.maxToolSteps, 7);
   // Workspace trust is a loopback-only standing decision.
   assert.strictEqual(captured?.trustWorkspaceInstructions, false);
-  assert.deepStrictEqual(await captured?.approver?.confirmPaidEscalation?.("banner"), {
-    decision: "deny",
-    reason: "paid inference is not available to remote callers",
-  });
+  assert.deepStrictEqual(
+    await captured?.approver?.confirmPaidEscalation?.("banner"),
+    {
+      decision: "deny",
+      reason: "paid inference is not available to remote callers",
+    },
+  );
   assert.deepStrictEqual(lines, [formatTurnSummaryLine(RESULT)]);
 });
 
@@ -375,6 +385,12 @@ Deno.test("formatTurnSummaryLine degrades gracefully on partial results", () => 
   const line = formatTurnSummaryLine(
     { sessionId: "01X" } as unknown as WorkbenchRuntimeResult,
   );
-  assert.ok(line.includes("model=unknown"), `expected ${JSON.stringify(line)} to include "model=unknown"`);
-  assert.deepStrictEqual(line, "[turn] session=01X model=unknown tokens=? cost=$? local");
+  assert.ok(
+    line.includes("model=unknown"),
+    `expected ${JSON.stringify(line)} to include "model=unknown"`,
+  );
+  assert.deepStrictEqual(
+    line,
+    "[turn] session=01X model=unknown tokens=? cost=$? local",
+  );
 });

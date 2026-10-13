@@ -6,7 +6,7 @@
  * run a transcript retry and reports thinking tokens separately.
  */
 import assert from "node:assert/strict";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { mock } from "node:test";
 import {
   anthropicStop,
   chatReply,
@@ -134,7 +134,10 @@ Deno.test("output-budget truncation runs one continuation retry and merges the t
     retriesUsed: 1,
   });
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
-  assert.deepStrictEqual((await modelResponse(run, frames))?.stop_reason, "stop");
+  assert.deepStrictEqual(
+    (await modelResponse(run, frames))?.stop_reason,
+    "stop",
+  );
 });
 
 Deno.test("a retry that is still truncated stops after exactly one retry and returns the merged partial", async () => {
@@ -151,7 +154,10 @@ Deno.test("a retry that is still truncated stops after exactly one retry and ret
     retriesUsed: 1,
   });
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
-  assert.deepStrictEqual((await modelResponse(run, frames))?.stop_reason, "length");
+  assert.deepStrictEqual(
+    (await modelResponse(run, frames))?.stop_reason,
+    "length",
+  );
 });
 
 /** Priced so a 3-token completion records $0.03; the input price is ~0. */
@@ -378,7 +384,7 @@ Deno.test("context overflow fails the turn with the structured operator message 
 });
 
 Deno.test("an injected overflow recovery plan buys exactly one retry (the compressor seam)", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, text } = await lengthTurn(
@@ -397,12 +403,12 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
     },
   );
   assert.deepStrictEqual(text, "recovered answer");
-  assertSpyCalls(recoverContextOverflow, 1);
+  assert.equal(recoverContextOverflow.mock.callCount(), 1);
   // The hook context reports reasoning-inclusive output (400 visible + 600
   // reasoning), consistent with classification — the compression consumer
   // sizes its plan from true token pressure, not just visible output.
   assert.partialDeepStrictEqual(
-    (recoverContextOverflow.calls[0].args as unknown[])[0] as Record<
+    (recoverContextOverflow.mock.calls[0].arguments as unknown[])[0] as Record<
       string,
       unknown
     >,
@@ -494,7 +500,7 @@ Deno.test("a recovery hook that throws closes the recovery trail before the turn
 });
 
 Deno.test("a recovery-plan retry that still overflows fails structured — the hook never loops", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, error } = await lengthTurn([OVERFLOW, OVERFLOW], {
@@ -503,7 +509,7 @@ Deno.test("a recovery-plan retry that still overflows fails structured — the h
   assert.ok(error instanceof Error);
   assert.ok(error.message.includes("Context window overflow"));
   assert.deepStrictEqual(run.transport.requests.length, 2);
-  assertSpyCalls(recoverContextOverflow, 1);
+  assert.equal(recoverContextOverflow.mock.callCount(), 1);
   assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
     retriesUsed: 1,
@@ -511,7 +517,7 @@ Deno.test("a recovery-plan retry that still overflows fails structured — the h
 });
 
 Deno.test("compression resolves the overflow but the fresh answer hits its output cap: bounded truncation, not a false overflow", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, text } = await lengthTurn(

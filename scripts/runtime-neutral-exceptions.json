@@ -411,7 +411,7 @@
   },
   {
     "path": "prototype/src/engine/headless-host.component.test.ts",
-    "count": 4,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

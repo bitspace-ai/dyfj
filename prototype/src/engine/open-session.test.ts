@@ -4,7 +4,6 @@
  * `session_start` row.
  */
 import assert from "node:assert/strict";
-import { assertNotEquals } from "@std/assert";
 import {
   chatReply,
   enginePorts,
@@ -80,7 +79,9 @@ Deno.test("principalId comes from the input struct and flows to events", async (
     fakes.ports,
   );
   const rows = await sessionRows(fakes.store, session.sessionId);
-  assert.deepStrictEqual(rows.map((row) => row.principal_id), ["custom-principal"]);
+  assert.deepStrictEqual(rows.map((row) => row.principal_id), [
+    "custom-principal",
+  ]);
   assert.deepStrictEqual(session.principalId, "custom-principal");
 });
 
@@ -125,7 +126,12 @@ Deno.test("an integrity session_start write failure fails the turn before anythi
           Promise.reject(new Error("simulated write failure: session_start")),
       },
     };
-    await assert.rejects(() => openSession(input({ mode }), { ...fakes.ports, store }), (error: unknown) => error instanceof Error && error.message.includes("simulated write failure: session_start"));
+    await assert.rejects(
+      () => openSession(input({ mode }), { ...fakes.ports, store }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("simulated write failure: session_start"),
+    );
   }
 });
 
@@ -185,7 +191,7 @@ Deno.test("openSession pins a remote caller's requested workspace to the default
     fakes.ports,
   );
   assert.deepStrictEqual(remote.honoredWorkspace, undefined);
-  assertNotEquals(remote.sessionId, local.sessionId);
+  assert.notStrictEqual(remote.sessionId, local.sessionId);
 });
 
 Deno.test("openSession seeds the budget tracker with spend already on the books", async () => {

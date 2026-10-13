@@ -36,9 +36,15 @@ Deno.test("a resumed turn with no routing of its own takes the recorded model", 
     turn({ sessionId: "S1", routingOptions: { fast: true } }),
     recorded("hosted/big"),
   );
-  assert.deepStrictEqual(input.routingOptions, { fast: true, modelId: "hosted/big" });
+  assert.deepStrictEqual(input.routingOptions, {
+    fast: true,
+    modelId: "hosted/big",
+  });
   assert.deepStrictEqual(input.restoredSessionModel, "hosted/big");
-  assert.deepStrictEqual(sessionRouteReason(input, "explicit_model_id"), "session_model");
+  assert.deepStrictEqual(
+    sessionRouteReason(input, "explicit_model_id"),
+    "session_model",
+  );
 });
 
 Deno.test("an explicit model, tier, hint or runner, or a new session, is left alone", async () => {
@@ -79,13 +85,22 @@ Deno.test("a routing failure on the recorded model names it; others pass through
     SessionModelUnavailableError,
   );
   assert.deepStrictEqual(missing.message.includes("not in the catalog"), true);
-  assert.throws(() =>
+  assert.throws(
+    () =>
       explainSessionModelFailure(
         restored,
         new WorkbenchModelNotRoutableError("gone/model"),
-      ), (error: unknown) => error instanceof SessionModelUnavailableError && error.message.includes("unpriced"));
+      ),
+    (error: unknown) =>
+      error instanceof SessionModelUnavailableError &&
+      error.message.includes("unpriced"),
+  );
   const other = new Error("boom");
-  assert.throws(() => explainSessionModelFailure(restored, other), (error: unknown) => error instanceof Error && error.message.includes("boom"));
+  assert.throws(
+    () => explainSessionModelFailure(restored, other),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("boom"),
+  );
   assert.throws(
     () =>
       explainSessionModelFailure(
@@ -97,11 +112,16 @@ Deno.test("a routing failure on the recorded model names it; others pass through
 });
 
 Deno.test("a session that last ran on an external-agent runner refuses a bare resume", async () => {
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       withSessionModel(
         turn({ sessionId: "S1" }),
         recorded(null, "codex-chatgpt"),
-      ), (error: unknown) => error instanceof SessionRunnerNotRestorableError && error.message.includes("codex-chatgpt"));
+      ),
+    (error: unknown) =>
+      error instanceof SessionRunnerNotRestorableError &&
+      error.message.includes("codex-chatgpt"),
+  );
   // An explicit model is the operator's choice and needs no lookup.
   const explicit = turn({ sessionId: "S1", routingOptions: { modelId: "m" } });
   assert.strictEqual(
