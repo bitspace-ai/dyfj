@@ -27,7 +27,7 @@ Deno.test("mocks", () => {
     assertEquals(method.calls[0].returned, undefined);
   } finally {
     warn.restore();
-    log.restore();
+    log /* cleanup */ .restore();
   }
 });
 --- after
@@ -52,7 +52,7 @@ Deno.test("mocks", () => {
     assert.deepStrictEqual(method.mock.calls[0].result, undefined);
   } finally {
     warn.mock.restore();
-    log.mock.restore();
+    log /* cleanup */ .mock.restore();
   }
 });
 --- findings

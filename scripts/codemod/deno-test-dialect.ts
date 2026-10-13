@@ -456,6 +456,18 @@ function prevNonSpace(text: string, pos: number, mask?: Uint8Array): number {
   return j;
 }
 
+/** The next position that is neither space nor comment, using `src`'s mask. */
+function nextCode(src: Source, pos: number): number {
+  let j = pos;
+  while (
+    j < src.text.length &&
+    (SPACE.test(src.text[j]) || src.mask[j] === COMMENT)
+  ) {
+    j++;
+  }
+  return j;
+}
+
 function nextNonSpace(text: string, pos: number): number {
   let j = pos;
   while (j < text.length && SPACE.test(text[j])) j++;
@@ -695,7 +707,12 @@ const IMPORT =
 
 function parseImports(src: Source): ImportDecl[] {
   const decls: ImportDecl[] = [];
-  for (const m of src.text.matchAll(IMPORT)) {
+  // Comments blanked to spaces (same length), so a quote or `;` inside one
+  // is not taken for syntax.
+  const blanked = src.text.split("").map((ch, i) =>
+    src.mask[i] === COMMENT && ch !== "\n" ? " " : ch
+  ).join("");
+  for (const m of blanked.matchAll(IMPORT)) {
     const start = m.index!;
     if (!src.isCode(start) || !isStatementStart(src, start)) continue;
     let clause = m[2].trim();
@@ -715,9 +732,10 @@ function parseImports(src: Source): ImportDecl[] {
     const braces = /^\{([\s\S]*)\}$/.exec(clause);
     if (braces) {
       decl.named = [];
-      const COMMENTS = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
-      if (COMMENTS.test(braces[1])) decl.hasComments = true;
-      for (const raw of braces[1].replace(COMMENTS, "").split(",")) {
+      if (src.mask.subarray(start, decl.end).includes(COMMENT)) {
+        decl.hasComments = true;
+      }
+      for (const raw of braces[1].split(",")) {
         const part = raw.trim();
         if (part === "") continue;
         const n = /^(type\s+)?([\w$]+)(?:\s+as\s+([\w$]+))?$/.exec(part);
@@ -1147,6 +1165,8 @@ const ASSERT_SYMBOLS = new Set([
 function looksLikeError(text: string, ctx: Context): boolean {
   return ctx.errorNames.has(text) ||
     /\bnew\s+[\w$.]*Error\s*\(/.test(text) ||
+    // An object literal holding an Error-shaped property value.
+    /[{,]\s*[\w$]+\s*:\s*(?:new\s+)?[\w$.]*Error\s*\(/.test(text) ||
     /^[\w$.]*Error\s*\(/.test(text) ||
     /(?:^|\.)(?:err|error|cause|thrown|caught)$/i.test(text);
 }
@@ -1182,7 +1202,7 @@ function convertAssertion(
   const rename = ASSERT_RENAMES[symbol];
   if (rename) {
     if (
-      symbol === "assertEquals" &&
+      (symbol === "assertEquals" || symbol === "assertObjectMatch") &&
       args.slice(0, 2).some((arg) => looksLikeError(arg.text, ctx))
     ) {
       return {
@@ -1354,9 +1374,18 @@ function convertAssertion(
         "write the validation by hand",
     };
   }
+  const message = args[3] ? `, ${args[3].text}` : "";
+  // No substring to check: the class alone, keeping the assertion message.
+  if (args[2].text === "undefined") {
+    return replaceCall(
+      call,
+      rule,
+      `${callee}(${args[0].text}, ${errorClass}${message})`,
+      ["assert"],
+    );
+  }
   const validator = `(error: unknown) => error instanceof ${errorClass} && ` +
     `error.message.includes(${args[2].text})`;
-  const message = args[3] ? `, ${args[3].text}` : "";
   return replaceCall(
     call,
     rule,
@@ -1597,7 +1626,7 @@ const spyMemberPass: Pass = (src, ctx) => {
     // A spy whose creation stayed std keeps its std reads.
     if (!isConvertedSpy(src, name)) continue;
     for (const pos of occurrences(src, name)) {
-      const dot = nextNonSpace(src.text, pos + name.length);
+      const dot = nextCode(src, pos + name.length);
       if (src.text[dot] !== ".") continue;
       const member = /^\.\s*([\w$]+)/.exec(src.text.slice(dot));
       if (!member) continue;
@@ -2229,9 +2258,11 @@ function convertProcess(
     // The host names Windows "windows" and node "win32", so only a direct
     // comparison with a string literal, whose literal can be mapped too,
     // keeps its meaning; a stored or otherwise compared value may not.
-    const compared = /^\s*[!=]==?\s*(["'])([^"'\\]*)\1/.exec(
-      src.text.slice(ref.end),
-    );
+    // The literal must be the whole right operand: what follows it ends
+    // the comparison (`"windows".replace(...)` would not be a literal).
+    const compared =
+      /^\s*[!=]==?\s*(["'])([^"'\\]*)\1(?=\s*(?:[);,}\]?:]|&&|\|\||$))/m
+        .exec(src.text.slice(ref.end));
     if (!compared) {
       return {
         pos,

@@ -13,6 +13,7 @@ Deno.test("throws", async () => {
     "bad input",
   );
   assertThrows(() => boom(), Error, "bad input", "explains");
+  assertThrows(() => boom(), TypeError, undefined, "explains");
   await assertRejects(() => later(), RangeError, "too late");
   await assertRejects(() => later());
   it("returns the rejection", () => assertRejects(() => later()));
@@ -25,6 +26,7 @@ Deno.test("throws", async () => {
   assert.throws(() => boom(), TypeError);
   assert.throws(() => boom(), (error: unknown) => error instanceof TypeError && error.message.includes("bad input"));
   assert.throws(() => boom(), (error: unknown) => error instanceof Error && error.message.includes("bad input"), "explains");
+  assert.throws(() => boom(), TypeError, "explains");
   await assert.rejects(() => later(), (error: unknown) => error instanceof RangeError && error.message.includes("too late"));
   await assert.rejects(() => later());
   it("returns the rejection", () => assert.rejects(() => later()));
