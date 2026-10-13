@@ -1,14 +1,9 @@
 // Tests for command invocation and its tool_call event (`invoke.ts`).
 
-import {
-  assertEquals,
-  assertFalse,
-  assertGreater,
-  assertLessOrEqual,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
@@ -103,12 +98,12 @@ describe("invokeCommand approval (ask) flow", () => {
       registry,
       call({ path: "x" }, { commandId: "write_file" }),
     );
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       authzBasis: "policy:deny:approval-denied",
       isError: true,
     });
-    assertStrictEquals(ran, false);
+    assert.strictEqual(ran, false);
   });
 
   it("an approve verdict runs the tool with the operator-approved basis", async () => {
@@ -118,7 +113,7 @@ describe("invokeCommand approval (ask) flow", () => {
       call({ path: "x" }, { commandId: "write_file" }),
       () => Promise.resolve({ decision: "approve" }),
     );
-    assertEquals(result, {
+    assert.deepStrictEqual(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-approved",
       isError: false,
@@ -145,11 +140,11 @@ describe("invokeCommand approval (ask) flow", () => {
     );
 
     await Promise.resolve();
-    assertStrictEquals(ran, false);
+    assert.strictEqual(ran, false);
 
     approve({ decision: "approve" });
-    assertObjectMatch(await pending, { decision: "allow" });
-    assertStrictEquals(ran, true);
+    assert.partialDeepStrictEqual(await pending, { decision: "allow" });
+    assert.strictEqual(ran, true);
   });
 
   it("a deny verdict does not run the tool and carries the reason", async () => {
@@ -165,25 +160,25 @@ describe("invokeCommand approval (ask) flow", () => {
       call({ path: "x" }, { commandId: "write_file" }),
       () => Promise.resolve({ decision: "deny", reason: "operator said no" }),
     );
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       authzBasis: "policy:deny:approval-denied",
       reason: approvalDeniedReason("write_file", "operator said no"),
       isError: true,
       verdict: "approval_denied",
     });
-    assertStrictEquals(ran, false);
+    assert.strictEqual(ran, false);
   });
 
   it("a refusal reads as a refusal, names no path, and says the command did not run", () => {
     const text = approvalDeniedReason("bash", "operator declined");
-    assertStrictEquals(
+    assert.strictEqual(
       text,
       "approval_denied: this bash call was not approved, so it did not run; " +
         "this is not its output. Do not retry it or a variant of it. Ask the " +
         "operator or take a different approach. Reason given: operator declined.",
     );
-    assertFalse(text.includes("/"));
+    assert.ok(!text.includes("/"));
   });
 
   it("a refused command that defines its own event content keeps that content; the refusal is in the result", async () => {
@@ -205,8 +200,8 @@ describe("invokeCommand approval (ask) flow", () => {
       },
       () => Promise.resolve({ decision: "deny", reason: "operator said no" }),
     );
-    assertEquals(events.length, 1);
-    assertObjectMatch(events[0], {
+    assert.deepStrictEqual(events.length, 1);
+    assert.partialDeepStrictEqual(events[0], {
       action: "deny",
       authz_basis: "policy:deny:approval-denied",
       tool_is_error: true,
@@ -224,7 +219,7 @@ describe("invokeCommand approval (ask) flow", () => {
       call({ path: "x" }, { commandId: "write_file" }),
       () => Promise.resolve({ decision: "approve" }),
     );
-    assertFalse("verdict" in result);
+    assert.ok(!("verdict" in result));
   });
 
   it("the approval request carries the tool identity and arguments", async () => {
@@ -238,7 +233,7 @@ describe("invokeCommand approval (ask) flow", () => {
         return Promise.resolve({ decision: "approve" });
       },
     );
-    assertEquals(seen, {
+    assert.deepStrictEqual(seen, {
       commandId: "write_file",
       callId: "call-123",
       title: "Write File",
@@ -260,7 +255,7 @@ describe("invokeCommand approval (ask) flow", () => {
         return Promise.resolve({ decision: "approve" });
       },
     );
-    assertObjectMatch(seen as Record<string, unknown>, {
+    assert.partialDeepStrictEqual(seen as Record<string, unknown>, {
       title: "Write File (a.txt)",
     });
   });
@@ -276,11 +271,11 @@ describe("invokeCommand approval (ask) flow", () => {
         return Promise.resolve({ decision: "approve" });
       },
     );
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       authzBasis: "policy:deny:invalid-arguments",
     });
-    assertStrictEquals(asked, false);
+    assert.strictEqual(asked, false);
   });
 });
 
@@ -288,7 +283,7 @@ describe("invokeCommand", () => {
   it("executes an allowed command and returns its authz basis", async () => {
     const registry = createCommandRegistry([readCommand()]);
 
-    assertEquals(await invokeCommand(registry, call()), {
+    assert.deepStrictEqual(await invokeCommand(registry, call()), {
       decision: "allow",
       authzBasis: "policy:allow:read-only-local",
       isError: false,
@@ -309,12 +304,12 @@ describe("invokeCommand", () => {
 
     const result = await invokeCommand(registry, call({ slug: "../secret" }));
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       isError: true,
       authzBasis: "policy:deny:invalid-arguments",
     });
-    assertStrictEquals(executed, false);
+    assert.strictEqual(executed, false);
   });
 });
 
@@ -338,7 +333,7 @@ describe("buildCommandToolCallEventPayload", () => {
       },
     );
 
-    assertObjectMatch(payload, {
+    assert.partialDeepStrictEqual(payload, {
       event_id: "01TESTEVENT0000000000000000",
       session_id: "01TESTSESSION00000000000000",
       event_type: "tool_call",
@@ -377,7 +372,7 @@ describe("buildCommandToolCallEventPayload", () => {
       },
     );
 
-    assertObjectMatch(payload, {
+    assert.partialDeepStrictEqual(payload, {
       action: "deny",
       authz_basis: "policy:deny:invalid-arguments",
       tool_is_error: true,
@@ -404,13 +399,13 @@ describe("invokeCommandWithEvent", () => {
       },
     });
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "allow",
       isError: false,
       result: "# project_dyfj",
     });
-    assertEquals(events.length, 1);
-    assertObjectMatch(events[0], {
+    assert.deepStrictEqual(events.length, 1);
+    assert.partialDeepStrictEqual(events[0], {
       event_type: "tool_call",
       action: "invoke",
       tool_name: "memory.read",
@@ -442,12 +437,12 @@ describe("invokeCommandWithEvent", () => {
       },
     );
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       isError: true,
     });
-    assertStrictEquals(executed, false);
-    assertObjectMatch(events[0], {
+    assert.strictEqual(executed, false);
+    assert.partialDeepStrictEqual(events[0], {
       event_type: "tool_call",
       action: "deny",
       tool_name: "memory.read",
@@ -466,7 +461,7 @@ const DOLT_TEXT_COLUMN_MAX_BYTES = 65_535;
 
 describe("truncateForEventColumn", () => {
   it("leaves a short string unchanged", () => {
-    assertStrictEquals(truncateForEventColumn("hello", 100), "hello");
+    assert.strictEqual(truncateForEventColumn("hello", 100), "hello");
   });
 
   it("caps an over-limit string and appends a marker with the original byte size", () => {
@@ -475,9 +470,18 @@ describe("truncateForEventColumn", () => {
     // The contract is output <= maxBytes INCLUDING the marker, not merely
     // under the (much larger) Dolt column limit — a marker appended after an
     // exact-maxBytes slice can itself push the total past maxBytes.
-    assertLessOrEqual(new TextEncoder().encode(truncated).byteLength, 60_000);
-    assertStringIncludes(truncated, "event-truncated");
-    assertStringIncludes(truncated, "100000 bytes");
+    assert.ok(
+      (new TextEncoder().encode(truncated).byteLength) <= 60_000,
+      `expected new TextEncoder().encode(truncated).byteLength <= 60_000`,
+    );
+    assert.ok(
+      truncated.includes("event-truncated"),
+      `expected ${JSON.stringify(truncated)} to include "event-truncated"`,
+    );
+    assert.ok(
+      truncated.includes("100000 bytes"),
+      `expected ${JSON.stringify(truncated)} to include "100000 bytes"`,
+    );
   });
 
   // Each "é" is 2 UTF-8 bytes; an odd byte cap forces the cut to land mid
@@ -493,8 +497,11 @@ describe("truncateForEventColumn", () => {
     // Must not throw on a mid-character cut.
     truncateForEventColumn(original, maxBytes);
     const truncated = truncateForEventColumn(original, maxBytes);
-    assertLessOrEqual(new TextEncoder().encode(truncated).byteLength, maxBytes);
-    assertFalse(truncated.includes("�"));
+    assert.ok(
+      (new TextEncoder().encode(truncated).byteLength) <= maxBytes,
+      `expected new TextEncoder().encode(truncated).byteLength <= ${maxBytes}`,
+    );
+    assert.ok(!truncated.includes("�"));
   });
 
   it("a limit smaller than the marker still yields output within the limit", () => {
@@ -503,8 +510,11 @@ describe("truncateForEventColumn", () => {
     // function degrades to a byte-safe slice of the marker rather than
     // returning a marker larger than the promised cap.
     const truncated = truncateForEventColumn("x".repeat(1000), 10);
-    assertLessOrEqual(new TextEncoder().encode(truncated).byteLength, 10);
-    assertFalse(truncated.includes("�"));
+    assert.ok(
+      (new TextEncoder().encode(truncated).byteLength) <= 10,
+      `expected new TextEncoder().encode(truncated).byteLength <= 10`,
+    );
+    assert.ok(!truncated.includes("�"));
   });
 
   it("reserves room for the marker itself, even when that leaves a mid-character excerpt boundary", () => {
@@ -512,9 +522,15 @@ describe("truncateForEventColumn", () => {
     // but not by much, so the excerpt budget after reserving the marker is
     // small enough that an odd remainder still forces a mid-character cut.
     const truncated = truncateForEventColumn("é".repeat(200), 100);
-    assertLessOrEqual(new TextEncoder().encode(truncated).byteLength, 100);
-    assertFalse(truncated.includes("�"));
-    assertStringIncludes(truncated, "event-truncated");
+    assert.ok(
+      (new TextEncoder().encode(truncated).byteLength) <= 100,
+      `expected new TextEncoder().encode(truncated).byteLength <= 100`,
+    );
+    assert.ok(!truncated.includes("�"));
+    assert.ok(
+      truncated.includes("event-truncated"),
+      `expected ${JSON.stringify(truncated)} to include "event-truncated"`,
+    );
   });
 });
 
@@ -543,18 +559,26 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
     );
 
     const toolResult = payload.tool_result as string;
-    assertLessOrEqual(
-      new TextEncoder().encode(toolResult).byteLength,
-      EVENT_RESULT_MAX_BYTES,
+    assert.ok(
+      (new TextEncoder().encode(toolResult).byteLength) <=
+        EVENT_RESULT_MAX_BYTES,
+      `expected new TextEncoder().encode(toolResult).byteLength <= ${EVENT_RESULT_MAX_BYTES}`,
     );
-    assertStringIncludes(toolResult, "event-truncated");
+    assert.ok(
+      toolResult.includes("event-truncated"),
+      `expected ${JSON.stringify(toolResult)} to include "event-truncated"`,
+    );
     // The marker records the true (uncapped) size in UTF-8 BYTES — assert in
     // the same unit, not string .length (UTF-16 code units), which only
     // coincides for an all-ASCII fixture and would let a unit regression
     // slip through unnoticed.
-    assertStringIncludes(
-      toolResult,
-      `${new TextEncoder().encode(modelFacingResult).byteLength} bytes`,
+    assert.ok(
+      toolResult.includes(
+        `${new TextEncoder().encode(modelFacingResult).byteLength} bytes`,
+      ),
+      `expected ${
+        JSON.stringify(toolResult)
+      } to include \`\${new TextEncoder().encode(modelFacingResult).byteLength} bytes\``,
     );
   });
 
@@ -574,7 +598,7 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
         spanId: "0123456789abcdef",
       },
     );
-    assertStrictEquals(payload.tool_result, "small file contents");
+    assert.strictEqual(payload.tool_result, "small file contents");
   });
 });
 
@@ -589,14 +613,14 @@ describe("read_file → tool_call event containment", () => {
   let root: string;
 
   beforeAll(async () => {
-    root = await Deno.makeTempDir();
+    root = await mkdtemp(join(tmpdir(), "tmp-"));
     // One character over the model-facing 64KB cap so builtin/file-read.ts's own
     // truncation kicks in — the exact receipted trigger shape.
-    await Deno.writeTextFile(`${root}/big.txt`, "a".repeat(64 * 1024 + 500));
+    await writeFile(`${root}/big.txt`, "a".repeat(64 * 1024 + 500));
   });
 
   afterAll(async () => {
-    if (root) await Deno.remove(root, { recursive: true });
+    if (root) await rm(root, { recursive: true });
   });
 
   it("completes without throwing and records a capped event with a full-size marker", async () => {
@@ -621,21 +645,31 @@ describe("read_file → tool_call event containment", () => {
 
     // The model-facing result keeps builtin/file-read.ts's own 64KB byte cap —
     // unchanged by this fix (non-goal).
-    assertStrictEquals(result.isError, false);
+    assert.strictEqual(result.isError, false);
     if (!("result" in result)) throw new Error("expected an allowed result");
-    assertStringIncludes(result.result as string, "[truncated at 65536 bytes]");
+    assert.ok(
+      (result.result as string).includes("[truncated at 65536 bytes]"),
+      `expected result.result as string to include "[truncated at 65536 bytes]"`,
+    );
     const modelFacingBytes = new TextEncoder().encode(result.result as string)
       .byteLength;
-    assertGreater(modelFacingBytes, DOLT_TEXT_COLUMN_MAX_BYTES);
+    assert.ok(
+      modelFacingBytes > DOLT_TEXT_COLUMN_MAX_BYTES,
+      `expected ${modelFacingBytes} > ${DOLT_TEXT_COLUMN_MAX_BYTES}`,
+    );
 
     // The event copy is capped well below the column limit, independently of
     // the model-facing value, with a marker recording the true size.
-    assertEquals(events.length, 1);
+    assert.deepStrictEqual(events.length, 1);
     const toolResult = events[0].tool_result as string;
-    assertLessOrEqual(
-      new TextEncoder().encode(toolResult).byteLength,
-      EVENT_RESULT_MAX_BYTES,
+    assert.ok(
+      (new TextEncoder().encode(toolResult).byteLength) <=
+        EVENT_RESULT_MAX_BYTES,
+      `expected new TextEncoder().encode(toolResult).byteLength <= ${EVENT_RESULT_MAX_BYTES}`,
     );
-    assertStringIncludes(toolResult, "event-truncated");
+    assert.ok(
+      toolResult.includes("event-truncated"),
+      `expected ${JSON.stringify(toolResult)} to include "event-truncated"`,
+    );
   });
 });
