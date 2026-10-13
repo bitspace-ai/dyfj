@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { executeGlobFiles, executeGrepFiles } from "./file-search.ts";
 import { RootAnchors } from "./root-anchors.ts";
@@ -14,8 +15,10 @@ import { RootAnchors } from "./root-anchors.ts";
 const anchors = new RootAnchors();
 const at = (root: string) => anchors.root(root);
 
-// Makes the pipe through bash, with env, cwd and stdin inherited. A shell that
-// cannot start rejects (spawn reports it as an `error` event); otherwise the
+// Makes the pipe through bash, with cwd and stdin inherited and only PATH from
+// the env: given no env, spawn copies the whole parent env, which needs an
+// unscoped env grant the integration lane does not give. A shell that cannot
+// start rejects (spawn reports it as an `error` event); otherwise the
 // exit code and stderr come back once the child has exited and its streams
 // have closed.
 function mkfifo(
@@ -23,6 +26,7 @@ function mkfifo(
 ): Promise<{ code: number | null; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("bash", ["-c", 'mkfifo "$1"', "bash", path], {
+      env: process.env.PATH === undefined ? {} : { PATH: process.env.PATH },
       stdio: ["inherit", "ignore", "pipe"],
     });
     let stderr = "";

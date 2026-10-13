@@ -28,9 +28,9 @@ async function forceKill(pid: number | undefined): Promise<void> {
   await probe("/bin/kill", ["-KILL", String(pid)], "ignore");
 }
 
-// Runs a probe command to its exit and returns its stdout. Env, cwd and stdin
-// are inherited, stderr is discarded and the exit status is not checked. Only
-// a probe that cannot start fails: spawn reports that as an `error` event.
+// Runs a probe command to its exit and returns its stdout. Cwd and stdin are
+// inherited, stderr is discarded and the exit status is not checked. Only a
+// probe that cannot start fails: spawn reports that as an `error` event.
 // `close` fires once the child has exited and its streams have closed, so no
 // probe outlives the call.
 function probe(
@@ -39,7 +39,10 @@ function probe(
   stdout: "pipe" | "ignore" = "pipe",
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(file, args, { stdio: ["inherit", stdout, "ignore"] });
+    const child = spawn(file, args, {
+      env: pathOnlyEnv(),
+      stdio: ["inherit", stdout, "ignore"],
+    });
     let text = "";
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -48,6 +51,14 @@ function probe(
     child.once("error", reject);
     child.once("close", () => resolve(text));
   });
+}
+
+// Given no env, spawn copies the whole parent env, which needs an unscoped env
+// grant; the integration lane grants env by name. PATH is the one variable
+// these children resolve anything through, so it is the one forwarded.
+function pathOnlyEnv(): Record<string, string> {
+  const path = process.env.PATH;
+  return path === undefined ? {} : { PATH: path };
 }
 
 function pidIn(text: string): number | undefined {
