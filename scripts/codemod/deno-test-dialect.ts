@@ -276,11 +276,16 @@ const REGEX_AFTER_WORD = new Set([
 
 const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
 
+/**
+ * Whether a `/` after the code character at `prev` opens a regex. `mask` is
+ * the scan so far: every position before the slash is already classified,
+ * so look-behinds skip comments through it.
+ */
 function regexAllowed(
   text: string,
   prev: number,
   openerOf: Map<number, number>,
-  at: number,
+  mask: Uint8Array,
 ): boolean {
   if (prev < 0) return true;
   const c = text[prev];
@@ -290,7 +295,7 @@ function regexAllowed(
   if (c === "}") return true;
   // A postfix ++ or -- ends an operand, so a `/` after it divides.
   if ((c === "+" || c === "-") && text[prev - 1] === c) {
-    const operand = text[prevNonSpace(text, prev - 1)];
+    const operand = text[prevNonSpace(text, prev - 1, mask)];
     if (operand !== undefined && /[\w$)\]]/.test(operand)) return false;
   }
   // After the parenthesis that closes `if (...)` and the like, a statement
@@ -298,11 +303,11 @@ function regexAllowed(
   if (c === ")") {
     const opener = openerOf.get(prev);
     if (opener === undefined) return false;
-    const before = wordBefore(text, opener);
+    const before = wordBefore(text, opener, mask);
     if (CONTROL_KEYWORDS.has(before.word)) return true;
     // `for await (...)`, unlike `await (expr)`, is a loop header.
     return before.word === "await" &&
-      wordBefore(text, before.start).word === "for";
+      wordBefore(text, before.start, mask).word === "for";
   }
   if (IDENT.test(c)) {
     let start = prev;
@@ -397,7 +402,7 @@ export function codeMask(
       prev = i - 1;
       continue;
     }
-    if (c === "/" && regexAllowed(text, prev, openerOf, i)) {
+    if (c === "/" && regexAllowed(text, prev, openerOf, mask)) {
       const end = skipRegex(text, i);
       if (end > 0) {
         // After a `}`, on the same line or the next (division continues
