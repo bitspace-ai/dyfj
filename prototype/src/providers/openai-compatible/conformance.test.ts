@@ -220,8 +220,14 @@ providerAdapterConformance({
             request.url,
             "https://api.openai.com/v1/chat/completions",
           );
-          assert.deepStrictEqual(request.headers.authorization, "Bearer sk-test-key");
-          assert.deepStrictEqual(JSON.parse(request.body).max_completion_tokens, 8192);
+          assert.deepStrictEqual(
+            request.headers.authorization,
+            "Bearer sk-test-key",
+          );
+          assert.deepStrictEqual(
+            JSON.parse(request.body).max_completion_tokens,
+            8192,
+          );
         },
         respond: {
           body: JSON.stringify({
@@ -254,7 +260,10 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assert.deepStrictEqual(JSON.parse(request.body).max_completion_tokens, 2),
+          assert.deepStrictEqual(
+            JSON.parse(request.body).max_completion_tokens,
+            2,
+          ),
         respond: {
           body: sse([
             { choices: [{ delta: { content: "cut" } }] },

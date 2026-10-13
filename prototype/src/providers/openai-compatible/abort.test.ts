@@ -104,7 +104,10 @@ describe("runWorkbenchTurn streaming", () => {
 
     transport.assertDone();
     assert.deepStrictEqual(deltas, [markup]);
-    assert.partialDeepStrictEqual(result, { text: markup, stopReason: "aborted" });
+    assert.partialDeepStrictEqual(result, {
+      text: markup,
+      stopReason: "aborted",
+    });
     assert.strictEqual(result.toolCalls, undefined);
   });
 

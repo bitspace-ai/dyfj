@@ -214,7 +214,11 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assert.partialDeepStrictEqual(result.usage, { input: 10, output: 2, reasoning: 7 });
+    assert.partialDeepStrictEqual(result.usage, {
+      input: 10,
+      output: 2,
+      reasoning: 7,
+    });
     assertAlmostEqual(
       result.usage.cost.total,
       (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
@@ -280,7 +284,11 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assert.partialDeepStrictEqual(result.usage, { input: 10, output: 9, reasoning: 0 });
+    assert.partialDeepStrictEqual(result.usage, {
+      input: 10,
+      output: 9,
+      reasoning: 0,
+    });
     assertAlmostEqual(
       result.usage.cost.total,
       (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
@@ -814,7 +822,10 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
     });
 
     transport.assertDone();
-    assert.partialDeepStrictEqual(result.usage, { cacheRead: 60_000, cacheWrite: 10_000 });
+    assert.partialDeepStrictEqual(result.usage, {
+      cacheRead: 60_000,
+      cacheWrite: 10_000,
+    });
     // Same total as an uncached call: 0.1M * 1 + 0.001M * 2 = 0.102
     assertAlmostEqual(result.usage.cost.total, 0.102, 5e-9);
   });
@@ -881,6 +892,8 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
       cacheWrite: 10_000,
     });
     const body = JSON.parse(transport.requests[0].body);
-    assert.partialDeepStrictEqual(body, { stream_options: { include_usage: true } });
+    assert.partialDeepStrictEqual(body, {
+      stream_options: { include_usage: true },
+    });
   });
 });

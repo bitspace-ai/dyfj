@@ -354,7 +354,8 @@ describe("runWorkbenchTurn streaming", () => {
         )),
       },
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "list files",
@@ -367,7 +368,13 @@ describe("runWorkbenchTurn streaming", () => {
           }],
           onTextDelta: () => {},
           fetchFn: transport.fetch,
-        }), (error: unknown) => error instanceof Error && error.message.includes("Provider returned too many textual tool-call markers"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Provider returned too many textual tool-call markers",
+        ),
+    );
     transport.assertDone();
   });
 

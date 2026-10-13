@@ -190,14 +190,19 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Response.json({ error: { message: "quota exceeded" } }),
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }), (error: unknown) => error instanceof Error && error.message.includes("Provider response returned an error envelope"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider response returned an error envelope"),
+    );
     transport.assertDone();
   });
 

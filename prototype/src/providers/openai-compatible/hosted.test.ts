@@ -315,7 +315,10 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
 
     assert.ok(failure instanceof HostedProviderCredentialMissingError);
     assert.strictEqual(failure.envVar, "OPENROUTER_API_KEY");
-    assert.ok(failure.message.includes("OPENROUTER_API_KEY"), `expected failure.message to include "OPENROUTER_API_KEY"`);
+    assert.ok(
+      failure.message.includes("OPENROUTER_API_KEY"),
+      `expected failure.message to include "OPENROUTER_API_KEY"`,
+    );
     assert.doesNotMatch(failure.message, /sk-openai-key/);
     assert.strictEqual(transport.requests.length, 0);
   });

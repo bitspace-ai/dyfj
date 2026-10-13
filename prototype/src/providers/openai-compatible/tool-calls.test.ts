@@ -159,7 +159,12 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider returned oversized tool arguments"),
+    );
     transport.assertDone();
   });
 
@@ -206,7 +211,12 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider returned oversized tool arguments"),
+    );
     transport.assertDone();
   });
 
@@ -401,7 +411,12 @@ describe("runWorkbenchTurn streaming", () => {
           }],
         }),
     }]);
-    await assert.rejects(() => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }), (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
+    await assert.rejects(
+      () => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider returned oversized tool arguments"),
+    );
     buffered.assertDone();
 
     const streamed = sseTransport([{
@@ -417,12 +432,17 @@ describe("runWorkbenchTurn streaming", () => {
         finish_reason: "tool_calls",
       }],
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         runWorkbenchTurn({
           ...common,
           onTextDelta: () => {},
           fetchFn: streamed.fetch,
-        }), (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider returned oversized tool arguments"),
+    );
     streamed.assertDone();
   });
 });

@@ -91,14 +91,19 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: { status: 500, body: "x".repeat(4 * 1024 * 1024 + 1) },
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }), (error: unknown) => error instanceof ProviderRequestFailedError && error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`));
+        }),
+      (error: unknown) =>
+        error instanceof ProviderRequestFailedError &&
+        error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`),
+    );
     transport.assertDone();
   });
 
@@ -225,14 +230,19 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => new Response(null, { status: 500 }),
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }), (error: unknown) => error instanceof ProviderRequestFailedError && error.message.includes("ollama/gemma4:e2b: HTTP 500"));
+        }),
+      (error: unknown) =>
+        error instanceof ProviderRequestFailedError &&
+        error.message.includes("ollama/gemma4:e2b: HTTP 500"),
+    );
     transport.assertDone();
   });
 
