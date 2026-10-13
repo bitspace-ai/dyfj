@@ -1,7 +1,8 @@
 // Fixture tests for the test-dialect codemod (`deno-test-dialect.ts`). Each
 // file under `fixtures/` holds a before text, the expected after text, the
 // rules the conversion must apply and the findings it must report (lines in
-// the after text). Written to node: builtins only, like the tool, so this file
+// the after text). An optional `captured-import:` line gives the specifier
+// the file would import the captured-assertion helper from. Written to node: builtins only, like the tool, so this file
 // never names the host runtime's global in its own text.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -21,6 +22,7 @@ const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 interface Fixture {
   name: string;
   rules: string[];
+  capturedImport?: string;
   before: string;
   after: string;
   findings: string[];
@@ -46,11 +48,15 @@ function parseFixture(name: string, text: string): Fixture {
   };
   const rulesLine = header.find((line) => line.startsWith("rules:"));
   if (rulesLine === undefined) throw new Error(`${name}: no "rules:" line`);
+  const importLine = header.find((line) => line.startsWith("captured-import:"));
   return {
     name,
     rules: rulesLine.slice("rules:".length).split(",").map((rule) =>
       rule.trim()
     ).filter((rule) => rule !== ""),
+    ...(importLine === undefined ? {} : {
+      capturedImport: importLine.slice("captured-import:".length).trim(),
+    }),
     // The before and after sections end at the next marker; the newline
     // before that marker belongs to the text.
     before: body("before").join("\n") + "\n",
@@ -86,7 +92,8 @@ describe("test-dialect codemod fixtures", () => {
 
   for (const fixture of fixtures) {
     describe(fixture.name, () => {
-      const result = convertSource(fixture.before);
+      const options = { capturedImport: fixture.capturedImport };
+      const result = convertSource(fixture.before, options);
 
       it("converts the before text to the after text", () => {
         assert.equal(result.source, fixture.after);
@@ -114,7 +121,7 @@ describe("test-dialect codemod fixtures", () => {
       });
 
       it("is idempotent: a second run changes nothing", () => {
-        const again = convertSource(result.source);
+        const again = convertSource(result.source, options);
         assert.equal(again.source, result.source);
         assert.equal(totalRewrites(again), 0);
         assert.deepEqual(findingLines(again), findingLines(result));

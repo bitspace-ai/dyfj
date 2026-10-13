@@ -20,10 +20,13 @@
 //   deno run --allow-read=. --allow-write=. scripts/codemod/deno-test-dialect.ts \
 //     [--write] [--json] <file-or-directory>...
 // Without --write it is a dry run. A directory is searched for *.test.ts.
+// A file under prototype/ whose thrown error is used imports the
+// captured-assertion helper (prototype/testing/assertions/captured.ts) by a
+// path relative to itself; elsewhere that use stays flagged.
 // Findings name lines in the file as it is on disk: the original text in a
 // dry run, the converted text after --write.
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -77,6 +80,15 @@ export const RULES: readonly RuleInfo[] = [
     id: "assert.rejects",
     from: "assertRejects(fn, Class?, includes?)",
     to: "assert.rejects(fn, Class | validation function)",
+  },
+  {
+    id: "assert.captured",
+    from:
+      "assertThrows / assertRejects whose value is bound, or read through " +
+      "`.member` or `(... as T).member`",
+    to: "captureThrow / captureRejection (prototype/testing/assertions/" +
+      "captured.ts); a message substring on a binding becomes assert.ok " +
+      "on its message",
   },
   {
     id: "assert.object-match",
@@ -814,6 +826,8 @@ interface Context {
   heldSpies: Set<string>;
   /** Std locals the file also declares: shadowed somewhere, never rewritten. */
   shadowed: Set<string>;
+  /** Where the captured-assertion helper is imported from, if it may be. */
+  capturedImport?: string;
   /** Names bound to a constructed Error (`const e = new Error(...)`). */
   errorNames: Set<string>;
   /** Whether the file declares its own binding of the host global's name. */
@@ -940,11 +954,12 @@ function declaresAt(
   return false;
 }
 
-function makeContext(text: string): Context {
+function makeContext(text: string, capturedImport?: string): Context {
   const original = new Source(text);
   const imports = parseImports(original);
   const ctx: Context = {
     original,
+    capturedImport,
     imports,
     stdAssert: stdBindings(imports, STD_ASSERT),
     stdMock: stdBindings(imports, STD_MOCK),
@@ -1075,6 +1090,7 @@ type Need =
   | "tmpdir"
   | "join"
   | "deepEqual"
+  | `captured:${string}`
   | `fs:${string}`
   | `fsSync:${string}`;
 
@@ -1404,7 +1420,7 @@ function convertAssertion(
   const rule = rejects ? "assert.rejects" : "assert.throws";
   const callee = rejects ? "assert.rejects" : "assert.throws";
   if (valueUsed(src, call.start)) {
-    return {
+    return convertCaptured(src, ctx, rejects, call) ?? {
       pos: call.start,
       flag: "thrown-value-used",
       reason: FLAGS["thrown-value-used"],
@@ -1443,6 +1459,97 @@ function convertAssertion(
     `${callee}(${args[0].text}, ${validator}${message})`,
     ["assert"],
   );
+}
+
+/**
+ * An assertThrows / assertRejects whose value is used, in a shape that keeps
+ * its meaning with the captured-assertion helper, which returns the error as
+ * std did: bound whole (`const e = [await] call;`), or read through a member
+ * (`call.m`, `(call as T).m`, `(await call as T).m`, `((await call) as T).m`).
+ * A message substring is kept only on a binding, as an assertion after it.
+ * Anything else returns undefined and stays flagged.
+ */
+function convertCaptured(
+  src: Source,
+  ctx: Context,
+  rejects: boolean,
+  call: Call,
+): Rewrite | undefined {
+  const helper = rejects ? "captureRejection" : "captureThrow";
+  const module = ctx.capturedImport;
+  if (module === undefined || !canUse(ctx, helper, module)) return undefined;
+  const { text, mask } = src;
+  const args = call.args;
+  if (args.length < 1 || args.length > 4) return undefined;
+  const errorClass = args[1]?.text;
+  if (
+    errorClass !== undefined &&
+    (/^["'`]/.test(errorClass) || errorClass === "undefined" ||
+      HOST_ERROR.test(errorClass))
+  ) {
+    return undefined;
+  }
+  const awaitWord = wordBefore(text, call.start, mask);
+  const awaited = awaitWord.word === "await";
+  const head = awaited ? awaitWord.start : call.start;
+
+  const binding = /(?:^|[^\w$.])(?:const|let)\s+([\w$]+)\s*(?::[^=;]+)?=\s*$/
+    .exec(statementHead(text, head));
+  const bound = binding !== null && isStatementEnd(text, call.end);
+  const readsMember = () => {
+    if (/^\s*\.[A-Za-z_$]/.test(text.slice(call.end))) return !awaited;
+    let start = head;
+    let end = call.end;
+    // `((await call) as T)`: the inner parentheses come off first.
+    if (
+      awaited && text[prevNonSpace(text, start, mask)] === "(" &&
+      text[nextNonSpace(text, end)] === ")"
+    ) {
+      start = prevNonSpace(text, start, mask);
+      end = nextNonSpace(text, end) + 1;
+    }
+    return text[prevNonSpace(text, start, mask)] === "(" &&
+      /^\s+as\s+[\w$.<>[\]| ]+?\s*\)\s*\.[A-Za-z_$]/.test(text.slice(end));
+  };
+  const rename = (rewrite: Omit<Rewrite, "pos" | "rule">): Rewrite => ({
+    pos: call.start,
+    rule: "assert.captured",
+    ...rewrite,
+  });
+  if (args.length <= 2) {
+    if (!bound && !readsMember()) return undefined;
+    return rename({
+      edits: [{ start: call.start, end: call.calleeEnd, text: helper }],
+      needs: [`captured:${helper}`],
+    });
+  }
+  // A message substring (and perhaps an assertion message): only on a
+  // binding whose value is the error, not a pending promise.
+  if (!bound || (rejects && !awaited)) return undefined;
+  const name = binding![1];
+  const substring = args[2].text;
+  const message = args[3] ? `, ${args[3].text}` : "";
+  const capture = `${helper}(${args[0].text}, ${errorClass})`;
+  if (substring === "undefined") {
+    if (args[3]) return undefined;
+    return rename({
+      edits: [{ start: call.start, end: call.end, text: capture }],
+      needs: [`captured:${helper}`],
+    });
+  }
+  const semicolon = nextNonSpace(text, call.end) + 1;
+  return rename({
+    edits: [
+      { start: call.start, end: call.end, text: capture },
+      {
+        start: semicolon,
+        end: semicolon,
+        text: `\n${indentAt(text, head)}assert.ok(${name}.message.includes(` +
+          `${substring})${message});`,
+      },
+    ],
+    needs: [`captured:${helper}`, "assert"],
+  });
 }
 
 const assertionPass: Pass = (src, ctx) =>
@@ -2725,7 +2832,9 @@ function fixImports(
     const [kind, name] = need.includes(":")
       ? need.split(":")
       : [need, need === "deepEqual" ? "isDeepStrictEqual" : need];
-    const entry = want(NEED_MODULES[kind]);
+    const entry = want(
+      kind === "captured" ? ctx.capturedImport! : NEED_MODULES[kind],
+    );
     if (kind === "assert" || kind === "process") entry.defaultName = kind;
     else entry.named.add(name);
   }
@@ -2812,9 +2921,20 @@ function fixImports(
 
 const MAX_ROUNDS = 10;
 
+export interface ConvertOptions {
+  /**
+   * The specifier this file would import the captured-assertion helper
+   * from. Without it, a used thrown value stays flagged.
+   */
+  capturedImport?: string;
+}
+
 /** Converts one test file's text. Pure: no I/O. */
-export function convertSource(text: string): ConversionResult {
-  const ctx = makeContext(text);
+export function convertSource(
+  text: string,
+  options: ConvertOptions = {},
+): ConversionResult {
+  const ctx = makeContext(text, options.capturedImport);
   const rewrites = new Map<string, number>();
   const count = (rule: string) =>
     rewrites.set(rule, (rewrites.get(rule) ?? 0) + 1);
@@ -2888,6 +3008,20 @@ export function convertSource(text: string): ConversionResult {
 // --------------------------------------------------------------------- CLI --
 
 const SKIPPED_DIRS = new Set(["node_modules", "target", "dist", "vendor"]);
+
+const PROTOTYPE = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../prototype",
+);
+const CAPTURED_HELPER = join(PROTOTYPE, "testing/assertions/captured.ts");
+
+/** The helper's specifier from `file`, for files under prototype/ only. */
+export function capturedImportFor(file: string): string | undefined {
+  const path = resolve(file);
+  if (!path.startsWith(PROTOTYPE + sep)) return undefined;
+  const spec = relative(dirname(path), CAPTURED_HELPER).split(sep).join("/");
+  return spec.startsWith(".") ? spec : `./${spec}`;
+}
 
 function collectFiles(path: string, into: string[]): void {
   if (!statSync(path).isDirectory()) {
@@ -2999,7 +3133,9 @@ function main(args: string[]): number {
   const reports: FileReport[] = [];
   for (const file of files.sort()) {
     const before = readFileSync(file, "utf8");
-    const result = convertSource(before);
+    const result = convertSource(before, {
+      capturedImport: capturedImportFor(file),
+    });
     const changed = result.source !== before;
     if (write && changed) writeFileSync(file, result.source);
     reports.push({ ...result, path: relative(process.cwd(), file), changed });
