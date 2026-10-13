@@ -1,7 +1,6 @@
 // Tests for the tool catalog (`catalog.ts`).
 
 import assert from "node:assert/strict";
-import { assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "./definition.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
@@ -73,7 +72,7 @@ describe("buildToolCatalog", () => {
     }, {});
 
     const memoryRead = registry.lookup("memory.read");
-    assertExists(memoryRead);
+    assert.ok(memoryRead !== undefined && memoryRead !== null);
     assert.partialDeepStrictEqual(memoryRead, {
       id: "memory.read",
       title: "Read Memory",

@@ -4,7 +4,6 @@ import {
 } from "../../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { assertArrayIncludes } from "@std/assert";
 import {
   createWebToolsSessionState,
   defineWebCommands,
@@ -566,7 +565,11 @@ describe("defineWebCommands", () => {
     };
     const commands = defineWebCommands(customServer, "token");
     const searchCmd = commands.find((c) => c.id === "web_search")!;
-    assertArrayIncludes(searchCmd.permission.effects, ["write.external"]);
+    const { effects } = searchCmd.permission;
+    assert.deepStrictEqual(
+      (["write.external"] as const).filter((item) => !effects.includes(item)),
+      [],
+    );
     assert.strictEqual(searchCmd.permission.defaultDecision, "ask");
   });
 
