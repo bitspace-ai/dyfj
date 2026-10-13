@@ -11,6 +11,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The Rust REPL prints a turn receipt's safety warning.** The runtime puts
+  a skipped-event-write warning in the receipt string, beside the answer
+  text. The REPL read the answer and dropped that string, so a turn whose
+  audit records were not all written showed its answer with no warning.
+  Lines in that string that begin with `WARNING:` are now printed,
+  sanitized, whether the answer streamed or arrived only with the receipt.
+  Event writes stay best-effort. The runtime builds the receipt before its
+  last session write, so a failure of that write is still not reported in
+  the receipt; the runtime's own diagnostic records it.
 - **Ctrl-C at the Rust REPL's approval prompt cancels the turn, and `n` denies that call.**
   While an approval was being read, Ctrl-C was readline's interrupt and was
   answered as a denial (`operator declined`). The keypress was not delivered as

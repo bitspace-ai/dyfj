@@ -5,6 +5,10 @@
 //! it used. The layout follows `formatReceipt` in the TypeScript CLI
 //! (`prototype/src/cli/render/receipt.ts`) so the two front-ends read alike.
 //! Every field is optional: a receipt missing one costs a narrower line.
+//!
+//! The same turn result carries a `receipt` string. A skipped event write is
+//! reported there as its own `WARNING:` line, beside the answer `text`.
+//! `safety_warnings` returns those lines; the cost line above does not.
 
 use crate::approval::visible;
 use serde_json::Value;
@@ -111,9 +115,27 @@ pub fn line(receipt: &Value, session_total: f64) -> String {
     format!("— {}", parts.join(" · "))
 }
 
+/// Safety-warning lines from the turn result's `receipt` string.
+///
+/// The runtime writes a skipped-event-write warning into that string. It is
+/// not a separate field, and it is not part of `text`. Each line that begins
+/// with `WARNING:` is returned, sanitized the same way other single-line
+/// runtime strings are. A result with no such line returns nothing.
+pub fn safety_warnings(result: &Value) -> Vec<String> {
+    let Some(text) = result.get("receipt").and_then(Value::as_str) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.starts_with("WARNING:").then(|| visible(line))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{count, line};
+    use super::{count, line, safety_warnings};
     use serde_json::json;
 
     fn receipt() -> serde_json::Value {
@@ -176,6 +198,38 @@ mod tests {
             line(&json!({}), 0.0),
             "— unknown model · $0 · session $0 · 0→0 tok"
         );
+    }
+
+    /// The warning lives in the receipt string, not in the answer, and a
+    /// line that merely contains the word is not one.
+    #[test]
+    fn safety_warnings_are_the_receipt_lines_that_begin_with_warning() {
+        let warning = "WARNING: 2 event write(s) failed \u{2014} the session's audit log has gaps";
+        let hostile = "WARNING: 1 event write(s) failed \u{2014} \u{1b}[2Jwiped";
+        let result = json!({
+            "text": "WARNING: this is the answer, not a receipt warning",
+            "receipt": format!(
+                "Workbench receipt\nSession: x\n- notes/WARNING: not a warning\n{warning}\n{hostile}\n"
+            ),
+        });
+        let warnings = safety_warnings(&result);
+        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(warnings[0], warning);
+        assert!(
+            !warnings[1].contains('\u{1b}'),
+            "escape survived: {:?}",
+            warnings[1]
+        );
+        assert!(
+            warnings[1].contains("wiped"),
+            "text must not be dropped: {:?}",
+            warnings[1]
+        );
+        assert!(warnings[1].starts_with("WARNING:"), "{:?}", warnings[1]);
+
+        assert!(safety_warnings(&json!({"receipt": "Workbench receipt\nSession: x\n"})).is_empty());
+        assert!(safety_warnings(&json!({})).is_empty());
+        assert!(safety_warnings(&json!({"receipt": 3})).is_empty());
     }
 
     #[test]

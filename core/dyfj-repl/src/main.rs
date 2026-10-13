@@ -336,19 +336,20 @@ async fn run_turn(
                         // tool-offering calls are buffered streams no text at
                         // all — verified against a live runtime on Anthropic,
                         // where a turn produced seven event frames, zero
-                        // deltas, and the answer only in the receipt. Render
-                        // the receipt text when nothing was streamed, or the
-                        // answer is invisible.
-                        if !wrote_any {
-                            if let Some(text) = result.get("text").and_then(Value::as_str) {
-                                if !text.is_empty() {
-                                    println!("{}", approval::visible_text(text));
-                                    wrote_any = true;
-                                }
-                            }
+                        // deltas, and the answer only in `text`. Render that
+                        // text when nothing was streamed, or the answer is
+                        // invisible. Warning lines in the `receipt` string
+                        // are shown either way.
+                        let close = turn_close(&result, wrote_any);
+                        if let Some(text) = close.buffered_text {
+                            println!("{text}");
+                            wrote_any = true;
                         }
                         if wrote_any {
                             println!();
+                        }
+                        for warning in close.warnings {
+                            eprintln!("{warning}");
                         }
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
@@ -502,6 +503,35 @@ fn discard_abandoned_frames(incoming: &mut mpsc::Receiver<Incoming>) {
     }
 }
 
+/// What a settled turn still has to show after queued frames are flushed.
+///
+/// `buffered_text` is the answer when nothing was streamed. `warnings` are
+/// the receipt's safety-warning lines. Those are filled in either case:
+/// `wrote_any` decides only whether the answer text is printed again.
+struct TurnClose {
+    buffered_text: Option<String>,
+    warnings: Vec<String>,
+}
+
+/// Decide the answer fallback and the receipt warnings for a completed turn.
+///
+/// `wrote_any` is whether answer text already reached the terminal as deltas.
+fn turn_close(result: &Value, wrote_any: bool) -> TurnClose {
+    let buffered_text = if wrote_any {
+        None
+    } else {
+        result
+            .get("text")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(approval::visible_text)
+    };
+    TurnClose {
+        buffered_text,
+        warnings: receipt::safety_warnings(result),
+    }
+}
+
 /// The runtime validates `turnId` against a UUID shape and rejects anything
 /// else, so this is a protocol requirement rather than a formatting choice. It
 /// also routes `turn/cancel` by this id: a repeated id would let a cancel land
@@ -513,6 +543,46 @@ fn new_turn_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::{MAX_INPUT_CHARACTERS, Submission, classify, new_turn_id, resolve_socket_path};
+
+    /// The receipt string carries the audit-gap warning beside the answer.
+    /// Streaming must not hide it, and a buffered answer must still appear.
+    #[test]
+    fn an_audit_gap_warning_is_shown_for_a_streamed_answer_and_a_buffered_one() {
+        let warning =
+            "WARNING: 2 event write(s) failed \u{2014} the session's audit log has gaps\u{1b}[2J";
+        let result = serde_json::json!({
+            "sessionId": "01J9ZQ4W8X6V5T3R2P1N0M9K8H",
+            "text": "the answer",
+            "receipt": format!(
+                "Workbench receipt\nSession: 01J\n{warning}\nActual cost:    $0.000000\n"
+            ),
+        });
+
+        let shows_warning = |lines: &[String]| {
+            lines
+                .iter()
+                .any(|line| line.contains("audit log has gaps") && !line.contains('\u{1b}'))
+        };
+
+        let streamed = super::turn_close(&result, true);
+        assert!(
+            streamed.buffered_text.is_none(),
+            "a streamed answer is not printed again from the receipt text"
+        );
+        assert!(
+            shows_warning(&streamed.warnings),
+            "streamed answer dropped the warning: {:?}",
+            streamed.warnings
+        );
+
+        let buffered = super::turn_close(&result, false);
+        assert_eq!(buffered.buffered_text.as_deref(), Some("the answer"));
+        assert!(
+            shows_warning(&buffered.warnings),
+            "buffered answer dropped the warning: {:?}",
+            buffered.warnings
+        );
+    }
 
     /// Sequence tests for supersession. Single-event tests cannot catch this:
     /// the defect is what `wrote_any` carries ACROSS events, and it decides
