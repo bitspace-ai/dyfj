@@ -7,13 +7,7 @@
  * config surface.
  */
 
-import {
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import {
@@ -24,15 +18,15 @@ import {
 
 describe("memorySearchConfigFromEnv", () => {
   it("returns null when no endpoint is configured (capability disabled)", () => {
-    assertStrictEquals(memorySearchConfigFromEnv(new MapEnv({})), null);
-    assertStrictEquals(
+    assert.strictEqual(memorySearchConfigFromEnv(new MapEnv({})), null);
+    assert.strictEqual(
       memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: "" })),
       null,
     );
   });
 
   it("defaults the tool to 'search' and omits the token when only URL is set", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       memorySearchConfigFromEnv(
         new MapEnv({
           DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
@@ -55,25 +49,25 @@ describe("memorySearchConfigFromEnv", () => {
         DYFJ_MEMORY_MCP_TOKEN: "fixture-token",
       }),
     );
-    assertStrictEquals(cfg?.url, "https://memory.example/mcp");
-    assertStrictEquals(cfg?.tool, "search_thoughts");
-    assertStrictEquals(cfg?.token, "fixture-token");
+    assert.strictEqual(cfg?.url, "https://memory.example/mcp");
+    assert.strictEqual(cfg?.tool, "search_thoughts");
+    assert.strictEqual(cfg?.token, "fixture-token");
   });
 
   it("refuses an endpoint that would carry the token in cleartext", () => {
     // https anywhere; plain http only to loopback. Fail-closed at config
     // resolution, before any request could ship the token.
-    assertThrows(
+    assert.throws(
       () =>
         memorySearchConfigFromEnv(
           new MapEnv({
             DYFJ_MEMORY_MCP_URL: "http://memory.example/mcp",
           }),
         ),
-      Error,
-      "https",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("https"),
     );
-    assertStrictEquals(
+    assert.strictEqual(
       memorySearchConfigFromEnv(
         new MapEnv({
           DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:8080/mcp",
@@ -81,7 +75,7 @@ describe("memorySearchConfigFromEnv", () => {
       )?.url,
       "http://127.0.0.1:8080/mcp",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       memorySearchConfigFromEnv(
         new MapEnv({
           DYFJ_MEMORY_MCP_URL: "http://localhost:8080/mcp",
@@ -99,11 +93,14 @@ describe("memorySearchConfigFromEnv", () => {
         "https://fixture-user@memory.example/mcp",
       ]
     ) {
-      assertThrows(
+      assert.throws(
         () =>
           memorySearchConfigFromEnv(new MapEnv({ DYFJ_MEMORY_MCP_URL: url })),
-        Error,
-        "DYFJ_MEMORY_MCP_URL must not include credentials",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes(
+            "DYFJ_MEMORY_MCP_URL must not include credentials",
+          ),
       );
     }
   });
@@ -120,10 +117,13 @@ describe("memorySearchConfigFromEnv", () => {
       message = error instanceof Error ? error.message : String(error);
     }
 
-    assertStringIncludes(message, "DYFJ_MEMORY_MCP_URL");
-    assertFalse(message.includes(username));
-    assertFalse(message.includes(password));
-    assertFalse(message.includes(url));
+    assert.ok(
+      message.includes("DYFJ_MEMORY_MCP_URL"),
+      `expected ${JSON.stringify(message)} to include "DYFJ_MEMORY_MCP_URL"`,
+    );
+    assert.ok(!message.includes(username));
+    assert.ok(!message.includes(password));
+    assert.ok(!message.includes(url));
   });
 
   it("a DNS name that merely starts with 127. is not loopback", () => {
@@ -136,18 +136,18 @@ describe("memorySearchConfigFromEnv", () => {
         "127.0.0.1.evil.example",
       ]
     ) {
-      assertThrows(
+      assert.throws(
         () =>
           memorySearchConfigFromEnv(
             new MapEnv({
               DYFJ_MEMORY_MCP_URL: `http://${host}/mcp`,
             }),
           ),
-        Error,
-        "https",
+        (error: unknown) =>
+          error instanceof Error && error.message.includes("https"),
       );
     }
-    assertStrictEquals(
+    assert.strictEqual(
       memorySearchConfigFromEnv(
         new MapEnv({
           DYFJ_MEMORY_MCP_URL: "http://127.1.2.3:9/mcp",
@@ -165,14 +165,14 @@ describe("memorySearchConfigFromEnv", () => {
         DYFJ_MEMORY_MCP_TOKEN_HEADER: "x-fixture-key",
       }),
     );
-    assertStrictEquals(named?.tokenHeader, "x-fixture-key");
+    assert.strictEqual(named?.tokenHeader, "x-fixture-key");
     const empty = memorySearchConfigFromEnv(
       new MapEnv({
         DYFJ_MEMORY_MCP_URL: "https://memory.example/mcp",
         DYFJ_MEMORY_MCP_TOKEN_HEADER: "",
       }),
     );
-    assertStrictEquals(empty?.tokenHeader, undefined);
+    assert.strictEqual(empty?.tokenHeader, undefined);
   });
 });
 
@@ -180,22 +180,25 @@ describe("memoryAuthHeaders", () => {
   const base = { url: "https://memory.example/mcp", tool: "search" };
 
   it("no token → no auth headers (header name alone is meaningless)", () => {
-    assertStrictEquals(memoryAuthHeaders(base), undefined);
-    assertStrictEquals(memoryAuthHeaders({ ...base, token: "" }), undefined);
-    assertStrictEquals(
+    assert.strictEqual(memoryAuthHeaders(base), undefined);
+    assert.strictEqual(memoryAuthHeaders({ ...base, token: "" }), undefined);
+    assert.strictEqual(
       memoryAuthHeaders({ ...base, tokenHeader: "x-fixture-key" }),
       undefined,
     );
   });
 
   it("token without a header name → standard Authorization: Bearer", () => {
-    assertEquals(memoryAuthHeaders({ ...base, token: "fixture-token" }), {
-      Authorization: "Bearer fixture-token",
-    });
+    assert.deepStrictEqual(
+      memoryAuthHeaders({ ...base, token: "fixture-token" }),
+      {
+        Authorization: "Bearer fixture-token",
+      },
+    );
   });
 
   it("token with a header name → raw token under the named header", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       memoryAuthHeaders({
         ...base,
         token: "fixture-token",
@@ -214,8 +217,8 @@ describe("recallRequestInit", () => {
     // stripped cross-origin), so following a 307/308 https→http downgrade
     // would ship the token header and query body in cleartext. Every recall
     // request must carry redirect: "error".
-    assertStrictEquals(recallRequestInit(base).redirect, "error");
-    assertEquals(
+    assert.strictEqual(recallRequestInit(base).redirect, "error");
+    assert.deepStrictEqual(
       recallRequestInit({
         ...base,
         token: "fixture-token",

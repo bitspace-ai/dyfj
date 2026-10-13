@@ -2,7 +2,7 @@
 // `createSystemDnsResolver` with an injected stand-in for the `node:dns`
 // `Resolver`. The adapter's answers against a real resolver are pinned by the
 // conformance suite in `dns.integration.test.ts`.
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { createSystemDnsResolver, type NodeDnsResolver } from "./dns.ts";
 
@@ -36,11 +36,11 @@ describe("createSystemDnsResolver", () => {
       resolve6: () => Promise.resolve(["2001:db8::1"]),
       cancel: () => {},
     }));
-    assertEquals(await resolver.resolve("example.com", "A"), {
+    assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
       ok: true,
       addresses: ["192.0.2.1"],
     });
-    assertEquals(await resolver.resolve("example.com", "AAAA"), {
+    assert.deepStrictEqual(await resolver.resolve("example.com", "AAAA"), {
       ok: true,
       addresses: ["2001:db8::1"],
     });
@@ -51,7 +51,7 @@ describe("createSystemDnsResolver", () => {
       const resolver = createSystemDnsResolver(() =>
         rejecting(codedError(code))
       );
-      assertEquals(await resolver.resolve("example.com", "A"), {
+      assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
         ok: true,
         addresses: [],
       });
@@ -66,7 +66,7 @@ describe("createSystemDnsResolver", () => {
       : err.name;
     it(`maps ${label} to unavailable`, async () => {
       const resolver = createSystemDnsResolver(() => rejecting(err));
-      assertEquals(await resolver.resolve("example.com", "A"), {
+      assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
         ok: false,
         reason: "unavailable",
       });
@@ -83,11 +83,11 @@ describe("createSystemDnsResolver", () => {
       resolve6: () => (queried++, Promise.resolve([])),
       cancel: () => {},
     }));
-    assertEquals(await resolver.resolve("example.com", "A"), {
+    assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
       ok: false,
       reason: "unavailable",
     });
-    assertEquals(queried, 0);
+    assert.deepStrictEqual(queried, 0);
   });
 
   it("reports unavailable when there are no servers", async () => {
@@ -97,7 +97,7 @@ describe("createSystemDnsResolver", () => {
       resolve6: () => Promise.resolve([]),
       cancel: () => {},
     }));
-    assertEquals(await resolver.resolve("example.com", "A"), {
+    assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
       ok: false,
       reason: "unavailable",
     });
@@ -107,7 +107,7 @@ describe("createSystemDnsResolver", () => {
     const resolver = createSystemDnsResolver(() =>
       rejecting(codedError("UNKNOWN"))
     );
-    assertEquals(await resolver.resolve("example.com", "A"), {
+    assert.deepStrictEqual(await resolver.resolve("example.com", "A"), {
       ok: false,
       reason: "failed",
     });
@@ -119,11 +119,11 @@ describe("createSystemDnsResolver", () => {
       made++;
       return rejecting(codedError("UNKNOWN"));
     });
-    assertEquals(
+    assert.deepStrictEqual(
       await resolver.resolve("example.com", "A", AbortSignal.abort()),
       { ok: false, reason: "failed" },
     );
-    assertEquals(made, 0);
+    assert.deepStrictEqual(made, 0);
   });
 
   it("cancels the lookup when the signal aborts mid-lookup and fails", async () => {
@@ -144,7 +144,7 @@ describe("createSystemDnsResolver", () => {
     }));
     const lookup = resolver.resolve("example.com", "A", controller.signal);
     controller.abort();
-    assertEquals(await lookup, { ok: false, reason: "failed" });
-    assertEquals(cancelled, 1);
+    assert.deepStrictEqual(await lookup, { ok: false, reason: "failed" });
+    assert.deepStrictEqual(cancelled, 1);
   });
 });

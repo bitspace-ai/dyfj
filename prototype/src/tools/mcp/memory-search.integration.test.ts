@@ -1,10 +1,10 @@
+import assert from "node:assert/strict";
 import {
   createMcpHandler,
   legacyStatelessFallback,
   McpServer,
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { assertRejects } from "@std/assert";
 import {
   buildMemorySearch,
   type MemorySearchDiagnostic,
@@ -16,10 +16,6 @@ import {
 } from "../../../testing/servers/mcp-server.ts";
 
 const FIXTURE_TOOL = "fixture-search";
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
 
 function assertEquals(actual: unknown, expected: unknown): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -766,7 +762,7 @@ Deno.test(
       })
     );
     try {
-      await assertRejects(() =>
+      await assert.rejects(() =>
         fetch(server.url, {
           ...recallRequestInit({
             ...base,

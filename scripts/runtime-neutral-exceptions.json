@@ -700,11 +700,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/invoke.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/tools/mcp/adapter.integration.test.ts",
     "count": 7,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
