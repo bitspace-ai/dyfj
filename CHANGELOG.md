@@ -187,6 +187,10 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **`core` depends on `ulid` 3.0.0.** Generation calls `Ulid::generate`, the 3.0
+  name of `Ulid::new`. Event and session ids are still 26-character Crockford
+  Base32 strings with the same 48-bit millisecond timestamp prefix, so their
+  stored text and sort order are unchanged.
 - **The unit test lane (`test.unit`) may read `TMPDIR`, `TMP` and `TEMP`.**
   Part of the move of the TypeScript tier to Node.js (decision D32): the tests
   are being rewritten onto `node:` builtins inside their existing
