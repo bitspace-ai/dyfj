@@ -9,7 +9,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 256
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "event_id"
+          }
         }
       },
       {
@@ -18,7 +25,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 256
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "session_id"
+          }
         }
       },
       {
@@ -27,7 +41,14 @@
         "type_info": {
           "type": "String",
           "flags": "NOT_NULL",
-          "max_size": 56
+          "collation": 255,
+          "max_size": 72
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "event_type"
+          }
         }
       },
       {
@@ -36,7 +57,14 @@
         "type_info": {
           "type": "Timestamp",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 26
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "created_at"
+          }
         }
       },
       {
@@ -45,7 +73,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 256
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "trace_id"
+          }
         }
       },
       {
@@ -54,7 +89,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 128
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "span_id"
+          }
         }
       },
       {
@@ -63,7 +105,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "",
+          "collation": 255,
           "max_size": 128
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "parent_span_id"
+          }
         }
       },
       {
@@ -72,7 +121,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 512
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "principal_id"
+          }
         }
       },
       {
@@ -81,7 +137,14 @@
         "type_info": {
           "type": "String",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 28
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "principal_type"
+          }
         }
       },
       {
@@ -90,7 +153,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 256
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "action"
+          }
         }
       },
       {
@@ -99,7 +169,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 1024
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "resource"
+          }
         }
       },
       {
@@ -108,7 +185,14 @@
         "type_info": {
           "type": "VarString",
           "flags": "NOT_NULL",
+          "collation": 255,
           "max_size": 1024
+        },
+        "origin": {
+          "Table": {
+            "table": "dolt.events",
+            "name": "authz_basis"
+          }
         }
       }
     ],

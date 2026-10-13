@@ -3,7 +3,8 @@
 //! This is the library half of the crate. The binary in `src/main.rs`
 //! is a demo wrapper; real consumers depend on the library directly.
 
-pub mod events;
+pub mod connect;
 pub mod error;
+pub mod events;
 
 pub use error::Error;

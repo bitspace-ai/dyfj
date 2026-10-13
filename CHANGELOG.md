@@ -187,6 +187,18 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The Rust core depends on sqlx 0.9.0.** Connections still use the Tokio
+  runtime and rustls (`tls-rustls`: ring, with the webpki roots sqlx 0.9
+  enables). A URL that keeps the default `utf8mb4` charset and does not set a
+  collation still sends `SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci` after
+  connect, the collation sqlx 0.8 used for that charset; a URL with another
+  charset gets no collation added. The handshake charset byte sqlx sends
+  before that statement is `utf8mb4_general_ci`; 0.9 does not expose a setting
+  for it. Plaintext `caching_sha2_password` RSA authentication stays available
+  through the `mysql-rsa` feature, which 0.9 no longer compiles in by default.
+  The committed `.sqlx/` cache was regenerated for the 0.9 describe format,
+  which records a collation id. The event read still types string columns as
+  `String` and `created_at` as `DateTime<Utc>`.
 - **`core` depends on `ulid` 3.0.0.** Generation calls `Ulid::generate`, the 3.0
   name of `Ulid::new`. Event and session ids are still 26-character Crockford
   Base32 strings with the same 48-bit millisecond timestamp prefix, so their
