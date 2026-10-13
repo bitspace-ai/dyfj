@@ -741,7 +741,7 @@
   },
   {
     "path": "prototype/src/transport/jsonrpc-peer.integration.test.ts",
-    "count": 4,
+    "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -756,7 +756,7 @@
   },
   {
     "path": "prototype/src/transport/node-socket.integration.test.ts",
-    "count": 17,
+    "count": 14,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -766,7 +766,7 @@
   },
   {
     "path": "prototype/src/transport/uds-client.integration.test.ts",
-    "count": 9,
+    "count": 8,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -776,7 +776,7 @@
   },
   {
     "path": "prototype/src/transport/uds-listener.integration.test.ts",
-    "count": 25,
+    "count": 10,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

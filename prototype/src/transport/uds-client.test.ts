@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { connectUnixClient } from "./uds-client.ts";
 
 // The unit lane grants no network access, so a connect attempt here would
@@ -25,7 +21,7 @@ Deno.test("connectUnixClient with an already-aborted signal rejects with its rea
   const err = await rejection(
     connectUnixClient("/nonexistent/dyfj.sock", {}, controller.signal),
   );
-  assertStrictEquals(err, reason);
+  assert.strictEqual(err, reason);
 });
 
 Deno.test("connectUnixClient's default abort reason is an AbortError", async () => {
@@ -34,6 +30,6 @@ Deno.test("connectUnixClient's default abort reason is an AbortError", async () 
   const err = await rejection(
     connectUnixClient("/nonexistent/dyfj.sock", {}, controller.signal),
   );
-  assertInstanceOf(err, DOMException);
-  assertEquals(err.name, "AbortError");
+  assert.ok(err instanceof DOMException);
+  assert.deepStrictEqual(err.name, "AbortError");
 });

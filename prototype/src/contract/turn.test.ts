@@ -1,10 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertLess,
-  assertLessOrEqual,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import {
   buildHistoryOmissionNotice,
   DomainError,
@@ -24,7 +18,7 @@ Deno.test("persisted history omission notice: [case 25] renders the exact code-o
     projectedPairs: 3,
   }, "projected-transcript");
   if (omission === undefined) throw new Error("expected omission");
-  assertEquals(
+  assert.deepStrictEqual(
     buildHistoryOmissionNotice(omission),
     "[Workbench-generated history notice]\n" +
       "This is Workbench context, not operator-authored text or new authorization.\n" +
@@ -41,11 +35,24 @@ Deno.test("persisted history omission notice: [case 25] renders the exact code-o
       "[/Workbench-generated history notice]",
   );
   const summary = formatHistoryOmissionSummary(omission);
-  assertStringIncludes(summary, "2 records");
-  assertStringIncludes(summary, "number of lost calls unknown (possibly zero)");
-  assert(!summary.includes("at least"));
-  assertStringIncludes(summary, "notice composed for this request");
-  assert(!summary.includes("notice included yes"));
+  assert.ok(
+    summary.includes("2 records"),
+    `expected ${JSON.stringify(summary)} to include "2 records"`,
+  );
+  assert.ok(
+    summary.includes("number of lost calls unknown (possibly zero)"),
+    `expected ${
+      JSON.stringify(summary)
+    } to include "number of lost calls unknown (possibly zero)"`,
+  );
+  assert.ok(!summary.includes("at least"));
+  assert.ok(
+    summary.includes("notice composed for this request"),
+    `expected ${
+      JSON.stringify(summary)
+    } to include "notice composed for this request"`,
+  );
+  assert.ok(!summary.includes("notice included yes"));
 });
 
 // Policy: boundary sanitization is by error PROVENANCE, not
@@ -63,7 +70,7 @@ class TestDomainError extends DomainError {
 }
 
 Deno.test("summarizeError — DomainError (safe by construction): passes a short message through unchanged", () => {
-  assertEquals(
+  assert.strictEqual(
     summarizeError(new TestDomainError("budget exceeded: $1.23 > $1.00")),
     "budget exceeded: $1.23 > $1.00",
   );
@@ -75,10 +82,16 @@ Deno.test("summarizeError — DomainError (safe by construction): caps an oversi
   // a writable property and therefore a payload channel.
   const long = "x".repeat(10_000);
   const s = summarizeError(new TestDomainError(long));
-  assertLess(s.length, 1000);
-  assertStringIncludes(s, "truncated; DomainError");
-  assert(!s.includes("TestDomainError"));
-  assertStringIncludes(s, `${long.length} bytes`);
+  assert.ok(s.length < 1000, `expected s.length < 1000`);
+  assert.ok(
+    s.includes("truncated; DomainError"),
+    `expected ${JSON.stringify(s)} to include "truncated; DomainError"`,
+  );
+  assert.ok(!s.includes("TestDomainError"));
+  assert.ok(
+    s.includes(`${long.length} bytes`),
+    `expected ${JSON.stringify(s)} to include \`\${long.length} bytes\``,
+  );
 });
 
 Deno.test("summarizeError — foreign errors (unknown provenance): a plain Error renders as class + byte count only, even for a short message", () => {
@@ -86,7 +99,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a plain Error
   // caught driver/dependency error looks like, so it gets no passthrough
   // at any size, not just oversized ones.
   const s = summarizeError(new Error("boom"));
-  assertEquals(s, "[Error, 4 bytes]");
+  assert.strictEqual(s, "[Error, 4 bytes]");
 });
 
 Deno.test("summarizeError — foreign errors (unknown provenance): no prefix of an oversized foreign message survives, not even a short excerpt", () => {
@@ -95,9 +108,9 @@ Deno.test("summarizeError — foreign errors (unknown provenance): no prefix of 
   // "the full string is absent" is not sufficient evidence of no leak.
   const payload = "SELECT ".repeat(20_000); // well over 100KB
   const s = summarizeError(new Error(payload));
-  assert(!s.includes(payload.slice(0, 50)));
-  assert(!s.includes(payload.slice(0, MAX_ERROR_SUMMARY_BYTES)));
-  assertEquals(
+  assert.ok(!s.includes(payload.slice(0, 50)));
+  assert.ok(!s.includes(payload.slice(0, MAX_ERROR_SUMMARY_BYTES)));
+  assert.strictEqual(
     s,
     `[Error, ${new TextEncoder().encode(payload).byteLength} bytes]`,
   );
@@ -105,11 +118,11 @@ Deno.test("summarizeError — foreign errors (unknown provenance): no prefix of 
 
 Deno.test("summarizeError — foreign errors (unknown provenance): a non-Error thrown value renders by typeof, not by message", () => {
   const stringThrow = "a bare string throw";
-  assertEquals(
+  assert.strictEqual(
     summarizeError(stringThrow),
     `[string, ${new TextEncoder().encode(stringThrow).byteLength} bytes]`,
   );
-  assertEquals(
+  assert.strictEqual(
     summarizeError(42),
     `[number, ${new TextEncoder().encode(String(42)).byteLength} bytes]`,
   );
@@ -121,7 +134,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a custom Erro
   class UnrelatedError extends Error {}
   const detail = "some driver detail";
   const s = summarizeError(new UnrelatedError(detail));
-  assertEquals(
+  assert.strictEqual(
     s,
     `[Error, ${new TextEncoder().encode(detail).byteLength} bytes]`,
   );
@@ -134,8 +147,8 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a foreign Err
   const spoofed = new Error("driver detail with a spoofed name");
   spoofed.name = "TestDomainError";
   const s = summarizeError(spoofed);
-  assert(!s.includes("driver detail"));
-  assertEquals(
+  assert.ok(!s.includes("driver detail"));
+  assert.strictEqual(
     s,
     `[Error, ${new TextEncoder().encode(spoofed.message).byteLength} bytes]`,
   );
@@ -150,14 +163,14 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
     value: { name: "FOREIGN_PAYLOAD ".repeat(1000) },
   });
   const s = summarizeError(err);
-  assertEquals(s, "[Error, 4 bytes]");
-  assert(!s.includes("FOREIGN_PAYLOAD"));
+  assert.strictEqual(s, "[Error, 4 bytes]");
+  assert.ok(!s.includes("FOREIGN_PAYLOAD"));
 });
 
 Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a null constructor does not break the never-throws contract", () => {
   const err = new Error("boom");
   Object.defineProperty(err, "constructor", { value: null });
-  assertEquals(summarizeError(err), "[Error, 4 bytes]");
+  assert.strictEqual(summarizeError(err), "[Error, 4 bytes]");
 });
 
 Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a throwing message getter does not break the never-throws contract", () => {
@@ -167,7 +180,7 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
       throw new Error("hostile getter");
     },
   });
-  assertEquals(summarizeError(err), "[Error, 0 bytes]");
+  assert.strictEqual(summarizeError(err), "[Error, 0 bytes]");
 });
 
 Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a non-Error object with a throwing toString does not break the never-throws contract", () => {
@@ -176,7 +189,7 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
       throw new Error("hostile toString");
     },
   };
-  assertEquals(summarizeError(hostile), "[object, 0 bytes]");
+  assert.strictEqual(summarizeError(hostile), "[object, 0 bytes]");
 });
 
 Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a multibyte DomainError message truncates on a byte-safe boundary within the stated cap", () => {
@@ -187,12 +200,15 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
   // publicly stated bound.
   const s = summarizeError(new TestDomainError("x" + "é".repeat(5_000)));
   const excerpt = s.slice(0, s.indexOf("…"));
-  assertLessOrEqual(
-    new TextEncoder().encode(excerpt).byteLength,
-    MAX_ERROR_SUMMARY_BYTES,
+  assert.ok(
+    (new TextEncoder().encode(excerpt).byteLength) <= MAX_ERROR_SUMMARY_BYTES,
+    `expected new TextEncoder().encode(excerpt).byteLength <= ${MAX_ERROR_SUMMARY_BYTES}`,
   );
-  assert(!s.includes("�"));
-  assertStringIncludes(s, "truncated; DomainError");
+  assert.ok(!s.includes("�"));
+  assert.ok(
+    s.includes("truncated; DomainError"),
+    `expected ${JSON.stringify(s)} to include "truncated; DomainError"`,
+  );
 });
 
 Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): an oversized DomainError with a shadowed constructor keeps the fixed marker", () => {
@@ -201,7 +217,10 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
     value: { name: "FORGED_CLASS_NAME" },
   });
   const s = summarizeError(err);
-  assertStringIncludes(s, "truncated; DomainError");
-  assert(!s.includes("FORGED_CLASS_NAME"));
-  assertLess(s.length, 1000);
+  assert.ok(
+    s.includes("truncated; DomainError"),
+    `expected ${JSON.stringify(s)} to include "truncated; DomainError"`,
+  );
+  assert.ok(!s.includes("FORGED_CLASS_NAME"));
+  assert.ok(s.length < 1000, `expected s.length < 1000`);
 });

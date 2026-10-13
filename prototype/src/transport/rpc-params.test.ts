@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "@std/assert";
+import assert from "node:assert/strict";
 import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 import {
   asRecord,
@@ -7,20 +7,23 @@ import {
 } from "./rpc-params.ts";
 
 function invalidParams(run: () => unknown, message: string): void {
-  const error = assertThrows(run, RpcError);
-  assertEquals(error.code, RpcErrorCode.invalidParams);
-  assertEquals(error.message, message);
+  assert.throws(run, (error: unknown) => {
+    assert.ok(error instanceof RpcError);
+    assert.strictEqual(error.code, RpcErrorCode.invalidParams);
+    assert.strictEqual(error.message, message);
+    return true;
+  });
 }
 
 Deno.test("asRecord treats non-object params as empty", () => {
-  assertEquals(asRecord(undefined), {});
-  assertEquals(asRecord("x"), {});
-  assertEquals(asRecord({ a: 1 }), { a: 1 });
+  assert.deepStrictEqual(asRecord(undefined), {});
+  assert.deepStrictEqual(asRecord("x"), {});
+  assert.deepStrictEqual(asRecord({ a: 1 }), { a: 1 });
 });
 
 Deno.test("sanitizeRpcIdentifier enforces presence, type, length and characters", () => {
-  assertEquals(sanitizeRpcIdentifier(undefined, "id"), undefined);
-  assertEquals(sanitizeRpcIdentifier("abc", "id"), "abc");
+  assert.deepStrictEqual(sanitizeRpcIdentifier(undefined, "id"), undefined);
+  assert.deepStrictEqual(sanitizeRpcIdentifier("abc", "id"), "abc");
   invalidParams(
     () => sanitizeRpcIdentifier(undefined, "id", { required: true }),
     "id is required",
@@ -41,15 +44,15 @@ Deno.test("sanitizeRpcIdentifier enforces presence, type, length and characters"
 });
 
 Deno.test("sanitizeRpcString strips complete ANSI CSI escape sequences", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     sanitizeRpcString("Clean \x1b[31mRed\x1b[0m Text", "label"),
     "Clean Red Text",
   );
 });
 
 Deno.test("sanitizeRpcString folds or keeps newlines by mode and bounds length", () => {
-  assertEquals(sanitizeRpcString(" a\n\tb ", "text"), "a b");
-  assertEquals(
+  assert.deepStrictEqual(sanitizeRpcString(" a\n\tb ", "text"), "a b");
+  assert.deepStrictEqual(
     sanitizeRpcString("a\r\nb\tc", "text", { singleLine: false }),
     "a\nb c",
   );

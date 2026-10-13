@@ -1,19 +1,25 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { workspaceRootForTransport } from "./runtime.ts";
 
 Deno.test("workspaceRootForTransport honors a loopback operator's requested workspace root", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     workspaceRootForTransport("/workspace/example-project", "loopback"),
     "/workspace/example-project",
   );
 });
 
 Deno.test("workspaceRootForTransport returns undefined for a loopback caller that sent no root", () => {
-  assertEquals(workspaceRootForTransport(undefined, "loopback"), undefined);
+  assert.deepStrictEqual(
+    workspaceRootForTransport(undefined, "loopback"),
+    undefined,
+  );
 });
 
 Deno.test("workspaceRootForTransport ignores a remote caller's requested root (pinned to server default)", () => {
   // A crafted cwd from a remote/shared consumer must not steer the file tools.
-  assertEquals(workspaceRootForTransport("/etc", "remote"), undefined);
-  assertEquals(workspaceRootForTransport("/", "remote"), undefined);
+  assert.deepStrictEqual(
+    workspaceRootForTransport("/etc", "remote"),
+    undefined,
+  );
+  assert.deepStrictEqual(workspaceRootForTransport("/", "remote"), undefined);
 });
