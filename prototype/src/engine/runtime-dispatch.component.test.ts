@@ -4,12 +4,8 @@
  * preflight, and fails closed when no runner is bound. The runner is a
  * recording fake; the ACP runtime behind the real port has its own tests.
  */
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertObjectMatch,
-  assertRejects,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { engineServices, LOCAL_MODEL } from "../../testing/builders/engine.ts";
 import {
   type AcpRunnerSelection,
@@ -116,59 +112,61 @@ const NO_RUNNER = "No external-agent runner is configured";
 Deno.test("fails closed when an explicit ACP route has no runner bound", async () => {
   // A direct caller that omits the runner service gets the fixed error,
   // never a lazily loaded runner.
-  const error = await assertRejects(() =>
+  const error = await captureRejection(() =>
     dispatch({
       runner: { kind: "acp", profile: "fixture" },
       trustWorkspaceInstructions: true,
     })
   );
-  assertInstanceOf(error, DomainError);
-  assertEquals(error.message, NO_RUNNER);
+  assert.ok(error instanceof DomainError);
+  assert.deepStrictEqual(error.message, NO_RUNNER);
 });
 
 Deno.test("fails closed when model selection routes to ACP with no runner bound", async () => {
-  await assertRejects(
+  await assert.rejects(
     () =>
       dispatch({
         routingOptions: { modelId: "fixture" },
         trustWorkspaceInstructions: true,
       }, { models: [ACP_FIXTURE] }),
-    DomainError,
-    NO_RUNNER,
+    (error: unknown) =>
+      error instanceof DomainError && error.message.includes(NO_RUNNER),
   );
 });
 
 Deno.test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
   const runner = recordingRunner();
-  await assertRejects(
+  await assert.rejects(
     () =>
       dispatch({
         runner: { kind: "acp", profile: "codex-chatgpt" },
         trustWorkspaceInstructions: false,
       }, { runner }),
-    Error,
-    "codex-chatgpt requires explicit workspace trust",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
   );
-  assertEquals(runner.calls.length, 0);
+  assert.deepStrictEqual(runner.calls.length, 0);
 });
 
 Deno.test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
   const runner = recordingRunner();
-  await assertRejects(
+  await assert.rejects(
     () =>
       dispatch({
         routingOptions: { modelId: CODEX_SOL.slug },
         trustWorkspaceInstructions: false,
       }, { models: [CODEX_SOL], runner }),
-    Error,
-    "codex-chatgpt requires explicit workspace trust",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("codex-chatgpt requires explicit workspace trust"),
   );
-  assertEquals(runner.calls.length, 0);
+  assert.deepStrictEqual(runner.calls.length, 0);
 });
 
 Deno.test("rejects an unapproved explicit Codex ChatGPT runner request with PaidEscalationDeclinedError", async () => {
   const runner = recordingRunner();
-  await assertRejects(
+  await assert.rejects(
     () =>
       dispatch({
         runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -176,7 +174,7 @@ Deno.test("rejects an unapproved explicit Codex ChatGPT runner request with Paid
       }, { runner }),
     PaidEscalationDeclinedError,
   );
-  assertEquals(runner.calls.length, 0);
+  assert.deepStrictEqual(runner.calls.length, 0);
 });
 
 Deno.test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
@@ -188,16 +186,16 @@ Deno.test("allows an explicit Codex ChatGPT runner request when paid escalation 
       confirmPaidEscalation: APPROVE,
     },
   }, { runner });
-  assertEquals(runner.calls.length, 1);
-  assertObjectMatch(runner.calls[0], {
+  assert.deepStrictEqual(runner.calls.length, 1);
+  assert.partialDeepStrictEqual(runner.calls[0], {
     runner: { kind: "acp", profile: "codex-chatgpt" },
   });
-  assertEquals(result.text, "stubbed");
+  assert.deepStrictEqual(result.text, "stubbed");
 });
 
 Deno.test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedError", async () => {
   const runner = recordingRunner();
-  await assertRejects(
+  await assert.rejects(
     () =>
       dispatch({
         prompt: "test unapproved paid",
@@ -206,7 +204,7 @@ Deno.test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedE
       }, { models: [CODEX_TERRA], runner }),
     PaidEscalationDeclinedError,
   );
-  assertEquals(runner.calls.length, 0);
+  assert.deepStrictEqual(runner.calls.length, 0);
 });
 
 Deno.test("allows a tier-2 ACP request when paid escalation is confirmed", async () => {
@@ -219,12 +217,12 @@ Deno.test("allows a tier-2 ACP request when paid escalation is confirmed", async
       confirmPaidEscalation: APPROVE,
     },
   }, { models: [CODEX_TERRA], runner });
-  assertEquals(runner.calls.length, 1);
-  assertObjectMatch(runner.calls[0], {
+  assert.deepStrictEqual(runner.calls.length, 1);
+  assert.partialDeepStrictEqual(runner.calls[0], {
     prompt: "test approved paid",
     runner: { kind: "acp", profile: "codex-chatgpt" },
   });
-  assertEquals(result.text, "stubbed");
+  assert.deepStrictEqual(result.text, "stubbed");
 });
 
 Deno.test("routes an ACP model selection to the external agent runner", async () => {
@@ -234,12 +232,12 @@ Deno.test("routes an ACP model selection to the external agent runner", async ()
     routingOptions: { modelId: "fixture" },
     trustWorkspaceInstructions: true,
   }, { models: [ACP_FIXTURE], runner });
-  assertEquals(runner.calls.length, 1);
-  assertObjectMatch(runner.calls[0], {
+  assert.deepStrictEqual(runner.calls.length, 1);
+  assert.partialDeepStrictEqual(runner.calls[0], {
     prompt: "test acp dispatch",
     runner: { kind: "acp", profile: "fixture" },
   });
-  assertEquals(result.receipt, "stubbed receipt: fixture");
+  assert.deepStrictEqual(result.receipt, "stubbed receipt: fixture");
 });
 
 Deno.test("allows resumed session turns on the external agent runner", async () => {
@@ -257,10 +255,10 @@ Deno.test("allows resumed session turns on the external agent runner", async () 
     trustWorkspaceInstructions: true,
     sessionId: first.sessionId,
   }, { models: [ACP_FIXTURE], runner });
-  assertEquals(second.sessionId, first.sessionId);
-  assertEquals(runner.calls.map((call) => call.prompt), [
+  assert.deepStrictEqual(second.sessionId, first.sessionId);
+  assert.deepStrictEqual(runner.calls.map((call) => call.prompt), [
     "first turn",
     "second turn",
   ]);
-  assertEquals(runner.calls[1].sessionId, first.sessionId);
+  assert.deepStrictEqual(runner.calls[1].sessionId, first.sessionId);
 });

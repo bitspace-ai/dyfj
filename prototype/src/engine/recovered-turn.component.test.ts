@@ -5,8 +5,8 @@
  * covers cache-side prompt accounting; Gemini covers an adapter that cannot
  * run a transcript retry and reports thinking tokens separately.
  */
-import { assert, assertEquals, assertObjectMatch } from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import {
   anthropicStop,
   chatReply,
@@ -109,32 +109,35 @@ Deno.test("output-budget truncation runs one continuation retry and merges the t
     lengthReply("first half "),
     chatReply({ content: "second half" }),
   ]);
-  assertEquals(text, "first half second half");
-  assertEquals(run.transport.requests.length, 2);
+  assert.deepStrictEqual(text, "first half second half");
+  assert.deepStrictEqual(run.transport.requests.length, 2);
   // The retry is a continuation: same transcript + the partial assistant
   // turn + the nudge (the live transcript itself is not mutated).
   const retry = conversation(run.transport.requests[1]);
-  assertObjectMatch(retry.at(-2)!, {
+  assert.partialDeepStrictEqual(retry.at(-2)!, {
     role: "assistant",
     content: "first half ",
   });
-  assertEquals(retry.at(-1), {
+  assert.deepStrictEqual(retry.at(-1), {
     role: "user",
     content: LENGTH_CONTINUATION_NUDGE,
   });
-  assertObjectMatch(frame(frames, "lengthStopDetected")!, {
+  assert.partialDeepStrictEqual(frame(frames, "lengthStopDetected")!, {
     classification: "output_budget_exhausted",
     severity: "warn",
     modelSlug: LOCAL_MODEL.slug,
     inputTokens: 42,
     outputTokens: 7,
   });
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "recovered",
     retriesUsed: 1,
   });
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
-  assertEquals((await modelResponse(run, frames))?.stop_reason, "stop");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(
+    (await modelResponse(run, frames))?.stop_reason,
+    "stop",
+  );
 });
 
 Deno.test("a retry that is still truncated stops after exactly one retry and returns the merged partial", async () => {
@@ -144,14 +147,17 @@ Deno.test("a retry that is still truncated stops after exactly one retry and ret
   ]);
   // Bounded: one retry, never a third call, and the turn still completes
   // with the merged partial output marked truncated on the audit log.
-  assertEquals(run.transport.requests.length, 2);
-  assertEquals(text, "part part ");
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.deepStrictEqual(run.transport.requests.length, 2);
+  assert.deepStrictEqual(text, "part part ");
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "still_truncated",
     retriesUsed: 1,
   });
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
-  assertEquals((await modelResponse(run, frames))?.stop_reason, "length");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(
+    (await modelResponse(run, frames))?.stop_reason,
+    "length",
+  );
 });
 
 /** Priced so a 3-token completion records $0.03; the input price is ~0. */
@@ -174,14 +180,14 @@ Deno.test("a retry the budget envelope refuses is skipped and the truncated turn
       confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
     },
   }, { models: [PENNY_OUTPUT] });
-  assertEquals(run.transport.requests.length, 1);
-  assertEquals(text, "truncated answer");
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.deepStrictEqual(text, "truncated answer");
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_refused_budget",
     retriesUsed: 0,
   });
   // The refusal downgrades the retry, not the turn.
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 Deno.test("a runaway-anomaly halt on the retry fails the turn — never downgraded to a partial", async () => {
@@ -200,12 +206,12 @@ Deno.test("a runaway-anomaly halt on the retry fails the turn — never downgrad
       confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
     },
   }, { models: [PENNY_OUTPUT] });
-  assert(error instanceof Error);
-  assertEquals(run.transport.requests.length, 1);
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.ok(error instanceof Error);
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_errored",
   });
-  assertObjectMatch(frames.at(-1)!, {
+  assert.partialDeepStrictEqual(frames.at(-1)!, {
     type: "turnFailed",
     errorName: "RunawayAnomalyHaltError",
   });
@@ -218,8 +224,8 @@ Deno.test("a continuation retry never signals a supersede — its text extends t
   ]);
   // Merged text: what streamed (partial + continuation) IS the answer, so a
   // consumer resetting here would lose real output.
-  assertEquals(text, "first half second half");
-  assertEquals(frame(frames, "supersedingRetryStarted"), undefined);
+  assert.deepStrictEqual(text, "first half second half");
+  assert.deepStrictEqual(frame(frames, "supersedingRetryStarted"), undefined);
 });
 
 Deno.test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
@@ -244,18 +250,18 @@ Deno.test("both cap and window bind: the continuation would overflow, so it is s
     },
   );
   // Exactly one provider call — the doomed continuation was not attempted.
-  assertEquals(run.transport.requests.length, 1);
-  assertEquals(text, partial);
-  assertObjectMatch(frame(frames, "lengthStopDetected")!, {
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.deepStrictEqual(text, partial);
+  assert.partialDeepStrictEqual(frame(frames, "lengthStopDetected")!, {
     classification: "output_budget_exhausted",
   });
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_would_overflow",
     retriesUsed: 0,
   });
   // Cut-off tool plan stripped; the turn completes cleanly.
-  assertEquals(frame(frames, "toolStepStarted"), undefined);
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frame(frames, "toolStepStarted"), undefined);
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 // ─── adapters without a transcript retry ─────────────────────────────────────
@@ -274,15 +280,15 @@ Deno.test("an adapter without transcript retry delivers the truncated partial in
     {},
     { models: [GEMINI_FREE_MODEL], env: GEMINI_KEY },
   );
-  assertEquals(run.transport.requests.length, 1);
-  assertEquals(text, "truncated answer");
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.deepStrictEqual(text, "truncated answer");
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_unsupported",
     retriesUsed: 0,
   });
   // The cut-off tool-call plan is stripped: no tool step ran.
-  assertEquals(frame(frames, "toolStepStarted"), undefined);
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frame(frames, "toolStepStarted"), undefined);
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 Deno.test("thinking tokens count toward classification: a thinking-model cap hit near the window is exhaustion, not a false overflow", async () => {
@@ -313,19 +319,19 @@ Deno.test("thinking tokens count toward classification: a thinking-model cap hit
       env: GEMINI_KEY,
     },
   );
-  assertEquals(run.transport.requests.length, 1);
-  assertEquals(text, "truncated thinking-model answer");
-  assertObjectMatch(frame(frames, "lengthStopDetected")!, {
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.deepStrictEqual(text, "truncated thinking-model answer");
+  assert.partialDeepStrictEqual(frame(frames, "lengthStopDetected")!, {
     classification: "output_budget_exhausted",
     severity: "warn",
     // The event reports true consumption: 9,600 visible + 6,000 reasoning.
     outputTokens: 15_600,
   });
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_unsupported",
     retriesUsed: 0,
   });
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 // ─── context overflow ────────────────────────────────────────────────────────
@@ -347,19 +353,19 @@ Deno.test("context overflow fails the turn with the structured operator message 
     { prompt: "one more question" },
     { models: [SMALL_WINDOW] },
   );
-  assert(error instanceof Error);
-  assert(error.message.includes("Context window overflow"));
-  assertEquals(run.transport.requests.length, 1);
-  assertObjectMatch(frame(frames, "lengthStopDetected")!, {
+  assert.ok(error instanceof Error);
+  assert.ok(error.message.includes("Context window overflow"));
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.partialDeepStrictEqual(frame(frames, "lengthStopDetected")!, {
     classification: "context_overflow",
     severity: "error",
     contextWindow: 10_000,
   });
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
     retriesUsed: 0,
   });
-  assertObjectMatch(frames.at(-1)!, {
+  assert.partialDeepStrictEqual(frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });
@@ -369,16 +375,16 @@ Deno.test("context overflow fails the turn with the structured operator message 
   const sessionId = frame(frames, "sessionStart")?.sessionId;
   const rows = await eventRows(run, sessionId!);
   const types = rows.map((row) => row.event_type);
-  assertEquals(types.includes("model_response"), false);
-  assert(types.includes("session_end"));
+  assert.deepStrictEqual(types.includes("model_response"), false);
+  assert.ok(types.includes("session_end"));
   const errorRow = rows.find((row) => row.event_type === "error");
-  assertEquals(errorRow?.stop_reason, "length");
-  assert((errorRow?.content ?? "").includes("/model"));
-  assert((errorRow?.content ?? "").includes("fresh session"));
+  assert.deepStrictEqual(errorRow?.stop_reason, "length");
+  assert.ok((errorRow?.content ?? "").includes("/model"));
+  assert.ok((errorRow?.content ?? "").includes("fresh session"));
 });
 
 Deno.test("an injected overflow recovery plan buys exactly one retry (the compressor seam)", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, text } = await lengthTurn(
@@ -396,13 +402,13 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
       recoverContextOverflow,
     },
   );
-  assertEquals(text, "recovered answer");
-  assertSpyCalls(recoverContextOverflow, 1);
+  assert.deepStrictEqual(text, "recovered answer");
+  assert.equal(recoverContextOverflow.mock.callCount(), 1);
   // The hook context reports reasoning-inclusive output (400 visible + 600
   // reasoning), consistent with classification — the compression consumer
   // sizes its plan from true token pressure, not just visible output.
-  assertObjectMatch(
-    (recoverContextOverflow.calls[0].args as unknown[])[0] as Record<
+  assert.partialDeepStrictEqual(
+    (recoverContextOverflow.mock.calls[0].arguments as unknown[])[0] as Record<
       string,
       unknown
     >,
@@ -412,12 +418,12 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
       usage: { input: 9_500, output: 1_000 },
     },
   );
-  assertEquals(conversation(run.transport.requests[1]), COMPRESSED);
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.deepStrictEqual(conversation(run.transport.requests[1]), COMPRESSED);
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "recovered",
     retriesUsed: 1,
   });
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 Deno.test("the overflow-recovery retry announces the supersede before any retry output exists", async () => {
@@ -441,11 +447,11 @@ Deno.test("the overflow-recovery retry announces the supersede before any retry 
     models: [SMALL_WINDOW],
     recoverContextOverflow: () => Promise.resolve({ messages: COMPRESSED }),
   });
-  assertEquals(text, "recovered answer");
+  assert.deepStrictEqual(text, "recovered answer");
   const supersedeAt = trail.indexOf("supersedingRetryStarted");
-  assert(supersedeAt > trail.indexOf("lengthStopDetected"));
-  assert(supersedeAt < trail.indexOf("retryProviderCall"));
-  assert(
+  assert.ok(supersedeAt > trail.indexOf("lengthStopDetected"));
+  assert.ok(supersedeAt < trail.indexOf("retryProviderCall"));
+  assert.ok(
     trail.indexOf("retryProviderCall") <
       trail.indexOf("lengthRecoveryFinished"),
   );
@@ -470,9 +476,9 @@ Deno.test("a failed supersede delivery aborts the retry instead of streaming an 
     models: [SMALL_WINDOW],
     recoverContextOverflow: () => Promise.resolve({ messages: COMPRESSED }),
   });
-  assert(error instanceof Error);
-  assertEquals(error.message, "event channel closed");
-  assertEquals(run.transport.requests.length, 1);
+  assert.ok(error instanceof Error);
+  assert.deepStrictEqual(error.message, "event channel closed");
+  assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
 Deno.test("a recovery hook that throws closes the recovery trail before the turn fails", async () => {
@@ -484,34 +490,34 @@ Deno.test("a recovery hook that throws closes the recovery trail before the turn
       throw new Error("compressor exploded");
     },
   });
-  assert(error instanceof Error);
-  assertEquals(error.message, "compressor exploded");
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.ok(error instanceof Error);
+  assert.deepStrictEqual(error.message, "compressor exploded");
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "retry_errored",
     retriesUsed: 0,
   });
-  assertEquals(frames.at(-1)?.type, "turnFailed");
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnFailed");
 });
 
 Deno.test("a recovery-plan retry that still overflows fails structured — the hook never loops", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, error } = await lengthTurn([OVERFLOW, OVERFLOW], {
     prompt: "one more question",
   }, { models: [SMALL_WINDOW], recoverContextOverflow });
-  assert(error instanceof Error);
-  assert(error.message.includes("Context window overflow"));
-  assertEquals(run.transport.requests.length, 2);
-  assertSpyCalls(recoverContextOverflow, 1);
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.ok(error instanceof Error);
+  assert.ok(error.message.includes("Context window overflow"));
+  assert.deepStrictEqual(run.transport.requests.length, 2);
+  assert.equal(recoverContextOverflow.mock.callCount(), 1);
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
     retriesUsed: 1,
   });
 });
 
 Deno.test("compression resolves the overflow but the fresh answer hits its output cap: bounded truncation, not a false overflow", async () => {
-  const recoverContextOverflow = spy(() =>
+  const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
   const { run, frames, text } = await lengthTurn(
@@ -532,15 +538,15 @@ Deno.test("compression resolves the overflow but the fresh answer hits its outpu
   );
   // The retry is reclassified against its OWN usage (output 200 ≥ cap 200 →
   // exhaustion), so the turn does NOT throw a stale context overflow.
-  assertEquals(text, "compressed but truncated answer");
-  assertEquals(run.transport.requests.length, 2);
-  assertObjectMatch(frame(frames, "lengthRecoveryFinished")!, {
+  assert.deepStrictEqual(text, "compressed but truncated answer");
+  assert.deepStrictEqual(run.transport.requests.length, 2);
+  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
     outcome: "still_truncated",
     retriesUsed: 1,
   });
   // Bounded terminal: cut-off tool plan stripped, turn completes cleanly.
-  assertEquals(frame(frames, "toolStepStarted"), undefined);
-  assertEquals(frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frame(frames, "toolStepStarted"), undefined);
+  assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
 Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow is not mistaken for exhaustion", async () => {
@@ -562,9 +568,9 @@ Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow 
       env: { ANTHROPIC_API_KEY: "test-key-not-real" },
     },
   );
-  assert(error instanceof Error);
-  assert(error.message.includes("Context window overflow"));
-  assertObjectMatch(frame(frames, "lengthStopDetected")!, {
+  assert.ok(error instanceof Error);
+  assert.ok(error.message.includes("Context window overflow"));
+  assert.partialDeepStrictEqual(frame(frames, "lengthStopDetected")!, {
     classification: "context_overflow",
     inputTokens: 9_500,
   });
@@ -586,7 +592,7 @@ Deno.test("an overflow on a model with no on-machine compressor fails without a 
       env: { ANTHROPIC_API_KEY: "test-key-not-real" },
     },
   );
-  assert(error instanceof Error);
-  assert(error.message.includes("Context window overflow"));
-  assertEquals(run.transport.requests.length, 1);
+  assert.ok(error instanceof Error);
+  assert.ok(error.message.includes("Context window overflow"));
+  assert.deepStrictEqual(run.transport.requests.length, 1);
 });

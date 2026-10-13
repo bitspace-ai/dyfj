@@ -3,7 +3,7 @@
  * which history the first call carries, and when it is left untouched. The
  * compression paths are covered by `compression.component.test.ts`.
  */
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   enginePorts,
   LOCAL_MODEL,
@@ -59,7 +59,7 @@ Deno.test("a companion turn carries its history, then the current prompt", async
     { ...LOCAL_MODEL, context_window: 1_000_000 },
     root.root,
   );
-  assertEquals(await loadTranscript(turn), [
+  assert.deepStrictEqual(await loadTranscript(turn), [
     ...HISTORY,
     { role: "user", content: "now" },
   ]);
@@ -74,8 +74,8 @@ Deno.test("ask and next-work turns carry no history", async () => {
       root.root,
     );
     const messages = await loadTranscript(turn);
-    assertEquals(messages.length, 1);
-    assertEquals(messages[0].content, turn.state.modelPrompt);
+    assert.deepStrictEqual(messages.length, 1);
+    assert.deepStrictEqual(messages[0].content, turn.state.modelPrompt);
   }
 });
 
@@ -91,7 +91,7 @@ Deno.test("a model without a known window never triggers proactive compression",
     root.root,
   );
   // No provider call is made: the stage never reaches the compressor.
-  assertEquals(await loadTranscript(turn), [
+  assert.deepStrictEqual(await loadTranscript(turn), [
     ...HISTORY,
     { role: "user", content: "now" },
   ]);

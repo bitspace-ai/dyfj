@@ -3,13 +3,9 @@
  * tests use only the engine ports and in-repo fakes: no CLI, socket server,
  * Kubernetes, model service, or operator corpus is involved.
  */
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
-import { spy } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { stat } from "node:fs/promises";
+import { mock } from "node:test";
 import {
   chatReply,
   engineServices,
@@ -59,8 +55,8 @@ Deno.test("two headless hosts complete native turns with separate context, ident
   });
   const eventsA: WorkbenchRuntimeEvent[] = [];
   const eventsB: WorkbenchRuntimeEvent[] = [];
-  const commitsA = spy(hostA.store.journal, "commit");
-  const commitsB = spy(hostB.store.journal, "commit");
+  const commitsA = mock.method(hostA.store.journal, "commit");
+  const commitsB = mock.method(hostB.store.journal, "commit");
 
   const runHost = (
     host: typeof hostA,
@@ -84,32 +80,46 @@ Deno.test("two headless hosts complete native turns with separate context, ident
   const b = await runHost(hostB, "bot-b", rootB.root, eventsB);
   hostA.transport.assertDone();
   hostB.transport.assertDone();
-  assertEquals([a.text, b.text], ["A complete", "B complete"]);
-  assertEquals([a.stopReason, b.stopReason], ["stop", "stop"]);
-  assertEquals([a.tokens.totalCalls, b.tokens.totalCalls], [1, 1]);
-  assertEquals(eventsA.at(-1)?.type, "turnCompleted");
-  assertEquals(eventsB.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual([a.text, b.text], ["A complete", "B complete"]);
+  assert.deepStrictEqual([a.stopReason, b.stopReason], ["stop", "stop"]);
+  assert.deepStrictEqual([a.tokens.totalCalls, b.tokens.totalCalls], [1, 1]);
+  assert.deepStrictEqual(eventsA.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(eventsB.at(-1)?.type, "turnCompleted");
 
   const promptA = systemMessage(hostA.transport.requests[0]);
   const promptB = systemMessage(hostB.transport.requests[0]);
-  assertStringIncludes(promptA, "Synthetic context belongs to a only.");
-  assertStringIncludes(promptB, "Synthetic context belongs to b only.");
-  assertEquals(
+  assert.ok(
+    promptA.includes("Synthetic context belongs to a only."),
+    `expected ${
+      JSON.stringify(promptA)
+    } to include "Synthetic context belongs to a only."`,
+  );
+  assert.ok(
+    promptB.includes("Synthetic context belongs to b only."),
+    `expected ${
+      JSON.stringify(promptB)
+    } to include "Synthetic context belongs to b only."`,
+  );
+  assert.deepStrictEqual(
     JSON.stringify(hostA.transport.requests).includes("belongs to b only"),
     false,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     JSON.stringify(hostB.transport.requests).includes("belongs to a only"),
     false,
   );
 
   const rowsA = await eventRows(hostA, a.sessionId);
   const rowsB = await eventRows(hostB, b.sessionId);
-  const writtenA = commitsA.calls.flatMap((call) => call.args[0].events);
-  const writtenB = commitsB.calls.flatMap((call) => call.args[0].events);
-  commitsA.restore();
-  commitsB.restore();
-  assert(a.sessionId !== b.sessionId);
+  const writtenA = commitsA.mock.calls.flatMap((call) =>
+    call.arguments[0].events
+  );
+  const writtenB = commitsB.mock.calls.flatMap((call) =>
+    call.arguments[0].events
+  );
+  commitsA.mock.restore();
+  commitsB.mock.restore();
+  assert.ok(a.sessionId !== b.sessionId);
   for (
     const [rows, written, principal] of [
       [rowsA, writtenA, "bot-a"],
@@ -117,28 +127,31 @@ Deno.test("two headless hosts complete native turns with separate context, ident
     ] as const
   ) {
     const start = rows.find((row) => row.event_type === "session_start");
-    assert(start !== undefined);
-    assertEquals(start.principal_id, principal);
+    assert.ok(start !== undefined);
+    assert.deepStrictEqual(start.principal_id, principal);
     const committedStart = written.find((event) =>
       event.event_type === "session_start"
     );
-    assert(committedStart !== undefined);
-    assertEquals(committedStart.authn_status, "authenticated");
-    assertEquals(committedStart.authn_mechanism, "api_key");
-    assertEquals(committedStart.authn_issuer_ref, "fixture-headless-host");
-    assertEquals(committedStart.authz_basis, "scheduled-task");
-    assert(rows.some((row) => row.event_type === "provider_call"));
-    assert(rows.some((row) => row.event_type === "model_response"));
-    assert(rows.some((row) => row.event_type === "session_end"));
+    assert.ok(committedStart !== undefined);
+    assert.deepStrictEqual(committedStart.authn_status, "authenticated");
+    assert.deepStrictEqual(committedStart.authn_mechanism, "api_key");
+    assert.deepStrictEqual(
+      committedStart.authn_issuer_ref,
+      "fixture-headless-host",
+    );
+    assert.deepStrictEqual(committedStart.authz_basis, "scheduled-task");
+    assert.ok(rows.some((row) => row.event_type === "provider_call"));
+    assert.ok(rows.some((row) => row.event_type === "model_response"));
+    assert.ok(rows.some((row) => row.event_type === "session_end"));
     // The legacy model_selected event has a separately documented identity gap.
-    assert(
+    assert.ok(
       rows.filter((row) => row.event_type !== "model_selected").every(
         (row) => row.principal_id === principal,
       ),
     );
   }
-  assertEquals(await eventRows(hostA, b.sessionId), []);
-  assertEquals(await eventRows(hostB, a.sessionId), []);
+  assert.deepStrictEqual(await eventRows(hostA, b.sessionId), []);
+  assert.deepStrictEqual(await eventRows(hostB, a.sessionId), []);
 });
 
 Deno.test("a headless host without an approval handler denies a model-requested mutation", async () => {
@@ -153,7 +166,7 @@ Deno.test("a headless host without an approval handler denies a model-requested 
     }),
     chatReply({ content: "Task ended without writing" }),
   ], { memories: [contextFor("denied")], env: {} });
-  const commits = spy(host.store.journal, "commit");
+  const commits = mock.method(host.store.journal, "commit");
   const result = await runWorkbenchRuntime({
     mode: "turn",
     prompt: "Try to write a note",
@@ -167,21 +180,27 @@ Deno.test("a headless host without an approval handler denies a model-requested 
   }, host.services);
 
   host.transport.assertDone();
-  assertEquals(result.text, "Task ended without writing");
-  assertEquals(result.agent.toolStepsUsed, 1);
-  await assertRejects(
-    () => Deno.stat(`${root.root}/note.txt`),
-    Deno.errors.NotFound,
+  assert.deepStrictEqual(result.text, "Task ended without writing");
+  assert.deepStrictEqual(result.agent.toolStepsUsed, 1);
+  await assert.rejects(
+    () => stat(`${root.root}/note.txt`),
+    (error: unknown) =>
+      error instanceof Error && (error as { code?: unknown }).code === "ENOENT",
   );
   const attempted = (await eventRows(host, result.sessionId)).find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "attempt-write"
   );
-  const committedAttempt = commits.calls.flatMap((call) => call.args[0].events)
+  const committedAttempt = commits.mock.calls.flatMap((call) =>
+    call.arguments[0].events
+  )
     .find((event) =>
       event.event_type === "tool_call" && event.tool_call_id === "attempt-write"
     );
-  commits.restore();
-  assertEquals(attempted?.tool_is_error, "1");
-  assertEquals(committedAttempt?.action, "deny");
-  assertStringIncludes(attempted?.tool_result ?? "", "approval is unavailable");
+  commits.mock.restore();
+  assert.deepStrictEqual(attempted?.tool_is_error, "1");
+  assert.deepStrictEqual(committedAttempt?.action, "deny");
+  assert.ok(
+    (attempted?.tool_result ?? "").includes("approval is unavailable"),
+    `expected attempted?.tool_result ?? "" to include "approval is unavailable"`,
+  );
 });

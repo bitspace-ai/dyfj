@@ -1,9 +1,5 @@
-import {
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import { captureThrow } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
@@ -40,9 +36,15 @@ Deno.test("a resumed turn with no routing of its own takes the recorded model", 
     turn({ sessionId: "S1", routingOptions: { fast: true } }),
     recorded("hosted/big"),
   );
-  assertEquals(input.routingOptions, { fast: true, modelId: "hosted/big" });
-  assertEquals(input.restoredSessionModel, "hosted/big");
-  assertEquals(sessionRouteReason(input, "explicit_model_id"), "session_model");
+  assert.deepStrictEqual(input.routingOptions, {
+    fast: true,
+    modelId: "hosted/big",
+  });
+  assert.deepStrictEqual(input.restoredSessionModel, "hosted/big");
+  assert.deepStrictEqual(
+    sessionRouteReason(input, "explicit_model_id"),
+    "session_model",
+  );
 });
 
 Deno.test("an explicit model, tier, hint or runner, or a new session, is left alone", async () => {
@@ -55,9 +57,9 @@ Deno.test("an explicit model, tier, hint or runner, or a new session, is left al
   ];
   for (const input of cases) {
     const reader = recorded("hosted/big");
-    assertStrictEquals(await withSessionModel(input, reader), input);
-    assertEquals(reader.calls, []);
-    assertEquals(
+    assert.strictEqual(await withSessionModel(input, reader), input);
+    assert.deepStrictEqual(reader.calls, []);
+    assert.deepStrictEqual(
       sessionRouteReason(input, "explicit_model_id"),
       "explicit_model_id",
     );
@@ -66,7 +68,7 @@ Deno.test("an explicit model, tier, hint or runner, or a new session, is left al
 
 Deno.test("a session with no recorded model resumes unchanged", async () => {
   const input = turn({ sessionId: "S1" });
-  assertStrictEquals(await withSessionModel(input, recorded(null)), input);
+  assert.strictEqual(await withSessionModel(input, recorded(null)), input);
 });
 
 Deno.test("a routing failure on the recorded model names it; others pass through", () => {
@@ -74,7 +76,7 @@ Deno.test("a routing failure on the recorded model names it; others pass through
     sessionId: "S1",
     restoredSessionModel: "gone/model",
   });
-  const missing = assertThrows(
+  const missing = captureThrow(
     () =>
       explainSessionModelFailure(
         restored,
@@ -82,23 +84,24 @@ Deno.test("a routing failure on the recorded model names it; others pass through
       ),
     SessionModelUnavailableError,
   );
-  assertEquals(missing.message.includes("not in the catalog"), true);
-  assertThrows(
+  assert.deepStrictEqual(missing.message.includes("not in the catalog"), true);
+  assert.throws(
     () =>
       explainSessionModelFailure(
         restored,
         new WorkbenchModelNotRoutableError("gone/model"),
       ),
-    SessionModelUnavailableError,
-    "unpriced",
+    (error: unknown) =>
+      error instanceof SessionModelUnavailableError &&
+      error.message.includes("unpriced"),
   );
   const other = new Error("boom");
-  assertThrows(
+  assert.throws(
     () => explainSessionModelFailure(restored, other),
-    Error,
-    "boom",
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("boom"),
   );
-  assertThrows(
+  assert.throws(
     () =>
       explainSessionModelFailure(
         turn({}),
@@ -109,18 +112,19 @@ Deno.test("a routing failure on the recorded model names it; others pass through
 });
 
 Deno.test("a session that last ran on an external-agent runner refuses a bare resume", async () => {
-  await assertRejects(
+  await assert.rejects(
     () =>
       withSessionModel(
         turn({ sessionId: "S1" }),
         recorded(null, "codex-chatgpt"),
       ),
-    SessionRunnerNotRestorableError,
-    "codex-chatgpt",
+    (error: unknown) =>
+      error instanceof SessionRunnerNotRestorableError &&
+      error.message.includes("codex-chatgpt"),
   );
   // An explicit model is the operator's choice and needs no lookup.
   const explicit = turn({ sessionId: "S1", routingOptions: { modelId: "m" } });
-  assertStrictEquals(
+  assert.strictEqual(
     await withSessionModel(explicit, recorded(null, "codex-chatgpt")),
     explicit,
   );

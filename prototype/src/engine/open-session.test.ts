@@ -3,13 +3,7 @@
  * identity and configuration, the frames it announces, and the integrity
  * `session_start` row.
  */
-import {
-  assert,
-  assertEquals,
-  assertNotEquals,
-  assertObjectMatch,
-  assertRejects,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import {
   chatReply,
   enginePorts,
@@ -50,15 +44,15 @@ Deno.test("openSession writes session_start under the turn root span, with the p
     fakes.ports,
   );
   const rows = await sessionRows(fakes.store, session.sessionId);
-  assertEquals(rows.length, 1);
-  assertObjectMatch(rows[0], {
+  assert.deepStrictEqual(rows.length, 1);
+  assert.partialDeepStrictEqual(rows[0], {
     event_type: "session_start",
     trace_id: session.traceId,
     span_id: session.turnRootSpanId,
     principal_id: "user",
     content: "what changed?",
   });
-  assertEquals(frames, [
+  assert.deepStrictEqual(frames, [
     {
       type: "sessionStart",
       sessionId: session.sessionId,
@@ -67,15 +61,15 @@ Deno.test("openSession writes session_start under the turn root span, with the p
     },
     { type: "inputReceived", sessionId: session.sessionId, promptLength: 13 },
   ]);
-  assertEquals(session.resumingSession, false);
-  assertEquals(session.startedAt, 1_000_000);
+  assert.deepStrictEqual(session.resumingSession, false);
+  assert.deepStrictEqual(session.startedAt, 1_000_000);
 });
 
 Deno.test("openSession continues a named session instead of creating one", async () => {
   const fakes = enginePorts();
   const session = await openSession(input({ sessionId: RESUMED }), fakes.ports);
-  assertEquals(session.sessionId, RESUMED);
-  assertEquals(session.resumingSession, true);
+  assert.deepStrictEqual(session.sessionId, RESUMED);
+  assert.deepStrictEqual(session.resumingSession, true);
 });
 
 Deno.test("principalId comes from the input struct and flows to events", async () => {
@@ -85,8 +79,10 @@ Deno.test("principalId comes from the input struct and flows to events", async (
     fakes.ports,
   );
   const rows = await sessionRows(fakes.store, session.sessionId);
-  assertEquals(rows.map((row) => row.principal_id), ["custom-principal"]);
-  assertEquals(session.principalId, "custom-principal");
+  assert.deepStrictEqual(rows.map((row) => row.principal_id), [
+    "custom-principal",
+  ]);
+  assert.deepStrictEqual(session.principalId, "custom-principal");
 });
 
 Deno.test("the input's principalId attributes every row a whole turn writes", async () => {
@@ -106,8 +102,8 @@ Deno.test("the input's principalId attributes every row a whole turn writes", as
   }, run.services);
   const rows = (await sessionRows(run.store, sessionId))
     .filter((row) => row.event_type !== "model_selected");
-  assert(rows.length >= 4);
-  assertEquals(
+  assert.ok(rows.length >= 4);
+  assert.deepStrictEqual(
     new Set(rows.map((row) => row.principal_id)),
     new Set(["custom-principal"]),
   );
@@ -130,10 +126,11 @@ Deno.test("an integrity session_start write failure fails the turn before anythi
           Promise.reject(new Error("simulated write failure: session_start")),
       },
     };
-    await assertRejects(
+    await assert.rejects(
       () => openSession(input({ mode }), { ...fakes.ports, store }),
-      Error,
-      "simulated write failure: session_start",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("simulated write failure: session_start"),
     );
   }
 });
@@ -149,12 +146,12 @@ Deno.test("openSession resolves the budget posture: turn override, then boundary
     }),
     fakes.ports,
   );
-  assertEquals(session.budgetConfig, {
+  assert.deepStrictEqual(session.budgetConfig, {
     sessionLimitUsd: 3,
     perCallLimitUsd: 0.5,
     dailyLimitUsd: BUDGET_DEFAULTS.dailyLimitUsd,
   });
-  assertEquals(session.anomalyConfig.turnMultiple, 7);
+  assert.deepStrictEqual(session.anomalyConfig.turnMultiple, 7);
 });
 
 Deno.test("openSession clamps the tool-step limit and falls back for non-integers", async () => {
@@ -169,7 +166,7 @@ Deno.test("openSession clamps the tool-step limit and falls back for non-integer
   ];
   for (const [maxToolSteps, expected] of cases) {
     const session = await openSession(input({ maxToolSteps }), fakes.ports);
-    assertEquals(session.maxToolSteps, expected);
+    assert.deepStrictEqual(session.maxToolSteps, expected);
   }
 });
 
@@ -179,7 +176,7 @@ Deno.test("openSession pins a remote caller's requested workspace to the default
     input({ workspaceRoot: "/requested" }),
     fakes.ports,
   );
-  assertEquals(local.honoredWorkspace, "/requested");
+  assert.deepStrictEqual(local.honoredWorkspace, "/requested");
   const remote = await openSession(
     input({
       workspaceRoot: "/requested",
@@ -193,8 +190,8 @@ Deno.test("openSession pins a remote caller's requested workspace to the default
     }),
     fakes.ports,
   );
-  assertEquals(remote.honoredWorkspace, undefined);
-  assertNotEquals(remote.sessionId, local.sessionId);
+  assert.deepStrictEqual(remote.honoredWorkspace, undefined);
+  assert.notStrictEqual(remote.sessionId, local.sessionId);
 });
 
 Deno.test("openSession seeds the budget tracker with spend already on the books", async () => {
@@ -204,7 +201,7 @@ Deno.test("openSession seeds the budget tracker with spend already on the books"
     {
       ...fakes.ports,
       fetchSpendBaselines: (id) => {
-        assert(id === RESUMED);
+        assert.ok(id === RESUMED);
         return Promise.resolve({
           sessionSpentUsd: 0.25,
           sessionSpentTodayUsd: 0.25,
@@ -214,7 +211,7 @@ Deno.test("openSession seeds the budget tracker with spend already on the books"
     },
   );
   const precall = session.budget.checkPreCall(1, 0, 0);
-  assertEquals(precall.sessionCostSoFar, 0.25);
+  assert.deepStrictEqual(precall.sessionCostSoFar, 0.25);
 });
 
 Deno.test("openSession reads spend baselines for the local day of the injected clock", async () => {
@@ -236,7 +233,7 @@ Deno.test("openSession reads spend baselines for the local day of the injected c
     ...fakes.ports,
     store,
   });
-  assertEquals(reads, [{
+  assert.deepStrictEqual(reads, [{
     sessionId: RESUMED,
     dayStart: localDayStart(new Date(Date.UTC(2020, 1, 29, 12))),
   }]);
