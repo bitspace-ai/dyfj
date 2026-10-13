@@ -637,9 +637,9 @@ Deno.test("declines compression on a tier-0 HOSTED model (locality, not tier)", 
   );
   // No compression request left the machine, and none was surfaced.
   assert.deepStrictEqual(run.transport.requests.length, 1);
-  assert.ok(
-    sessionRequest(run).url.includes("api.anthropic.com"),
-    `expected sessionRequest(run).url to include "api.anthropic.com"`,
+  assert.strictEqual(
+    new URL(sessionRequest(run).url).hostname,
+    "api.anthropic.com",
   );
   assert.deepStrictEqual(compressed(frames), undefined);
   assert.ok(

@@ -716,9 +716,9 @@ Deno.test("an adapter that sends only the prompt is never proactively compressed
   assert.strictEqual(fit.error, null);
   assert.deepStrictEqual(fit.result?.text, "prompt-only reply");
   assert.deepStrictEqual(fit.run.transport.requests.length, 1);
-  assert.ok(
-    fit.run.transport.requests[0].url.includes("googleapis.com"),
-    `expected fit.run.transport.requests[0].url to include "googleapis.com"`,
+  assert.strictEqual(
+    new URL(fit.run.transport.requests[0].url).hostname,
+    "generativelanguage.googleapis.com",
   );
   assert.deepStrictEqual(frame(fit.frames, "contextCompressed"), undefined);
   const rows = await eventRows(
