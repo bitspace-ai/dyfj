@@ -1256,6 +1256,19 @@ const MOCK_SYMBOLS = new Set([
   "assertSpyCall",
 ]);
 
+/**
+ * Whether `name` is bound to a spy or stub this run converted: its binding
+ * now reads `mock.fn(` or `mock.method(`. Its reads and spy assertions are
+ * rewritten only then; a spy left std keeps its std forms.
+ */
+function isConvertedSpy(src: Source, name: string): boolean {
+  const escaped = name.replace(/\$/g, "\\$");
+  return new RegExp(
+    `(?:^|[^\\w$])(?:const|let|var)\\s+${escaped}\\s*(?::[^=]+)?=\\s*` +
+      "mock\\.(?:fn|method)\\s*\\(",
+  ).test(src.text);
+}
+
 /** The name a spy or stub at `pos` is bound to by `const|let|var`, if any. */
 function spyBinding(text: string, pos: number): string | undefined {
   return /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
@@ -1316,7 +1329,7 @@ function convertMock(
   const blocked = unusable(ctx, pos, "assert", "node:assert/strict") ??
     unusable(ctx, pos, "mock", "node:test");
   if (blocked) return blocked;
-  if (!ctx.heldSpies.has(target) && !ctx.spies.has(target)) {
+  if (!ctx.heldSpies.has(target) && !isConvertedSpy(src, target)) {
     return {
       pos,
       reason: `${symbol} on \`${target}\`, which is not a spy the tool ` +
@@ -1405,9 +1418,9 @@ const mockPass: Pass = (src, ctx) =>
 /** `s.restore()` and `s.calls` on names bound to a converted spy or stub. */
 const spyMemberPass: Pass = (src, ctx) => {
   const outcomes: Outcome[] = [];
-  // The spies stay std ones when `mock` cannot be imported; so do their reads.
-  const blocked = !canUse(ctx, "mock", "node:test");
   for (const name of ctx.spies) {
+    // A spy whose creation stayed std keeps its std reads.
+    if (!isConvertedSpy(src, name)) continue;
     for (const pos of occurrences(src, name)) {
       const dot = nextNonSpace(src.text, pos + name.length);
       if (src.text[dot] !== ".") continue;
@@ -1415,13 +1428,6 @@ const spyMemberPass: Pass = (src, ctx) => {
       if (!member) continue;
       const memberStart = dot + member[0].length - member[1].length;
       const memberEnd = dot + member[0].length;
-      if (blocked && (member[1] === "restore" || member[1] === "calls")) {
-        outcomes.push({
-          pos,
-          reason: "`mock` is already bound in this file; convert by hand",
-        });
-        continue;
-      }
       if (member[1] === "restore") {
         outcomes.push({
           pos,
