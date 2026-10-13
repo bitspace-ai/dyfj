@@ -15,10 +15,11 @@ Deno.test("process", () => {
   const has = Deno.env.has(key);
   const inherited = Deno.env.get("toString");
   const viaKey = Deno.env.get(key);
+  const computed = Deno.env.get(nextKey());
   const exe = Deno.execPath();
   const windows = Deno.build.os === "windows";
   const pid = Deno.pid;
-  void [cwd, home, has, inherited, viaKey, exe, windows, pid];
+  void [cwd, home, has, inherited, viaKey, computed, exe, windows, pid];
 });
 --- after
 import process from "node:process";
@@ -34,9 +35,11 @@ Deno.test("process", () => {
   const has = Object.hasOwn(process.env, key);
   const inherited = Object.hasOwn(process.env, "toString") ? process.env.toString : undefined;
   const viaKey = Object.hasOwn(process.env, key) ? process.env[key] : undefined;
+  const computed = Deno.env.get(nextKey());
   const exe = process.execPath;
   const windows = process.platform === "win32";
   const pid = process.pid;
-  void [cwd, home, has, inherited, viaKey, exe, windows, pid];
+  void [cwd, home, has, inherited, viaKey, computed, exe, windows, pid];
 });
 --- findings
+unconverted 14

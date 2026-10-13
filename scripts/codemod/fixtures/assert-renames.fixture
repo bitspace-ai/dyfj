@@ -1,5 +1,7 @@
 # Assertions whose node:assert/strict form is a rename of the callee.
-rules: assert.import, assert.ok, assert.equals, assert.strict-equals, assert.not-equals, assert.not-strict-equals, assert.match, assert.not-match, assert.object-match, assert.fail
+# assertNotEquals stays: node's deep inequality passes for -0 against 0 and
+# for a null-prototype object against a plain one, where std's fails.
+rules: assert.import, assert.ok, assert.equals, assert.strict-equals, assert.not-strict-equals, assert.match, assert.not-match, assert.object-match, assert.fail
 --- before
 import {
   assert,
@@ -30,6 +32,7 @@ Deno.test("renames", () => {
 });
 --- after
 import assert from "node:assert/strict";
+import { assertNotEquals } from "@std/assert";
 import { helper } from "./helper.ts";
 
 Deno.test("renames", () => {
@@ -39,7 +42,7 @@ Deno.test("renames", () => {
     helper(),
     1,
   );
-  assert.notDeepStrictEqual([1], [2]);
+  assertNotEquals([1], [2]);
   assert.notStrictEqual(1, 2);
   assert.match("abc", /b/);
   assert.doesNotMatch("abc", /z/);
@@ -47,3 +50,4 @@ Deno.test("renames", () => {
   if (helper() > 1) assert.fail("unreachable");
 });
 --- findings
+unconverted 12

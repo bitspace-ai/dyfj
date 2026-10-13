@@ -56,11 +56,6 @@ export const RULES: readonly RuleInfo[] = [
     to: "assert.strictEqual",
   },
   {
-    id: "assert.not-equals",
-    from: "assertNotEquals",
-    to: "assert.notDeepStrictEqual",
-  },
-  {
     id: "assert.not-strict-equals",
     from: "assertNotStrictEquals",
     to: "assert.notStrictEqual",
@@ -1085,7 +1080,6 @@ const ASSERT_RENAMES: Record<string, [rule: string, member: string]> = {
   assert: ["assert.ok", "ok"],
   assertEquals: ["assert.equals", "deepStrictEqual"],
   assertStrictEquals: ["assert.strict-equals", "strictEqual"],
-  assertNotEquals: ["assert.not-equals", "notDeepStrictEqual"],
   assertNotStrictEquals: ["assert.not-strict-equals", "notStrictEqual"],
   assertMatch: ["assert.match", "match"],
   assertNotMatch: ["assert.not-match", "doesNotMatch"],
@@ -1111,6 +1105,7 @@ const ASSERT_SYMBOLS = new Set([
   ...Object.keys(COMPARISONS),
   "assertInstanceOf",
   "assertArrayIncludes",
+  "assertNotEquals",
   "assertFalse",
   "assertStringIncludes",
   "assertThrows",
@@ -1179,6 +1174,17 @@ function convertAssertion(
     return replaceCall(call, "assert.false", `assert.ok(${negated}${rest})`, [
       "assert",
     ]);
+  }
+  if (symbol === "assertNotEquals") {
+    // node's deep inequality passes for -0 against 0 and for a
+    // null-prototype object against a plain one, where std's fails: a
+    // rewrite could turn a failing test into a passing one.
+    return {
+      pos: call.start,
+      reason: "assertNotEquals: node's notDeepStrictEqual passes where std " +
+        "fails (-0 against 0, null-prototype objects); convert by hand, " +
+        "for example to notStrictEqual for primitives",
+    };
   }
   if (symbol === "assertInstanceOf") {
     if (args.length < 2 || args.length > 3) {
@@ -1356,19 +1362,29 @@ function isConvertedSpy(src: Source, name: string): boolean {
 
 /**
  * Whether every declaration of `name` in the original file binds it straight
- * to a std spy or stub with no type arguments, so that all of them convert
- * and every read of the name is a converted spy's.
+ * to a std spy or stub that converts (no type arguments, a supported
+ * argument count, not held by `using`), so that all of them convert and
+ * every read of the name is a converted spy's.
  */
 function onlySpyBindings(ctx: Context, name: string): boolean {
   const creators = [...ctx.stdMock].filter(([, symbol]) =>
     symbol === "spy" || symbol === "stub"
   ).map(([local]) => local);
   const { text } = ctx.original;
+  if (ctx.heldSpies.has(name)) return false;
   return declarations(ctx.original, ctx.imports, name).every((pos) => {
     const after = text.slice(pos + name.length);
-    return creators.some((local) =>
-      new RegExp(`^\\s*(?::[^=]+)?=\\s*${local}\\s*\\(`).test(after)
-    );
+    return creators.some((local) => {
+      const m = new RegExp(`^\\s*(?::[^=]+)?=\\s*${local}\\s*\\(`)
+        .exec(after);
+      if (!m) return false;
+      // The creation must itself convert: spy takes 0-2 arguments, stub 2-3.
+      const at = text.indexOf(local, pos + name.length);
+      const call = callAt(ctx.original, at, at + local.length);
+      if (call === undefined) return false;
+      const n = call.args.length;
+      return ctx.stdMock.get(local) === "spy" ? n <= 2 : n === 2 || n === 3;
+    });
   });
 }
 
@@ -2183,6 +2199,14 @@ function convertProcess(
     if (member === "get" && args.length === 1) {
       if (ownKey(key)) {
         return swap("process.env", call.end, `process.env${envAccess(key)}`);
+      }
+      // The key is read twice below, so it must be safe to evaluate twice.
+      if (!isBareName(key) && !/^(["'])[^"'\\]*\1$/.test(key)) {
+        return {
+          pos,
+          reason: `${host} with a computed key that would be evaluated ` +
+            "twice; convert by hand",
+        };
       }
       const read = `Object.hasOwn(process.env, ${key}) ? ` +
         `process.env${envAccess(key)} : undefined`;
