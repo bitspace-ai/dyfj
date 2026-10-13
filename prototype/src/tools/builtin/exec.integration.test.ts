@@ -3,17 +3,14 @@
 // the agent loop runs: the deadline must bound the call, stop the whole tree,
 // and keep output written after the kill point out of the result.
 
-import {
-  assert,
-  assertFalse,
-  assertMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "../definition.ts";
 import { defineBash, executeBash } from "./exec.ts";
 
-const posix = Deno.build.os !== "windows";
+const posix = process.platform !== "win32";
 const TIMEOUT_MS = 500;
 // The deadline plus the stop grace, the kill settle and the drain bound, with
 // slack for a loaded machine. A tree that survives the timeout runs for 10 s.
@@ -21,22 +18,47 @@ const RETURN_BOUND_MS = TIMEOUT_MS + 4_000;
 
 // Live means present and not a zombie: an unreaped zombie has already exited.
 async function isLive(pid: number): Promise<boolean> {
-  const out = await new Deno.Command("/bin/ps", {
-    args: ["-o", "stat=", "-p", String(pid)],
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  const stat = new TextDecoder().decode(out.stdout).trim();
+  const stdout = await probe("/bin/ps", ["-o", "stat=", "-p", String(pid)]);
+  const stat = stdout.trim();
   return stat !== "" && !stat.startsWith("Z");
 }
 
 async function forceKill(pid: number | undefined): Promise<void> {
   if (pid === undefined) return;
-  await new Deno.Command("/bin/kill", {
-    args: ["-KILL", String(pid)],
-    stdout: "null",
-    stderr: "null",
-  }).output();
+  await probe("/bin/kill", ["-KILL", String(pid)], "ignore");
+}
+
+// Runs a probe command to its exit and returns its stdout. Cwd and stdin are
+// inherited, stderr is discarded and the exit status is not checked. Only a
+// probe that cannot start fails: spawn reports that as an `error` event.
+// `close` fires once the child has exited and its streams have closed, so no
+// probe outlives the call.
+function probe(
+  file: string,
+  args: string[],
+  stdout: "pipe" | "ignore" = "pipe",
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, {
+      env: pathOnlyEnv(),
+      stdio: ["inherit", stdout, "ignore"],
+    });
+    let text = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      text += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", () => resolve(text));
+  });
+}
+
+// Given no env, spawn copies the whole parent env, which needs an unscoped env
+// grant; the integration lane grants env by name. PATH is the one variable
+// these children resolve anything through, so it is the one forwarded.
+function pathOnlyEnv(): Record<string, string> {
+  const path = process.env.PATH;
+  return path === undefined ? {} : { PATH: path };
 }
 
 function pidIn(out: string): number | undefined {
@@ -46,7 +68,9 @@ function pidIn(out: string): number | undefined {
 
 async function runTimed(command: string) {
   const start = performance.now();
-  const out = await executeBash(Deno.cwd(), command, { timeoutMs: TIMEOUT_MS });
+  const out = await executeBash(process.cwd(), command, {
+    timeoutMs: TIMEOUT_MS,
+  });
   return { out, elapsedMs: performance.now() - start };
 }
 
@@ -58,13 +82,13 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
         `sleep 10 & echo "pid=$!"; wait`,
       );
       pid = pidIn(out);
-      assert(
+      assert.ok(
         elapsedMs < RETURN_BOUND_MS,
         `returned after ${Math.round(elapsedMs)}ms`,
       );
-      assertMatch(out, /^timed out after 500ms \(killed/);
-      assert(pid !== undefined, `no pid in: ${out}`);
-      assertFalse(await isLive(pid), "the sleep outlived the timeout");
+      assert.match(out, /^timed out after 500ms \(killed/);
+      assert.ok(pid !== undefined, `no pid in: ${out}`);
+      assert.ok(!(await isLive(pid)), "the sleep outlived the timeout");
     } finally {
       await forceKill(pid);
     }
@@ -79,13 +103,13 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
         `( sleep 10 & echo "pid=$!"; wait ) | cat`,
       );
       pid = pidIn(out);
-      assert(
+      assert.ok(
         elapsedMs < RETURN_BOUND_MS,
         `returned after ${Math.round(elapsedMs)}ms`,
       );
-      assertMatch(out, /^timed out after 500ms \(killed/);
-      assert(pid !== undefined, `no pid in: ${out}`);
-      assertFalse(await isLive(pid), "the sleep outlived the timeout");
+      assert.match(out, /^timed out after 500ms \(killed/);
+      assert.ok(pid !== undefined, `no pid in: ${out}`);
+      assert.ok(!(await isLive(pid)), "the sleep outlived the timeout");
     } finally {
       await forceKill(pid);
     }
@@ -95,9 +119,9 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
     const { out } = await runTimed(
       `echo before; ( sleep 2; echo after ) | cat`,
     );
-    assertMatch(out, /^timed out after 500ms \(killed/);
-    assertMatch(out, /^before$/m);
-    assertFalse(/after$/m.test(out), `post-deadline output reported: ${out}`);
+    assert.match(out, /^timed out after 500ms \(killed/);
+    assert.match(out, /^before$/m);
+    assert.ok(!/after$/m.test(out), `post-deadline output reported: ${out}`);
   });
 });
 
@@ -107,7 +131,7 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
 describe("bash with a requested timeoutSec against real processes", {
   ignore: !posix,
 }, () => {
-  const bash = defineBash(Deno.cwd());
+  const bash = defineBash(process.cwd());
   const context = { authzBasis: "policy:allow:operator-approved" };
   const call = (args: Record<string, unknown>): CommandCall => ({
     commandId: "bash",
@@ -121,7 +145,7 @@ describe("bash with a requested timeoutSec against real processes", {
       call({ command: "echo requested; exit 3", timeoutSec: 5 }),
       context,
     );
-    assertStrictEquals(out, "exit 3\nrequested");
+    assert.strictEqual(out, "exit 3\nrequested");
   });
 
   it("stops the whole tree at the requested timeout, not the default", async () => {
@@ -134,14 +158,14 @@ describe("bash with a requested timeoutSec against real processes", {
       );
       const elapsedMs = performance.now() - start;
       pid = pidIn(out);
-      assert(
+      assert.ok(
         elapsedMs < 1_000 + 4_000,
         `returned after ${Math.round(elapsedMs)}ms`,
       );
-      assertMatch(out, /^timed out after 1000ms \(killed/);
-      assert(pid !== undefined, `no pid in: ${out}`);
-      assertFalse(
-        await isLive(pid),
+      assert.match(out, /^timed out after 1000ms \(killed/);
+      assert.ok(pid !== undefined, `no pid in: ${out}`);
+      assert.ok(
+        !(await isLive(pid)),
         "the sleep outlived the requested timeout",
       );
     } finally {
