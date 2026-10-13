@@ -5,15 +5,12 @@
  * under the default `strict` posture) give the tests a hook inside a running
  * tool through the `Approver` port — no module is mocked.
  */
-import {
-  assert,
-  assertEquals,
-  assertMatch,
-  assertObjectMatch,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { stub } from "@std/testing/mock";
 import {
   chatReply,
   conversation,
@@ -68,8 +65,8 @@ async function loopTurn(
   patch?: (run: EngineRun) => void,
   models?: ModelSeed[],
 ): Promise<LoopRun> {
-  const root = await Deno.makeTempDir({ prefix: "engine-loop-" });
-  await Deno.writeTextFile(`${root}/README.md`, "# readme\n");
+  const root = await mkdtemp(join(tmpdir(), "engine-loop-"));
+  await writeFile(`${root}/README.md`, "# readme\n");
   const run = engineServices(exchanges, models ? { models } : {});
   patch?.(run);
   const frames: WorkbenchRuntimeEvent[] = [];
@@ -87,7 +84,7 @@ async function loopTurn(
   } catch (error) {
     return { run, frames, error, root };
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await rm(root, { recursive: true });
   }
 }
 
@@ -101,19 +98,19 @@ async function rows(loop: LoopRun) {
 async function quietly<T>(
   run: () => Promise<T>,
 ): Promise<{ value: T; warnings: string[] }> {
-  const log = stub(console, "log");
-  const warn = stub(console, "warn");
-  const error = stub(console, "error");
+  const log = mock.method(console, "log", () => {});
+  const warn = mock.method(console, "warn", () => {});
+  const error = mock.method(console, "error", () => {});
   try {
     const value = await run();
     return {
       value,
-      warnings: warn.calls.map((call) => String(call.args[0])),
+      warnings: warn.mock.calls.map((call) => String(call.arguments[0])),
     };
   } finally {
-    log.restore();
-    warn.restore();
-    error.restore();
+    log.mock.restore();
+    warn.mock.restore();
+    error.mock.restore();
   }
 }
 
@@ -125,9 +122,9 @@ Deno.test("agent loop iterates model<->tools until the model stops requesting to
     toolReply([LIST("c2", "src")]),
     chatReply({ content: "done exploring" }),
   ], { prompt: "explore the repo" });
-  assertEquals(result?.text, "done exploring");
+  assert.deepStrictEqual(result?.text, "done exploring");
   // step 0 (initial) + two follow-up gather calls = three model calls
-  assertEquals(run.transport.requests.length, 3);
+  assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
 Deno.test("agent loop honors a configured small step limit and forces a no-tools conclusion", async () => {
@@ -137,33 +134,35 @@ Deno.test("agent loop honors a configured small step limit and forces a no-tools
     prompt: "loop without stopping",
     maxToolSteps: 2,
   });
-  assertEquals(result?.text, "forced conclusion");
+  assert.deepStrictEqual(result?.text, "forced conclusion");
   // Step 0 plus one gather call, then one forced no-tools call.
-  assertEquals(run.transport.requests.length, 3);
-  assertEquals(result?.agent, {
+  assert.deepStrictEqual(run.transport.requests.length, 3);
+  assert.deepStrictEqual(result?.agent, {
     toolStepsUsed: 2,
     maxToolSteps: 2,
     limitReached: true,
   });
   // The final forced call dropped tools to make the model conclude.
   const last = run.transport.requests.at(-1)!;
-  assertEquals(requestBody(last).tools, undefined);
-  assertStringIncludes(
-    systemMessage(last),
-    "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached.",
+  assert.deepStrictEqual(requestBody(last).tools, undefined);
+  assert.ok(
+    systemMessage(last).includes(
+      "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached.",
+    ),
+    `expected systemMessage(last) to include "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached."`,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     conversation(last).filter((m) => m.role === "user").map((m) => m.content),
     ["loop without stopping"],
   );
   // An earlier gather call still offered tools, so the model could continue.
-  assert(Array.isArray(requestBody(run.transport.requests[1]).tools));
+  assert.ok(Array.isArray(requestBody(run.transport.requests[1]).tools));
   const limitAt = frames.findIndex((f) => f.type === "toolStepLimitReached");
-  assertObjectMatch(frames[limitAt], {
+  assert.partialDeepStrictEqual(frames[limitAt], {
     type: "toolStepLimitReached",
     maxSteps: 2,
   });
-  assertEquals(frames[limitAt + 1].type, "beforeProviderRequest");
+  assert.deepStrictEqual(frames[limitAt + 1].type, "beforeProviderRequest");
 });
 
 for (
@@ -178,7 +177,7 @@ for (
       prompt: "answer without tools",
       maxToolSteps: provided,
     });
-    assertEquals(result?.agent, {
+    assert.deepStrictEqual(result?.agent, {
       toolStepsUsed: 0,
       maxToolSteps: expected,
       limitReached: false,
@@ -193,21 +192,26 @@ Deno.test("agent loop forces a conclusion when the model repeats prior tool call
     repeat, // step 1 gather — identical call
     chatReply({ content: "done" }),
   ]);
-  assertEquals(result?.text, "done");
-  assertEquals(result?.agent, {
+  assert.deepStrictEqual(result?.text, "done");
+  assert.deepStrictEqual(result?.agent, {
     toolStepsUsed: 2,
     maxToolSteps: AGENT_DEFAULTS.maxToolSteps,
     limitReached: false,
   });
   // step 0 + one gather + the forced conclusion — not the full step cap
-  assertEquals(run.transport.requests.length, 3);
+  assert.deepStrictEqual(run.transport.requests.length, 3);
   const forced = run.transport.requests[2];
-  assertEquals(requestBody(forced).tools, undefined);
-  assertStringIncludes(
-    systemMessage(forced),
-    "Workbench instruction: tool use ended because the model repeated prior tool calls.",
+  assert.deepStrictEqual(requestBody(forced).tools, undefined);
+  assert.ok(
+    systemMessage(forced).includes(
+      "Workbench instruction: tool use ended because the model repeated prior tool calls.",
+    ),
+    `expected systemMessage(forced) to include "Workbench instruction: tool use ended because the model repeated prior tool calls."`,
   );
-  assertEquals(frames.some((f) => f.type === "toolStepLimitReached"), false);
+  assert.deepStrictEqual(
+    frames.some((f) => f.type === "toolStepLimitReached"),
+    false,
+  );
 });
 
 // ─── a denied approval ends tool use for the turn ────────────────────────────
@@ -251,46 +255,48 @@ describe("a denied approval", () => {
         },
       },
     });
-    assertEquals(loop.error, null);
+    assert.strictEqual(loop.error, null);
     // One approval was raised, the denial ended tool use, and the model was
     // asked once more, with no tools: two provider requests in all.
-    assertEquals(approvals, ["c1"]);
-    assertEquals(loop.run.transport.requests.length, 2);
+    assert.deepStrictEqual(approvals, ["c1"]);
+    assert.deepStrictEqual(loop.run.transport.requests.length, 2);
     const concluding = loop.run.transport.requests[1];
-    assertEquals(requestBody(concluding).tools, undefined);
-    assertStringIncludes(
-      systemMessage(concluding),
-      "Workbench instruction: tool use ended because a tool call was not approved.",
+    assert.deepStrictEqual(requestBody(concluding).tools, undefined);
+    assert.ok(
+      systemMessage(concluding).includes(
+        "Workbench instruction: tool use ended because a tool call was not approved.",
+      ),
+      `expected systemMessage(concluding) to include "Workbench instruction: tool use ended because a tool call was not approved."`,
     );
     // The tool message is a refusal the model cannot mistake for output.
     const toolMessage = conversation(concluding).find((m) => m.role === "tool");
-    assertMatch(
+    assert.match(
       toolMessage?.content ?? "",
       /^approval_denied: this write_file call was not approved, so it did not run; this is not its output\. /,
     );
-    assertStringIncludes(
-      toolMessage?.content ?? "",
-      "Reason given: operator declined",
+    assert.ok(
+      (toolMessage?.content ?? "").includes("Reason given: operator declined"),
+      `expected toolMessage?.content ?? "" to include "Reason given: operator declined"`,
     );
     // The frame carries the verdict; the stop reason is the ordinary one.
     const completed = loop.frames.filter((f) => f.type === "toolCallCompleted");
-    assertEquals(completed.length, 1);
-    assertObjectMatch(completed[0], {
+    assert.deepStrictEqual(completed.length, 1);
+    assert.partialDeepStrictEqual(completed[0], {
       isError: true,
       verdict: "approval_denied",
     });
-    assertEquals(loop.result?.stopReason, "stop");
+    assert.deepStrictEqual(loop.result?.stopReason, "stop");
     // The durable event holds the refusal, not stdout. Its `action` and
     // `authz_basis` columns (golden scenario 13) are unchanged.
     const toolRow = (await rows(loop)).find((row) =>
       row.event_type === "tool_call"
     );
-    assertObjectMatch(toolRow!, {
+    assert.partialDeepStrictEqual(toolRow!, {
       tool_name: "write_file",
       tool_is_error: "1",
     });
-    assertMatch(String(toolRow!.tool_result), /^approval_denied: /);
-    assertMatch(
+    assert.match(String(toolRow!.tool_result), /^approval_denied: /);
+    assert.match(
       String(toolRow!.content),
       /^write_file denied: approval_denied: /,
     );
@@ -317,15 +323,15 @@ describe("after a denied approval", () => {
         },
       },
     });
-    assertEquals(loop.error, null);
-    assertEquals(approvals, ["c1"]);
-    assertEquals(loop.run.transport.requests.length, 2);
-    assertEquals(
+    assert.strictEqual(loop.error, null);
+    assert.deepStrictEqual(approvals, ["c1"]);
+    assert.deepStrictEqual(loop.run.transport.requests.length, 2);
+    assert.deepStrictEqual(
       loop.frames.filter((f) => f.type === "toolCallCompleted").length,
       1,
     );
-    assertEquals(loop.result?.stopReason, "stop");
-    assertEquals(loop.result?.text, "I will try again.");
+    assert.deepStrictEqual(loop.result?.stopReason, "stop");
+    assert.deepStrictEqual(loop.result?.text, "I will try again.");
   });
 });
 
@@ -352,25 +358,31 @@ Deno.test("contains a failed capped conclusion without losing prior-call account
     ], { prompt: "loop until the limit" })
   );
   const { error, frames } = loop.value;
-  assert(error instanceof Error);
-  assertEquals(error.message, CONCLUSION_FAILED);
+  assert.ok(error instanceof Error);
+  assert.deepStrictEqual(error.message, CONCLUSION_FAILED);
   const calls = (await rows(loop.value)).filter((row) =>
     row.event_type === "provider_call"
   );
-  assertEquals(calls.length, AGENT_DEFAULTS.maxToolSteps + 1);
+  assert.deepStrictEqual(calls.length, AGENT_DEFAULTS.maxToolSteps + 1);
   for (const call of calls.slice(0, AGENT_DEFAULTS.maxToolSteps)) {
-    assertObjectMatch(call, { stop_reason: "tool_use", tokens_input: "10" });
+    assert.partialDeepStrictEqual(call, {
+      stop_reason: "tool_use",
+      tokens_input: "10",
+    });
   }
-  assertObjectMatch(calls.at(-1)!, {
+  assert.partialDeepStrictEqual(calls.at(-1)!, {
     provider_call_purpose: "forced_conclusion",
     provider_error_class: "ToolStepLimitConclusionError",
     stop_reason: "error",
   });
-  assertObjectMatch(frames.find((f) => f.type === "turnFailed")!, {
+  assert.partialDeepStrictEqual(frames.find((f) => f.type === "turnFailed")!, {
     errorName: "ToolStepLimitConclusionError",
     errorMessage: CONCLUSION_FAILED,
   });
-  assertEquals(JSON.stringify({ calls, frames }).includes(sentinel), false);
+  assert.deepStrictEqual(
+    JSON.stringify({ calls, frames }).includes(sentinel),
+    false,
+  );
 });
 
 Deno.test("contains a failed overflow-recovery call after the tool-step limit", async () => {
@@ -397,22 +409,25 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
     )
   );
   const { error, frames } = loop.value;
-  assert(error instanceof Error);
-  assertEquals(error.message, CONCLUSION_FAILED);
+  assert.ok(error instanceof Error);
+  assert.deepStrictEqual(error.message, CONCLUSION_FAILED);
   const calls = (await rows(loop.value)).filter((row) =>
     row.event_type === "provider_call"
   );
-  assertEquals(calls.length, AGENT_DEFAULTS.maxToolSteps + 2);
-  assertObjectMatch(calls.at(-1)!, {
+  assert.deepStrictEqual(calls.length, AGENT_DEFAULTS.maxToolSteps + 2);
+  assert.partialDeepStrictEqual(calls.at(-1)!, {
     provider_call_purpose: "recovery",
     provider_error_class: "ToolStepLimitConclusionError",
     stop_reason: "error",
   });
-  assertObjectMatch(frames.find((f) => f.type === "turnFailed")!, {
+  assert.partialDeepStrictEqual(frames.find((f) => f.type === "turnFailed")!, {
     errorName: "ToolStepLimitConclusionError",
     errorMessage: CONCLUSION_FAILED,
   });
-  assertEquals(JSON.stringify({ calls, frames }).includes(sentinel), false);
+  assert.deepStrictEqual(
+    JSON.stringify({ calls, frames }).includes(sentinel),
+    false,
+  );
 });
 
 // ─── the provider-call trace ─────────────────────────────────────────────────
@@ -435,15 +450,15 @@ Deno.test("persists an ordered provider-call trace with requested tools beneath 
   const all = await rows(loop);
   const root = all.find((row) => row.event_type === "session_start")!;
   const calls = all.filter((row) => row.event_type === "provider_call");
-  assertEquals(calls.length, 2);
-  assertObjectMatch(calls[0], {
+  assert.deepStrictEqual(calls.length, 2);
+  assert.partialDeepStrictEqual(calls[0], {
     parent_span_id: root.span_id,
     provider_call_order: "1",
     provider_call_purpose: "initial",
     tokens_input: "10",
     tokens_output: "2",
   });
-  assertObjectMatch(calls[1], {
+  assert.partialDeepStrictEqual(calls[1], {
     parent_span_id: root.span_id,
     provider_call_order: "2",
     provider_call_purpose: "tool_followup",
@@ -453,16 +468,16 @@ Deno.test("persists an ordered provider-call trace with requested tools beneath 
   const toolCall = all.find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "read-1"
   );
-  assertEquals(toolCall?.parent_span_id, calls[0].span_id);
-  assert(calls[0].span_id !== root.span_id);
+  assert.deepStrictEqual(toolCall?.parent_span_id, calls[0].span_id);
+  assert.ok(calls[0].span_id !== root.span_id);
   const selected = all.find((row) => row.event_type === "model_selected");
-  assertEquals(selected?.parent_span_id, root.span_id);
-  assertObjectMatch(
+  assert.deepStrictEqual(selected?.parent_span_id, root.span_id);
+  assert.partialDeepStrictEqual(
     all.find((row) => row.event_type === "model_response")!,
     { parent_span_id: root.span_id, tokens_input: "24", tokens_output: "5" },
   );
   const summary = all.find((row) => row.event_type === "budget_summary");
-  assertEquals(summary?.parent_span_id, root.span_id);
+  assert.deepStrictEqual(summary?.parent_span_id, root.span_id);
 });
 
 Deno.test("a skipped provider_call span leaves its requested tool attached to the turn root", async () => {
@@ -488,17 +503,23 @@ Deno.test("a skipped provider_call span leaves its requested tool attached to th
   );
   const all = await rows(loop);
   const root = all.find((row) => row.event_type === "session_start")!;
-  assertEquals(all.some((row) => row.event_type === "provider_call"), false);
+  assert.deepStrictEqual(
+    all.some((row) => row.event_type === "provider_call"),
+    false,
+  );
   const toolCall = all.find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "c1"
   );
-  assertEquals(toolCall?.parent_span_id, root.span_id);
-  assertObjectMatch(loop.result!, {
+  assert.deepStrictEqual(toolCall?.parent_span_id, root.span_id);
+  assert.partialDeepStrictEqual(loop.result!, {
     text: "complete despite skipped provider spans",
     tokens: { input: 84, output: 14, totalCalls: 2 },
   });
-  assertStringIncludes(loop.result!.receipt, "audit log has gaps");
-  assert(warnings.some((line) => line.includes("Event write skipped")));
+  assert.ok(
+    loop.result!.receipt.includes("audit log has gaps"),
+    `expected loop.result!.receipt to include "audit log has gaps"`,
+  );
+  assert.ok(warnings.some((line) => line.includes("Event write skipped")));
 });
 
 // A tool_call row is best-effort: an INSERT failure (for example an oversized
@@ -528,20 +549,29 @@ Deno.test("tool_call event write failure does not fail the tool step or turn (be
     )
   );
   // The tool step ran, and the turn concluded normally.
-  assertEquals(loop.result?.text, "done despite event-write failure");
+  assert.deepStrictEqual(loop.result?.text, "done despite event-write failure");
   // The skip is on record, by class only: the console line never carries the
   // driver error's message.
   const skipped = warnings.filter((line) =>
     line.includes("Event write skipped")
   );
-  assert(skipped.length > 0);
+  assert.ok(skipped.length > 0);
   for (const line of skipped) {
-    assertEquals(line.includes("simulated write failure"), false);
-    assertStringIncludes(line, "Error");
+    assert.deepStrictEqual(line.includes("simulated write failure"), false);
+    assert.ok(
+      line.includes("Error"),
+      `expected ${JSON.stringify(line)} to include "Error"`,
+    );
   }
   // Best-effort never means silent: the receipt carries the skip count.
-  assertStringIncludes(loop.result!.receipt, "event write(s) failed");
-  assertStringIncludes(loop.result!.receipt, "audit log has gaps");
+  assert.ok(
+    loop.result!.receipt.includes("event write(s) failed"),
+    `expected loop.result!.receipt to include "event write(s) failed"`,
+  );
+  assert.ok(
+    loop.result!.receipt.includes("audit log has gaps"),
+    `expected loop.result!.receipt to include "audit log has gaps"`,
+  );
 });
 
 // ─── unparsed tool-call markup ───────────────────────────────────────────────
@@ -554,31 +584,34 @@ Deno.test("emits and persists content-free unparsed-markup metadata before compl
   const warning = loop.frames.find((f) =>
     f.type === "unparsedToolCallMarkupDetected"
   );
-  assert(warning?.type === "unparsedToolCallMarkupDetected");
-  assertEquals(warning, {
+  assert.ok(warning?.type === "unparsedToolCallMarkupDetected");
+  assert.deepStrictEqual(warning, {
     type: "unparsedToolCallMarkupDetected",
     sessionId: loop.result!.sessionId,
     count: warning.count,
     countIsLowerBound: warning.countIsLowerBound,
   });
-  assert(warning.count >= 1);
-  assertEquals(
+  assert.ok(warning.count >= 1);
+  assert.deepStrictEqual(
     /edit_file|read_file|<tool_call>/.test(JSON.stringify(warning)),
     false,
   );
-  assert(
+  assert.ok(
     loop.frames.indexOf(warning) <
       loop.frames.findIndex((f) => f.type === "turnCompleted"),
   );
   const all = await rows(loop);
-  assertEquals(all.some((row) => row.event_type === "tool_call"), false);
+  assert.deepStrictEqual(
+    all.some((row) => row.event_type === "tool_call"),
+    false,
+  );
   const call = all.find((row) => row.event_type === "provider_call")!;
-  assertEquals(call.unparsed_tool_call_count, String(warning.count));
-  assertEquals(
+  assert.deepStrictEqual(call.unparsed_tool_call_count, String(warning.count));
+  assert.deepStrictEqual(
     /edit_file|read_file|<tool_call>/.test(JSON.stringify(call)),
     false,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     all.find((row) => row.event_type === "model_response")?.content,
     loop.result!.text,
   );
@@ -592,18 +625,21 @@ Deno.test("flags a complete textual tool call the forced conclusion cannot run",
     "<parameter=path>\nREADME.md\n</parameter>\n</function>\n</tool_call>";
   const repeat = toolReply([LIST("c")]);
   const loop = await loopTurn([repeat, repeat, chatReply({ content: block })]);
-  assertEquals(requestBody(loop.run.transport.requests[2]).tools, undefined);
-  assertEquals(loop.result?.text, block);
+  assert.deepStrictEqual(
+    requestBody(loop.run.transport.requests[2]).tools,
+    undefined,
+  );
+  assert.deepStrictEqual(loop.result?.text, block);
   const warning = loop.frames.find((f) =>
     f.type === "unparsedToolCallMarkupDetected"
   );
-  assertEquals(warning, {
+  assert.deepStrictEqual(warning, {
     type: "unparsedToolCallMarkupDetected",
     sessionId: loop.result!.sessionId,
     count: 1,
     countIsLowerBound: false,
   });
-  assert(
+  assert.ok(
     loop.frames.indexOf(warning!) <
       loop.frames.findIndex((f) => f.type === "turnCompleted"),
   );
@@ -611,7 +647,7 @@ Deno.test("flags a complete textual tool call the forced conclusion cannot run",
     row.event_type === "provider_call" &&
     row.provider_call_purpose === "forced_conclusion"
   );
-  assertObjectMatch(forced!, { unparsed_tool_call_count: "1" });
+  assert.partialDeepStrictEqual(forced!, { unparsed_tool_call_count: "1" });
 });
 
 Deno.test("fails instead of completing when the unparsed-markup warning cannot be delivered", async () => {
@@ -629,10 +665,10 @@ Deno.test("fails instead of completing when the unparsed-markup warning cannot b
       },
     })
   );
-  assert(loop.value.error instanceof Error);
-  assertEquals(loop.value.error.message, "client disconnected");
-  assert(seen.includes("turnFailed"));
-  assertEquals(seen.includes("turnCompleted"), false);
+  assert.ok(loop.value.error instanceof Error);
+  assert.deepStrictEqual(loop.value.error.message, "client disconnected");
+  assert.ok(seen.includes("turnFailed"));
+  assert.deepStrictEqual(seen.includes("turnCompleted"), false);
 });
 
 // ─── provider and tool failures ──────────────────────────────────────────────
@@ -642,17 +678,17 @@ Deno.test("records a content-free provider-call failure with a safe classificati
   const loop = await quietly(() =>
     loopTurn([{ respond: { status: 500, body } }], { prompt: "fail safely" })
   );
-  assert(loop.value.error instanceof Error);
+  assert.ok(loop.value.error instanceof Error);
   const call = (await rows(loop.value)).find((row) =>
     row.event_type === "provider_call"
   );
-  assertObjectMatch(call!, {
+  assert.partialDeepStrictEqual(call!, {
     provider_call_order: "1",
     provider_call_purpose: "initial",
     stop_reason: "error",
   });
-  assert((call?.provider_error_class ?? "") !== "");
-  assertEquals(JSON.stringify(call).includes(body), false);
+  assert.ok((call?.provider_error_class ?? "") !== "");
+  assert.deepStrictEqual(JSON.stringify(call).includes(body), false);
 });
 
 Deno.test("a denied tool call's reason reaches the model verbatim on the next step, marked as an error", async () => {
@@ -665,20 +701,24 @@ Deno.test("a denied tool call's reason reaches the model verbatim on the next st
   const toolMessage = conversation(loop.run.transport.requests[1]).find((m) =>
     m.role === "tool"
   );
-  assert(toolMessage !== undefined);
-  assertEquals(toolMessage.tool_call_id, "bad-1");
-  assertStringIncludes(
-    toolMessage.content,
-    "invalid arguments for read_file: missing required argument: path",
+  assert.ok(toolMessage !== undefined);
+  assert.deepStrictEqual(toolMessage.tool_call_id, "bad-1");
+  assert.ok(
+    toolMessage.content.includes(
+      "invalid arguments for read_file: missing required argument: path",
+    ),
+    `expected toolMessage.content to include "invalid arguments for read_file: missing required argument: path"`,
   );
-  assertStringIncludes(
-    toolMessage.content,
-    "Call read_file again with arguments matching the expected shape.",
+  assert.ok(
+    toolMessage.content.includes(
+      "Call read_file again with arguments matching the expected shape.",
+    ),
+    `expected toolMessage.content to include "Call read_file again with arguments matching the expected shape."`,
   );
   const event = (await rows(loop)).find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "bad-1"
   );
-  assertEquals(event?.tool_is_error, "1");
+  assert.deepStrictEqual(event?.tool_is_error, "1");
 });
 
 Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", async () => {
@@ -691,17 +731,24 @@ Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", 
       },
     })
   );
-  assert(loop.value.error instanceof Error);
+  assert.ok(loop.value.error instanceof Error);
   const completed = loop.value.frames.find((f) =>
     f.type === "toolCallCompleted" && f.isError
   );
-  assert(completed?.type === "toolCallCompleted");
+  assert.ok(completed?.type === "toolCallCompleted");
   const message = String(completed.errorMessage);
-  assertEquals(message.includes(hugePayload), false);
-  assertStringIncludes(message, "Error");
-  assertStringIncludes(
-    message,
-    `${new TextEncoder().encode(hugePayload).byteLength} bytes`,
+  assert.deepStrictEqual(message.includes(hugePayload), false);
+  assert.ok(
+    message.includes("Error"),
+    `expected ${JSON.stringify(message)} to include "Error"`,
+  );
+  assert.ok(
+    message.includes(
+      `${new TextEncoder().encode(hugePayload).byteLength} bytes`,
+    ),
+    `expected ${
+      JSON.stringify(message)
+    } to include \`\${new TextEncoder().encode(hugePayload).byteLength} bytes\``,
   );
 });
 
@@ -741,12 +788,12 @@ Deno.test("an abort during a running tool lets it settle and starts no queued to
   void pending.finally(() => turnSettled = true);
   await toolStarted;
   await Promise.resolve();
-  assertEquals(turnSettled, false);
+  assert.deepStrictEqual(turnSettled, false);
   releaseTool();
   const { result, run } = await quietly(() => pending).then((r) => r.value);
-  assertEquals(result?.stopReason, "aborted");
-  assertEquals(approvals, ["c1"]);
-  assertEquals(run.transport.requests.length, 1);
+  assert.deepStrictEqual(result?.stopReason, "aborted");
+  assert.deepStrictEqual(approvals, ["c1"]);
+  assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
 Deno.test("an approval cancellation does not report a tool failure", async () => {
@@ -765,9 +812,12 @@ Deno.test("an approval cancellation does not report a tool failure", async () =>
       },
     },
   });
-  assertEquals(result?.stopReason, "aborted");
-  assertEquals(frames.some((f) => f.type === "toolCallCompleted"), false);
-  assert(
+  assert.deepStrictEqual(result?.stopReason, "aborted");
+  assert.deepStrictEqual(
+    frames.some((f) => f.type === "toolCallCompleted"),
+    false,
+  );
+  assert.ok(
     frames.some((f) =>
       f.type === "turnAborted" && f.turnId === turnId &&
       f.sessionId === result?.sessionId && f.traceId === result?.traceId
@@ -808,12 +858,12 @@ Deno.test("tool invocation crosses the boundary in the same turn that start-even
   await startEmission;
   // The first call's invocation started in the same event-loop turn as its
   // start frame, so its approval was already requested.
-  assertEquals(approvals, ["c1"]);
+  assert.deepStrictEqual(approvals, ["c1"]);
   abortController.abort();
   releaseStartEvent();
   const { result } = await pending;
-  assertEquals(result?.stopReason, "aborted");
-  assertEquals(approvals, ["c1"]);
+  assert.deepStrictEqual(result?.stopReason, "aborted");
+  assert.deepStrictEqual(approvals, ["c1"]);
 });
 
 // ─── transcript shape ────────────────────────────────────────────────────────
@@ -829,10 +879,10 @@ Deno.test("each step replays the assistant's tool-call turn and its linked resul
   ]);
   const followUp = conversation(loop.run.transport.requests[1]);
   const assistant = followUp.find((m) => m.role === "assistant");
-  assert(assistant !== undefined);
-  assertEquals(assistant.content, "looking");
-  assertEquals(assistant.tool_calls?.length, 2);
+  assert.ok(assistant !== undefined);
+  assert.deepStrictEqual(assistant.content, "looking");
+  assert.deepStrictEqual(assistant.tool_calls?.length, 2);
   const tools = followUp.filter((m) => m.role === "tool");
-  assertEquals(tools.map((m) => m.tool_call_id), ["c1", "r1"]);
-  assertMatch(tools[1].content, /# readme/);
+  assert.deepStrictEqual(tools.map((m) => m.tool_call_id), ["c1", "r1"]);
+  assert.match(tools[1].content, /# readme/);
 });

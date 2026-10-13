@@ -5,7 +5,7 @@
  * The protocol it negotiates must reach the client as a structured
  * `memoryRecallNegotiated` frame on the turn's event channel.
  */
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { startLoopbackHttp } from "../../testing/servers/mcp-server.ts";
@@ -58,13 +58,13 @@ Deno.test("recall negotiation reaches the client as a structured frame", async (
     await buildContext(state, input, fakes.ports);
 
     const recall = state.commandRegistry.lookup("memory.search");
-    assert(recall !== undefined);
+    assert.ok(recall !== undefined);
     const answer = await recall.executor(
       { commandId: "memory.search", arguments: { query: "needle" } } as never,
       {} as never,
     );
-    assertEquals(answer, "match:needle");
-    assertEquals(
+    assert.deepStrictEqual(answer, "match:needle");
+    assert.deepStrictEqual(
       frames.filter((frame) => frame.type === "memoryRecallNegotiated"),
       [{
         type: "memoryRecallNegotiated",
@@ -100,5 +100,8 @@ Deno.test("a remote turn is never offered external-memory recall", async () => {
   const session = await openSession(input, fakes.ports);
   const state = newTurnState(session, createCommandRegistry());
   await buildContext(state, input, fakes.ports);
-  assertEquals(state.commandRegistry.lookup("memory.search"), undefined);
+  assert.deepStrictEqual(
+    state.commandRegistry.lookup("memory.search"),
+    undefined,
+  );
 });

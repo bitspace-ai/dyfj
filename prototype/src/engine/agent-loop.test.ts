@@ -3,7 +3,7 @@
  * as the assistant's tool-call turn followed by one linked tool message per
  * result.
  */
-import { assertEquals, assertObjectMatch } from "@std/assert";
+import assert from "node:assert/strict";
 import { toolStepToMessages } from "./agent-loop.ts";
 
 Deno.test("toolStepToMessages emits the assistant tool-call turn followed by linked tool results", () => {
@@ -27,15 +27,15 @@ Deno.test("toolStepToMessages emits the assistant tool-call turn followed by lin
     ],
   );
 
-  assertEquals(messages.length, 2);
+  assert.deepStrictEqual(messages.length, 2);
   // The assistant turn carries the model's own text + its tool-call intentions.
-  assertObjectMatch(messages[0], {
+  assert.partialDeepStrictEqual(messages[0], {
     role: "assistant",
     content: "Let me read the project memory.",
     toolCalls,
   });
   // The tool result is linked back to the call by id (toolCallId === call id).
-  assertObjectMatch(messages[1], {
+  assert.partialDeepStrictEqual(messages[1], {
     role: "tool",
     toolCallId: "call-memory",
     name: "memory.read",
@@ -66,9 +66,16 @@ Deno.test("toolStepToMessages emits one tool message per result, preserving orde
     ],
   );
 
-  assertEquals(messages.map((m) => m.role), ["assistant", "tool", "tool"]);
-  assertObjectMatch(messages[1], { toolCallId: "c1", content: "a.ts" });
-  assertObjectMatch(messages[2], {
+  assert.deepStrictEqual(messages.map((m) => m.role), [
+    "assistant",
+    "tool",
+    "tool",
+  ]);
+  assert.partialDeepStrictEqual(messages[1], {
+    toolCallId: "c1",
+    content: "a.ts",
+  });
+  assert.partialDeepStrictEqual(messages[2], {
     toolCallId: "c2",
     content: "slug does not match required pattern",
   });
@@ -89,7 +96,7 @@ Deno.test("toolStepToMessages marks failed results isError so wire formats can f
     ],
   );
 
-  assertObjectMatch(messages[1], {
+  assert.partialDeepStrictEqual(messages[1], {
     role: "tool",
     toolCallId: "c1",
     isError: true,
@@ -101,5 +108,5 @@ Deno.test("toolStepToMessages marks failed results isError so wire formats can f
     [{ id: "c2", name: "list_files", arguments: { path: "." } }],
     [{ commandId: "list_files", callId: "c2", isError: false, result: "a" }],
   );
-  assertEquals("isError" in ok[1], false);
+  assert.deepStrictEqual("isError" in ok[1], false);
 });

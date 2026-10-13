@@ -3,8 +3,8 @@
  * branches on the error's real class (instanceof), never on its writable
  * `.name`, so a foreign error cannot claim a class and ride its treatment.
  */
-import { assert, assertEquals } from "@std/assert";
-import { stub } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { enginePorts } from "../../testing/builders/engine.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
@@ -33,11 +33,11 @@ async function failWith(err: unknown) {
     await openSession(input, ports),
     createCommandRegistry(),
   );
-  const consoleError = stub(console, "error");
+  const consoleError = mock.method(console, "error", () => {});
   try {
     await failTurn(state, input, ports, err);
   } finally {
-    consoleError.restore();
+    consoleError.mock.restore();
   }
   const rows = await store.events.bySession({
     sessionId: state.session.sessionId,
@@ -57,15 +57,15 @@ Deno.test("a foreign Error named after ContextWindowOverflowError does not get i
   const spoofed = new Error(hugePayload);
   spoofed.name = "ContextWindowOverflowError";
   const { error, frames, logged, turnError } = await failWith(spoofed);
-  assert(error !== undefined);
+  assert.ok(error !== undefined);
   // A real ContextWindowOverflowError writes stop_reason "length"; the
   // spoofed foreign error falls through to the generic branch instead, which
   // writes "error" — proof the instanceof check, not the name, decided.
-  assertEquals(error.stop_reason, "error");
-  assertEquals(String(error.content).includes(hugePayload), false);
-  assertEquals(logged.join("\n").includes(hugePayload), false);
-  assertEquals(JSON.stringify(frames).includes(hugePayload), false);
-  assertEquals(turnError, spoofed);
+  assert.deepStrictEqual(error.stop_reason, "error");
+  assert.deepStrictEqual(String(error.content).includes(hugePayload), false);
+  assert.deepStrictEqual(logged.join("\n").includes(hugePayload), false);
+  assert.deepStrictEqual(JSON.stringify(frames).includes(hugePayload), false);
+  assert.strictEqual(turnError, spoofed);
 });
 
 Deno.test("a real ContextWindowOverflowError is recorded as a length stop", async () => {
@@ -76,7 +76,7 @@ Deno.test("a real ContextWindowOverflowError is recorded as a length stop", asyn
     outputTokens: 100,
   });
   const { error, logged, turnError } = await failWith(overflow);
-  assertEquals(error?.stop_reason, "length");
-  assert(logged.some((line) => line.includes("/model")));
-  assertEquals(turnError, overflow);
+  assert.deepStrictEqual(error?.stop_reason, "length");
+  assert.ok(logged.some((line) => line.includes("/model")));
+  assert.strictEqual(turnError, overflow);
 });
