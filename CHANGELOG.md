@@ -9,6 +9,14 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Security
+
+- **A `core` integration test no longer writes `DATABASE_URL` into its own
+  error context.** When `schema_round_trip` could not connect, the context it
+  added to the error interpolated the full `DATABASE_URL`, including any
+  password in it. That context now names the variable instead of its value.
+  The underlying database driver error is still attached unchanged.
+
 ### Fixed
 
 - **The Rust REPL prints a turn receipt's safety warning.** The runtime puts
