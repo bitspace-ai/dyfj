@@ -1,0 +1,28 @@
+# A std name or the host name bound by an aliased destructuring target, and
+# the host name bound by an import, are declarations too: their uses are
+# left for hand conversion.
+rules:
+--- before
+import { assertEquals } from "@std/assert";
+
+Deno.test("aliases", () => {
+  {
+    const { check: assertEquals } = helpers;
+    assertEquals(1, 2);
+  }
+  assertEquals(3, 3);
+});
+--- after
+import { assertEquals } from "@std/assert";
+
+Deno.test("aliases", () => {
+  {
+    const { check: assertEquals } = helpers;
+    assertEquals(1, 2);
+  }
+  assertEquals(3, 3);
+});
+--- findings
+unconverted 5
+unconverted 6
+unconverted 8

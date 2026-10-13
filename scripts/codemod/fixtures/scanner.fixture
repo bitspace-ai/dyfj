@@ -18,6 +18,7 @@ Deno.test("scanner", () => {
   while (false) /assertEquals/.exec(quoted);
   if (ratio) {}
   /assertEquals\(/.test(quoted);
+  if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   assertEquals(ratio, 2);
   void [quoted, single, pattern, template];
 });
@@ -37,6 +38,7 @@ Deno.test("scanner", () => {
   while (false) /assertEquals/.exec(quoted);
   if (ratio) {}
   /assertEquals\(/.test(quoted);
+  if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   assert.deepStrictEqual(ratio, 2);
   void [quoted, single, pattern, template];
 });

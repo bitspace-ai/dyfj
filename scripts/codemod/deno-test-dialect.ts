@@ -285,12 +285,10 @@ function regexAllowed(
 ): boolean {
   if (prev < 0) return true;
   const c = text[prev];
-  // A `/` that starts its own line after a `}` begins a statement: a block
-  // closed above it. An object literal ending a line and divided on the next
-  // is not a form the tests use.
-  if (c === "}" && text.slice(lineStart(text, at), at).trim() === "") {
-    return true;
-  }
+  // After a `}` a `/` is read as a regex when one parses there: a block
+  // closes before a statement, while dividing an object literal is never
+  // meaningful. (If no regex parses, the scanner falls back to division.)
+  if (c === "}") return true;
   // After the parenthesis that closes `if (...)` and the like, a statement
   // starts, so `/` opens a regex; after any other `)` it divides.
   if (c === ")") {
@@ -671,6 +669,8 @@ interface ImportDecl {
   namespace?: string;
   named?: Named[];
   spec: string;
+  /** The named list holds comments, which a rewrite would drop. */
+  hasComments?: boolean;
 }
 
 const IMPORT =
@@ -698,7 +698,9 @@ function parseImports(src: Source): ImportDecl[] {
     const braces = /^\{([\s\S]*)\}$/.exec(clause);
     if (braces) {
       decl.named = [];
-      for (const raw of braces[1].split(",")) {
+      const COMMENTS = /\/\/[^\n]*|\/\*[\s\S]*?\*\//g;
+      if (COMMENTS.test(braces[1])) decl.hasComments = true;
+      for (const raw of braces[1].replace(COMMENTS, "").split(",")) {
         const part = raw.trim();
         if (part === "") continue;
         const n = /^(type\s+)?([\w$]+)(?:\s+as\s+([\w$]+))?$/.exec(part);
@@ -795,6 +797,21 @@ function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
   return declarations(src, imports, name).length > 0;
 }
 
+/** The unmatched opening bracket before `pos`, or -1. */
+function enclosingOpen(src: Source, pos: number): number {
+  let depth = 0;
+  for (let j = pos - 1; j >= 0; j--) {
+    if (!src.isCode(j)) continue;
+    const c = src.text[j];
+    if (")]}".includes(c)) depth++;
+    else if ("([{".includes(c)) {
+      if (depth === 0) return j;
+      depth--;
+    }
+  }
+  return -1;
+}
+
 /** Whether the occurrence of `name` at `pos` declares it. */
 function declaresAt(
   src: Source,
@@ -810,25 +827,19 @@ function declaresAt(
   if (text[next] === ":" || text.startsWith("?:", next)) return true;
   if (text.startsWith("=>", next)) return true;
   const before = text[prevNonSpace(text, pos, src.mask)];
-  if (!"(,{[".includes(before)) return false;
-  let depth = 0;
-  let open = -1;
-  for (let j = pos - 1; j >= 0 && open < 0; j--) {
-    if (!src.isCode(j)) continue;
-    const c = text[j];
-    if (")]}".includes(c)) depth++;
-    else if ("([{".includes(c)) {
-      if (depth === 0) open = j;
-      else depth--;
+  if (!"(,{[:".includes(before)) return false;
+  // Climb out through any destructuring pattern (`{ a: name }`, `[x, name]`,
+  // nested) to what binds it: a declaration keyword, or a parameter list.
+  let open = enclosingOpen(src, pos);
+  while (open >= 0 && text[open] !== "(") {
+    if (DECLARING.has(wordBefore(text, open, src.mask).word)) return true;
+    if (!"(,{[:".includes(text[prevNonSpace(text, open, src.mask)])) {
+      return false;
     }
+    open = enclosingOpen(src, open);
   }
   if (open < 0) return false;
   const keyword = wordBefore(text, open, src.mask).word;
-  // A destructuring pattern (`const { name } = ...`) or a catch parameter.
-  if (text[open] !== "(") {
-    if (DECLARING.has(keyword)) return true;
-    return false;
-  }
   if (keyword === "catch") return true;
   const close = matchBracket(src, open);
   if (close < 0) return false;
@@ -869,7 +880,12 @@ function makeContext(text: string): Context {
       if (isDeclared(original, imports, local)) ctx.shadowed.add(local);
     }
   }
-  ctx.hostShadowed = isDeclared(original, imports, HOST);
+  ctx.hostShadowed = isDeclared(original, imports, HOST) ||
+    imports.some((decl) =>
+      !decl.typeOnly && (decl.defaultName === HOST ||
+        decl.namespace === HOST ||
+        (decl.named ?? []).some((n) => n.local === HOST && !n.type))
+    );
   const errorBinding =
     /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:new\s+)?[\w$.]*Error\s*\(/g;
   for (const m of text.matchAll(errorBinding)) {
@@ -1613,6 +1629,39 @@ const STAT_FIELDS: Record<string, string> = {
   isBlockDevice: "isBlockDevice()",
 };
 
+/** Stat fields whose node value means the same as the host's. */
+const STAT_VALUES = new Set([
+  "mode",
+  "size",
+  "mtime",
+  "atime",
+  "birthtime",
+  "ctime",
+  "dev",
+  "ino",
+  "uid",
+  "gid",
+  "nlink",
+  "blocks",
+  "blksize",
+  "rdev",
+]);
+
+const ASSERTION_CALLEES =
+  /^(?:assert\.rejects|assert\.throws|assertRejects|assertThrows)$/;
+
+/**
+ * Whether the result of the host call at `pos` is used: not a statement of
+ * its own, and not the body of an arrow handed to a throw/reject assertion
+ * (which looks only at whether it settles).
+ */
+function resultUsed(src: Source, pos: number): boolean {
+  if (!valueUsed(src, pos)) return false;
+  const p = prevNonSpace(src.text, pos, src.mask);
+  const arrow = src.text[p] === ">" && src.text[p - 1] === "=";
+  return !(arrow && ASSERTION_CALLEES.test(enclosingCallee(src, pos)));
+}
+
 /** Host fs functions renamed one-for-one: host name -> [rule, node name]. */
 const FS_RENAMES: Record<string, [string, string]> = {
   remove: ["fs.remove", "rm"],
@@ -1676,6 +1725,13 @@ function convertFs(
           "directory, which rm rejects; use unlink or rmdir by hand",
       };
     }
+  }
+  if (base === "mkdir" && resultUsed(src, pos)) {
+    return {
+      pos,
+      reason: `${host} result is used; node's recursive mkdir resolves to ` +
+        "the first directory it made, the host's to nothing; convert by hand",
+    };
   }
   const rename = FS_RENAMES[base];
   if (rename) {
@@ -1776,6 +1832,18 @@ function convertFs(
       after = nextNonSpace(src.text, after + 1);
     }
     const field = /^\.\s*([\w$]+)/.exec(src.text.slice(after));
+    const ignoresResult = /^\.\s*then\s*\(\s*(?:async\s*)?\(\s*\)\s*=>/
+      .test(src.text.slice(after));
+    if (
+      field && !STAT_FIELDS[field[1]] && !STAT_VALUES.has(field[1]) &&
+      !ignoresResult
+    ) {
+      return {
+        pos,
+        reason: `${host} result is passed on (.${field[1]}); its is* fields ` +
+          "become methods in node:fs, so convert by hand",
+      };
+    }
     if (field && STAT_FIELDS[field[1]]) {
       const fieldStart = after + field[0].length - field[1].length;
       edits.push({
@@ -1783,20 +1851,14 @@ function convertFs(
         end: fieldStart + field[1].length,
         text: STAT_FIELDS[field[1]],
       });
-    } else if (field === null) {
-      // The whole result is kept: its is* fields become methods in node:fs,
-      // and reads of a bound name cannot be followed by text rules.
-      const before = src.text.slice(lineStart(src.text, pos), pos);
-      if (
-        /=\s*(?:await\s+)?$/.test(before) &&
-        !/[=!<>]=\s*(?:await\s+)?$/.test(before)
-      ) {
-        return {
-          pos,
-          reason: `${host} result is bound to a name; its is* fields ` +
-            "become methods in node:fs, so convert its reads by hand",
-        };
-      }
+    } else if (field === null && resultUsed(src, pos)) {
+      // The whole result goes somewhere: its is* fields become methods in
+      // node:fs, and its later reads cannot be followed by text rules.
+      return {
+        pos,
+        reason: `${host} result is bound or passed on; its is* fields ` +
+          "become methods in node:fs, so convert its reads by hand",
+      };
     }
     return blocked(base) ?? {
       pos,
@@ -2245,6 +2307,22 @@ const optionPass: Pass = (src) => {
   return outcomes;
 };
 
+/** Std imports kept whole for their comments, though some names went unused. */
+const commentedImportPass: Pass = (src) => {
+  const imports = parseImports(src);
+  return imports.filter((decl) =>
+    decl.hasComments &&
+    (STD_ASSERT.test(decl.spec) || STD_MOCK.test(decl.spec)) &&
+    (decl.named ?? []).some((n) =>
+      !occurrences(src, n.local).some((pos) => !insideImport(imports, pos))
+    )
+  ).map((decl) => ({
+    pos: decl.start,
+    reason: "this import holds comments, so it keeps names the file no " +
+      "longer uses; remove them by hand",
+  }));
+};
+
 /** In order: assertions before the host pass, which rewrites their arguments. */
 const PASSES: Pass[] = [
   assertionPass,
@@ -2253,6 +2331,7 @@ const PASSES: Pass[] = [
   timePass,
   hostPass,
   optionPass,
+  commentedImportPass,
 ];
 
 // ------------------------------------------------------------------ driver --
@@ -2336,6 +2415,8 @@ function fixImports(
     const named = decl.named ?? [];
     const kept = named.filter((n) => used(n.local));
     if (kept.length === named.length) continue;
+    // Rewriting would drop the comments; the unused names are reported.
+    if (decl.hasComments) continue;
     count(assertSpec ? "assert.import" : "mock.import");
     edits.set(
       decl,
