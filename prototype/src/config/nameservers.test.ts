@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import {
   nameserverNetGrants,
   readNameserverNetGrants,
@@ -65,7 +64,7 @@ Deno.test("readNameserverNetGrants reads the resolver configuration", async () =
 });
 
 Deno.test("readNameserverNetGrants yields no grants when the file cannot be read", async () => {
-  assertEquals(
+  assert.deepStrictEqual(
     await readNameserverNetGrants(() =>
       Promise.reject(
         Object.assign(new Error("missing"), { code: "ENOENT" }),

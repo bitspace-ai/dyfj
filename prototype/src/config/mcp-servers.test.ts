@@ -173,12 +173,15 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
 
   Deno.test("parseMcpServersConfig: accepts fixed Linear team and exact-name project bindings", () => {
     const parsed = parseMcpServersConfig(linearCreationTable(), CONFIG_PATH);
+    // The parser builds `projects` without a prototype, so a project named
+    // like an Object.prototype member cannot collide with one; the expected
+    // value pins that.
     assert.deepStrictEqual(parsed[0].linearIssueCreation, {
       teamId: "team_fixture_01",
-      projects: {
+      projects: Object.assign(Object.create(null), {
         "Synthetic Project": "project_fixture_01",
         "Second Project": "project_fixture_02",
-      },
+      }),
     });
   });
 
@@ -305,7 +308,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     );
   });
 
-  Deno.test("parseMcpServersConfig: rejects hostnames containing Deno grant separators", () => {
+  Deno.test("parseMcpServersConfig: rejects hostnames containing net-grant list separators", () => {
     assert.match(
       (captureThrow(() =>
         parseMcpServersConfig(

@@ -18,7 +18,7 @@ envConformance({
   },
   probeKey: PROBE,
   cleanup: () => {
-    if (original === undefined) Deno.env.delete(PROBE);
-    else Deno.env.set(PROBE, original);
+    if (original === undefined) delete process.env[PROBE];
+    else process.env[PROBE] = original;
   },
 });
