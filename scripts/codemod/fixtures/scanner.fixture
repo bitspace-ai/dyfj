@@ -3,8 +3,8 @@
 # parenthesis), while code inside template substitutions is not. A `/` after
 # a postfix ++ or -- divides. A `/` after a `}` on the same line is read as a
 # regex when one parses there, and reported, since an object literal could
-# also stand there.
-rules: assert.import, assert.equals
+# also stand there. A std name inside such a span keeps its import.
+rules: assert.equals
 --- before
 // A header comment before the imports.
 import { assertEquals } from "@std/assert";
@@ -33,6 +33,7 @@ Deno.test("scanner", () => {
 --- after
 // A header comment before the imports.
 import assert from "node:assert/strict";
+import { assertEquals } from "@std/assert";
 
 Deno.test("scanner", () => {
   const quoted = "assertEquals(1, 2)";
@@ -58,3 +59,4 @@ Deno.test("scanner", () => {
 --- findings
 unconverted 19
 unconverted 20
+unconverted 21

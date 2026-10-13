@@ -345,7 +345,7 @@ const COMMENT = 2;
  */
 export function codeMask(
   text: string,
-  ambiguous: number[] = [],
+  ambiguous: [start: number, end: number][] = [],
 ): Uint8Array {
   const mask = new Uint8Array(text.length);
   const templateDepths: number[] = [];
@@ -396,14 +396,10 @@ export function codeMask(
     if (c === "/" && regexAllowed(text, prev, openerOf, i)) {
       const end = skipRegex(text, i);
       if (end > 0) {
-        // After a `}` on the same line, an object literal could stand
-        // there and make this division: the reading is reported.
-        if (
-          text[prev] === "}" &&
-          text.slice(lineStart(text, i), i).trim() !== ""
-        ) {
-          ambiguous.push(i);
-        }
+        // After a `}`, on the same line or the next (division continues
+        // across a line break), an object literal could stand there and
+        // make this division: the reading is reported.
+        if (text[prev] === "}") ambiguous.push([i, end]);
         i = end;
         prev = i - 1;
         continue;
@@ -435,7 +431,7 @@ export function codeMask(
 class Source {
   readonly mask: Uint8Array;
   /** Regexes read after a same-line `}`, where division was also possible. */
-  readonly ambiguous: number[] = [];
+  readonly ambiguous: [start: number, end: number][] = [];
   constructor(readonly text: string) {
     this.mask = codeMask(text, this.ambiguous);
   }
@@ -640,11 +636,6 @@ function isPostfixChain(text: string): boolean {
  */
 function isBareName(text: string): boolean {
   return /^[A-Za-z_$][\w$]*$/.test(text);
-}
-
-/** A name or member chain. */
-function isPlainName(text: string): boolean {
-  return /^[A-Za-z_$][\w$]*(\??\.[A-Za-z_$][\w$]*|\[\d+\])*$/.test(text);
 }
 
 /** `text` as an operand of a binary or relational operator. */
@@ -1254,6 +1245,17 @@ function convertAssertion(
     const receiver = cast ? `(${actual})` : actual;
     const rest = args.slice(2).map((arg) => `, ${arg.text}`).join("");
     const items = new Source(expected);
+    if (
+      splitList(items, 0, expected.length - 1).some((arg) =>
+        looksLikeError(arg.text, ctx)
+      )
+    ) {
+      return {
+        pos: call.start,
+        flag: "error-equality",
+        reason: FLAGS["error-equality"],
+      };
+    }
     const primitive = splitList(items, 0, expected.length - 1).every((arg) =>
       /^(?:"[^"]*"|'[^']*'|`[^`]*`|-?\d[\w.]*|true|false|null|undefined)$/
         .test(arg.text)
@@ -2000,9 +2002,14 @@ function convertFs(
         text: `for (${loop[1]} ${loop[2]} of await ${listing}`,
       }];
     const bodyStart = nextNonSpace(src.text, headerClose + 1);
-    const bodyEnd = src.text[bodyStart] === "{"
-      ? matchBracket(src, bodyStart)
-      : src.text.indexOf(";", bodyStart);
+    // Only a braced body has an end text rules can find safely.
+    if (src.text[bodyStart] !== "{") {
+      return {
+        pos,
+        reason: `${host} loop without a braced body; convert by hand`,
+      };
+    }
+    const bodyEnd = matchBracket(src, bodyStart);
     // A body that declares the entry name again shadows it somewhere, and
     // its is* reads cannot be told apart by text.
     const bodyImports = parseImports(src);
@@ -2453,7 +2460,7 @@ const optionPass: Pass = (src) => {
 
 /** Regexes the scanner read after a same-line `}`: reported for a look. */
 const ambiguityPass: Pass = (src) =>
-  src.ambiguous.map((pos) => ({
+  src.ambiguous.map(([pos]) => ({
     pos,
     reason: "a `/` after `}` on the same line was read as a regex; if the " +
       "`}` ends an object literal it is division, so check by hand",
@@ -2555,7 +2562,16 @@ function fixImports(
   // `assert.` reads are the node import's only when this run adds it;
   // otherwise they are reads of the std `assert` and keep it imported.
   const nodeAssert = needs.has("assert");
+  // A name inside an ambiguous span (read as a regex, perhaps division)
+  // may run, so it keeps its import.
+  const inAmbiguous = (local: string) =>
+    src.ambiguous.some(([start, end]) =>
+      new RegExp(`(?<![\\w$])${local}(?![\\w$])`).test(
+        src.text.slice(start, end),
+      )
+    );
   const used = (local: string) =>
+    inAmbiguous(local) ||
     occurrences(src, local).some((pos) =>
       !insideImport(imports, pos) &&
       !(nodeAssert && local === "assert" &&

@@ -1,7 +1,8 @@
 # assertArrayIncludes on a bare name and a literal list of expected items:
 # the assertion names the items that are missing. Primitive items match with
 # includes, other items deeply, as std does. A member chain or computed list
-# would be evaluated once per item, so it is left for hand review.
+# would be evaluated once per item, and Error items would compare by message
+# only, so both are left for hand review.
 rules: assert.array-includes
 --- before
 import { assertArrayIncludes } from "@std/assert";
@@ -17,6 +18,7 @@ Deno.test("array includes", () => {
   assertArrayIncludes(item.tags, ["x"], "tagged");
   assertArrayIncludes(messages, [{ role: "tool", content: "" }]);
   assertArrayIncludes(lines(), ["a"]);
+  assertArrayIncludes(errors, [new Error("x")]);
 });
 --- after
 import assert from "node:assert/strict";
@@ -34,8 +36,10 @@ Deno.test("array includes", () => {
   assertArrayIncludes(item.tags, ["x"], "tagged");
   assert.deepStrictEqual([{ role: "tool", content: "" }].filter((item) => !messages.some((candidate) => isDeepStrictEqual(candidate, item))), []);
   assertArrayIncludes(lines(), ["a"]);
+  assertArrayIncludes(errors, [new Error("x")]);
 });
 --- findings
 unconverted 9
 unconverted 13
 unconverted 15
+hand-review error-equality 16
