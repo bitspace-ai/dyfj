@@ -1,0 +1,15 @@
+# The host global reached through a global object is still the host global:
+# it is reported for hand conversion rather than passing silently.
+rules:
+--- before
+Deno.test("through globalThis", () => {
+  const cwd = globalThis.Deno.cwd();
+  void cwd;
+});
+--- after
+Deno.test("through globalThis", () => {
+  const cwd = globalThis.Deno.cwd();
+  void cwd;
+});
+--- findings
+unconverted 2

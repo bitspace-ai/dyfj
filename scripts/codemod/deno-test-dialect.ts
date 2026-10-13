@@ -343,7 +343,10 @@ const COMMENT = 2;
  * comments and regex literals (template substitutions are code). Comment
  * characters are marked COMMENT, everything else 0.
  */
-export function codeMask(text: string): Uint8Array {
+export function codeMask(
+  text: string,
+  ambiguous: number[] = [],
+): Uint8Array {
   const mask = new Uint8Array(text.length);
   const templateDepths: number[] = [];
   const openParens: number[] = [];
@@ -393,6 +396,14 @@ export function codeMask(text: string): Uint8Array {
     if (c === "/" && regexAllowed(text, prev, openerOf, i)) {
       const end = skipRegex(text, i);
       if (end > 0) {
+        // After a `}` on the same line, an object literal could stand
+        // there and make this division: the reading is reported.
+        if (
+          text[prev] === "}" &&
+          text.slice(lineStart(text, i), i).trim() !== ""
+        ) {
+          ambiguous.push(i);
+        }
         i = end;
         prev = i - 1;
         continue;
@@ -423,8 +434,10 @@ export function codeMask(text: string): Uint8Array {
 
 class Source {
   readonly mask: Uint8Array;
+  /** Regexes read after a same-line `}`, where division was also possible. */
+  readonly ambiguous: number[] = [];
   constructor(readonly text: string) {
-    this.mask = codeMask(text);
+    this.mask = codeMask(text, this.ambiguous);
   }
   isCode(i: number): boolean {
     return this.mask[i] === 1;
@@ -2350,6 +2363,17 @@ const hostPass: Pass = (src, ctx) => {
       reason: `${HOST} is used as an object; convert by hand`,
     });
   }
+  const viaGlobal = new RegExp(
+    `\\b(?:globalThis|window|self)\\s*\\??\\.\\s*${HOST}(?![\\w$])`,
+    "g",
+  );
+  for (const m of src.text.matchAll(viaGlobal)) {
+    if (!src.isCode(m.index!) || isMember(src, m.index!)) continue;
+    outcomes.push({
+      pos: m.index!,
+      reason: `${HOST} reached through a global object; convert by hand`,
+    });
+  }
   return outcomes;
 };
 
@@ -2399,8 +2423,30 @@ const optionPass: Pass = (src) => {
       outcomes.push({ pos, flag, reason: FLAGS[flag] });
     }
   }
+  // The same keys quoted (`"permissions":`) or computed (`["permissions"]:`).
+  const quoted =
+    /(\[\s*)?(["'])(permissions|sanitize(?:Ops|Resources|Exit))\2(\s*\])?\s*:/g;
+  for (const m of src.text.matchAll(quoted)) {
+    const pos = m.index!;
+    if ((m[1] === undefined) !== (m[4] === undefined)) continue;
+    const p = prevNonSpace(src.text, pos, src.mask);
+    if (p < 0 || !src.isCode(p) || !"{,".includes(src.text[p])) continue;
+    if (!inRegistrationOptions(src, pos)) continue;
+    const flag: Flag = m[3] === "permissions"
+      ? "test-permissions"
+      : "sanitizer-options";
+    outcomes.push({ pos, flag, reason: FLAGS[flag] });
+  }
   return outcomes;
 };
+
+/** Regexes the scanner read after a same-line `}`: reported for a look. */
+const ambiguityPass: Pass = (src) =>
+  src.ambiguous.map((pos) => ({
+    pos,
+    reason: "a `/` after `}` on the same line was read as a regex; if the " +
+      "`}` ends an object literal it is division, so check by hand",
+  }));
 
 /** Std imports kept whole for their comments, though some names went unused. */
 const commentedImportPass: Pass = (src) => {
@@ -2427,6 +2473,7 @@ const PASSES: Pass[] = [
   hostPass,
   optionPass,
   commentedImportPass,
+  ambiguityPass,
 ];
 
 // ------------------------------------------------------------------ driver --

@@ -1,7 +1,9 @@
 # Only code is rewritten: names inside strings, templates, comments and regex
 # literals are left alone (a regex can follow a control statement's closing
 # parenthesis), while code inside template substitutions is not. A `/` after
-# a postfix ++ or -- divides.
+# a postfix ++ or -- divides. A `/` after a `}` on the same line is read as a
+# regex when one parses there, and reported, since an object literal could
+# also stand there.
 rules: assert.import, assert.equals
 --- before
 // A header comment before the imports.
@@ -23,9 +25,10 @@ Deno.test("scanner", () => {
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
+  const n = { valueOf() { return 4; } } / ratio / 1;
   for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
   assertEquals(ratio, 2);
-  void [quoted, single, pattern, template, halves, quarter];
+  void [quoted, single, pattern, template, halves, quarter, n];
 });
 --- after
 // A header comment before the imports.
@@ -47,8 +50,11 @@ Deno.test("scanner", () => {
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
+  const n = { valueOf() { return 4; } } / ratio / 1;
   for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
   assert.deepStrictEqual(ratio, 2);
-  void [quoted, single, pattern, template, halves, quarter];
+  void [quoted, single, pattern, template, halves, quarter, n];
 });
 --- findings
+unconverted 19
+unconverted 20

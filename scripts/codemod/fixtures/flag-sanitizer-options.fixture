@@ -5,6 +5,7 @@ Deno.test({
   name: "leaky",
   sanitizeResources: false,
   sanitizeOps: false,
+  "sanitizeExit": false,
   fn: () => {},
 });
 --- after
@@ -12,8 +13,10 @@ Deno.test({
   name: "leaky",
   sanitizeResources: false,
   sanitizeOps: false,
+  "sanitizeExit": false,
   fn: () => {},
 });
 --- findings
 hand-review sanitizer-options 3
 hand-review sanitizer-options 4
+hand-review sanitizer-options 5
