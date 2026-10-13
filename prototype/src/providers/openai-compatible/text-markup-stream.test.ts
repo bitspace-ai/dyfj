@@ -3,7 +3,7 @@
 // gaps stream as prose, and an abort strips only a genuinely incomplete
 // offered call from both the live deltas and the durable text.
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
@@ -42,8 +42,8 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
   });
 
   it("does not use tool_calling prose as the wrapper for a later tool call", async () => {
@@ -85,9 +85,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "Use <tool_calling> as a heading; ");
-    assertStrictEquals(result.text, "Use <tool_calling> as a heading; ");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), "Use <tool_calling> as a heading; ");
+    assert.strictEqual(result.text, "Use <tool_calling> as a heading; ");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -132,9 +132,9 @@ describe("runWorkbenchTurn streaming", () => {
     transport.assertDone();
 
     const narration = "The literal marker is <tool_call> in this sentence.";
-    assertStrictEquals(deltas.join(""), `${narration} `);
-    assertStrictEquals(result.text, `${narration} `);
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), `${narration} `);
+    assert.strictEqual(result.text, `${narration} `);
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -168,9 +168,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("preserves a closed function name that only prefixes an offered tool", async () => {
@@ -214,8 +214,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
   });
 
   it("preserves a closed wrapped name that only prefixes an offered tool", async () => {
@@ -260,8 +260,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
   });
 
   it("preserves ordinary text after a complete offered call when aborted", async () => {
@@ -306,9 +306,9 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "before  after");
-    assertStrictEquals(result.text, "before  after");
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas.join(""), "before  after");
+    assert.strictEqual(result.text, "before  after");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("withholds both permitted tool-call whitespace gaps across deltas", async () => {
@@ -353,9 +353,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "answer");
-    assertStrictEquals(result.text, "answer");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), "answer");
+    assert.strictEqual(result.text, "answer");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -399,9 +399,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("treats excessive whitespace after a function name as prose", async () => {
@@ -464,10 +464,10 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await resultPromise;
     transport.assertDone();
 
-    assertStrictEquals(deltas[0], prefix);
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas[0], prefix);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("treats an excessive post-name gap in one delta as prose", async () => {
@@ -511,9 +511,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("a literal wrapper cannot hide a later incomplete offered call on abort", async () => {
@@ -558,7 +558,7 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), prefix);
-    assertStrictEquals(result.text, prefix);
+    assert.strictEqual(deltas.join(""), prefix);
+    assert.strictEqual(result.text, prefix);
   });
 });

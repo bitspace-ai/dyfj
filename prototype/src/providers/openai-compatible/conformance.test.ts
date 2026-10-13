@@ -1,11 +1,6 @@
 // The OpenAI-compatible adapter against the provider conformance kit.
 
-import {
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { providerAdapterConformance } from "../../../testing/conformance/provider-adapter.ts";
 import {
   estimateTextTokens,
@@ -115,12 +110,12 @@ providerAdapterConformance({
       clock: [0, 10, 15, 20],
       exchanges: [{
         expect: (request) => {
-          assertEquals(
+          assert.deepStrictEqual(
             request.url,
             "http://localhost:11434/v1/chat/completions",
           );
-          assertEquals(request.redirect, "error");
-          assertEquals(JSON.parse(request.body).stream, true);
+          assert.deepStrictEqual(request.redirect, "error");
+          assert.deepStrictEqual(JSON.parse(request.body).stream, true);
         },
         respond: {
           body: [
@@ -221,12 +216,12 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) => {
-          assertEquals(
+          assert.deepStrictEqual(
             request.url,
             "https://api.openai.com/v1/chat/completions",
           );
-          assertEquals(request.headers.authorization, "Bearer sk-test-key");
-          assertEquals(JSON.parse(request.body).max_completion_tokens, 8192);
+          assert.deepStrictEqual(request.headers.authorization, "Bearer sk-test-key");
+          assert.deepStrictEqual(JSON.parse(request.body).max_completion_tokens, 8192);
         },
         respond: {
           body: JSON.stringify({
@@ -259,7 +254,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).max_completion_tokens, 2),
+          assert.deepStrictEqual(JSON.parse(request.body).max_completion_tokens, 2),
         respond: {
           body: sse([
             { choices: [{ delta: { content: "cut" } }] },
@@ -361,7 +356,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertEquals(requestBody(request.body), {
+          assert.deepStrictEqual(requestBody(request.body), {
             model: "gemma4:e2b",
             stream: false,
             messages: [
@@ -379,8 +374,8 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = requestBody(request.body);
-          assertStrictEquals(body.stream, true);
-          assertStrictEquals("stream_options" in body, false);
+          assert.strictEqual(body.stream, true);
+          assert.strictEqual("stream_options" in body, false);
         },
         respond: streamedReply,
       }],
@@ -394,8 +389,8 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = requestBody(request.body);
-          assertEquals(body.stream_options, { include_usage: true });
-          assertStrictEquals(body.max_completion_tokens, 8192);
+          assert.deepStrictEqual(body.stream_options, { include_usage: true });
+          assert.strictEqual(body.max_completion_tokens, 8192);
         },
         respond: streamedReply,
       }],
@@ -408,7 +403,7 @@ providerAdapterConformance({
       exchanges: [{
         // stream_options is only valid on a streaming request.
         expect: (request) =>
-          assertStrictEquals(
+          assert.strictEqual(
             "stream_options" in requestBody(request.body),
             false,
           ),
@@ -422,7 +417,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertObjectMatch(requestBody(request.body), {
+          assert.partialDeepStrictEqual(requestBody(request.body), {
             response_format: { type: "json_object" },
           }),
         respond: reply,
@@ -435,7 +430,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertObjectMatch(requestBody(request.body), {
+          assert.partialDeepStrictEqual(requestBody(request.body), {
             tools: [{
               type: "function",
               function: {
@@ -479,7 +474,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertEquals(requestBody(request.body).messages, [
+          assert.deepStrictEqual(requestBody(request.body).messages, [
             { role: "system", content: "system" },
             { role: "user", content: "what is this repo?" },
             // The tool-call intentions: dotted name sanitized to the wire form
@@ -511,13 +506,13 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = requestBody(request.body);
-          assertEquals(
+          assert.deepStrictEqual(
             body.tools.map((tool: { function: { name: string } }) =>
               tool.function.name
             ),
             collidingWireNames,
           );
-          assertEquals(
+          assert.deepStrictEqual(
             body.messages[1].tool_calls.map((
               call: { function: { name: string } },
             ) => call.function.name),
@@ -535,20 +530,20 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = requestBody(request.body);
-          assertFalse("tools" in body);
-          assertFalse("tool_choice" in body);
-          assertEquals(
+          assert.ok(!("tools" in body));
+          assert.ok(!("tool_choice" in body));
+          assert.deepStrictEqual(
             body.messages[1].tool_calls.map((
               call: { function: { name: string } },
             ) => call.function.name),
             collidingWireNames,
           );
-          assertStrictEquals(
+          assert.strictEqual(
             collidingWireNames.every((name) => name.length <= 64),
             true,
           );
           // The caller's transcript keeps its registry names.
-          assertEquals(
+          assert.deepStrictEqual(
             collidingHistory[0].toolCalls.map((call) => call.name),
             collidingTools.map((tool) => tool.name),
           );

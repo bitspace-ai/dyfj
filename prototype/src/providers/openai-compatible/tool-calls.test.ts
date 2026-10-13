@@ -2,7 +2,7 @@
 // calls, mixed structured and textual calls, argument bounds, and flags for
 // tool-call markup that did not parse.
 
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
@@ -56,9 +56,9 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(deltas.join(""), "before  after");
-    assertStrictEquals(result.text, "before  after");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), "before  after");
+    assert.strictEqual(result.text, "before  after");
+    assert.deepStrictEqual(result.toolCalls, [
       {
         id: "tc-1",
         name: "list_files",
@@ -111,8 +111,8 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(result.text, "");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "tc-1", name: "read_file", arguments: { path: "README.md" } },
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
@@ -159,11 +159,7 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    await assertRejects(
-      () => pending,
-      Error,
-      "Provider returned oversized tool arguments",
-    );
+    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
     transport.assertDone();
   });
 
@@ -210,11 +206,7 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    await assertRejects(
-      () => pending,
-      Error,
-      "Provider returned oversized tool arguments",
-    );
+    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
     transport.assertDone();
   });
 
@@ -254,9 +246,9 @@ describe("runWorkbenchTurn streaming", () => {
         fetchFn: transport.fetch,
       });
 
-      assertStrictEquals(result.text, markup);
-      assertStrictEquals(result.toolCalls, undefined);
-      assertEquals(deltas, [markup]);
+      assert.strictEqual(result.text, markup);
+      assert.strictEqual(result.toolCalls, undefined);
+      assert.deepStrictEqual(deltas, [markup]);
       transport.assertDone();
     }
   });
@@ -296,9 +288,9 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(result.text, malformed);
-    assertStrictEquals(result.toolCalls, undefined);
-    assertEquals(result.unparsedToolCallMarkup, {
+    assert.strictEqual(result.text, malformed);
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
       count: 64,
       countIsLowerBound: true,
     });
@@ -329,10 +321,10 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(deltas.join(""), malformed);
-    assertStrictEquals(result.text, malformed);
-    assertStrictEquals(result.toolCalls, undefined);
-    assertEquals(result.unparsedToolCallMarkup, {
+    assert.strictEqual(deltas.join(""), malformed);
+    assert.strictEqual(result.text, malformed);
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.deepStrictEqual(result.unparsedToolCallMarkup, {
       count: 2,
       countIsLowerBound: false,
     });
@@ -378,7 +370,7 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "tc-2", name: "read_file", arguments: { path: "a.ts" } },
     ]);
     transport.assertDone();
@@ -409,11 +401,7 @@ describe("runWorkbenchTurn streaming", () => {
           }],
         }),
     }]);
-    await assertRejects(
-      () => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }),
-      Error,
-      "Provider returned oversized tool arguments",
-    );
+    await assert.rejects(() => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }), (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
     buffered.assertDone();
 
     const streamed = sseTransport([{
@@ -429,16 +417,12 @@ describe("runWorkbenchTurn streaming", () => {
         finish_reason: "tool_calls",
       }],
     }]);
-    await assertRejects(
-      () =>
+    await assert.rejects(() =>
         runWorkbenchTurn({
           ...common,
           onTextDelta: () => {},
           fetchFn: streamed.fetch,
-        }),
-      Error,
-      "Provider returned oversized tool arguments",
-    );
+        }), (error: unknown) => error instanceof Error && error.message.includes("Provider returned oversized tool arguments"));
     streamed.assertDone();
   });
 });
@@ -490,8 +474,8 @@ describe("runWorkbenchTurn tool calls", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(result.stopReason, "tool_use");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(result.stopReason, "tool_use");
+    assert.deepStrictEqual(result.toolCalls, [
       {
         id: "call-memory",
         name: "memory.read",

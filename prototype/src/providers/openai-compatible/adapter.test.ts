@@ -2,11 +2,7 @@
 // redirect refusal, error-body bounds, and how streamed usage frames combine
 // with the character estimate.
 
-import {
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
@@ -53,16 +49,16 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(
+    assert.strictEqual(
       transport.requests[0].url,
       "http://127.0.0.1:18080/v1/chat/completions",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       JSON.parse(transport.requests[0].body).model,
       "mlx-community/Qwen3-Coder-30B-A3B-Instruct-8bit",
     );
-    assertStrictEquals(result.model.provider, "mlx-lm");
-    assertStrictEquals(result.text, "hello from mlx");
+    assert.strictEqual(result.model.provider, "mlx-lm");
+    assert.strictEqual(result.text, "hello from mlx");
   });
 
   it("refuses redirects on the provider request (no off-box body egress via 307/308)", async () => {
@@ -85,7 +81,7 @@ describe("runWorkbenchTurn streaming", () => {
     // Only the initial base URL is validated as loopback; with redirect: "error"
     // the platform fetch throws on a 307/308 instead of re-POSTing the (private)
     // transcript body to the redirect target off loopback.
-    assertStrictEquals(transport.requests[0].redirect, "error");
+    assert.strictEqual(transport.requests[0].redirect, "error");
   });
 
   it("reads an oversized error response body only to the shared cap and reports the cut", async () => {
@@ -95,18 +91,14 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: { status: 500, body: "x".repeat(4 * 1024 * 1024 + 1) },
     }]);
-    await assertRejects(
-      () =>
+    await assert.rejects(() =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }),
-      ProviderRequestFailedError,
-      `at least ${MAX_ERROR_BODY_BYTES} bytes`,
-    );
+        }), (error: unknown) => error instanceof ProviderRequestFailedError && error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`));
     transport.assertDone();
   });
 
@@ -141,7 +133,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: laterText,
       stopReason: "stop",
       usage: { input: 7, output: 101 },
@@ -182,7 +174,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 7, output: 200 });
+    assert.partialDeepStrictEqual(result.usage, { input: 7, output: 200 });
   });
 
   it("does not let an earlier finish enable a stale equal usage frame", async () => {
@@ -224,7 +216,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 7, output: 200 });
+    assert.partialDeepStrictEqual(result.usage, { input: 7, output: 200 });
   });
 
   it("preserves HTTP status diagnostics for a bodyless error response", async () => {
@@ -233,18 +225,14 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => new Response(null, { status: 500 }),
     }]);
-    await assertRejects(
-      () =>
+    await assert.rejects(() =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }),
-      ProviderRequestFailedError,
-      "ollama/gemma4:e2b: HTTP 500",
-    );
+        }), (error: unknown) => error instanceof ProviderRequestFailedError && error.message.includes("ollama/gemma4:e2b: HTTP 500"));
     transport.assertDone();
   });
 
@@ -270,7 +258,7 @@ describe("runWorkbenchTurn streaming", () => {
 
     transport.assertDone();
     const body = JSON.parse(transport.requests[0].body);
-    assertStrictEquals("stream_options" in body, false);
+    assert.strictEqual("stream_options" in body, false);
   });
 
   it("trusts final provider usage over the character estimate", async () => {
@@ -299,6 +287,6 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 7, output: 1 });
+    assert.partialDeepStrictEqual(result.usage, { input: 7, output: 1 });
   });
 });

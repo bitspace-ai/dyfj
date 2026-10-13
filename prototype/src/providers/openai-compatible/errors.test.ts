@@ -2,12 +2,7 @@
 // errors against cancellation: malformed frames, independent aborts, error
 // envelopes, and terminal error finishes.
 
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
@@ -27,7 +22,7 @@ describe("runWorkbenchTurn streaming", () => {
         return new Response("data: {malformed}\n\n", { status: 200 });
       },
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -52,7 +47,7 @@ describe("runWorkbenchTurn streaming", () => {
         return new Response('data: {"choices":[');
       },
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -86,7 +81,7 @@ describe("runWorkbenchTurn streaming", () => {
     await yieldToStream();
     abortController.abort();
 
-    await assertRejects(() => pending, SyntaxError);
+    await assert.rejects(() => pending, SyntaxError);
     transport.assertDone();
   });
 
@@ -108,7 +103,7 @@ describe("runWorkbenchTurn streaming", () => {
     await yieldToStream();
     abortController.abort();
 
-    await assertRejects(() => pending, SyntaxError);
+    await assert.rejects(() => pending, SyntaxError);
     transport.assertDone();
   });
 
@@ -130,7 +125,7 @@ describe("runWorkbenchTurn streaming", () => {
     await yieldToStream();
     abortController.abort();
 
-    await assertRejects(() => pending, SyntaxError);
+    await assert.rejects(() => pending, SyntaxError);
     transport.assertDone();
   });
 
@@ -161,7 +156,7 @@ describe("runWorkbenchTurn streaming", () => {
       onTextDelta: () => {},
       fetchFn: transport.fetch,
     }).then(() => undefined, (x) => x);
-    assertStrictEquals(error, independent);
+    assert.strictEqual(error, independent);
     transport.assertDone();
   });
 
@@ -186,7 +181,7 @@ describe("runWorkbenchTurn streaming", () => {
     await yieldToStream();
     abortController.abort();
 
-    assertObjectMatch(await pending, { stopReason: "error" });
+    assert.partialDeepStrictEqual(await pending, { stopReason: "error" });
     transport.assertDone();
   });
 
@@ -195,18 +190,14 @@ describe("runWorkbenchTurn streaming", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Response.json({ error: { message: "quota exceeded" } }),
     }]);
-    await assertRejects(
-      () =>
+    await assert.rejects(() =>
         runWorkbenchTurn({
           systemPrompt: "system",
           prompt: "hello",
           routing: { modelId: "gemma4:e2b" },
           models,
           fetchFn: transport.fetch,
-        }),
-      Error,
-      "Provider response returned an error envelope",
-    );
+        }), (error: unknown) => error instanceof Error && error.message.includes("Provider response returned an error envelope"));
     transport.assertDone();
   });
 
@@ -242,10 +233,10 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(result.stopReason, "error");
-    assertStrictEquals(result.text, "");
-    assertEquals(deltas, []);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.stopReason, "error");
+    assert.strictEqual(result.text, "");
+    assert.deepStrictEqual(deltas, []);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("a buffered provider error cannot be reclassified as textual tool use", async () => {
@@ -276,7 +267,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(result.stopReason, "error");
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.stopReason, "error");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 });
