@@ -781,6 +781,20 @@ function stdBindings(imports: ImportDecl[], spec: RegExp): Map<string, string> {
 
 const DECLARING = new Set(["const", "let", "var", "function", "class"]);
 
+/** Words before `(` that open a control statement, not a parameter list. */
+const CONTROL_WORDS = new Set([
+  "if",
+  "for",
+  "while",
+  "switch",
+  "catch",
+  "with",
+  "return",
+  "typeof",
+  "await",
+  "new",
+]);
+
 /**
  * Whether the file declares `name` other than by its import: a variable,
  * function or class, a typed parameter (or object key), or an untyped
@@ -847,6 +861,13 @@ function declaresAt(
   const keyword = wordBefore(text, open, src.mask).word;
   if (keyword === "catch") return true;
   const close = matchBracket(src, open);
+  // A method or constructor: `name(params) {` (or with a return type).
+  if (
+    close >= 0 && keyword !== "" && !CONTROL_WORDS.has(keyword) &&
+    /^\s*(?::[^=;{]+)?\{/.test(text.slice(close + 1))
+  ) {
+    return true;
+  }
   if (close < 0) return false;
   if (/^\s*(?::[^=;{]+)?=>/.test(text.slice(close + 1))) return true;
   if (/function\s*[\w$]*\s*$/.test(text.slice(0, open))) return true;
@@ -1184,12 +1205,13 @@ function convertAssertion(
     if (
       args.length < 2 || args.length > 3 || !expected.startsWith("[") ||
       matchBracket(new Source(expected), 0) !== expected.length - 1 ||
-      !/^[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*|\[[^\]]+\])*$/.test(list)
+      !isBareName(list)
     ) {
       return {
         pos: call.start,
-        reason: "assertArrayIncludes on a computed list, or with expected " +
-          "items that are not an array literal; rewrite by hand",
+        reason: "assertArrayIncludes on something other than a bare name " +
+          "(it would be evaluated once per item), or with expected items " +
+          "that are not an array literal; rewrite by hand",
       };
     }
     const item = ["item", "entry", "member"].find((name) =>
@@ -2469,7 +2491,7 @@ function fixImports(
   ) {
     const existing = imports.find((decl) =>
       decl.spec === module && !decl.typeOnly && decl.namespace === undefined &&
-      !edits.has(decl)
+      !decl.hasComments && !edits.has(decl)
     );
     const named = existing?.named ?? [];
     // What every value import of the module already binds, not only the

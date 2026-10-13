@@ -1,6 +1,7 @@
-# assertArrayIncludes on a literal list of expected items: the assertion names
-# the items that are missing. Primitive items match with includes, other items
-# deeply, as std does. A computed list is left for hand review.
+# assertArrayIncludes on a bare name and a literal list of expected items:
+# the assertion names the items that are missing. Primitive items match with
+# includes, other items deeply, as std does. A member chain or computed list
+# would be evaluated once per item, so it is left for hand review.
 rules: assert.array-includes
 --- before
 import { assertArrayIncludes } from "@std/assert";
@@ -26,13 +27,15 @@ Deno.test("array includes", () => {
   const stderr = ["a", "b"];
   const item = { tags: ["x"] };
   assert.deepStrictEqual(["a"].filter((item) => !stderr.includes(item)), []);
-  assert.deepStrictEqual([
+  assertArrayIncludes(parsed.permissions["serve-unix"].run as string[], [
     "/bin/kill",
     "/bin/sleep",
-  ].filter((item) => !(parsed.permissions["serve-unix"].run as string[]).includes(item)), []);
-  assert.deepStrictEqual(["x"].filter((entry) => !item.tags.includes(entry)), [], "tagged");
+  ]);
+  assertArrayIncludes(item.tags, ["x"], "tagged");
   assert.deepStrictEqual([{ role: "tool", content: "" }].filter((item) => !messages.some((candidate) => isDeepStrictEqual(candidate, item))), []);
   assertArrayIncludes(lines(), ["a"]);
 });
 --- findings
+unconverted 9
+unconverted 13
 unconverted 15
