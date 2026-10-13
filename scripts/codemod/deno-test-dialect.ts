@@ -780,41 +780,61 @@ const DECLARING = new Set(["const", "let", "var", "function", "class"]);
  * parameter of an arrow or function. Conservative: text rules cannot follow
  * scopes, so any such declaration marks the import shadowed.
  */
-function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
-  const { text } = src;
+function declarations(
+  src: Source,
+  imports: ImportDecl[],
+  name: string,
+): number {
+  let count = 0;
   for (const pos of occurrences(src, name)) {
-    if (insideImport(imports, pos)) continue;
-    if (DECLARING.has(wordBefore(text, pos, src.mask).word)) return true;
-    const end = pos + name.length;
-    const next = nextNonSpace(text, end);
-    if (text[next] === ":" || text.startsWith("?:", next)) return true;
-    if (text.startsWith("=>", next)) return true;
-    const before = text[prevNonSpace(text, pos, src.mask)];
-    if (!"(,{[".includes(before)) continue;
-    let depth = 0;
-    let open = -1;
-    for (let j = pos - 1; j >= 0 && open < 0; j--) {
-      if (!src.isCode(j)) continue;
-      const c = text[j];
-      if (")]}".includes(c)) depth++;
-      else if ("([{".includes(c)) {
-        if (depth === 0) open = j;
-        else depth--;
-      }
-    }
-    if (open < 0) continue;
-    const keyword = wordBefore(text, open, src.mask).word;
-    // A destructuring pattern (`const { name } = ...`) or a catch parameter.
-    if (text[open] !== "(") {
-      if (DECLARING.has(keyword)) return true;
-      continue;
-    }
-    if (keyword === "catch") return true;
-    const close = matchBracket(src, open);
-    if (close < 0) continue;
-    if (/^\s*(?::[^=;{]+)?=>/.test(text.slice(close + 1))) return true;
-    if (/function\s*[\w$]*\s*$/.test(text.slice(0, open))) return true;
+    if (declaresAt(src, imports, name, pos)) count++;
   }
+  return count;
+}
+
+function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
+  return declarations(src, imports, name) > 0;
+}
+
+/** Whether the occurrence of `name` at `pos` declares it. */
+function declaresAt(
+  src: Source,
+  imports: ImportDecl[],
+  name: string,
+  pos: number,
+): boolean {
+  const { text } = src;
+  if (insideImport(imports, pos)) return false;
+  if (DECLARING.has(wordBefore(text, pos, src.mask).word)) return true;
+  const end = pos + name.length;
+  const next = nextNonSpace(text, end);
+  if (text[next] === ":" || text.startsWith("?:", next)) return true;
+  if (text.startsWith("=>", next)) return true;
+  const before = text[prevNonSpace(text, pos, src.mask)];
+  if (!"(,{[".includes(before)) return false;
+  let depth = 0;
+  let open = -1;
+  for (let j = pos - 1; j >= 0 && open < 0; j--) {
+    if (!src.isCode(j)) continue;
+    const c = text[j];
+    if (")]}".includes(c)) depth++;
+    else if ("([{".includes(c)) {
+      if (depth === 0) open = j;
+      else depth--;
+    }
+  }
+  if (open < 0) return false;
+  const keyword = wordBefore(text, open, src.mask).word;
+  // A destructuring pattern (`const { name } = ...`) or a catch parameter.
+  if (text[open] !== "(") {
+    if (DECLARING.has(keyword)) return true;
+    return false;
+  }
+  if (keyword === "catch") return true;
+  const close = matchBracket(src, open);
+  if (close < 0) return false;
+  if (/^\s*(?::[^=;{]+)?=>/.test(text.slice(close + 1))) return true;
+  if (/function\s*[\w$]*\s*$/.test(text.slice(0, open))) return true;
   return false;
 }
 
@@ -1318,7 +1338,18 @@ function convertMock(
     }
     const blocked = unusable(ctx, pos, "mock", "node:test");
     if (blocked) return blocked;
-    if (!spyBinding(src.text, pos)) {
+    const bound = spyBinding(src.text, pos);
+    if (
+      bound !== undefined &&
+      declarations(ctx.original, ctx.imports, bound) > 1
+    ) {
+      return {
+        pos,
+        reason: `${symbol} is bound to \`${bound}\`, a name declared again ` +
+          "elsewhere in the file; convert by hand",
+      };
+    }
+    if (!bound) {
       return {
         pos,
         reason: `${symbol} is not bound to a name the tool can follow, so ` +
@@ -1911,8 +1942,8 @@ function convertError(src: Source, ref: HostRef): Outcome {
         edits: [{
           start: operandStart,
           end: ref.end,
-          text:
-            `(${operand} as { ${field}?: unknown }).${field} === "${value}"`,
+          text: `(${operand} as { ${field}?: unknown } | null | undefined)` +
+            `?.${field} === "${value}"`,
         }],
         needs: [],
       };
@@ -1937,6 +1968,14 @@ const PLATFORMS: Record<string, string> = {
   aix: "aix",
   windows: "win32",
 };
+
+const PROTOTYPE_NAMES = new Set(Object.getOwnPropertyNames(Object.prototype));
+
+/** A literal key that no plain object inherits. */
+function ownKey(key: string): boolean {
+  const m = /^(["'])([^"'\\]*)\1$/.exec(key);
+  return m !== null && !PROTOTYPE_NAMES.has(m[2]);
+}
 
 function envAccess(key: string): string {
   const m = /^(["'])([A-Za-z_][\w]*)\1$/.exec(key);
@@ -2016,19 +2055,30 @@ function convertProcess(
   }
   if (head === "env" && ref.path.length === 2 && call !== undefined) {
     const args = call.args;
+    const key = args[0]?.text ?? "";
+    if (/^(["'])__proto__\1$/.test(key)) {
+      return { pos, reason: `${host} on "__proto__"; convert by hand` };
+    }
+    // process.env is a plain object: a key that may be inherited from
+    // Object.prototype is read through an own-property check, as the host's
+    // map does. A literal key that is not a prototype name reads directly.
     if (member === "get" && args.length === 1) {
+      if (ownKey(key)) {
+        return swap("process.env", call.end, `process.env${envAccess(key)}`);
+      }
+      const read = `Object.hasOwn(process.env, ${key}) ? ` +
+        `process.env${envAccess(key)} : undefined`;
       return swap(
         "process.env",
         call.end,
-        `process.env${envAccess(args[0].text)}`,
+        standsAlone(src, pos, call.end) ? read : `(${read})`,
       );
     }
     if (member === "has" && args.length === 1) {
-      const test = `process.env${envAccess(args[0].text)} !== undefined`;
       return swap(
         "process.env",
         call.end,
-        standsAlone(src, pos, call.end) ? test : `(${test})`,
+        `Object.hasOwn(process.env, ${key})`,
       );
     }
     const statement = isStatementStart(src, pos) &&
@@ -2256,10 +2306,13 @@ function fixImports(
 ): Edit[] {
   const src = new Source(text);
   const imports = parseImports(src);
+  // `assert.` reads are the node import's only when this run adds it;
+  // otherwise they are reads of the std `assert` and keep it imported.
+  const nodeAssert = needs.has("assert");
   const used = (local: string) =>
     occurrences(src, local).some((pos) =>
       !insideImport(imports, pos) &&
-      !(local === "assert" &&
+      !(nodeAssert && local === "assert" &&
         src.text[nextNonSpace(src.text, pos + local.length)] === ".")
     );
   const edits = new Map<ImportDecl, string>();

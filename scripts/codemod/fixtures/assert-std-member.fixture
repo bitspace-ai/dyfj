@@ -1,0 +1,22 @@
+# A member read of the std `assert` (here its name) keeps the std binding, so
+# the std import keeps `assert`, and the file's assertions are left for hand
+# conversion rather than importing node's `assert` over it.
+rules:
+--- before
+import { assert, assertEquals } from "@std/assert";
+
+Deno.test("member use", () => {
+  const name = assert.name;
+  void name;
+  assertEquals(1, 1);
+});
+--- after
+import { assert, assertEquals } from "@std/assert";
+
+Deno.test("member use", () => {
+  const name = assert.name;
+  void name;
+  assertEquals(1, 1);
+});
+--- findings
+unconverted 6

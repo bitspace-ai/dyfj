@@ -1,5 +1,7 @@
 # Host error classes become error codes: an object validator in assertions, a
-# code (or name) check in instanceof tests.
+# code (or name) check in instanceof tests. The check reads the property
+# through optional chaining, so a caught null, undefined or primitive gives
+# false as instanceof does, rather than throwing.
 rules: errors.code, errors.not-capable, assert.import, assert.rejects, assert.throws, fs.read-text-file, fs.mkdir, fs.remove
 --- before
 import { assertRejects, assertThrows } from "@std/assert";
@@ -31,12 +33,12 @@ Deno.test("errors", async () => {
   try {
     await rm("/missing", { recursive: true });
   } catch (error) {
-    if (!((error as { code?: unknown }).code === "ENOENT")) throw error;
+    if (!((error as { code?: unknown } | null | undefined)?.code === "ENOENT")) throw error;
   }
   try {
     probe();
   } catch (error) {
-    if ((error as { name?: unknown }).name === "NotCapable") return;
+    if ((error as { name?: unknown } | null | undefined)?.name === "NotCapable") return;
   }
   const made = new Deno.errors.NotFound("x");
   void made;
