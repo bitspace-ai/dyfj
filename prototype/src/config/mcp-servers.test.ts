@@ -1,9 +1,5 @@
-import {
-  assertEquals,
-  assertMatch,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import { captureThrow } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { parseMcpServersConfig } from "./mcp-servers.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
@@ -52,7 +48,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
 
 { // "parseMcpServersConfig"
   Deno.test("parseMcpServersConfig: accepts the bounded HTTP-only server and per-tool policy shape", () => {
-    assertEquals(parseMcpServersConfig(serverTable(), CONFIG_PATH), [{
+    assert.deepStrictEqual(parseMcpServersConfig(serverTable(), CONFIG_PATH), [{
       id: "linear",
       transport: "streamable_http",
       url: "https://mcp.linear.app/mcp",
@@ -80,7 +76,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
         fetch_tool: "tavily_extract",
       },
     });
-    assertEquals(parseMcpServersConfig(table, CONFIG_PATH), [{
+    assert.deepStrictEqual(parseMcpServersConfig(table, CONFIG_PATH), [{
       id: "linear",
       transport: "streamable_http",
       url: "https://mcp.linear.app/mcp",
@@ -117,10 +113,13 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
             approval: "ask",
           }],
         });
-      assertThrows(
+      assert.throws(
         () => parseMcpServersConfig(table, CONFIG_PATH),
-        Error,
-        "create_issue cannot be a search or fetch capability; use linear_issue_creation",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes(
+            "create_issue cannot be a search or fetch capability; use linear_issue_creation",
+          ),
       );
     });
   }
@@ -136,8 +135,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
             approval: "ask",
           }],
         };
-        assertMatch(
-          (assertThrows(() =>
+        assert.match(
+          (captureThrow(() =>
             parseMcpServersConfig(
               withBinding
                 ? linearCreationTable(overrides)
@@ -152,8 +151,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
   }
 
   Deno.test("parseMcpServersConfig: requires exactly one creation upstream", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseMcpServersConfig(
           linearCreationTable({
             tools: [
@@ -174,12 +173,15 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
 
   Deno.test("parseMcpServersConfig: accepts fixed Linear team and exact-name project bindings", () => {
     const parsed = parseMcpServersConfig(linearCreationTable(), CONFIG_PATH);
-    assertEquals(parsed[0].linearIssueCreation, {
+    // The parser builds `projects` without a prototype, so a project named
+    // like an Object.prototype member cannot collide with one; the expected
+    // value pins that.
+    assert.deepStrictEqual(parsed[0].linearIssueCreation, {
       teamId: "team_fixture_01",
-      projects: {
+      projects: Object.assign(Object.create(null), {
         "Synthetic Project": "project_fixture_01",
         "Second Project": "project_fixture_02",
-      },
+      }),
     });
   });
 
@@ -218,8 +220,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
   ];
   for (const [index, [overrides, pattern]] of malformedBindings.entries()) {
     Deno.test(`parseMcpServersConfig: rejects malformed Linear issue binding ${index}`, () => {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseMcpServersConfig(linearCreationTable(overrides), CONFIG_PATH)
         ) as Error).message,
         pattern,
@@ -233,8 +235,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
         search_tool: "undeclared_search",
       },
     });
-    assertMatch(
-      (assertThrows(() => parseMcpServersConfig(table, CONFIG_PATH)) as Error)
+    assert.match(
+      (captureThrow(() => parseMcpServersConfig(table, CONFIG_PATH)) as Error)
         .message,
       /search_tool must be a declared tool/,
     );
@@ -261,8 +263,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
   ];
   for (const [index, [overrides, pattern]] of unsupportedShapes.entries()) {
     Deno.test(`parseMcpServersConfig: fails closed on unsupported authority shape ${index}`, () => {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseMcpServersConfig(serverTable(overrides), CONFIG_PATH)
         ) as Error).message,
         pattern,
@@ -279,8 +281,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
       env: {},
       inheritEnv: [],
     };
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseMcpServersConfig(serverTable(), CONFIG_PATH, secrets)
       ) as Error).message,
       /linear_mcp.*secrets\.named/,
@@ -288,8 +290,8 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
   });
 
   Deno.test("parseMcpServersConfig: permits cleartext only for loopback IP literals", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseMcpServersConfig(
           serverTable({ url: "http://localhost:43137/mcp" }),
           CONFIG_PATH,
@@ -297,7 +299,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
       ) as Error).message,
       /https.*loopback/,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       parseMcpServersConfig(
         serverTable({ url: "http://127.0.0.1:43137/mcp" }),
         CONFIG_PATH,
@@ -306,9 +308,9 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     );
   });
 
-  Deno.test("parseMcpServersConfig: rejects hostnames containing Deno grant separators", () => {
-    assertMatch(
-      (assertThrows(() =>
+  Deno.test("parseMcpServersConfig: rejects hostnames containing net-grant list separators", () => {
+    assert.match(
+      (captureThrow(() =>
         parseMcpServersConfig(
           serverTable({ url: "https://foo%2cbar.example/mcp" }),
           CONFIG_PATH,

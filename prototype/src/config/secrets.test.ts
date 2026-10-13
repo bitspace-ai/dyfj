@@ -1,12 +1,4 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertNotStrictEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   buildResolverEnv,
@@ -59,8 +51,8 @@ describe("resolveSecretsIntoEnv", () => {
       run,
       log: () => {},
     });
-    assertEquals(results, []);
-    assertEquals(env.store, {});
+    assert.deepStrictEqual(results, []);
+    assert.deepStrictEqual(env.store, {});
   });
 
   it("resolves a pointer and sets the value into env", async () => {
@@ -74,9 +66,9 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ ANTHROPIC_API_KEY: "op://v/anthropic/credential" }),
       { env, run, log: () => {} },
     );
-    assertEquals(calls, [{ pointer: "op://v/anthropic/credential" }]);
-    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "sk-secret");
-    assertEquals(results, [{
+    assert.deepStrictEqual(calls, [{ pointer: "op://v/anthropic/credential" }]);
+    assert.strictEqual(env.store.ANTHROPIC_API_KEY, "sk-secret");
+    assert.deepStrictEqual(results, [{
       envVar: "ANTHROPIC_API_KEY",
       status: "resolved",
     }]);
@@ -93,9 +85,9 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ ANTHROPIC_API_KEY: "op://v/anthropic/credential" }),
       { env, run, log: () => {} },
     );
-    assertStrictEquals(ran, false);
-    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "ambient");
-    assertStrictEquals(results[0].status, "already-set");
+    assert.strictEqual(ran, false);
+    assert.strictEqual(env.store.ANTHROPIC_API_KEY, "ambient");
+    assert.strictEqual(results[0].status, "already-set");
   });
 
   it("an empty env var does not count as set (still resolves)", async () => {
@@ -106,7 +98,7 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ OPENAI_API_KEY: "op://v/openai/credential" }),
       { env, run, log: () => {} },
     );
-    assertStrictEquals(env.store.OPENAI_API_KEY, "sk-openai");
+    assert.strictEqual(env.store.OPENAI_API_KEY, "sk-openai");
   });
 
   it("a failed resolution leaves the var unset (provider fails closed)", async () => {
@@ -120,8 +112,8 @@ describe("resolveSecretsIntoEnv", () => {
       cfg({ GEMINI_API_KEY: "op://v/gemini/credential" }),
       { env, run, log: () => {} },
     );
-    assertStrictEquals(env.store.GEMINI_API_KEY, undefined);
-    assertEquals(results[0], {
+    assert.strictEqual(env.store.GEMINI_API_KEY, undefined);
+    assert.deepStrictEqual(results[0], {
       envVar: "GEMINI_API_KEY",
       status: "unavailable",
       reason: "timed out after 1000ms (locked or unavailable)",
@@ -144,10 +136,10 @@ describe("resolveSecretsIntoEnv", () => {
       }),
       { env, run, log: () => {} },
     );
-    assertNotStrictEquals(env.store.ANTHROPIC_API_KEY, undefined);
-    assertNotStrictEquals(env.store.OPENAI_API_KEY, undefined);
-    assertStrictEquals(env.store.GEMINI_API_KEY, undefined);
-    assertEquals(results.map((r) => r.status), [
+    assert.notStrictEqual(env.store.ANTHROPIC_API_KEY, undefined);
+    assert.notStrictEqual(env.store.OPENAI_API_KEY, undefined);
+    assert.strictEqual(env.store.GEMINI_API_KEY, undefined);
+    assert.deepStrictEqual(results.map((r) => r.status), [
       "resolved",
       "unavailable",
       "resolved",
@@ -167,10 +159,20 @@ describe("resolveSecretsIntoEnv", () => {
       { env, run, log: (m) => logs.push(m) },
     );
     const joined = logs.join("\n");
-    assertFalse(joined.includes("super-secret-token-abc"));
-    assertFalse(joined.includes("ambient-value-xyz"));
-    assertStringIncludes(joined, "ANTHROPIC_API_KEY: resolved");
-    assertStringIncludes(joined, "OPENAI_API_KEY: already-set");
+    assert.ok(!joined.includes("super-secret-token-abc"));
+    assert.ok(!joined.includes("ambient-value-xyz"));
+    assert.ok(
+      joined.includes("ANTHROPIC_API_KEY: resolved"),
+      `expected ${
+        JSON.stringify(joined)
+      } to include "ANTHROPIC_API_KEY: resolved"`,
+    );
+    assert.ok(
+      joined.includes("OPENAI_API_KEY: already-set"),
+      `expected ${
+        JSON.stringify(joined)
+      } to include "OPENAI_API_KEY: already-set"`,
+    );
   });
 });
 
@@ -186,14 +188,16 @@ describe("resolveSecrets named credentials", () => {
         log: (message) => logs.push(message),
       },
     );
-    assertEquals(resolved.named, { linear_mcp: "linear-secret-value" });
-    assertEquals(resolved.namedResolutions, [{
+    assert.deepStrictEqual(resolved.named, {
+      linear_mcp: "linear-secret-value",
+    });
+    assert.deepStrictEqual(resolved.namedResolutions, [{
       name: "linear_mcp",
       status: "resolved",
     }]);
-    assertEquals(env.store, {});
-    assertFalse((logs.join("\n")).includes("linear-secret-value"));
-    assertFalse((logs.join("\n")).includes("op://v/linear/credential"));
+    assert.deepStrictEqual(env.store, {});
+    assert.ok(!(logs.join("\n")).includes("linear-secret-value"));
+    assert.ok(!(logs.join("\n")).includes("op://v/linear/credential"));
   });
 
   it("shares the session-first probe across env and named pointers", async () => {
@@ -213,10 +217,10 @@ describe("resolveSecrets named credentials", () => {
         log: () => {},
       },
     );
-    assertEquals(spawned, ["op://v/openai/credential"]);
-    assertStrictEquals(env.store.OPENAI_API_KEY, undefined);
-    assertEquals(resolved.named, {});
-    assertObjectMatch(resolved.namedResolutions[0], {
+    assert.deepStrictEqual(spawned, ["op://v/openai/credential"]);
+    assert.strictEqual(env.store.OPENAI_API_KEY, undefined);
+    assert.deepStrictEqual(resolved.named, {});
+    assert.partialDeepStrictEqual(resolved.namedResolutions[0], {
       name: "linear_mcp",
       status: "unavailable",
     });
@@ -225,15 +229,15 @@ describe("resolveSecrets named credentials", () => {
 
 describe("secretsRunGrant", () => {
   it("null config → no run grant", () => {
-    assertStrictEquals(secretsRunGrant(null), null);
+    assert.strictEqual(secretsRunGrant(null), null);
   });
 
   it("returns command[0] as the binary to grant --allow-run", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       secretsRunGrant(cfg({}, { command: ["op", "read"] })),
       "op",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       secretsRunGrant(cfg({}, { command: ["/usr/local/bin/vault", "get"] })),
       "/usr/local/bin/vault",
     );
@@ -257,10 +261,10 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
       }),
       { env, run, log: () => {} },
     );
-    assertEquals(snapshotsAtRun, [0, 0]);
+    assert.deepStrictEqual(snapshotsAtRun, [0, 0]);
     // Both are applied after the pass.
-    assertStrictEquals(env.store.ANTHROPIC_API_KEY, "v-op://v/a/credential");
-    assertStrictEquals(env.store.OPENAI_API_KEY, "v-op://v/o/credential");
+    assert.strictEqual(env.store.ANTHROPIC_API_KEY, "v-op://v/a/credential");
+    assert.strictEqual(env.store.OPENAI_API_KEY, "v-op://v/o/credential");
   });
 
   it("session-first: probes one pointer alone, then bursts the rest", async () => {
@@ -285,8 +289,8 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
     );
     // Probe runs alone (in-flight 1), then the two followers burst together
     // (in-flight peaks at 2).
-    assertStrictEquals(inFlightAtEachStart[0], 1);
-    assertStrictEquals(Math.max(...inFlightAtEachStart), 2);
+    assert.strictEqual(inFlightAtEachStart[0], 1);
+    assert.strictEqual(Math.max(...inFlightAtEachStart), 2);
   });
 
   it("bounds the successful session's follower concurrency", async () => {
@@ -325,9 +329,9 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
     const peakBeforeRelease = peak;
     releaseFollowers();
     const result = await resolving;
-    assertEquals((Object.keys(result.named)).length, 17);
-    assertStrictEquals(peakBeforeRelease, 8);
-    assertStrictEquals(peak, 8);
+    assert.deepStrictEqual((Object.keys(result.named)).length, 17);
+    assert.strictEqual(peakBeforeRelease, 8);
+    assert.strictEqual(peak, 8);
   });
 
   it("logging order follows pointer declaration order", async () => {
@@ -342,8 +346,14 @@ describe("resolveSecretsIntoEnv — staging and concurrency", () => {
       }),
       { env, run, log: (m) => logs.push(m) },
     );
-    assertStringIncludes(logs[0], "ANTHROPIC_API_KEY");
-    assertStringIncludes(logs[1], "OPENAI_API_KEY");
+    assert.ok(
+      logs[0].includes("ANTHROPIC_API_KEY"),
+      `expected logs[0] to include "ANTHROPIC_API_KEY"`,
+    );
+    assert.ok(
+      logs[1].includes("OPENAI_API_KEY"),
+      `expected logs[1] to include "OPENAI_API_KEY"`,
+    );
   });
 });
 
@@ -366,23 +376,23 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       }),
       { env, run, log: () => {} },
     );
-    assertEquals(spawned, ["op://v/a/credential"]);
-    assertEquals(results.map((r) => r.status), [
+    assert.deepStrictEqual(spawned, ["op://v/a/credential"]);
+    assert.deepStrictEqual(results.map((r) => r.status), [
       "unavailable",
       "unavailable",
       "unavailable",
     ]);
     // The probe reads distinctly from the skipped followers (which name it).
-    assertMatch(results[0].reason ?? "", /session probe failed: timed out/);
-    assertMatch(
+    assert.match(results[0].reason ?? "", /session probe failed: timed out/);
+    assert.match(
       results[1].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    assertMatch(
+    assert.match(
       results[2].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    assertEquals((Object.keys(env.store)).length, 0);
+    assert.deepStrictEqual((Object.keys(env.store)).length, 0);
   });
 
   it("probe fails (non-timeout, e.g. bad first ref) → followers skipped, not spawned", async () => {
@@ -410,22 +420,22 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       { env, run, log: () => {} },
     );
     // Only the probe spawned; followers were skipped fail-closed.
-    assertEquals(spawned, ["op://v/a/credential"]);
-    assertEquals(results.map((r) => r.status), [
+    assert.deepStrictEqual(spawned, ["op://v/a/credential"]);
+    assert.deepStrictEqual(results.map((r) => r.status), [
       "unavailable",
       "unavailable",
       "unavailable",
     ]);
     // The probe names its own raw failure; followers name the probe to fix.
-    assertMatch(
+    assert.match(
       results[0].reason ?? "",
       /session probe failed: resolver exited with code 1/,
     );
-    assertMatch(
+    assert.match(
       results[1].reason ?? "",
       /skipped: session probe ANTHROPIC_API_KEY did not resolve/,
     );
-    assertEquals((Object.keys(env.store)).length, 0);
+    assert.deepStrictEqual((Object.keys(env.store)).length, 0);
   });
 
   it("an already-set first pointer is not the probe (env wins, next pending probes)", async () => {
@@ -446,8 +456,8 @@ describe("resolveSecretsIntoEnv — session-first fail-fast", () => {
       }),
       { env, run, log: () => {} },
     );
-    assertEquals(spawned, ["op://v/o/credential"]);
-    assertEquals(results.map((r) => r.status), [
+    assert.deepStrictEqual(spawned, ["op://v/o/credential"]);
+    assert.deepStrictEqual(results.map((r) => r.status), [
       "already-set",
       "unavailable",
       "unavailable",
@@ -481,7 +491,7 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
       ambient,
     );
     // Base (present ones) + forwarded inherit_env + [secrets.env] literal.
-    assertEquals(resolverEnv, {
+    assert.deepStrictEqual(resolverEnv, {
       PATH: "/bin",
       HOME: fakeHome,
       USER: "x",
@@ -489,19 +499,19 @@ describe("buildResolverEnv (isolated resolver environment)", () => {
       OP_ACCOUNT: "my.1password.com",
     });
     // The runtime's other secrets are absent.
-    assertFalse("DOLT_PASSWORD" in resolverEnv);
-    assertFalse("ANTHROPIC_API_KEY" in resolverEnv);
+    assert.ok(!("DOLT_PASSWORD" in resolverEnv));
+    assert.ok(!("ANTHROPIC_API_KEY" in resolverEnv));
   });
 
   it("a base var absent from ambient is simply not set", () => {
     const resolverEnv = buildResolverEnv(cfg({}), fakeEnv({ PATH: "/bin" }));
-    assertEquals(resolverEnv, { PATH: "/bin" });
+    assert.deepStrictEqual(resolverEnv, { PATH: "/bin" });
   });
 });
 
 describe("unavailableSecretPointers", () => {
   it("keeps only the pointers that failed, environment then named, with their reasons", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       unavailableSecretPointers({
         environment: [
           {
@@ -541,14 +551,18 @@ describe("runSecretCommand when the command cannot start", () => {
     const started = performance.now();
     const res = await runSecretCommand([privatePath, "read"], "pointer", 5_000);
     const elapsed = performance.now() - started;
-    assertStrictEquals(res.ok, false);
-    assertStrictEquals(
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(
       res.reason,
       "cannot run the resolver command (not found or not permitted)",
     );
-    assertFalse((res.reason ?? "").includes("resolver-xyz"));
-    assertFalse((res.reason ?? "").includes("timed out"));
-    assertEquals(elapsed < 2_000, true, `took ${Math.round(elapsed)}ms`);
+    assert.ok(!(res.reason ?? "").includes("resolver-xyz"));
+    assert.ok(!(res.reason ?? "").includes("timed out"));
+    assert.deepStrictEqual(
+      elapsed < 2_000,
+      true,
+      `took ${Math.round(elapsed)}ms`,
+    );
   });
 
   it("returns a fresh failure each time, so one caller cannot alter the next", async () => {
@@ -556,10 +570,10 @@ describe("runSecretCommand when the command cannot start", () => {
     const first = await runSecretCommand(command, "pointer", 5_000);
     (first as { reason?: string }).reason = "mutated";
     const second = await runSecretCommand(command, "pointer", 5_000);
-    assertStrictEquals(
+    assert.strictEqual(
       second.reason,
       "cannot run the resolver command (not found or not permitted)",
     );
-    assertNotStrictEquals(second, first);
+    assert.notStrictEqual(second, first);
   });
 });

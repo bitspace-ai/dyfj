@@ -1,0 +1,18 @@
+# The value read through a member access on the call.
+rules: assert.import, assert.captured
+captured-import: ../../testing/assertions/captured.ts
+--- before
+import { assertThrows } from "@std/assert";
+
+Deno.test("member", () => {
+  const message = assertThrows(() => boom(), Error).message;
+  void message;
+});
+--- after
+import { captureThrow } from "../../testing/assertions/captured.ts";
+
+Deno.test("member", () => {
+  const message = captureThrow(() => boom(), Error).message;
+  void message;
+});
+--- findings

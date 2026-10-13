@@ -1,0 +1,37 @@
+# The value read through a cast, awaited inside or outside the parentheses.
+rules: assert.import, assert.match, assert.captured
+captured-import: ../../testing/assertions/captured.ts
+--- before
+import { assertMatch, assertRejects, assertThrows } from "@std/assert";
+
+Deno.test("cast", async () => {
+  assertMatch(
+    (assertThrows(() => boom()) as Error).message,
+    /boom/,
+  );
+  assertMatch(
+    (await assertRejects(() => later()) as Error).message,
+    /later/,
+  );
+  const message =
+    ((await assertRejects(() => later())) as Error).message;
+  assertMatch(message, /later/);
+});
+--- after
+import { captureRejection, captureThrow } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+
+Deno.test("cast", async () => {
+  assert.match(
+    (captureThrow(() => boom()) as Error).message,
+    /boom/,
+  );
+  assert.match(
+    (await captureRejection(() => later()) as Error).message,
+    /later/,
+  );
+  const message =
+    ((await captureRejection(() => later())) as Error).message;
+  assert.match(message, /later/);
+});
+--- findings

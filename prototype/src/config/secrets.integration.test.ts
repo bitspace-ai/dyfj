@@ -1,17 +1,13 @@
 // runSecretCommand against real child processes (`bash`), and the parent
 // environment it must not leak into the resolver child. The pure resolution
 // logic is covered by `secrets.test.ts` with an in-memory env.
-import {
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { runSecretCommand } from "./secrets.ts";
 
 /** A real PATH so a child with a replaced environment can still find external binaries. */
-const PATH_ENV = { PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin" };
+const PATH_ENV = { PATH: process.env.PATH ?? "/usr/bin:/bin" };
 
 describe("runSecretCommand (real subprocess)", () => {
   it("a spawn failure reason leaks neither the resolver path nor the pointer", async () => {
@@ -21,16 +17,16 @@ describe("runSecretCommand (real subprocess)", () => {
       .join("/");
     const pointer = "op://PrivateVault/SecretItem/credential";
     const res = await runSecretCommand([privatePath, "read"], pointer, 2000);
-    assertStrictEquals(res.ok, false);
-    assertStrictEquals(
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(
       res.reason,
       "cannot run the resolver command (not found or not permitted)",
     );
     // The operator-private path and the pointer must not appear in the reason.
-    assertFalse(res.reason.includes("private-user"));
-    assertFalse(res.reason.includes("secret-vault-tool"));
-    assertFalse(res.reason.includes("PrivateVault"));
-    assertFalse(res.reason.includes(pointer));
+    assert.ok(!res.reason.includes("private-user"));
+    assert.ok(!res.reason.includes("secret-vault-tool"));
+    assert.ok(!res.reason.includes("PrivateVault"));
+    assert.ok(!res.reason.includes(pointer));
   });
 
   it("returns the trimmed stdout on a clean exit", async () => {
@@ -40,7 +36,7 @@ describe("runSecretCommand (real subprocess)", () => {
       2000,
       PATH_ENV,
     );
-    assertEquals(res, { ok: true, value: "resolved-value" });
+    assert.deepStrictEqual(res, { ok: true, value: "resolved-value" });
   });
 
   it("treats empty stdout as unavailable", async () => {
@@ -50,8 +46,8 @@ describe("runSecretCommand (real subprocess)", () => {
       2000,
       PATH_ENV,
     );
-    assertStrictEquals(res.ok, false);
-    assertMatch(res.reason ?? "", /empty/);
+    assert.strictEqual(res.ok, false);
+    assert.match(res.reason ?? "", /empty/);
   });
 
   it("names the signal when the resolver is killed by one, without captured output", async () => {
@@ -61,8 +57,8 @@ describe("runSecretCommand (real subprocess)", () => {
       2000,
       PATH_ENV,
     );
-    assertStrictEquals(res.ok, false);
-    assertStrictEquals(res.reason, "resolver was killed by SIGKILL");
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.reason, "resolver was killed by SIGKILL");
   });
 
   it("reports the exit code on a non-zero exit (no captured output)", async () => {
@@ -72,16 +68,16 @@ describe("runSecretCommand (real subprocess)", () => {
       2000,
       PATH_ENV,
     );
-    assertStrictEquals(res.ok, false);
-    assertStrictEquals(res.reason, "resolver exited with code 4");
-    assertFalse(res.reason.includes("SHOULD_NOT_LEAK"));
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.reason, "resolver exited with code 4");
+    assert.ok(!res.reason.includes("SHOULD_NOT_LEAK"));
   });
 
   it("the passed env replaces the child's environment: an ambient var NOT in it is absent", async () => {
     // Prove the resolver child does not inherit an ambient secret. bash echoes
     // $LEAKY_AMBIENT; the child is spawned with only PATH as its environment, so it prints
     // the empty marker even though the parent process has the var set.
-    Deno.env.set("LEAKY_AMBIENT", "super-secret");
+    process.env.LEAKY_AMBIENT = "super-secret";
     try {
       const res = await runSecretCommand(
         ["bash", "-c", 'printf "[%s]" "${LEAKY_AMBIENT-}"'],
@@ -89,9 +85,9 @@ describe("runSecretCommand (real subprocess)", () => {
         2000,
         PATH_ENV,
       );
-      assertEquals(res, { ok: true, value: "[]" });
+      assert.deepStrictEqual(res, { ok: true, value: "[]" });
     } finally {
-      Deno.env.delete("LEAKY_AMBIENT");
+      delete process.env.LEAKY_AMBIENT;
     }
   });
 });
@@ -104,7 +100,7 @@ describe("runSecretCommand — env passthrough", () => {
       2000,
       { ...PATH_ENV, RESOLVER_MARKER: "from-secrets-env" },
     );
-    assertEquals(res, { ok: true, value: "from-secrets-env" });
+    assert.deepStrictEqual(res, { ok: true, value: "from-secrets-env" });
   });
 });
 
@@ -126,7 +122,7 @@ describe({
       150,
       PATH_ENV,
     );
-    assertStrictEquals(res.ok, false);
-    assertMatch(res.reason ?? "", /timed out/);
+    assert.strictEqual(res.ok, false);
+    assert.match(res.reason ?? "", /timed out/);
   });
 });

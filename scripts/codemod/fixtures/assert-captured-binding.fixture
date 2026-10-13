@@ -1,0 +1,31 @@
+# assertThrows and assertRejects whose value is bound: the helper returns what
+# std returned, the class carrying over.
+rules: assert.import, assert.captured
+captured-import: ../../testing/assertions/captured.ts
+--- before
+import { assertRejects, assertThrows } from "@std/assert";
+
+Deno.test("bound", async () => {
+  const error = assertThrows(() => boom());
+  const typed = await assertRejects(() => later(), TypeError);
+  const pending = assertRejects(() => later());
+  let caught = assertThrows(
+    () => boom(),
+    RangeError,
+  );
+  void [error, typed, pending, caught];
+});
+--- after
+import { captureRejection, captureThrow } from "../../testing/assertions/captured.ts";
+
+Deno.test("bound", async () => {
+  const error = captureThrow(() => boom());
+  const typed = await captureRejection(() => later(), TypeError);
+  const pending = captureRejection(() => later());
+  let caught = captureThrow(
+    () => boom(),
+    RangeError,
+  );
+  void [error, typed, pending, caught];
+});
+--- findings

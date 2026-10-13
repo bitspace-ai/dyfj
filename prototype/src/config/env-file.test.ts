@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { envFileVar, readLauncherEnvVar } from "./env-file.ts";
 
@@ -14,32 +14,32 @@ Deno.test("envFileVar reads KEY=VALUE, export prefix, quotes and comments", () =
     "SINGLE='x'",
     "  SPACED  =  padded value  ",
   ].join("\n");
-  assertEquals(
+  assert.deepStrictEqual(
     envFileVar(text, "DYFJ_MEMORY_MCP_URL"),
     "https://memory.example/mcp",
   );
-  assertEquals(envFileVar(text, "OTHER"), "1");
-  assertEquals(envFileVar(text, "SINGLE"), "x");
-  assertEquals(envFileVar(text, "SPACED"), "padded value");
-  assertStrictEquals(envFileVar(text, "MISSING"), undefined);
+  assert.deepStrictEqual(envFileVar(text, "OTHER"), "1");
+  assert.deepStrictEqual(envFileVar(text, "SINGLE"), "x");
+  assert.deepStrictEqual(envFileVar(text, "SPACED"), "padded value");
+  assert.strictEqual(envFileVar(text, "MISSING"), undefined);
 });
 
 Deno.test("envFileVar: first definition wins, empty values are defined", () => {
-  assertEquals(envFileVar("A=first\nA=second\n", "A"), "first");
-  assertStrictEquals(envFileVar("A=\n", "A"), "");
-  assertStrictEquals(envFileVar('A=""\n', "A"), "");
+  assert.deepStrictEqual(envFileVar("A=first\nA=second\n", "A"), "first");
+  assert.strictEqual(envFileVar("A=\n", "A"), "");
+  assert.strictEqual(envFileVar('A=""\n', "A"), "");
 });
 
 Deno.test("envFileVar keeps '=' inside values and unmatched quotes verbatim", () => {
-  assertEquals(envFileVar("A=b=c\n", "A"), "b=c");
-  assertEquals(envFileVar('A="open\n', "A"), '"open');
-  assertEquals(envFileVar("A='mixed\"\n", "A"), "'mixed\"");
+  assert.deepStrictEqual(envFileVar("A=b=c\n", "A"), "b=c");
+  assert.deepStrictEqual(envFileVar('A="open\n', "A"), '"open');
+  assert.deepStrictEqual(envFileVar("A='mixed\"\n", "A"), "'mixed\"");
 });
 
 Deno.test("envFileVar ignores commented and malformed lines", () => {
-  assertStrictEquals(envFileVar("# A=1\n", "A"), undefined);
-  assertStrictEquals(envFileVar("1A=1\n", "1A"), undefined);
-  assertStrictEquals(envFileVar("A 1\n", "A"), undefined);
+  assert.strictEqual(envFileVar("# A=1\n", "A"), undefined);
+  assert.strictEqual(envFileVar("1A=1\n", "1A"), undefined);
+  assert.strictEqual(envFileVar("A 1\n", "A"), undefined);
 });
 
 // Precedence mirrors the child: `--env-file` never overrides a variable that
@@ -56,8 +56,8 @@ Deno.test("readLauncherEnvVar: a defined ambient value wins over .env", async ()
     },
     new MapEnv({ DYFJ_ROOT: "/ambient" }),
   );
-  assertEquals(value, "/ambient");
-  assertEquals(reads, []);
+  assert.deepStrictEqual(value, "/ambient");
+  assert.deepStrictEqual(reads, []);
 });
 
 Deno.test("readLauncherEnvVar: an empty ambient value is authoritative", async () => {
@@ -71,8 +71,8 @@ Deno.test("readLauncherEnvVar: an empty ambient value is authoritative", async (
     },
     new MapEnv({ DYFJ_ROOT: "" }),
   );
-  assertStrictEquals(value, "");
-  assertEquals(reads, []);
+  assert.strictEqual(value, "");
+  assert.deepStrictEqual(reads, []);
 });
 
 Deno.test("readLauncherEnvVar: unset ambient falls back to <cwd>/.env", async () => {
@@ -86,8 +86,8 @@ Deno.test("readLauncherEnvVar: unset ambient falls back to <cwd>/.env", async ()
     },
     new MapEnv(),
   );
-  assertEquals(value, "/from-file");
-  assertEquals(reads, ["/proto/.env"]);
+  assert.deepStrictEqual(value, "/from-file");
+  assert.deepStrictEqual(reads, ["/proto/.env"]);
 });
 
 Deno.test("readLauncherEnvVar: an unreadable .env yields undefined", async () => {
@@ -100,5 +100,5 @@ Deno.test("readLauncherEnvVar: an unreadable .env yields undefined", async () =>
       ),
     new MapEnv(),
   );
-  assertStrictEquals(value, undefined);
+  assert.strictEqual(value, undefined);
 });

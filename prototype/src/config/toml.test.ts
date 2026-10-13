@@ -1,4 +1,4 @@
-import { assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
 import { configFilePath } from "./toml.ts";
@@ -11,21 +11,21 @@ const FAKE_HOME = ["", "home", "x"].join("/");
 
 { // "configFilePath"
   Deno.test("configFilePath: uses DYFJ_ROOT when set", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       configFilePath(env({ DYFJ_ROOT: "/custom" })),
       "/custom/config.toml",
     );
   });
 
   Deno.test("configFilePath: falls back to ~/.dyfj", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       configFilePath(env({ HOME: FAKE_HOME })),
       `${FAKE_HOME}/.dyfj/config.toml`,
     );
   });
 
   Deno.test("configFilePath: treats an EMPTY DYFJ_ROOT as absent (not '/'), matching the launcher", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       configFilePath(env({ DYFJ_ROOT: "", HOME: FAKE_HOME })),
       `${FAKE_HOME}/.dyfj/config.toml`,
     );

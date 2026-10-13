@@ -1,9 +1,9 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { resolveDoltConnection } from "./dolt.ts";
 
 Deno.test("resolveDoltConnection reads Dolt connection settings from the env", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     resolveDoltConnection(
       new MapEnv({
         DOLT_HOST: "localhost",
@@ -24,7 +24,7 @@ Deno.test("resolveDoltConnection reads Dolt connection settings from the env", (
 });
 
 Deno.test("resolveDoltConnection defaults the password to empty, never a dev password", () => {
-  assertEquals(resolveDoltConnection(new MapEnv()), {
+  assert.deepStrictEqual(resolveDoltConnection(new MapEnv()), {
     host: "127.0.0.1",
     port: 3306,
     user: "root",

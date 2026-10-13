@@ -285,13 +285,8 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/config/env.integration.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/config/mcp-servers.test.ts",
-    "count": 13,
+    "count": 12,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -301,17 +296,12 @@
   },
   {
     "path": "prototype/src/config/schema.test.ts",
-    "count": 7,
+    "count": 6,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/config/secrets-config.test.ts",
     "count": 22,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/secrets.integration.test.ts",
-    "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -321,7 +311,7 @@
   },
   {
     "path": "prototype/src/config/workbench.test.ts",
-    "count": 24,
+    "count": 22,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
