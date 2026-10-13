@@ -1079,11 +1079,15 @@ function stdUses(
       const after = nextNonSpace(src.text, pos + local.length);
       if (src.text[after] === ".") continue;
       const call = callAt(src, pos, pos + local.length);
-      // A method declared with this name (`assertEquals(a, b) { ... }`) is a
-      // declaration, not a call of the import.
+      // A method declared with this name is a declaration, not a call of
+      // the import: one with a body (`assertEquals(a, b) { ... }`), a
+      // signature with a return type (`assertEquals(a: T): void;` in an
+      // interface or type), or an abstract method.
       if (
         call !== undefined &&
-        /^\s*(?::[^=;{]+)?\{/.test(src.text.slice(call.end))
+        (/^\s*(?::[^=;{]+)?\{/.test(src.text.slice(call.end)) ||
+          /^\s*:[^=;{}]+[;,}\n]/.test(src.text.slice(call.end)) ||
+          wordBefore(src.text, pos, src.mask).word === "abstract")
       ) {
         continue;
       }
@@ -2462,8 +2466,8 @@ const optionPass: Pass = (src) => {
 const ambiguityPass: Pass = (src) =>
   src.ambiguous.map(([pos]) => ({
     pos,
-    reason: "a `/` after `}` on the same line was read as a regex; if the " +
-      "`}` ends an object literal it is division, so check by hand",
+    reason: "a `/` after a `}` was read as a regex; if the `}` ends an " +
+      "object literal it is division, so check by hand",
   }));
 
 /** Std imports kept whole for their comments, though some names went unused. */
