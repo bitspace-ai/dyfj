@@ -6,13 +6,9 @@
  * the engine fakes; a held-open stream gives the cancellation cases a real
  * mid-response abort.
  */
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { assertRejects } from "@std/assert";
 import { stub } from "@std/testing/mock";
 import {
   chatReply,
@@ -64,8 +60,8 @@ function failingWrites(
 async function quietly<T>(
   run: () => Promise<T>,
 ): Promise<{ value: T; warnings: string[] }> {
-  const log = stub(console, "log");
-  const warn = stub(console, "warn");
+  const log = mock.method(console, "log", () => {});
+  const warn = mock.method(console, "warn", () => {});
   const error = stub(console, "error");
   try {
     const value = await run();
@@ -74,8 +70,8 @@ async function quietly<T>(
       warnings: warn.calls.map((call) => String(call.args[0])),
     };
   } finally {
-    log.restore();
-    warn.restore();
+    log.mock.restore();
+    warn.mock.restore();
     error.restore();
   }
 }
@@ -91,8 +87,8 @@ Deno.test("emits the runtime spine event sequence without leaking full prompt or
       onRuntimeEvent: (event) => void frames.push(event),
     },
   });
-  assertEquals(result.text, "runtime response");
-  assertEquals(frames.map((frame) => frame.type), [
+  assert.deepStrictEqual(result.text, "runtime response");
+  assert.deepStrictEqual(frames.map((frame) => frame.type), [
     "sessionStart",
     "inputReceived",
     "contextBuilt",
@@ -102,40 +98,40 @@ Deno.test("emits the runtime spine event sequence without leaking full prompt or
     "turnCompleted",
   ]);
   const { sessionId, traceId } = result;
-  assertEquals(frames[0], {
+  assert.deepStrictEqual(frames[0], {
     type: "sessionStart",
     sessionId,
     traceId,
     mode: "turn",
   });
-  assertEquals(frames[1], {
+  assert.deepStrictEqual(frames[1], {
     type: "inputReceived",
     sessionId,
     promptLength: 36,
   });
-  assertObjectMatch(frames[2], { type: "contextBuilt", sessionId });
-  assertObjectMatch(frames[3], {
+  assert.partialDeepStrictEqual(frames[2], { type: "contextBuilt", sessionId });
+  assert.partialDeepStrictEqual(frames[3], {
     type: "modelSelected",
     sessionId,
     modelSlug: LOCAL_MODEL.slug,
     tier: 0,
   });
-  assertObjectMatch(frames[4], {
+  assert.partialDeepStrictEqual(frames[4], {
     type: "beforeProviderRequest",
     sessionId,
     modelSlug: LOCAL_MODEL.slug,
   });
-  assertObjectMatch(frames[5], {
+  assert.partialDeepStrictEqual(frames[5], {
     type: "afterProviderResponse",
     sessionId,
     modelSlug: LOCAL_MODEL.slug,
     inputCount: 42,
     outputCount: 7,
   });
-  assertEquals(frames[6], { type: "turnCompleted", sessionId, traceId });
+  assert.deepStrictEqual(frames[6], { type: "turnCompleted", sessionId, traceId });
   const wire = JSON.stringify(frames);
-  assertEquals(wire.includes("summarize this sensitive prompt body"), false);
-  assertEquals(wire.includes("runtime response"), false);
+  assert.deepStrictEqual(wire.includes("summarize this sensitive prompt body"), false);
+  assert.deepStrictEqual(wire.includes("runtime response"), false);
 });
 
 Deno.test("treats observer failures as best-effort and preserves the turn result", async () => {
@@ -150,13 +146,13 @@ Deno.test("treats observer failures as best-effort and preserves the turn result
       },
     })
   );
-  assertEquals(result.text, "runtime response");
+  assert.deepStrictEqual(result.text, "runtime response");
   // Provenance-summarized, never raw: an observer failure is a foreign
   // error, so the console line carries a fixed label + byte count, not the
   // message (which can embed payload content).
-  assert(warnings.includes("Runtime observer skipped: [Error, 18 bytes]"));
+  assert.ok(warnings.includes("Runtime observer skipped: [Error, 18 bytes]"));
   for (const line of warnings) {
-    assertEquals(line.includes("observer sink down"), false);
+    assert.deepStrictEqual(line.includes("observer sink down"), false);
   }
 });
 
@@ -181,32 +177,32 @@ Deno.test("an aborted turn finalizes partial text and usage without dispatching 
       log: () => {},
     },
   });
-  assertObjectMatch(first, {
+  assert.partialDeepStrictEqual(first, {
     text: "partial answer",
     stopReason: "aborted",
     tokens: { totalCalls: 1 },
   });
   const rows = await eventRows(run, first.sessionId);
-  assertObjectMatch(rows.find((row) => row.event_type === "model_response")!, {
+  assert.partialDeepStrictEqual(rows.find((row) => row.event_type === "model_response")!, {
     content: "partial answer",
     stop_reason: "aborted",
     tokens_input: String(first.tokens.input),
     tokens_output: String(first.tokens.output),
   });
-  assertEquals(rows.some((row) => row.event_type === "tool_call"), false);
-  assert(
+  assert.deepStrictEqual(rows.some((row) => row.event_type === "tool_call"), false);
+  assert.ok(
     frames.some((frame) =>
       frame.type === "turnAborted" && frame.sessionId === first.sessionId &&
       frame.traceId === first.traceId && frame.turnId === TURN_ID
     ),
   );
-  assertEquals(frames.some((frame) => frame.type === "turnCompleted"), false);
+  assert.deepStrictEqual(frames.some((frame) => frame.type === "turnCompleted"), false);
 
   const next = await runTurn(run, {
     prompt: "continue",
     sessionId: first.sessionId,
   });
-  assertObjectMatch(next, { text: "next answer", stopReason: "stop" });
+  assert.partialDeepStrictEqual(next, { text: "next answer", stopReason: "stop" });
 });
 
 Deno.test("an aborted next-work turn preserves partial text without validating it", async () => {
@@ -234,16 +230,16 @@ Deno.test("an aborted next-work turn preserves partial text without validating i
         void logged.push(parts.map(String).join(" ")),
     },
   });
-  assertObjectMatch(result, { text: partial, stopReason: "aborted" });
-  assertEquals(result.validation, undefined);
-  assertEquals(
+  assert.partialDeepStrictEqual(result, { text: partial, stopReason: "aborted" });
+  assert.deepStrictEqual(result.validation, undefined);
+  assert.deepStrictEqual(
     logged.some((line) => line.includes("Next-work validation failed")),
     false,
   );
   const response = (await eventRows(run, result.sessionId)).find((row) =>
     row.event_type === "model_response"
   );
-  assertEquals(JSON.parse(String(response?.content)), {
+  assert.deepStrictEqual(JSON.parse(String(response?.content)), {
     worklet_id: "next-work.v0",
     raw: partial,
   });
@@ -273,14 +269,14 @@ Deno.test("a provider terminal error outranks a concurrent cancellation", async 
       log: () => {},
     },
   });
-  assertEquals(result.stopReason, "error");
-  assertObjectMatch(
+  assert.deepStrictEqual(result.stopReason, "error");
+  assert.partialDeepStrictEqual(
     (await eventRows(run, result.sessionId)).find((row) =>
       row.event_type === "model_response"
     )!,
     { stop_reason: "error" },
   );
-  assertEquals(frames.some((frame) => frame.type === "turnAborted"), false);
+  assert.deepStrictEqual(frames.some((frame) => frame.type === "turnAborted"), false);
 });
 
 Deno.test("closes cancellation acceptance before terminal finalization", async () => {
@@ -303,8 +299,8 @@ Deno.test("closes cancellation acceptance before terminal finalization", async (
       log: () => {},
     },
   });
-  assertEquals(result.stopReason, "stop");
-  assertEquals(closedAtCompletion, true);
+  assert.deepStrictEqual(result.stopReason, "stop");
+  assert.deepStrictEqual(closedAtCompletion, true);
 });
 
 // ─── failures ────────────────────────────────────────────────────────────────
@@ -333,20 +329,17 @@ Deno.test("surfaces the error and emits turnFailed when the provider request fai
       ProviderRequestFailedError,
     )
   );
-  assertStringIncludes(thrown.value.message, "[Error, 23 bytes]");
-  assertEquals(thrown.value.message.includes("unavailable"), false);
+  assert.ok(thrown.value.message.includes("[Error, 23 bytes]"), `expected thrown.value.message to include "[Error, 23 bytes]"`);
+  assert.deepStrictEqual(thrown.value.message.includes("unavailable"), false);
   const failed = frames.at(-1)!;
-  assertObjectMatch(failed, {
+  assert.partialDeepStrictEqual(failed, {
     type: "turnFailed",
     errorName: "ProviderRequestFailedError",
     errorMessage: thrown.value.message,
   });
-  assertStringIncludes(
-    String((failed as { errorMessage: string }).errorMessage),
-    `${LOCAL_MODEL.provider}/${LOCAL_MODEL.slug}`,
-  );
-  assertEquals(frames[0].type, "sessionStart");
-  assertObjectMatch(failed, {
+  assert.ok(String((failed as { errorMessage: string }).errorMessage).includes(`${LOCAL_MODEL.provider}/${LOCAL_MODEL.slug}`), `expected String((failed as { errorMessage: string }).errorMessage) to include \`\${LOCAL_MODEL.provider}/\${LOCAL_MODEL.slug}\``);
+  assert.deepStrictEqual(frames[0].type, "sessionStart");
+  assert.partialDeepStrictEqual(failed, {
     sessionId: frames[0].sessionId,
     traceId: (frames[0] as { traceId: string }).traceId,
   });
@@ -360,7 +353,7 @@ Deno.test("best-effort event write failure is swallowed (turn still completes)",
   const { value: result } = await quietly(() =>
     runTurn(run, { prompt: "policy probe" })
   );
-  assertEquals(result.text, "runtime response");
+  assert.deepStrictEqual(result.text, "runtime response");
 });
 
 Deno.test("integrity event inside the runtime try (model_response) also fails the turn — not masked by the final receipt", async () => {
@@ -381,15 +374,15 @@ Deno.test("provider_call write failure preserves aggregate accounting and the re
   const { value: result } = await quietly(() =>
     runTurn(run, { prompt: "policy probe" })
   );
-  assertObjectMatch(result.tokens, { input: 42, output: 7, totalCalls: 1 });
+  assert.partialDeepStrictEqual(result.tokens, { input: 42, output: 7, totalCalls: 1 });
   const rows = await eventRows(run, result.sessionId);
-  assertObjectMatch(rows.find((row) => row.event_type === "model_response")!, {
+  assert.partialDeepStrictEqual(rows.find((row) => row.event_type === "model_response")!, {
     content: "runtime response",
     tokens_input: "42",
     tokens_output: "7",
   });
-  assertEquals(rows.some((row) => row.event_type === "provider_call"), false);
-  assertStringIncludes(result.receipt, "audit log has gaps");
+  assert.deepStrictEqual(rows.some((row) => row.event_type === "provider_call"), false);
+  assert.ok(result.receipt.includes("audit log has gaps"), `expected result.receipt to include "audit log has gaps"`);
 });
 
 Deno.test("a clean session's receipt carries no audit-gap warning", async () => {
@@ -398,7 +391,7 @@ Deno.test("a clean session's receipt carries no audit-gap warning", async () => 
     prompt: "hello",
     frames: { log: () => {} },
   });
-  assertEquals(result.receipt.includes("audit log has gaps"), false);
+  assert.deepStrictEqual(result.receipt.includes("audit log has gaps"), false);
 });
 
 // A failed model_response INTEGRITY write still fails the turn, but its
@@ -430,14 +423,14 @@ Deno.test("a failed model_response integrity write sanitizes its message before 
     )
   );
   const failed = frames.find((frame) => frame.type === "turnFailed");
-  assert(failed?.type === "turnFailed");
+  assert.ok(failed?.type === "turnFailed");
   const wireMessage = String(failed.errorMessage);
-  assertEquals(wireMessage.includes(hugePayload), false);
-  assert(wireMessage.length < 1000);
+  assert.deepStrictEqual(wireMessage.includes(hugePayload), false);
+  assert.ok(wireMessage.length < 1000);
   const error = (await eventRows(run, failed.sessionId)).find((row) =>
     row.event_type === "error"
   );
-  assert(error !== undefined);
-  assertEquals(String(error.content).includes(hugePayload), false);
-  assertEquals(logged.join("\n").includes(hugePayload), false);
+  assert.ok(error !== undefined);
+  assert.deepStrictEqual(String(error.content).includes(hugePayload), false);
+  assert.deepStrictEqual(logged.join("\n").includes(hugePayload), false);
 });

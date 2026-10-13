@@ -9,12 +9,11 @@
  * only by their own fixed caps, no fit check before each loop call, and a
  * provider's "context exceeded" rejection surfacing as a generic error.
  */
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertEquals } from "@std/assert";
 import {
   chatReply,
   conversation,
@@ -98,9 +97,9 @@ async function fitTurn(
     recoverContextOverflow?: WorkbenchRuntimeServices["recoverContextOverflow"];
   } = {},
 ): Promise<FitRun> {
-  const root = await Deno.makeTempDir({ prefix: "engine-fit-" });
+  const root = await mkdtemp(join(tmpdir(), "engine-fit-"));
   for (const [path, content] of Object.entries(options.files ?? {})) {
-    await Deno.writeTextFile(`${root}/${path}`, content);
+    await writeFile(`${root}/${path}`, content);
   }
   const run = engineServices(exchanges, {
     models: options.models,
@@ -122,7 +121,7 @@ async function fitTurn(
   } catch (error) {
     return { run, frames, error };
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await rm(root, { recursive: true });
   }
 }
 
@@ -135,7 +134,7 @@ async function fitTurn(
 function assertEveryRequestFits(run: EngineRun, window = WINDOW): void {
   for (const [index, request] of run.transport.requests.entries()) {
     const tokens = Math.ceil(request.body.length / 4);
-    assert(
+    assert.ok(
       tokens <= window,
       `request ${index} estimates at ${tokens} tokens, over the ${window}-token window`,
     );
@@ -172,27 +171,27 @@ Deno.test("three parallel 64 KiB reads on a 32K window: every result is bounded 
     { files: { "CHANGELOG.md": BIG_FILE } },
   );
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "read it");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, "read it");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   assertEveryRequestFits(fit.run);
 
   // The model sees each result cut with an explicit marker that says how
   // much survived and how to get the rest.
   const toolMessages = conversation(fit.run.transport.requests[1])
     .filter((m) => m.role === "tool");
-  assertEquals(toolMessages.length, 3);
+  assert.deepStrictEqual(toolMessages.length, 3);
   for (const message of toolMessages) {
-    assertStringIncludes(message.content, "trimmed");
-    assertStringIncludes(message.content, `${WINDOW}-token context window`);
-    assertStringIncludes(message.content, "offset");
+    assert.ok(message.content.includes("trimmed"), `expected message.content to include "trimmed"`);
+    assert.ok(message.content.includes(`${WINDOW}-token context window`), `expected message.content to include \`\${WINDOW}-token context window\``);
+    assert.ok(message.content.includes("offset"), `expected message.content to include "offset"`);
   }
   const trimmed = fit.frames.filter((f) => f.type === "toolResultTrimmed");
-  assertEquals(trimmed.length, 3);
-  assertObjectMatch(trimmed[0], { commandId: "read_file", callId: "c1" });
+  assert.deepStrictEqual(trimmed.length, 3);
+  assert.partialDeepStrictEqual(trimmed[0], { commandId: "read_file", callId: "c1" });
   // The bound is a whole-result bound: the follow-up fits without the fit
   // step having to collapse any of the fresh results further.
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
-  for (const message of toolMessages) assert(message.content.length > 20_000);
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
+  for (const message of toolMessages) assert.ok(message.content.length > 20_000);
 
   // The durable tool_call events keep the full result (within the event
   // column's own limit): the window bound is a projection for the model, not
@@ -200,13 +199,13 @@ Deno.test("three parallel 64 KiB reads on a 32K window: every result is bounded 
   const toolEvents = (await rows(fit)).filter((row) =>
     row.event_type === "tool_call"
   );
-  assertEquals(toolEvents.length, 3);
+  assert.deepStrictEqual(toolEvents.length, 3);
   for (const event of toolEvents) {
-    assert(
+    assert.ok(
       (event.tool_result ?? "").length > toolMessages[0].content.length,
       "the event row should hold more of the result than the model saw",
     );
-    assertEquals((event.tool_result ?? "").includes("trimmed"), false);
+    assert.deepStrictEqual((event.tool_result ?? "").includes("trimmed"), false);
   }
 });
 
@@ -244,19 +243,19 @@ Deno.test("a session whose history is already over the window completes its next
     conversationMessages: history,
   });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "still here");
-  assertEquals(fit.run.transport.requests.length, 1);
+  assert.deepStrictEqual(fit.result?.text, "still here");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 1);
   assertEveryRequestFits(fit.run);
 
   const seen = conversation(fit.run.transport.requests[0]);
   const toolMessages = seen.filter((m) => m.role === "tool");
-  assertEquals(toolMessages.length, 3);
+  assert.deepStrictEqual(toolMessages.length, 3);
   // Oldest first: the earliest results are trimmed, the newest kept verbatim
   // once the request fits.
-  assertStringIncludes(toolMessages[0].content, "trimmed");
-  assert(toolMessages[0].content.length < 2_000);
-  assertEquals(toolMessages[2].content, history[6].content);
-  assertEquals(
+  assert.ok(toolMessages[0].content.includes("trimmed"), `expected toolMessages[0].content to include "trimmed"`);
+  assert.ok(toolMessages[0].content.length < 2_000);
+  assert.deepStrictEqual(toolMessages[2].content, history[6].content);
+  assert.deepStrictEqual(
     seen.map((m) => m.role),
     [
       "user",
@@ -271,14 +270,14 @@ Deno.test("a session whose history is already over the window completes its next
     ],
   );
   const fitted = frame(fit.frames, "contextFitted");
-  assert(fitted !== undefined);
-  assertObjectMatch(fitted, {
+  assert.ok(fitted !== undefined);
+  assert.partialDeepStrictEqual(fitted, {
     trigger: "before_send",
     contextWindow: WINDOW,
     compressed: false,
   });
-  assert(fitted.trimmedToolResults >= 1);
-  assert(fitted.estimatedTokensAfter < fitted.estimatedTokensBefore);
+  assert.ok(fitted.trimmedToolResults >= 1);
+  assert.ok(fitted.estimatedTokensAfter < fitted.estimatedTokensBefore);
 });
 
 // ─── fit compresses elder turns when shrinking is not enough ─────────────────
@@ -302,7 +301,7 @@ function summaryReply(): ScriptedExchange {
   return {
     ...chatReply({ content: VALID_SUMMARY }),
     expect: (request) =>
-      assertEquals(systemMessage(request), COMPRESSION_SYSTEM_PROMPT),
+      assert.deepStrictEqual(systemMessage(request), COMPRESSION_SYSTEM_PROMPT),
   };
 }
 
@@ -335,20 +334,20 @@ Deno.test("fit compresses elder prose when there are no tool results to shrink",
     ],
   }, { models: [TINY_WINDOW] });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "compressed twice");
-  assertEquals(fit.run.transport.requests.length, 3);
+  assert.deepStrictEqual(fit.result?.text, "compressed twice");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 3);
   assertEveryRequestFits(fit.run, TINY_WINDOW.context_window!);
   const compressions = fit.frames.filter((f) => f.type === "contextCompressed");
-  assertEquals(
+  assert.deepStrictEqual(
     compressions.map((f) => f.type === "contextCompressed" && f.trigger),
     ["proactive", "request_fit"],
   );
-  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+  assert.partialDeepStrictEqual(frame(fit.frames, "contextFitted")!, {
     trigger: "before_send",
     compressed: true,
     trimmedToolResults: 0,
   });
-  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
 });
 
 // ─── a provider's context-exceeded rejection is context overflow ─────────────
@@ -399,29 +398,26 @@ Deno.test("a llama-server context-size rejection is classified and recovered by 
     conversationMessages: history,
   });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "recovered");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, "recovered");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   const [first, retry] = fit.run.transport.requests;
-  assert(retry.body.length < first.body.length);
-  assert(Math.round((retry.body.length / 4) * 2.5) <= WINDOW);
-  assertStringIncludes(
-    conversation(retry).filter((m) => m.role === "tool")[0].content,
-    "trimmed",
-  );
-  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+  assert.ok(retry.body.length < first.body.length);
+  assert.ok(Math.round((retry.body.length / 4) * 2.5) <= WINDOW);
+  assert.ok(conversation(retry).filter((m) => m.role === "tool")[0].content.includes("trimmed"), `expected conversation(retry).filter((m) => m.role === "tool")[0].content to include "trimmed"`);
+  assert.partialDeepStrictEqual(frame(fit.frames, "contextFitted")!, {
     trigger: "provider_rejected",
     contextWindow: WINDOW,
   });
-  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
 
   const calls = (await rows(fit)).filter((row) =>
     row.event_type === "provider_call"
   );
-  assertObjectMatch(calls[0], {
+  assert.partialDeepStrictEqual(calls[0], {
     stop_reason: "error",
     provider_error_class: "ProviderContextExceededError",
   });
-  assertObjectMatch(calls[1], {
+  assert.partialDeepStrictEqual(calls[1], {
     provider_call_purpose: "recovery",
     stop_reason: "stop",
   });
@@ -431,18 +427,18 @@ Deno.test("a rejection with nothing left to trim fails as context overflow namin
   const fit = await fitTurn([LLAMA_SERVER_REJECTION], {
     prompt: "a short question",
   });
-  assert(fit.error instanceof Error);
-  assertStringIncludes(fit.error.message, "Context window overflow");
-  assertStringIncludes(fit.error.message, `${WINDOW}-token context window`);
-  assertEquals(fit.run.transport.requests.length, 1);
-  assertObjectMatch(fit.frames.at(-1)!, {
+  assert.ok(fit.error instanceof Error);
+  assert.ok(fit.error.message.includes("Context window overflow"), `expected fit.error.message to include "Context window overflow"`);
+  assert.ok(fit.error.message.includes(`${WINDOW}-token context window`), `expected fit.error.message to include \`\${WINDOW}-token context window\``);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 1);
+  assert.partialDeepStrictEqual(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });
   // The provider's body never rides the error: only the counts it reported.
-  assertEquals(fit.error.message.includes("try increasing it"), false);
+  assert.deepStrictEqual(fit.error.message.includes("try increasing it"), false);
   const errorRow = (await rows(fit)).find((row) => row.event_type === "error");
-  assertStringIncludes(errorRow?.content ?? "", "/model");
+  assert.ok((errorRow?.content ?? "").includes("/model"), `expected errorRow?.content ?? "" to include "/model"`);
 });
 
 Deno.test("the fit step never sends a request over the window on a tool follow-up", async () => {
@@ -460,15 +456,15 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
     },
   );
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "all read");
-  assertEquals(fit.run.transport.requests.length, 3);
+  assert.deepStrictEqual(fit.result?.text, "all read");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 3);
   assertEveryRequestFits(fit.run);
   // The small first result survives untouched on the later calls, and the
   // bounded results needed no further collapse.
   const last = conversation(fit.run.transport.requests[2]);
-  assertEquals(last.filter((m) => m.role === "tool")[0].content, "short\n");
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
-  assert(requestBody(fit.run.transport.requests[2]).tools !== undefined);
+  assert.deepStrictEqual(last.filter((m) => m.role === "tool")[0].content, "short\n");
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
+  assert.ok(requestBody(fit.run.transport.requests[2]).tools !== undefined);
 });
 
 // ─── the fit measures what the adapter sends ─────────────────────────────────
@@ -486,11 +482,11 @@ Deno.test("an adapter that sends only the prompt is sized by the prompt: a long 
     env: { GEMINI_API_KEY: "test-key-not-real" },
   });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "prompt-only reply");
-  assertEquals(fit.run.transport.requests.length, 1);
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
-  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
-  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(fit.result?.text, "prompt-only reply");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 1);
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
+  assert.deepStrictEqual(frame(fit.frames, "contextCompressed"), undefined);
+  assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
 });
 
 // ─── a fit that cannot reach the budget is a failure, not a fitted event ─────
@@ -503,13 +499,13 @@ Deno.test("trimming that still leaves the request over the window fails without 
     prompt: "a short follow-up",
     conversationMessages: overWindowHistory(60_000),
   }, { models: [{ ...LOCAL_MODEL, context_window: 4_000 }] });
-  assert(fit.error instanceof Error);
-  assertStringIncludes(fit.error.message, "4000-token context window");
-  assertStringIncludes(fit.error.message, "input budget");
-  assertStringIncludes(fit.error.message, "it was not sent");
-  assertEquals(fit.run.transport.requests.length, 0);
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
-  assertObjectMatch(fit.frames.at(-1)!, {
+  assert.ok(fit.error instanceof Error);
+  assert.ok(fit.error.message.includes("4000-token context window"), `expected fit.error.message to include "4000-token context window"`);
+  assert.ok(fit.error.message.includes("input budget"), `expected fit.error.message to include "input budget"`);
+  assert.ok(fit.error.message.includes("it was not sent"), `expected fit.error.message to include "it was not sent"`);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 0);
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
+  assert.partialDeepStrictEqual(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });
@@ -541,20 +537,17 @@ Deno.test("an overflow-recovery plan is fitted before its retry is sent", async 
     },
   );
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "recovered answer");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, "recovered answer");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   assertEveryRequestFits(fit.run, 10_000);
   const retry = conversation(fit.run.transport.requests[1]);
-  assertStringIncludes(
-    retry.find((m) => m.role === "tool")!.content,
-    "trimmed",
-  );
-  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+  assert.ok(retry.find((m) => m.role === "tool")!.content.includes("trimmed"), `expected retry.find((m) => m.role === "tool")!.content to include "trimmed"`);
+  assert.partialDeepStrictEqual(frame(fit.frames, "contextFitted")!, {
     trigger: "before_send",
     trimmedToolResults: 1,
     compressed: false,
   });
-  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthRecoveryFinished")!, {
     outcome: "recovered",
     retriesUsed: 1,
   });
@@ -593,20 +586,20 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
     conversationMessages: history,
   }, { models: [TINY_WINDOW] });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "compressed in passes");
+  assert.deepStrictEqual(fit.result?.text, "compressed in passes");
   assertEveryRequestFits(fit.run, TINY_WINDOW.context_window!);
   const compressions = fit.run.transport.requests.filter((request) =>
     systemMessage(request) === COMPRESSION_SYSTEM_PROMPT
   );
-  assert(compressions.length >= 2, "expected more than one compression pass");
-  assertEquals(
+  assert.ok(compressions.length >= 2, "expected more than one compression pass");
+  assert.deepStrictEqual(
     fit.run.transport.requests.length,
     compressions.length + 1,
   );
   const frames = fit.frames.filter((f) => f.type === "contextCompressed");
-  assertEquals(frames.length, compressions.length);
-  assertObjectMatch(frame(fit.frames, "contextFitted")!, { compressed: true });
-  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(frames.length, compressions.length);
+  assert.partialDeepStrictEqual(frame(fit.frames, "contextFitted")!, { compressed: true });
+  assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
   // The persisted retained counts replay to the transcript the model saw:
   // the summary, then exactly the turns kept verbatim.
   const rows = await eventRows(
@@ -616,7 +609,7 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
   const persisted = rows.filter((row) =>
     row.event_type === "context_compressed"
   );
-  assertEquals(persisted.length, compressions.length);
+  assert.deepStrictEqual(persisted.length, compressions.length);
   const live = conversation(fit.run.transport.requests.at(-1)!);
   const resumed = buildConversationMessages([
     ...history.map((m) =>
@@ -636,7 +629,7 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
       }) as unknown as WorkbenchSessionEvent
     ),
   ]);
-  assertEquals(
+  assert.deepStrictEqual(
     resumed.map((m) => ({ role: m.role, content: m.content })),
     live.map((m) => ({ role: m.role, content: m.content })),
   );
@@ -665,15 +658,15 @@ Deno.test("an adapter that sends only the prompt is never proactively compressed
     env: { GEMINI_API_KEY: "test-key-not-real" },
   });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "prompt-only reply");
-  assertEquals(fit.run.transport.requests.length, 1);
-  assertStringIncludes(fit.run.transport.requests[0].url, "googleapis.com");
-  assertEquals(frame(fit.frames, "contextCompressed"), undefined);
+  assert.deepStrictEqual(fit.result?.text, "prompt-only reply");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 1);
+  assert.ok(fit.run.transport.requests[0].url.includes("googleapis.com"), `expected fit.run.transport.requests[0].url to include "googleapis.com"`);
+  assert.deepStrictEqual(frame(fit.frames, "contextCompressed"), undefined);
   const rows = await eventRows(
     fit.run,
     frame(fit.frames, "sessionStart")!.sessionId,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     rows.some((row) => row.event_type === "context_compressed"),
     false,
   );
@@ -705,18 +698,18 @@ Deno.test("a refit retry that hits the output cap delivers the partial with its 
     },
   );
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "cut off plan");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, "cut off plan");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   // The cut-off plan never ran: recovery is bounded to the one retry.
-  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
-  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+  assert.deepStrictEqual(frame(fit.frames, "toolStepStarted"), undefined);
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthStopDetected")!, {
     classification: "output_budget_exhausted",
   });
-  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthRecoveryFinished")!, {
     outcome: "still_truncated",
     retriesUsed: 1,
   });
-  assertEquals(fit.frames.at(-1)?.type, "turnCompleted");
+  assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
 });
 
 Deno.test("a refit retry that still overflows the window fails structured", async () => {
@@ -727,15 +720,15 @@ Deno.test("a refit retry that still overflows the window fails structured", asyn
       conversationMessages: overWindowHistory(20_000),
     },
   );
-  assert(fit.error instanceof Error);
-  assertStringIncludes(fit.error.message, "Context window overflow");
-  assertEquals(fit.run.transport.requests.length, 2);
-  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
-  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+  assert.ok(fit.error instanceof Error);
+  assert.ok(fit.error.message.includes("Context window overflow"), `expected fit.error.message to include "Context window overflow"`);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(frame(fit.frames, "toolStepStarted"), undefined);
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
     retriesUsed: 1,
   });
-  assertObjectMatch(fit.frames.at(-1)!, {
+  assert.partialDeepStrictEqual(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });
@@ -768,16 +761,16 @@ Deno.test("a count-less rejection of the refit retry fails with the learned wind
     prompt: "a short follow-up",
     conversationMessages: overWindowHistory(20_000),
   });
-  assert(fit.error instanceof ContextWindowOverflowError);
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.ok(fit.error instanceof ContextWindowOverflowError);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   const [first, retry] = fit.run.transport.requests;
-  assertEquals(fit.error.details.contextWindow, 20_000);
-  assert(fit.error.details.inputTokens <= Math.ceil(retry.body.length / 4));
-  assert(
+  assert.deepStrictEqual(fit.error.details.contextWindow, 20_000);
+  assert.ok(fit.error.details.inputTokens <= Math.ceil(retry.body.length / 4));
+  assert.ok(
     fit.error.details.inputTokens < Math.ceil(first.body.length / 4) - 5_000,
   );
-  assertStringIncludes(fit.error.message, "20000-token context window");
-  assertObjectMatch(fit.frames.at(-1)!, {
+  assert.ok(fit.error.message.includes("20000-token context window"), `expected fit.error.message to include "20000-token context window"`);
+  assert.partialDeepStrictEqual(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });
@@ -810,15 +803,15 @@ Deno.test("a refit retry's length stop is classified against the window the reje
     prompt: "a short follow-up",
     conversationMessages: overWindowHistory(20_000),
   });
-  assert(fit.error instanceof ContextWindowOverflowError);
-  assertEquals(fit.error.details.contextWindow, 20_000);
-  assertEquals(fit.run.transport.requests.length, 2);
-  assertEquals(frame(fit.frames, "toolStepStarted"), undefined);
-  assertObjectMatch(frame(fit.frames, "lengthStopDetected")!, {
+  assert.ok(fit.error instanceof ContextWindowOverflowError);
+  assert.deepStrictEqual(fit.error.details.contextWindow, 20_000);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(frame(fit.frames, "toolStepStarted"), undefined);
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthStopDetected")!, {
     classification: "context_overflow",
     contextWindow: 20_000,
   });
-  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthRecoveryFinished")!, {
     outcome: "overflow_failed",
     retriesUsed: 1,
   });
@@ -846,19 +839,16 @@ Deno.test("a continuation the fit can make fit is retried even where the raw tra
     conversationMessages: history,
   }, { models: [{ ...LOCAL_MODEL, context_window: 12_000 }] });
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, partial + " and the rest");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, partial + " and the rest");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   assertEveryRequestFits(fit.run, 12_000);
   const retry = conversation(fit.run.transport.requests[1]);
-  assertStringIncludes(
-    retry.find((m) => m.role === "tool")!.content,
-    "trimmed",
-  );
-  assertObjectMatch(frame(fit.frames, "contextFitted")!, {
+  assert.ok(retry.find((m) => m.role === "tool")!.content.includes("trimmed"), `expected retry.find((m) => m.role === "tool")!.content to include "trimmed"`);
+  assert.partialDeepStrictEqual(frame(fit.frames, "contextFitted")!, {
     trigger: "before_send",
     trimmedToolResults: 1,
   });
-  assertObjectMatch(frame(fit.frames, "lengthRecoveryFinished")!, {
+  assert.partialDeepStrictEqual(frame(fit.frames, "lengthRecoveryFinished")!, {
     outcome: "recovered",
     retriesUsed: 1,
   });
@@ -884,16 +874,16 @@ Deno.test("a result before a forced conclusion is sized against the request with
     },
   );
   assertEquals(fit.error, null);
-  assertEquals(fit.result?.text, "concluded");
-  assertEquals(fit.run.transport.requests.length, 2);
+  assert.deepStrictEqual(fit.result?.text, "concluded");
+  assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   const conclusion = fit.run.transport.requests[1];
-  assertEquals(requestBody(conclusion).tools, undefined);
-  assertEquals(
+  assert.deepStrictEqual(requestBody(conclusion).tools, undefined);
+  assert.deepStrictEqual(
     conversation(conclusion).find((m) => m.role === "tool")?.content,
     notes,
   );
-  assertEquals(frame(fit.frames, "toolResultTrimmed"), undefined);
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
+  assert.deepStrictEqual(frame(fit.frames, "toolResultTrimmed"), undefined);
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
   assertEveryRequestFits(fit.run, 12_000);
 });
 
@@ -920,11 +910,11 @@ Deno.test("a Gemini context-size rejection fails as context overflow without a r
     models: [GEMINI_FREE_MODEL],
     env: { GEMINI_API_KEY: "test-key-not-real" },
   });
-  assert(fit.error instanceof ContextWindowOverflowError);
-  assertEquals(fit.error.details.contextWindow, 32_768);
-  assertEquals(fit.run.transport.requests.length, 1);
-  assertEquals(frame(fit.frames, "contextFitted"), undefined);
-  assertObjectMatch(fit.frames.at(-1)!, {
+  assert.ok(fit.error instanceof ContextWindowOverflowError);
+  assert.deepStrictEqual(fit.error.details.contextWindow, 32_768);
+  assert.deepStrictEqual(fit.run.transport.requests.length, 1);
+  assert.deepStrictEqual(frame(fit.frames, "contextFitted"), undefined);
+  assert.partialDeepStrictEqual(fit.frames.at(-1)!, {
     type: "turnFailed",
     errorName: "ContextWindowOverflowError",
   });

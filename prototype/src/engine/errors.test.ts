@@ -1,4 +1,5 @@
-import { assert, assertEquals, assertNotEquals } from "@std/assert";
+import assert from "node:assert/strict";
+import { assertEquals, assertNotEquals } from "@std/assert";
 import { BudgetExceededError } from "../budget/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
@@ -28,7 +29,7 @@ Deno.test("PaidEscalationDeclinedError passes a short, ordinary reason through u
     reason: "not now",
   });
   assertEquals(err.verdict.reason, "not now");
-  assert(err.message.includes("not now"));
+  assert.ok(err.message.includes("not now"));
 });
 
 Deno.test("PaidEscalationDeclinedError caps an oversized reason, on both .message and the stored .verdict", () => {
@@ -37,11 +38,11 @@ Deno.test("PaidEscalationDeclinedError caps an oversized reason, on both .messag
     decision: "escalate",
     reason,
   });
-  assert(
+  assert.ok(
     new TextEncoder().encode(err.verdict.reason ?? "").byteLength <=
       MAX_REASON_FIELD_BYTES,
   );
-  assert(!err.message.includes(reason));
+  assert.ok(!err.message.includes(reason));
 });
 
 Deno.test("PaidEscalationDeclinedError strips a terminal escape sequence from the reason", () => {
@@ -50,8 +51,8 @@ Deno.test("PaidEscalationDeclinedError strips a terminal escape sequence from th
     decision: "deny",
     reason: `${esc}[31mdanger${esc}[0m`,
   });
-  assert(!(err.verdict.reason ?? "").includes(esc));
-  assert(!err.message.includes(esc));
+  assert.ok(!(err.verdict.reason ?? "").includes(esc));
+  assert.ok(!err.message.includes(esc));
 });
 
 // ── classifyErrorKind ─────────────────────────────────────────────────────────
@@ -85,8 +86,8 @@ Deno.test("classifyErrorKind classifies a DomainError subclass with a shadowed .
   Object.defineProperty(err, "constructor", {
     value: { name: "FOREIGN_PAYLOAD" },
   });
-  assert(err instanceof DomainError);
-  assert(err instanceof BudgetExceededError);
+  assert.ok(err instanceof DomainError);
+  assert.ok(err instanceof BudgetExceededError);
   assertEquals(classifyErrorKind(err), "BudgetExceededError");
   assertNotEquals(classifyErrorKind(err), "FOREIGN_PAYLOAD");
 });
@@ -104,8 +105,8 @@ Deno.test('classifyErrorKind reports the fixed literal "Error" for a plain Error
 });
 
 Deno.test('classifyErrorKind reports "unknown" for a non-Error throw', () => {
-  assertEquals(classifyErrorKind("bare string throw"), "unknown");
-  assertEquals(classifyErrorKind(null), "unknown");
+  assert.deepStrictEqual(classifyErrorKind("bare string throw"), "unknown");
+  assert.deepStrictEqual(classifyErrorKind(null), "unknown");
 });
 
 Deno.test('classifyErrorKind classifies a foreign Error with a spoofed .constructor.name as plain "Error"', () => {
@@ -113,7 +114,7 @@ Deno.test('classifyErrorKind classifies a foreign Error with a spoofed .construc
   Object.defineProperty(spoofed, "constructor", {
     value: { name: "FOREIGN_PAYLOAD" },
   });
-  assert(spoofed instanceof Error);
+  assert.ok(spoofed instanceof Error);
   assertEquals(classifyErrorKind(spoofed), "Error");
 });
 
@@ -123,8 +124,8 @@ Deno.test("classifyErrorKind does not treat an error-shaped plain object as an E
     constructor: { name: "ContextWindowOverflowError" },
     message: "not a real error",
   };
-  assert(!(fake instanceof Error));
-  assertEquals(classifyErrorKind(fake), "unknown");
+  assert.ok(!(fake instanceof Error));
+  assert.deepStrictEqual(classifyErrorKind(fake), "unknown");
 });
 
 Deno.test("classifyErrorKind reports each provider failure class by its own fixed literal", () => {

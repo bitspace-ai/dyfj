@@ -3,14 +3,8 @@
  * `buildContext`: model selection into the turn state, the entry gates in
  * order, and the `model_selected` record.
  */
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertObjectMatch,
-  assertRejects,
-} from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import {
   type EngineFakes,
   enginePorts,
@@ -77,17 +71,17 @@ Deno.test("budgetGate routes a free local turn and records the selection", async
 
   const route = await budgetGate(state, input, fakes.ports);
 
-  assertEquals(route.selected.slug, "local-chat");
-  assertEquals(state.selectedForReceipt?.slug, "local-chat");
-  assertEquals(state.selectedForEvents, {
+  assert.deepStrictEqual(route.selected.slug, "local-chat");
+  assert.deepStrictEqual(state.selectedForReceipt?.slug, "local-chat");
+  assert.deepStrictEqual(state.selectedForEvents, {
     slug: "local-chat",
     provider: "ollama",
     api: "openai-completions",
   });
-  assertEquals(state.estimatedCostUsd, 0);
+  assert.deepStrictEqual(state.estimatedCostUsd, 0);
   const [selected] = await selectedRows(fakes, state.session.sessionId);
-  assertObjectMatch(selected, { model_id: "local-chat" });
-  assertEquals(frames.at(-1), {
+  assert.partialDeepStrictEqual(selected, { model_id: "local-chat" });
+  assert.deepStrictEqual(frames.at(-1), {
     type: "modelSelected",
     sessionId: state.session.sessionId,
     modelSlug: "local-chat",
@@ -118,18 +112,18 @@ Deno.test("budgetGate asks paid consent with the preflight banner, and a decline
   );
 
   const error = await budgetGate(state, input, fakes.ports).catch((e) => e);
-  assertInstanceOf(error, PaidEscalationDeclinedError);
-  assertEquals(banners.length, 1);
-  assert(banners[0].startsWith("Paid inference preflight"));
+  assert.ok(error instanceof PaidEscalationDeclinedError);
+  assert.deepStrictEqual(banners.length, 1);
+  assert.ok(banners[0].startsWith("Paid inference preflight"));
   // The selection is on the receipt, but nothing was recorded as selected.
-  assertEquals(state.selectedForReceipt?.slug, PRICED.slug);
-  assertEquals(await selectedRows(fakes, state.session.sessionId), []);
+  assert.deepStrictEqual(state.selectedForReceipt?.slug, PRICED.slug);
+  assert.deepStrictEqual(await selectedRows(fakes, state.session.sessionId), []);
 });
 
 Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decline stops the turn", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({ models: [PRICED] });
-  const confirmPaidEscalation = spy(() =>
+  const confirmPaidEscalation = mock.fn(() =>
     Promise.resolve({ decision: "approve" as const })
   );
   const { state, input } = await contextReady(
@@ -146,11 +140,11 @@ Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decl
     root.root,
   );
 
-  await assertRejects(
+  await assert.rejects(
     () => budgetGate(state, input, fakes.ports),
     BudgetCeilingDeclinedError,
   );
-  assertSpyCalls(confirmPaidEscalation, 0);
+  assert.equal(confirmPaidEscalation.mock.callCount(), 0);
 });
 
 Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can record a confirmation", async () => {
@@ -158,7 +152,7 @@ Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can rec
   const fakes = enginePorts({
     models: [pricedLocalModel({ costInput: 0.000001, costOutput: 10_000 })],
   });
-  const confirmBudgetCeiling = spy(() =>
+  const confirmBudgetCeiling = mock.fn(() =>
     Promise.resolve({ decision: "approve" as const })
   );
   fakes.ports.fetchSpendBaselines = () =>
@@ -181,17 +175,17 @@ Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can rec
     root.root,
   );
 
-  await assertRejects(
+  await assert.rejects(
     () => budgetGate(state, input, fakes.ports),
     RunawayAnomalyHaltError,
   );
-  assertSpyCalls(confirmBudgetCeiling, 0);
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 0);
 });
 
 Deno.test("an approved ceiling overrun persists for the session through its owner's budget scope", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({ models: [PRICED] });
-  const confirmBudgetCeiling = spy(() =>
+  const confirmBudgetCeiling = mock.fn(() =>
     Promise.resolve({ decision: "approve" as const })
   );
   const turn = {
@@ -210,7 +204,7 @@ Deno.test("an approved ceiling overrun persists for the session through its owne
   await budgetGate(second.state, second.input, fakes.ports);
   // The first turn's confirmation raised the session's per-call mark, so the
   // second turn at the same estimate is not asked again.
-  assertSpyCalls(confirmBudgetCeiling, 1);
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 1);
   const marks = fakes.ports.budgetScopes.budgetScope(turn.sessionId);
-  assert((marks.per_call_limit ?? 0) > 0.00001);
+  assert.ok((marks.per_call_limit ?? 0) > 0.00001);
 });
