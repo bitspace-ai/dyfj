@@ -647,6 +647,8 @@ function isPostfixChain(text: string): boolean {
     if ("([{".includes(c)) depth++;
     else if (")]}".includes(c)) depth--;
     else if (depth === 0 && !/[\w$.?!]/.test(c)) return false;
+    // `?` only as optional chaining; `??` and a ternary bind looser.
+    else if (depth === 0 && c === "?" && text[i + 1] !== ".") return false;
   }
   return text !== "";
 }
@@ -1449,6 +1451,14 @@ function onlySpyBindings(ctx: Context, name: string): boolean {
   ).map(([local]) => local);
   const { text } = ctx.original;
   if (ctx.heldSpies.has(name)) return false;
+  // A later assignment can hold a spy the tool did not create.
+  const reassigned = occurrences(ctx.original, name).some((pos) =>
+    !declaresAt(ctx.original, ctx.imports, name, pos) &&
+    /^\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/.test(
+      text.slice(pos + name.length),
+    )
+  );
+  if (reassigned) return false;
   return declarations(ctx.original, ctx.imports, name).every((pos) => {
     const after = text.slice(pos + name.length);
     return creators.some((local) => {
@@ -1627,8 +1637,9 @@ const spyMemberPass: Pass = (src, ctx) => {
     if (!isConvertedSpy(src, name)) continue;
     for (const pos of occurrences(src, name)) {
       const dot = nextCode(src, pos + name.length);
-      if (src.text[dot] !== ".") continue;
-      const member = /^\.\s*([\w$]+)/.exec(src.text.slice(dot));
+      // A member read, plain or optional (`s.restore()`, `s?.restore()`).
+      if (src.text[dot] !== "." && !src.text.startsWith("?.", dot)) continue;
+      const member = /^\??\.\s*([\w$]+)/.exec(src.text.slice(dot));
       if (!member) continue;
       const memberStart = dot + member[0].length - member[1].length;
       const memberEnd = dot + member[0].length;

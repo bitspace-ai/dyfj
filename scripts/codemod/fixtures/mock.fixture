@@ -28,6 +28,7 @@ Deno.test("mocks", () => {
   } finally {
     warn.restore();
     log /* cleanup */ .restore();
+    quiet?.restore();
   }
 });
 --- after
@@ -53,6 +54,7 @@ Deno.test("mocks", () => {
   } finally {
     warn.mock.restore();
     log /* cleanup */ .mock.restore();
+    quiet?.mock.restore();
   }
 });
 --- findings
