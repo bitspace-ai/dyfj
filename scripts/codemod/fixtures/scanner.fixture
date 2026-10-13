@@ -1,9 +1,10 @@
 # Only code is rewritten: names inside strings, templates, comments and regex
 # literals are left alone (a regex can follow a control statement's closing
 # parenthesis), while code inside template substitutions is not. A `/` after
-# a postfix ++ or -- divides. A `/` after a `}` on the same line is read as a
-# regex when one parses there, and reported, since an object literal could
-# also stand there. A std name inside such a span keeps its import.
+# a postfix ++ or -- divides; after break, continue or debugger a regex
+# starts. A `/` after a `}` is read as a regex when one parses there, and
+# reported, since an object literal could also stand there. A std name inside
+# such a span keeps its import.
 rules: assert.equals
 --- before
 // A header comment before the imports.
@@ -27,6 +28,12 @@ Deno.test("scanner", () => {
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   const n = { valueOf() { return 4; } } / ratio / 1;
   for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
+  for (const x of [quoted]) {
+    if (!x) continue
+    /assertEquals(1, 2)/.test(x);
+    debugger
+    /assertEquals(1, 2)/.test(x);
+  }
   assertEquals(ratio, 2);
   void [quoted, single, pattern, template, halves, quarter, n];
 });
@@ -53,6 +60,12 @@ Deno.test("scanner", () => {
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   const n = { valueOf() { return 4; } } / ratio / 1;
   for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
+  for (const x of [quoted]) {
+    if (!x) continue
+    /assertEquals(1, 2)/.test(x);
+    debugger
+    /assertEquals(1, 2)/.test(x);
+  }
   assert.deepStrictEqual(ratio, 2);
   void [quoted, single, pattern, template, halves, quarter, n];
 });

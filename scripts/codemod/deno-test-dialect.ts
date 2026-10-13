@@ -268,6 +268,10 @@ const REGEX_AFTER_WORD = new Set([
   "else",
   "await",
   "yield",
+  // Statement terminators: under ASI a regex can start the next line.
+  "break",
+  "continue",
+  "debugger",
 ]);
 
 const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
