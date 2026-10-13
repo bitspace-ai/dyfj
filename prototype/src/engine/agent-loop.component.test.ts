@@ -10,9 +10,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mock } from "node:test";
-import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { stub } from "@std/testing/mock";
 import {
   chatReply,
   conversation,
@@ -102,17 +100,17 @@ async function quietly<T>(
 ): Promise<{ value: T; warnings: string[] }> {
   const log = mock.method(console, "log", () => {});
   const warn = mock.method(console, "warn", () => {});
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   try {
     const value = await run();
     return {
       value,
-      warnings: warn.calls.map((call) => String(call.args[0])),
+      warnings: warn.mock.calls.map((call) => String(call.arguments[0])),
     };
   } finally {
     log.mock.restore();
     warn.mock.restore();
-    error.restore();
+    error.mock.restore();
   }
 }
 
@@ -147,7 +145,12 @@ Deno.test("agent loop honors a configured small step limit and forces a no-tools
   // The final forced call dropped tools to make the model conclude.
   const last = run.transport.requests.at(-1)!;
   assert.deepStrictEqual(requestBody(last).tools, undefined);
-  assert.ok(systemMessage(last).includes("Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached."), `expected systemMessage(last) to include "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached."`);
+  assert.ok(
+    systemMessage(last).includes(
+      "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached.",
+    ),
+    `expected systemMessage(last) to include "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached."`,
+  );
   assert.deepStrictEqual(
     conversation(last).filter((m) => m.role === "user").map((m) => m.content),
     ["loop without stopping"],
@@ -199,8 +202,16 @@ Deno.test("agent loop forces a conclusion when the model repeats prior tool call
   assert.deepStrictEqual(run.transport.requests.length, 3);
   const forced = run.transport.requests[2];
   assert.deepStrictEqual(requestBody(forced).tools, undefined);
-  assert.ok(systemMessage(forced).includes("Workbench instruction: tool use ended because the model repeated prior tool calls."), `expected systemMessage(forced) to include "Workbench instruction: tool use ended because the model repeated prior tool calls."`);
-  assert.deepStrictEqual(frames.some((f) => f.type === "toolStepLimitReached"), false);
+  assert.ok(
+    systemMessage(forced).includes(
+      "Workbench instruction: tool use ended because the model repeated prior tool calls.",
+    ),
+    `expected systemMessage(forced) to include "Workbench instruction: tool use ended because the model repeated prior tool calls."`,
+  );
+  assert.deepStrictEqual(
+    frames.some((f) => f.type === "toolStepLimitReached"),
+    false,
+  );
 });
 
 // ─── a denied approval ends tool use for the turn ────────────────────────────
@@ -244,21 +255,29 @@ describe("a denied approval", () => {
         },
       },
     });
-    assertEquals(loop.error, null);
+    assert.strictEqual(loop.error, null);
     // One approval was raised, the denial ended tool use, and the model was
     // asked once more, with no tools: two provider requests in all.
     assert.deepStrictEqual(approvals, ["c1"]);
     assert.deepStrictEqual(loop.run.transport.requests.length, 2);
     const concluding = loop.run.transport.requests[1];
     assert.deepStrictEqual(requestBody(concluding).tools, undefined);
-    assert.ok(systemMessage(concluding).includes("Workbench instruction: tool use ended because a tool call was not approved."), `expected systemMessage(concluding) to include "Workbench instruction: tool use ended because a tool call was not approved."`);
+    assert.ok(
+      systemMessage(concluding).includes(
+        "Workbench instruction: tool use ended because a tool call was not approved.",
+      ),
+      `expected systemMessage(concluding) to include "Workbench instruction: tool use ended because a tool call was not approved."`,
+    );
     // The tool message is a refusal the model cannot mistake for output.
     const toolMessage = conversation(concluding).find((m) => m.role === "tool");
     assert.match(
       toolMessage?.content ?? "",
       /^approval_denied: this write_file call was not approved, so it did not run; this is not its output\. /,
     );
-    assert.ok((toolMessage?.content ?? "").includes("Reason given: operator declined"), `expected toolMessage?.content ?? "" to include "Reason given: operator declined"`);
+    assert.ok(
+      (toolMessage?.content ?? "").includes("Reason given: operator declined"),
+      `expected toolMessage?.content ?? "" to include "Reason given: operator declined"`,
+    );
     // The frame carries the verdict; the stop reason is the ordinary one.
     const completed = loop.frames.filter((f) => f.type === "toolCallCompleted");
     assert.deepStrictEqual(completed.length, 1);
@@ -304,7 +323,7 @@ describe("after a denied approval", () => {
         },
       },
     });
-    assertEquals(loop.error, null);
+    assert.strictEqual(loop.error, null);
     assert.deepStrictEqual(approvals, ["c1"]);
     assert.deepStrictEqual(loop.run.transport.requests.length, 2);
     assert.deepStrictEqual(
@@ -346,7 +365,10 @@ Deno.test("contains a failed capped conclusion without losing prior-call account
   );
   assert.deepStrictEqual(calls.length, AGENT_DEFAULTS.maxToolSteps + 1);
   for (const call of calls.slice(0, AGENT_DEFAULTS.maxToolSteps)) {
-    assert.partialDeepStrictEqual(call, { stop_reason: "tool_use", tokens_input: "10" });
+    assert.partialDeepStrictEqual(call, {
+      stop_reason: "tool_use",
+      tokens_input: "10",
+    });
   }
   assert.partialDeepStrictEqual(calls.at(-1)!, {
     provider_call_purpose: "forced_conclusion",
@@ -357,7 +379,10 @@ Deno.test("contains a failed capped conclusion without losing prior-call account
     errorName: "ToolStepLimitConclusionError",
     errorMessage: CONCLUSION_FAILED,
   });
-  assert.deepStrictEqual(JSON.stringify({ calls, frames }).includes(sentinel), false);
+  assert.deepStrictEqual(
+    JSON.stringify({ calls, frames }).includes(sentinel),
+    false,
+  );
 });
 
 Deno.test("contains a failed overflow-recovery call after the tool-step limit", async () => {
@@ -399,7 +424,10 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
     errorName: "ToolStepLimitConclusionError",
     errorMessage: CONCLUSION_FAILED,
   });
-  assert.deepStrictEqual(JSON.stringify({ calls, frames }).includes(sentinel), false);
+  assert.deepStrictEqual(
+    JSON.stringify({ calls, frames }).includes(sentinel),
+    false,
+  );
 });
 
 // ─── the provider-call trace ─────────────────────────────────────────────────
@@ -475,7 +503,10 @@ Deno.test("a skipped provider_call span leaves its requested tool attached to th
   );
   const all = await rows(loop);
   const root = all.find((row) => row.event_type === "session_start")!;
-  assert.deepStrictEqual(all.some((row) => row.event_type === "provider_call"), false);
+  assert.deepStrictEqual(
+    all.some((row) => row.event_type === "provider_call"),
+    false,
+  );
   const toolCall = all.find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "c1"
   );
@@ -484,7 +515,10 @@ Deno.test("a skipped provider_call span leaves its requested tool attached to th
     text: "complete despite skipped provider spans",
     tokens: { input: 84, output: 14, totalCalls: 2 },
   });
-  assert.ok(loop.result!.receipt.includes("audit log has gaps"), `expected loop.result!.receipt to include "audit log has gaps"`);
+  assert.ok(
+    loop.result!.receipt.includes("audit log has gaps"),
+    `expected loop.result!.receipt to include "audit log has gaps"`,
+  );
   assert.ok(warnings.some((line) => line.includes("Event write skipped")));
 });
 
@@ -524,11 +558,20 @@ Deno.test("tool_call event write failure does not fail the tool step or turn (be
   assert.ok(skipped.length > 0);
   for (const line of skipped) {
     assert.deepStrictEqual(line.includes("simulated write failure"), false);
-    assert.ok(line.includes("Error"), `expected ${JSON.stringify(line)} to include "Error"`);
+    assert.ok(
+      line.includes("Error"),
+      `expected ${JSON.stringify(line)} to include "Error"`,
+    );
   }
   // Best-effort never means silent: the receipt carries the skip count.
-  assert.ok(loop.result!.receipt.includes("event write(s) failed"), `expected loop.result!.receipt to include "event write(s) failed"`);
-  assert.ok(loop.result!.receipt.includes("audit log has gaps"), `expected loop.result!.receipt to include "audit log has gaps"`);
+  assert.ok(
+    loop.result!.receipt.includes("event write(s) failed"),
+    `expected loop.result!.receipt to include "event write(s) failed"`,
+  );
+  assert.ok(
+    loop.result!.receipt.includes("audit log has gaps"),
+    `expected loop.result!.receipt to include "audit log has gaps"`,
+  );
 });
 
 // ─── unparsed tool-call markup ───────────────────────────────────────────────
@@ -558,7 +601,10 @@ Deno.test("emits and persists content-free unparsed-markup metadata before compl
       loop.frames.findIndex((f) => f.type === "turnCompleted"),
   );
   const all = await rows(loop);
-  assert.deepStrictEqual(all.some((row) => row.event_type === "tool_call"), false);
+  assert.deepStrictEqual(
+    all.some((row) => row.event_type === "tool_call"),
+    false,
+  );
   const call = all.find((row) => row.event_type === "provider_call")!;
   assert.deepStrictEqual(call.unparsed_tool_call_count, String(warning.count));
   assert.deepStrictEqual(
@@ -579,7 +625,10 @@ Deno.test("flags a complete textual tool call the forced conclusion cannot run",
     "<parameter=path>\nREADME.md\n</parameter>\n</function>\n</tool_call>";
   const repeat = toolReply([LIST("c")]);
   const loop = await loopTurn([repeat, repeat, chatReply({ content: block })]);
-  assert.deepStrictEqual(requestBody(loop.run.transport.requests[2]).tools, undefined);
+  assert.deepStrictEqual(
+    requestBody(loop.run.transport.requests[2]).tools,
+    undefined,
+  );
   assert.deepStrictEqual(loop.result?.text, block);
   const warning = loop.frames.find((f) =>
     f.type === "unparsedToolCallMarkupDetected"
@@ -654,8 +703,18 @@ Deno.test("a denied tool call's reason reaches the model verbatim on the next st
   );
   assert.ok(toolMessage !== undefined);
   assert.deepStrictEqual(toolMessage.tool_call_id, "bad-1");
-  assert.ok(toolMessage.content.includes("invalid arguments for read_file: missing required argument: path"), `expected toolMessage.content to include "invalid arguments for read_file: missing required argument: path"`);
-  assert.ok(toolMessage.content.includes("Call read_file again with arguments matching the expected shape."), `expected toolMessage.content to include "Call read_file again with arguments matching the expected shape."`);
+  assert.ok(
+    toolMessage.content.includes(
+      "invalid arguments for read_file: missing required argument: path",
+    ),
+    `expected toolMessage.content to include "invalid arguments for read_file: missing required argument: path"`,
+  );
+  assert.ok(
+    toolMessage.content.includes(
+      "Call read_file again with arguments matching the expected shape.",
+    ),
+    `expected toolMessage.content to include "Call read_file again with arguments matching the expected shape."`,
+  );
   const event = (await rows(loop)).find((row) =>
     row.event_type === "tool_call" && row.tool_call_id === "bad-1"
   );
@@ -679,8 +738,18 @@ Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", 
   assert.ok(completed?.type === "toolCallCompleted");
   const message = String(completed.errorMessage);
   assert.deepStrictEqual(message.includes(hugePayload), false);
-  assert.ok(message.includes("Error"), `expected ${JSON.stringify(message)} to include "Error"`);
-  assert.ok(message.includes(`${new TextEncoder().encode(hugePayload).byteLength} bytes`), `expected ${JSON.stringify(message)} to include \`\${new TextEncoder().encode(hugePayload).byteLength} bytes\``);
+  assert.ok(
+    message.includes("Error"),
+    `expected ${JSON.stringify(message)} to include "Error"`,
+  );
+  assert.ok(
+    message.includes(
+      `${new TextEncoder().encode(hugePayload).byteLength} bytes`,
+    ),
+    `expected ${
+      JSON.stringify(message)
+    } to include \`\${new TextEncoder().encode(hugePayload).byteLength} bytes\``,
+  );
 });
 
 // ─── cancellation inside a tool step ─────────────────────────────────────────
@@ -744,7 +813,10 @@ Deno.test("an approval cancellation does not report a tool failure", async () =>
     },
   });
   assert.deepStrictEqual(result?.stopReason, "aborted");
-  assert.deepStrictEqual(frames.some((f) => f.type === "toolCallCompleted"), false);
+  assert.deepStrictEqual(
+    frames.some((f) => f.type === "toolCallCompleted"),
+    false,
+  );
   assert.ok(
     frames.some((f) =>
       f.type === "turnAborted" && f.turnId === turnId &&

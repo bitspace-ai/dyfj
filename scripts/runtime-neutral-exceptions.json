@@ -356,7 +356,7 @@
   },
   {
     "path": "prototype/src/engine/agent-loop.component.test.ts",
-    "count": 22,
+    "count": 19,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -376,22 +376,22 @@
   },
   {
     "path": "prototype/src/engine/build-context.test.ts",
-    "count": 24,
+    "count": 23,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/engine/compression.component.test.ts",
-    "count": 19,
+    "count": 17,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/engine/context-fit.component.test.ts",
-    "count": 21,
+    "count": 18,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/engine/engine.component.test.ts",
-    "count": 19,
+    "count": 18,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

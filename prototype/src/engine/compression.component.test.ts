@@ -196,7 +196,12 @@ Deno.test("compresses elder turns when the transcript crosses ~50% of the window
   assert.deepStrictEqual(frame.trigger, "proactive");
   assert.deepStrictEqual(frame.turnsCompressed, 2);
   const seen = conversation(sessionRequest(run));
-  assert.ok(seen[0].content.includes(CONVERSATION_SUMMARY_MARKER), `expected seen[0].content to include ${JSON.stringify(CONVERSATION_SUMMARY_MARKER)}`);
+  assert.ok(
+    seen[0].content.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected seen[0].content to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
   assert.deepStrictEqual(JSON.stringify(seen).includes("old question"), false);
 
   const sessionId = frames.find((f) => f.type === "sessionStart")?.sessionId;
@@ -266,7 +271,10 @@ Deno.test("records a safe failed compression attempt and continues uncompressed"
       },
     )
   );
-  assert.ok(JSON.stringify(conversation(sessionRequest(run))).includes("old question"), `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`);
+  assert.ok(
+    JSON.stringify(conversation(sessionRequest(run))).includes("old question"),
+    `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`,
+  );
   const sessionId = frames.find((f) => f.type === "sessionStart")?.sessionId;
   const rows = await eventRows(run, sessionId!);
   assert.deepStrictEqual(
@@ -279,7 +287,10 @@ Deno.test("records a safe failed compression attempt and continues uncompressed"
   );
   assert.partialDeepStrictEqual(attempt ?? {}, { stop_reason: "error" });
   assert.ok((attempt?.provider_error_class ?? "") !== "");
-  assert.deepStrictEqual(JSON.stringify(attempt).includes(providerMessage), false);
+  assert.deepStrictEqual(
+    JSON.stringify(attempt).includes(providerMessage),
+    false,
+  );
 });
 
 Deno.test("an abort during compression cannot replace elder context", async () => {
@@ -317,7 +328,10 @@ Deno.test("does not compress below the trigger, and leaves the transcript intact
     { models: [HUGE_WINDOW] },
   );
   assert.deepStrictEqual(compressed(frames), undefined);
-  assert.ok(JSON.stringify(conversation(sessionRequest(run))).includes("old question"), `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`);
+  assert.ok(
+    JSON.stringify(conversation(sessionRequest(run))).includes("old question"),
+    `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`,
+  );
 });
 
 Deno.test("the companion turn's system prompt carries the untrusted-summary policy", async () => {
@@ -326,7 +340,12 @@ Deno.test("the companion turn's system prompt carries the untrusted-summary poli
     { prompt: "hello", conversationMessages: undefined },
     { models: [HUGE_WINDOW] },
   );
-  assert.ok(systemMessage(sessionRequest(run)).includes(SUMMARY_TRUST_POLICY), `expected systemMessage(sessionRequest(run)) to include ${JSON.stringify(SUMMARY_TRUST_POLICY)}`);
+  assert.ok(
+    systemMessage(sessionRequest(run)).includes(SUMMARY_TRUST_POLICY),
+    `expected systemMessage(sessionRequest(run)) to include ${
+      JSON.stringify(SUMMARY_TRUST_POLICY)
+    }`,
+  );
 });
 
 Deno.test("[case 16] proactive compression leaves the native notice outside partitioned messages", async () => {
@@ -344,7 +363,10 @@ Deno.test("[case 16] proactive compression leaves the native notice outside part
   ], { historyOmission: omission });
   assert.deepStrictEqual(run.transport.requests.length, 2);
   const request = sessionRequest(run);
-  assert.ok(systemMessage(request).includes("[Workbench-generated history notice]"), `expected systemMessage(request) to include "[Workbench-generated history notice]"`);
+  assert.ok(
+    systemMessage(request).includes("[Workbench-generated history notice]"),
+    `expected systemMessage(request) to include "[Workbench-generated history notice]"`,
+  );
   assert.deepStrictEqual(
     JSON.stringify(conversation(request)).includes(
       "Workbench-generated history notice",
@@ -370,7 +392,10 @@ Deno.test("declines compression when its event cannot be persisted", async () =>
     )
   );
   assert.deepStrictEqual(compressed(frames), undefined);
-  assert.ok(JSON.stringify(conversation(sessionRequest(run))).includes("old question"), `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`);
+  assert.ok(
+    JSON.stringify(conversation(sessionRequest(run))).includes("old question"),
+    `expected JSON.stringify(conversation(sessionRequest(run))) to include "old question"`,
+  );
 });
 
 Deno.test("adopts compression when a rejected write turns out to be durable", async () => {
@@ -388,7 +413,12 @@ Deno.test("adopts compression when a rejected write turns out to be durable", as
   assert.ok(compressed(frames) !== undefined);
   const seen = JSON.stringify(conversation(sessionRequest(run)));
   assert.deepStrictEqual(seen.includes("old question"), false);
-  assert.ok(seen.includes(CONVERSATION_SUMMARY_MARKER), `expected ${JSON.stringify(seen)} to include ${JSON.stringify(CONVERSATION_SUMMARY_MARKER)}`);
+  assert.ok(
+    seen.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected ${JSON.stringify(seen)} to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
 });
 
 Deno.test("fails the turn when durability cannot be determined", async () => {
@@ -453,8 +483,14 @@ Deno.test("the payload the proactive path actually emits replays byte-identical"
   // The verbatim tail survived: the first retained turn is the one an
   // off-by-one in the retained count silently eats.
   const text = JSON.stringify(resumed);
-  assert.ok(text.includes("third question"), `expected ${JSON.stringify(text)} to include "third question"`);
-  assert.ok(text.includes("fourth question"), `expected ${JSON.stringify(text)} to include "fourth question"`);
+  assert.ok(
+    text.includes("third question"),
+    `expected ${JSON.stringify(text)} to include "third question"`,
+  );
+  assert.ok(
+    text.includes("fourth question"),
+    `expected ${JSON.stringify(text)} to include "fourth question"`,
+  );
   assert.deepStrictEqual(text.includes("old question"), false);
 });
 
@@ -515,7 +551,10 @@ Deno.test("[case 22] persisted reactive compression is followed by an event-reco
   );
   assert.deepStrictEqual(sessionCalls.length, 2);
   for (const request of sessionCalls) {
-    assert.ok(systemMessage(request).includes("[Workbench-generated history notice]"), `expected systemMessage(request) to include "[Workbench-generated history notice]"`);
+    assert.ok(
+      systemMessage(request).includes("[Workbench-generated history notice]"),
+      `expected systemMessage(request) to include "[Workbench-generated history notice]"`,
+    );
   }
   assert.deepStrictEqual(result.historyOmission?.detectedInHistory, 2);
 
@@ -568,7 +607,12 @@ Deno.test("[case 22] persisted reactive compression is followed by an event-reco
     historyOmission: recomputed,
   });
   assert.deepStrictEqual(subsequent.text, "subsequent answer");
-  assert.ok(systemMessage(sessionRequest(next)).includes("History records withheld: 1."), `expected systemMessage(sessionRequest(next)) to include "History records withheld: 1."`);
+  assert.ok(
+    systemMessage(sessionRequest(next)).includes(
+      "History records withheld: 1.",
+    ),
+    `expected systemMessage(sessionRequest(next)) to include "History records withheld: 1."`,
+  );
   assert.deepStrictEqual(subsequent.historyOmission?.detectedInHistory, 1);
 });
 
@@ -593,9 +637,15 @@ Deno.test("declines compression on a tier-0 HOSTED model (locality, not tier)", 
   );
   // No compression request left the machine, and none was surfaced.
   assert.deepStrictEqual(run.transport.requests.length, 1);
-  assert.ok(sessionRequest(run).url.includes("api.anthropic.com"), `expected sessionRequest(run).url to include "api.anthropic.com"`);
+  assert.ok(
+    sessionRequest(run).url.includes("api.anthropic.com"),
+    `expected sessionRequest(run).url to include "api.anthropic.com"`,
+  );
   assert.deepStrictEqual(compressed(frames), undefined);
-  assert.ok(sessionRequest(run).body.includes("old question"), `expected sessionRequest(run).body to include "old question"`);
+  assert.ok(
+    sessionRequest(run).body.includes("old question"),
+    `expected sessionRequest(run).body to include "old question"`,
+  );
 });
 
 Deno.test("a tier-0 HOSTED session model compresses via a local tier-0 row when one exists", async () => {
@@ -604,7 +654,10 @@ Deno.test("a tier-0 HOSTED session model compresses via a local tier-0 row when 
       {
         ...summaryReply(),
         expect: (request) => {
-          assert.deepStrictEqual(systemMessage(request), COMPRESSION_SYSTEM_PROMPT);
+          assert.deepStrictEqual(
+            systemMessage(request),
+            COMPRESSION_SYSTEM_PROMPT,
+          );
           assert.deepStrictEqual(requestBody(request).model, "qwen3-local");
         },
       },
@@ -617,7 +670,10 @@ Deno.test("a tier-0 HOSTED session model compresses via a local tier-0 row when 
     },
   );
   assert.ok(compressed(frames) !== undefined);
-  assert.ok(run.transport.requests[0].url.includes("127.0.0.1"), `expected run.transport.requests[0].url to include "127.0.0.1"`);
+  assert.ok(
+    run.transport.requests[0].url.includes("127.0.0.1"),
+    `expected run.transport.requests[0].url to include "127.0.0.1"`,
+  );
 });
 
 Deno.test("compression routes to a local tier-0 row even when a hosted tier-0 row is preferred", async () => {

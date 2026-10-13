@@ -117,7 +117,10 @@ Deno.test("budgetGate asks paid consent with the preflight banner, and a decline
   assert.ok(banners[0].startsWith("Paid inference preflight"));
   // The selection is on the receipt, but nothing was recorded as selected.
   assert.deepStrictEqual(state.selectedForReceipt?.slug, PRICED.slug);
-  assert.deepStrictEqual(await selectedRows(fakes, state.session.sessionId), []);
+  assert.deepStrictEqual(
+    await selectedRows(fakes, state.session.sessionId),
+    [],
+  );
 });
 
 Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decline stops the turn", async () => {

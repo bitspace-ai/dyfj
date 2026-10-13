@@ -5,7 +5,6 @@
  */
 import assert from "node:assert/strict";
 import { mock } from "node:test";
-import { assertEquals } from "@std/assert";
 import { enginePorts } from "../../testing/builders/engine.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
@@ -66,7 +65,7 @@ Deno.test("a foreign Error named after ContextWindowOverflowError does not get i
   assert.deepStrictEqual(String(error.content).includes(hugePayload), false);
   assert.deepStrictEqual(logged.join("\n").includes(hugePayload), false);
   assert.deepStrictEqual(JSON.stringify(frames).includes(hugePayload), false);
-  assertEquals(turnError, spoofed);
+  assert.strictEqual(turnError, spoofed);
 });
 
 Deno.test("a real ContextWindowOverflowError is recorded as a length stop", async () => {
@@ -79,5 +78,5 @@ Deno.test("a real ContextWindowOverflowError is recorded as a length stop", asyn
   const { error, logged, turnError } = await failWith(overflow);
   assert.deepStrictEqual(error?.stop_reason, "length");
   assert.ok(logged.some((line) => line.includes("/model")));
-  assertEquals(turnError, overflow);
+  assert.strictEqual(turnError, overflow);
 });

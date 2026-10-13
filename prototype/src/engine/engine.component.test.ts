@@ -9,7 +9,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { mock } from "node:test";
-import { stub } from "@std/testing/mock";
 import {
   chatReply,
   conversation,
@@ -102,7 +101,9 @@ Deno.test("principalId from the input attributes every event of the turn except 
     principalId: "custom-principal",
   });
   const rows = await eventRows(run, result.sessionId);
-  assert.ok(rows.filter((row) => row.event_type !== "model_selected").length >= 4);
+  assert.ok(
+    rows.filter((row) => row.event_type !== "model_selected").length >= 4,
+  );
   const principals = new Set(
     rows.filter((row) => row.event_type !== "model_selected").map((row) =>
       row.principal_id
@@ -167,7 +168,10 @@ Deno.test("a remote resumed ask stays pinned when its stored-workspace lookup fa
   });
   assert.deepStrictEqual(result.text, "answer");
   assert.deepStrictEqual(run.transport.requests.length, 1);
-  assert.ok(systemMessage(run.transport.requests[0]).includes("RUNTIME ROOT"), `expected systemMessage(run.transport.requests[0]) to include "RUNTIME ROOT"`);
+  assert.ok(
+    systemMessage(run.transport.requests[0]).includes("RUNTIME ROOT"),
+    `expected systemMessage(run.transport.requests[0]) to include "RUNTIME ROOT"`,
+  );
 });
 
 Deno.test("an elevated AGENTS.md reaches the provider request and the session record", async () => {
@@ -180,10 +184,23 @@ Deno.test("an elevated AGENTS.md reaches the provider request and the session re
     trustWorkspaceInstructions: true,
   });
   const system = systemMessage(run.transport.requests[0]);
-  assert.ok(system.includes(`## AGENTS.md\n${AGENTS_INSTRUCTIONS_TRUST_PREAMBLE}`), `expected ${JSON.stringify(system)} to include \`## AGENTS.md\\n\${AGENTS_INSTRUCTIONS_TRUST_PREAMBLE}\``);
-  assert.ok(system.includes("Log friction to the pilot register."), `expected ${JSON.stringify(system)} to include "Log friction to the pilot register."`);
+  assert.ok(
+    system.includes(`## AGENTS.md\n${AGENTS_INSTRUCTIONS_TRUST_PREAMBLE}`),
+    `expected ${
+      JSON.stringify(system)
+    } to include \`## AGENTS.md\\n\${AGENTS_INSTRUCTIONS_TRUST_PREAMBLE}\``,
+  );
+  assert.ok(
+    system.includes("Log friction to the pilot register."),
+    `expected ${
+      JSON.stringify(system)
+    } to include "Log friction to the pilot register."`,
+  );
   const row = await run.store.sessions.detail({ sessionId: result.sessionId });
-  assert.ok((row?.content ?? "").includes("AGENTS.md"), `expected row?.content ?? "" to include "AGENTS.md"`);
+  assert.ok(
+    (row?.content ?? "").includes("AGENTS.md"),
+    `expected row?.content ?? "" to include "AGENTS.md"`,
+  );
 });
 
 // ─── persisted-history omission notice ───────────────────────────────────────
@@ -215,7 +232,10 @@ Deno.test("[follow-up case 15] successful native companion composition exposes t
     historyOmission: GAP_OMISSION,
   });
   const request = run.transport.requests[0];
-  assert.ok(systemMessage(request).includes(NOTICE_OPEN), `expected systemMessage(request) to include ${JSON.stringify(NOTICE_OPEN)}`);
+  assert.ok(
+    systemMessage(request).includes(NOTICE_OPEN),
+    `expected systemMessage(request) to include ${JSON.stringify(NOTICE_OPEN)}`,
+  );
   assert.deepStrictEqual(conversation(request), [
     { role: "user", content: "persisted prompt" },
     { role: "user", content: "continue" },
@@ -224,8 +244,14 @@ Deno.test("[follow-up case 15] successful native companion composition exposes t
     historyDelivery: "projected-transcript",
     noticeIncluded: true,
   });
-  assert.ok(result.receipt.includes("Tool evidence withheld: 1 record"), `expected result.receipt to include "Tool evidence withheld: 1 record"`);
-  assert.ok(result.receipt.includes("notice composed for this request"), `expected result.receipt to include "notice composed for this request"`);
+  assert.ok(
+    result.receipt.includes("Tool evidence withheld: 1 record"),
+    `expected result.receipt to include "Tool evidence withheld: 1 record"`,
+  );
+  assert.ok(
+    result.receipt.includes("notice composed for this request"),
+    `expected result.receipt to include "notice composed for this request"`,
+  );
   assert.deepStrictEqual(result.receipt.includes("notice included yes"), false);
   assert.ok(
     result.context.sources.some((source) =>
@@ -251,7 +277,10 @@ Deno.test("[follow-up A1] resumed native ask excludes omission notice and receip
     { role: "user", content: "inspect the repository" },
   ]);
   assert.deepStrictEqual("historyOmission" in result, false);
-  assert.deepStrictEqual(result.receipt.includes("Tool evidence withheld:"), false);
+  assert.deepStrictEqual(
+    result.receipt.includes("Tool evidence withheld:"),
+    false,
+  );
   assert.deepStrictEqual(
     result.context.sources.some((source) =>
       source.includes("persisted tool history notice")
@@ -287,9 +316,15 @@ Deno.test("[follow-up A1] resumed native next-work excludes omission notice and 
   const messages = conversation(request);
   assert.deepStrictEqual(messages.length, 1);
   assert.deepStrictEqual(messages[0].role, "user");
-  assert.ok(messages[0].content.includes("next-work.v0"), `expected messages[0].content to include "next-work.v0"`);
+  assert.ok(
+    messages[0].content.includes("next-work.v0"),
+    `expected messages[0].content to include "next-work.v0"`,
+  );
   assert.deepStrictEqual("historyOmission" in result, false);
-  assert.deepStrictEqual(result.receipt.includes("Tool evidence withheld:"), false);
+  assert.deepStrictEqual(
+    result.receipt.includes("Tool evidence withheld:"),
+    false,
+  );
   assert.deepStrictEqual(result.validation, { ok: true, errors: [] });
 });
 
@@ -304,21 +339,32 @@ Deno.test("[follow-up N1] native companion failure before notice composition omi
         Promise.reject(new Error("simulated context load failure")),
     },
   });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       runTurn(run, {
         prompt: "continue",
         rootOverride: root.root,
         sessionId: RESUMED,
         conversationMessages: [{ role: "user", content: "persisted prompt" }],
         historyOmission: MALFORMED_OMISSION,
-      }), (error: unknown) => error instanceof Error && error.message.includes("simulated context load failure"));
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("simulated context load failure"),
+  );
   assert.deepStrictEqual(run.transport.requests.length, 0);
   const row = await run.store.sessions.detail({ sessionId: RESUMED });
   const content = row?.content ?? "";
   // The session record carries the final receipt and context sources.
-  assert.ok(content.includes("Workbench receipt"), `expected ${JSON.stringify(content)} to include "Workbench receipt"`);
+  assert.ok(
+    content.includes("Workbench receipt"),
+    `expected ${JSON.stringify(content)} to include "Workbench receipt"`,
+  );
   assert.deepStrictEqual(content.includes("Tool evidence withheld:"), false);
-  assert.deepStrictEqual(content.includes("persisted tool history notice"), false);
+  assert.deepStrictEqual(
+    content.includes("persisted tool history notice"),
+    false,
+  );
 });
 
 // ─── budget gate ─────────────────────────────────────────────────────────────
@@ -328,7 +374,8 @@ const PRICED = pricedLocalModel({ costInput: 15, costOutput: 75 });
 Deno.test("declining paid inference aborts before any provider call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [PRICED] });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       runTurn(run, {
         prompt: "explore",
         rootOverride: root.root,
@@ -339,14 +386,24 @@ Deno.test("declining paid inference aborts before any provider call", async () =
           confirmPaidEscalation: () =>
             Promise.resolve({ decision: "deny", reason: "operator declined" }),
         },
-      }), (error: unknown) => error instanceof Error && error.message.includes("Paid inference consent declined"));
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("Paid inference consent declined"),
+  );
   assert.deepStrictEqual(run.transport.requests.length, 0);
   const rows = await run.store.sessions.list({ limit: 5 });
   const row = await run.store.sessions.detail({
     sessionId: rows[0].session_id,
   });
-  assert.ok((row?.content ?? "").includes("notice composed for this request"), `expected row?.content ?? "" to include "notice composed for this request"`);
-  assert.deepStrictEqual((row?.content ?? "").includes("notice included yes"), false);
+  assert.ok(
+    (row?.content ?? "").includes("notice composed for this request"),
+    `expected row?.content ?? "" to include "notice composed for this request"`,
+  );
+  assert.deepStrictEqual(
+    (row?.content ?? "").includes("notice included yes"),
+    false,
+  );
 });
 
 Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
@@ -375,7 +432,8 @@ Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call
 Deno.test("declining a budget ceiling aborts before any provider call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [PRICED] });
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       runTurn(run, {
         prompt: "explore",
         rootOverride: root.root,
@@ -386,7 +444,11 @@ Deno.test("declining a budget ceiling aborts before any provider call", async ()
           confirmBudgetCeiling: () =>
             Promise.resolve({ decision: "deny", reason: "too much" }),
         },
-      }), (error: unknown) => error instanceof Error && error.message.includes("Budget ceiling confirmation declined"));
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("Budget ceiling confirmation declined"),
+  );
   assert.deepStrictEqual(run.transport.requests.length, 0);
 });
 
@@ -438,7 +500,10 @@ Deno.test("cancelling a budget approval finalizes an aborted turn", async () => 
     frames.some((frame) => frame.type === "afterProviderResponse"),
     false,
   );
-  assert.deepStrictEqual(frames.some((frame) => frame.type === "turnFailed"), false);
+  assert.deepStrictEqual(
+    frames.some((frame) => frame.type === "turnFailed"),
+    false,
+  );
 });
 
 const ANOMALY_MODEL = pricedLocalModel({
@@ -460,7 +525,8 @@ Deno.test("scope hard-multiple halts even spend a ceiling confirmation already c
   const confirmBudgetCeiling = mock.fn(() =>
     Promise.resolve({ decision: "approve" as const })
   );
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       runTurn(run, {
         prompt: "explore",
         rootOverride: root.root,
@@ -475,7 +541,10 @@ Deno.test("scope hard-multiple halts even spend a ceiling confirmation already c
           // handler.
           confirmBudgetCeiling,
         },
-      }), (error: unknown) => error instanceof Error && error.message.includes("Runaway spend anomaly"));
+      }),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("Runaway spend anomaly"),
+  );
   assert.deepStrictEqual(run.transport.requests.length, 0);
   // The hard stop fires at turn entry BEFORE the soft ceiling confirm, so
   // the aborted turn leaves no scope-period ceiling confirmation behind.
@@ -574,7 +643,7 @@ Deno.test("an approval verdict cannot start a new turn: a turn requested from in
 
   let second: Promise<unknown> | undefined;
   let framesAtVerdict: string[] = [];
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   try {
     const first = turn("write the note", "first", async () => {
       // The approver asks for another turn on the same session, then
@@ -589,10 +658,13 @@ Deno.test("an approval verdict cannot start a new turn: a turn requested from in
     const secondResult = await second as NativeWorkbenchRuntimeResult;
     assert.deepStrictEqual(secondResult.text, "second done");
   } finally {
-    error.restore();
+    error.mock.restore();
   }
   // Nothing of the second turn ran while the approver held its verdict...
-  assert.deepStrictEqual(framesAtVerdict.some((f) => f.startsWith("second:")), false);
+  assert.deepStrictEqual(
+    framesAtVerdict.some((f) => f.startsWith("second:")),
+    false,
+  );
   // ...and the verdict resumed the approving turn, whose tool ran and which
   // finalized before the second turn started.
   assert.deepStrictEqual(
@@ -671,7 +743,7 @@ Deno.test("a turn naming a new session's id, issued while that session's first t
 
   let second: Promise<unknown> | undefined;
   let framesAtVerdict: string[] = [];
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   try {
     // The first turn names no session; the approver learns the new id from
     // the sessionStart frame and issues a second turn naming it.
@@ -691,10 +763,13 @@ Deno.test("a turn naming a new session's id, issued while that session's first t
     assert.deepStrictEqual(secondResult.sessionId, newSessionId);
     assert.deepStrictEqual(secondResult.text, "second done");
   } finally {
-    error.restore();
+    error.mock.restore();
   }
   // Nothing of the second turn ran while the first held its session...
-  assert.deepStrictEqual(framesAtVerdict.some((f) => f.startsWith("second:")), false);
+  assert.deepStrictEqual(
+    framesAtVerdict.some((f) => f.startsWith("second:")),
+    false,
+  );
   // ...and the second started only after the first finalized.
   const firstEnd = frames.indexOf("first:turnCompleted");
   const secondStart = frames.indexOf("second:sessionStart");

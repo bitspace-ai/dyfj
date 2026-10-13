@@ -100,5 +100,8 @@ Deno.test("a remote turn is never offered external-memory recall", async () => {
   const session = await openSession(input, fakes.ports);
   const state = newTurnState(session, createCommandRegistry());
   await buildContext(state, input, fakes.ports);
-  assert.deepStrictEqual(state.commandRegistry.lookup("memory.search"), undefined);
+  assert.deepStrictEqual(
+    state.commandRegistry.lookup("memory.search"),
+    undefined,
+  );
 });

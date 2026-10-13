@@ -66,8 +66,15 @@ Deno.test("toolStepToMessages emits one tool message per result, preserving orde
     ],
   );
 
-  assert.deepStrictEqual(messages.map((m) => m.role), ["assistant", "tool", "tool"]);
-  assert.partialDeepStrictEqual(messages[1], { toolCallId: "c1", content: "a.ts" });
+  assert.deepStrictEqual(messages.map((m) => m.role), [
+    "assistant",
+    "tool",
+    "tool",
+  ]);
+  assert.partialDeepStrictEqual(messages[1], {
+    toolCallId: "c1",
+    content: "a.ts",
+  });
   assert.partialDeepStrictEqual(messages[2], {
     toolCallId: "c2",
     content: "slug does not match required pattern",
