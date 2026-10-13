@@ -2,12 +2,8 @@
 // exits, trees that outlive their shell, a descendant that leaves the group,
 // and a group stopper that cannot signal (a fake at the stopper port).
 
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { buildSafeBashEnv } from "./exec.ts";
 import {
@@ -16,7 +12,7 @@ import {
   runBounded,
 } from "./bounded-process.ts";
 
-const posix = Deno.build.os !== "windows";
+const posix = process.platform !== "win32";
 const TIMEOUT_MS = 300;
 const RETURN_BOUND_MS = TIMEOUT_MS + 4_000;
 
@@ -49,7 +45,7 @@ async function bash(script: string, options: BoundedOptions = {}) {
   const result = await runBounded({
     command: "bash",
     args: ["-c", script],
-    cwd: Deno.cwd(),
+    cwd: process.cwd(),
     env: buildSafeBashEnv(),
     timeoutMs: TIMEOUT_MS,
   }, options);
@@ -59,7 +55,7 @@ async function bash(script: string, options: BoundedOptions = {}) {
 describe("runBounded", { ignore: !posix }, () => {
   it("returns the exit code and both streams of an ordinary exit", async () => {
     const { result } = await bash("echo out; echo err >&2; exit 3");
-    assertEquals(result, {
+    assert.deepStrictEqual(result, {
       code: 3,
       signal: null,
       stdout: "out\n",
@@ -73,15 +69,15 @@ describe("runBounded", { ignore: !posix }, () => {
     try {
       const { result, elapsedMs } = await bash(`sleep 10 & echo "pid=$!"`);
       pid = pidIn(result.stdout);
-      assert(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
-      assertStrictEquals(result.timedOut, true);
-      assertEquals(result.termination, {
+      assert.ok(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
+      assert.strictEqual(result.timedOut, true);
+      assert.deepStrictEqual(result.termination, {
         group: "stopped",
         exited: true,
         outputClosed: true,
       });
-      assert(pid !== undefined);
-      assertFalse(await isLive(pid));
+      assert.ok(pid !== undefined);
+      assert.ok(!(await isLive(pid)));
     } finally {
       await forceKill(pid);
     }
@@ -97,19 +93,19 @@ describe("runBounded", { ignore: !posix }, () => {
         { graceMs: 200 },
       );
       pid = pidIn(result.stdout);
-      assert(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
+      assert.ok(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
       // TERM was ignored, so the stop ran the full grace before escalating.
-      assert(
+      assert.ok(
         elapsedMs >= TIMEOUT_MS + 200,
         `returned before the grace elapsed: ${Math.round(elapsedMs)}ms`,
       );
-      assertEquals(result.termination, {
+      assert.deepStrictEqual(result.termination, {
         group: "stopped",
         exited: true,
         outputClosed: true,
       });
-      assert(pid !== undefined, `no pid in: ${result.stdout}`);
-      assertFalse(await isLive(pid), "the TERM-ignoring sleep survived");
+      assert.ok(pid !== undefined, `no pid in: ${result.stdout}`);
+      assert.ok(!(await isLive(pid)), "the TERM-ignoring sleep survived");
     } finally {
       await forceKill(pid);
     }
@@ -119,8 +115,8 @@ describe("runBounded", { ignore: !posix }, () => {
     const { result } = await bash(
       `echo before; trap 'echo trapped; exit 1' TERM; sleep 10 & wait`,
     );
-    assertStrictEquals(result.timedOut, true);
-    assertStrictEquals(result.stdout, "before\n");
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.stdout, "before\n");
   });
 
   it("returns within the drain bound when a descendant leaves the group, and says so", async () => {
@@ -133,12 +129,12 @@ describe("runBounded", { ignore: !posix }, () => {
         { drainMs: 200 },
       );
       pid = pidIn(result.stdout);
-      assert(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
-      assertStrictEquals(result.timedOut, true);
-      assertStrictEquals(result.termination?.outputClosed, false);
-      assert(pid !== undefined, `no pid in: ${result.stdout}`);
+      assert.ok(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
+      assert.strictEqual(result.timedOut, true);
+      assert.strictEqual(result.termination?.outputClosed, false);
+      assert.ok(pid !== undefined, `no pid in: ${result.stdout}`);
       // The report is honest: the escaped process really is still running.
-      assert(await isLive(pid));
+      assert.ok(await isLive(pid));
     } finally {
       await forceKill(pid);
     }
@@ -157,16 +153,16 @@ describe("runBounded", { ignore: !posix }, () => {
         { stopGroup: cannotSignal, drainMs: 200 },
       );
       pid = pidIn(result.stdout);
-      assert(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
-      assert(stopped !== undefined && stopped > 1);
-      assertEquals(result.termination, {
+      assert.ok(elapsedMs < RETURN_BOUND_MS, `took ${Math.round(elapsedMs)}ms`);
+      assert.ok(stopped !== undefined && stopped > 1);
+      assert.deepStrictEqual(result.termination, {
         group: "unavailable",
         exited: true,
         outputClosed: false,
       });
       // Only the shell was killed; its child is the survivor reported above.
-      assert(pid !== undefined);
-      assert(await isLive(pid));
+      assert.ok(pid !== undefined);
+      assert.ok(await isLive(pid));
     } finally {
       await forceKill(pid);
     }
@@ -182,7 +178,7 @@ describe("runBounded", { ignore: !posix }, () => {
         drainMs: 200,
       });
       pid = pidIn(result.stdout);
-      assertStrictEquals(result.termination?.group, "unavailable");
+      assert.strictEqual(result.termination?.group, "unavailable");
     } finally {
       await forceKill(pid);
     }

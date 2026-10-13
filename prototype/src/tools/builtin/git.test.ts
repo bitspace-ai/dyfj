@@ -1,12 +1,5 @@
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertLess,
-  assertLessOrEqual,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { assertArrayIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
@@ -46,7 +39,7 @@ function recordingRunner(
 
 describe("buildGitArgv", () => {
   it("status asks for porcelain output with branch detail", () => {
-    assertEquals(buildGitArgv(ROOT, { subcommand: "status" }).argv, [
+    assert.deepStrictEqual(buildGitArgv(ROOT, { subcommand: "status" }).argv, [
       "--no-pager",
       "--literal-pathspecs",
       "status",
@@ -56,16 +49,16 @@ describe("buildGitArgv", () => {
   });
 
   it("diff defaults to the working tree and honours staged", () => {
-    assertEquals(buildGitArgv(ROOT, { subcommand: "diff" }).argv, [
+    assert.deepStrictEqual(buildGitArgv(ROOT, { subcommand: "diff" }).argv, [
       "--no-pager",
       "--literal-pathspecs",
       "diff",
     ]);
-    assertEquals(
+    assert.deepStrictEqual(
       buildGitArgv(ROOT, { subcommand: "diff", staged: true }).argv,
       ["--no-pager", "--literal-pathspecs", "diff", "--staged"],
     );
-    assertEquals(
+    assert.deepStrictEqual(
       buildGitArgv(ROOT, { subcommand: "diff", staged: false }).argv,
       ["--no-pager", "--literal-pathspecs", "diff"],
     );
@@ -83,7 +76,7 @@ describe("buildGitArgv", () => {
       subcommand: "add",
       paths: ["src/a.ts", "src/b.ts"],
     });
-    assertEquals(plan.argv, [
+    assert.deepStrictEqual(plan.argv, [
       "--no-pager",
       "--literal-pathspecs",
       "add",
@@ -98,7 +91,7 @@ describe("buildGitArgv", () => {
       subcommand: "commit",
       message: "--not-a-flag",
     });
-    assertEquals(plan.argv, [
+    assert.deepStrictEqual(plan.argv, [
       "--no-pager",
       "--literal-pathspecs",
       "commit",
@@ -113,7 +106,7 @@ describe("buildGitArgv", () => {
       message: "msg",
       paths: ["src/a.ts"],
     });
-    assertEquals(plan.argv, [
+    assert.deepStrictEqual(plan.argv, [
       "--no-pager",
       "--literal-pathspecs",
       "commit",
@@ -129,7 +122,7 @@ describe("buildGitArgv", () => {
       subcommand: "add",
       paths: ["./src/../src/a.ts"],
     });
-    assertEquals(plan.argv, [
+    assert.deepStrictEqual(plan.argv, [
       "--no-pager",
       "--literal-pathspecs",
       "add",
@@ -142,9 +135,15 @@ describe("buildGitArgv", () => {
 describe("buildGitArgv refusals", () => {
   it("push is refused by name, with the reason", () => {
     const plan = buildGitArgv(ROOT, { subcommand: "push" });
-    assertStrictEquals(plan.argv, undefined);
-    assertStringIncludes(plan.error!, "not available to the agent");
-    assertStringIncludes(plan.error!, "operator action");
+    assert.strictEqual(plan.argv, undefined);
+    assert.ok(
+      plan.error!.includes("not available to the agent"),
+      `expected plan.error! to include "not available to the agent"`,
+    );
+    assert.ok(
+      plan.error!.includes("operator action"),
+      `expected plan.error! to include "operator action"`,
+    );
   });
 
   for (
@@ -161,7 +160,7 @@ describe("buildGitArgv refusals", () => {
     ]
   ) {
     it(`${sub} is refused`, () => {
-      assertStrictEquals(
+      assert.strictEqual(
         buildGitArgv(ROOT, { subcommand: sub }).argv,
         undefined,
       );
@@ -170,29 +169,37 @@ describe("buildGitArgv refusals", () => {
 
   it("an unknown subcommand is refused and lists what is allowed", () => {
     const plan = buildGitArgv(ROOT, { subcommand: "bisect" });
-    assertStringIncludes(plan.error!, "unsupported git subcommand");
+    assert.ok(
+      plan.error!.includes("unsupported git subcommand"),
+      `expected plan.error! to include "unsupported git subcommand"`,
+    );
     for (const allowed of GIT_SUBCOMMANDS) {
-      assertStringIncludes(plan.error!, allowed);
+      assert.ok(
+        plan.error!.includes(allowed),
+        `expected plan.error! to include ${JSON.stringify(allowed)}`,
+      );
     }
   });
 
   it("a missing subcommand is refused", () => {
-    assertStringIncludes(
-      buildGitArgv(ROOT, {}).error!,
-      "subcommand is required",
+    assert.ok(
+      buildGitArgv(ROOT, {}).error!.includes("subcommand is required"),
+      `expected buildGitArgv(ROOT, {}).error! to include "subcommand is required"`,
     );
   });
 
   it("absolute paths and traversal are rejected", () => {
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "add", paths: ["/etc/passwd"] })
-        .error!,
-      "relative",
+    assert.ok(
+      (buildGitArgv(ROOT, { subcommand: "add", paths: ["/etc/passwd"] })
+        .error!).includes("relative"),
+      `expected buildGitArgv(ROOT, { subcommand: "add", paths: ["/etc/passwd"] })
+        .error! to include "relative"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "add", paths: ["../secrets"] })
-        .error!,
-      "escapes the workspace root",
+    assert.ok(
+      (buildGitArgv(ROOT, { subcommand: "add", paths: ["../secrets"] })
+        .error!).includes("escapes the workspace root"),
+      `expected buildGitArgv(ROOT, { subcommand: "add", paths: ["../secrets"] })
+        .error! to include "escapes the workspace root"`,
     );
   });
 
@@ -201,7 +208,10 @@ describe("buildGitArgv refusals", () => {
       subcommand: "add",
       paths: [":(top)private.txt"],
     });
-    assertStringIncludes(plan.error!, "pathspec magic is disabled");
+    assert.ok(
+      plan.error!.includes("pathspec magic is disabled"),
+      `expected plan.error! to include "pathspec magic is disabled"`,
+    );
   });
 
   it("every argv disables pathspec interpretation", () => {
@@ -216,25 +226,31 @@ describe("buildGitArgv refusals", () => {
   });
 
   it("a path that looks like a flag is rejected", () => {
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "add", paths: ["--exec=rm -rf /"] })
-        .error!,
-      "must not start with '-'",
+    assert.ok(
+      (buildGitArgv(ROOT, { subcommand: "add", paths: ["--exec=rm -rf /"] })
+        .error!).includes("must not start with '-'"),
+      `expected buildGitArgv(ROOT, { subcommand: "add", paths: ["--exec=rm -rf /"] })
+        .error! to include "must not start with '-'"`,
     );
   });
 
   it("add requires a path and commit requires a message", () => {
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "add" }).error!,
-      "requires at least one path",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "add" }).error!.includes(
+        "requires at least one path",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "add" }).error! to include "requires at least one path"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "commit" }).error!,
-      "non-empty message",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "commit" }).error!.includes(
+        "non-empty message",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "commit" }).error! to include "non-empty message"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "commit", message: "   " }).error!,
-      "non-empty message",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "commit", message: "   " }).error!
+        .includes("non-empty message"),
+      `expected buildGitArgv(ROOT, { subcommand: "commit", message: "   " }).error! to include "non-empty message"`,
     );
   });
 
@@ -243,7 +259,10 @@ describe("buildGitArgv refusals", () => {
       subcommand: "commit",
       message: "x".repeat(5000),
     });
-    assertStringIncludes(plan.error!, "exceeds the 4096-byte limit");
+    assert.ok(
+      plan.error!.includes("exceeds the 4096-byte limit"),
+      `expected plan.error! to include "exceeds the 4096-byte limit"`,
+    );
   });
 
   it("a multibyte message over the byte cap is rejected on its bytes", () => {
@@ -253,21 +272,29 @@ describe("buildGitArgv refusals", () => {
       subcommand: "commit",
       message: "𝄞".repeat(1500),
     });
-    assertStringIncludes(plan.error!, "6000 bytes");
+    assert.ok(
+      plan.error!.includes("6000 bytes"),
+      `expected plan.error! to include "6000 bytes"`,
+    );
   });
 
   it("arguments are rejected where they do not apply", () => {
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "status", message: "no" }).error!,
-      "commit only",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "status", message: "no" }).error!
+        .includes("commit only"),
+      `expected buildGitArgv(ROOT, { subcommand: "status", message: "no" }).error! to include "commit only"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "log", staged: true }).error!,
-      "diff only",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "log", staged: true }).error!.includes(
+        "diff only",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "log", staged: true }).error! to include "diff only"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "status", limit: 5 }).error!,
-      "log only",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "status", limit: 5 }).error!.includes(
+        "log only",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "status", limit: 5 }).error! to include "log only"`,
     );
   });
 
@@ -275,13 +302,17 @@ describe("buildGitArgv refusals", () => {
     // Number() would run these and throw out of buildGitArgv, past the
     // executor's own error handling.
     const hostile = { valueOf: null, toString: null } as unknown;
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "log", limit: hostile }).error!,
-      "limit must be an integer",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "log", limit: hostile }).error!.includes(
+        "limit must be an integer",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "log", limit: hostile }).error! to include "limit must be an integer"`,
     );
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "log", limit: "5" }).error!,
-      "limit must be an integer",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "log", limit: "5" }).error!.includes(
+        "limit must be an integer",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "log", limit: "5" }).error! to include "limit must be an integer"`,
     );
   });
 
@@ -290,19 +321,24 @@ describe("buildGitArgv refusals", () => {
       subcommand: "add",
       paths: ["a".repeat(5000)],
     });
-    assertStringIncludes(plan.error!, "exceeds 4096 characters");
+    assert.ok(
+      plan.error!.includes("exceeds 4096 characters"),
+      `expected plan.error! to include "exceeds 4096 characters"`,
+    );
   });
 
   it("an unsupported subcommand echo is bounded", () => {
     const plan = buildGitArgv(ROOT, { subcommand: "z".repeat(5000) });
-    assertLess(plan.error!.length, 400);
+    assert.ok(plan.error!.length < 400, `expected plan.error!.length < 400`);
   });
 
   it("too many paths are rejected", () => {
     const paths = Array.from({ length: 101 }, (_, i) => `f${i}.ts`);
-    assertStringIncludes(
-      buildGitArgv(ROOT, { subcommand: "add", paths }).error!,
-      "at most 100 paths",
+    assert.ok(
+      buildGitArgv(ROOT, { subcommand: "add", paths }).error!.includes(
+        "at most 100 paths",
+      ),
+      `expected buildGitArgv(ROOT, { subcommand: "add", paths }).error! to include "at most 100 paths"`,
     );
   });
 });
@@ -311,23 +347,26 @@ describe("executeGit", () => {
   it("runs the built argv in the workspace root", async () => {
     const { runner, calls } = recordingRunner({ stdout: "## main\n" });
     const out = await executeGit(ROOT, { subcommand: "status" }, { runner });
-    assertEquals(calls.length, 1);
-    assertStrictEquals(calls[0].cwd, ROOT);
-    assertEquals(calls[0].args, [
+    assert.deepStrictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].cwd, ROOT);
+    assert.deepStrictEqual(calls[0].args, [
       "--no-pager",
       "--literal-pathspecs",
       "status",
       "--porcelain=v1",
       "--branch",
     ]);
-    assertStrictEquals(out, "exit 0\n## main");
+    assert.strictEqual(out, "exit 0\n## main");
   });
 
   it("a refused call never reaches the runner", async () => {
     const { runner, calls } = recordingRunner();
     const out = await executeGit(ROOT, { subcommand: "push" }, { runner });
-    assertEquals(calls.length, 0);
-    assertStringIncludes(out, "not available to the agent");
+    assert.deepStrictEqual(calls.length, 0);
+    assert.ok(
+      out.includes("not available to the agent"),
+      `expected ${JSON.stringify(out)} to include "not available to the agent"`,
+    );
   });
 
   it("a non-zero exit returns status and stderr rather than throwing", async () => {
@@ -340,8 +379,14 @@ describe("executeGit", () => {
       { subcommand: "commit", message: "msg" },
       { runner },
     );
-    assertStringIncludes(out, "exit 1");
-    assertStringIncludes(out, "nothing to commit");
+    assert.ok(
+      out.includes("exit 1"),
+      `expected ${JSON.stringify(out)} to include "exit 1"`,
+    );
+    assert.ok(
+      out.includes("nothing to commit"),
+      `expected ${JSON.stringify(out)} to include "nothing to commit"`,
+    );
   });
 
   it("a timeout is reported as a killed run", async () => {
@@ -350,7 +395,12 @@ describe("executeGit", () => {
       runner,
       timeoutMs: 50,
     });
-    assertStringIncludes(out, "timed out after 50ms (killed)");
+    assert.ok(
+      out.includes("timed out after 50ms (killed)"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "timed out after 50ms (killed)"`,
+    );
   });
 
   it("a timeout that stopped git's process group says the output ends at the deadline", async () => {
@@ -363,17 +413,24 @@ describe("executeGit", () => {
       runner,
       timeoutMs: 50,
     });
-    assertStringIncludes(
-      out,
-      "timed out after 50ms (killed; output shown up to the deadline)",
+    assert.ok(
+      out.includes(
+        "timed out after 50ms (killed; output shown up to the deadline)",
+      ),
+      `expected ${
+        JSON.stringify(out)
+      } to include "timed out after 50ms (killed; output shown up to the deadline)"`,
     );
-    assertFalse(out.includes("may survive"));
+    assert.ok(!out.includes("may survive"));
   });
 
   it("a signal is reported instead of an exit code", async () => {
     const { runner } = recordingRunner({ code: 0, signal: "SIGTERM" });
     const out = await executeGit(ROOT, { subcommand: "status" }, { runner });
-    assertStringIncludes(out, "exit by signal SIGTERM");
+    assert.ok(
+      out.includes("exit by signal SIGTERM"),
+      `expected ${JSON.stringify(out)} to include "exit by signal SIGTERM"`,
+    );
   });
 
   it("output is truncated at the byte cap", async () => {
@@ -382,8 +439,11 @@ describe("executeGit", () => {
       runner,
       maxBytes: 100,
     });
-    assertStringIncludes(out, "[truncated at 100 bytes]");
-    assertLess(out.length, 300);
+    assert.ok(
+      out.includes("[truncated at 100 bytes]"),
+      `expected ${JSON.stringify(out)} to include "[truncated at 100 bytes]"`,
+    );
+    assert.ok(out.length < 300, `expected out.length < 300`);
   });
 
   it("truncation counts bytes, not UTF-16 units", async () => {
@@ -394,7 +454,10 @@ describe("executeGit", () => {
       maxBytes: 100,
     });
     const body = out.split("\n")[1] ?? "";
-    assertLessOrEqual(new TextEncoder().encode(body).byteLength, 100);
+    assert.ok(
+      (new TextEncoder().encode(body).byteLength) <= 100,
+      `expected new TextEncoder().encode(body).byteLength <= 100`,
+    );
   });
 
   it("a pathless commit in a subdirectory workspace warns about scope", async () => {
@@ -415,8 +478,16 @@ describe("executeGit", () => {
       message: "msg",
     }, { runner });
     assertArrayIncludes(calls[0], ["rev-parse"]);
-    assertStringIncludes(out, "records every staged change");
-    assertStringIncludes(out, "exit 0");
+    assert.ok(
+      out.includes("records every staged change"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "records every staged change"`,
+    );
+    assert.ok(
+      out.includes("exit 0"),
+      `expected ${JSON.stringify(out)} to include "exit 0"`,
+    );
   });
 
   it("a commit at the repository root carries no scope warning", async () => {
@@ -434,7 +505,7 @@ describe("executeGit", () => {
     }, {
       runner,
     });
-    assertFalse(out.includes("records every staged change"));
+    assert.ok(!out.includes("records every staged change"));
   });
 
   it("a commit with explicit paths skips the repository-scope check", async () => {
@@ -454,8 +525,8 @@ describe("executeGit", () => {
       message: "m",
       paths: ["a.ts"],
     }, { runner });
-    assertEquals(calls.length, 1);
-    assertFalse(calls[0].includes("rev-parse"));
+    assert.deepStrictEqual(calls.length, 1);
+    assert.ok(!calls[0].includes("rev-parse"));
   });
 
   it("a runner failure is returned as a tool error", async () => {
@@ -463,7 +534,7 @@ describe("executeGit", () => {
     const out = await executeGit(ROOT, { subcommand: "status" }, {
       runner: failing,
     });
-    assertStrictEquals(out, "error: cannot run git: git not found");
+    assert.strictEqual(out, "error: cannot run git: git not found");
   });
 });
 
@@ -503,7 +574,7 @@ describe("buildCommandToolCallEventPayload", () => {
         call(args, { commandId: "git" }),
         { permissionLevel: "operator", loopback: true },
       );
-      assertStrictEquals(policy.decision, "ask");
+      assert.strictEqual(policy.decision, "ask");
     }
   });
 
@@ -525,8 +596,8 @@ describe("buildCommandToolCallEventPayload", () => {
         call(args, { commandId: "git" }),
         { permissionLevel: "operator", loopback: true },
       );
-      assertStrictEquals(policy.decision, "deny");
-      assertStrictEquals(policy.authzBasis, "policy:deny:invalid-arguments");
+      assert.strictEqual(policy.decision, "deny");
+      assert.strictEqual(policy.authzBasis, "policy:deny:invalid-arguments");
     }
   });
 
@@ -535,7 +606,7 @@ describe("buildCommandToolCallEventPayload", () => {
       workspaceRoot: "/work",
     });
     const git = registry.lookup("git")!;
-    assertStrictEquals(git.redactResult, true);
+    assert.strictEqual(git.redactResult, true);
 
     // A hook or credential helper runs inside git's process tree and can print
     // anything it can read, so the durable event must carry the sentinel even
@@ -557,11 +628,12 @@ describe("buildCommandToolCallEventPayload", () => {
       },
       git,
     );
-    assertStrictEquals(payload.tool_result, "[redacted]");
-    assertFalse(
-      (payload.tool_result as string).includes("ANTHROPIC_API_KEY"),
-    );
+    assert.strictEqual(payload.tool_result, "[redacted]");
+    assert.ok(!(payload.tool_result as string).includes("ANTHROPIC_API_KEY"));
     // Arguments stay legible: knowing WHICH git operation ran is the point.
-    assertStringIncludes(JSON.stringify(payload.tool_arguments), "status");
+    assert.ok(
+      JSON.stringify(payload.tool_arguments).includes("status"),
+      `expected JSON.stringify(payload.tool_arguments) to include "status"`,
+    );
   });
 });
