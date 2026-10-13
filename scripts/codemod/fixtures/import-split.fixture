@@ -1,0 +1,24 @@
+# A module imported by more than one declaration: a name any of them binds
+# is reused, not imported again, and only the missing names are added.
+rules: fs.remove, fs.read-text-file, fs.mkdir
+--- before
+import { readFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
+
+Deno.test("split", async () => {
+  await Deno.remove("/tmp/x", { recursive: true });
+  void (await Deno.readTextFile("/tmp/y"));
+  await Deno.mkdir("/tmp/z", { recursive: true });
+  void [readFile, rm];
+});
+--- after
+import { mkdir, readFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
+
+Deno.test("split", async () => {
+  await rm("/tmp/x", { recursive: true });
+  void (await readFile("/tmp/y", "utf8"));
+  await mkdir("/tmp/z", { recursive: true });
+  void [readFile, rm];
+});
+--- findings

@@ -773,7 +773,7 @@ function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
     if (text[next] === ":" || text.startsWith("?:", next)) return true;
     if (text.startsWith("=>", next)) return true;
     const before = text[prevNonSpace(text, pos, src.mask)];
-    if (before !== "(" && before !== ",") continue;
+    if (!"(,{[".includes(before)) continue;
     let depth = 0;
     let open = -1;
     for (let j = pos - 1; j >= 0 && open < 0; j--) {
@@ -781,11 +781,18 @@ function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
       const c = text[j];
       if (")]}".includes(c)) depth++;
       else if ("([{".includes(c)) {
-        if (depth === 0) open = c === "(" ? j : -2;
+        if (depth === 0) open = j;
         else depth--;
       }
     }
     if (open < 0) continue;
+    const keyword = wordBefore(text, open, src.mask).word;
+    // A destructuring pattern (`const { name } = ...`) or a catch parameter.
+    if (text[open] !== "(") {
+      if (DECLARING.has(keyword)) return true;
+      continue;
+    }
+    if (keyword === "catch") return true;
     const close = matchBracket(src, open);
     if (close < 0) continue;
     if (/^\s*(?::[^=;{]+)?=>/.test(text.slice(close + 1))) return true;
@@ -1931,11 +1938,22 @@ function convertProcess(
     return swap("process.pid", ref.end, "process.pid");
   }
   if (head === "build" && member === "os" && ref.path.length === 2) {
-    const outcome = swap("process.platform", ref.end, "process.platform");
-    const compared = /^\s*([!=]==?)\s*(["'])windows\2/.exec(
+    // The host names Windows "windows" and node "win32", so only a direct
+    // comparison with a string literal, whose literal can be mapped too,
+    // keeps its meaning; a stored or otherwise compared value may not.
+    const compared = /^\s*[!=]==?\s*(["'])([^"'\\]*)\1/.exec(
       src.text.slice(ref.end),
     );
-    if (!isSkip(outcome) && compared) {
+    if (!compared) {
+      return {
+        pos,
+        reason: `${host} is stored or compared with something other than ` +
+          'a string literal; its Windows value ("windows") differs from ' +
+          'process.platform ("win32"), so convert by hand',
+      };
+    }
+    const outcome = swap("process.platform", ref.end, "process.platform");
+    if (!isSkip(outcome) && compared[2] === "windows") {
       const literal = ref.end + compared[0].length - '"windows"'.length;
       outcome.edits.push({
         start: literal,
@@ -2227,12 +2245,22 @@ function fixImports(
       !edits.has(decl)
     );
     const named = existing?.named ?? [];
+    // What every value import of the module already binds, not only the
+    // first one: a name bound by any of them is reused, never added again.
+    const present = imports.filter((decl) =>
+      decl.spec === module && !decl.typeOnly && !edits.has(decl)
+    );
     const missing = [...entry.named].filter((name) =>
-      !named.some((n) => n.local === name && !n.type)
+      !present.some((decl) =>
+        (decl.named ?? []).some((n) =>
+          n.local === name && n.imported === name && !n.type
+        )
+      )
     );
     const needsDefault = entry.defaultName !== undefined &&
-      existing?.defaultName !== entry.defaultName;
-    if (existing && !needsDefault && missing.length === 0) continue;
+      !present.some((decl) => decl.defaultName === entry.defaultName);
+    if (!needsDefault && missing.length === 0) continue;
+    const defaultName = needsDefault ? entry.defaultName : undefined;
     if (existing && (!needsDefault || existing.defaultName === undefined)) {
       const merged = [
         ...named,
@@ -2244,15 +2272,15 @@ function fixImports(
       ].sort((a, b) => a.imported < b.imported ? -1 : 1);
       edits.set(
         existing,
-        renderImport(module, entry.defaultName ?? existing.defaultName, merged),
+        renderImport(module, defaultName ?? existing.defaultName, merged),
       );
       continue;
     }
     added.push(
       renderImport(
         module,
-        entry.defaultName,
-        [...entry.named].sort().map((name) => ({
+        defaultName,
+        [...missing].sort().map((name) => ({
           imported: name,
           local: name,
           type: false,

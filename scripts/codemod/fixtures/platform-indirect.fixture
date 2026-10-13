@@ -1,0 +1,30 @@
+# The host's platform name differs from node's on Windows ("windows" against
+# "win32"), so only a direct comparison with a string literal converts, with
+# the literal mapped. A stored value or a comparison with anything else is
+# left for hand conversion.
+rules: process.platform
+--- before
+const WINDOWS = "windows";
+
+Deno.test("platform", () => {
+  const direct = Deno.build.os === "windows";
+  const linux = Deno.build.os !== "linux";
+  const os = Deno.build.os;
+  const named = Deno.build.os === WINDOWS;
+  void [direct, linux, os, named];
+});
+--- after
+import process from "node:process";
+
+const WINDOWS = "windows";
+
+Deno.test("platform", () => {
+  const direct = process.platform === "win32";
+  const linux = process.platform !== "linux";
+  const os = Deno.build.os;
+  const named = Deno.build.os === WINDOWS;
+  void [direct, linux, os, named];
+});
+--- findings
+unconverted 8
+unconverted 9
