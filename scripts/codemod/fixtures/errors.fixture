@@ -1,7 +1,7 @@
-# Host error classes become error codes: an object validator in assertions, a
-# code (or name) check in instanceof tests. The check reads the property
-# through optional chaining, so a caught null, undefined or primitive gives
-# false as instanceof does, rather than throwing.
+# Host error classes become error codes: an Error instance with the matching
+# code (or name), both as an assertion's validation function and in place of
+# an instanceof test. A plain object with the right code does not pass, and
+# a caught null, undefined or primitive gives false, as instanceof does.
 rules: errors.code, errors.not-capable, assert.import, assert.rejects, assert.throws, fs.read-text-file, fs.mkdir, fs.remove
 --- before
 import { assertRejects, assertThrows } from "@std/assert";
@@ -28,17 +28,17 @@ import { mkdirSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
 
 Deno.test("errors", async () => {
-  await assert.rejects(() => readFile("/missing", "utf8"), { code: "ENOENT" });
-  assert.throws(() => mkdirSync("/tmp"), { code: "EEXIST" });
+  await assert.rejects(() => readFile("/missing", "utf8"), (error: unknown) => error instanceof Error && (error as { code?: unknown }).code === "ENOENT");
+  assert.throws(() => mkdirSync("/tmp"), (error: unknown) => error instanceof Error && (error as { code?: unknown }).code === "EEXIST");
   try {
     await rm("/missing", { recursive: true });
   } catch (error) {
-    if (!((error as { code?: unknown } | null | undefined)?.code === "ENOENT")) throw error;
+    if (!((error instanceof Error && (error as { code?: unknown }).code === "ENOENT"))) throw error;
   }
   try {
     probe();
   } catch (error) {
-    if ((error as { name?: unknown } | null | undefined)?.name === "NotCapable") return;
+    if ((error instanceof Error && (error as { name?: unknown }).name === "NotCapable")) return;
   }
   const made = new Deno.errors.NotFound("x");
   void made;

@@ -1087,12 +1087,16 @@ function stdUses(
       if (insideImport(imports, pos)) continue;
       const after = nextNonSpace(src.text, pos + local.length);
       if (src.text[after] === ".") continue;
-      uses.push({
-        pos,
-        local,
-        symbol,
-        call: callAt(src, pos, pos + local.length),
-      });
+      const call = callAt(src, pos, pos + local.length);
+      // A method declared with this name (`assertEquals(a, b) { ... }`) is a
+      // declaration, not a call of the import.
+      if (
+        call !== undefined &&
+        /^\s*(?::[^=;{]+)?\{/.test(src.text.slice(call.end))
+      ) {
+        continue;
+      }
+      uses.push({ pos, local, symbol, call });
     }
   }
   return uses.sort((a, b) => a.pos - b.pos);
@@ -2098,7 +2102,10 @@ function convertError(src: Source, ref: HostRef): Outcome {
       edits: [{
         start: ref.start,
         end: ref.end,
-        text: `{ ${field}: "${value}" }`,
+        // An Error with the matching code: a plain object carrying the code
+        // is not the host's error class and must not pass.
+        text: `(error: unknown) => error instanceof Error && ` +
+          `(error as { ${field}?: unknown }).${field} === "${value}"`,
       }],
       needs: [],
     };
@@ -2111,15 +2118,18 @@ function convertError(src: Source, ref: HostRef): Outcome {
       operandStart--;
     }
     const operand = src.text.slice(operandStart, operandEnd);
-    if (isPlainName(operand)) {
+    // The operand is read twice, so only a bare name qualifies. Requiring
+    // an Error keeps a plain object with the right code from passing, and
+    // gives false for null, undefined or a primitive, as instanceof does.
+    if (isBareName(operand)) {
       return {
         pos,
         rule,
         edits: [{
           start: operandStart,
           end: ref.end,
-          text: `(${operand} as { ${field}?: unknown } | null | undefined)` +
-            `?.${field} === "${value}"`,
+          text: `(${operand} instanceof Error && ` +
+            `(${operand} as { ${field}?: unknown }).${field} === "${value}")`,
         }],
         needs: [],
       };
