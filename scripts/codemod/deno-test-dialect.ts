@@ -521,7 +521,10 @@ function occurrences(src: Source, name: string): number[] {
     i = src.text.indexOf(name, i + 1)
   ) {
     if (!src.isCode(i)) continue;
-    if (i > 0 && IDENT.test(src.text[i - 1])) continue;
+    // A private name (`#name`) is its own identifier, not this one.
+    if (i > 0 && (IDENT.test(src.text[i - 1]) || src.text[i - 1] === "#")) {
+      continue;
+    }
     const after = src.text[i + name.length];
     if (after !== undefined && IDENT.test(after)) continue;
     if (isMember(src, i)) continue;
@@ -884,7 +887,13 @@ function declaresAt(
   const next = nextNonSpace(text, end);
   if (text[next] === ":" || text.startsWith("?:", next)) return true;
   if (text.startsWith("=>", next)) return true;
-  const before = text[prevNonSpace(text, pos, src.mask)];
+  let p = prevNonSpace(text, pos, src.mask);
+  // A rest element (`...name`) binds like a plain one in a pattern or a
+  // parameter list; as a spread in an expression the climb below rejects it.
+  if (text.slice(p - 2, p + 1) === "...") {
+    p = prevNonSpace(text, p - 2, src.mask);
+  }
+  const before = text[p];
   if (!"(,{[:".includes(before)) return false;
   // Climb out through any destructuring pattern (`{ a: name }`, `[x, name]`,
   // nested) to what binds it: a declaration keyword, or a parameter list.
@@ -1732,7 +1741,12 @@ function hostRefs(src: Source): HostRef[] {
   for (const m of src.text.matchAll(HOST_REF)) {
     const start = m.index!;
     if (!src.isCode(start)) continue;
-    if (start > 0 && IDENT.test(src.text[start - 1])) continue;
+    if (
+      start > 0 &&
+      (IDENT.test(src.text[start - 1]) || src.text[start - 1] === "#")
+    ) {
+      continue;
+    }
     if (isMember(src, start)) continue;
     refs.push({
       start,
@@ -2442,8 +2456,10 @@ const hostPass: Pass = (src, ctx) => {
       reason: `${HOST} is used as an object; convert by hand`,
     });
   }
+  // `globalThis.Deno` and `globalThis["Deno"]` (static key) alike.
   const viaGlobal = new RegExp(
-    `\\b(?:globalThis|window|self)\\s*\\??\\.\\s*${HOST}(?![\\w$])`,
+    `\\b(?:globalThis|window|self)\\s*(?:\\??\\.\\s*${HOST}(?![\\w$])|` +
+      `(?:\\?\\.)?\\[\\s*(["'\`])${HOST}\\1\\s*\\])`,
     "g",
   );
   for (const m of src.text.matchAll(viaGlobal)) {
