@@ -1,6 +1,7 @@
 # Only code is rewritten: names inside strings, templates, comments and regex
 # literals are left alone (a regex can follow a control statement's closing
-# parenthesis), while code inside template substitutions is not.
+# parenthesis), while code inside template substitutions is not. A `/` after
+# a postfix ++ or -- divides.
 rules: assert.import, assert.equals
 --- before
 // A header comment before the imports.
@@ -14,13 +15,16 @@ Deno.test("scanner", () => {
   const pattern = /assertEquals\(/;
   const template = `assertEquals(7, 8) ${String(assertEquals(1, 1))} done`;
   const ratio = 4 / 2 / 1;
+  let count = 1;
+  const halves = count++ / 2 / 1;
+  const quarter = count-- / assertEquals(4, 4) / 1;
   if (ratio) /assertEquals(.*)/.test(quoted);
   while (false) /assertEquals/.exec(quoted);
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   assertEquals(ratio, 2);
-  void [quoted, single, pattern, template];
+  void [quoted, single, pattern, template, halves, quarter];
 });
 --- after
 // A header comment before the imports.
@@ -34,12 +38,15 @@ Deno.test("scanner", () => {
   const pattern = /assertEquals\(/;
   const template = `assertEquals(7, 8) ${String(assert.deepStrictEqual(1, 1))} done`;
   const ratio = 4 / 2 / 1;
+  let count = 1;
+  const halves = count++ / 2 / 1;
+  const quarter = count-- / assert.deepStrictEqual(4, 4) / 1;
   if (ratio) /assertEquals(.*)/.test(quoted);
   while (false) /assertEquals/.exec(quoted);
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
   assert.deepStrictEqual(ratio, 2);
-  void [quoted, single, pattern, template];
+  void [quoted, single, pattern, template, halves, quarter];
 });
 --- findings

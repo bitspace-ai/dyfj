@@ -289,6 +289,11 @@ function regexAllowed(
   // closes before a statement, while dividing an object literal is never
   // meaningful. (If no regex parses, the scanner falls back to division.)
   if (c === "}") return true;
+  // A postfix ++ or -- ends an operand, so a `/` after it divides.
+  if ((c === "+" || c === "-") && text[prev - 1] === c) {
+    const operand = text[prevNonSpace(text, prev - 1)];
+    if (operand !== undefined && /[\w$)\]]/.test(operand)) return false;
+  }
   // After the parenthesis that closes `if (...)` and the like, a statement
   // starts, so `/` opens a regex; after any other `)` it divides.
   if (c === ")") {
@@ -1917,6 +1922,21 @@ function convertFs(
     const bodyEnd = src.text[bodyStart] === "{"
       ? matchBracket(src, bodyStart)
       : src.text.indexOf(";", bodyStart);
+    // A body that declares the entry name again shadows it somewhere, and
+    // its is* reads cannot be told apart by text.
+    const bodyImports = parseImports(src);
+    if (
+      occurrences(src, loop[2]).some((at) =>
+        at > bodyStart && at < bodyEnd &&
+        declaresAt(src, bodyImports, loop[2], at)
+      )
+    ) {
+      return {
+        pos,
+        reason: `${host} loop body declares \`${loop[2]}\` again; convert ` +
+          "by hand",
+      };
+    }
     const entry = new RegExp(`(?<![\\w$.])${loop[2]}\\s*\\.\\s*([\\w$]+)`, "g");
     for (const m of src.text.slice(bodyStart, bodyEnd).matchAll(entry)) {
       const at = bodyStart + m.index!;
