@@ -61,6 +61,7 @@ The first meaningful commit here has landed (see `../notes/tracer-bullet.md`). F
 
 - `Cargo.toml` — crate metadata, edition 2024
 - `rust-toolchain.toml` — pins the Rust toolchain channel for reproducibility
+- `src/connect.rs` — MySQL connect options. A URL that keeps the default `utf8mb4` charset and does not name a collation still uses `utf8mb4_unicode_ci`, the collation sqlx 0.8 applied for that charset; a URL with another charset gets no collation added
 - `src/events.rs` — minimal event read/write API over the canonical Dolt schema
 - `src/main.rs` — tracer-bullet demo wrapper
 - `tests/` — ignored live-Dolt integration tests

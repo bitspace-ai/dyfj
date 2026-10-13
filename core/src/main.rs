@@ -43,7 +43,13 @@ async fn main() -> Result<()> {
          core/.env (or export DATABASE_URL directly).",
     )?;
 
-    let pool = MySqlPool::connect(&database_url).await.with_context(|| {
+    let options = dyfj_core::connect::connect_options(&database_url).with_context(|| {
+        format!(
+            "DATABASE_URL is not a usable MySQL URL ({})",
+            redact_database_url(&database_url)
+        )
+    })?;
+    let pool = MySqlPool::connect_with(options).await.with_context(|| {
         format!(
             "failed to connect to {}",
             redact_database_url(&database_url)

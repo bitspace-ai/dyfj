@@ -40,9 +40,11 @@ async fn round_trip_session_start_event() -> Result<()> {
     let _ = dotenvy::dotenv();
     let database_url =
         std::env::var("DATABASE_URL").context("DATABASE_URL must be set for integration tests")?;
+    let options = dyfj_core::connect::connect_options(&database_url)
+        .context("DATABASE_URL is not a usable MySQL URL")?;
     let pool = MySqlPoolOptions::new()
         .max_connections(1)
-        .connect(&database_url)
+        .connect_with(options)
         .await
         .context("connect to the database named by DATABASE_URL")?;
     sqlx::query("SET time_zone = '+02:00'")
