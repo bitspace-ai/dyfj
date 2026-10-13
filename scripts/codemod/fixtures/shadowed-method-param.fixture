@@ -1,0 +1,41 @@
+# Untyped parameters of methods and constructors declare too: a std name
+# bound that way is shadowed, and its uses are left for hand conversion.
+rules:
+--- before
+import { assertEquals } from "@std/assert";
+
+class Runner {
+  constructor(assertEquals) {
+    assertEquals(0, 0);
+  }
+  run(assertEquals) {
+    assertEquals(1, 2);
+  }
+}
+
+Deno.test("method params", () => {
+  assertEquals(3, 3);
+  void Runner;
+});
+--- after
+import { assertEquals } from "@std/assert";
+
+class Runner {
+  constructor(assertEquals) {
+    assertEquals(0, 0);
+  }
+  run(assertEquals) {
+    assertEquals(1, 2);
+  }
+}
+
+Deno.test("method params", () => {
+  assertEquals(3, 3);
+  void Runner;
+});
+--- findings
+unconverted 4
+unconverted 5
+unconverted 7
+unconverted 8
+unconverted 13

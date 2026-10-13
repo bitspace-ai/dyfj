@@ -1,0 +1,25 @@
+# assertFalse keeps its falsiness check: assert.ok on the negation.
+rules: assert.import, assert.false
+--- before
+import { assertFalse } from "@std/assert";
+
+Deno.test("false", () => {
+  const flag = false;
+  const text = "abc";
+  assertFalse(flag);
+  assertFalse(text.includes("z"), "no z");
+  assertFalse(text === "x");
+  assertFalse(flag??text);
+});
+--- after
+import assert from "node:assert/strict";
+
+Deno.test("false", () => {
+  const flag = false;
+  const text = "abc";
+  assert.ok(!flag);
+  assert.ok(!text.includes("z"), "no z");
+  assert.ok(!(text === "x"));
+  assert.ok(!(flag??text));
+});
+--- findings

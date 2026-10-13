@@ -1,18 +1,18 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { hasDotPathComponent } from "./lexical-path.ts";
 
 Deno.test("hasDotPathComponent finds a whole `.` or `..` component", () => {
-  assertEquals(hasDotPathComponent("/a/./b"), true);
-  assertEquals(hasDotPathComponent("/a/../b"), true);
-  assertEquals(hasDotPathComponent("/a/b/.."), true);
-  assertEquals(hasDotPathComponent("/a/b/."), true);
-  assertEquals(hasDotPathComponent("/.."), true);
+  assert.deepStrictEqual(hasDotPathComponent("/a/./b"), true);
+  assert.deepStrictEqual(hasDotPathComponent("/a/../b"), true);
+  assert.deepStrictEqual(hasDotPathComponent("/a/b/.."), true);
+  assert.deepStrictEqual(hasDotPathComponent("/a/b/."), true);
+  assert.deepStrictEqual(hasDotPathComponent("/.."), true);
 });
 
 Deno.test("hasDotPathComponent ignores dots inside a component", () => {
-  assertEquals(hasDotPathComponent("/a/.b/c"), false);
-  assertEquals(hasDotPathComponent("/a/b../c"), false);
-  assertEquals(hasDotPathComponent("/a/.../c"), false);
-  assertEquals(hasDotPathComponent("/a/b.txt"), false);
-  assertEquals(hasDotPathComponent("/"), false);
+  assert.deepStrictEqual(hasDotPathComponent("/a/.b/c"), false);
+  assert.deepStrictEqual(hasDotPathComponent("/a/b../c"), false);
+  assert.deepStrictEqual(hasDotPathComponent("/a/.../c"), false);
+  assert.deepStrictEqual(hasDotPathComponent("/a/b.txt"), false);
+  assert.deepStrictEqual(hasDotPathComponent("/"), false);
 });

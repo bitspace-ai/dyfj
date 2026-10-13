@@ -1,16 +1,15 @@
-import { realpath, stat } from "node:fs/promises";
-import path from "node:path";
+import assert from "node:assert/strict";
+import { tmpdir } from "node:os";
 import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertGreater,
-  assertLess,
-  assertLessOrEqual,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { assertSpyCall, assertSpyCalls, stub } from "@std/testing/mock";
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import path from "node:path";
+import { mock } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
   AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
@@ -57,10 +56,16 @@ Deno.test("extractReadmeSection1: returns only README Section 1", () => {
     "Later section.",
   ].join("\n"));
 
-  assertStringIncludes(section, "## 1. Decisions");
-  assertStringIncludes(section, "Layer 0 rules.");
-  assertFalse(section.includes("## 2. Goal"));
-  assertFalse(section.includes("Later section."));
+  assert.ok(
+    section.includes("## 1. Decisions"),
+    `expected ${JSON.stringify(section)} to include "## 1. Decisions"`,
+  );
+  assert.ok(
+    section.includes("Layer 0 rules."),
+    `expected ${JSON.stringify(section)} to include "Layer 0 rules."`,
+  );
+  assert.ok(!section.includes("## 2. Goal"));
+  assert.ok(!section.includes("Later section."));
 });
 
 Deno.test("buildContextSourceLines: names repo files and context sources without private context paths", () => {
@@ -78,7 +83,7 @@ Deno.test("buildContextSourceLines: names repo files and context sources without
     },
   ]);
 
-  assertEquals(lines, [
+  assert.deepStrictEqual(lines, [
     "AGENTS.md <AGENTS.md>",
     "README.md Section 1 <README.md#section-1>",
     "notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
@@ -122,27 +127,34 @@ Deno.test("buildAskSystemPrompt: frames the repo-local next-work question with p
 
   // The persona is the injected base prompt; the builder composes it with
   // the live repo context (no hardcoded persona of its own).
-  assertStringIncludes(
-    prompt,
-    "You are the test companion. Help with anything.",
+  assert.ok(
+    prompt.includes("You are the test companion. Help with anything."),
+    `expected ${
+      JSON.stringify(prompt)
+    } to include "You are the test companion. Help with anything."`,
   );
-  assertStringIncludes(
-    prompt,
-    "Workbench MVP loop: ship the smallest useful slice.",
+  assert.ok(
+    prompt.includes("Workbench MVP loop: ship the smallest useful slice."),
+    `expected ${
+      JSON.stringify(prompt)
+    } to include "Workbench MVP loop: ship the smallest useful slice."`,
   );
-  assertStringIncludes(prompt, "Context sources used");
+  assert.ok(
+    prompt.includes("Context sources used"),
+    `expected ${JSON.stringify(prompt)} to include "Context sources used"`,
+  );
 });
 
 Deno.test("loadAskRepoContext: loads generic README and manifest context from the selected workspace", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-selected-",
-  });
+  const selectedRoot = await mkdtemp(
+    path.join(tmpdir(), "ask-context-selected-"),
+  );
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "README.md"),
       "# Music Rotater\n\nRotates a personal music library.\n",
     );
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "package.json"),
       JSON.stringify({ name: "music-rotater", version: "1.0.0" }),
     );
@@ -154,27 +166,34 @@ Deno.test("loadAskRepoContext: loads generic README and manifest context from th
     });
     const rendered = buildAskSystemPrompt("test companion", context);
 
-    assertEquals(context.sources, [
+    assert.deepStrictEqual(context.sources, [
       { kind: "file", label: "README.md", path: "README.md" },
       { kind: "file", label: "package.json", path: "package.json" },
     ]);
-    assertLess(
-      rendered.indexOf("untrusted workspace context"),
-      rendered.indexOf("Music Rotater"),
+    assert.ok(
+      rendered.indexOf("untrusted workspace context") <
+        rendered.indexOf("Music Rotater"),
+      `expected rendered.indexOf("untrusted workspace context") < rendered.indexOf("Music Rotater")`,
     );
-    assertStringIncludes(rendered, "Music Rotater");
-    assertStringIncludes(rendered, '"name":"music-rotater"');
+    assert.ok(
+      rendered.includes("Music Rotater"),
+      `expected ${JSON.stringify(rendered)} to include "Music Rotater"`,
+    );
+    assert.ok(
+      rendered.includes('"name":"music-rotater"'),
+      `expected ${
+        JSON.stringify(rendered)
+      } to include '"name":"music-rotater"'`,
+    );
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("loadAskRepoContext: reads the profile and token-budget defaults from the injected env", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-env-",
-  });
+  const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-env-"));
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "README.md"),
       "# Music Rotater\n\nRotates a personal music library.\n",
     );
@@ -186,28 +205,26 @@ Deno.test("loadAskRepoContext: reads the profile and token-budget defaults from 
         DYFJ_WORKBENCH_CONTEXT_TOKENS: "12345",
       }),
     });
-    assertEquals(configured.profile, "full");
-    assertEquals(configured.budget.totalTokens, 12345);
+    assert.deepStrictEqual(configured.profile, "full");
+    assert.deepStrictEqual(configured.budget.totalTokens, 12345);
 
     // An env without either variable yields the compact profile's default.
     const unset = await loadAskRepoContext({
       repoRoot: selectedRoot,
       env: new MapEnv({}),
     });
-    assertEquals(unset.profile, "compact");
-    assertEquals(
+    assert.deepStrictEqual(unset.profile, "compact");
+    assert.deepStrictEqual(
       unset.budget.totalTokens,
       COMPACT_CONTEXT_BUDGET.totalTokens,
     );
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("loadAskRepoContext: a repository without DYFJ-shaped files degrades to empty bounded context", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-empty-",
-  });
+  const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-empty-"));
   try {
     const context = await loadAskRepoContext({
       repoRoot: selectedRoot,
@@ -215,24 +232,24 @@ Deno.test("loadAskRepoContext: a repository without DYFJ-shaped files degrades t
       budget: defaultBudgetFor("compact"),
     });
 
-    assertEquals(context.sources, []);
-    assertEquals(context.sections, []);
-    assertStrictEquals(context.budget.usedTokens, 0);
+    assert.deepStrictEqual(context.sources, []);
+    assert.deepStrictEqual(context.sections, []);
+    assert.strictEqual(context.budget.usedTokens, 0);
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("loadAskRepoContext: compact generic AGENTS context leaves room for the README section", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-system-budget-",
-  });
+  const selectedRoot = await mkdtemp(
+    path.join(tmpdir(), "ask-context-system-budget-"),
+  );
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "AGENTS.md"),
       "Generic project instructions. ".repeat(80),
     );
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "README.md"),
       "# Project\n\n## 1. Decisions\n\nThe README decision context must remain visible.\n",
     );
@@ -243,30 +260,28 @@ Deno.test("loadAskRepoContext: compact generic AGENTS context leaves room for th
       budget: defaultBudgetFor("compact"),
     });
 
-    assertEquals(context.sources.map((source) => source.path), [
+    assert.deepStrictEqual(context.sources.map((source) => source.path), [
       "AGENTS.md",
       "README.md#section-1",
     ]);
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("loadAskRepoContext: loads the richer Workbench context when those files exist in the selected workspace", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-dyfj-",
-  });
+  const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-dyfj-"));
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "AGENTS.md"),
       "Read README Section 1; it is authoritative.\n",
     );
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "README.md"),
       "# Project\n\n## 1. Decisions\n\nLayer 0 rules.\n\n## 2. Goal\n\nShip.\n",
     );
-    await Deno.mkdir(path.join(selectedRoot, "notes"));
-    await Deno.writeTextFile(
+    await mkdir(path.join(selectedRoot, "notes"));
+    await writeFile(
       path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
       "Workbench loop: ship the smallest useful slice.\n",
     );
@@ -277,7 +292,7 @@ Deno.test("loadAskRepoContext: loads the richer Workbench context when those fil
       budget: defaultBudgetFor("full"),
     });
 
-    assertEquals(context.sources.map((source) => source.path), [
+    assert.deepStrictEqual(context.sources.map((source) => source.path), [
       "AGENTS.md",
       "README.md#section-1",
       "notes/workbench-mvp-loop.md",
@@ -285,27 +300,29 @@ Deno.test("loadAskRepoContext: loads the richer Workbench context when those fil
     const bodies = context.sections.map((section) => section.body).join(
       "\n",
     );
-    assertStringIncludes(
-      buildAskSystemPrompt("test companion", context),
-      "untrusted workspace context",
+    assert.ok(
+      buildAskSystemPrompt("test companion", context).includes(
+        "untrusted workspace context",
+      ),
+      `expected buildAskSystemPrompt("test companion", context) to include "untrusted workspace context"`,
     );
-    assertFalse(bodies.includes("## 2. Goal"));
+    assert.ok(!bodies.includes("## 2. Goal"));
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a manifest", async () => {
-  const selectedRoot = await Deno.makeTempDir({
-    prefix: "ask-context-priority-",
-  });
+  const selectedRoot = await mkdtemp(
+    path.join(tmpdir(), "ask-context-priority-"),
+  );
   try {
-    await Deno.mkdir(path.join(selectedRoot, "notes"));
-    await Deno.writeTextFile(
+    await mkdir(path.join(selectedRoot, "notes"));
+    await writeFile(
       path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
       "Workbench loop: ship the smallest useful slice. ".repeat(4),
     );
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(selectedRoot, "deno.json"),
       JSON.stringify({ description: "manifest context ".repeat(100) }),
     );
@@ -317,27 +334,29 @@ Deno.test("loadAskRepoContext: compact Workbench context prioritizes notes ahead
     });
     const paths = context.sources.map((source) => source.path);
 
-    assert(paths.includes("notes/workbench-mvp-loop.md"));
+    assert.ok(paths.includes("notes/workbench-mvp-loop.md"));
     if (paths.includes("deno.json")) {
-      assertLess(
-        paths.indexOf("notes/workbench-mvp-loop.md"),
-        paths.indexOf("deno.json"),
+      assert.ok(
+        paths.indexOf("notes/workbench-mvp-loop.md") <
+          paths.indexOf("deno.json"),
+        `expected paths.indexOf("notes/workbench-mvp-loop.md") < paths.indexOf("deno.json")`,
       );
     }
   } finally {
-    await Deno.remove(selectedRoot, { recursive: true });
+    await rm(selectedRoot, { recursive: true });
   }
 });
 
 Deno.test("packContextSections: compact profile uses a small budget weighted to repo context", () => {
-  assertStrictEquals(COMPACT_CONTEXT_BUDGET.totalTokens, 500);
-  assertLess(
-    COMPACT_CONTEXT_BUDGET.totalTokens,
-    DEFAULT_CONTEXT_BUDGET.totalTokens,
+  assert.strictEqual(COMPACT_CONTEXT_BUDGET.totalTokens, 500);
+  assert.ok(
+    COMPACT_CONTEXT_BUDGET.totalTokens < DEFAULT_CONTEXT_BUDGET.totalTokens,
+    `expected ${COMPACT_CONTEXT_BUDGET.totalTokens} < ${DEFAULT_CONTEXT_BUDGET.totalTokens}`,
   );
-  assertGreater(
-    COMPACT_CONTEXT_BUDGET.activeRepoPercent,
-    COMPACT_CONTEXT_BUDGET.derivedMemoryPercent,
+  assert.ok(
+    COMPACT_CONTEXT_BUDGET.activeRepoPercent >
+      COMPACT_CONTEXT_BUDGET.derivedMemoryPercent,
+    `expected ${COMPACT_CONTEXT_BUDGET.activeRepoPercent} > ${COMPACT_CONTEXT_BUDGET.derivedMemoryPercent}`,
   );
 });
 
@@ -373,7 +392,7 @@ Deno.test("packContextSections: compact budget can keep AGENTS and README Sectio
     },
   ], COMPACT_CONTEXT_BUDGET);
 
-  assertEquals(packed.sources.map((source) => source.label), [
+  assert.deepStrictEqual(packed.sources.map((source) => source.label), [
     "AGENTS.md",
     "README.md Section 1",
     "notes/workbench-mvp-loop.md",
@@ -404,12 +423,24 @@ Deno.test("packContextSections: enforces tiered budget ceilings and reserves hea
     headroomPercent: 0.1,
   });
 
-  assertLessOrEqual(packed.summary.usedTokens, 90);
-  assertLessOrEqual(packed.summary.byBucket.system.usedTokens, 20);
-  assertLessOrEqual(packed.summary.byBucket.active_repo.usedTokens, 50);
-  assertLessOrEqual(packed.summary.byBucket.derived_memory.usedTokens, 20);
-  assertStrictEquals(packed.summary.headroomTokens, 10);
-  assertStrictEquals(
+  assert.ok(
+    packed.summary.usedTokens <= 90,
+    `expected ${packed.summary.usedTokens} <= 90`,
+  );
+  assert.ok(
+    packed.summary.byBucket.system.usedTokens <= 20,
+    `expected ${packed.summary.byBucket.system.usedTokens} <= 20`,
+  );
+  assert.ok(
+    packed.summary.byBucket.active_repo.usedTokens <= 50,
+    `expected ${packed.summary.byBucket.active_repo.usedTokens} <= 50`,
+  );
+  assert.ok(
+    packed.summary.byBucket.derived_memory.usedTokens <= 20,
+    `expected ${packed.summary.byBucket.derived_memory.usedTokens} <= 20`,
+  );
+  assert.strictEqual(packed.summary.headroomTokens, 10);
+  assert.strictEqual(
     packed.sections.some((section) => section.truncated),
     true,
   );
@@ -434,27 +465,29 @@ Deno.test("packContextSections: keeps source metadata only for included sections
     totalTokens: 40,
   });
 
-  assertEquals(packed.sources.map((source) => source.label), ["large"]);
+  assert.deepStrictEqual(packed.sources.map((source) => source.label), [
+    "large",
+  ]);
 });
 
 Deno.test("estimateContextTokens: uses the same four-character approximation as model preflight", () => {
-  assertStrictEquals(estimateContextTokens("12345678"), 2);
+  assert.strictEqual(estimateContextTokens("12345678"), 2);
 });
 
 Deno.test("loadAgentsInstructions: loads AGENTS.md at the workspace root; no sibling markers required", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-flat-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-flat-"));
   try {
-    await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
 
     const result = await loadAgentsInstructions(dir);
-    assertStrictEquals(result?.body.trim(), "# Flat Rules");
-    assertEquals(result?.source, {
+    assert.strictEqual(result?.body.trim(), "# Flat Rules");
+    assert.deepStrictEqual(result?.source, {
       kind: "file",
       label: "AGENTS.md",
       path: "AGENTS.md",
     });
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -463,50 +496,52 @@ Deno.test("loadAgentsInstructions: does NOT discover an ancestor's AGENTS.md —
   // workspace must never enter the model request. An ancestor carrying the
   // old walk-up markers (AGENTS.md + README.md) is exactly the escape this
   // pins shut; a subdirectory workspace degrades to graceful absence.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-anc-"));
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(dir, "AGENTS.md"),
       "# Ancestor Rules — must not leak\n",
     );
-    await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+    await writeFile(path.join(dir, "README.md"), "# Repo\n");
     const nested = path.join(dir, "a", "b");
-    await Deno.mkdir(nested, { recursive: true });
+    await mkdir(nested, { recursive: true });
 
-    assertStrictEquals(await loadAgentsInstructions(nested), null);
+    assert.strictEqual(await loadAgentsInstructions(nested), null);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
 Deno.test("loadAgentsInstructions: rejects a non-regular-file AGENTS.md — the lstat guard never follows links", async () => {
-  // Sandbox constraint, disclosed: Deno.symlink() requires unscoped
-  // read+write, which the path-scoped test profile deliberately refuses,
+  // Sandbox constraint, disclosed: creating a symlink (`node:fs` `symlink`
+  // included) requires unscoped read+write under the current runtime,
+  // which the path-scoped test profile deliberately refuses,
   // so a literal symlink fixture cannot be constructed here. The guard
   // under test is `lstat` + `!isFile`, which rejects a symlink, a
   // directory, or a FIFO through the identical branch — lstat never
   // follows links by definition — so a directory fixture pins the same
   // containment behavior with a constructible fixture.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-nrf-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-nrf-"));
   try {
-    await Deno.mkdir(path.join(dir, "AGENTS.md"));
-    using warn = stub(console, "warn");
-    assertStrictEquals(await loadAgentsInstructions(dir), null);
-    assertSpyCalls(warn, 1);
-    assertSpyCall(warn, 0, {
-      args: ["AGENTS.md skipped: not a regular file in the workspace root"],
-    });
+    await mkdir(path.join(dir, "AGENTS.md"));
+    const warn = mock.method(console, "warn", () => {});
+    assert.strictEqual(await loadAgentsInstructions(dir), null);
+    assert.equal(warn.mock.callCount(), 1);
+    assert.deepStrictEqual(warn.mock.calls[0].arguments, [
+      "AGENTS.md skipped: not a regular file in the workspace root",
+    ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    mock.restoreAll();
+    await rm(dir, { recursive: true });
   }
 });
 
 Deno.test("loadAgentsInstructions: returns null for a workspace with no AGENTS.md", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-none-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-none-"));
   try {
-    assertStrictEquals(await loadAgentsInstructions(dir), null);
+    assert.strictEqual(await loadAgentsInstructions(dir), null);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -517,55 +552,53 @@ Deno.test("loadAgentsInstructions: a root whose identity differs from the select
   // directory (a persisted root/ancestor swap), the loader refuses. The
   // live mid-read race itself cannot be scheduled deterministically in a
   // test; this pins the detection branch both sides of the read share.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-swap-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-swap-"));
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(dir, "AGENTS.md"),
       "# Swapped-in rules — must not load\n",
     );
     const real = await stat(await realpath(dir));
-    using warn = stub(console, "warn");
+    const warn = mock.method(console, "warn", () => {});
     const result = await loadAgentsInstructions(dir, {
       dev: real.dev,
       ino: real.ino + 1,
     });
-    assertStrictEquals(result, null);
-    assertSpyCalls(warn, 1);
-    assertSpyCall(warn, 0, {
-      args: [
-        "AGENTS.md skipped: workspace root is not the selected directory",
-      ],
-    });
+    assert.strictEqual(result, null);
+    assert.equal(warn.mock.callCount(), 1);
+    assert.deepStrictEqual(warn.mock.calls[0].arguments, [
+      "AGENTS.md skipped: workspace root is not the selected directory",
+    ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    mock.restoreAll();
+    await rm(dir, { recursive: true });
   }
 });
 
 Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a zero-identity anchor fails closed", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-anc2-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-anc2-"));
   try {
-    await Deno.writeTextFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
+    await writeFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
     const real = await stat(await realpath(dir));
 
     const loaded = await loadAgentsInstructions(dir, {
       dev: real.dev,
       ino: real.ino,
     });
-    assertStrictEquals(loaded?.body.trim(), "# Anchored");
+    assert.strictEqual(loaded?.body.trim(), "# Anchored");
 
-    using warn = stub(console, "warn");
-    assertStrictEquals(
+    const warn = mock.method(console, "warn", () => {});
+    assert.strictEqual(
       await loadAgentsInstructions(dir, { dev: 0, ino: 0 }),
       null,
     );
-    assertSpyCalls(warn, 1);
-    assertSpyCall(warn, 0, {
-      args: [
-        "AGENTS.md skipped: workspace root identity unavailable on this platform",
-      ],
-    });
+    assert.equal(warn.mock.callCount(), 1);
+    assert.deepStrictEqual(warn.mock.calls[0].arguments, [
+      "AGENTS.md skipped: workspace root identity unavailable on this platform",
+    ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    mock.restoreAll();
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -574,20 +607,23 @@ Deno.test("loadAgentsInstructions: an unresolvable workspace root warns — it i
   // must not masquerade as "this workspace has no instructions": the
   // operator elevated trust expecting instructions from a workspace that
   // does not exist as named.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-mrr-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-mrr-"));
   try {
     const missingRoot = path.join(dir, "does-not-exist");
-    using warn = stub(console, "warn");
-    assertStrictEquals(await loadAgentsInstructions(missingRoot), null);
-    assertSpyCalls(warn, 1);
-    const [call] = warn.calls;
-    assertEquals(call.args.length, 1);
-    assertStringIncludes(
-      String(call.args[0]),
-      "AGENTS.md skipped: workspace root not resolvable",
+    const warn = mock.method(console, "warn", () => {});
+    assert.strictEqual(await loadAgentsInstructions(missingRoot), null);
+    assert.equal(warn.mock.callCount(), 1);
+    const [call] = warn.mock.calls;
+    assert.deepStrictEqual(call.arguments.length, 1);
+    assert.ok(
+      String(call.arguments[0]).includes(
+        "AGENTS.md skipped: workspace root not resolvable",
+      ),
+      `expected String(call.arguments[0]) to include "AGENTS.md skipped: workspace root not resolvable"`,
     );
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    mock.restoreAll();
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -595,27 +631,33 @@ Deno.test("loadAgentsInstructions: caps an oversized AGENTS.md with a marker and
   // The system prompt is never compressed, so the injected body must be
   // bounded here — and the receipt must say an excerpt entered the prompt,
   // not the whole file.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-big-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-big-"));
   try {
     const oversized = "# Giant Rules\n\n" +
       "All work must be receipted. ".repeat(10_000); // ~70K tokens
-    await Deno.writeTextFile(path.join(dir, "AGENTS.md"), oversized);
-    await Deno.writeTextFile(path.join(dir, "README.md"), "# Repo\n");
+    await writeFile(path.join(dir, "AGENTS.md"), oversized);
+    await writeFile(path.join(dir, "README.md"), "# Repo\n");
 
     const result = await loadAgentsInstructions(dir);
-    assert(result !== null);
-    assertLessOrEqual(
-      estimateContextTokens(result.body),
-      AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50,
+    assert.ok(result !== null);
+    assert.ok(
+      estimateContextTokens(result.body) <=
+        (AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50),
+      `expected estimateContextTokens(result.body) <= AGENTS_INSTRUCTIONS_TOKEN_LIMIT + 50`,
     );
-    assertStringIncludes(result.body, "[AGENTS.md truncated");
-    assertEquals(result.source, {
+    assert.ok(
+      result.body.includes("[AGENTS.md truncated"),
+      `expected ${
+        JSON.stringify(result.body)
+      } to include "[AGENTS.md truncated"`,
+    );
+    assert.deepStrictEqual(result.source, {
       kind: "file",
       label: "AGENTS.md excerpt",
       path: "AGENTS.md",
     });
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -626,26 +668,31 @@ Deno.test("loadAgentsInstructions: flags truncation when the byte-bound read cli
   // agree — the string comparison alone would report the full file while
   // the content past the byte bound was silently dropped. The loader must
   // flag the clipped read itself.
-  const dir = await Deno.makeTempDir({ prefix: "agents-instructions-ws-" });
+  const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-ws-"));
   try {
     const head = "# Rules before the whitespace run\n";
     const padding = "\n".repeat(AGENTS_INSTRUCTIONS_MAX_READ_BYTES);
     const tail = "# Rules past the read bound\n";
-    await Deno.writeTextFile(
+    await writeFile(
       path.join(dir, "AGENTS.md"),
       head + padding + tail,
     );
 
     const result = await loadAgentsInstructions(dir);
-    assert(result !== null);
-    assertStringIncludes(result.body, "[AGENTS.md truncated");
-    assertFalse(result.body.includes("past the read bound"));
-    assertEquals(result.source, {
+    assert.ok(result !== null);
+    assert.ok(
+      result.body.includes("[AGENTS.md truncated"),
+      `expected ${
+        JSON.stringify(result.body)
+      } to include "[AGENTS.md truncated"`,
+    );
+    assert.ok(!result.body.includes("past the read bound"));
+    assert.deepStrictEqual(result.source, {
       kind: "file",
       label: "AGENTS.md excerpt",
       path: "AGENTS.md",
     });
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });

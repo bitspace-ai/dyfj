@@ -1,0 +1,39 @@
+# A directly bound spy whose creation is left std (here: type arguments)
+# keeps its std reads and spy assertions; only converted spies get the
+# node:test forms.
+rules: mock.spy, mock.restore, mock.assert-spy-calls
+--- before
+import { assertSpyCalls, spy } from "@std/testing/mock";
+
+Deno.test("mixed", () => {
+  // const typed = mock.fn(...) once this test moves.
+  const typed = spy<(n: number) => number>((n) => n);
+  const plain = spy();
+  typed(1);
+  plain();
+  assertSpyCalls(typed, 1);
+  assertSpyCalls(plain, 1);
+  void typed.calls.length;
+  typed.restore();
+  plain.restore();
+});
+--- after
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { assertSpyCalls, spy } from "@std/testing/mock";
+
+Deno.test("mixed", () => {
+  // const typed = mock.fn(...) once this test moves.
+  const typed = spy<(n: number) => number>((n) => n);
+  const plain = mock.fn();
+  typed(1);
+  plain();
+  assertSpyCalls(typed, 1);
+  assert.equal(plain.mock.callCount(), 1);
+  void typed.calls.length;
+  typed.restore();
+  plain.mock.restore();
+});
+--- findings
+unconverted 7
+unconverted 11

@@ -1,0 +1,52 @@
+# Async filesystem calls onto node:fs/promises, with node:os tmpdir for temp
+# directories and the file's own path join.
+rules: fs.make-temp-dir, fs.mkdir, fs.write-text-file, fs.read-text-file, fs.chmod, fs.rename, fs.symlink, fs.real-path, fs.remove
+--- before
+import { join } from "node:path";
+
+Deno.test("fs", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "fs-fixture-" });
+  const plain = await Deno.makeTempDir();
+  const nested = await Deno.makeTempDir({ dir, prefix: "inner-" });
+  try {
+    await Deno.mkdir(join(dir, "a"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "a", "f.txt"), "one");
+    await Deno.writeTextFile(join(dir, "a", "f.txt"), "two", { append: true });
+    await Deno.writeTextFile(join(dir, "x.sh"), "#!/bin/sh", { mode: 0o755 });
+    const text = await Deno.readTextFile(join(dir, "a", "f.txt"));
+    await Deno.chmod(join(dir, "x.sh"), 0o700);
+    await Deno.rename(join(dir, "x.sh"), join(dir, "y.sh"));
+    await Deno.symlink(join(dir, "a"), join(dir, "link"), { type: "dir" });
+    const real = await Deno.realPath(dir);
+    void [text, real, nested];
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+    await Deno.remove(plain, { recursive: true });
+  }
+});
+--- after
+import { appendFile, chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+Deno.test("fs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "fs-fixture-"));
+  const plain = await mkdtemp(join(tmpdir(), "tmp-"));
+  const nested = await mkdtemp(join(dir, "inner-"));
+  try {
+    await mkdir(join(dir, "a"), { recursive: true });
+    await writeFile(join(dir, "a", "f.txt"), "one");
+    await appendFile(join(dir, "a", "f.txt"), "two");
+    await writeFile(join(dir, "x.sh"), "#!/bin/sh", { mode: 0o755 });
+    const text = await readFile(join(dir, "a", "f.txt"), "utf8");
+    await chmod(join(dir, "x.sh"), 0o700);
+    await rename(join(dir, "x.sh"), join(dir, "y.sh"));
+    await symlink(join(dir, "a"), join(dir, "link"), "dir");
+    const real = await realpath(dir);
+    void [text, real, nested];
+  } finally {
+    await rm(dir, { recursive: true });
+    await rm(plain, { recursive: true });
+  }
+});
+--- findings

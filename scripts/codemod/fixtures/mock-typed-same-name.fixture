@@ -1,0 +1,30 @@
+# A typed spy shares its name with a plain one in another test: since the
+# typed creation stays std, neither converts and both keep their std reads.
+rules:
+--- before
+import { spy } from "@std/testing/mock";
+
+Deno.test("plain", () => {
+  const callback = spy();
+  callback.restore();
+});
+
+Deno.test("typed", () => {
+  const callback = spy<() => void>();
+  callback.restore();
+});
+--- after
+import { spy } from "@std/testing/mock";
+
+Deno.test("plain", () => {
+  const callback = spy();
+  callback.restore();
+});
+
+Deno.test("typed", () => {
+  const callback = spy<() => void>();
+  callback.restore();
+});
+--- findings
+unconverted 4
+unconverted 9

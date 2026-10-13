@@ -1,0 +1,18 @@
+# FakeTime moves to mock.timers by hand.
+rules:
+--- before
+import { FakeTime } from "@std/testing/time";
+
+Deno.test("time", () => {
+  const time = new FakeTime(0);
+  time.restore();
+});
+--- after
+import { FakeTime } from "@std/testing/time";
+
+Deno.test("time", () => {
+  const time = new FakeTime(0);
+  time.restore();
+});
+--- findings
+hand-review fake-time 4

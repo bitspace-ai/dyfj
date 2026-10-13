@@ -1,0 +1,39 @@
+# Interface, type and abstract method signatures named like an assertion are
+# declarations without bodies: they are left alone, while real calls convert.
+rules: assert.equals
+--- before
+import { assertEquals } from "@std/assert";
+
+interface Checker {
+  assertEquals(a: unknown, b: unknown): boolean;
+}
+
+type Spec = { assertEquals(a: unknown, b: unknown): void };
+
+abstract class Base {
+  abstract assertEquals(a: unknown, b: unknown): void;
+}
+
+Deno.test("signatures", () => {
+  assertEquals(1, 1);
+  void [Base];
+});
+--- after
+import assert from "node:assert/strict";
+import { assertEquals } from "@std/assert";
+
+interface Checker {
+  assertEquals(a: unknown, b: unknown): boolean;
+}
+
+type Spec = { assertEquals(a: unknown, b: unknown): void };
+
+abstract class Base {
+  abstract assertEquals(a: unknown, b: unknown): void;
+}
+
+Deno.test("signatures", () => {
+  assert.deepStrictEqual(1, 1);
+  void [Base];
+});
+--- findings

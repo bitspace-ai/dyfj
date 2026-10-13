@@ -1,0 +1,35 @@
+# Sync filesystem calls onto node:fs, joining through a default node:path import.
+rules: fs.make-temp-dir, fs.mkdir, fs.write-text-file, fs.read-text-file, fs.real-path, fs.remove
+--- before
+import path from "node:path";
+
+Deno.test("sync", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "sync-" });
+  try {
+    Deno.mkdirSync(path.join(dir, "a"));
+    Deno.writeTextFileSync(path.join(dir, "a", "f"), "x");
+    const text = Deno.readTextFileSync(path.join(dir, "a", "f"));
+    const real = Deno.realPathSync(dir);
+    void [text, real];
+  } finally {
+    Deno.removeSync(dir, { recursive: true });
+  }
+});
+--- after
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+Deno.test("sync", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "sync-"));
+  try {
+    mkdirSync(path.join(dir, "a"));
+    writeFileSync(path.join(dir, "a", "f"), "x");
+    const text = readFileSync(path.join(dir, "a", "f"), "utf8");
+    const real = realpathSync(dir);
+    void [text, real];
+  } finally {
+    rmSync(dir, { recursive: true });
+  }
+});
+--- findings

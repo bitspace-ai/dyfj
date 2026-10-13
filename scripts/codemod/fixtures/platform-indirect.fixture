@@ -1,0 +1,42 @@
+# The host's platform name differs from node's on Windows ("windows" against
+# "win32"; Solaris and illumos against "sunos"), so only a direct comparison
+# with a literal that maps one-to-one converts. A stored value, a comparison
+# with anything else, or a literal without a one-to-one counterpart is left
+# for hand conversion.
+rules: process.platform
+--- before
+const WINDOWS = "windows";
+
+Deno.test("platform", () => {
+  const direct = Deno.build.os === "windows";
+  const linux = Deno.build.os !== "linux";
+  const os = Deno.build.os;
+  const named = Deno.build.os === WINDOWS;
+  const solaris = Deno.build.os === "solaris";
+  const swapped = Deno.build.os === "windows".replace("windows", "linux");
+  const continued = Deno.build.os === "windows"
+    .replace("windows", "linux");
+  void [direct, linux, os, named, solaris, swapped, continued];
+});
+--- after
+import process from "node:process";
+
+const WINDOWS = "windows";
+
+Deno.test("platform", () => {
+  const direct = process.platform === "win32";
+  const linux = process.platform !== "linux";
+  const os = Deno.build.os;
+  const named = Deno.build.os === WINDOWS;
+  const solaris = Deno.build.os === "solaris";
+  const swapped = Deno.build.os === "windows".replace("windows", "linux");
+  const continued = Deno.build.os === "windows"
+    .replace("windows", "linux");
+  void [direct, linux, os, named, solaris, swapped, continued];
+});
+--- findings
+unconverted 8
+unconverted 9
+unconverted 10
+unconverted 11
+unconverted 12

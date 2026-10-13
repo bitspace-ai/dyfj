@@ -1,0 +1,45 @@
+# Process and environment reads onto node:process. process.env is a plain
+# object, so a key that might be inherited from Object.prototype (any computed
+# key, or a prototype name) is read through an own-property check, as the
+# host's map does.
+rules: process.cwd, process.env, process.exec-path, process.platform, process.pid
+--- before
+Deno.test("process", () => {
+  const cwd = Deno.cwd();
+  const home = Deno.env.get("HOME");
+  const key = "DYFJ_X";
+  // A comment before a statement-level rewrite.
+  Deno.env.set(key, "1");
+  Deno.env.set("DYFJ_Y", "2");
+  Deno.env.delete("DYFJ_Y");
+  const has = Deno.env.has(key);
+  const inherited = Deno.env.get("toString");
+  const viaKey = Deno.env.get(key);
+  const computed = Deno.env.get(nextKey());
+  const exe = Deno.execPath();
+  const windows = Deno.build.os === "windows";
+  const pid = Deno.pid;
+  void [cwd, home, has, inherited, viaKey, computed, exe, windows, pid];
+});
+--- after
+import process from "node:process";
+
+Deno.test("process", () => {
+  const cwd = process.cwd();
+  const home = process.env.HOME;
+  const key = "DYFJ_X";
+  // A comment before a statement-level rewrite.
+  process.env[key] = "1";
+  process.env.DYFJ_Y = "2";
+  delete process.env.DYFJ_Y;
+  const has = Object.hasOwn(process.env, key);
+  const inherited = Object.hasOwn(process.env, "toString") ? process.env.toString : undefined;
+  const viaKey = Object.hasOwn(process.env, key) ? process.env[key] : undefined;
+  const computed = Deno.env.get(nextKey());
+  const exe = process.execPath;
+  const windows = process.platform === "win32";
+  const pid = process.pid;
+  void [cwd, home, has, inherited, viaKey, computed, exe, windows, pid];
+});
+--- findings
+unconverted 14

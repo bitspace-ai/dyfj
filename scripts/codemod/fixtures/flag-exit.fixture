@@ -1,0 +1,12 @@
+# Exiting the process from inside a test is reviewed by hand.
+rules:
+--- before
+Deno.test("exit", () => {
+  if (broken()) Deno.exit(1);
+});
+--- after
+Deno.test("exit", () => {
+  if (broken()) Deno.exit(1);
+});
+--- findings
+hand-review exit 2

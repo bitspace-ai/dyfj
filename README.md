@@ -1096,7 +1096,8 @@ and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
 non-integration, non-golden `Deno.test` file, run in parallel with the op and
-resource sanitizers enabled and no run, net, or env grant), current and
+resource sanitizers enabled, no run or net grant, and env access only to
+`TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
@@ -2046,3 +2047,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-12 - The `--runner codex-chatgpt` and ACP containment passages name
   `/bin/sleep` as the process-group probe child and its place beside
   `/bin/kill` in the `serve-unix` spawn grant.
+- 2026-10-12 - The aggregate gate's description of `test.unit` names its env
+  grant: `TMPDIR`, `TMP` and `TEMP`, which `node:os` `tmpdir()` reads.

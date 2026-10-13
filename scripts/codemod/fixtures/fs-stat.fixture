@@ -1,0 +1,26 @@
+# stat and lstat: the boolean is* fields become node's methods. A result bound
+# to a name is left, because its later reads cannot be followed by text rules.
+rules: fs.stat
+--- before
+Deno.test("stat", async () => {
+  await Deno.stat("/tmp");
+  const mode = (await Deno.stat("/tmp")).mode! & 0o777;
+  const isDir = (await Deno.stat("/tmp")).isDirectory;
+  const isLink = Deno.lstatSync("/tmp").isSymlink;
+  const info = await Deno.stat("/tmp");
+  void [mode, isDir, isLink, info];
+});
+--- after
+import { lstatSync } from "node:fs";
+import { stat } from "node:fs/promises";
+
+Deno.test("stat", async () => {
+  await stat("/tmp");
+  const mode = (await stat("/tmp")).mode! & 0o777;
+  const isDir = (await stat("/tmp")).isDirectory();
+  const isLink = lstatSync("/tmp").isSymbolicLink();
+  const info = await Deno.stat("/tmp");
+  void [mode, isDir, isLink, info];
+});
+--- findings
+unconverted 9

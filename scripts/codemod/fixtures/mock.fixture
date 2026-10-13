@@ -1,0 +1,60 @@
+# @std/testing/mock onto node:test mock: spies, stubs, call records and the
+# spy assertions.
+rules: mock.import, mock.spy, mock.stub, mock.restore, mock.calls, mock.assert-spy-calls, mock.assert-spy-call, assert.import, assert.equals
+--- before
+import { assertEquals } from "@std/assert";
+import {
+  assertSpyCall,
+  assertSpyCalls,
+  spy,
+  stub,
+} from "@std/testing/mock";
+
+Deno.test("mocks", () => {
+  const callback = spy((n: number) => n + 1);
+  const quiet = spy();
+  const method = spy(target, "run");
+  const warn = stub(console, "warn");
+  const log = stub(console, "log", () => {});
+  try {
+    callback(1);
+    console.warn("w");
+    assertSpyCalls(callback, 1);
+    assertSpyCall(callback, 0, { args: [1], returned: 2 });
+    assertSpyCall(quiet, 0);
+    assertEquals(callback.calls[0].args, [1]);
+    assertEquals(warn.calls.length, 1);
+    assertEquals(method.calls[0].returned, undefined);
+  } finally {
+    warn.restore();
+    log /* cleanup */ .restore();
+    quiet?.restore();
+  }
+});
+--- after
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+
+Deno.test("mocks", () => {
+  const callback = mock.fn((n: number) => n + 1);
+  const quiet = mock.fn();
+  const method = mock.method(target, "run");
+  const warn = mock.method(console, "warn", () => {});
+  const log = mock.method(console, "log", () => {});
+  try {
+    callback(1);
+    console.warn("w");
+    assert.equal(callback.mock.callCount(), 1);
+    assert.deepStrictEqual(callback.mock.calls[0].arguments, [1]);
+    assert.deepStrictEqual(callback.mock.calls[0].result, 2);
+    assert.ok(quiet.mock.calls[0]);
+    assert.deepStrictEqual(callback.mock.calls[0].arguments, [1]);
+    assert.deepStrictEqual(warn.mock.callCount(), 1);
+    assert.deepStrictEqual(method.mock.calls[0].result, undefined);
+  } finally {
+    warn.mock.restore();
+    log /* cleanup */ .mock.restore();
+    quiet?.mock.restore();
+  }
+});
+--- findings

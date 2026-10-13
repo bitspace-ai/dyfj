@@ -1,0 +1,28 @@
+# mkdtemp appends its random suffix to the path it is given, so an empty
+# prefix would make a sibling of the temp root rather than a directory in it.
+# Only a non-empty string literal prefix (or none, which gets "tmp-")
+# converts; any other prefix is left for hand conversion.
+rules: fs.make-temp-dir
+--- before
+import { join } from "node:path";
+
+Deno.test("prefixes", async () => {
+  const named = await Deno.makeTempDir({ prefix: "named-" });
+  const empty = await Deno.makeTempDir({ prefix: "" });
+  const computed = await Deno.makeTempDir({ prefix: label });
+  void [named, empty, computed, join];
+});
+--- after
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+Deno.test("prefixes", async () => {
+  const named = await mkdtemp(join(tmpdir(), "named-"));
+  const empty = await Deno.makeTempDir({ prefix: "" });
+  const computed = await Deno.makeTempDir({ prefix: label });
+  void [named, empty, computed, join];
+});
+--- findings
+unconverted 7
+unconverted 8

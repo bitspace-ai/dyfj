@@ -1,0 +1,28 @@
+# A file that binds its own `mock` keeps its std spies and stubs: importing
+# node:test's mock over the local binding would not compile. Their std reads
+# stay valid and are left as they are.
+rules:
+--- before
+import { spy } from "@std/testing/mock";
+
+const mock = { calls: 0 };
+
+Deno.test("collision", () => {
+  const callback = spy();
+  callback();
+  void [mock, callback.calls.length];
+  callback.restore();
+});
+--- after
+import { spy } from "@std/testing/mock";
+
+const mock = { calls: 0 };
+
+Deno.test("collision", () => {
+  const callback = spy();
+  callback();
+  void [mock, callback.calls.length];
+  callback.restore();
+});
+--- findings
+unconverted 6

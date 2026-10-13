@@ -1,0 +1,14 @@
+# The permissions API belongs to the registration and the lane; it stays in S2a.
+rules:
+--- before
+Deno.test("query", () => {
+  const status = Deno.permissions.querySync({ name: "net" });
+  void status;
+});
+--- after
+Deno.test("query", () => {
+  const status = Deno.permissions.querySync({ name: "net" });
+  void status;
+});
+--- findings
+hand-review permissions-api 2

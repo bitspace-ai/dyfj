@@ -1,0 +1,29 @@
+# A binding imported from the right module in the wrong shape is not reused:
+# a namespace or an aliased named import is not the default export the
+# rewrite would emit, so the occurrence is left for hand conversion.
+rules:
+--- before
+import * as assert from "node:assert/strict";
+import { join as process } from "node:path";
+import { assertEquals } from "@std/assert";
+
+Deno.test("shapes", () => {
+  assert.equal(1, 1);
+  assertEquals(process("a", "b"), "a/b");
+  const cwd = Deno.cwd();
+  void cwd;
+});
+--- after
+import * as assert from "node:assert/strict";
+import { join as process } from "node:path";
+import { assertEquals } from "@std/assert";
+
+Deno.test("shapes", () => {
+  assert.equal(1, 1);
+  assertEquals(process("a", "b"), "a/b");
+  const cwd = Deno.cwd();
+  void cwd;
+});
+--- findings
+unconverted 7
+unconverted 8

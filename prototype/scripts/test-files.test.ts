@@ -115,17 +115,23 @@ Deno.test("parseTypecheckScope accepts exactly one known scope", () => {
   assertThrows(() => parseTypecheckScope(["sources", "tests"]));
 });
 
-Deno.test("the unit lane runs in parallel, sanitized, with no run, net or env grant", () => {
+Deno.test("the unit lane runs in parallel, sanitized, with no run or net grant and env only for the temp directory", () => {
   const args = unitTestArgs(["testing/fakes/map-env.test.ts"]);
   assertEquals(args.slice(0, 2), ["test", "--parallel"]);
   assertEquals(args.at(-1), "testing/fakes/map-env.test.ts");
-  for (const banned of ["--allow-run", "--allow-net", "--allow-env", "-A"]) {
+  for (const banned of ["--allow-run", "--allow-net", "-A"]) {
     assertEquals(
       args.some((argument) => argument.startsWith(banned)),
       false,
       banned,
     );
   }
+  // node:os tmpdir() reads TMPDIR, then TMP and TEMP when it is unset; no
+  // other variable is granted.
+  assertEquals(
+    args.filter((argument) => argument.startsWith("--allow-env")),
+    ["--allow-env=TMPDIR,TMP,TEMP"],
+  );
   // The pinned Deno makes the op and resource sanitizers opt-in; the lane
   // opts in.
   assertEquals(args.includes("--sanitize-ops"), true);

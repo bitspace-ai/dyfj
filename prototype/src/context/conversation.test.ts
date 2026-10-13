@@ -1,13 +1,5 @@
-import {
-  assert,
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import {
   CONVERSATION_SUMMARY_MARKER,
   countTurns,
@@ -94,7 +86,7 @@ const event = (
 function reported(
   omission: HistoryOmissionProjection | undefined,
 ): HistoryOmissionProjection {
-  assert(omission !== undefined, "expected an omission witness");
+  assert.ok(omission !== undefined, "expected an omission witness");
   return omission;
 }
 
@@ -128,13 +120,18 @@ Deno.test("fetchWorkbenchSessionEvents: preserves persisted tool-history validit
     sessionId: "01ABCDEF0123456789ABCDEF01",
     events: eventsReturning([valid]),
   });
-  assertStrictEquals(emptyResult.toolHistoryValid, true);
-  assertArrayIncludes(buildConversationMessages([emptyResult]), [{
-    role: "tool",
-    toolCallId: "call-1",
-    name: "read_file",
-    content: "",
-  }]);
+  assert.strictEqual(emptyResult.toolHistoryValid, true);
+  const emptyMessages = buildConversationMessages([emptyResult]);
+  assert.ok(
+    emptyMessages.some((message) =>
+      isDeepStrictEqual(message, {
+        role: "tool",
+        toolCallId: "call-1",
+        name: "read_file",
+        content: "",
+      })
+    ),
+  );
 
   for (
     const corrupted of [
@@ -151,11 +148,14 @@ Deno.test("fetchWorkbenchSessionEvents: preserves persisted tool-history validit
         corrupted as unknown as Record<string, string>,
       ]),
     });
-    assertStrictEquals(event.toolHistoryValid, false);
-    assertThrows(
+    assert.strictEqual(event.toolHistoryValid, false);
+    assert.throws(
       () => buildConversationMessages([event]),
-      Error,
-      "Session history is empty after withholding unavailable tool evidence",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Session history is empty after withholding unavailable tool evidence",
+        ),
     );
   }
 });
@@ -166,7 +166,7 @@ Deno.test("buildConversationMessages: maps prompts to user turns and responses t
     event("model_response", "A local-first workbench."),
     event("session_end", null),
   ]);
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "What is DYFJ?" },
     { role: "assistant", content: "A local-first workbench." },
   ]);
@@ -177,7 +177,7 @@ Deno.test("buildConversationMessages: replays an external-agent response as an a
     event("session_start", "delegate this"),
     event("agent_response", "external result"),
   ]);
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "delegate this" },
     { role: "assistant", content: "external result" },
   ]);
@@ -194,13 +194,13 @@ Deno.test("buildConversationMessages: [case 1] retains a valid tool pair whose r
       result: "",
     }),
   ], { onOmission: (value) => omission = value });
-  assertEquals(messages.at(-1), {
+  assert.deepStrictEqual(messages.at(-1), {
     role: "tool",
     toolCallId: "empty-result",
     name: "read_file",
     content: "",
   });
-  assertStrictEquals(omission, undefined);
+  assert.strictEqual(omission, undefined);
 });
 
 Deno.test("buildConversationMessages: [case 3] counts a gap marker without claiming a positive missing-call count", () => {
@@ -215,7 +215,7 @@ Deno.test("buildConversationMessages: [case 3] counts a gap marker without claim
       isError: true,
     }),
   ], { onOmission: (value) => omission = value });
-  assertEquals(omission, {
+  assert.deepStrictEqual(omission, {
     detectedInHistory: 1,
     malformedToolRecords: 0,
     gapMarkers: 1,
@@ -237,11 +237,17 @@ Deno.test("buildConversationMessages: [case 4] continues an incident-shaped prom
       isError: true,
     }),
   ]);
-  assertEquals(messages, [{ role: "user", content: "run the check" }]);
+  assert.deepStrictEqual(messages, [{
+    role: "user",
+    content: "run the check",
+  }]);
 });
 
 Deno.test("buildConversationMessages: [case 23] metadata-only history remains an allowed empty projection", () => {
-  assertEquals(buildConversationMessages([event("session_end", null)]), []);
+  assert.deepStrictEqual(
+    buildConversationMessages([event("session_end", null)]),
+    [],
+  );
 });
 
 Deno.test("buildConversationMessages: [case 2] withholds a malformed row while retaining prose on both sides", () => {
@@ -257,11 +263,11 @@ Deno.test("buildConversationMessages: [case 2] withholds a malformed row while r
     }),
     event("model_response", "dependent prose after"),
   ], { onOmission: (value) => omission = value });
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "before" },
     { role: "assistant", content: "dependent prose after" },
   ]);
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 1,
     malformedToolRecords: 1,
     gapMarkers: 0,
@@ -272,7 +278,7 @@ Deno.test("buildConversationMessages: [case 2] withholds a malformed row while r
 
 Deno.test("buildConversationMessages: [case 5] refuses when withholding leaves no projected transcript", () => {
   let omission: HistoryOmissionProjection | undefined;
-  assertThrows(
+  assert.throws(
     () =>
       buildConversationMessages([
         event("tool_call", null, {
@@ -283,14 +289,19 @@ Deno.test("buildConversationMessages: [case 5] refuses when withholding leaves n
           valid: false,
         }),
       ], { onOmission: (value) => omission = value }),
-    Error,
-    "Session history is empty after withholding unavailable tool evidence",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "Session history is empty after withholding unavailable tool evidence",
+      ),
   );
-  assertObjectMatch({ ...reported(omission) }, { detectedInHistory: 1 });
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
+    detectedInHistory: 1,
+  });
 });
 
 Deno.test("buildConversationMessages: [case 6] refuses a synthetic split tool pair through the live representability guard", () => {
-  assertThrows(
+  assert.throws(
     () =>
       assertRepresentableToolHistory([{
         role: "tool",
@@ -298,18 +309,24 @@ Deno.test("buildConversationMessages: [case 6] refuses a synthetic split tool pa
         name: "read_file",
         content: "result",
       }]),
-    Error,
-    "Session contains unrepresentable persisted tool history",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "Session contains unrepresentable persisted tool history",
+      ),
   );
-  assertThrows(
+  assert.throws(
     () =>
       assertRepresentableToolHistory([{
         role: "assistant",
         content: "",
         toolCalls: [{ id: "orphan", name: "read_file", arguments: {} }],
       }]),
-    Error,
-    "Session contains unrepresentable persisted tool history",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "Session contains unrepresentable persisted tool history",
+      ),
   );
 });
 
@@ -334,11 +351,11 @@ Deno.test("buildConversationMessages: [case 7] reports three projected pairs bes
   const messages = buildConversationMessages(events, {
     onOmission: (value) => omission = value,
   });
-  assertEquals(
+  assert.deepStrictEqual(
     messages.filter((message) => message.role === "tool").length,
     3,
   );
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 1,
     gapMarkers: 1,
     projectedPairs: 3,
@@ -364,7 +381,7 @@ Deno.test("buildConversationMessages: [case 8] counts withheld records independe
       valid: false,
     }),
   ], { onOmission: (value) => omission = value });
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 2,
     malformedToolRecords: 2,
     withheldFromProjection: 2,
@@ -386,11 +403,11 @@ Deno.test("buildConversationMessages: [case 9] keeps whole-history counts when a
     event("session_start", "recent prompt"),
     event("model_response", "recent answer"),
   ], { maxTurns: 1, onOmission: (value) => omission = value });
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "recent prompt" },
     { role: "assistant", content: "recent answer" },
   ]);
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 1,
     withheldFromProjection: 0,
   });
@@ -418,13 +435,23 @@ Deno.test("buildConversationMessages: [case 10] retains a compressed summary whi
       }),
     ),
   ], { onOmission: (value) => omission = value });
-  assertStringIncludes(messages[0].content, CONVERSATION_SUMMARY_MARKER);
-  assertArrayIncludes(messages, [{
-    role: "user",
-    content: "retained prompt",
-  }]);
-  assertFalse(JSON.stringify(messages).includes("elder prompt"));
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.ok(
+    messages[0].content.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected ${JSON.stringify(messages[0].content)} to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
+  assert.deepStrictEqual(
+    [{
+      role: "user",
+      content: "retained prompt",
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.ok(!JSON.stringify(messages).includes("elder prompt"));
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 1,
     withheldFromProjection: 0,
   });
@@ -460,9 +487,16 @@ Deno.test("buildConversationMessages: [case 11] repeated compression recomputes 
     return { messages, omission };
   };
   const first = project();
-  assertEquals(project(), first);
-  assertObjectMatch({ ...reported(first.omission) }, { detectedInHistory: 1 });
-  assertStringIncludes(first.messages[0].content, "second summary");
+  assert.deepStrictEqual(project(), first);
+  assert.partialDeepStrictEqual({ ...reported(first.omission) }, {
+    detectedInHistory: 1,
+  });
+  assert.ok(
+    first.messages[0].content.includes("second summary"),
+    `expected ${
+      JSON.stringify(first.messages[0].content)
+    } to include "second summary"`,
+  );
 });
 
 Deno.test("buildConversationMessages: [case 12] derives the witness from events beside a legacy summary with no omission field", () => {
@@ -484,8 +518,13 @@ Deno.test("buildConversationMessages: [case 12] derives the witness from events 
       }),
     ),
   ], { onOmission: (value) => omission = value });
-  assertStringIncludes(messages[0].content, "legacy summary");
-  assertObjectMatch({ ...reported(omission) }, {
+  assert.ok(
+    messages[0].content.includes("legacy summary"),
+    `expected ${
+      JSON.stringify(messages[0].content)
+    } to include "legacy summary"`,
+  );
+  assert.partialDeepStrictEqual({ ...reported(omission) }, {
     detectedInHistory: 1,
     gapMarkers: 1,
   });
@@ -504,7 +543,12 @@ Deno.test("buildConversationMessages: [case 17] retains later dependent prose ve
     }),
     event("model_response", dependent),
   ]);
-  assertArrayIncludes(messages, [{ role: "assistant", content: dependent }]);
+  assert.deepStrictEqual(
+    [{ role: "assistant", content: dependent }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
 });
 
 Deno.test("buildConversationMessages: [case 18] identical immutable events yield identical projections and counts", () => {
@@ -525,7 +569,7 @@ Deno.test("buildConversationMessages: [case 18] identical immutable events yield
     });
     return { messages, omission };
   };
-  assertEquals(project(), project());
+  assert.deepStrictEqual(project(), project());
 });
 
 Deno.test("buildConversationMessages: [case 19] native and ACP-labelled rows have identical projection decisions and counts", () => {
@@ -547,7 +591,7 @@ Deno.test("buildConversationMessages: [case 19] native and ACP-labelled rows hav
     );
     return { messages, omission };
   };
-  assertEquals(project(null), project("acp"));
+  assert.deepStrictEqual(project(null), project("acp"));
 });
 
 Deno.test("buildConversationMessages: a context_compressed event replaces the elder turns with the pinned summary", () => {
@@ -564,18 +608,33 @@ Deno.test("buildConversationMessages: a context_compressed event replaces the el
     event("model_response", "fresh answer"),
   ]);
   // Byte-consistent with what the live session injected: the shared formatter.
-  assertEquals(messages[0], formatSummaryMessage(summary));
-  assertStringIncludes(messages[0].content, CONVERSATION_SUMMARY_MARKER);
+  assert.deepStrictEqual(messages[0], formatSummaryMessage(summary));
+  assert.ok(
+    messages[0].content.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected ${JSON.stringify(messages[0].content)} to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
   // Elder turns are gone; the recent turns after compression remain.
-  assertFalse(JSON.stringify(messages).includes("old question one"));
-  assertArrayIncludes(messages, [{
-    role: "user",
-    content: "fresh question",
-  }]);
-  assertArrayIncludes(messages, [{
-    role: "assistant",
-    content: "fresh answer",
-  }]);
+  assert.ok(!JSON.stringify(messages).includes("old question one"));
+  assert.deepStrictEqual(
+    [{
+      role: "user",
+      content: "fresh question",
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.deepStrictEqual(
+    [{
+      role: "assistant",
+      content: "fresh answer",
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
 });
 
 Deno.test("buildConversationMessages: resume keeps the verbatim tail and current prompt, dropping only elder", () => {
@@ -601,20 +660,45 @@ Deno.test("buildConversationMessages: resume keeps the verbatim tail and current
     ),
     event("model_response", "the current answer"),
   ]);
-  assertStringIncludes(messages[0].content, CONVERSATION_SUMMARY_MARKER);
+  assert.ok(
+    messages[0].content.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected ${JSON.stringify(messages[0].content)} to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
   const s = JSON.stringify(messages);
-  assertFalse(s.includes("elder q1"));
-  assertFalse(s.includes("elder q2"));
-  assertArrayIncludes(messages, [{ role: "user", content: "tail q1" }]);
-  assertArrayIncludes(messages, [{ role: "user", content: "tail q2" }]);
-  assertArrayIncludes(messages, [{
-    role: "user",
-    content: "the current question",
-  }]);
-  assertArrayIncludes(messages, [{
-    role: "assistant",
-    content: "the current answer",
-  }]);
+  assert.ok(!s.includes("elder q1"));
+  assert.ok(!s.includes("elder q2"));
+  assert.deepStrictEqual(
+    [{ role: "user", content: "tail q1" }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.deepStrictEqual(
+    [{ role: "user", content: "tail q2" }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.deepStrictEqual(
+    [{
+      role: "user",
+      content: "the current question",
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.deepStrictEqual(
+    [{
+      role: "assistant",
+      content: "the current answer",
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
 });
 
 Deno.test("buildConversationMessages: the summary marker survives resume past the recent-turns cap", () => {
@@ -633,10 +717,18 @@ Deno.test("buildConversationMessages: the summary marker survives resume past th
   }
   const messages = buildConversationMessages(events, { maxTurns: 3 });
   // The pinned summary is still at the head despite 20 following turns...
-  assertStringIncludes(messages[0].content, CONVERSATION_SUMMARY_MARKER);
+  assert.ok(
+    messages[0].content.includes(CONVERSATION_SUMMARY_MARKER),
+    `expected ${JSON.stringify(messages[0].content)} to include ${
+      JSON.stringify(CONVERSATION_SUMMARY_MARKER)
+    }`,
+  );
   // ...and only the most recent 3 turns follow it (summary user + 3 users).
-  assertEquals(messages.filter((m) => m.role === "user").length, 1 + 3);
-  assertFalse(JSON.stringify(messages).includes("q0"));
+  assert.deepStrictEqual(
+    messages.filter((m) => m.role === "user").length,
+    1 + 3,
+  );
+  assert.ok(!JSON.stringify(messages).includes("q0"));
 });
 
 Deno.test("buildConversationMessages: keeps prior turns when a context_compressed payload is unparseable", () => {
@@ -644,7 +736,7 @@ Deno.test("buildConversationMessages: keeps prior turns when a context_compresse
     event("session_start", "keep me"),
     event("context_compressed", "not json"),
   ]);
-  assertEquals(messages, [{ role: "user", content: "keep me" }]);
+  assert.deepStrictEqual(messages, [{ role: "user", content: "keep me" }]);
 });
 
 Deno.test("buildConversationMessages: resumes uncompressed on a payload with no retained count", () => {
@@ -666,8 +758,8 @@ Deno.test("buildConversationMessages: resumes uncompressed on a payload with no 
     ),
     event("model_response", "recent a"),
   ]);
-  assertFalse(JSON.stringify(messages).includes(CONVERSATION_SUMMARY_MARKER));
-  assertEquals(messages, [
+  assert.ok(!JSON.stringify(messages).includes(CONVERSATION_SUMMARY_MARKER));
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "elder q" },
     { role: "assistant", content: "elder a" },
     { role: "user", content: "recent q" },
@@ -695,11 +787,11 @@ Deno.test("buildConversationMessages: resume is byte-identical to the live trans
   // ── Live path, exactly as the runtime does it ──
   // buildResume caps the seed to the most recent maxTurns turns (21..30)...
   const seed = buildConversationMessages(priorEvents, { maxTurns });
-  assertStrictEquals(countTurns(seed), maxTurns);
+  assert.strictEqual(countTurns(seed), maxTurns);
   // ...and the compressor partitions THAT capped seed.
   const { elder, tail } = partitionForCompression(seed, VERBATIM_TAIL_TURNS);
-  assertStrictEquals(countTurns(elder), 8);
-  assertStrictEquals(countTurns(tail), 2);
+  assert.strictEqual(countTurns(elder), 8);
+  assert.strictEqual(countTurns(tail), 2);
   const summary = "## Session intent\nsummary of questions 21-28";
   const liveTranscript = [formatSummaryMessage(summary), ...tail];
 
@@ -712,15 +804,25 @@ Deno.test("buildConversationMessages: resume is byte-identical to the live trans
     ),
   ], { maxTurns });
 
-  assertEquals(resumed, liveTranscript);
+  assert.deepStrictEqual(resumed, liveTranscript);
   // The summarized turns must not ALSO survive verbatim — the exact corruption
   // a leading count produced (turns 21-28 both summarized and replayed).
   const resumedJson = JSON.stringify(resumed);
   for (const i of [21, 22, 23, 24, 25, 26, 27, 28]) {
-    assertFalse(resumedJson.includes(`question ${i}`));
+    assert.ok(!resumedJson.includes(`question ${i}`));
   }
-  assertArrayIncludes(resumed, [{ role: "user", content: "question 29" }]);
-  assertArrayIncludes(resumed, [{ role: "user", content: "question 30" }]);
+  assert.deepStrictEqual(
+    [{ role: "user", content: "question 29" }].filter((item) =>
+      !resumed.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
+  assert.deepStrictEqual(
+    [{ role: "user", content: "question 30" }].filter((item) =>
+      !resumed.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
 });
 
 Deno.test("buildConversationMessages: a failed turn (error event, no model_response) rebuilds without a half-turn", () => {
@@ -736,7 +838,7 @@ Deno.test("buildConversationMessages: a failed turn (error event, no model_respo
     event("error", "Context window overflow: ..."),
     event("session_end", null),
   ]);
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "What is DYFJ?" },
     { role: "assistant", content: "A local-first workbench." },
     { role: "user", content: "one more question" },
@@ -750,13 +852,13 @@ Deno.test("buildConversationMessages: keeps only the most recent maxTurns exchan
   ]).flat();
   const messages = buildConversationMessages(events, { maxTurns: 3 });
   // 3 turns => 6 messages, and they are the most recent ones (no truncation).
-  assertEquals(messages.length, 6);
-  assertEquals(messages[0], { role: "user", content: "prompt 47" });
-  assertEquals(messages.at(-1), {
+  assert.deepStrictEqual(messages.length, 6);
+  assert.deepStrictEqual(messages[0], { role: "user", content: "prompt 47" });
+  assert.deepStrictEqual(messages.at(-1), {
     role: "assistant",
     content: "response 49",
   });
-  assertStrictEquals(messages.some((m) => m.content === "prompt 0"), false);
+  assert.strictEqual(messages.some((m) => m.content === "prompt 0"), false);
 });
 
 Deno.test("buildConversationMessages: replays a tool_call event as a paired assistant+tool turn", () => {
@@ -770,7 +872,7 @@ Deno.test("buildConversationMessages: replays a tool_call event as a paired assi
     }),
     event("model_response", "There are two entries."),
   ]);
-  assertEquals(messages, [
+  assert.deepStrictEqual(messages, [
     { role: "user", content: "list the files" },
     {
       role: "assistant",
@@ -791,8 +893,8 @@ Deno.test("buildConversationMessages: replays a tool_call event as a paired assi
   // same id — the wire-format pairing invariant.
   const toolIdx = messages.findIndex((m) => m.role === "tool");
   const prior = messages[toolIdx - 1];
-  assertStrictEquals(prior.role, "assistant");
-  assertStrictEquals(
+  assert.strictEqual(prior.role, "assistant");
+  assert.strictEqual(
     prior.role === "assistant" && prior.toolCalls?.[0]?.id,
     "call_1",
   );
@@ -814,13 +916,19 @@ Deno.test("buildConversationMessages: replays a failed tool_call with its error 
     }),
     event("model_response", "Retrying with a path."),
   ]);
-  assertArrayIncludes(messages, [{
-    role: "tool",
-    toolCallId: "call_bad",
-    name: "read_file",
-    content: "invalid arguments for read_file: missing required argument: path",
-    isError: true,
-  }]);
+  assert.deepStrictEqual(
+    [{
+      role: "tool",
+      toolCallId: "call_bad",
+      name: "read_file",
+      content:
+        "invalid arguments for read_file: missing required argument: path",
+      isError: true,
+    }].filter((item) =>
+      !messages.some((candidate) => isDeepStrictEqual(candidate, item))
+    ),
+    [],
+  );
   // A successful replayed result stays unmarked (absent, not false).
   const ok = buildConversationMessages([
     event("session_start", "list"),
@@ -832,7 +940,7 @@ Deno.test("buildConversationMessages: replays a failed tool_call with its error 
     }),
   ]);
   const okTool = ok.find((m) => m.role === "tool");
-  assertStrictEquals(okTool && "isError" in okTool, false);
+  assert.strictEqual(okTool && "isError" in okTool, false);
 });
 
 Deno.test("buildConversationMessages: truncation never orphans a tool result from its call", () => {
@@ -852,12 +960,12 @@ Deno.test("buildConversationMessages: truncation never orphans a tool result fro
   const messages = buildConversationMessages([...turn(0), ...turn(1)], {
     maxTurns: 1,
   });
-  assertEquals(messages[0], { role: "user", content: "prompt 1" });
-  assertStrictEquals(messages.some((m) => m.content === "prompt 0"), false);
+  assert.deepStrictEqual(messages[0], { role: "user", content: "prompt 1" });
+  assert.strictEqual(messages.some((m) => m.content === "prompt 0"), false);
   // First message is a user turn; no leading orphaned tool message.
-  assertStrictEquals(messages[0].role, "user");
+  assert.strictEqual(messages[0].role, "user");
   const toolMsg = messages.find((m) => m.role === "tool");
-  assertStrictEquals(
+  assert.strictEqual(
     toolMsg && "toolCallId" in toolMsg && toolMsg.toolCallId,
     "call_1",
   );

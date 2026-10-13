@@ -1,0 +1,56 @@
+# A per-test permissions option belongs to the registration and the lane,
+# whether its key is bare, shorthand, quoted or computed. A permissions key in
+# other data is not flagged.
+rules:
+--- before
+Deno.test("data", () => {
+  const config = { permissions: { level: "strict" } };
+  void config;
+});
+Deno.test({
+  name: "needs net",
+  permissions: { net: true },
+  fn: () => {},
+});
+Deno.test({
+  name: "quoted",
+  "permissions": { net: true },
+  fn: () => {},
+});
+Deno.test({
+  name: "computed",
+  ["permissions"]: { net: true },
+  fn: () => {},
+});
+const permissions = { net: true };
+Deno.test({ name: "shorthand", permissions, fn: () => {} });
+Deno.test({ name: "commented", permissions /* why */: { net: true }, fn() {} });
+--- after
+Deno.test("data", () => {
+  const config = { permissions: { level: "strict" } };
+  void config;
+});
+Deno.test({
+  name: "needs net",
+  permissions: { net: true },
+  fn: () => {},
+});
+Deno.test({
+  name: "quoted",
+  "permissions": { net: true },
+  fn: () => {},
+});
+Deno.test({
+  name: "computed",
+  ["permissions"]: { net: true },
+  fn: () => {},
+});
+const permissions = { net: true };
+Deno.test({ name: "shorthand", permissions, fn: () => {} });
+Deno.test({ name: "commented", permissions /* why */: { net: true }, fn() {} });
+--- findings
+hand-review test-permissions 7
+hand-review test-permissions 12
+hand-review test-permissions 17
+hand-review test-permissions 21
+hand-review test-permissions 22

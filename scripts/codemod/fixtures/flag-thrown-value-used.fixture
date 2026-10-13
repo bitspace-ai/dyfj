@@ -1,0 +1,32 @@
+# The std assertions return the thrown error; node's return nothing, so a call
+# whose value is used (bound, passed as an argument, held in an array, a for
+# loop's condition) is left for hand review.
+rules:
+--- before
+import { assertThrows } from "@std/assert";
+
+Deno.test("value", () => {
+  const error = assertThrows(() => boom(), Error);
+  void error;
+  consume(assertThrows(() => boom()));
+  const errors = [assertThrows(() => boom())];
+  const capture = () => assertThrows(() => boom());
+  for (let i = 0; assertThrows(() => boom()); i++) break;
+});
+--- after
+import { assertThrows } from "@std/assert";
+
+Deno.test("value", () => {
+  const error = assertThrows(() => boom(), Error);
+  void error;
+  consume(assertThrows(() => boom()));
+  const errors = [assertThrows(() => boom())];
+  const capture = () => assertThrows(() => boom());
+  for (let i = 0; assertThrows(() => boom()); i++) break;
+});
+--- findings
+hand-review thrown-value-used 4
+hand-review thrown-value-used 6
+hand-review thrown-value-used 7
+hand-review thrown-value-used 8
+hand-review thrown-value-used 9
