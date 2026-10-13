@@ -1,11 +1,7 @@
 // Unit tests for the model catalog: registry-row parsing, access modality,
 // and catalog pricing.
 
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   getModelAccessModality,
@@ -32,7 +28,7 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertObjectMatch(parsed[0], {
+    assert.partialDeepStrictEqual(parsed[0], {
       slug: "gemma4",
       displayName: "Gemma 4 27B",
       tier: 0,
@@ -69,14 +65,14 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertObjectMatch(priced, {
+    assert.partialDeepStrictEqual(priced, {
       costCacheRead: 0.02574,
       costCacheWrite: 0.32175,
     });
     // A zero cache price is the schema default, not a price: leave it unset
     // so metering falls back to the input rate.
-    assertStrictEquals("costCacheRead" in unpriced, false);
-    assertStrictEquals("costCacheWrite" in unpriced, false);
+    assert.strictEqual("costCacheRead" in unpriced, false);
+    assert.strictEqual("costCacheWrite" in unpriced, false);
   });
 
   it("accepts Dolt JSON display values for capabilities", () => {
@@ -94,7 +90,7 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertEquals(parsed[0].capabilities, ["text", "reasoning"]);
+    assert.deepStrictEqual(parsed[0].capabilities, ["text", "reasoning"]);
   });
 
   it("parses catalog token limits when the row declares them", () => {
@@ -114,8 +110,8 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertStrictEquals(parsed[0].contextWindow, 131072);
-    assertStrictEquals(parsed[0].maxOutputTokens, 8192);
+    assert.strictEqual(parsed[0].contextWindow, 131072);
+    assert.strictEqual(parsed[0].maxOutputTokens, 8192);
   });
 
   it("absent, zero, fractional, or malformed limits load as unknown, not as a tiny limit", () => {
@@ -143,8 +139,8 @@ describe("parseModelRegistryRows", () => {
     ]);
 
     for (const model of [absent, zero, garbage, fractional]) {
-      assertStrictEquals(model.contextWindow, undefined);
-      assertStrictEquals(model.maxOutputTokens, undefined);
+      assert.strictEqual(model.contextWindow, undefined);
+      assert.strictEqual(model.maxOutputTokens, undefined);
     }
   });
 
@@ -196,10 +192,10 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertStrictEquals(parsed[0].modality, "local");
-    assertStrictEquals(parsed[1].modality, "frontier-hosted");
-    assertStrictEquals(parsed[2].modality, "aggregator-hosted");
-    assertStrictEquals(parsed[3].modality, "subscription-oauth");
+    assert.strictEqual(parsed[0].modality, "local");
+    assert.strictEqual(parsed[1].modality, "frontier-hosted");
+    assert.strictEqual(parsed[2].modality, "aggregator-hosted");
+    assert.strictEqual(parsed[3].modality, "subscription-oauth");
   });
 
   it("parses execution and hardware profile fields when present and leaves undefined when absent", () => {
@@ -253,27 +249,27 @@ describe("parseModelRegistryRows", () => {
       },
     ]);
 
-    assertStrictEquals(parsed[0].architecture, "dense");
-    assertStrictEquals(parsed[0].totalParamsB, 29.6);
-    assertStrictEquals(parsed[0].activeParamsB, 29.6);
-    assertStrictEquals(parsed[0].recommendedQuant, "Q4_K_XL");
-    assertStrictEquals(parsed[0].residentRamGiB, 23.0);
-    assertStrictEquals(parsed[0].reasoningEffortControl, true);
+    assert.strictEqual(parsed[0].architecture, "dense");
+    assert.strictEqual(parsed[0].totalParamsB, 29.6);
+    assert.strictEqual(parsed[0].activeParamsB, 29.6);
+    assert.strictEqual(parsed[0].recommendedQuant, "Q4_K_XL");
+    assert.strictEqual(parsed[0].residentRamGiB, 23.0);
+    assert.strictEqual(parsed[0].reasoningEffortControl, true);
 
-    assertStrictEquals(parsed[1].architecture, "moe");
-    assertStrictEquals(parsed[1].totalParamsB, 119.0);
-    assertStrictEquals(parsed[1].activeParamsB, 6.5);
-    assertStrictEquals(parsed[1].recommendedQuant, "Q4_K_M");
-    assertStrictEquals(parsed[1].residentRamGiB, 62.0);
-    assertStrictEquals(parsed[1].reasoningEffortControl, false);
+    assert.strictEqual(parsed[1].architecture, "moe");
+    assert.strictEqual(parsed[1].totalParamsB, 119.0);
+    assert.strictEqual(parsed[1].activeParamsB, 6.5);
+    assert.strictEqual(parsed[1].recommendedQuant, "Q4_K_M");
+    assert.strictEqual(parsed[1].residentRamGiB, 62.0);
+    assert.strictEqual(parsed[1].reasoningEffortControl, false);
 
     // Absent execution metadata leaves optional fields undefined, with default false reasoning control
-    assertStrictEquals(parsed[2].architecture, undefined);
-    assertStrictEquals(parsed[2].totalParamsB, undefined);
-    assertStrictEquals(parsed[2].activeParamsB, undefined);
-    assertStrictEquals(parsed[2].recommendedQuant, undefined);
-    assertStrictEquals(parsed[2].residentRamGiB, undefined);
-    assertStrictEquals(parsed[2].reasoningEffortControl, false);
+    assert.strictEqual(parsed[2].architecture, undefined);
+    assert.strictEqual(parsed[2].totalParamsB, undefined);
+    assert.strictEqual(parsed[2].activeParamsB, undefined);
+    assert.strictEqual(parsed[2].recommendedQuant, undefined);
+    assert.strictEqual(parsed[2].residentRamGiB, undefined);
+    assert.strictEqual(parsed[2].reasoningEffortControl, false);
   });
 
   it("parses various truthy and falsy boolean representations for reasoningEffortControl", () => {
@@ -297,11 +293,11 @@ describe("parseModelRegistryRows", () => {
       row("m5", "invalid"),
     ]);
 
-    assertStrictEquals(parsed[0].reasoningEffortControl, true);
-    assertStrictEquals(parsed[1].reasoningEffortControl, true);
-    assertStrictEquals(parsed[2].reasoningEffortControl, false);
-    assertStrictEquals(parsed[3].reasoningEffortControl, true);
-    assertStrictEquals(parsed[4].reasoningEffortControl, false);
+    assert.strictEqual(parsed[0].reasoningEffortControl, true);
+    assert.strictEqual(parsed[1].reasoningEffortControl, true);
+    assert.strictEqual(parsed[2].reasoningEffortControl, false);
+    assert.strictEqual(parsed[3].reasoningEffortControl, true);
+    assert.strictEqual(parsed[4].reasoningEffortControl, false);
   });
 
   it("normalizes architecture case and whitespace while rejecting unrecognized values", () => {
@@ -323,9 +319,9 @@ describe("parseModelRegistryRows", () => {
       row("a3", "transformer"),
     ]);
 
-    assertStrictEquals(parsed[0].architecture, "moe");
-    assertStrictEquals(parsed[1].architecture, "dense");
-    assertStrictEquals(parsed[2].architecture, undefined);
+    assert.strictEqual(parsed[0].architecture, "moe");
+    assert.strictEqual(parsed[1].architecture, "dense");
+    assert.strictEqual(parsed[2].architecture, undefined);
   });
 
   it("trims recommendedQuant whitespace and maps whitespace-only to undefined", () => {
@@ -346,8 +342,8 @@ describe("parseModelRegistryRows", () => {
       row("q2", "   "),
     ]);
 
-    assertStrictEquals(parsed[0].recommendedQuant, "Q4_K_M");
-    assertStrictEquals(parsed[1].recommendedQuant, undefined);
+    assert.strictEqual(parsed[0].recommendedQuant, "Q4_K_M");
+    assert.strictEqual(parsed[1].recommendedQuant, undefined);
   });
 });
 
@@ -356,93 +352,93 @@ describe("getModelAccessModality", () => {
     getModelAccessModality({ provider, baseUrl });
 
   it("identifies loopback endpoints as local", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       modality("ollama", "http://127.0.0.1:11434/v1"),
       "local",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("mlx-lm", "http://localhost:18080/v1"),
       "local",
     );
   });
 
   it("classifies non-loopback URLs for local providers as custom-hosted", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       modality("ollama", "https://remote-ollama.example.com/v1"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("litellm", "https://litellm.example.com/v1"),
       "custom-hosted",
     );
   });
 
   it("identifies openrouter as aggregator-hosted", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openrouter", "https://openrouter.ai/api/v1"),
       "aggregator-hosted",
     );
   });
 
   it("identifies direct vendor APIs as frontier-hosted", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       modality("anthropic", "https://api.anthropic.com"),
       "frontier-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openai", "https://api.openai.com/v1"),
       "frontier-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("google", "https://generativelanguage.googleapis.com"),
       "frontier-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("xai", "https://api.x.ai/v1"),
       "frontier-hosted",
     );
   });
 
   it("classifies non-canonical or proxy vendor endpoints as custom-hosted", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openai", "https://internal-proxy.example.com/v1"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openai", "https://api.openai.com/badpath"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("anthropic", "http://localhost:8080"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openrouter", "https://openrouter.ai/garbage"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("openrouter", "https://openrouter.proxy.corp/v1"),
       "custom-hosted",
     );
   });
 
   it("identifies local ACP subscription runner adapters as subscription-oauth", () => {
-    assertStrictEquals(modality("codex-chatgpt", ""), "subscription-oauth");
-    assertStrictEquals(
+    assert.strictEqual(modality("codex-chatgpt", ""), "subscription-oauth");
+    assert.strictEqual(
       modality("claude-acp", "http://127.0.0.1:18080/v1"),
       "subscription-oauth",
     );
-    assertStrictEquals(modality("grok-build", "acp"), "subscription-oauth");
-    assertStrictEquals(modality("cursor-agent", ""), "subscription-oauth");
-    assertStrictEquals(
+    assert.strictEqual(modality("grok-build", "acp"), "subscription-oauth");
+    assert.strictEqual(modality("cursor-agent", ""), "subscription-oauth");
+    assert.strictEqual(
       modality("gemini-antigravity", "http://localhost:11434/v1"),
       "subscription-oauth",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("codex-chatgpt", "https://remote-proxy.example.com"),
       "custom-hosted",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modality("grok-build", "https://api.x.ai/v1"),
       "custom-hosted",
     );
@@ -465,18 +461,18 @@ describe("unpriced models are unroutable", () => {
   };
 
   it("modelHasCatalogPricing: tier 0 zero-cost is priced (free by declaration)", () => {
-    assertStrictEquals(modelHasCatalogPricing(models[0]), true); // tier 0, $0
-    assertStrictEquals(modelHasCatalogPricing(models[2]), true); // tier 1, priced
-    assertStrictEquals(modelHasCatalogPricing(unpriced), false); // tier 2, $0
-    assertStrictEquals(
+    assert.strictEqual(modelHasCatalogPricing(models[0]), true); // tier 0, $0
+    assert.strictEqual(modelHasCatalogPricing(models[2]), true); // tier 1, priced
+    assert.strictEqual(modelHasCatalogPricing(unpriced), false); // tier 2, $0
+    assert.strictEqual(
       modelHasCatalogPricing({ ...unpriced, costInput: 15 }),
       false,
     ); // half-priced
-    assertStrictEquals(
+    assert.strictEqual(
       modelHasCatalogPricing({ ...unpriced, costInput: 15, costOutput: 75 }),
       true,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       modelHasCatalogPricing({
         ...unpriced,
         modality: "subscription-oauth",
@@ -500,8 +496,8 @@ describe("unpriced models are unroutable", () => {
         capabilities: "text",
       },
     ]);
-    assertStrictEquals(parsed[0].costInput, 0);
-    assertStrictEquals(parsed[0].costOutput, 0);
-    assertStrictEquals(Number.isNaN(parsed[0].costInput), false);
+    assert.strictEqual(parsed[0].costInput, 0);
+    assert.strictEqual(parsed[0].costOutput, 0);
+    assert.strictEqual(Number.isNaN(parsed[0].costInput), false);
   });
 });

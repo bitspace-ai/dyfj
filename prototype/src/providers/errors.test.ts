@@ -1,12 +1,7 @@
 // Unit tests for provider error messages: every registry- or config-sourced
 // field interpolated into one is bounded and inert.
 
-import {
-  assert,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   HostedProviderCredentialMissingError,
@@ -33,11 +28,11 @@ describe("provider error field redaction", () => {
       "gpt-test",
       "https://user:hunter2@internal.example.com:8443/steal?key=sk-live-abc#f",
     );
-    assertStringIncludes(err.message, "https://internal.example.com:8443");
-    assertFalse(err.message.includes("hunter2"));
-    assertFalse(err.message.includes("user"));
-    assertFalse(err.message.includes("sk-live-abc"));
-    assertFalse(err.message.includes("/steal"));
+    assert.ok(err.message.includes("https://internal.example.com:8443"), `expected err.message to include "https://internal.example.com:8443"`);
+    assert.ok(!err.message.includes("hunter2"));
+    assert.ok(!err.message.includes("user"));
+    assert.ok(!err.message.includes("sk-live-abc"));
+    assert.ok(!err.message.includes("/steal"));
   });
 
   it("an unparseable baseUrl is replaced wholesale, never echoed", () => {
@@ -45,16 +40,16 @@ describe("provider error field redaction", () => {
       "gpt-test",
       "not a url at all sk-live-embedded-token",
     );
-    assertStringIncludes(err.message, "<unparseable url>");
-    assertFalse(err.message.includes("sk-live-embedded-token"));
+    assert.ok(err.message.includes("<unparseable url>"), `expected err.message to include "<unparseable url>"`);
+    assert.ok(!err.message.includes("sk-live-embedded-token"));
   });
 
   it("an oversized identifier is capped in the message; the property keeps the raw value", () => {
     const huge = "s".repeat(50_000);
     const err = new WorkbenchModelNotFoundError(huge);
     const bytes = new TextEncoder().encode(err.message).byteLength;
-    assert(bytes < 400, `expected message under 400 bytes, got ${bytes}`);
-    assertStrictEquals(err.slug, huge);
+    assert.ok(bytes < 400, `expected message under 400 bytes, got ${bytes}`);
+    assert.strictEqual(err.slug, huge);
   });
 
   it("recovery says to fix the reported failure and restart, on both paths", () => {
@@ -62,14 +57,11 @@ describe("provider error field redaction", () => {
       "openrouter/x",
       "OPENROUTER_API_KEY",
     ).message;
-    assertStringIncludes(message, "fix what `dyfj status` reports");
+    assert.ok(message.includes("fix what `dyfj status` reports"), `expected ${JSON.stringify(message)} to include "fix what \`dyfj status\` reports"`);
     // Setting the key afterwards needs the restart too: a running runtime
     // does not reread its environment.
-    assertStringIncludes(
-      message,
-      "or set it or declare it under [secrets], then restart",
-    );
-    assertFalse(message.includes("op run"));
+    assert.ok(message.includes("or set it or declare it under [secrets], then restart"), `expected ${JSON.stringify(message)} to include "or set it or declare it under [secrets], then restart"`);
+    assert.ok(!message.includes("op run"));
   });
 
   it("the recovery survives the wire summary even with the largest fields", () => {
@@ -80,12 +72,12 @@ describe("provider error field redaction", () => {
       "E".repeat(50_000),
     );
     const bytes = new TextEncoder().encode(err.message).byteLength;
-    assert(
+    assert.ok(
       bytes <= MAX_ERROR_SUMMARY_BYTES,
       `expected at most ${MAX_ERROR_SUMMARY_BYTES} bytes, got ${bytes}`,
     );
-    assertStrictEquals(summarizeError(err), err.message);
-    assertStringIncludes(err.message, "then start it).");
+    assert.strictEqual(summarizeError(err), err.message);
+    assert.ok(err.message.includes("then start it)."), `expected err.message to include "then start it)."`);
   });
 
   it("control characters in registry-sourced fields cannot forge log lines or escape sequences", () => {
@@ -93,10 +85,10 @@ describe("provider error field redaction", () => {
       "slug\n[2026-01-01] operator approved unlimited spend",
       "ENV\x1b[31mVAR",
     );
-    assertFalse(err.message.includes("\n"));
-    assertFalse(err.message.includes("\x1b"));
+    assert.ok(!err.message.includes("\n"));
+    assert.ok(!err.message.includes("\x1b"));
     // The text survives inert (collapsed onto one line), the injection doesn't.
-    assertStringIncludes(err.message, "operator approved unlimited spend");
+    assert.ok(err.message.includes("operator approved unlimited spend"), `expected err.message to include "operator approved unlimited spend"`);
   });
 });
 
@@ -112,21 +104,21 @@ describe("provider failure messages", () => {
       requestedTokens: 82366,
       limitTokens: 32768,
     });
-    assertStringIncludes(err.message, "llama-cpp/qwen3.6-35b-a3b");
-    assertStringIncludes(err.message, "82366 tokens");
-    assertStringIncludes(err.message, "32768-token");
-    assertStringIncludes(err.message, "HTTP 400");
-    assertStringIncludes(err.message, "larger context window");
-    assertStringIncludes(err.message, "new session");
-    assertStrictEquals(err.kind, "context_exceeded");
-    assertStrictEquals(err.status, 400);
+    assert.ok(err.message.includes("llama-cpp/qwen3.6-35b-a3b"), `expected err.message to include "llama-cpp/qwen3.6-35b-a3b"`);
+    assert.ok(err.message.includes("82366 tokens"), `expected err.message to include "82366 tokens"`);
+    assert.ok(err.message.includes("32768-token"), `expected err.message to include "32768-token"`);
+    assert.ok(err.message.includes("HTTP 400"), `expected err.message to include "HTTP 400"`);
+    assert.ok(err.message.includes("larger context window"), `expected err.message to include "larger context window"`);
+    assert.ok(err.message.includes("new session"), `expected err.message to include "new session"`);
+    assert.strictEqual(err.kind, "context_exceeded");
+    assert.strictEqual(err.status, 400);
   });
 
   it("context exceeded without counts still states the condition and the way out", () => {
     const err = new ProviderContextExceededError(target, 413, {});
-    assertStringIncludes(err.message, "context window");
-    assertStringIncludes(err.message, "new session");
-    assertFalse(err.message.includes("undefined"));
+    assert.ok(err.message.includes("context window"), `expected err.message to include "context window"`);
+    assert.ok(err.message.includes("new session"), `expected err.message to include "new session"`);
+    assert.ok(!err.message.includes("undefined"));
   });
 
   it("authentication failed points at the provider's key and the restart", () => {
@@ -134,12 +126,12 @@ describe("provider failure messages", () => {
       { provider: "anthropic", slug: "claude-x" },
       401,
     );
-    assertStringIncludes(err.message, "Authentication failed");
-    assertStringIncludes(err.message, "anthropic/claude-x");
-    assertStringIncludes(err.message, "HTTP 401");
-    assertStringIncludes(err.message, "dyfj status");
-    assertStringIncludes(err.message, "restart");
-    assertStrictEquals(err.kind, "authentication");
+    assert.ok(err.message.includes("Authentication failed"), `expected err.message to include "Authentication failed"`);
+    assert.ok(err.message.includes("anthropic/claude-x"), `expected err.message to include "anthropic/claude-x"`);
+    assert.ok(err.message.includes("HTTP 401"), `expected err.message to include "HTTP 401"`);
+    assert.ok(err.message.includes("dyfj status"), `expected err.message to include "dyfj status"`);
+    assert.ok(err.message.includes("restart"), `expected err.message to include "restart"`);
+    assert.strictEqual(err.kind, "authentication");
   });
 
   it("a 403 is an access problem, not a bad key: the hint points at the account's access", () => {
@@ -147,31 +139,31 @@ describe("provider failure messages", () => {
       { provider: "anthropic", slug: "claude-x" },
       403,
     );
-    assertStringIncludes(err.message, "Access denied");
-    assertStringIncludes(err.message, "HTTP 403");
-    assertStringIncludes(err.message, "accepted");
-    assertStringIncludes(err.message, "/model");
-    assertFalse(err.message.includes("restart"));
-    assertStrictEquals(err.kind, "authentication");
+    assert.ok(err.message.includes("Access denied"), `expected err.message to include "Access denied"`);
+    assert.ok(err.message.includes("HTTP 403"), `expected err.message to include "HTTP 403"`);
+    assert.ok(err.message.includes("accepted"), `expected err.message to include "accepted"`);
+    assert.ok(err.message.includes("/model"), `expected err.message to include "/model"`);
+    assert.ok(!err.message.includes("restart"));
+    assert.strictEqual(err.kind, "authentication");
   });
 
   it("rate limited says to wait or switch; quota and overload say so by name", () => {
     const limited = new ProviderRateLimitedError(target, 429, "rate_limit");
-    assertStringIncludes(limited.message, "Rate limited");
-    assertStringIncludes(limited.message, "HTTP 429");
-    assertStringIncludes(limited.message, "/model");
+    assert.ok(limited.message.includes("Rate limited"), `expected limited.message to include "Rate limited"`);
+    assert.ok(limited.message.includes("HTTP 429"), `expected limited.message to include "HTTP 429"`);
+    assert.ok(limited.message.includes("/model"), `expected limited.message to include "/model"`);
     // A body that says "quota" may be a per-minute limit that resets on its
     // own or an account that needs credit; the body does not say which, so
     // the hint covers both and never sends the operator to billing alone.
     const quota = new ProviderRateLimitedError(target, 429, "quota");
-    assertStringIncludes(quota.message, "quota");
-    assertStringIncludes(quota.message, "reset");
-    assertStringIncludes(quota.message, "credit");
-    assertStringIncludes(quota.message, "/model");
+    assert.ok(quota.message.includes("quota"), `expected quota.message to include "quota"`);
+    assert.ok(quota.message.includes("reset"), `expected quota.message to include "reset"`);
+    assert.ok(quota.message.includes("credit"), `expected quota.message to include "credit"`);
+    assert.ok(quota.message.includes("/model"), `expected quota.message to include "/model"`);
     const overloaded = new ProviderRateLimitedError(target, 529, "overloaded");
-    assertStringIncludes(overloaded.message, "overloaded");
-    assertStrictEquals(overloaded.reason, "overloaded");
-    assertStrictEquals(overloaded.kind, "rate_limited");
+    assert.ok(overloaded.message.includes("overloaded"), `expected overloaded.message to include "overloaded"`);
+    assert.strictEqual(overloaded.reason, "overloaded");
+    assert.strictEqual(overloaded.kind, "rate_limited");
   });
 
   it("model not found keeps both readings: not served, or not accessible to this account", () => {
@@ -179,41 +171,38 @@ describe("provider failure messages", () => {
     // to it", so the hint must cover the account's access as well as the
     // registry row and the base URL.
     const err = new ProviderModelNotFoundError(target, 404);
-    assertStringIncludes(err.message, "Model not found");
-    assertStringIncludes(err.message, "qwen3.6-35b-a3b");
-    assertStringIncludes(err.message, "HTTP 404");
-    assertStringIncludes(err.message, "no access");
-    assertStringIncludes(err.message, "registry");
-    assertStringIncludes(err.message, "base URL");
-    assertStringIncludes(err.message, "account's access");
-    assertStrictEquals(err.kind, "model_not_found");
+    assert.ok(err.message.includes("Model not found"), `expected err.message to include "Model not found"`);
+    assert.ok(err.message.includes("qwen3.6-35b-a3b"), `expected err.message to include "qwen3.6-35b-a3b"`);
+    assert.ok(err.message.includes("HTTP 404"), `expected err.message to include "HTTP 404"`);
+    assert.ok(err.message.includes("no access"), `expected err.message to include "no access"`);
+    assert.ok(err.message.includes("registry"), `expected err.message to include "registry"`);
+    assert.ok(err.message.includes("base URL"), `expected err.message to include "base URL"`);
+    assert.ok(err.message.includes("account's access"), `expected err.message to include "account's access"`);
+    assert.strictEqual(err.kind, "model_not_found");
   });
 
   it("unreachable states the cause it classified and has no status", () => {
     const refused = new ProviderUnreachableError(target, "refused");
-    assertStringIncludes(refused.message, "unreachable");
-    assertStringIncludes(refused.message, "refused");
-    assertStringIncludes(refused.message, "base URL");
-    assertStrictEquals(refused.status, undefined);
-    assertStrictEquals(refused.kind, "unreachable");
+    assert.ok(refused.message.includes("unreachable"), `expected refused.message to include "unreachable"`);
+    assert.ok(refused.message.includes("refused"), `expected refused.message to include "refused"`);
+    assert.ok(refused.message.includes("base URL"), `expected refused.message to include "base URL"`);
+    assert.strictEqual(refused.status, undefined);
+    assert.strictEqual(refused.kind, "unreachable");
     const dns = new ProviderUnreachableError(target, "dns");
-    assertStringIncludes(dns.message, "resolved");
+    assert.ok(dns.message.includes("resolved"), `expected dns.message to include "resolved"`);
     const timeout = new ProviderUnreachableError(target, "timeout", {
       timeoutMs: 30_000,
       mode: "streaming",
     });
-    assertStringIncludes(
-      timeout.message,
-      "no response headers within 30000ms (streaming request exceeded its budget",
-    );
+    assert.ok(timeout.message.includes("no response headers within 30000ms (streaming request exceeded its budget"), `expected timeout.message to include "no response headers within 30000ms (streaming request exceeded its budget"`);
   });
 
   it("request too large distinguishes size from token count", () => {
     const err = new ProviderRequestTooLargeError(target, 413);
-    assertStringIncludes(err.message, "Request too large");
-    assertStringIncludes(err.message, "HTTP 413");
-    assertStringIncludes(err.message, "not by token count");
-    assertStrictEquals(err.kind, "request_too_large");
+    assert.ok(err.message.includes("Request too large"), `expected err.message to include "Request too large"`);
+    assert.ok(err.message.includes("HTTP 413"), `expected err.message to include "HTTP 413"`);
+    assert.ok(err.message.includes("not by token count"), `expected err.message to include "not by token count"`);
+    assert.strictEqual(err.kind, "request_too_large");
   });
 
   it("an unclassified HTTP failure reports provider, status and body size only", () => {
@@ -221,13 +210,13 @@ describe("provider failure messages", () => {
       status: 500,
       bodyBytes: 260,
     });
-    assertStringIncludes(err.message, "Provider request failed");
-    assertStringIncludes(err.message, "llama-cpp/qwen3.6-35b-a3b");
-    assertStringIncludes(err.message, "HTTP 500");
-    assertStringIncludes(err.message, "260 bytes");
-    assertStringIncludes(err.message, "log");
-    assertStrictEquals(err.status, 500);
-    assertStrictEquals(err.kind, "unclassified");
+    assert.ok(err.message.includes("Provider request failed"), `expected err.message to include "Provider request failed"`);
+    assert.ok(err.message.includes("llama-cpp/qwen3.6-35b-a3b"), `expected err.message to include "llama-cpp/qwen3.6-35b-a3b"`);
+    assert.ok(err.message.includes("HTTP 500"), `expected err.message to include "HTTP 500"`);
+    assert.ok(err.message.includes("260 bytes"), `expected err.message to include "260 bytes"`);
+    assert.ok(err.message.includes("log"), `expected err.message to include "log"`);
+    assert.strictEqual(err.status, 500);
+    assert.strictEqual(err.kind, "unclassified");
   });
 
   it("an unclassified HTTP failure whose body was cut at the reader's cap reports a lower bound", () => {
@@ -238,17 +227,17 @@ describe("provider failure messages", () => {
       bodyBytes: 65_536,
       truncated: true,
     });
-    assertStringIncludes(err.message, "at least 65536 bytes");
+    assert.ok(err.message.includes("at least 65536 bytes"), `expected err.message to include "at least 65536 bytes"`);
   });
 
   it("an unclassified failure before any response keeps the opaque label of its cause", () => {
     const err = new ProviderRequestFailedError(target, {
       cause: new Error("local model unavailable"),
     });
-    assertStringIncludes(err.message, "no response");
-    assertStringIncludes(err.message, "[Error, 23 bytes]");
-    assertFalse(err.message.includes("unavailable"));
-    assertStrictEquals(err.status, undefined);
+    assert.ok(err.message.includes("no response"), `expected err.message to include "no response"`);
+    assert.ok(err.message.includes("[Error, 23 bytes]"), `expected err.message to include "[Error, 23 bytes]"`);
+    assert.ok(!err.message.includes("unavailable"));
+    assert.strictEqual(err.status, undefined);
   });
 
   it("registry-sourced fields are bounded and inert in every class", () => {
@@ -267,14 +256,14 @@ describe("provider failure messages", () => {
         new ProviderContextExceededError(hostile, 400, {}),
       ]
     ) {
-      assertFalse(err.message.includes("\u001b"));
-      assertFalse(err.message.includes("\n"));
-      assert(
+      assert.ok(!err.message.includes("\u001b"));
+      assert.ok(!err.message.includes("\n"));
+      assert.ok(
         new TextEncoder().encode(err.message).byteLength <=
           MAX_ERROR_SUMMARY_BYTES,
         `${err.name}: ${err.message.length}`,
       );
-      assertStrictEquals(summarizeError(err), err.message);
+      assert.strictEqual(summarizeError(err), err.message);
     }
   });
 });

@@ -1,15 +1,8 @@
 // Unit tests for model routing: explicit, configured-default, tier, and hint
 // selection, locality bounds, and catalog-pricing routability.
 
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertNotStrictEquals,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import { captureThrow } from "../../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   defaultLocalWorkbenchModels,
@@ -26,9 +19,9 @@ describe("selectWorkbenchModel", () => {
   it("defaults to the local Qwen3.6 model on llama.cpp when available", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {});
 
-    assertStrictEquals(selection.selected.slug, "llama-cpp/qwen3.6-35b-a3b");
-    assertStrictEquals(selection.selected.provider, "llama-cpp");
-    assertStrictEquals(selection.reason, "default");
+    assert.strictEqual(selection.selected.slug, "llama-cpp/qwen3.6-35b-a3b");
+    assert.strictEqual(selection.selected.provider, "llama-cpp");
+    assert.strictEqual(selection.reason, "default");
   });
 
   it("falls back to the Ollama Qwen 3.6 row when the llama.cpp row is absent", () => {
@@ -39,16 +32,16 @@ describe("selectWorkbenchModel", () => {
       {},
     );
 
-    assertStrictEquals(selection.selected.slug, "qwen3.6:35b-a3b");
-    assertStrictEquals(selection.selected.provider, "ollama");
+    assert.strictEqual(selection.selected.slug, "qwen3.6:35b-a3b");
+    assert.strictEqual(selection.selected.provider, "ollama");
   });
 
   it("falls back to next preferred local model when primary default is not available", () => {
     const selection = selectWorkbenchModel(models, {});
 
-    assertStrictEquals(selection.selected.slug, "laguna-xs-2.1");
-    assertStrictEquals(selection.selected.provider, "ollama");
-    assertStrictEquals(selection.reason, "default");
+    assert.strictEqual(selection.selected.slug, "laguna-xs-2.1");
+    assert.strictEqual(selection.selected.provider, "ollama");
+    assert.strictEqual(selection.reason, "default");
   });
 
   it("explicit model selection can select a local model by slug", () => {
@@ -56,29 +49,25 @@ describe("selectWorkbenchModel", () => {
       modelId: "gemma4:e2b",
     });
 
-    assertStrictEquals(selection.selected.provider, "ollama");
-    assertStrictEquals(selection.reason, "explicit_model_id");
+    assert.strictEqual(selection.selected.provider, "ollama");
+    assert.strictEqual(selection.reason, "explicit_model_id");
   });
 
   it("explicit tier applies the local preference chain", () => {
     const selection = selectWorkbenchModel(models, { tier: 1 });
 
-    assertStrictEquals(selection.selected.slug, "claude-haiku-4-5");
-    assertStrictEquals(selection.reason, "explicit_tier");
+    assert.strictEqual(selection.selected.slug, "claude-haiku-4-5");
+    assert.strictEqual(selection.reason, "explicit_tier");
   });
 
   it("unknown explicit model fails before inference", () => {
-    assertThrows(
-      () => selectWorkbenchModel(models, { modelId: "missing" }),
-      Error,
-      "Model not found: missing",
-    );
+    assert.throws(() => selectWorkbenchModel(models, { modelId: "missing" }), (error: unknown) => error instanceof Error && error.message.includes("Model not found: missing"));
   });
 
   it("uses a local configured default model on a bare turn", () => {
     const selection = selectWorkbenchModel(models, {}, "gemma4:e2b");
-    assertStrictEquals(selection.selected.slug, "gemma4:e2b");
-    assertStrictEquals(selection.reason, "default_config");
+    assert.strictEqual(selection.selected.slug, "gemma4:e2b");
+    assert.strictEqual(selection.reason, "default_config");
   });
 
   it("uses a configured default model across local, subscription, and hosted routes on a bare turn", () => {
@@ -96,23 +85,23 @@ describe("selectWorkbenchModel", () => {
     };
 
     const local = selectWorkbenchModel(models, {}, "gemma4:e2b");
-    assertStrictEquals(local.selected.slug, "gemma4:e2b");
-    assertStrictEquals(local.reason, "default_config");
+    assert.strictEqual(local.selected.slug, "gemma4:e2b");
+    assert.strictEqual(local.reason, "default_config");
 
     const subscription = selectWorkbenchModel(
       [...models, subscriptionModel],
       {},
       "codex-chatgpt/gpt-5.6-sol",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       subscription.selected.slug,
       "codex-chatgpt/gpt-5.6-sol",
     );
-    assertStrictEquals(subscription.reason, "default_config");
+    assert.strictEqual(subscription.reason, "default_config");
 
     const hosted = selectWorkbenchModel(models, {}, "claude-haiku-4-5");
-    assertStrictEquals(hosted.selected.slug, "claude-haiku-4-5");
-    assertStrictEquals(hosted.reason, "default_config");
+    assert.strictEqual(hosted.selected.slug, "claude-haiku-4-5");
+    assert.strictEqual(hosted.reason, "default_config");
   });
 
   it("validates fast speed tier option against model capabilities", () => {
@@ -129,18 +118,18 @@ describe("selectWorkbenchModel", () => {
       modality: "subscription-oauth",
     };
 
-    assertStrictEquals(modelSupportsFastSpeed(fastCapableModel), true);
-    assertStrictEquals(modelSupportsFastSpeed(models[0]), false);
+    assert.strictEqual(modelSupportsFastSpeed(fastCapableModel), true);
+    assert.strictEqual(modelSupportsFastSpeed(models[0]), false);
 
     // Fast option succeeds on fast-capable model
     const selection = selectWorkbenchModel(
       [...models, fastCapableModel],
       { modelId: "codex-chatgpt/gpt-5.6-terra", fast: true },
     );
-    assertStrictEquals(selection.selected.slug, "codex-chatgpt/gpt-5.6-terra");
+    assert.strictEqual(selection.selected.slug, "codex-chatgpt/gpt-5.6-terra");
 
     // Fast option throws on unsupported model
-    assertThrows(
+    assert.throws(
       () =>
         selectWorkbenchModel(
           [...models, fastCapableModel],
@@ -154,19 +143,19 @@ describe("selectWorkbenchModel", () => {
     const errWithControl = new WorkbenchModelFastSpeedUnsupportedError(
       "bad\nslug\x00with\tctrl",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       errWithControl.message,
       'Model "bad slugwith ctrl" does not support fast speed tier',
     );
 
     const oversized = "a".repeat(200);
     const errOversized = new WorkbenchModelFastSpeedUnsupportedError(oversized);
-    assert(
+    assert.ok(
       errOversized.message.length < 200,
       `expected message length < 200, got ${errOversized.message.length}`,
     );
-    assertStrictEquals(errOversized.message.startsWith('Model "'), true);
-    assertFalse(errOversized.message.includes(oversized));
+    assert.strictEqual(errOversized.message.startsWith('Model "'), true);
+    assert.ok(!errOversized.message.includes(oversized));
   });
 
   it("a mis-tiered hosted row is never the ambient default", () => {
@@ -185,16 +174,12 @@ describe("selectWorkbenchModel", () => {
       capabilities: ["text", "code"],
     };
     const selection = selectWorkbenchModel([misTiered, ...models], {});
-    assertStrictEquals(selection.selected.slug, "laguna-xs-2.1");
-    assertFalse(selection.considered.includes("hosted-mistiered"));
+    assert.strictEqual(selection.selected.slug, "laguna-xs-2.1");
+    assert.ok(!selection.considered.includes("hosted-mistiered"));
 
     // With no genuinely local row at all, the ambient default fails closed
     // rather than routing the mis-tiered hosted row without consent.
-    assertThrows(
-      () => selectWorkbenchModel([misTiered], {}),
-      Error,
-      "Model not found: tier:0",
-    );
+    assert.throws(() => selectWorkbenchModel([misTiered], {}), (error: unknown) => error instanceof Error && error.message.includes("Model not found: tier:0"));
   });
 
   it("explicit tier 0 is locality-bounded too — a mis-tiered hosted row never routes", () => {
@@ -214,20 +199,16 @@ describe("selectWorkbenchModel", () => {
       capabilities: ["text", "code"],
     };
     const selection = selectWorkbenchModel([misTiered, ...models], { tier: 0 });
-    assertStrictEquals(selection.selected.slug, "laguna-xs-2.1");
-    assertStrictEquals(selection.reason, "explicit_tier");
-    assertFalse(selection.considered.includes("hosted-mistiered"));
+    assert.strictEqual(selection.selected.slug, "laguna-xs-2.1");
+    assert.strictEqual(selection.reason, "explicit_tier");
+    assert.ok(!selection.considered.includes("hosted-mistiered"));
 
-    assertThrows(
-      () => selectWorkbenchModel([misTiered], { tier: 0 }),
-      Error,
-      "Model not found: tier:0",
-    );
+    assert.throws(() => selectWorkbenchModel([misTiered], { tier: 0 }), (error: unknown) => error instanceof Error && error.message.includes("Model not found: tier:0"));
 
     // Hosted tiers stay tier-based: explicit tier 1 still routes the priced
     // hosted row (and remains consent-gated downstream).
     const hosted = selectWorkbenchModel([misTiered, ...models], { tier: 1 });
-    assertStrictEquals(hosted.selected.slug, "claude-haiku-4-5");
+    assert.strictEqual(hosted.selected.slug, "claude-haiku-4-5");
   });
 
   it("hint routing is bounded by locality like the bare default", () => {
@@ -250,9 +231,9 @@ describe("selectWorkbenchModel", () => {
       [misTieredCoder, ...noLocalCoder],
       { hint: "code" },
     );
-    assertStrictEquals(selection.selected.slug, "gemma4:e2b");
-    assertStrictEquals(selection.reason, "hint_code_fallback_local");
-    assertFalse(selection.considered.includes("hosted-mistiered-coder"));
+    assert.strictEqual(selection.selected.slug, "gemma4:e2b");
+    assert.strictEqual(selection.reason, "hint_code_fallback_local");
+    assert.ok(!selection.considered.includes("hosted-mistiered-coder"));
   });
 
   it("a hosted configured default still routes when named explicitly", () => {
@@ -261,8 +242,8 @@ describe("selectWorkbenchModel", () => {
       { modelId: "claude-haiku-4-5" },
       "claude-haiku-4-5",
     );
-    assertStrictEquals(selection.selected.slug, "claude-haiku-4-5");
-    assertStrictEquals(selection.reason, "explicit_model_id");
+    assert.strictEqual(selection.selected.slug, "claude-haiku-4-5");
+    assert.strictEqual(selection.reason, "explicit_model_id");
   });
 
   it("explicit modelId beats the configured default", () => {
@@ -271,8 +252,8 @@ describe("selectWorkbenchModel", () => {
       { modelId: "laguna-xs-2.1" },
       "claude-haiku-4-5",
     );
-    assertStrictEquals(selection.selected.slug, "laguna-xs-2.1");
-    assertStrictEquals(selection.reason, "explicit_model_id");
+    assert.strictEqual(selection.selected.slug, "laguna-xs-2.1");
+    assert.strictEqual(selection.reason, "explicit_model_id");
   });
 
   it("a routing hint suppresses the configured default", () => {
@@ -281,24 +262,20 @@ describe("selectWorkbenchModel", () => {
       { hint: "code" },
       "claude-haiku-4-5",
     );
-    assertNotStrictEquals(selection.reason, "default_config");
-    assertStrictEquals(selection.selected.tier, 0);
+    assert.notStrictEqual(selection.reason, "default_config");
+    assert.strictEqual(selection.selected.tier, 0);
   });
 
   it("absent/empty default falls through to the local default", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       selectWorkbenchModel(models, {}, null).reason,
       "default",
     );
-    assertStrictEquals(selectWorkbenchModel(models, {}, "").reason, "default");
+    assert.strictEqual(selectWorkbenchModel(models, {}, "").reason, "default");
   });
 
   it("an unknown configured default fails before inference", () => {
-    assertThrows(
-      () => selectWorkbenchModel(models, {}, "nope"),
-      Error,
-      "Model not found: nope",
-    );
+    assert.throws(() => selectWorkbenchModel(models, {}, "nope"), (error: unknown) => error instanceof Error && error.message.includes("Model not found: nope"));
   });
 });
 
@@ -329,9 +306,9 @@ describe("explicit tier preference", () => {
       },
     ];
     const selection = selectWorkbenchModel(tierZero, { tier: 0 });
-    assertStrictEquals(selection.selected.slug, "qwen3.6:35b-a3b");
-    assertStrictEquals(selection.reason, "explicit_tier");
-    assertEquals(selection.considered, [
+    assert.strictEqual(selection.selected.slug, "qwen3.6:35b-a3b");
+    assert.strictEqual(selection.reason, "explicit_tier");
+    assert.deepStrictEqual(selection.considered, [
       "laguna-xs-2.1",
       "qwen3.6:35b-a3b",
     ]);
@@ -354,25 +331,21 @@ describe("unpriced models are unroutable", () => {
   };
 
   it("explicit modelId selection of an unpriced paid model throws the named error", () => {
-    assertThrows(
+    assert.throws(
       () =>
         selectWorkbenchModel([...models, unpriced], {
           modelId: "gpt-6-preview",
         }),
       WorkbenchModelNotRoutableError,
     );
-    const err = assertThrows(() =>
+    const err = captureThrow(() =>
       selectWorkbenchModel([...models, unpriced], { modelId: "gpt-6-preview" })
     );
-    assertMatch((err as Error).message, /no catalog pricing/);
+    assert.match((err as Error).message, /no catalog pricing/);
   });
 
   it("an unpriced configured default throws WorkbenchModelNotRoutableError", () => {
-    assertThrows(
-      () => selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview"),
-      Error,
-      "Model not routable [gpt-6-preview]: no catalog pricing row",
-    );
+    assert.throws(() => selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview"), (error: unknown) => error instanceof Error && error.message.includes("Model not routable [gpt-6-preview]: no catalog pricing row"));
   });
 
   it("tier routing skips unpriced candidates and picks a priced one", () => {
@@ -389,31 +362,31 @@ describe("unpriced models are unroutable", () => {
       [...models, unpriced, pricedTier2],
       { tier: 2 },
     );
-    assertStrictEquals(selection.selected.slug, "claude-opus-4-8");
-    assertEquals(selection.considered, ["claude-opus-4-8"]); // unpriced not considered
+    assert.strictEqual(selection.selected.slug, "claude-opus-4-8");
+    assert.deepStrictEqual(selection.considered, ["claude-opus-4-8"]); // unpriced not considered
   });
 
   it("a tier whose only candidates are unpriced names the catalog problem", () => {
-    assertThrows(
+    assert.throws(
       () => selectWorkbenchModel([...models, unpriced], { tier: 2 }),
       WorkbenchModelNotRoutableError,
     );
-    const unpricedErr = assertThrows(() =>
+    const unpricedErr = captureThrow(() =>
       selectWorkbenchModel([...models, unpriced], { tier: 2 })
     );
-    assertMatch(
+    assert.match(
       (unpricedErr as Error).message,
       /all candidates unpriced: gpt-6-preview/,
     );
     // An empty tier is still a not-found, not a pricing complaint.
-    const emptyErr = assertThrows(() =>
+    const emptyErr = captureThrow(() =>
       selectWorkbenchModel(models, { tier: 2 })
     );
-    assertMatch((emptyErr as Error).message, /not found|tier:2/);
+    assert.match((emptyErr as Error).message, /not found|tier:2/);
   });
 
   it("tier 0 routing is unaffected (free models stay routable)", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       selectWorkbenchModel([...models, unpriced], {}).selected.tier,
       0,
     );
