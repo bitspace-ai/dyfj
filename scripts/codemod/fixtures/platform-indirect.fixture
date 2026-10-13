@@ -14,7 +14,9 @@ Deno.test("platform", () => {
   const named = Deno.build.os === WINDOWS;
   const solaris = Deno.build.os === "solaris";
   const swapped = Deno.build.os === "windows".replace("windows", "linux");
-  void [direct, linux, os, named, solaris, swapped];
+  const continued = Deno.build.os === "windows"
+    .replace("windows", "linux");
+  void [direct, linux, os, named, solaris, swapped, continued];
 });
 --- after
 import process from "node:process";
@@ -28,10 +30,13 @@ Deno.test("platform", () => {
   const named = Deno.build.os === WINDOWS;
   const solaris = Deno.build.os === "solaris";
   const swapped = Deno.build.os === "windows".replace("windows", "linux");
-  void [direct, linux, os, named, solaris, swapped];
+  const continued = Deno.build.os === "windows"
+    .replace("windows", "linux");
+  void [direct, linux, os, named, solaris, swapped, continued];
 });
 --- findings
 unconverted 8
 unconverted 9
 unconverted 10
 unconverted 11
+unconverted 12

@@ -11,6 +11,7 @@ Deno.test("errors", () => {
   const left = new Error("x");
   const right = new TypeError("x");
   assertEquals(left, right);
+  assertEquals({ error: left }, { error: right });
   assertEquals(1, 1);
 });
 --- after
@@ -23,8 +24,10 @@ Deno.test("errors", () => {
   const left = new Error("x");
   const right = new TypeError("x");
   assertEquals(left, right);
+  assertEquals({ error: left }, { error: right });
   assert.deepStrictEqual(1, 1);
 });
 --- findings
 hand-review error-equality 6
 hand-review error-equality 9
+hand-review error-equality 10

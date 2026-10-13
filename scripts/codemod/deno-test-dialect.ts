@@ -1166,6 +1166,13 @@ const ASSERT_SYMBOLS = new Set([
 
 function looksLikeError(text: string, ctx: Context): boolean {
   return ctx.errorNames.has(text) ||
+    // A name bound to a constructed Error, anywhere inside the operand.
+    [...ctx.errorNames].some((name) =>
+      new RegExp(
+        `(?<![\\w$.])${name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}(?![\\w$])`,
+      )
+        .test(text)
+    ) ||
     /\bnew\s+[\w$.]*Error\s*\(/.test(text) ||
     // An object literal holding an Error-shaped property value.
     /[{,]\s*[\w$]+\s*:\s*(?:new\s+)?[\w$.]*Error\s*\(/.test(text) ||
@@ -2272,7 +2279,7 @@ function convertProcess(
     // The literal must be the whole right operand: what follows it ends
     // the comparison (`"windows".replace(...)` would not be a literal).
     const compared =
-      /^\s*[!=]==?\s*(["'])([^"'\\]*)\1(?=\s*(?:[);,}\]?:]|&&|\|\||$))/m
+      /^\s*[!=]==?\s*(["'])([^"'\\]*)\1(?=\s*(?:[);,}\]?:]|&&|\|\||$))/
         .exec(src.text.slice(ref.end));
     if (!compared) {
       return {
