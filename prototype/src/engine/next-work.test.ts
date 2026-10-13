@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   buildNextWorkBrief,
   printNextWorkResult,
@@ -12,11 +12,11 @@ Deno.test("buildNextWorkBrief: requests strict JSON for the next-work worklet wi
     prompt: "what should I work on next here?",
   });
 
-  assertStringIncludes(brief, "worklet_id: next-work.v0");
-  assertStringIncludes(brief, "context_profile: compact");
-  assertStringIncludes(brief, "Return strict JSON only");
-  assertStringIncludes(brief, '"recommendation"');
-  assertStringIncludes(brief, '"confidence"');
+  assert.ok(brief.includes("worklet_id: next-work.v0"), `expected ${JSON.stringify(brief)} to include "worklet_id: next-work.v0"`);
+  assert.ok(brief.includes("context_profile: compact"), `expected ${JSON.stringify(brief)} to include "context_profile: compact"`);
+  assert.ok(brief.includes("Return strict JSON only"), `expected ${JSON.stringify(brief)} to include "Return strict JSON only"`);
+  assert.ok(brief.includes('"recommendation"'), `expected ${JSON.stringify(brief)} to include '"recommendation"'`);
+  assert.ok(brief.includes('"confidence"'), `expected ${JSON.stringify(brief)} to include '"confidence"'`);
 });
 
 Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result", () => {
@@ -31,7 +31,7 @@ Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result
     confidence: "medium",
   }));
 
-  assertEquals(result, {
+  assert.deepStrictEqual(result, {
     ok: true,
     value: {
       worklet_id: "next-work.v0",
@@ -48,7 +48,7 @@ Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result
 });
 
 Deno.test("validateNextWorkJson: rejects prose or incomplete JSON before trusting the model result", () => {
-  assertEquals(validateNextWorkJson("Work on the routing item next."), {
+  assert.deepStrictEqual(validateNextWorkJson("Work on the routing item next."), {
     ok: false,
     errors: ["model output was not strict JSON"],
   });
@@ -59,7 +59,7 @@ Deno.test("validateNextWorkJson: rejects prose or incomplete JSON before trustin
     recommendation: "Work the next-work routing slice next.",
   }));
 
-  assertEquals(incomplete, {
+  assert.deepStrictEqual(incomplete, {
     ok: false,
     errors: [
       "missing required field: rationale",
@@ -79,7 +79,7 @@ Deno.test("printNextWorkResult presents a valid result and the raw output of an 
     "raw model text",
     log,
   );
-  assertEquals(lines, [
+  assert.deepStrictEqual(lines, [
     "Next-work validation failed",
     "- missing required field: risks",
     "",
@@ -105,7 +105,7 @@ Deno.test("printNextWorkResult presents a valid result and the raw output of an 
     "{}",
     log,
   );
-  assertEquals(lines, [
+  assert.deepStrictEqual(lines, [
     "Next work",
     "Recommendation: Ship it.",
     "Rationale: Ready.",

@@ -1,5 +1,6 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import type { PaidEscalationVerdict } from "../contract/mod.ts";
 import { PaidEscalationDeclinedError } from "./errors.ts";
 import {
@@ -30,31 +31,28 @@ function verdict(
 }
 
 Deno.test("formatMoney formats sub-cent model costs with six decimal places", () => {
-  assertEquals(formatMoney(0.0001234), "$0.000123");
+  assert.deepStrictEqual(formatMoney(0.0001234), "$0.000123");
 });
 
 Deno.test("formatMoney formats zero as an explicit dollar amount", () => {
-  assertEquals(formatMoney(0), "$0.000000");
+  assert.deepStrictEqual(formatMoney(0), "$0.000000");
 });
 
 Deno.test("buildPaidEscalationPreflightBanner shows paid escalation call shape before inference", () => {
   const banner = buildPaidEscalationPreflightBanner(BASE_PREFLIGHT);
 
-  assertStringIncludes(banner, "Paid inference preflight");
-  assertStringIncludes(
-    banner,
-    "Model:           Claude Sonnet (claude-sonnet)",
-  );
-  assertStringIncludes(banner, "Tier:            1");
-  assertStringIncludes(banner, "Route:           explicit_tier");
-  assertStringIncludes(banner, "Estimated cost:  $0.012346");
-  assertStringIncludes(banner, "Session spent:   $0.050000 / $1.000000");
-  assertStringIncludes(banner, "Session headroom: $0.950000");
-  assertStringIncludes(banner, "Per-call limit:  $0.100000");
+  assert.ok(banner.includes("Paid inference preflight"), `expected ${JSON.stringify(banner)} to include "Paid inference preflight"`);
+  assert.ok(banner.includes("Model:           Claude Sonnet (claude-sonnet)"), `expected ${JSON.stringify(banner)} to include "Model:           Claude Sonnet (claude-sonnet)"`);
+  assert.ok(banner.includes("Tier:            1"), `expected ${JSON.stringify(banner)} to include "Tier:            1"`);
+  assert.ok(banner.includes("Route:           explicit_tier"), `expected ${JSON.stringify(banner)} to include "Route:           explicit_tier"`);
+  assert.ok(banner.includes("Estimated cost:  $0.012346"), `expected ${JSON.stringify(banner)} to include "Estimated cost:  $0.012346"`);
+  assert.ok(banner.includes("Session spent:   $0.050000 / $1.000000"), `expected ${JSON.stringify(banner)} to include "Session spent:   $0.050000 / $1.000000"`);
+  assert.ok(banner.includes("Session headroom: $0.950000"), `expected ${JSON.stringify(banner)} to include "Session headroom: $0.950000"`);
+  assert.ok(banner.includes("Per-call limit:  $0.100000"), `expected ${JSON.stringify(banner)} to include "Per-call limit:  $0.100000"`);
 });
 
 Deno.test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     maybeBuildPaidEscalationPreflightBanner({
       ...BASE_PREFLIGHT,
       tier: 0,
@@ -65,41 +63,41 @@ Deno.test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", ()
 });
 
 Deno.test("isNextWorkMode keeps generic ask separate from the measured next-work worklet", () => {
-  assertEquals(isNextWorkMode("ask"), false);
-  assertEquals(isNextWorkMode("next-work"), true);
+  assert.deepStrictEqual(isNextWorkMode("ask"), false);
+  assert.deepStrictEqual(isNextWorkMode("next-work"), true);
 });
 
 Deno.test("routeReasonForMode names the local next-work default and passes other reasons through", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     routeReasonForMode("default", 0, true),
     "default_local_next_work",
   );
-  assertEquals(routeReasonForMode("default", 0, false), "default");
-  assertEquals(routeReasonForMode("default", 1, true), "default");
-  assertEquals(
+  assert.deepStrictEqual(routeReasonForMode("default", 0, false), "default");
+  assert.deepStrictEqual(routeReasonForMode("default", 1, true), "default");
+  assert.deepStrictEqual(
     routeReasonForMode("explicit_model_id", 0, true),
     "explicit_model_id",
   );
 });
 
 Deno.test("confirmPaidRoute passes tier 0 without asking", async () => {
-  const confirm = spy(verdict({ decision: "deny" }));
+  const confirm = mock.fn(verdict({ decision: "deny" }));
   await confirmPaidRoute({ ...BASE_PREFLIGHT, tier: 0 }, confirm);
-  assertSpyCalls(confirm, 0);
+  assert.equal(confirm.mock.callCount(), 0);
 });
 
 Deno.test("confirmPaidRoute shows the banner and resolves on approval", async () => {
-  const confirm = spy(verdict({ decision: "approve" }));
+  const confirm = mock.fn(verdict({ decision: "approve" }));
   await confirmPaidRoute(BASE_PREFLIGHT, confirm);
-  assertSpyCalls(confirm, 1);
-  assertEquals(
-    confirm.calls[0].args[0],
+  assert.equal(confirm.mock.callCount(), 1);
+  assert.deepStrictEqual(
+    confirm.mock.calls[0].arguments[0],
     buildPaidEscalationPreflightBanner(BASE_PREFLIGHT),
   );
 });
 
 Deno.test("confirmPaidRoute throws the declined verdict", async () => {
-  const error = await assertRejects(
+  const error = await captureRejection(
     () =>
       confirmPaidRoute(
         BASE_PREFLIGHT,
@@ -107,18 +105,18 @@ Deno.test("confirmPaidRoute throws the declined verdict", async () => {
       ),
     PaidEscalationDeclinedError,
   );
-  assertEquals(error.verdict, {
+  assert.deepStrictEqual(error.verdict, {
     decision: "deny",
     reason: "operator declined",
   });
-  assertEquals(
+  assert.deepStrictEqual(
     error.message,
     "Paid inference consent declined: operator declined",
   );
 });
 
 Deno.test("confirmPaidRoute treats an escalate verdict as a refusal", async () => {
-  const error = await assertRejects(
+  const error = await captureRejection(
     () =>
       confirmPaidRoute(
         { ...BASE_PREFLIGHT, tier: 2 },
@@ -126,15 +124,15 @@ Deno.test("confirmPaidRoute treats an escalate verdict as a refusal", async () =
       ),
     PaidEscalationDeclinedError,
   );
-  assertEquals(error.message, "Paid inference escalation required");
+  assert.deepStrictEqual(error.message, "Paid inference escalation required");
 });
 
 Deno.test("confirmPaidRoute denies when no consent handler is configured", async () => {
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => confirmPaidRoute(BASE_PREFLIGHT, undefined),
     PaidEscalationDeclinedError,
   );
-  assertEquals(error.verdict, {
+  assert.deepStrictEqual(error.verdict, {
     decision: "deny",
     reason: "no consent handler configured",
   });

@@ -1,4 +1,4 @@
-import { assertEquals, assertObjectMatch } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   PAID_ESCALATION_NOT_APPROVED,
   PAID_ESCALATION_REMOTE_DENIED,
@@ -12,7 +12,7 @@ const TURN_ID = "123e4567-e89b-42d3-a456-426614174000";
 
 // deno-lint-ignore no-explicit-any
 function match(actual: unknown, expected: Record<string, any>): void {
-  assertObjectMatch(actual as Record<string, unknown>, expected);
+  assert.partialDeepStrictEqual(actual as Record<string, unknown>, expected);
 }
 
 Deno.test("resolveTurnFromBody selects the fixture runner only for a loopback turn", () => {
@@ -137,9 +137,9 @@ Deno.test("resolveTurnFromBody applies a budget override on loopback only", () =
   });
   const remote = resolveTurnFromBody({ prompt: "hi", budget }, false);
   if ("error" in remote) throw new Error(remote.error);
-  assertEquals(remote.runtimeInput.sessionLimitUsd, undefined);
-  assertEquals(remote.runtimeInput.perCallLimitUsd, undefined);
-  assertEquals(remote.runtimeInput.dailyLimitUsd, undefined);
+  assert.deepStrictEqual(remote.runtimeInput.sessionLimitUsd, undefined);
+  assert.deepStrictEqual(remote.runtimeInput.perCallLimitUsd, undefined);
+  assert.deepStrictEqual(remote.runtimeInput.dailyLimitUsd, undefined);
   match(
     resolveTurnFromBody(
       { prompt: "hi", budget: { sessionLimitUsd: 0 } },
@@ -153,11 +153,11 @@ Deno.test("resolveTurnFromBody applies a budget override on loopback only", () =
 });
 
 Deno.test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
-  assertEquals(parseBudgetOverride([]), { error: "budget must be an object" });
-  assertEquals(parseBudgetOverride({ dailyLimitUsd: 1001 }), {
+  assert.deepStrictEqual(parseBudgetOverride([]), { error: "budget must be an object" });
+  assert.deepStrictEqual(parseBudgetOverride({ dailyLimitUsd: 1001 }), {
     error: "budget.dailyLimitUsd must be a positive number up to 1000",
   });
-  assertEquals(parseBudgetOverride({ perCallLimitUsd: 0.25 }), {
+  assert.deepStrictEqual(parseBudgetOverride({ perCallLimitUsd: 0.25 }), {
     perCallLimitUsd: 0.25,
   });
 });
@@ -173,16 +173,16 @@ Deno.test("resolveTurnFromBody validates the session id shape", () => {
 });
 
 Deno.test("paidEscalationVerdict denies remote callers even when they opt in", () => {
-  assertEquals(paidEscalationVerdict(false, true), {
+  assert.deepStrictEqual(paidEscalationVerdict(false, true), {
     decision: "deny",
     reason: PAID_ESCALATION_REMOTE_DENIED,
   });
 });
 
 Deno.test("paidEscalationVerdict denies a loopback caller that did not opt in", () => {
-  assertEquals(paidEscalationVerdict(true, false), {
+  assert.deepStrictEqual(paidEscalationVerdict(true, false), {
     decision: "deny",
     reason: PAID_ESCALATION_NOT_APPROVED,
   });
-  assertEquals(paidEscalationVerdict(true, true), { decision: "approve" });
+  assert.deepStrictEqual(paidEscalationVerdict(true, true), { decision: "approve" });
 });

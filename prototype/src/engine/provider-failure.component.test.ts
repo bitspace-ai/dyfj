@@ -8,7 +8,8 @@
  * the Workbench-written message with its recovery hint, the classified
  * kind, and none of the provider's text.
  */
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { stub } from "@std/testing/mock";
 import {
   type EngineRun,
@@ -52,7 +53,7 @@ async function failingTurn(
     },
   });
   const frames: WorkbenchRuntimeEvent[] = [];
-  const log = stub(console, "log");
+  const log = mock.method(console, "log", () => {});
   const error = stub(console, "error");
   let thrown: unknown = null;
   try {
@@ -67,17 +68,17 @@ async function failingTurn(
   } catch (err) {
     thrown = err;
   } finally {
-    log.restore();
+    log.mock.restore();
     error.restore();
   }
-  assert(thrown !== null, "the turn should have failed");
+  assert.ok(thrown !== null, "the turn should have failed");
   const failed = frames.at(-1);
-  assert(failed?.type === "turnFailed", `last frame was ${failed?.type}`);
+  assert.ok(failed?.type === "turnFailed", `last frame was ${failed?.type}`);
   const sessionId = (frames[0] as { sessionId: string }).sessionId;
   const errorRow = (await eventRows(run, sessionId)).find((row) =>
     row.event_type === "error"
   );
-  assert(errorRow !== undefined, "no error event was written");
+  assert.ok(errorRow !== undefined, "no error event was written");
   return {
     run,
     frames,
@@ -103,14 +104,14 @@ function assertReported(
   turn: FailedTurn,
   expected: { errorName: string; includes: string[]; excludes: string[] },
 ): void {
-  assertEquals(turn.failed.errorName, expected.errorName);
-  assertEquals(turn.failed.errorMessage, turn.operatorLine);
-  assertEquals(turn.errorRow.content, turn.operatorLine);
+  assert.deepStrictEqual(turn.failed.errorName, expected.errorName);
+  assert.deepStrictEqual(turn.failed.errorMessage, turn.operatorLine);
+  assert.deepStrictEqual(turn.errorRow.content, turn.operatorLine);
   for (const text of expected.includes) {
-    assertStringIncludes(turn.operatorLine, text);
+    assert.ok(turn.operatorLine.includes(text), `expected turn.operatorLine to include ${JSON.stringify(text)}`);
   }
   for (const text of expected.excludes) {
-    assertEquals(
+    assert.deepStrictEqual(
       turn.operatorLine.includes(text),
       false,
       `operator line relays "${text}": ${turn.operatorLine}`,
@@ -131,7 +132,7 @@ Deno.test("llama-server's context-size rejection reaches the operator with both 
     includes: ["82366", "32768", "/model"],
     excludes: [F.LLAMA_SERVER_CONTEXT_EXCEEDED.foreignText],
   });
-  assertEquals(turn.run.transport.requests.length, 1);
+  assert.deepStrictEqual(turn.run.transport.requests.length, 1);
 });
 
 // ─── one fixture per class ───────────────────────────────────────────────────
@@ -143,7 +144,7 @@ Deno.test("an authentication failure names the provider and says which key to ch
     includes: ["Authentication failed", "anthropic", "HTTP 401", "key"],
     excludes: [F.ANTHROPIC_AUTH.foreignText],
   });
-  assertEquals(
+  assert.deepStrictEqual(
     turn.errorRow.provider_error_class,
     "ProviderAuthenticationError",
   );
@@ -156,7 +157,7 @@ Deno.test("a rate limit names the provider and says to wait or switch model", as
     includes: ["Rate limited", LOCAL_MODEL.provider, "HTTP 429", "/model"],
     excludes: [F.OPENAI_RATE_LIMIT.foreignText],
   });
-  assertEquals(turn.errorRow.provider_error_class, "ProviderRateLimitedError");
+  assert.deepStrictEqual(turn.errorRow.provider_error_class, "ProviderRateLimitedError");
 });
 
 Deno.test("a model the provider does not serve names the model and the registry row", async () => {
@@ -166,7 +167,7 @@ Deno.test("a model the provider does not serve names the model and the registry 
     includes: ["Model not found", "google", GEMINI_FREE_MODEL.slug, "HTTP 404"],
     excludes: [F.GEMINI_MODEL_NOT_FOUND.foreignText],
   });
-  assertEquals(
+  assert.deepStrictEqual(
     turn.errorRow.provider_error_class,
     "ProviderModelNotFoundError",
   );
@@ -182,7 +183,7 @@ Deno.test("a refused connection names the provider and says to check the server"
     includes: ["unreachable", LOCAL_MODEL.provider, "refused", "base URL"],
     excludes: ["os error 61", "error sending request"],
   });
-  assertEquals(turn.errorRow.provider_error_class, "ProviderUnreachableError");
+  assert.deepStrictEqual(turn.errorRow.provider_error_class, "ProviderUnreachableError");
 });
 
 Deno.test("a request the provider refuses by size names the provider and says to shorten it", async () => {
@@ -192,7 +193,7 @@ Deno.test("a request the provider refuses by size names the provider and says to
     includes: ["Request too large", "anthropic", "HTTP 413"],
     excludes: [F.ANTHROPIC_REQUEST_TOO_LARGE.foreignText],
   });
-  assertEquals(
+  assert.deepStrictEqual(
     turn.errorRow.provider_error_class,
     "ProviderRequestTooLargeError",
   );
@@ -207,7 +208,7 @@ Deno.test("an unclassified provider error shows the provider and status, and non
     includes: [LOCAL_MODEL.provider, LOCAL_MODEL.slug, "HTTP 500", "bytes"],
     excludes: [F.OPENAI_SERVER_ERROR.foreignText, "server_error"],
   });
-  assertEquals(
+  assert.deepStrictEqual(
     turn.errorRow.provider_error_class,
     "ProviderRequestFailedError",
   );
@@ -233,5 +234,5 @@ Deno.test("a provider failure is a reported condition, not an unexpected error, 
   } finally {
     error.restore();
   }
-  assertEquals(error.calls.map((c) => String(c.args[0])), []);
+  assert.deepStrictEqual(error.calls.map((c) => String(c.args[0])), []);
 });
