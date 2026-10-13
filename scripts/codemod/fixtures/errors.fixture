@@ -8,7 +8,7 @@ Deno.test("errors", async () => {
   await assertRejects(() => Deno.readTextFile("/missing"), Deno.errors.NotFound);
   assertThrows(() => Deno.mkdirSync("/tmp"), Deno.errors.AlreadyExists);
   try {
-    await Deno.remove("/missing");
+    await Deno.remove("/missing", { recursive: true });
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
   }
@@ -29,7 +29,7 @@ Deno.test("errors", async () => {
   await assert.rejects(() => readFile("/missing", "utf8"), { code: "ENOENT" });
   assert.throws(() => mkdirSync("/tmp"), { code: "EEXIST" });
   try {
-    await rm("/missing");
+    await rm("/missing", { recursive: true });
   } catch (error) {
     if (!((error as { code?: unknown }).code === "ENOENT")) throw error;
   }

@@ -1,5 +1,6 @@
 # Only code is rewritten: names inside strings, templates, comments and regex
-# literals are left alone, while code inside template substitutions is not.
+# literals are left alone (a regex can follow a control statement's closing
+# parenthesis), while code inside template substitutions is not.
 rules: assert.import, assert.equals
 --- before
 // A header comment before the imports.
@@ -13,6 +14,8 @@ Deno.test("scanner", () => {
   const pattern = /assertEquals\(/;
   const template = `assertEquals(7, 8) ${String(assertEquals(1, 1))} done`;
   const ratio = 4 / 2 / 1;
+  if (ratio) /assertEquals(.*)/.test(quoted);
+  while (false) /assertEquals/.exec(quoted);
   assertEquals(ratio, 2);
   void [quoted, single, pattern, template];
 });
@@ -28,6 +31,8 @@ Deno.test("scanner", () => {
   const pattern = /assertEquals\(/;
   const template = `assertEquals(7, 8) ${String(assert.deepStrictEqual(1, 1))} done`;
   const ratio = 4 / 2 / 1;
+  if (ratio) /assertEquals(.*)/.test(quoted);
+  while (false) /assertEquals/.exec(quoted);
   assert.deepStrictEqual(ratio, 2);
   void [quoted, single, pattern, template];
 });

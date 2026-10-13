@@ -275,9 +275,22 @@ const REGEX_AFTER_WORD = new Set([
   "yield",
 ]);
 
-function regexAllowed(text: string, prev: number): boolean {
+const CONTROL_KEYWORDS = new Set(["if", "while", "for", "with"]);
+
+function regexAllowed(
+  text: string,
+  prev: number,
+  openerOf: Map<number, number>,
+): boolean {
   if (prev < 0) return true;
   const c = text[prev];
+  // After the parenthesis that closes `if (...)` and the like, a statement
+  // starts, so `/` opens a regex; after any other `)` it divides.
+  if (c === ")") {
+    const opener = openerOf.get(prev);
+    return opener !== undefined &&
+      CONTROL_KEYWORDS.has(wordBefore(text, opener).word);
+  }
   if (IDENT.test(c)) {
     let start = prev;
     while (start > 0 && IDENT.test(text[start - 1])) start--;
@@ -324,6 +337,8 @@ const COMMENT = 2;
 export function codeMask(text: string): Uint8Array {
   const mask = new Uint8Array(text.length);
   const templateDepths: number[] = [];
+  const openParens: number[] = [];
+  const openerOf = new Map<number, number>();
   let depth = 0;
   let prev = -1;
   const templateText = (from: number): number => {
@@ -366,13 +381,18 @@ export function codeMask(text: string): Uint8Array {
       prev = i - 1;
       continue;
     }
-    if (c === "/" && regexAllowed(text, prev)) {
+    if (c === "/" && regexAllowed(text, prev, openerOf)) {
       const end = skipRegex(text, i);
       if (end > 0) {
         i = end;
         prev = i - 1;
         continue;
       }
+    }
+    if (c === "(") openParens.push(i);
+    else if (c === ")") {
+      const opener = openParens.pop();
+      if (opener !== undefined) openerOf.set(i, opener);
     }
     if (c === "{") depth++;
     else if (c === "}") {
@@ -1564,6 +1584,18 @@ function convertFs(
     text: named(node),
   });
 
+  if (base === "remove") {
+    // node's rm rejects a directory unless it is recursive, while the host's
+    // remove also takes an empty one: only a provably recursive call is safe.
+    const options = args.length === 2 ? objectProps(args[1].text) : undefined;
+    if (options?.get("recursive") !== "true") {
+      return {
+        pos,
+        reason: `${host} without { recursive: true } may remove an empty ` +
+          "directory, which rm rejects; use unlink or rmdir by hand",
+      };
+    }
+  }
   const rename = FS_RENAMES[base];
   if (rename) {
     return blocked(rename[1]) ?? {
