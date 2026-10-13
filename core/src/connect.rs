@@ -15,10 +15,11 @@ use crate::error::Result;
 const SQLX_08_UTF8MB4_COLLATION: &str = "utf8mb4_unicode_ci";
 
 /// Parse `database_url` and keep the session collation sqlx 0.8 used for the
-/// default charset.
+/// default charset. MySQL treats charset names case-insensitively, so the
+/// charset is compared that way.
 pub fn connect_options(database_url: &str) -> Result<MySqlConnectOptions> {
     let options: MySqlConnectOptions = database_url.parse()?;
-    if options.get_collation().is_none() && options.get_charset() == "utf8mb4" {
+    if options.get_collation().is_none() && options.get_charset().eq_ignore_ascii_case("utf8mb4") {
         Ok(options.collation(SQLX_08_UTF8MB4_COLLATION))
     } else {
         Ok(options)
@@ -34,6 +35,13 @@ mod tests {
         let options =
             connect_options("mysql://root@127.0.0.1:3306/dolt").expect("example URL must parse");
         assert_eq!(options.get_charset(), "utf8mb4");
+        assert_eq!(options.get_collation(), Some("utf8mb4_unicode_ci"));
+    }
+
+    #[test]
+    fn treats_the_default_charset_name_case_insensitively() {
+        let options = connect_options("mysql://root@127.0.0.1:3306/dolt?charset=UTF8MB4")
+            .expect("example URL must parse");
         assert_eq!(options.get_collation(), Some("utf8mb4_unicode_ci"));
     }
 
