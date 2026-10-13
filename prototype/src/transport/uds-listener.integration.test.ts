@@ -1,4 +1,7 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import assert from "node:assert/strict";
+import { lstatSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
+import { assertRejects } from "@std/assert";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -64,10 +67,10 @@ async function serve(
 
 function exists(path: string): boolean {
   try {
-    Deno.lstatSync(path);
+    lstatSync(path);
     return true;
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return false;
+    if ((err instanceof Error && (err as { code?: unknown }).code === "ENOENT")) return false;
     throw err;
   }
 }
@@ -84,23 +87,23 @@ Deno.test("serveUnixJsonRpc serves every connection from one handler map and set
     },
   });
   const server: UnixJsonRpcServer = served.server;
-  assertEquals(server.socketPath, udsTestSocket("listener-serve"));
-  assert(Deno.lstatSync(server.socketPath).isSocket);
+  assert.deepStrictEqual(server.socketPath, udsTestSocket("listener-serve"));
+  assert.ok(lstatSync(server.socketPath).isSocket());
 
   await using a = await dial(server.socketPath);
   await using b = await dial(server.socketPath);
   let settledOnce = new Promise<void>((resolve) => markSettled = resolve);
-  assertEquals(await a.peer.request("echo", { from: "a" }), {
+  assert.deepStrictEqual(await a.peer.request("echo", { from: "a" }), {
     echoed: { from: "a" },
   });
   await settledOnce;
   settledOnce = new Promise<void>((resolve) => markSettled = resolve);
-  assertEquals(await b.peer.request("echo", { from: "b" }), {
+  assert.deepStrictEqual(await b.peer.request("echo", { from: "b" }), {
     echoed: { from: "b" },
   });
   await settledOnce;
-  assertEquals(settled.map(([req]) => req.method), ["echo", "echo"]);
-  assertEquals(settled.map(([, res]) => "result" in res), [true, true]);
+  assert.deepStrictEqual(settled.map(([req]) => req.method), ["echo", "echo"]);
+  assert.deepStrictEqual(settled.map(([, res]) => "result" in res), [true, true]);
 });
 
 Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file", async () => {
@@ -125,8 +128,8 @@ Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file"
   await client.closed;
   await new Promise((resolve) => setTimeout(resolve, 0));
   await rejected;
-  assert(!exists(socketPath));
-  await assertRejects(() =>
+  assert.ok(!exists(socketPath));
+  await assert.rejects(() =>
     Deno.connect({ transport: "unix", path: socketPath })
   );
 });
@@ -138,11 +141,11 @@ Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connect
     handlers: { ping: () => "pong" },
   });
   await using client = await dial(socketPath);
-  assertEquals(await client.peer.request("ping"), "pong");
+  assert.deepStrictEqual(await client.peer.request("ping"), "pong");
   await server.close({ disconnectPeers: false });
   // No new connections, but the open one still answers.
-  assert(!exists(socketPath));
-  assertEquals(await client.peer.request("ping"), "pong");
+  assert.ok(!exists(socketPath));
+  assert.deepStrictEqual(await client.peer.request("ping"), "pong");
 });
 
 Deno.test({
@@ -172,7 +175,7 @@ Deno.test({
         }),
       ]);
       clearTimeout(timer);
-      assertEquals(read, null);
+      assert.deepStrictEqual(read, null);
     } finally {
       conn.close();
     }
@@ -224,7 +227,7 @@ Deno.test({
       } finally {
         clearTimeout(timer);
       }
-      assertEquals(JSON.parse(text.trim()), {
+      assert.deepStrictEqual(JSON.parse(text.trim()), {
         jsonrpc: "2.0",
         id: 1,
         result: "answered",
@@ -255,7 +258,7 @@ Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () =
   } finally {
     conn.close();
   }
-  assertEquals(errors.length, 1);
+  assert.deepStrictEqual(errors.length, 1);
 });
 
 // --- bind safety ---
@@ -263,14 +266,10 @@ Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () =
 Deno.test("refuses to bind while a live runtime answers on the socket", async () => {
   await using served = await serve("listener-live", { ping: () => "pong" });
   const socketPath = served.server.socketPath;
-  await assertRejects(
-    () => serveUnixJsonRpc(socketPath, { handlers: {} }),
-    Error,
-    "live runtime is already serving",
-  );
+  await assert.rejects(() => serveUnixJsonRpc(socketPath, { handlers: {} }), (error: unknown) => error instanceof Error && error.message.includes("live runtime is already serving"));
   // The live server is untouched: its socket file still exists and accepts.
   await using client = await dial(socketPath);
-  assertEquals(await client.peer.request("ping"), "pong");
+  assert.deepStrictEqual(await client.peer.request("ping"), "pong");
 });
 
 Deno.test("clears a genuinely stale socket and binds", async () => {
@@ -278,10 +277,10 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
   // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its socket
   // file behind with nothing accepting.
   await fabricateStaleUdsSocket(socketPath);
-  assert(Deno.lstatSync(socketPath).isSocket);
+  assert.ok(lstatSync(socketPath).isSocket());
 
   await assertSocketBindable(socketPath);
-  assertThrows(() => Deno.lstatSync(socketPath), Deno.errors.NotFound);
+  assert.throws(() => lstatSync(socketPath), (error: unknown) => error instanceof Error && (error as { code?: unknown }).code === "ENOENT");
 
   // And the serve path binds over it end to end.
   const server = await serveUnixJsonRpc(socketPath, {
@@ -289,7 +288,7 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
   });
   try {
     await using client = await dial(socketPath);
-    assertEquals(await client.peer.request("ping"), "pong");
+    assert.deepStrictEqual(await client.peer.request("ping"), "pong");
   } finally {
     await server.close();
   }
@@ -297,19 +296,11 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
 
 Deno.test("refuses to bind over a non-socket path", async () => {
   const path = udsTestSocket("listener-file");
-  await Deno.writeTextFile(path, "not a socket");
+  await writeFile(path, "not a socket");
   try {
-    await assertRejects(
-      () => assertSocketBindable(path),
-      Error,
-      "exists and is not a socket",
-    );
-    await assertRejects(
-      () => serveUnixJsonRpc(path, { handlers: {} }),
-      Error,
-      "exists and is not a socket",
-    );
-    assertEquals(await Deno.readTextFile(path), "not a socket");
+    await assert.rejects(() => assertSocketBindable(path), (error: unknown) => error instanceof Error && error.message.includes("exists and is not a socket"));
+    await assert.rejects(() => serveUnixJsonRpc(path, { handlers: {} }), (error: unknown) => error instanceof Error && error.message.includes("exists and is not a socket"));
+    assert.deepStrictEqual(await readFile(path, "utf8"), "not a socket");
   } finally {
     await Deno.remove(path);
   }
@@ -319,5 +310,5 @@ Deno.test("assertSocketBindable is a no-op for an absent path", async () => {
   const path = udsTestSocket("listener-file");
   await removeIfPresent(path);
   await assertSocketBindable(path);
-  assert(!exists(path));
+  assert.ok(!exists(path));
 });

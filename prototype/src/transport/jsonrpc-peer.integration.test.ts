@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
@@ -17,7 +17,7 @@ async function connectPair(
   const accepted = listener.accept();
   const clientConn = await nodeSocketHost.connect(sock);
   const serverConn = await accepted;
-  assert(serverConn !== null);
+  assert.ok(serverConn !== null);
   const server = new JsonRpcPeer(serverConn, { handlers: serverHandlers });
   const client = new JsonRpcPeer(clientConn, { handlers: clientHandlers });
   const loops = Promise.all([server.run(), client.run()]);
@@ -42,14 +42,14 @@ Deno.test("a large response is delivered intact over a real socket (partial writ
   const big = "x".repeat(300_000); // exceeds a single socket write
   await using pair = await connectPair({ big: () => ({ payload: big }) });
   const result = await pair.client.request("big") as { payload: string };
-  assertEquals(result.payload.length, 300_000);
-  assertStrictEquals(result.payload, big);
+  assert.deepStrictEqual(result.payload.length, 300_000);
+  assert.strictEqual(result.payload, big);
 });
 
 Deno.test("multibyte payloads round-trip over a real socket", async () => {
   const text = "77→15 tok   😀 ".repeat(20_000);
   await using pair = await connectPair({ echo: (params) => params });
-  assertEquals(await pair.client.request("echo", { text }), { text });
+  assert.deepStrictEqual(await pair.client.request("echo", { text }), { text });
 });
 
 Deno.test("the approval round-trip crosses a real socket in both directions", async () => {
@@ -68,8 +68,8 @@ Deno.test("the approval round-trip crosses a real socket in both directions", as
       approval: () => ({ decision: "approve" }),
     },
   );
-  assertEquals(await pair.client.request("work"), {
+  assert.deepStrictEqual(await pair.client.request("work"), {
     decision: { decision: "approve" },
   });
-  assertEquals(streamed, [{ delta: "step" }]);
+  assert.deepStrictEqual(streamed, [{ delta: "step" }]);
 });

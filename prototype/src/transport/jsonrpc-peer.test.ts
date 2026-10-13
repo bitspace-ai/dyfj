@@ -1,12 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import type { ByteConnection } from "./connection.ts";
 import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import {
@@ -191,8 +183,8 @@ Deno.test("request frames on the wire are byte-identical to the literal frames",
       : { jsonrpc: "2.0", id, method, params };
     return encodeFrame(literal);
   });
-  assertEquals(concat(conn.written), concat(expected));
-  assertEquals(
+  assert.deepStrictEqual(concat(conn.written), concat(expected));
+  assert.deepStrictEqual(
     new TextDecoder().decode(conn.written[0]),
     '{"jsonrpc":"2.0","id":"p1","method":"approval"}\n',
   );
@@ -204,12 +196,12 @@ Deno.test("notification and response frames on the wire are unchanged", async ()
   await pair.client.notify("stream", { delta: "hi" });
   await pair.client.request("ping");
   const dec = new TextDecoder();
-  assertEquals(
+  assert.deepStrictEqual(
     dec.decode(concat(pair.clientConn.written)),
     '{"jsonrpc":"2.0","method":"stream","params":{"delta":"hi"}}\n' +
       '{"jsonrpc":"2.0","id":"p1","method":"ping"}\n',
   );
-  assertEquals(
+  assert.deepStrictEqual(
     dec.decode(concat(serverConn.written)),
     '{"jsonrpc":"2.0","id":"p1","result":{"pong":true}}\n',
   );
@@ -219,7 +211,7 @@ Deno.test("notification and response frames on the wire are unchanged", async ()
 
 Deno.test("client request -> server handler -> result", async () => {
   await using pair = connectPair({ "models/list": () => ({ models: [] }) });
-  assertEquals(await pair.client.request("models/list"), { models: [] });
+  assert.deepStrictEqual(await pair.client.request("models/list"), { models: [] });
 });
 
 Deno.test("all requests on one connection share one handler context", async () => {
@@ -234,18 +226,18 @@ Deno.test("all requests on one connection share one handler context", async () =
   await pair.client.request("inspect");
   await pair.client.request("inspect");
 
-  assertEquals(contexts.length, 2);
-  assertStrictEquals(contexts[0], contexts[1]);
+  assert.deepStrictEqual(contexts.length, 2);
+  assert.strictEqual(contexts[0], contexts[1]);
 });
 
 Deno.test("server-initiated request -> client handler (the approval round-trip)", async () => {
   await using pair = connectPair({}, {
     approval: (params) => {
-      assertObjectMatch(params as Record<string, unknown>, { tool: "bash" });
+      assert.partialDeepStrictEqual(params as Record<string, unknown>, { tool: "bash" });
       return { decision: "approve-once" };
     },
   });
-  assertEquals(
+  assert.deepStrictEqual(
     await pair.server.request("approval", {
       tool: "bash",
       command: "rm -rf build/",
@@ -279,14 +271,14 @@ Deno.test("an aborted request removes its pending correlation and ignores a late
 
   await approvalStarted;
   abortController.abort();
-  assertStrictEquals(
+  assert.strictEqual(
     await rejection(pending),
     abortController.signal.reason,
   );
   releaseApproval();
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assertEquals(await pair.server.request("approval", { tool: "next" }), {
+  assert.deepStrictEqual(await pair.server.request("approval", { tool: "next" }), {
     decision: "approve",
   });
 });
@@ -295,20 +287,20 @@ Deno.test("a request with an already-aborted signal rejects without writing", as
   await using pair = connectPair();
   const abortController = new AbortController();
   abortController.abort();
-  assertStrictEquals(
+  assert.strictEqual(
     await rejection(
       pair.client.request("never", undefined, abortController.signal),
     ),
     abortController.signal.reason,
   );
-  assertEquals(pair.clientConn.written.length, 0);
+  assert.deepStrictEqual(pair.clientConn.written.length, 0);
 });
 
 Deno.test("unknown method rejects with methodNotFound", async () => {
   await using pair = connectPair({});
   const err = await rejection(pair.client.request("nope"));
-  assertInstanceOf(err, RpcError);
-  assertEquals(err.code, RpcErrorCode.methodNotFound);
+  assert.ok(err instanceof RpcError);
+  assert.deepStrictEqual(err.code, RpcErrorCode.methodNotFound);
 });
 
 Deno.test("a handler RpcError propagates as a rejection with its code", async () => {
@@ -318,8 +310,8 @@ Deno.test("a handler RpcError propagates as a rejection with its code", async ()
     },
   });
   const err = await rejection(pair.client.request("turn"));
-  assertInstanceOf(err, RpcError);
-  assertEquals(err.code, RpcErrorCode.paidNotApproved);
+  assert.ok(err instanceof RpcError);
+  assert.deepStrictEqual(err.code, RpcErrorCode.paidNotApproved);
 });
 
 // Reconstructing an RpcError from a wire response must not stamp whatever
@@ -336,10 +328,10 @@ Deno.test("reconstructing an RpcError from an oversized/control-character wire m
     },
   });
   const caught = await rejection(pair.client.request("turn"));
-  assertInstanceOf(caught, RpcError);
-  assert(!caught.message.includes(esc));
-  assert(caught.message.length < payload.length);
-  assert(new TextEncoder().encode(caught.message).byteLength < 1000);
+  assert.ok(caught instanceof RpcError);
+  assert.ok(!caught.message.includes(esc));
+  assert.ok(caught.message.length < payload.length);
+  assert.ok(new TextEncoder().encode(caught.message).byteLength < 1000);
 });
 
 Deno.test("a malformed error envelope rejects the pending request instead of orphaning it", async () => {
@@ -373,7 +365,7 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
         error: { code: -32000, message: 42 },
       } as unknown as JsonRpcMessage,
     ));
-    await assertRejects(() => req1, RpcError, "malformed error envelope");
+    await assert.rejects(() => req1, (error: unknown) => error instanceof RpcError && error.message.includes("malformed error envelope"));
 
     // Case 2: null error object — property access alone would throw.
     const req2 = client.request("turn");
@@ -381,7 +373,7 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
     await rawConn.write(encodeFrame(
       { jsonrpc: "2.0", id: id2, error: null } as unknown as JsonRpcMessage,
     ));
-    await assertRejects(() => req2, RpcError, "malformed error envelope");
+    await assert.rejects(() => req2, (error: unknown) => error instanceof RpcError && error.message.includes("malformed error envelope"));
   } finally {
     client.close();
     await loop;
@@ -399,7 +391,7 @@ Deno.test("notifications reach a matching handler fire-and-forget", async () => 
   });
   await pair.client.notify("stream", { delta: "hi" });
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assertEquals(seen, { delta: "hi" });
+  assert.deepStrictEqual(seen, { delta: "hi" });
 });
 
 Deno.test("a slow request does not block other requests on the same connection", async () => {
@@ -416,9 +408,9 @@ Deno.test("a slow request does not block other requests on the same connection",
   });
   const slow = pair.client.request("slow"); // in flight, parked on the gate
   // fast must resolve even though slow is still pending on the same connection
-  assertEquals(await pair.client.request("fast"), { ok: true });
+  assert.deepStrictEqual(await pair.client.request("fast"), { ok: true });
   release();
-  assertEquals(await slow, { done: true });
+  assert.deepStrictEqual(await slow, { done: true });
 });
 
 Deno.test("a handler streams notifications and issues an approval mid-execution (ctx)", async () => {
@@ -441,10 +433,10 @@ Deno.test("a handler streams notifications and issues an approval mid-execution 
       approval: () => ({ decision: "approve-once" }),
     },
   );
-  assertEquals(await pair.client.request("work"), {
+  assert.deepStrictEqual(await pair.client.request("work"), {
     decision: { decision: "approve-once" },
   });
-  assertEquals(streamed, [{ delta: "step 1" }, { delta: "step 2" }]);
+  assert.deepStrictEqual(streamed, [{ delta: "step 1" }, { delta: "step 2" }]);
 });
 
 // --- byte stream handling ---
@@ -455,15 +447,15 @@ Deno.test("a large response is delivered intact across short writes", async () =
     maxWrite: 4096, // every write() accepts at most 4 KiB
   });
   const result = await pair.client.request("big") as { payload: string };
-  assertEquals(result.payload.length, 300_000);
-  assertStrictEquals(result.payload, big);
+  assert.deepStrictEqual(result.payload.length, 300_000);
+  assert.strictEqual(result.payload, big);
 });
 
 Deno.test("a multibyte character bisected across two reads round-trips byte-for-byte", async () => {
   const payload = "77→15 tok"; // → is E2 86 92
   const bytes = encodeFrame(notification("stream", { delta: payload }));
   const splitAt = bytes.indexOf(0xe2) + 1; // lead byte ends chunk one
-  assert(splitAt > 0);
+  assert.ok(splitAt > 0);
   const seen: unknown[] = [];
   const peer = new JsonRpcPeer(
     scriptedConn([bytes.subarray(0, splitAt), bytes.subarray(splitAt)]),
@@ -476,7 +468,7 @@ Deno.test("a multibyte character bisected across two reads round-trips byte-for-
     },
   );
   await peer.run();
-  assertEquals(seen, [{ delta: payload }]);
+  assert.deepStrictEqual(seen, [{ delta: payload }]);
 });
 
 Deno.test("EOF flush feeds the buffered decoder tail into the frame layer", async () => {
@@ -496,7 +488,7 @@ Deno.test("EOF flush feeds the buffered decoder tail into the frame layer", asyn
     onParseError: (detail) => errors.push(detail),
   });
   await peer.run();
-  assertEquals(errors, [`frame exceeds ${head.length} bytes`]);
+  assert.deepStrictEqual(errors, [`frame exceeds ${head.length} bytes`]);
 });
 
 Deno.test("malformed frames and invalid messages reach onParseError without closing the connection", async () => {
@@ -509,8 +501,8 @@ Deno.test("malformed frames and invalid messages reach onParseError without clos
   );
   await peer.run();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assertEquals(errors.length, 2);
-  assertEquals(errors[1], "invalid message");
+  assert.deepStrictEqual(errors.length, 2);
+  assert.deepStrictEqual(errors[1], "invalid message");
 });
 
 // --- lifecycle ---
@@ -521,7 +513,7 @@ Deno.test("pending requests reject when the connection closes", async () => {
   });
   const pending = pair.client.request("slow");
   pair.client.close();
-  await assertRejects(() => pending, Error, "connection closed");
+  await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("connection closed"));
 });
 
 Deno.test("onRequestSettled fires after response has been written to the connection", async () => {
@@ -548,10 +540,10 @@ Deno.test("onRequestSettled fires after response has been written to the connect
     },
   );
 
-  assertEquals(await pair.client.request("ping"), { pong: true });
+  assert.deepStrictEqual(await pair.client.request("ping"), { pong: true });
   await settledOnce;
   // The response frame was already on the wire when the hook ran.
-  assertEquals(settled, [{
+  assert.deepStrictEqual(settled, [{
     method: "ping",
     result: { pong: true },
     written: 1,
@@ -580,13 +572,13 @@ Deno.test("onRequestSettled error is caught and routed to onParseError without c
   );
 
   let reported = nextReport();
-  assertEquals(await pair.client.request("ping"), { ok: true });
+  assert.deepStrictEqual(await pair.client.request("ping"), { ok: true });
   await reported;
-  assertEquals(errors.length, 1);
-  assertStringIncludes(errors[0], "onRequestSettled error");
+  assert.deepStrictEqual(errors.length, 1);
+  assert.ok(errors[0].includes("onRequestSettled error"), `expected errors[0] to include "onRequestSettled error"`);
   // The peer still serves requests after the hook threw.
   reported = nextReport();
-  assertEquals(await pair.client.request("ping"), { ok: true });
+  assert.deepStrictEqual(await pair.client.request("ping"), { ok: true });
   await reported;
-  assertEquals(errors.length, 2);
+  assert.deepStrictEqual(errors.length, 2);
 });

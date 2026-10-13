@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { resolveSocketPath } from "./uds-path.ts";
 
@@ -7,7 +7,7 @@ import { resolveSocketPath } from "./uds-path.ts";
 const FAKE_HOME = ["", "home", "c"].join("/");
 
 Deno.test("resolveSocketPath: DYFJ_SOCKET wins over everything", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSocketPath(
       new MapEnv({
         DYFJ_SOCKET: "/explicit.sock",
@@ -20,7 +20,7 @@ Deno.test("resolveSocketPath: DYFJ_SOCKET wins over everything", () => {
 });
 
 Deno.test("resolveSocketPath falls back to $XDG_RUNTIME_DIR/dyfj", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSocketPath(
       new MapEnv({ XDG_RUNTIME_DIR: "/run/u", HOME: FAKE_HOME }),
     ),
@@ -29,7 +29,7 @@ Deno.test("resolveSocketPath falls back to $XDG_RUNTIME_DIR/dyfj", () => {
 });
 
 Deno.test("resolveSocketPath falls back to ~/.dyfj/run when no XDG_RUNTIME_DIR", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSocketPath(new MapEnv({ HOME: FAKE_HOME })),
     `${FAKE_HOME}/.dyfj/run/workbench.sock`,
   );
@@ -38,13 +38,13 @@ Deno.test("resolveSocketPath falls back to ~/.dyfj/run when no XDG_RUNTIME_DIR",
 // Empty values count as unset, and the last resort is a path relative to the
 // working directory. The Rust REPL client resolves the same precedence.
 Deno.test("resolveSocketPath treats empty values as unset", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSocketPath(
       new MapEnv({ DYFJ_SOCKET: "", XDG_RUNTIME_DIR: "", HOME: FAKE_HOME }),
     ),
     `${FAKE_HOME}/.dyfj/run/workbench.sock`,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSocketPath(new MapEnv({})),
     "./.dyfj/run/workbench.sock",
   );
