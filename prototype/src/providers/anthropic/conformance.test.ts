@@ -85,7 +85,10 @@ providerAdapterConformance({
       exchanges: [{
         // Dotted registry names go out wire-safe and come back mapped.
         expect: (request) =>
-          assert.deepStrictEqual(JSON.parse(request.body).tools[0].name, "memory_read"),
+          assert.deepStrictEqual(
+            JSON.parse(request.body).tools[0].name,
+            "memory_read",
+          ),
         respond: {
           body: JSON.stringify({
             content: [{
@@ -152,8 +155,14 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) => {
-          assert.deepStrictEqual(request.url, "https://api.anthropic.com/v1/messages");
-          assert.deepStrictEqual(request.headers["x-api-key"], "test-key-not-real");
+          assert.deepStrictEqual(
+            request.url,
+            "https://api.anthropic.com/v1/messages",
+          );
+          assert.deepStrictEqual(
+            request.headers["x-api-key"],
+            "test-key-not-real",
+          );
           assert.ok(request.headers["anthropic-version"]);
         },
         respond: {
@@ -309,7 +318,10 @@ providerAdapterConformance({
           });
           assert.strictEqual(body.system[1].cache_control, undefined);
           assert.ok(body.max_tokens > 0, "max_tokens should be positive");
-          assert.deepStrictEqual(body.messages, [{ role: "user", content: "Say hi." }]);
+          assert.deepStrictEqual(body.messages, [{
+            role: "user",
+            content: "Say hi.",
+          }]);
         },
         respond: reply,
       }],

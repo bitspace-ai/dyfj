@@ -49,14 +49,18 @@ describe("fetchWithHeaderTimeout", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Promise.reject(new Error("connection refused")),
     }]);
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         fetchWithHeaderTimeout(
           transport.fetch,
           "http://x/",
           {},
           { provider: "l", slug: "m" },
           1000,
-        ), (error: unknown) => error instanceof Error && error.message.includes("connection refused"));
+        ),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("connection refused"),
+    );
   });
 
   it("a buffered request names its own budget, not the streaming one", async () => {

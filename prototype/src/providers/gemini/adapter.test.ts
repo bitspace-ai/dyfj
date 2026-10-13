@@ -3,7 +3,6 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { assertRejects } from "@std/assert";
 import { ManualClock } from "../../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
@@ -49,10 +48,11 @@ describe("runWorkbenchTurn Google Gemini", () => {
       getEnv,
       fetchFn: transport.fetch,
     });
-    const rejection = assertRejects(
+    const rejection = assert.rejects(
       () => pending,
-      Error,
-      "Gemini stream returned an error envelope",
+      (error) =>
+        error instanceof Error &&
+        error.message.includes("Gemini stream returned an error envelope"),
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -372,7 +372,10 @@ describe("Gemini base-URL contract and model path", () => {
 
   it("accepts only the canonical https host and base path", () => {
     for (const url of accepted) {
-      assert.deepStrictEqual(geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok, true);
+      assert.deepStrictEqual(
+        geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        true,
+      );
     }
     for (const url of rejected) {
       assert.deepStrictEqual(

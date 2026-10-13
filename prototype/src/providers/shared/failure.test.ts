@@ -71,9 +71,12 @@ describe("classifyProviderResponse", () => {
     assert.deepStrictEqual(classifyProviderResponse(401, ""), {
       kind: "authentication",
     });
-    assert.deepStrictEqual(classifyProviderResponse(403, "<html>forbidden</html>"), {
-      kind: "authentication",
-    });
+    assert.deepStrictEqual(
+      classifyProviderResponse(403, "<html>forbidden</html>"),
+      {
+        kind: "authentication",
+      },
+    );
     assert.deepStrictEqual(classifyProviderResponse(429, ""), {
       kind: "rate_limited",
       cause: "rate_limit",
@@ -253,7 +256,10 @@ describe("readBoundedErrorBody", () => {
       new TextEncoder().encode(read.text).byteLength <= MAX_ERROR_BODY_BYTES,
       true,
     );
-    assert.deepStrictEqual(read.text.startsWith('{"error":{"message":"xxx'), true);
+    assert.deepStrictEqual(
+      read.text.startsWith('{"error":{"message":"xxx'),
+      true,
+    );
   });
 
   it("a body that reaches exactly the cap and stays open settles at the cap instead of waiting", async () => {
@@ -302,6 +308,10 @@ describe("readBoundedErrorBody", () => {
     const read = await readBoundedErrorBody(
       await transport.fetch("http://x/", { method: "POST" }),
     );
-    assert.deepStrictEqual(read, { text: "partial", bytes: 7, truncated: true });
+    assert.deepStrictEqual(read, {
+      text: "partial",
+      bytes: 7,
+      truncated: true,
+    });
   });
 });

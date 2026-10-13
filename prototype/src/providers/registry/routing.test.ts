@@ -61,7 +61,12 @@ describe("selectWorkbenchModel", () => {
   });
 
   it("unknown explicit model fails before inference", () => {
-    assert.throws(() => selectWorkbenchModel(models, { modelId: "missing" }), (error: unknown) => error instanceof Error && error.message.includes("Model not found: missing"));
+    assert.throws(
+      () => selectWorkbenchModel(models, { modelId: "missing" }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Model not found: missing"),
+    );
   });
 
   it("uses a local configured default model on a bare turn", () => {
@@ -179,7 +184,12 @@ describe("selectWorkbenchModel", () => {
 
     // With no genuinely local row at all, the ambient default fails closed
     // rather than routing the mis-tiered hosted row without consent.
-    assert.throws(() => selectWorkbenchModel([misTiered], {}), (error: unknown) => error instanceof Error && error.message.includes("Model not found: tier:0"));
+    assert.throws(
+      () => selectWorkbenchModel([misTiered], {}),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Model not found: tier:0"),
+    );
   });
 
   it("explicit tier 0 is locality-bounded too — a mis-tiered hosted row never routes", () => {
@@ -203,7 +213,12 @@ describe("selectWorkbenchModel", () => {
     assert.strictEqual(selection.reason, "explicit_tier");
     assert.ok(!selection.considered.includes("hosted-mistiered"));
 
-    assert.throws(() => selectWorkbenchModel([misTiered], { tier: 0 }), (error: unknown) => error instanceof Error && error.message.includes("Model not found: tier:0"));
+    assert.throws(
+      () => selectWorkbenchModel([misTiered], { tier: 0 }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Model not found: tier:0"),
+    );
 
     // Hosted tiers stay tier-based: explicit tier 1 still routes the priced
     // hosted row (and remains consent-gated downstream).
@@ -275,7 +290,12 @@ describe("selectWorkbenchModel", () => {
   });
 
   it("an unknown configured default fails before inference", () => {
-    assert.throws(() => selectWorkbenchModel(models, {}, "nope"), (error: unknown) => error instanceof Error && error.message.includes("Model not found: nope"));
+    assert.throws(
+      () => selectWorkbenchModel(models, {}, "nope"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Model not found: nope"),
+    );
   });
 });
 
@@ -345,7 +365,14 @@ describe("unpriced models are unroutable", () => {
   });
 
   it("an unpriced configured default throws WorkbenchModelNotRoutableError", () => {
-    assert.throws(() => selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview"), (error: unknown) => error instanceof Error && error.message.includes("Model not routable [gpt-6-preview]: no catalog pricing row"));
+    assert.throws(
+      () => selectWorkbenchModel([...models, unpriced], {}, "gpt-6-preview"),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Model not routable [gpt-6-preview]: no catalog pricing row",
+        ),
+    );
   });
 
   it("tier routing skips unpriced candidates and picks a priced one", () => {

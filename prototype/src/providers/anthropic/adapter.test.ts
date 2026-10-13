@@ -4,7 +4,6 @@
 import { captureRejection } from "../../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { assertRejects } from "@std/assert";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
@@ -136,10 +135,11 @@ describe("anthropic provider adapter", () => {
       getEnv,
       fetchFn: transport.fetch,
     });
-    const rejection = assertRejects(
+    const rejection = assert.rejects(
       () => pending,
-      Error,
-      "Anthropic stream returned an error envelope",
+      (error) =>
+        error instanceof Error &&
+        error.message.includes("Anthropic stream returned an error envelope"),
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -247,7 +247,10 @@ describe("Anthropic base-URL contract", () => {
 
   it("accepts only the canonical https host and base path", () => {
     for (const url of accepted) {
-      assert.deepStrictEqual(anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok, true);
+      assert.deepStrictEqual(
+        anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        true,
+      );
     }
     for (const url of rejected) {
       assert.deepStrictEqual(
@@ -294,7 +297,10 @@ describe("Anthropic base-URL contract", () => {
   it("sends the canonical request unchanged, refusing redirects", async () => {
     const transport = new ScriptedHttpTransport([{
       expect: (request) => {
-        assert.deepStrictEqual(request.url, "https://api.anthropic.com/v1/messages");
+        assert.deepStrictEqual(
+          request.url,
+          "https://api.anthropic.com/v1/messages",
+        );
         assert.deepStrictEqual(request.method, "POST");
         assert.deepStrictEqual(request.redirect, "error");
         assert.deepStrictEqual(request.headers, {

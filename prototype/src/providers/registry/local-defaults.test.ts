@@ -2,7 +2,6 @@
 // registry catalog.
 
 import assert from "node:assert/strict";
-import { assertArrayIncludes, assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   defaultLocalWorkbenchModels,
@@ -31,12 +30,15 @@ describe("defaultLocalWorkbenchModels", () => {
       residentRamGiB: 24.0,
       reasoningEffortControl: false,
     });
-    assertArrayIncludes(defaults[0].capabilities, [
-      "text",
-      "code",
-      "reasoning",
-      "tools",
-    ]);
+    assert.deepStrictEqual(
+      [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+      ].filter((item) => !defaults[0].capabilities.includes(item)),
+      [],
+    );
   });
 
   it("provides zero-cost Tier 0 local fallback models", () => {
@@ -45,7 +47,7 @@ describe("defaultLocalWorkbenchModels", () => {
     const muse = defaults.find((m) => m.slug === "muse-glimmer:30b");
     const qwen36 = defaults.find((m) => m.slug === "qwen3.6:35b-a3b");
 
-    assertExists(laguna);
+    assert.ok(laguna !== undefined && laguna !== null);
     assert.partialDeepStrictEqual(laguna, {
       slug: "laguna-xs-2.1",
       provider: "ollama",
@@ -59,16 +61,19 @@ describe("defaultLocalWorkbenchModels", () => {
       residentRamGiB: 20.0,
       reasoningEffortControl: false,
     });
-    assertArrayIncludes(laguna.capabilities, [
-      "text",
-      "code",
-      "reasoning",
-      "tools",
-      "thinking",
-      "long-context",
-    ]);
+    assert.deepStrictEqual(
+      [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+        "thinking",
+        "long-context",
+      ].filter((item) => !laguna.capabilities.includes(item)),
+      [],
+    );
 
-    assertExists(muse);
+    assert.ok(muse !== undefined && muse !== null);
     assert.partialDeepStrictEqual(muse, {
       slug: "muse-glimmer:30b",
       provider: "ollama",
@@ -83,7 +88,7 @@ describe("defaultLocalWorkbenchModels", () => {
       reasoningEffortControl: true,
     });
 
-    assertExists(qwen36);
+    assert.ok(qwen36 !== undefined && qwen36 !== null);
     assert.partialDeepStrictEqual(qwen36, {
       slug: "qwen3.6:35b-a3b",
       provider: "ollama",
@@ -114,10 +119,24 @@ describe("withDefaultLocalWorkbenchModels", () => {
       "muse-glimmer:30b",
     ]);
     const slugs = merged.map((model) => model.slug);
-    assert.deepStrictEqual(["laguna-xs-2.1"].filter((item) => !slugs.includes(item)), []);
-    assert.deepStrictEqual(["muse-glimmer:30b"].filter((item) => !slugs.includes(item)), []);
-    assert.deepStrictEqual(["deepseek-r1:32b"].filter((item) => !slugs.includes(item)), []);
-    assert.deepStrictEqual(["mistral-small:24b-instruct-2501-q4_K_M"].filter((item) => !slugs.includes(item)), []);
+    assert.deepStrictEqual(
+      ["laguna-xs-2.1"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["deepseek-r1:32b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["mistral-small:24b-instruct-2501-q4_K_M"].filter((item) =>
+        !slugs.includes(item)
+      ),
+      [],
+    );
     assert.strictEqual(
       merged.filter((model) => model.slug === "gemma4:26b").length,
       1,
@@ -133,7 +152,10 @@ describe("withDefaultLocalWorkbenchModels", () => {
 
     const slugs = merged.map((model) => model.slug);
     assert.strictEqual(slugs.includes("qwen3.6:35b-a3b"), false);
-    assert.deepStrictEqual(["muse-glimmer:30b"].filter((item) => !slugs.includes(item)), []);
+    assert.deepStrictEqual(
+      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
   });
 
   it("does not duplicate the default when the registry already has it", () => {

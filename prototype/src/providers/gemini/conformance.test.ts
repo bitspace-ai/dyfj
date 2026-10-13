@@ -27,7 +27,10 @@ const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 /** A buffered reply, for cases that pin only the request. */
 const reply = {
   body: JSON.stringify({
-    candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+    candidates: [{
+      content: { parts: [{ text: "ok" }] },
+      finishReason: "STOP",
+    }],
     usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
   }),
 };
@@ -140,7 +143,10 @@ providerAdapterConformance({
             request.url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
           );
-          assert.deepStrictEqual(request.headers["x-goog-api-key"], "gem-test-key");
+          assert.deepStrictEqual(
+            request.headers["x-goog-api-key"],
+            "gem-test-key",
+          );
         },
         respond: {
           body: JSON.stringify({

@@ -67,7 +67,10 @@ Deno.test("classifyContextExceeded: a rejection without counts still classifies,
     classifyContextExceeded(413, "the prompt exceeds the context length"),
     {},
   );
-  assert.deepStrictEqual(classifyContextExceeded(422, "context_length_exceeded"), {});
+  assert.deepStrictEqual(
+    classifyContextExceeded(422, "context_length_exceeded"),
+    {},
+  );
 });
 
 Deno.test("classifyContextExceeded: an unrelated 400 is not overflow", () => {

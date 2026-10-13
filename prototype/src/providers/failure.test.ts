@@ -96,9 +96,18 @@ async function replay(
   transport.assertDone();
   // The Workbench-written message names the provider, the model and the
   // status, and carries none of the provider's text.
-  assert.ok(error.message.includes(model.provider), `expected error.message to include model.provider`);
-  assert.ok(error.message.includes(model.slug), `expected error.message to include model.slug`);
-  assert.ok(error.message.includes(`HTTP ${fixture.status}`), `expected error.message to include \`HTTP \${fixture.status}\``);
+  assert.ok(
+    error.message.includes(model.provider),
+    `expected error.message to include model.provider`,
+  );
+  assert.ok(
+    error.message.includes(model.slug),
+    `expected error.message to include model.slug`,
+  );
+  assert.ok(
+    error.message.includes(`HTTP ${fixture.status}`),
+    `expected error.message to include \`HTTP \${fixture.status}\``,
+  );
   assert.strictEqual(error.message.includes(fixture.foreignText), false);
   assert.strictEqual(error.provider, model.provider);
   assert.strictEqual(error.slug, model.slug);
@@ -163,16 +172,31 @@ describe("provider failure classification at the adapter", () => {
   it("a context-size rejection still carries the provider's counts for the refit", async () => {
     const error = await replay(F.LLAMA_SERVER_CONTEXT_EXCEEDED);
     assert.ok(error instanceof ProviderContextExceededError);
-    assert.deepStrictEqual(error.report, { requestedTokens: 82366, limitTokens: 32768 });
-    assert.ok(error.message.includes("82366"), `expected error.message to include "82366"`);
-    assert.ok(error.message.includes("32768"), `expected error.message to include "32768"`);
+    assert.deepStrictEqual(error.report, {
+      requestedTokens: 82366,
+      limitTokens: 32768,
+    });
+    assert.ok(
+      error.message.includes("82366"),
+      `expected error.message to include "82366"`,
+    );
+    assert.ok(
+      error.message.includes("32768"),
+      `expected error.message to include "32768"`,
+    );
   });
 
   it("OpenAI's 404, which may mean no access rather than no such model, keeps both in the hint", async () => {
     const error = await replay(F.OPENAI_MODEL_NOT_FOUND);
     assert.ok(error instanceof ProviderModelNotFoundError);
-    assert.ok(error.message.includes("no access"), `expected error.message to include "no access"`);
-    assert.ok(error.message.includes("account's access"), `expected error.message to include "account's access"`);
+    assert.ok(
+      error.message.includes("no access"),
+      `expected error.message to include "no access"`,
+    );
+    assert.ok(
+      error.message.includes("account's access"),
+      `expected error.message to include "account's access"`,
+    );
   });
 
   const unclassified = [
@@ -187,7 +211,12 @@ describe("provider failure classification at the adapter", () => {
       assert.strictEqual(error.kind, "unclassified");
       // The body's size is reported, as the opaque label always has; the
       // body itself is not.
-      assert.ok(error.message.includes(`${new TextEncoder().encode(fixture.body).byteLength} bytes`), `expected error.message to include \`\${new TextEncoder().encode(fixture.body).byteLength} bytes\``);
+      assert.ok(
+        error.message.includes(
+          `${new TextEncoder().encode(fixture.body).byteLength} bytes`,
+        ),
+        `expected error.message to include \`\${new TextEncoder().encode(fixture.body).byteLength} bytes\``,
+      );
     });
   }
 
@@ -203,7 +232,10 @@ describe("provider failure classification at the adapter", () => {
         () => turn(model, transport),
         ProviderRequestFailedError,
       );
-      assert.ok(error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`), `expected error.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``);
+      assert.ok(
+        error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`),
+        `expected error.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``,
+      );
     });
   }
 
@@ -220,13 +252,19 @@ describe("provider failure classification at the adapter", () => {
       500,
     );
     assert.ok(outcome instanceof ProviderRequestFailedError);
-    assert.ok(outcome.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`), `expected outcome.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``);
+    assert.ok(
+      outcome.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`),
+      `expected outcome.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``,
+    );
   });
 
   it("a per-minute quota says the quota resets, not only to add credit", async () => {
     const error = await replay(F.GEMINI_QUOTA_PER_MINUTE);
     assert.ok(error instanceof ProviderRateLimitedError);
-    assert.ok(error.message.includes("reset"), `expected error.message to include "reset"`);
+    assert.ok(
+      error.message.includes("reset"),
+      `expected error.message to include "reset"`,
+    );
   });
 
   it("an unrecognised failure with an empty body still names the provider and status", async () => {
@@ -237,8 +275,14 @@ describe("provider failure classification at the adapter", () => {
       () => turn(local, transport),
       ProviderRequestFailedError,
     );
-    assert.ok(error.message.includes("llama-cpp/qwen3.6-35b-a3b"), `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`);
-    assert.ok(error.message.includes("HTTP 502"), `expected error.message to include "HTTP 502"`);
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("HTTP 502"),
+      `expected error.message to include "HTTP 502"`,
+    );
   });
 });
 
@@ -253,8 +297,14 @@ describe("transport failure classification at the adapter", () => {
         ProviderUnreachableError,
       );
       assert.strictEqual(error.reason, "refused");
-      assert.ok(error.message.includes(model.provider), `expected error.message to include model.provider`);
-      assert.ok(error.message.includes(model.slug), `expected error.message to include model.slug`);
+      assert.ok(
+        error.message.includes(model.provider),
+        `expected error.message to include model.provider`,
+      );
+      assert.ok(
+        error.message.includes(model.slug),
+        `expected error.message to include model.slug`,
+      );
       assert.strictEqual(error.message.includes("os error 61"), false);
     });
   }
@@ -281,9 +331,18 @@ describe("transport failure classification at the adapter", () => {
       () => turn(local, transport),
       ProviderRedirectedError,
     );
-    assert.ok(error.message.includes("redirect"), `expected error.message to include "redirect"`);
-    assert.ok(error.message.includes("llama-cpp/qwen3.6-35b-a3b"), `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`);
-    assert.ok(error.message.includes("base URL"), `expected error.message to include "base URL"`);
+    assert.ok(
+      error.message.includes("redirect"),
+      `expected error.message to include "redirect"`,
+    );
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("base URL"),
+      `expected error.message to include "base URL"`,
+    );
     assert.strictEqual(error.kind, "redirected");
   });
 
@@ -296,8 +355,14 @@ describe("transport failure classification at the adapter", () => {
       ProviderRequestFailedError,
     );
     assert.strictEqual(error.status, undefined);
-    assert.ok(error.message.includes("llama-cpp/qwen3.6-35b-a3b"), `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`);
-    assert.ok(error.message.includes("[Error, 23 bytes]"), `expected error.message to include "[Error, 23 bytes]"`);
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("[Error, 23 bytes]"),
+      `expected error.message to include "[Error, 23 bytes]"`,
+    );
     assert.strictEqual(error.message.includes("unavailable"), false);
   });
 

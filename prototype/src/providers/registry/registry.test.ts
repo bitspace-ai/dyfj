@@ -60,11 +60,18 @@ Deno.test("dispatch keys on the provider, not the catalog api column", () => {
 });
 
 Deno.test("two adapters may not serve the same provider", () => {
-  assert.throws(() =>
+  assert.throws(
+    () =>
       createProviderRegistry([
         openAICompatibleAdapter,
         { ...anthropicAdapter, api: "other", providers: new Set(["openai"]) },
-      ]), (error: unknown) => error instanceof Error && error.message.includes("provider openai is served by both openai-compatible and other"));
+      ]),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "provider openai is served by both openai-compatible and other",
+      ),
+  );
 });
 
 Deno.test("a provider no adapter serves fails closed before any request", async () => {
@@ -99,7 +106,11 @@ Deno.test("capability queries answer from the serving adapter", () => {
     ["codex-chatgpt", false, false],
   ];
   for (const [provider, streams, retry] of table) {
-    assert.deepStrictEqual(modelStreamsToolCalls(model(provider)), streams, provider);
+    assert.deepStrictEqual(
+      modelStreamsToolCalls(model(provider)),
+      streams,
+      provider,
+    );
     assert.deepStrictEqual(
       modelSupportsTranscriptRetry(model(provider)),
       retry,
