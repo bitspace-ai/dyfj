@@ -1,12 +1,5 @@
-import {
-  assertEquals,
-  assertMatch,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { stub } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { type EventReader, fetchWorkbenchSessionEvents } from "../store/mod.ts";
 import type { WorkbenchSessionEvent } from "../contract/mod.ts";
@@ -68,15 +61,15 @@ function deps(overrides: Partial<ExecuteTurnDeps>): ExecuteTurnDeps {
 async function captureStderr<T>(
   run: () => Promise<T>,
 ): Promise<{ value: T; lines: string[] }> {
-  const error = stub(console, "error");
+  const error = mock.method(console, "error", () => {});
   try {
     const value = await run();
     return {
       value,
-      lines: error.calls.map((call) => call.args.join(" ")),
+      lines: error.mock.calls.map((call) => call.arguments.join(" ")),
     };
   } finally {
-    error.restore();
+    error.mock.restore();
   }
 }
 
@@ -97,7 +90,7 @@ Deno.test("[case 5 boundary] empty-after-withholding history fails before runtim
     }]),
   });
   let runtimeCalled = false;
-  await assertRejects(
+  await assert.rejects(
     () =>
       executeTurn(
         resolved({ prompt: "what did it find?", sessionId: SESSION_ID }),
@@ -109,10 +102,13 @@ Deno.test("[case 5 boundary] empty-after-withholding history fails before runtim
           },
         }),
       ),
-    Error,
-    "Session history is empty after withholding unavailable tool evidence",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "Session history is empty after withholding unavailable tool evidence",
+      ),
   );
-  assertStrictEquals(runtimeCalled, false);
+  assert.strictEqual(runtimeCalled, false);
 });
 
 Deno.test("[case 4 boundary] threads incident omission facts into runtime without changing persisted prompt", async () => {
@@ -154,11 +150,11 @@ Deno.test("[case 4 boundary] threads incident omission facts into runtime withou
       }),
     )
   );
-  assertEquals(captured?.prompt, "continue now");
-  assertEquals(captured?.conversationMessages, [
+  assert.deepStrictEqual(captured?.prompt, "continue now");
+  assert.deepStrictEqual(captured?.conversationMessages, [
     { role: "user", content: "original persisted prompt" },
   ]);
-  assertObjectMatch(captured?.historyOmission ?? {}, {
+  assert.partialDeepStrictEqual(captured?.historyOmission ?? {}, {
     detectedInHistory: 1,
     gapMarkers: 1,
     callsUnknown: true,
@@ -200,11 +196,11 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
       }),
     );
     for (let i = 0; i < 10; i++) await Promise.resolve();
-    assertEquals(log, ["fetch history", "first runs"]);
+    assert.deepStrictEqual(log, ["fetch history", "first runs"]);
     releaseFirst();
     await Promise.all([first, second]);
   });
-  assertEquals(log, [
+  assert.deepStrictEqual(log, [
     "fetch history",
     "first runs",
     "first settles",
@@ -232,11 +228,11 @@ Deno.test("a new-session turn hands the runtime the id its owner holds; a resume
       deps({ owners, runRuntime }),
     );
   });
-  assertEquals(inputs[0].sessionId, undefined);
-  assertMatch(inputs[0].newSessionId ?? "", /^[0-9A-HJKMNP-TV-Z]{26}$/);
-  assertEquals(inputs[1].sessionId, SESSION_ID);
-  assertEquals(inputs[1].newSessionId, undefined);
-  assertEquals(activeDuringRun, 1);
+  assert.deepStrictEqual(inputs[0].sessionId, undefined);
+  assert.match(inputs[0].newSessionId ?? "", /^[0-9A-HJKMNP-TV-Z]{26}$/);
+  assert.deepStrictEqual(inputs[1].sessionId, SESSION_ID);
+  assert.deepStrictEqual(inputs[1].newSessionId, undefined);
+  assert.deepStrictEqual(activeDuringRun, 1);
 });
 
 Deno.test("the ticket's signal reaches the runtime, and only an identified turn reports its window closing", async () => {
@@ -264,15 +260,15 @@ Deno.test("the ticket's signal reaches the runtime, and only an identified turn 
     executeTurn(resolved({ prompt: "hi" }), deps({ owners, runRuntime }))
   );
 
-  assertStrictEquals(inputs[0].abortSignal, identified.signal);
+  assert.strictEqual(inputs[0].abortSignal, identified.signal);
   inputs[0].cancellationWindow?.closeCancellation();
-  assertStrictEquals(identified.cancel(), false);
+  assert.strictEqual(identified.cancel(), false);
 
-  assertStrictEquals(inputs[1].abortSignal, anonymous.signal);
-  assertStrictEquals(inputs[1].cancellationWindow, undefined);
+  assert.strictEqual(inputs[1].abortSignal, anonymous.signal);
+  assert.strictEqual(inputs[1].cancellationWindow, undefined);
 
-  assertStrictEquals(inputs[2].abortSignal, undefined);
-  assertStrictEquals(inputs[2].cancellationWindow, undefined);
+  assert.strictEqual(inputs[2].abortSignal, undefined);
+  assert.strictEqual(inputs[2].cancellationWindow, undefined);
 });
 
 Deno.test("a turn cancelled while queued behind its session's lock starts already aborted", async () => {
@@ -308,18 +304,18 @@ Deno.test("a turn cancelled while queued behind its session's lock starts alread
       }),
     );
     for (let i = 0; i < 10; i++) await Promise.resolve();
-    assertEquals(log, ["first runs"]);
+    assert.deepStrictEqual(log, ["first runs"]);
     // The queued turn's window is open before it runs: the cancel is honored
     // once.
-    assertStrictEquals(queued.cancel(), true);
-    assertStrictEquals(queued.cancel(), false);
+    assert.strictEqual(queued.cancel(), true);
+    assert.strictEqual(queued.cancel(), false);
     releaseFirst();
     await Promise.all([first, second]);
   });
   // It keeps its place in the queue, and its runtime starts already aborted.
-  assertEquals(log, ["first runs", "second runs"]);
-  assertStrictEquals(queuedInput?.abortSignal, queued.signal);
-  assertStrictEquals(queuedInput?.abortSignal?.aborted, true);
+  assert.deepStrictEqual(log, ["first runs", "second runs"]);
+  assert.strictEqual(queuedInput?.abortSignal, queued.signal);
+  assert.strictEqual(queuedInput?.abortSignal?.aborted, true);
 });
 
 Deno.test("executeTurn binds boundary config and the transport's paid verdict", async () => {
@@ -343,15 +339,18 @@ Deno.test("executeTurn binds boundary config and the transport's paid verdict", 
       }),
     )
   );
-  assertEquals(captured?.budgetTallyMode, "on");
-  assertEquals(captured?.maxToolSteps, 7);
+  assert.deepStrictEqual(captured?.budgetTallyMode, "on");
+  assert.deepStrictEqual(captured?.maxToolSteps, 7);
   // Workspace trust is a loopback-only standing decision.
-  assertStrictEquals(captured?.trustWorkspaceInstructions, false);
-  assertEquals(await captured?.approver?.confirmPaidEscalation?.("banner"), {
-    decision: "deny",
-    reason: "paid inference is not available to remote callers",
-  });
-  assertEquals(lines, [formatTurnSummaryLine(RESULT)]);
+  assert.strictEqual(captured?.trustWorkspaceInstructions, false);
+  assert.deepStrictEqual(
+    await captured?.approver?.confirmPaidEscalation?.("banner"),
+    {
+      decision: "deny",
+      reason: "paid inference is not available to remote callers",
+    },
+  );
+  assert.deepStrictEqual(lines, [formatTurnSummaryLine(RESULT)]);
 });
 
 Deno.test("formatTurnSummaryLine reports external runner evidence without inventing model or USD facts", () => {
@@ -359,12 +358,12 @@ Deno.test("formatTurnSummaryLine reports external runner evidence without invent
     sessionId: "01ACP",
     runner: { profile: "fixture", protocol: "acp", costBasis: "local_free" },
   } as unknown as WorkbenchRuntimeResult);
-  assertEquals(
+  assert.deepStrictEqual(
     line,
     "[turn] session=01ACP runner=fixture protocol=acp cost_basis=local_free",
   );
-  assertEquals(line.includes("model="), false);
-  assertEquals(line.includes("cost=$"), false);
+  assert.deepStrictEqual(line.includes("model="), false);
+  assert.deepStrictEqual(line.includes("cost=$"), false);
 });
 
 Deno.test("formatTurnSummaryLine carries routing and cost facts, never content", () => {
@@ -375,17 +374,23 @@ Deno.test("formatTurnSummaryLine carries routing and cost facts, never content",
     cost: { totalUsd: 0.008498, paidInferenceUsed: true },
     text: "SECRET turn content that must not be logged",
   } as unknown as WorkbenchRuntimeResult);
-  assertEquals(
+  assert.deepStrictEqual(
     line,
     "[turn] session=01ABC model=claude-opus-4-8 tokens=87in/70out cost=$0.008498 paid",
   );
-  assertEquals(line.includes("SECRET"), false);
+  assert.deepStrictEqual(line.includes("SECRET"), false);
 });
 
 Deno.test("formatTurnSummaryLine degrades gracefully on partial results", () => {
   const line = formatTurnSummaryLine(
     { sessionId: "01X" } as unknown as WorkbenchRuntimeResult,
   );
-  assertStringIncludes(line, "model=unknown");
-  assertEquals(line, "[turn] session=01X model=unknown tokens=? cost=$? local");
+  assert.ok(
+    line.includes("model=unknown"),
+    `expected ${JSON.stringify(line)} to include "model=unknown"`,
+  );
+  assert.deepStrictEqual(
+    line,
+    "[turn] session=01X model=unknown tokens=? cost=$? local",
+  );
 });

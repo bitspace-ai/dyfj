@@ -6,14 +6,9 @@
  * tracker recorded.
  */
 
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
-import { assertSpyCalls, stub } from "@std/testing/mock";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
@@ -175,12 +170,12 @@ Deno.test("observedProviderCall writes one provider_call row and records a local
   const result = await observedProviderCall(h.context, request);
 
   transport.assertDone();
-  assertEquals(result.turn.text, "hi there");
-  assertStrictEquals(result.persisted, true);
-  assertStrictEquals(result.recorded, true);
-  assertEquals(h.written.length, 1);
+  assert.deepStrictEqual(result.turn.text, "hi there");
+  assert.strictEqual(result.persisted, true);
+  assert.strictEqual(result.recorded, true);
+  assert.deepStrictEqual(h.written.length, 1);
   const [event] = h.written;
-  assertEquals(event, {
+  assert.deepStrictEqual(event, {
     event_type: "provider_call",
     event_id: event.event_id,
     session_id: SESSION_ID,
@@ -208,25 +203,25 @@ Deno.test("observedProviderCall writes one provider_call row and records a local
     duration_ms: 250,
     ...AUTHN,
   });
-  assertEquals(h.skipped, 0);
+  assert.deepStrictEqual(h.skipped, 0);
 
   const stored = await h.store.events.bySession({
     sessionId: SESSION_ID,
     limit: 10,
     order: "asc",
   });
-  assertEquals(stored.length, 1);
-  assertObjectMatch(stored[0], {
+  assert.deepStrictEqual(stored.length, 1);
+  assert.partialDeepStrictEqual(stored[0], {
     event_type: "provider_call",
     span_id: result.providerSpanId,
     provider_call_order: "3",
     provider_call_purpose: "initial",
   });
 
-  assertEquals(h.budget.totalCalls, 1);
-  assertEquals(h.budget.totalTokensInput, 12);
-  assertEquals(h.budget.totalTokensOutput, 4);
-  assertEquals(h.budget.totalCost, 0);
+  assert.deepStrictEqual(h.budget.totalCalls, 1);
+  assert.deepStrictEqual(h.budget.totalTokensInput, 12);
+  assert.deepStrictEqual(h.budget.totalTokensOutput, 4);
+  assert.deepStrictEqual(h.budget.totalCost, 0);
 });
 
 Deno.test("observedProviderCall records a paid call's cost with the tracker", async () => {
@@ -244,18 +239,18 @@ Deno.test("observedProviderCall records a paid call's cost with the tracker", as
   const result = await observedProviderCall(h.context, request);
 
   transport.assertDone();
-  assertStrictEquals(result.recorded, true);
+  assert.strictEqual(result.recorded, true);
   const cost = result.turn.usage.cost.total;
-  assert(cost > 0);
-  assertObjectMatch(h.written[0], {
+  assert.ok(cost > 0);
+  assert.partialDeepStrictEqual(h.written[0], {
     model_id: HOSTED.slug,
     provider: "anthropic",
     tokens_input: 1000,
     tokens_output: 200,
     cost_total: cost,
   });
-  assertEquals(h.budget.totalCost, cost);
-  assertEquals(h.budget.getSummary().byTier["1"]?.calls, 1);
+  assert.deepStrictEqual(h.budget.totalCost, cost);
+  assert.deepStrictEqual(h.budget.getSummary().byTier["1"]?.calls, 1);
 });
 
 Deno.test("observedProviderCall writes the unparsed tool-call markup counts only when asked", async () => {
@@ -267,8 +262,8 @@ Deno.test("observedProviderCall writes the unparsed tool-call markup counts only
     openAIReply(markup),
   ]);
   const loopResult = await observedProviderCall(loop.context, loopRequest);
-  assert(loopResult.turn.unparsedToolCallMarkup !== undefined);
-  assertObjectMatch(loop.written[0], {
+  assert.ok(loopResult.turn.unparsedToolCallMarkup !== undefined);
+  assert.partialDeepStrictEqual(loop.written[0], {
     unparsed_tool_call_count: loopResult.turn.unparsedToolCallMarkup.count,
     unparsed_tool_call_count_is_lower_bound:
       loopResult.turn.unparsedToolCallMarkup.countIsLowerBound,
@@ -284,9 +279,12 @@ Deno.test("observedProviderCall writes the unparsed tool-call markup counts only
   });
   await observedProviderCall(compression.context, compressionRequest);
   const row = compression.written[0];
-  assertEquals("unparsed_tool_call_count" in row, false);
-  assertEquals("unparsed_tool_call_count_is_lower_bound" in row, false);
-  assertObjectMatch(row, {
+  assert.deepStrictEqual("unparsed_tool_call_count" in row, false);
+  assert.deepStrictEqual(
+    "unparsed_tool_call_count_is_lower_bound" in row,
+    false,
+  );
+  assert.partialDeepStrictEqual(row, {
     authz_basis: "policy:local-compression",
     provider_call_purpose: "context_compression",
   });
@@ -302,15 +300,15 @@ Deno.test("observedProviderCall writes an error row for a failed call and rethro
     mapProviderError: () => mapped,
   });
 
-  const thrown = await assertRejects(() =>
+  const thrown = await captureRejection(() =>
     observedProviderCall(h.context, request)
   );
-  assertStrictEquals(thrown, mapped);
+  assert.strictEqual(thrown, mapped);
 
   transport.assertDone();
-  assertEquals(h.written.length, 1);
+  assert.deepStrictEqual(h.written.length, 1);
   const [event] = h.written;
-  assertEquals(event, {
+  assert.deepStrictEqual(event, {
     event_type: "provider_call",
     event_id: event.event_id,
     session_id: SESSION_ID,
@@ -334,7 +332,7 @@ Deno.test("observedProviderCall writes an error row for a failed call and rethro
     duration_ms: 250,
     ...AUTHN,
   });
-  assertEquals(h.budget.totalCalls, 0);
+  assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
 Deno.test("observedProviderCall classifies an unmapped provider error by its own class", async () => {
@@ -354,17 +352,17 @@ Deno.test("observedProviderCall classifies an unmapped provider error by its own
     },
   );
 
-  await assertRejects(
+  await assert.rejects(
     () => observedProviderCall(h.context, request),
     HostedProviderCredentialMissingError,
   );
   transport.assertDone();
-  assertObjectMatch(h.written[0], {
+  assert.partialDeepStrictEqual(h.written[0], {
     resource: HOSTED.slug,
     provider_error_class: "HostedProviderCredentialMissingError",
     stop_reason: "error",
   });
-  assertEquals(h.budget.totalCalls, 0);
+  assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
 Deno.test("observedProviderCall does not record a request that was never dispatched", async () => {
@@ -384,30 +382,32 @@ Deno.test("observedProviderCall does not record a request that was never dispatc
   const result = await observedProviderCall(h.context, request);
 
   transport.assertDone();
-  assertStrictEquals(result.turn.requestDispatched, false);
-  assertStrictEquals(result.recorded, false);
-  assertEquals(h.written.length, 1);
-  assertObjectMatch(h.written[0], { stop_reason: "aborted" });
-  assertEquals(h.budget.totalCalls, 0);
+  assert.strictEqual(result.turn.requestDispatched, false);
+  assert.strictEqual(result.recorded, false);
+  assert.deepStrictEqual(h.written.length, 1);
+  assert.partialDeepStrictEqual(h.written[0], { stop_reason: "aborted" });
+  assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
 Deno.test("observedProviderCall counts a failed event write and still records the usage", async () => {
   const h = harness({ rejectWrites: true });
-  const warn = stub(console, "warn");
+  const warn = mock.method(console, "warn", () => {});
   let result;
   try {
     const { request } = callRequest(h, LOCAL, [openAIReply("hi")]);
     result = await observedProviderCall(h.context, request);
   } finally {
-    warn.restore();
+    warn.mock.restore();
   }
 
-  assertStrictEquals(result.persisted, false);
-  assertStrictEquals(result.recorded, true);
-  assertEquals(h.skipped, 1);
-  assertSpyCalls(warn, 1);
-  assertEquals(warn.calls[0].args, ["Event write skipped: Error"]);
-  assertEquals(h.budget.totalCalls, 1);
+  assert.strictEqual(result.persisted, false);
+  assert.strictEqual(result.recorded, true);
+  assert.deepStrictEqual(h.skipped, 1);
+  assert.equal(warn.mock.callCount(), 1);
+  assert.deepStrictEqual(warn.mock.calls[0].arguments, [
+    "Event write skipped: Error",
+  ]);
+  assert.deepStrictEqual(h.budget.totalCalls, 1);
 });
 
 Deno.test("observedProviderCall defaults the provider session to the turn's session", async () => {
@@ -438,5 +438,8 @@ Deno.test("observedProviderCall defaults the provider session to the turn's sess
   request.params.fetchFn = transport.fetch;
   await observedProviderCall(h.context, request);
   transport.assertDone();
-  assertEquals(transport.requests[0].headers["x-grok-conv-id"], SESSION_ID);
+  assert.deepStrictEqual(
+    transport.requests[0].headers["x-grok-conv-id"],
+    SESSION_ID,
+  );
 });

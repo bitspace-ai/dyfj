@@ -5,8 +5,8 @@
  * net access, so a runtime path that fell back to process state or the
  * platform `fetch` would fail here instead of passing silently.
  */
-import { assertEquals, assertObjectMatch } from "@std/assert";
-import { stub } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
@@ -62,8 +62,8 @@ async function turnWith(env: Record<string, string>) {
   const transport = new ScriptedHttpTransport([anthropicReply(clock, 250)]);
   // The runtime logs its receipt, and the unit lane has no env grant for the
   // principal lookup behind the best-effort model_selected row.
-  const log = stub(console, "log");
-  const warn = stub(console, "warn");
+  const log = mock.method(console, "log", () => {});
+  const warn = mock.method(console, "warn", () => {});
   try {
     const result = await runWorkbenchRuntime({
       mode: "turn",
@@ -88,8 +88,8 @@ async function turnWith(env: Record<string, string>) {
     });
     return { result, rows, requests: transport.requests };
   } finally {
-    log.restore();
-    warn.restore();
+    log.mock.restore();
+    warn.mock.restore();
   }
 }
 
@@ -102,18 +102,21 @@ Deno.test("the injected transport, env and clock carry a whole native turn", asy
   const { result, rows, requests } = await turnWith({
     ANTHROPIC_API_KEY: "key-from-the-injected-env",
   });
-  assertEquals(result.text, "hello from the fake");
+  assert.deepStrictEqual(result.text, "hello from the fake");
   // The provider call went through the injected transport, authenticated
   // with the credential from the injected env.
-  assertEquals(requests.length, 1);
-  assertEquals(
+  assert.deepStrictEqual(requests.length, 1);
+  assert.deepStrictEqual(
     requests[0].headers["x-api-key"],
     "key-from-the-injected-env",
   );
   // Durations come from the injected clock: the reply advanced it 250ms.
-  assertObjectMatch(rows.find((row) => row.event_type === "session_end")!, {
-    duration_ms: "250",
-  });
+  assert.partialDeepStrictEqual(
+    rows.find((row) => row.event_type === "session_end")!,
+    {
+      duration_ms: "250",
+    },
+  );
 });
 
 Deno.test("memory recall is configured from the injected env", async () => {
@@ -129,6 +132,6 @@ Deno.test("memory recall is configured from the injected env", async () => {
   const added = toolNames(withRecall.requests[0]).filter((name) =>
     !toolNames(without.requests[0]).includes(name)
   );
-  assertEquals(added.length, 1);
-  assertEquals(added[0].includes("memory"), true);
+  assert.deepStrictEqual(added.length, 1);
+  assert.deepStrictEqual(added[0].includes("memory"), true);
 });

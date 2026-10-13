@@ -5,12 +5,9 @@
  * stop on actual spend. Whole turns run over the engine fakes; tool steps run
  * the real `list_files` tool on a temp workspace.
  */
-import {
-  assertAlmostEquals,
-  assertEquals,
-  assertObjectMatch,
-} from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import {
   chatReply,
   type EngineRun,
@@ -87,12 +84,12 @@ Deno.test("budgets and records every provider call so the receipt aggregates the
     {},
   );
   // Three provider calls, each 10 in / 2 out → aggregated, not just the last.
-  assertEquals(result?.tokens.input, 30);
-  assertEquals(result?.tokens.output, 6);
-  assertEquals(result?.tokens.totalCalls, 3);
+  assert.deepStrictEqual(result?.tokens.input, 30);
+  assert.deepStrictEqual(result?.tokens.output, 6);
+  assert.deepStrictEqual(result?.tokens.totalCalls, 3);
   const rows = await eventRows(run, result!.sessionId);
   const response = rows.find((row) => row.event_type === "model_response");
-  assertObjectMatch(response ?? {}, {
+  assert.partialDeepStrictEqual(response ?? {}, {
     tokens_input: "30",
     tokens_output: "6",
   });
@@ -102,7 +99,7 @@ Deno.test("re-confirms budget ceiling when a later same-size call crosses the se
   // $15/Mtok input, so one reported input token records $0.000015.
   const priced = pricedLocalModel({ costInput: 15, costOutput: 75 });
   const usage = { prompt_tokens: 1, completion_tokens: 0 };
-  const confirmBudgetCeiling = spy(APPROVE_PAID);
+  const confirmBudgetCeiling = mock.fn(APPROVE_PAID);
   const { run, result } = await gatedTurn(
     [
       toolReply("c1", usage),
@@ -118,9 +115,9 @@ Deno.test("re-confirms budget ceiling when a later same-size call crosses the se
       },
     },
   );
-  assertSpyCalls(confirmBudgetCeiling, 2);
-  assertEquals(run.transport.requests.length, 2);
-  assertEquals(result?.text, "done");
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 2);
+  assert.deepStrictEqual(run.transport.requests.length, 2);
+  assert.deepStrictEqual(result?.text, "done");
 });
 
 /** Priced so each completion token records $0.01; input is ~free. */
@@ -141,12 +138,12 @@ Deno.test("rejects an over-budget follow-up call before invoking the provider (t
       },
     },
   );
-  assertEquals(result?.text, "");
-  assertObjectMatch(frames.at(-1)!, {
+  assert.deepStrictEqual(result?.text, "");
+  assert.partialDeepStrictEqual(frames.at(-1)!, {
     type: "turnFailed",
     errorName: "BudgetExceededError",
   });
-  assertEquals(run.transport.requests.length, 1);
+  assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
 // Estimates are ~0 (input nearly free) so the estimate-based ceiling stays
@@ -172,17 +169,17 @@ Deno.test("halts a multi-call turn on ACTUAL accumulated spend, failing closed w
     PER_TOKEN,
     ANOMALY,
   );
-  assertEquals(error instanceof Error, true);
-  assertEquals(
+  assert.deepStrictEqual(error instanceof Error, true);
+  assert.deepStrictEqual(
     (error as Error).message.includes("Runaway spend anomaly"),
     true,
   );
   // Calls 1-3 ran ($0.36 recorded); the halt fired BEFORE call 4.
-  assertEquals(run.transport.requests.length, 3);
+  assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
 Deno.test("an approval admits one call only — the next anomalous call prompts again", async () => {
-  const confirmRunawayAnomaly = spy((_: RunawayAnomalyWarning) =>
+  const confirmRunawayAnomaly = mock.fn((_: RunawayAnomalyWarning) =>
     APPROVE_PAID()
   );
   const { run, result } = await gatedTurn(
@@ -199,13 +196,13 @@ Deno.test("an approval admits one call only — the next anomalous call prompts 
       approver: { ...ANOMALY.approver, confirmRunawayAnomaly },
     },
   );
-  assertEquals(result?.text, "done");
-  assertEquals(run.transport.requests.length, 5);
+  assert.deepStrictEqual(result?.text, "done");
+  assert.deepStrictEqual(run.transport.requests.length, 5);
   // Never persists: BOTH anomalous pre-checks prompted, unlike the ceiling
   // gate's scope-period coverage where the first approval would have
   // silenced the second.
-  assertSpyCalls(confirmRunawayAnomaly, 2);
-  const first = confirmRunawayAnomaly.calls[0].args[0];
-  assertEquals(first.trigger, "turn_spend");
-  assertAlmostEquals(first.turnSpentUsd, 0.36);
+  assert.equal(confirmRunawayAnomaly.mock.callCount(), 2);
+  const first = confirmRunawayAnomaly.mock.calls[0].arguments[0];
+  assert.deepStrictEqual(first.trigger, "turn_spend");
+  assertAlmostEqual(first.turnSpentUsd, 0.36);
 });
