@@ -1,0 +1,25 @@
+# assertAlmostEquals stays std where the helper cannot be imported: the file
+# binds the helper's name itself, or the call's arguments are not the two to
+# four std takes.
+rules:
+almost-equal-import: ./almost-equal.ts
+--- before
+import { assertAlmostEquals } from "@std/assert";
+
+const assertAlmostEqual = (a: number, b: number) => a === b;
+
+Deno.test("kept", () => {
+  assertAlmostEquals(0.1 + 0.2, 0.3);
+  void assertAlmostEqual;
+});
+--- after
+import { assertAlmostEquals } from "@std/assert";
+
+const assertAlmostEqual = (a: number, b: number) => a === b;
+
+Deno.test("kept", () => {
+  assertAlmostEquals(0.1 + 0.2, 0.3);
+  void assertAlmostEqual;
+});
+--- findings
+unconverted 6

@@ -22,7 +22,8 @@
 // Without --write it is a dry run. A directory is searched for *.test.ts.
 // A file under prototype/ whose thrown error is used imports the
 // captured-assertion helper (prototype/testing/assertions/captured.ts) by a
-// path relative to itself; elsewhere that use stays flagged.
+// path relative to itself; elsewhere that use stays flagged. The same goes
+// for assertAlmostEquals and its helper (testing/assertions/almost-equal.ts).
 // Findings name lines in the file as it is on disk: the original text in a
 // dry run, the converted text after --write.
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -89,6 +90,11 @@ export const RULES: readonly RuleInfo[] = [
     to: "captureThrow / captureRejection (prototype/testing/assertions/" +
       "captured.ts); a message substring on a binding becomes assert.ok " +
       "on its message",
+  },
+  {
+    id: "assert.almost-equals",
+    from: "assertAlmostEquals(a, b, tolerance?, msg?)",
+    to: "assertAlmostEqual (prototype/testing/assertions/almost-equal.ts)",
   },
   {
     id: "assert.object-match",
@@ -824,10 +830,14 @@ interface Context {
   spies: Set<string>;
   /** Names held by `using`: left for hand review, with their assertions. */
   heldSpies: Set<string>;
+  /** Local factories whose returned spy or stub converts (`factoryReturn`). */
+  factories: Set<string>;
   /** Std locals the file also declares: shadowed somewhere, never rewritten. */
   shadowed: Set<string>;
   /** Where the captured-assertion helper is imported from, if it may be. */
   capturedImport?: string;
+  /** Where the almost-equal helper is imported from, if it may be. */
+  almostEqualImport?: string;
   /** Names bound to a constructed Error (`const e = new Error(...)`). */
   errorNames: Set<string>;
   /** Whether the file declares its own binding of the host global's name. */
@@ -917,9 +927,13 @@ function declaresAt(
   if (DECLARING.has(wordBefore(text, pos, src.mask).word)) return true;
   const end = pos + name.length;
   const next = nextNonSpace(text, end);
-  if (text[next] === ":" || text.startsWith("?:", next)) return true;
-  if (text.startsWith("=>", next)) return true;
   let p = prevNonSpace(text, pos, src.mask);
+  if (text[next] === ":" || text.startsWith("?:", next)) {
+    // A key in braces (an object literal, a type literal, or a key renamed
+    // in a destructuring pattern) binds nothing; a typed parameter does.
+    return !("{,".includes(text[p]) && text[enclosingOpen(src, pos)] === "{");
+  }
+  if (text.startsWith("=>", next)) return true;
   // A rest element (`...name`) binds like a plain one in a pattern or a
   // parameter list; as a spread in an expression the climb below rejects it.
   if (text.slice(p - 2, p + 1) === "...") {
@@ -954,18 +968,20 @@ function declaresAt(
   return false;
 }
 
-function makeContext(text: string, capturedImport?: string): Context {
+function makeContext(text: string, options: ConvertOptions): Context {
   const original = new Source(text);
   const imports = parseImports(original);
   const ctx: Context = {
     original,
-    capturedImport,
+    capturedImport: options.capturedImport,
+    almostEqualImport: options.almostEqualImport,
     imports,
     stdAssert: stdBindings(imports, STD_ASSERT),
     stdMock: stdBindings(imports, STD_MOCK),
     stdTime: stdBindings(imports, STD_TIME),
     spies: new Set(),
     heldSpies: new Set(),
+    factories: new Set(),
     shadowed: new Set(),
     errorNames: new Set(),
     hostShadowed: false,
@@ -987,6 +1003,7 @@ function makeContext(text: string, capturedImport?: string): Context {
       if (isDeclared(original, imports, local)) ctx.shadowed.add(local);
     }
   }
+  findFactories(ctx);
   ctx.hostShadowed = isDeclared(original, imports, HOST) ||
     imports.some((decl) =>
       !decl.typeOnly && (decl.defaultName === HOST ||
@@ -1091,6 +1108,7 @@ type Need =
   | "join"
   | "deepEqual"
   | `captured:${string}`
+  | `almost:${string}`
   | `fs:${string}`
   | `fsSync:${string}`;
 
@@ -1196,6 +1214,7 @@ const shadowedSkip = (pos: number, local: string): Skip => ({
 });
 
 const ASSERT_SYMBOLS = new Set([
+  "assertAlmostEquals",
   ...Object.keys(ASSERT_RENAMES),
   ...Object.keys(COMPARISONS),
   "assertInstanceOf",
@@ -1552,6 +1571,36 @@ function convertCaptured(
   });
 }
 
+/**
+ * assertAlmostEquals onto the helper that reproduces it, for a file that may
+ * import it (one under prototype/ that does not bind the helper's name).
+ */
+function convertAlmostEquals(ctx: Context, call: Call): Outcome {
+  const helper = "assertAlmostEqual";
+  const module = ctx.almostEqualImport;
+  if (module === undefined || !canUse(ctx, helper, module)) {
+    return {
+      pos: call.start,
+      reason: "assertAlmostEquals has no node counterpart, and this file " +
+        `cannot import ${helper} (prototype/testing/assertions/` +
+        "almost-equal.ts); convert by hand",
+    };
+  }
+  const args = call.args;
+  if (
+    args.length < 2 || args.length > 4 ||
+    args.some((arg) => arg.text.startsWith("..."))
+  ) {
+    return {
+      pos: call.start,
+      reason: "assertAlmostEquals with unexpected arguments",
+    };
+  }
+  return renameCallee(call, "assert.almost-equals", helper, [
+    `almost:${helper}`,
+  ]);
+}
+
 const assertionPass: Pass = (src, ctx) =>
   stdUses(src, ctx.stdAssert).map(({ pos, local, symbol, call }): Outcome => {
     if (ctx.shadowed.has(local)) return shadowedSkip(pos, local);
@@ -1564,6 +1613,7 @@ const assertionPass: Pass = (src, ctx) =>
     if (call.typeArgs) {
       return { pos, reason: `@std/assert ${symbol} with type arguments` };
     }
+    if (symbol === "assertAlmostEquals") return convertAlmostEquals(ctx, call);
     return unusable(ctx, pos, "assert", "node:assert/strict") ??
       convertAssertion(src, ctx, symbol, call);
   });
@@ -1582,11 +1632,18 @@ const MOCK_SYMBOLS = new Set([
  * now reads `mock.fn(` or `mock.method(`. Its reads and spy assertions are
  * rewritten only then; a spy left std keeps its std forms.
  */
-function isConvertedSpy(src: Source, name: string): boolean {
-  const escaped = name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+function isConvertedSpy(src: Source, ctx: Context, name: string): boolean {
+  const escape = (text: string) => text.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+  // A factory counts once the creation it returns has converted.
+  const makers = [
+    "mock\\.(?:fn|method)",
+    ...[...ctx.factories].filter((factory) =>
+      factoryReturn(src, factory)?.callee.startsWith("mock")
+    ).map(escape),
+  ];
   const binding = new RegExp(
-    `(?:^|[^\\w$])(?:const|let|var)\\s+${escaped}\\s*(?::[^=]+)?=\\s*` +
-      "mock\\.(?:fn|method)\\s*\\(",
+    `(?:^|[^\\w$])(?:const|let|var)\\s+${escape(name)}\\s*(?::[^=]+)?=\\s*` +
+      `(?:${makers.join("|")})\\s*\\(`,
     "g",
   );
   // Only a binding in code counts, not one quoted in a comment or string.
@@ -1615,18 +1672,149 @@ function onlySpyBindings(ctx: Context, name: string): boolean {
   if (reassigned) return false;
   return declarations(ctx.original, ctx.imports, name).every((pos) => {
     const after = text.slice(pos + name.length);
-    return creators.some((local) => {
+    return [...creators, ...ctx.factories].some((local) => {
       const m = new RegExp(`^\\s*(?::[^=]+)?=\\s*${local}\\s*\\(`)
         .exec(after);
       if (!m) return false;
-      // The creation must itself convert: spy takes 0-2 arguments, stub 2-3.
       const at = text.indexOf(local, pos + name.length);
       const call = callAt(ctx.original, at, at + local.length);
       if (call === undefined) return false;
-      const n = call.args.length;
-      return ctx.stdMock.get(local) === "spy" ? n <= 2 : n === 2 || n === 3;
+      // A factory's creation was checked when it was found.
+      return ctx.factories.has(local) || creationConverts(ctx, local, call);
     });
   });
+}
+
+/**
+ * Whether a std spy or stub creation converts: an unshadowed local, no type
+ * arguments, and the argument count a rule takes (spy 0-2, stub 2-3).
+ */
+function creationConverts(ctx: Context, local: string, call: Call): boolean {
+  const symbol = ctx.stdMock.get(local);
+  if (symbol !== "spy" && symbol !== "stub") return false;
+  if (ctx.shadowed.has(local) || call.typeArgs) return false;
+  const n = call.args.length;
+  return symbol === "spy" ? n <= 2 : n === 2 || n === 3;
+}
+
+/**
+ * The spy or stub creation a local factory returns, if `name` is one: it is
+ * declared once, as `function name(...) {` or `const name = (...) =>`, not
+ * async and with no declared return type (which would name the std type),
+ * and its body is the creation (a concise arrow) or holds exactly one
+ * `return`, directly in the body, of the creation. The creation is a call of
+ * a std local or, once converted, of `mock.fn` / `mock.method`.
+ */
+function factoryReturn(
+  src: Source,
+  name: string,
+): (Call & { callee: string }) | undefined {
+  const { text, mask } = src;
+  const decls = declarations(src, parseImports(src), name);
+  if (decls.length !== 1) return undefined;
+  const at = decls[0];
+  const keyword = wordBefore(text, at, mask);
+  let open: number;
+  if (keyword.word === "function") {
+    if (wordBefore(text, keyword.start, mask).word === "async") {
+      return undefined;
+    }
+    open = nextCode(src, at + name.length);
+  } else if (keyword.word === "const") {
+    const m = /^\s*=\s*\(/.exec(text.slice(at + name.length));
+    if (!m) return undefined;
+    open = at + name.length + m[0].length - 1;
+  } else {
+    return undefined;
+  }
+  if (text[open] !== "(") return undefined;
+  const close = matchBracket(src, open);
+  if (close < 0) return undefined;
+  let body = nextCode(src, close + 1);
+  if (keyword.word === "const") {
+    if (!text.startsWith("=>", body)) return undefined;
+    body = nextCode(src, body + 2);
+  } else if (text[body] !== "{") {
+    return undefined;
+  }
+  let expression = body;
+  if (text[body] === "{") {
+    const end = matchBracket(src, body);
+    const returns = occurrences(src, "return").filter((pos) =>
+      pos > body && pos < end
+    );
+    if (returns.length !== 1 || enclosingOpen(src, returns[0]) !== body) {
+      return undefined;
+    }
+    expression = nextCode(src, returns[0] + "return".length);
+  }
+  const callee = /^(?:mock\s*\.\s*(?:fn|method)|[\w$]+)/.exec(
+    text.slice(expression),
+  )?.[0];
+  if (callee === undefined) return undefined;
+  const call = callAt(src, expression, expression + callee.length);
+  if (call === undefined || !isStatementEnd(text, call.end)) return undefined;
+  return { ...call, callee };
+}
+
+/**
+ * Whether every use of factory `name` keeps its spy's reads convertible: a
+ * call bound whole by `const|let|var` to a name that only ever holds a
+ * converted spy, or a call passed on unnamed (an argument, an array item, a
+ * property value), whose reads no test can make.
+ */
+function factoryUsesConvert(ctx: Context, name: string): boolean {
+  const src = ctx.original;
+  const { text, mask } = src;
+  return occurrences(src, name).every((pos) => {
+    if (insideImport(ctx.imports, pos)) return true;
+    if (declaresAt(src, ctx.imports, name, pos)) return true;
+    const call = callAt(src, pos, pos + name.length);
+    if (call === undefined || call.typeArgs) return false;
+    const bound = spyBinding(text, pos);
+    if (bound !== undefined) {
+      return isStatementEnd(text, call.end) && onlySpyBindings(ctx, bound);
+    }
+    return "(,:[".includes(text[prevNonSpace(text, pos, mask)]) &&
+      ",)]}".includes(text[nextCode(src, call.end)]);
+  });
+}
+
+/**
+ * Fills `ctx.factories`: the local factories whose returned creation
+ * converts and whose every use is one `factoryUsesConvert` accepts. A
+ * factory that fails drops out, which can fail another's use in turn, so
+ * the check repeats until nothing changes. Names bound from a factory's call
+ * are tracked as spies.
+ */
+function findFactories(ctx: Context): void {
+  const src = ctx.original;
+  const declared =
+    /(?:^|[^\w$.])(?:function\s+([\w$]+)\s*\(|const\s+([\w$]+)\s*=\s*\()/g;
+  for (const m of src.text.matchAll(declared)) {
+    const name = m[1] ?? m[2];
+    if (!src.isCode(m.index! + m[0].indexOf(name))) continue;
+    const creation = factoryReturn(src, name);
+    if (
+      creation !== undefined && creationConverts(ctx, creation.callee, creation)
+    ) {
+      ctx.factories.add(name);
+    }
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const name of ctx.factories) {
+      if (factoryUsesConvert(ctx, name)) continue;
+      ctx.factories.delete(name);
+      changed = true;
+    }
+  }
+  for (const name of ctx.factories) {
+    for (const pos of occurrences(src, name)) {
+      const bound = spyBinding(src.text, pos);
+      if (bound !== undefined) ctx.spies.add(bound);
+    }
+  }
 }
 
 /** An assignment operator (plain or compound) at the start of the text. */
@@ -1666,12 +1854,15 @@ function convertMock(
           "declares as something else; convert by hand",
       };
     }
-    if (!bound) {
+    const made = [...ctx.factories].some((factory) =>
+      factoryReturn(src, factory)?.start === pos
+    );
+    if (!bound && !made) {
       return {
         pos,
-        reason: `${symbol} is not bound to a name the tool can follow, so ` +
-          "its restore and call-record reads cannot be rewritten; convert " +
-          "by hand",
+        reason: `${symbol} is not bound to a name the tool can follow, nor ` +
+          "returned by a local factory it can prove, so its restore and " +
+          "call-record reads cannot be rewritten; convert by hand",
       };
     }
     if (symbol === "spy" && args.length <= 1) {
@@ -1700,7 +1891,7 @@ function convertMock(
   const blocked = unusable(ctx, pos, "assert", "node:assert/strict") ??
     unusable(ctx, pos, "mock", "node:test");
   if (blocked) return blocked;
-  if (!ctx.heldSpies.has(target) && !isConvertedSpy(src, target)) {
+  if (!ctx.heldSpies.has(target) && !isConvertedSpy(src, ctx, target)) {
     return {
       pos,
       reason: `${symbol} on \`${target}\`, which is not a spy the tool ` +
@@ -1791,7 +1982,7 @@ const spyMemberPass: Pass = (src, ctx) => {
   const outcomes: Outcome[] = [];
   for (const name of ctx.spies) {
     // A spy whose creation stayed std keeps its std reads.
-    if (!isConvertedSpy(src, name)) continue;
+    if (!isConvertedSpy(src, ctx, name)) continue;
     for (const pos of occurrences(src, name)) {
       const dot = nextCode(src, pos + name.length);
       // A member read, plain or optional (`s.restore()`, `s?.restore()`).
@@ -2833,7 +3024,11 @@ function fixImports(
       ? need.split(":")
       : [need, need === "deepEqual" ? "isDeepStrictEqual" : need];
     const entry = want(
-      kind === "captured" ? ctx.capturedImport! : NEED_MODULES[kind],
+      kind === "captured"
+        ? ctx.capturedImport!
+        : kind === "almost"
+        ? ctx.almostEqualImport!
+        : NEED_MODULES[kind],
     );
     if (kind === "assert" || kind === "process") entry.defaultName = kind;
     else entry.named.add(name);
@@ -2927,6 +3122,11 @@ export interface ConvertOptions {
    * from. Without it, a used thrown value stays flagged.
    */
   capturedImport?: string;
+  /**
+   * The specifier this file would import the almost-equal helper from.
+   * Without it, assertAlmostEquals stays unconverted.
+   */
+  almostEqualImport?: string;
 }
 
 /** Converts one test file's text. Pure: no I/O. */
@@ -2934,7 +3134,7 @@ export function convertSource(
   text: string,
   options: ConvertOptions = {},
 ): ConversionResult {
-  const ctx = makeContext(text, options.capturedImport);
+  const ctx = makeContext(text, options);
   const rewrites = new Map<string, number>();
   const count = (rule: string) =>
     rewrites.set(rule, (rewrites.get(rule) ?? 0) + 1);
@@ -3014,13 +3214,27 @@ const PROTOTYPE = resolve(
   "../../prototype",
 );
 const CAPTURED_HELPER = join(PROTOTYPE, "testing/assertions/captured.ts");
+const ALMOST_EQUAL_HELPER = join(
+  PROTOTYPE,
+  "testing/assertions/almost-equal.ts",
+);
 
-/** The helper's specifier from `file`, for files under prototype/ only. */
-export function capturedImportFor(file: string): string | undefined {
+/** `helper`'s specifier from `file`, for files under prototype/ only. */
+function helperImportFor(file: string, helper: string): string | undefined {
   const path = resolve(file);
   if (!path.startsWith(PROTOTYPE + sep)) return undefined;
-  const spec = relative(dirname(path), CAPTURED_HELPER).split(sep).join("/");
+  const spec = relative(dirname(path), helper).split(sep).join("/");
   return spec.startsWith(".") ? spec : `./${spec}`;
+}
+
+/** The captured-assertion helper's specifier from `file`, if it has one. */
+export function capturedImportFor(file: string): string | undefined {
+  return helperImportFor(file, CAPTURED_HELPER);
+}
+
+/** The almost-equal helper's specifier from `file`, if it has one. */
+export function almostEqualImportFor(file: string): string | undefined {
+  return helperImportFor(file, ALMOST_EQUAL_HELPER);
 }
 
 function collectFiles(path: string, into: string[]): void {
@@ -3135,6 +3349,7 @@ function main(args: string[]): number {
     const before = readFileSync(file, "utf8");
     const result = convertSource(before, {
       capturedImport: capturedImportFor(file),
+      almostEqualImport: almostEqualImportFor(file),
     });
     const changed = result.source !== before;
     if (write && changed) writeFileSync(file, result.source);

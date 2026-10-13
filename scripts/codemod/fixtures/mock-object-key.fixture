@@ -1,0 +1,27 @@
+# An object key, or a key renamed in a destructuring pattern, binds no name:
+# a spy bound to a name the file also uses as a key still converts.
+rules: mock.import, mock.spy, mock.assert-spy-calls
+--- before
+import { assertSpyCalls, spy } from "@std/testing/mock";
+
+Deno.test("keys", async () => {
+  const confirm = spy(() => Promise.resolve("approve"));
+  await run({ confirm });
+  await run({ id: 1, confirm: () => Promise.resolve("deny") });
+  const { confirm: other } = services;
+  assertSpyCalls(confirm, 1);
+  void other;
+});
+--- after
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+
+Deno.test("keys", async () => {
+  const confirm = mock.fn(() => Promise.resolve("approve"));
+  await run({ confirm });
+  await run({ id: 1, confirm: () => Promise.resolve("deny") });
+  const { confirm: other } = services;
+  assert.equal(confirm.mock.callCount(), 1);
+  void other;
+});
+--- findings
