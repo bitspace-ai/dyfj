@@ -1216,6 +1216,21 @@ function valueUsed(src: Source, pos: number): boolean {
     p = prevNonSpace(text, before.start, mask);
     before = wordBefore(text, before.start, mask);
   }
+  // A `;` inside a for header separates its clauses: the condition clause
+  // is a used value, not a statement.
+  if (text[p] === ";") {
+    const open = enclosingOpen(src, pos);
+    if (open >= 0 && text[open] === "(") {
+      const keyword = wordBefore(text, open, mask);
+      if (
+        keyword.word === "for" ||
+        (keyword.word === "await" &&
+          wordBefore(text, keyword.start, mask).word === "for")
+      ) {
+        return true;
+      }
+    }
+  }
   if (p < 0 || ";{})".includes(text[p])) return false;
   // A concise arrow body returns the value; only a test registration's
   // callback ignores what it returns.
@@ -2945,16 +2960,40 @@ function formatReport(reports: FileReport[], write: boolean): string {
   return lines.join("\n");
 }
 
+const USAGE =
+  "usage: deno-test-dialect.ts [--write] [--json] <file-or-directory>...";
+
+/**
+ * The command line: the two flags and at least one path. An unknown option
+ * is an error, so a mistyped `--write` cannot fall back to a dry run.
+ */
+export function parseCliArgs(
+  args: readonly string[],
+): { write: boolean; json: boolean; paths: string[] } {
+  const unknown = args.filter((arg) =>
+    arg.startsWith("-") && arg !== "--write" && arg !== "--json"
+  );
+  if (unknown.length > 0) {
+    throw new Error(`unknown option ${unknown.join(", ")}; ${USAGE}`);
+  }
+  const paths = args.filter((arg) => !arg.startsWith("-"));
+  if (paths.length === 0) throw new Error(USAGE);
+  return {
+    write: args.includes("--write"),
+    json: args.includes("--json"),
+    paths,
+  };
+}
+
 function main(args: string[]): number {
-  const write = args.includes("--write");
-  const json = args.includes("--json");
-  const paths = args.filter((arg) => !arg.startsWith("--"));
-  if (paths.length === 0) {
-    console.error(
-      "usage: deno-test-dialect.ts [--write] [--json] <file-or-directory>...",
-    );
+  let parsed: ReturnType<typeof parseCliArgs>;
+  try {
+    parsed = parseCliArgs(args);
+  } catch (error) {
+    console.error((error as Error).message);
     return 2;
   }
+  const { write, json, paths } = parsed;
   const files: string[] = [];
   for (const path of paths) collectFiles(path, files);
   const reports: FileReport[] = [];

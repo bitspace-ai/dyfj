@@ -12,6 +12,7 @@ import {
   type ConversionResult,
   convertSource,
   FLAGS,
+  parseCliArgs,
   RULES,
 } from "./deno-test-dialect.ts";
 
@@ -127,6 +128,21 @@ describe("test-dialect codemod fixtures", () => {
     assert.equal(leftover.line, 18);
     assert.equal(leftover.originalLine, 16);
     assert.match(fixture.before.split("\n")[15], /new \w+\.errors\.NotFound/);
+  });
+
+  it("parses its command line and rejects unknown options", () => {
+    assert.deepEqual(parseCliArgs(["--write", "--json", "a", "b"]), {
+      write: true,
+      json: true,
+      paths: ["a", "b"],
+    });
+    assert.deepEqual(parseCliArgs(["a"]), {
+      write: false,
+      json: false,
+      paths: ["a"],
+    });
+    assert.throws(() => parseCliArgs(["--wirte", "a"]), /--wirte/);
+    assert.throws(() => parseCliArgs([]), /usage/);
   });
 
   it("has a fixture for every rule", () => {
