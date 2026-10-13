@@ -18,6 +18,7 @@ import {
   realpath,
   rename,
   rm,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
@@ -323,7 +324,7 @@ describe("glob matching is bounded across the whole call", () => {
 describe("every non-scope omission reaches the completeness note", () => {
   useSearchRoot();
 
-  // The sandbox cannot create symlinks or non-regular files (Deno.symlink needs
+  // The sandbox cannot create symlinks or non-regular files (creating a symlink needs
   // unscoped read+write), so the counters are driven directly. What matters is
   // that no omission class can reach walkNotes and produce nothing.
   it("a symlink skip is disclosed", () => {
@@ -558,7 +559,7 @@ describe("the glob budget holds inside a final character class", () => {
 describe("errors never carry an absolute path to the model", () => {
   useSearchRoot();
 
-  // These strings reach the model AND the durable event transcript, and Deno's
+  // These strings reach the model AND the durable event transcript, and the runtime's
   // exception messages embed the path they failed on — home directory and all.
   // Assembled at runtime so the public-boundary scan never matches this
   // fixture as a home-directory path in tracked source.
@@ -725,7 +726,7 @@ describe("post-containment failures stay path-free", () => {
     // Canonicalize (the containment check succeeds), then remove the file so
     // the read itself is what fails — the window this finding is about.
     await realpath(gone);
-    await Deno.remove(gone);
+    await unlink(gone);
     const out = await executeReadFile(at(root), "vanishes.txt");
     assert.strictEqual(out.startsWith("error:"), true);
     assert.ok(!out.includes(root));

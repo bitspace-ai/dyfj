@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertNotEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import type { CommandCall } from "../definition.ts";
@@ -212,7 +211,7 @@ describe("buildSafeBashEnv", () => {
 
   it("forwards only non-secret keys and never the projected secrets", () => {
     // Secrets present in the parent env must NOT be forwarded to bash
-    // (CWE-532). The env is injected, so the test never touches Deno.env.
+    // (CWE-532). The env is injected, so the test never touches the process env.
     const env = buildSafeBashEnv(
       new MapEnv({
         PATH: "/usr/bin:/bin",
@@ -229,7 +228,7 @@ describe("buildSafeBashEnv", () => {
     assert.ok(!Object.hasOwn(env, "DOLT_PASSWORD"));
     assert.ok(!Object.hasOwn(env, "DYFJ_MEMORY_MCP_TOKEN"));
     // PATH must be forwarded so commands still resolve.
-    assertNotEquals(env.PATH, undefined);
+    assert.notStrictEqual(env.PATH, undefined);
     assert.deepStrictEqual(env, { PATH: "/usr/bin:/bin", TERM: "dumb" });
   });
 });

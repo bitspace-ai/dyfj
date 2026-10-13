@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertArrayIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
@@ -66,9 +65,17 @@ describe("buildGitArgv", () => {
 
   it("log bounds the number of commits and clamps an oversized limit", () => {
     const plan = buildGitArgv(ROOT, { subcommand: "log" });
-    assertArrayIncludes(plan.argv!, ["--max-count=20"]);
+    const argv = plan.argv!;
+    assert.ok(
+      argv.includes("--max-count=20"),
+      `expected ${JSON.stringify(argv)} to include "--max-count=20"`,
+    );
     const clamped = buildGitArgv(ROOT, { subcommand: "log", limit: 10_000 });
-    assertArrayIncludes(clamped.argv!, ["--max-count=200"]);
+    const clampedArgv = clamped.argv!;
+    assert.ok(
+      clampedArgv.includes("--max-count=200"),
+      `expected ${JSON.stringify(clampedArgv)} to include "--max-count=200"`,
+    );
   });
 
   it("paths are placed after the -- separator", () => {
@@ -219,9 +226,11 @@ describe("buildGitArgv refusals", () => {
       const args: Record<string, unknown> = { subcommand: sub };
       if (sub === "add") args.paths = ["a.ts"];
       if (sub === "commit") args.message = "m";
-      assertArrayIncludes(buildGitArgv(ROOT, args).argv!, [
-        "--literal-pathspecs",
-      ]);
+      const argv = buildGitArgv(ROOT, args).argv!;
+      assert.ok(
+        argv.includes("--literal-pathspecs"),
+        `expected ${JSON.stringify(argv)} to include "--literal-pathspecs"`,
+      );
     }
   });
 
@@ -477,7 +486,11 @@ describe("executeGit", () => {
       subcommand: "commit",
       message: "msg",
     }, { runner });
-    assertArrayIncludes(calls[0], ["rev-parse"]);
+    const first = calls[0];
+    assert.ok(
+      first.includes("rev-parse"),
+      `expected ${JSON.stringify(first)} to include "rev-parse"`,
+    );
     assert.ok(
       out.includes("records every staged change"),
       `expected ${
@@ -560,7 +573,11 @@ describe("buildCommandToolCallEventPayload", () => {
       workspaceRoot: "/work",
     });
     const git = registry.lookup("git")!;
-    assertArrayIncludes(git.permission.effects, ["run.process"]);
+    const effects = git.permission.effects;
+    assert.ok(
+      effects.includes("run.process"),
+      `expected ${JSON.stringify(effects)} to include "run.process"`,
+    );
     for (
       const args of [
         { subcommand: "status" },

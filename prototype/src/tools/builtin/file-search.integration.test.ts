@@ -3,6 +3,7 @@
 // contract is in file.test.ts and file-hardening.test.ts.
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,21 +14,36 @@ import { RootAnchors } from "./root-anchors.ts";
 const anchors = new RootAnchors();
 const at = (root: string) => anchors.root(root);
 
+// Makes the pipe through bash, with env, cwd and stdin inherited. A shell that
+// cannot start rejects (spawn reports it as an `error` event); otherwise the
+// exit code and stderr come back once the child has exited and its streams
+// have closed.
+function mkfifo(
+  path: string,
+): Promise<{ code: number | null; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", ["-c", 'mkfifo "$1"', "bash", path], {
+      stdio: ["inherit", "ignore", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code, stderr }));
+  });
+}
+
 describe("search walk over a named pipe", () => {
   let root: string;
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "tmp-"));
     await writeFile(`${root}/plain.txt`, "needle\n");
-    const made = await new Deno.Command("bash", {
-      args: ["-c", 'mkfifo "$1"', "bash", `${root}/pipe`],
-      stdout: "null",
-      stderr: "piped",
-    }).output();
-    if (!made.success) {
-      throw new Error(
-        `mkfifo failed: ${new TextDecoder().decode(made.stderr)}`,
-      );
+    const made = await mkfifo(`${root}/pipe`);
+    if (made.code !== 0) {
+      throw new Error(`mkfifo failed: ${made.stderr}`);
     }
   });
 

@@ -12,9 +12,11 @@ import assert from "node:assert/strict";
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -254,7 +256,7 @@ describe("executeWriteFile", () => {
 describe("executeWriteFile symlink containment", () => {
   useIoRoot();
 
-  // The scoped test sandbox forbids Deno.symlink (a symlink's target cannot be
+  // The scoped test sandbox forbids creating a symlink (a symlink's target cannot be
   // permission-scoped), so the no-follow guard is exercised with an injected
   // lstat. The real OS symlink-follow escape — a dangling in-root link to an
   // outside target — is validated separately by the Codex security PoC.
@@ -602,9 +604,9 @@ describe("executeReadFile ranged reads", () => {
     // Sparse: stat reports 5MB without writing 5MB, which is exactly the case
     // the pre-read stat is there to catch.
     const huge = `${sroot}/huge.bin`;
-    const f = await Deno.create(huge);
+    const f = await open(huge, "w+");
     await f.truncate(5 * 1024 * 1024);
-    f.close();
+    await f.close();
     const out = await executeReadFile(at(sroot), "huge.bin");
     assert.strictEqual(out.startsWith("error:"), true);
     assert.ok(
@@ -613,7 +615,7 @@ describe("executeReadFile ranged reads", () => {
         JSON.stringify(out)
       } to include "over the 4194304-byte limit"`,
     );
-    await Deno.remove(huge);
+    await unlink(huge);
   });
 });
 
@@ -729,7 +731,7 @@ describe("grep_files resource bounds", () => {
       const pattern = ["(a+)+", "$"].join("");
       out = await executeGrepFiles(at(broot), pattern, { budgetMs: 300 });
     } finally {
-      await Deno.remove(catastrophic);
+      await unlink(catastrophic);
     }
     const elapsed = performance.now() - started;
     // The budget is what bounds this, so allow generous slack for worker

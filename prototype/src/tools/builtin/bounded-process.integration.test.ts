@@ -3,6 +3,7 @@
 // and a group stopper that cannot signal (a fake at the stopper port).
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { buildSafeBashEnv } from "./exec.ts";
@@ -17,22 +18,36 @@ const TIMEOUT_MS = 300;
 const RETURN_BOUND_MS = TIMEOUT_MS + 4_000;
 
 async function isLive(pid: number): Promise<boolean> {
-  const out = await new Deno.Command("/bin/ps", {
-    args: ["-o", "stat=", "-p", String(pid)],
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  const stat = new TextDecoder().decode(out.stdout).trim();
+  const stdout = await probe("/bin/ps", ["-o", "stat=", "-p", String(pid)]);
+  const stat = stdout.trim();
   return stat !== "" && !stat.startsWith("Z");
 }
 
 async function forceKill(pid: number | undefined): Promise<void> {
   if (pid === undefined) return;
-  await new Deno.Command("/bin/kill", {
-    args: ["-KILL", String(pid)],
-    stdout: "null",
-    stderr: "null",
-  }).output();
+  await probe("/bin/kill", ["-KILL", String(pid)], "ignore");
+}
+
+// Runs a probe command to its exit and returns its stdout. Env, cwd and stdin
+// are inherited, stderr is discarded and the exit status is not checked. Only
+// a probe that cannot start fails: spawn reports that as an `error` event.
+// `close` fires once the child has exited and its streams have closed, so no
+// probe outlives the call.
+function probe(
+  file: string,
+  args: string[],
+  stdout: "pipe" | "ignore" = "pipe",
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { stdio: ["inherit", stdout, "ignore"] });
+    let text = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      text += chunk;
+    });
+    child.once("error", reject);
+    child.once("close", () => resolve(text));
+  });
 }
 
 function pidIn(text: string): number | undefined {
