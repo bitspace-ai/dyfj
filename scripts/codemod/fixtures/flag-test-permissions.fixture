@@ -24,6 +24,7 @@ Deno.test({
 });
 const permissions = { net: true };
 Deno.test({ name: "shorthand", permissions, fn: () => {} });
+Deno.test({ name: "commented", permissions /* why */: { net: true }, fn() {} });
 --- after
 Deno.test("data", () => {
   const config = { permissions: { level: "strict" } };
@@ -46,8 +47,10 @@ Deno.test({
 });
 const permissions = { net: true };
 Deno.test({ name: "shorthand", permissions, fn: () => {} });
+Deno.test({ name: "commented", permissions /* why */: { net: true }, fn() {} });
 --- findings
 hand-review test-permissions 7
 hand-review test-permissions 12
 hand-review test-permissions 17
 hand-review test-permissions 21
+hand-review test-permissions 22

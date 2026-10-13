@@ -486,6 +486,19 @@ function wordBefore(
   return { start: start + 1, word: text.slice(start + 1, end + 1) };
 }
 
+/**
+ * The text of the current statement up to `pos`: from just after the last
+ * `;`, `{` or `}` before it, so a binding split over lines is still seen.
+ */
+function statementHead(text: string, pos: number): string {
+  const start = Math.max(
+    text.lastIndexOf(";", pos - 1),
+    text.lastIndexOf("{", pos - 1),
+    text.lastIndexOf("}", pos - 1),
+  ) + 1;
+  return text.slice(start, pos);
+}
+
 function lineStart(text: string, pos: number): number {
   return text.lastIndexOf("\n", pos - 1) + 1;
 }
@@ -710,14 +723,19 @@ interface ImportDecl {
 const IMPORT =
   /\bimport\s+(type\s+)?([^;'"]*?)\s*from\s*(["'])([^"']+)\3[ \t]*;?/g;
 
-function parseImports(src: Source): ImportDecl[] {
-  const decls: ImportDecl[] = [];
-  // Comments blanked to spaces (same length), so a quote or `;` inside one
-  // is not taken for syntax.
-  const blanked = src.text.split("").map((ch, i) =>
+/**
+ * `src`'s text with comments blanked to spaces (same length, so positions
+ * hold), so a quote, `;` or `:` inside one is not taken for syntax.
+ */
+function blankComments(src: Source): string {
+  return src.text.split("").map((ch, i) =>
     src.mask[i] === COMMENT && ch !== "\n" ? " " : ch
   ).join("");
-  for (const m of blanked.matchAll(IMPORT)) {
+}
+
+function parseImports(src: Source): ImportDecl[] {
+  const decls: ImportDecl[] = [];
+  for (const m of blankComments(src).matchAll(IMPORT)) {
     const start = m.index!;
     if (!src.isCode(start) || !isStatementStart(src, start)) continue;
     let clause = m[2].trim();
@@ -945,7 +963,7 @@ function makeContext(text: string): Context {
     for (const pos of occurrences(original, local)) {
       const m =
         /(?:^|[^\w$])(const|let|var|using)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
-          .exec(text.slice(lineStart(text, pos), pos));
+          .exec(statementHead(text, pos));
       if (m) (m[1] === "using" ? ctx.heldSpies : ctx.spies).add(m[2]);
     }
   }
@@ -1470,9 +1488,7 @@ function onlySpyBindings(ctx: Context, name: string): boolean {
   // A later assignment can hold a spy the tool did not create.
   const reassigned = occurrences(ctx.original, name).some((pos) =>
     !declaresAt(ctx.original, ctx.imports, name, pos) &&
-    /^\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/.test(
-      text.slice(pos + name.length),
-    )
+    ASSIGNMENT.test(text.slice(pos + name.length))
   );
   if (reassigned) return false;
   return declarations(ctx.original, ctx.imports, name).every((pos) => {
@@ -1491,15 +1507,18 @@ function onlySpyBindings(ctx: Context, name: string): boolean {
   });
 }
 
+/** An assignment operator (plain or compound) at the start of the text. */
+const ASSIGNMENT = /^\s*(?:[-+*/%&|^]|\*\*|<<|>>>?|&&|\|\||\?\?)?=(?!=)/;
+
 /** The name a spy or stub at `pos` is bound to by `const|let|var`, if any. */
 function spyBinding(text: string, pos: number): string | undefined {
   return /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
-    .exec(text.slice(lineStart(text, pos), pos))?.[1];
+    .exec(statementHead(text, pos))?.[1];
 }
 
 function heldByUsing(text: string, pos: number): boolean {
   return /\busing\s+[\w$]+\s*(?::[^=]+)?=\s*$/.test(
-    text.slice(lineStart(text, pos), pos),
+    statementHead(text, pos),
   );
 }
 
@@ -2087,15 +2106,18 @@ function convertFs(
     // A body that declares the entry name again shadows it somewhere, and
     // its is* reads cannot be told apart by text.
     const bodyImports = parseImports(src);
+    // Assigning the name in the body puts something else in it too.
     if (
       occurrences(src, loop[2]).some((at) =>
         at > bodyStart && at < bodyEnd &&
-        declaresAt(src, bodyImports, loop[2], at)
+        (declaresAt(src, bodyImports, loop[2], at) ||
+          ASSIGNMENT.test(src.text.slice(at + loop[2].length)))
       )
     ) {
       return {
         pos,
-        reason: `${host} loop body declares \`${loop[2]}\` again; convert ` +
+        reason:
+          `${host} loop body declares or assigns \`${loop[2]}\`; convert ` +
           "by hand",
       };
     }
@@ -2509,8 +2531,10 @@ const optionPass: Pass = (src) => {
     [/\bpermissions\s*(?::|(?=[,}]))/g, "test-permissions"],
     [/\bsanitize(?:Ops|Resources|Exit)\s*(?::|(?=[,}]))/g, "sanitizer-options"],
   ];
+  // Matched with comments blanked, so `permissions /* why */:` still counts.
+  const blanked = blankComments(src);
   for (const [pattern, flag] of options) {
-    for (const m of src.text.matchAll(pattern)) {
+    for (const m of blanked.matchAll(pattern)) {
       const pos = m.index!;
       if (!src.isCode(pos) || isMember(src, pos)) continue;
       const p = prevNonSpace(src.text, pos, src.mask);
@@ -2522,7 +2546,7 @@ const optionPass: Pass = (src) => {
   // The same keys quoted (`"permissions":`) or computed (`["permissions"]:`).
   const quoted =
     /(\[\s*)?(["'])(permissions|sanitize(?:Ops|Resources|Exit))\2(\s*\])?\s*:/g;
-  for (const m of src.text.matchAll(quoted)) {
+  for (const m of blanked.matchAll(quoted)) {
     const pos = m.index!;
     if ((m[1] === undefined) !== (m[4] === undefined)) continue;
     const p = prevNonSpace(src.text, pos, src.mask);
