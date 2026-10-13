@@ -780,20 +780,19 @@ const DECLARING = new Set(["const", "let", "var", "function", "class"]);
  * parameter of an arrow or function. Conservative: text rules cannot follow
  * scopes, so any such declaration marks the import shadowed.
  */
+/** Positions where the file declares `name` other than by its import. */
 function declarations(
   src: Source,
   imports: ImportDecl[],
   name: string,
-): number {
-  let count = 0;
-  for (const pos of occurrences(src, name)) {
-    if (declaresAt(src, imports, name, pos)) count++;
-  }
-  return count;
+): number[] {
+  return occurrences(src, name).filter((pos) =>
+    declaresAt(src, imports, name, pos)
+  );
 }
 
 function isDeclared(src: Source, imports: ImportDecl[], name: string): boolean {
-  return declarations(src, imports, name) > 0;
+  return declarations(src, imports, name).length > 0;
 }
 
 /** Whether the occurrence of `name` at `pos` declares it. */
@@ -1312,6 +1311,24 @@ function isConvertedSpy(src: Source, name: string): boolean {
   ).test(src.text);
 }
 
+/**
+ * Whether every declaration of `name` in the original file binds it straight
+ * to a std spy or stub with no type arguments, so that all of them convert
+ * and every read of the name is a converted spy's.
+ */
+function onlySpyBindings(ctx: Context, name: string): boolean {
+  const creators = [...ctx.stdMock].filter(([, symbol]) =>
+    symbol === "spy" || symbol === "stub"
+  ).map(([local]) => local);
+  const { text } = ctx.original;
+  return declarations(ctx.original, ctx.imports, name).every((pos) => {
+    const after = text.slice(pos + name.length);
+    return creators.some((local) =>
+      new RegExp(`^\\s*(?::[^=]+)?=\\s*${local}\\s*\\(`).test(after)
+    );
+  });
+}
+
 /** The name a spy or stub at `pos` is bound to by `const|let|var`, if any. */
 function spyBinding(text: string, pos: number): string | undefined {
   return /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*$/
@@ -1339,14 +1356,11 @@ function convertMock(
     const blocked = unusable(ctx, pos, "mock", "node:test");
     if (blocked) return blocked;
     const bound = spyBinding(src.text, pos);
-    if (
-      bound !== undefined &&
-      declarations(ctx.original, ctx.imports, bound) > 1
-    ) {
+    if (bound !== undefined && !onlySpyBindings(ctx, bound)) {
       return {
         pos,
-        reason: `${symbol} is bound to \`${bound}\`, a name declared again ` +
-          "elsewhere in the file; convert by hand",
+        reason: `${symbol} is bound to \`${bound}\`, a name the file also ` +
+          "declares as something else; convert by hand",
       };
     }
     if (!bound) {

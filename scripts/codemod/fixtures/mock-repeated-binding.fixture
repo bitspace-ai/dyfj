@@ -1,0 +1,32 @@
+# The same name bound to a spy or stub in several tests is still one kind of
+# binding everywhere, so every one of them converts with its reads.
+rules: mock.import, mock.stub, mock.restore, mock.calls
+--- before
+import { stub } from "@std/testing/mock";
+
+Deno.test("one", () => {
+  const warn = stub(console, "warn");
+  void warn.calls.length;
+  warn.restore();
+});
+
+Deno.test("two", () => {
+  const warn = stub(console, "warn");
+  void warn.calls.length;
+  warn.restore();
+});
+--- after
+import { mock } from "node:test";
+
+Deno.test("one", () => {
+  const warn = mock.method(console, "warn", () => {});
+  void warn.mock.callCount();
+  warn.mock.restore();
+});
+
+Deno.test("two", () => {
+  const warn = mock.method(console, "warn", () => {});
+  void warn.mock.callCount();
+  warn.mock.restore();
+});
+--- findings
