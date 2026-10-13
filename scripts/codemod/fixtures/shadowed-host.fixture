@@ -1,0 +1,32 @@
+# A file that declares its own binding of the host global's name (a
+# parameter, a local) cannot have its host references rewritten safely: some
+# of them reach the local. They are left for hand conversion.
+rules:
+--- before
+interface Host {
+  cwd(): string;
+}
+
+function run(Deno: Host) {
+  return Deno.cwd();
+}
+
+Deno.test("shadowed host", () => {
+  void [run, Deno.cwd()];
+});
+--- after
+interface Host {
+  cwd(): string;
+}
+
+function run(Deno: Host) {
+  return Deno.cwd();
+}
+
+Deno.test("shadowed host", () => {
+  void [run, Deno.cwd()];
+});
+--- findings
+unconverted 5
+unconverted 6
+unconverted 10

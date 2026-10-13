@@ -10,6 +10,7 @@ Deno.test("value", () => {
   void error;
   consume(assertThrows(() => boom()));
   const errors = [assertThrows(() => boom())];
+  const capture = () => assertThrows(() => boom());
 });
 --- after
 import { assertThrows } from "@std/assert";
@@ -19,8 +20,10 @@ Deno.test("value", () => {
   void error;
   consume(assertThrows(() => boom()));
   const errors = [assertThrows(() => boom())];
+  const capture = () => assertThrows(() => boom());
 });
 --- findings
 hand-review thrown-value-used 4
 hand-review thrown-value-used 6
 hand-review thrown-value-used 7
+hand-review thrown-value-used 8

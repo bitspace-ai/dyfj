@@ -16,6 +16,8 @@ Deno.test("scanner", () => {
   const ratio = 4 / 2 / 1;
   if (ratio) /assertEquals(.*)/.test(quoted);
   while (false) /assertEquals/.exec(quoted);
+  if (ratio) {}
+  /assertEquals\(/.test(quoted);
   assertEquals(ratio, 2);
   void [quoted, single, pattern, template];
 });
@@ -33,6 +35,8 @@ Deno.test("scanner", () => {
   const ratio = 4 / 2 / 1;
   if (ratio) /assertEquals(.*)/.test(quoted);
   while (false) /assertEquals/.exec(quoted);
+  if (ratio) {}
+  /assertEquals\(/.test(quoted);
   assert.deepStrictEqual(ratio, 2);
   void [quoted, single, pattern, template];
 });

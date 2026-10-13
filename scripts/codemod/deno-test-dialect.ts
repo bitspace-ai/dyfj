@@ -281,9 +281,16 @@ function regexAllowed(
   text: string,
   prev: number,
   openerOf: Map<number, number>,
+  at: number,
 ): boolean {
   if (prev < 0) return true;
   const c = text[prev];
+  // A `/` that starts its own line after a `}` begins a statement: a block
+  // closed above it. An object literal ending a line and divided on the next
+  // is not a form the tests use.
+  if (c === "}" && text.slice(lineStart(text, at), at).trim() === "") {
+    return true;
+  }
   // After the parenthesis that closes `if (...)` and the like, a statement
   // starts, so `/` opens a regex; after any other `)` it divides.
   if (c === ")") {
@@ -381,7 +388,7 @@ export function codeMask(text: string): Uint8Array {
       prev = i - 1;
       continue;
     }
-    if (c === "/" && regexAllowed(text, prev, openerOf)) {
+    if (c === "/" && regexAllowed(text, prev, openerOf, i)) {
       const end = skipRegex(text, i);
       if (end > 0) {
         i = end;
@@ -612,7 +619,15 @@ function isPostfixChain(text: string): boolean {
   return text !== "";
 }
 
-/** A name or member chain, safe to evaluate twice. */
+/**
+ * A bare identifier: the only operand an assertion message may read a second
+ * time, since a member read can run a getter.
+ */
+function isBareName(text: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(text);
+}
+
+/** A name or member chain. */
 function isPlainName(text: string): boolean {
   return /^[A-Za-z_$][\w$]*(\??\.[A-Za-z_$][\w$]*|\[\d+\])*$/.test(text);
 }
@@ -741,6 +756,8 @@ interface Context {
   shadowed: Set<string>;
   /** Names bound to a constructed Error (`const e = new Error(...)`). */
   errorNames: Set<string>;
+  /** Whether the file declares its own binding of the host global's name. */
+  hostShadowed: boolean;
   /** The callee that joins paths, and whether it needs an import. */
   join?: { callee: string; needsImport: boolean };
   usable: Map<string, boolean>;
@@ -814,6 +831,7 @@ function makeContext(text: string): Context {
     heldSpies: new Set(),
     shadowed: new Set(),
     errorNames: new Set(),
+    hostShadowed: false,
     usable: new Map(),
   };
   const mockLocals = [...ctx.stdMock].filter(([, symbol]) =>
@@ -832,6 +850,7 @@ function makeContext(text: string): Context {
       if (isDeclared(original, imports, local)) ctx.shadowed.add(local);
     }
   }
+  ctx.hostShadowed = isDeclared(original, imports, HOST);
   const errorBinding =
     /(?:^|[^\w$])(?:const|let|var)\s+([\w$]+)\s*(?::[^=]+)?=\s*(?:new\s+)?[\w$.]*Error\s*\(/g;
   for (const m of text.matchAll(errorBinding)) {
@@ -1054,7 +1073,11 @@ function valueUsed(src: Source, pos: number): boolean {
     before = wordBefore(text, before.start, mask);
   }
   if (p < 0 || ";{})".includes(text[p])) return false;
-  if (text[p] === ">" && text[p - 1] === "=") return false;
+  // A concise arrow body returns the value; only a test registration's
+  // callback ignores what it returns.
+  if (text[p] === ">" && text[p - 1] === "=") {
+    return !REGISTRATION_CALLEE.test(enclosingCallee(src, pos));
+  }
   if (before.word === "else") return false;
   return true;
 }
@@ -1164,7 +1187,7 @@ function convertAssertion(
     }
     const [left, right] = [args[0].text, args[1].text];
     const part = (text: string) =>
-      isPlainName(text) ? `\${${text}}` : templateEscape(text);
+      isBareName(text) ? `\${${text}}` : templateEscape(text);
     const message = args[2]?.text ??
       `\`expected ${part(left)} ${comparison} ${part(right)}\``;
     return replaceCall(
@@ -1184,7 +1207,7 @@ function convertAssertion(
     const [haystack, needle] = [args[0].text, args[1].text];
     const receiver = isPostfixChain(haystack) ? haystack : `(${haystack})`;
     const part = (text: string) =>
-      isPlainName(text) ? `\${JSON.stringify(${text})}` : templateEscape(text);
+      isBareName(text) ? `\${JSON.stringify(${text})}` : templateEscape(text);
     const message = args[2]?.text ??
       `\`expected ${part(haystack)} to include ${part(needle)}\``;
     return replaceCall(
@@ -1262,7 +1285,7 @@ const MOCK_SYMBOLS = new Set([
  * rewritten only then; a spy left std keeps its std forms.
  */
 function isConvertedSpy(src: Source, name: string): boolean {
-  const escaped = name.replace(/\$/g, "\\$");
+  const escaped = name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
   return new RegExp(
     `(?:^|[^\\w$])(?:const|let|var)\\s+${escaped}\\s*(?::[^=]+)?=\\s*` +
       "mock\\.(?:fn|method)\\s*\\(",
@@ -1901,6 +1924,20 @@ function convertError(src: Source, ref: HostRef): Outcome {
   };
 }
 
+/**
+ * Host platform names with a one-to-one `process.platform` value. Solaris and
+ * illumos both report "sunos" in node, so neither maps.
+ */
+const PLATFORMS: Record<string, string> = {
+  darwin: "darwin",
+  linux: "linux",
+  android: "android",
+  freebsd: "freebsd",
+  openbsd: "openbsd",
+  aix: "aix",
+  windows: "win32",
+};
+
 function envAccess(key: string): string {
   const m = /^(["'])([A-Za-z_][\w]*)\1$/.exec(key);
   return m ? `.${m[2]}` : `[${key}]`;
@@ -1958,13 +1995,21 @@ function convertProcess(
           'process.platform ("win32"), so convert by hand',
       };
     }
+    const mapped = PLATFORMS[compared[2]];
+    if (mapped === undefined) {
+      return {
+        pos,
+        reason: `${host} compared with "${compared[2]}", which has no ` +
+          "one-to-one process.platform value; convert by hand",
+      };
+    }
     const outcome = swap("process.platform", ref.end, "process.platform");
-    if (!isSkip(outcome) && compared[2] === "windows") {
-      const literal = ref.end + compared[0].length - '"windows"'.length;
+    if (!isSkip(outcome) && mapped !== compared[2]) {
+      const literalEnd = ref.end + compared[0].length;
       outcome.edits.push({
-        start: literal,
-        end: ref.end + compared[0].length,
-        text: '"win32"',
+        start: literalEnd - compared[2].length - 2,
+        end: literalEnd,
+        text: `"${mapped}"`,
       });
     }
     return outcome;
@@ -2037,6 +2082,14 @@ const hostPass: Pass = (src, ctx) => {
     const [head] = ref.path;
     const pos = ref.start;
     if (REGISTRATION.has(head)) continue;
+    if (ctx.hostShadowed) {
+      outcomes.push({
+        pos,
+        reason: `the file declares its own \`${HOST}\`, so some references ` +
+          "reach the local; convert by hand",
+      });
+      continue;
+    }
     if (head === "errors") {
       outcomes.push(convertError(src, ref));
       continue;
