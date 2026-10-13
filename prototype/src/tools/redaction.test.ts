@@ -1,12 +1,7 @@
 // Tests for the shared redactor (`redaction.ts`) as the durable tool_call
 // event applies it.
 
-import {
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
@@ -104,8 +99,8 @@ describe("redactCommandArguments (sensitive tool args)", () => {
       () => Promise.resolve({ decision: "approve" }),
     );
     const args = JSON.parse(events[0].tool_arguments as string);
-    assertStrictEquals(args.path, "notes.md");
-    assertStrictEquals(args.content, "[redacted]");
+    assert.strictEqual(args.path, "notes.md");
+    assert.strictEqual(args.content, "[redacted]");
   });
 
   it("redacts a redact-marked argument of any type — malformed content cannot bypass it", async () => {
@@ -160,12 +155,10 @@ describe("redactCommandArguments (sensitive tool args)", () => {
       // Non-string content is denied by validation before execution, but the
       // denied call's persisted event still redacts content to the sentinel —
       // the raw nested payload never reaches the log or replay.
-      assertStrictEquals(result.decision, "deny");
+      assert.strictEqual(result.decision, "deny");
       const args = JSON.parse(events[0].tool_arguments as string);
-      assertStrictEquals(args.content, "[redacted]");
-      assertFalse(
-        (events[0].tool_arguments as string).includes("secret token"),
-      );
+      assert.strictEqual(args.content, "[redacted]");
+      assert.ok(!(events[0].tool_arguments as string).includes("secret token"));
     }
   });
 
@@ -173,7 +166,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
     const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
       workspaceRoot: "/work",
     });
-    assertStrictEquals(
+    assert.strictEqual(
       registry.lookup("write_file")!.inputSchema.properties!.content!.redact,
       true,
     );
@@ -193,7 +186,7 @@ describe("redactCommandArguments (sensitive tool args)", () => {
         events.push(e);
       },
     });
-    assertEquals(JSON.parse(events[0].tool_arguments as string), {
+    assert.deepStrictEqual(JSON.parse(events[0].tool_arguments as string), {
       slug: "project_dyfj",
     });
   });
@@ -220,11 +213,11 @@ describe("redactCommandArguments (sensitive tool args)", () => {
       },
     );
 
-    assertStrictEquals(result.decision, "deny");
-    assertEquals(JSON.parse(events[0].tool_arguments as string), {
+    assert.strictEqual(result.decision, "deny");
+    assert.deepStrictEqual(JSON.parse(events[0].tool_arguments as string), {
       slug: "[redacted]",
     });
-    assertFalse((events[0].tool_arguments as string).includes("unexpected"));
+    assert.ok(!(events[0].tool_arguments as string).includes("unexpected"));
   });
 });
 
@@ -271,9 +264,9 @@ describe("buildCommandToolCallEventPayload", () => {
       ctx,
       bashCommand(true),
     );
-    assertStrictEquals(redacted.tool_result, "[redacted]");
-    assertFalse((redacted.tool_result as string).includes("ANTHROPIC_API_KEY"));
-    assertEquals(JSON.parse(redacted.tool_arguments as string), {
+    assert.strictEqual(redacted.tool_result, "[redacted]");
+    assert.ok(!(redacted.tool_result as string).includes("ANTHROPIC_API_KEY"));
+    assert.deepStrictEqual(JSON.parse(redacted.tool_arguments as string), {
       command: "env",
     });
 
@@ -283,8 +276,11 @@ describe("buildCommandToolCallEventPayload", () => {
       ctx,
       bashCommand(false),
     );
-    assertStringIncludes(kept.tool_result as string, "ANTHROPIC_API_KEY");
-    assertEquals(JSON.parse(kept.tool_arguments as string), {
+    assert.ok(
+      (kept.tool_result as string).includes("ANTHROPIC_API_KEY"),
+      `expected kept.tool_result as string to include "ANTHROPIC_API_KEY"`,
+    );
+    assert.deepStrictEqual(JSON.parse(kept.tool_arguments as string), {
       command: "env",
     });
   });
@@ -328,14 +324,15 @@ describe("buildCommandToolCallEventPayload", () => {
       () => Promise.resolve({ decision: "approve" }),
     );
     // The model still received the real output in-turn…
-    assertStrictEquals(result.isError, false);
+    assert.strictEqual(result.isError, false);
     if (!result.isError) {
-      assertStringIncludes(result.result as string, "ANTHROPIC_API_KEY");
+      assert.ok(
+        (result.result as string).includes("ANTHROPIC_API_KEY"),
+        `expected result.result as string to include "ANTHROPIC_API_KEY"`,
+      );
     }
     // …but the durable event never persists it.
-    assertStrictEquals(events[0].tool_result, "[redacted]");
-    assertFalse(
-      (events[0].tool_result as string).includes("ANTHROPIC_API_KEY"),
-    );
+    assert.strictEqual(events[0].tool_result, "[redacted]");
+    assert.ok(!(events[0].tool_result as string).includes("ANTHROPIC_API_KEY"));
   });
 });

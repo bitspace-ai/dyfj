@@ -1,10 +1,6 @@
 // Tests for argument validation and its corrective feedback (`validate.ts`).
 
-import {
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, JsonSchemaObject } from "./definition.ts";
@@ -39,32 +35,44 @@ describe("invalid-arguments feedback", () => {
       call({}, { commandId: "read_file" }),
     ) as { decision: string; authzBasis: string; reason: string };
 
-    assertStrictEquals(result.decision, "deny");
-    assertStrictEquals(result.authzBasis, "policy:deny:invalid-arguments");
+    assert.strictEqual(result.decision, "deny");
+    assert.strictEqual(result.authzBasis, "policy:deny:invalid-arguments");
     // Names the tool and the exact validation failure…
-    assertStringIncludes(
-      result.reason,
-      "invalid arguments for read_file: missing required argument: path",
+    assert.ok(
+      result.reason.includes(
+        "invalid arguments for read_file: missing required argument: path",
+      ),
+      `expected result.reason to include "invalid arguments for read_file: missing required argument: path"`,
     );
     // …states the expected shape, with the schema's own description…
     // read_file gained optional offset/limit (ranged reads). The corrective
     // feedback advertises them, which is the point: the model learns the
     // affordance exists from the error it just caused.
-    assertStringIncludes(
-      result.reason,
-      'expected: {"path": string (required), "offset": number (optional), ' +
-        '"limit": number (optional)}',
+    assert.ok(
+      result.reason.includes(
+        'expected: {"path": string (required), "offset": number (optional), ' +
+          '"limit": number (optional)}',
+      ),
+      `expected result.reason to include 'expected: {"path": string (required), "offset": number (optional), ' +
+        '"limit": number (optional)}'`,
     );
-    assertStringIncludes(
-      result.reason,
-      "path — File path relative to the workspace root.",
+    assert.ok(
+      result.reason.includes(
+        "path — File path relative to the workspace root.",
+      ),
+      `expected result.reason to include "path — File path relative to the workspace root."`,
     );
     // …reports what actually arrived…
-    assertStringIncludes(result.reason, "received keys: (none)");
+    assert.ok(
+      result.reason.includes("received keys: (none)"),
+      `expected result.reason to include "received keys: (none)"`,
+    );
     // …and instructs a corrected retry.
-    assertStringIncludes(
-      result.reason,
-      "Call read_file again with arguments matching the expected shape.",
+    assert.ok(
+      result.reason.includes(
+        "Call read_file again with arguments matching the expected shape.",
+      ),
+      `expected result.reason to include "Call read_file again with arguments matching the expected shape."`,
     );
   });
 
@@ -77,14 +85,20 @@ describe("invalid-arguments feedback", () => {
       ),
     ) as { decision: string; reason: string };
 
-    assertStrictEquals(result.decision, "deny");
-    assertStringIncludes(result.reason, "content must be a string");
+    assert.strictEqual(result.decision, "deny");
+    assert.ok(
+      result.reason.includes("content must be a string"),
+      `expected result.reason to include "content must be a string"`,
+    );
     // Both keys are declared in write_file's schema, so both are named.
-    assertStringIncludes(result.reason, 'received keys: "path", "content"');
+    assert.ok(
+      result.reason.includes('received keys: "path", "content"'),
+      `expected result.reason to include 'received keys: "path", "content"'`,
+    );
     // Values may carry redact-marked payloads and the reason is persisted to
     // the event trail — schema vocabulary only, never values.
-    assertFalse(result.reason.includes("12345"));
-    assertFalse(result.reason.includes("notes/friction.md"));
+    assert.ok(!result.reason.includes("12345"));
+    assert.ok(!result.reason.includes("notes/friction.md"));
   });
 
   it("an unrecognized property name is never echoed into the reason", () => {
@@ -104,14 +118,14 @@ describe("invalid-arguments feedback", () => {
       ),
     ) as { decision: string; reason: string };
 
-    assertStrictEquals(result.decision, "deny");
+    assert.strictEqual(result.decision, "deny");
     // The untrusted name appears nowhere in the model-visible / durable reason.
-    assertFalse(result.reason.includes(untrustedName));
-    assertFalse(result.reason.includes("placeholder"));
+    assert.ok(!result.reason.includes(untrustedName));
+    assert.ok(!result.reason.includes("placeholder"));
     // It is reported as a bare count instead, alongside the recognized key.
-    assertStringIncludes(
-      result.reason,
-      'received keys: "path", 1 not declared',
+    assert.ok(
+      result.reason.includes('received keys: "path", 1 not declared'),
+      `expected result.reason to include 'received keys: "path", 1 not declared'`,
     );
   });
 
@@ -129,16 +143,18 @@ describe("invalid-arguments feedback", () => {
         ),
       ) as { decision: string; authzBasis: string; reason: string };
 
-      assertStrictEquals(result.decision, "deny");
-      assertStrictEquals(result.authzBasis, "policy:deny:invalid-arguments");
-      assertStringIncludes(
-        result.reason,
-        "unexpected argument not declared in the tool's schema",
+      assert.strictEqual(result.decision, "deny");
+      assert.strictEqual(result.authzBasis, "policy:deny:invalid-arguments");
+      assert.ok(
+        result.reason.includes(
+          "unexpected argument not declared in the tool's schema",
+        ),
+        `expected result.reason to include "unexpected argument not declared in the tool's schema"`,
       );
-      assertFalse(result.reason.includes(inherited));
-      assertStringIncludes(
-        result.reason,
-        'received keys: "path", 1 not declared',
+      assert.ok(!result.reason.includes(inherited));
+      assert.ok(
+        result.reason.includes('received keys: "path", 1 not declared'),
+        `expected result.reason to include 'received keys: "path", 1 not declared'`,
       );
     }
   });
@@ -163,15 +179,19 @@ describe("invalid-arguments feedback", () => {
       },
     );
 
-    assertStrictEquals(result.isError, true);
+    assert.strictEqual(result.isError, true);
     // The event trail shows the exact text the model saw, so a future
     // diagnosis of this failure mode reads the true feedback.
     const reason = result.isError ? result.reason : "";
-    assertStrictEquals(events[0].tool_result, reason);
-    assertStrictEquals(events[0].tool_is_error, true);
-    assertStringIncludes(
-      reason,
-      "invalid arguments for read_file: missing required argument: path",
+    assert.strictEqual(events[0].tool_result, reason);
+    assert.strictEqual(events[0].tool_is_error, true);
+    assert.ok(
+      reason.includes(
+        "invalid arguments for read_file: missing required argument: path",
+      ),
+      `expected ${
+        JSON.stringify(reason)
+      } to include "invalid arguments for read_file: missing required argument: path"`,
     );
   });
 });
@@ -188,28 +208,28 @@ describe("declared numeric bounds", () => {
 
   it("accepts values on and inside the bounds", () => {
     for (const seconds of [1, 300, 600]) {
-      assertStrictEquals(validateCommandArguments(schema, { seconds }), null);
+      assert.strictEqual(validateCommandArguments(schema, { seconds }), null);
     }
-    assertStrictEquals(validateCommandArguments(schema, { ratio: 0 }), null);
+    assert.strictEqual(validateCommandArguments(schema, { ratio: 0 }), null);
   });
 
   it("names the bound a value falls outside of", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       validateCommandArguments(schema, { seconds: 601 }),
       "seconds must be at most 600",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       validateCommandArguments(schema, { seconds: 0 }),
       "seconds must be at least 1",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       validateCommandArguments(schema, { ratio: -0.5 }),
       "ratio must be at least 0",
     );
   });
 
   it("a non-integer is reported as such before its bounds", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       validateCommandArguments(schema, { seconds: 1.5 }),
       "seconds must be an integer",
     );

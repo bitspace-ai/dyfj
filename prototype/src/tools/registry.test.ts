@@ -1,6 +1,6 @@
 // Tests for the command registry (`registry.ts`).
 
-import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
@@ -40,25 +40,26 @@ describe("createCommandRegistry", () => {
 
     registry.register(command);
 
-    assertStrictEquals(registry.lookup("memory.read"), command);
-    assertEquals(registry.list(), [command]);
+    assert.strictEqual(registry.lookup("memory.read"), command);
+    assert.deepStrictEqual(registry.list(), [command]);
   });
 
   it("rejects duplicate command ids", () => {
     const registry = createCommandRegistry();
     registry.register(readCommand());
 
-    assertThrows(
+    assert.throws(
       () => registry.register(readCommand()),
-      Error,
-      "Command already registered: memory.read",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Command already registered: memory.read"),
     );
   });
 
   it("projects registered commands into model-facing tool schemas", () => {
     const registry = createCommandRegistry([readCommand()]);
 
-    assertEquals(registry.projectTools(), [
+    assert.deepStrictEqual(registry.projectTools(), [
       {
         name: "memory.read",
         description: "Load one Dolt-backed memory by slug.",

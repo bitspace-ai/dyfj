@@ -1,13 +1,7 @@
 // Tests for the tool catalog (`catalog.ts`).
 
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertExists,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { assertExists } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall } from "./definition.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
@@ -30,14 +24,17 @@ function call(
 describe("buildToolCatalog", () => {
   it("registers only memory.read without a workspace root", () => {
     const registry = buildToolCatalog({}, {});
-    assertEquals(registry.list().map((c) => c.id), ["memory.read"]);
+    assert.deepStrictEqual(registry.list().map((c) => c.id), ["memory.read"]);
   });
 
   it("refuses to register the file tools without root anchors", () => {
-    assertThrows(
+    assert.throws(
       () => buildToolCatalog({}, { workspaceRoot: "/work" }),
-      Error,
-      "tool catalog: the workspace file tools need root anchors",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "tool catalog: the workspace file tools need root anchors",
+        ),
     );
   });
 
@@ -45,7 +42,7 @@ describe("buildToolCatalog", () => {
     const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
       workspaceRoot: "/work",
     });
-    assertEquals(registry.list().map((c) => c.id).sort(), [
+    assert.deepStrictEqual(registry.list().map((c) => c.id).sort(), [
       "bash",
       "edit_file",
       "git",
@@ -67,7 +64,7 @@ describe("buildToolCatalog", () => {
       readFile,
       call({ path: "deno.json" }, { commandId: "read_file" }),
     );
-    assertStrictEquals(result.decision, "allow");
+    assert.strictEqual(result.decision, "allow");
   });
 
   it("registers memory.read as the first core command", () => {
@@ -77,7 +74,7 @@ describe("buildToolCatalog", () => {
 
     const memoryRead = registry.lookup("memory.read");
     assertExists(memoryRead);
-    assertObjectMatch(memoryRead, {
+    assert.partialDeepStrictEqual(memoryRead, {
       id: "memory.read",
       title: "Read Memory",
       permission: {
@@ -91,17 +88,20 @@ describe("buildToolCatalog", () => {
     });
     // assertObjectMatch treats an expected array as a prefix; pin the exact
     // arrays so an added effect or resource still fails.
-    assertEquals(memoryRead.permission.effects, ["read.memory", "emit.event"]);
-    assertEquals(memoryRead.permission.resources, ["memory:*"]);
+    assert.deepStrictEqual(memoryRead.permission.effects, [
+      "read.memory",
+      "emit.event",
+    ]);
+    assert.deepStrictEqual(memoryRead.permission.resources, ["memory:*"]);
     const projected = registry.projectTools()[0];
-    assertObjectMatch(projected, {
+    assert.partialDeepStrictEqual(projected, {
       name: "memory.read",
       parameters: {
         required: ["slug"],
         additionalProperties: false,
       },
     });
-    assertEquals(projected.parameters.required, ["slug"]);
+    assert.deepStrictEqual(projected.parameters.required, ["slug"]);
   });
 });
 
@@ -118,8 +118,14 @@ describe("buildToolCatalog wiring", () => {
     });
 
     const names = registry.projectTools().map((t) => t.name);
-    assertArrayIncludes(names, ["grep_files"]);
-    assertArrayIncludes(names, ["glob_files"]);
+    assert.deepStrictEqual(
+      ["grep_files"].filter((item) => !names.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["glob_files"].filter((item) => !names.includes(item)),
+      [],
+    );
   });
 
   it("registered search tools auto-approve; bash still asks", () => {
@@ -133,12 +139,12 @@ describe("buildToolCatalog wiring", () => {
         cmd,
         call({ pattern: "x" }, { commandId: id }),
       );
-      assertStrictEquals(result.decision, "allow");
-      assertStrictEquals(result.authzBasis, "policy:allow:read-only-local");
+      assert.strictEqual(result.decision, "allow");
+      assert.strictEqual(result.authzBasis, "policy:allow:read-only-local");
     }
 
     const bash = registry.lookup("bash")!;
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(
         bash,
         call({ command: "ls" }, { commandId: "bash" }),

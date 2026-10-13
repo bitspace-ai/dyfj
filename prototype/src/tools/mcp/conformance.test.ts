@@ -1,9 +1,4 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 
 import {
@@ -21,7 +16,7 @@ const SPAN_ID = "00f067aa0ba902b7";
 
 describe("MCP W3C trace context", () => {
   it("injects canonical trace identifiers and validated trace state", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       injectMcpTraceContext({ retained: true, baggage: "drop=me" }, {
         traceId: TRACE_ID,
         spanId: SPAN_ID,
@@ -37,7 +32,7 @@ describe("MCP W3C trace context", () => {
   });
 
   it("extracts a validated remote parent without retaining raw envelopes", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       extractMcpTraceContext({
         traceparent: `00-${TRACE_ID}-${SPAN_ID}-01`,
         tracestate: "vendor=value",
@@ -63,7 +58,7 @@ describe("MCP W3C trace context", () => {
     ]
   ) {
     it(`rejects invalid traceparent ${traceparent}`, () => {
-      assertStrictEquals(extractMcpTraceContext({ traceparent }), undefined);
+      assert.strictEqual(extractMcpTraceContext({ traceparent }), undefined);
     });
   }
 
@@ -81,7 +76,7 @@ describe("MCP W3C trace context", () => {
         traceparent: `00-${TRACE_ID}-${SPAN_ID}-00`,
         tracestate: traceState,
       });
-      assertEquals(extracted, {
+      assert.deepStrictEqual(extracted, {
         traceId: TRACE_ID,
         parentSpanId: SPAN_ID,
         traceFlags: 0,
@@ -96,20 +91,20 @@ describe("MCP W3C trace context", () => {
       traceState: "vendor=value",
       parentIsRemote: true,
     }, "server");
-    assertEquals(fields, {
+    assert.deepStrictEqual(fields, {
       trace_flags: 1,
       trace_state: "vendor=value",
       span_kind: "server",
       parent_is_remote: true,
     });
-    assertFalse("traceparent" in fields);
-    assertFalse("baggage" in fields);
+    assert.ok(!("traceparent" in fields));
+    assert.ok(!("baggage" in fields));
   });
 });
 
 describe("MCP deterministic list and retry fixtures", () => {
   it("sorts lists independently of producer order", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       sortMcpList([
         { name: "zeta" },
         { name: "alpha" },
@@ -124,7 +119,7 @@ describe("MCP deterministic list and retry fixtures", () => {
   });
 
   it("partitions private freshness by principal and clearance", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       resolveMcpListFreshness({
         ttlMs: 1_000,
         cacheScope: "private",
@@ -150,8 +145,8 @@ describe("MCP deterministic list and retry fixtures", () => {
       principalId: "operator-b",
       clearance: "client_safe:public",
     });
-    assertStrictEquals(first.partition, '["public","client_safe:public"]');
-    assertStrictEquals(second.partition, first.partition);
+    assert.strictEqual(first.partition, '["public","client_safe:public"]');
+    assert.strictEqual(second.partition, first.partition);
   });
 
   it("encodes private partition tuples without separator or control collisions", () => {
@@ -161,7 +156,7 @@ describe("MCP deterministic list and retry fixtures", () => {
         clearance,
       }).partition;
     const controlPartition = partition("line\nbreak", "public\0private");
-    assertEquals(
+    assert.deepStrictEqual(
       (new Set([
         partition("a:b", "c"),
         partition("a", "b:c"),
@@ -172,8 +167,8 @@ describe("MCP deterministic list and retry fixtures", () => {
       ])).size,
       6,
     );
-    assertFalse(controlPartition.includes("\n"));
-    assertFalse(controlPartition.includes("\0"));
+    assert.ok(!controlPartition.includes("\n"));
+    assert.ok(!controlPartition.includes("\0"));
   });
 
   it("bounds server-controlled cache identity inputs", () => {
@@ -181,30 +176,32 @@ describe("MCP deterministic list and retry fixtures", () => {
       principalId: "\0".repeat(128),
       clearance: "\0".repeat(128),
     }).partition;
-    assertEquals(maximumEscapedPartition.length, 1_553);
-    assertFalse(maximumEscapedPartition.includes("\0"));
-    assertThrows(
+    assert.deepStrictEqual(maximumEscapedPartition.length, 1_553);
+    assert.ok(!maximumEscapedPartition.includes("\0"));
+    assert.throws(
       () =>
         resolveMcpListFreshness({
           principalId: "p".repeat(129),
           clearance: "public",
         }),
-      Error,
-      "principalId exceeds 128 UTF-16 code units",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("principalId exceeds 128 UTF-16 code units"),
     );
-    assertThrows(
+    assert.throws(
       () =>
         resolveMcpListFreshness({
           principalId: "operator",
           clearance: "c".repeat(129),
         }),
-      Error,
-      "clearance exceeds 128 UTF-16 code units",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("clearance exceeds 128 UTF-16 code units"),
     );
   });
 
   it("defaults untrusted freshness to immediately stale and private", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       resolveMcpListFreshness({
         ttlMs: -1,
         cacheScope: "unexpected",
@@ -245,7 +242,7 @@ describe("MCP deterministic list and retry fixtures", () => {
     ] as const
   ) {
     it(`classifies ${JSON.stringify(input)} as ${expected}`, () => {
-      assertStrictEquals(classifyMcpRetry(input), expected);
+      assert.strictEqual(classifyMcpRetry(input), expected);
     });
   }
 });
@@ -264,32 +261,32 @@ describe("bounded JSON Schema 2020-12 refs", () => {
   });
 
   it("rejects remote, cyclic, unresolved, and over-budget refs", () => {
-    assertThrows(
+    assert.throws(
       () =>
         assertBoundedLocalJsonSchemaRefs({
           $ref: "https://example.invalid/schema",
         }),
-      Error,
-      "only local",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("only local"),
     );
-    assertThrows(
+    assert.throws(
       () =>
         assertBoundedLocalJsonSchemaRefs({
           $defs: { loop: { $ref: "#/$defs/loop" } },
           $ref: "#/$defs/loop",
         }),
-      Error,
-      "cyclic",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("cyclic"),
     );
-    assertThrows(
+    assert.throws(
       () =>
         assertBoundedLocalJsonSchemaRefs({
           $ref: "#/$defs/missing",
         }),
-      Error,
-      "unresolved",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("unresolved"),
     );
-    assertThrows(
+    assert.throws(
       () =>
         assertBoundedLocalJsonSchemaRefs({
           $defs: { value: { type: "string" } },
@@ -298,8 +295,8 @@ describe("bounded JSON Schema 2020-12 refs", () => {
             { $ref: "#/$defs/value" },
           ],
         }, { maxDepth: 4, maxRefs: 1 }),
-      Error,
-      "count exceeded",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("count exceeded"),
     );
   });
 });

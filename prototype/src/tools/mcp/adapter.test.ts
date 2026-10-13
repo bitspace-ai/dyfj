@@ -1,14 +1,6 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-  fail,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertSpyCalls, spy } from "@std/testing/mock";
 import saveIssueSchema from "../../extensions/linear/linear-save-issue-schema.fixture.ts";
 import { buildLinearIssueCreationCommand } from "../../extensions/linear/mod.ts";
 import {
@@ -34,11 +26,11 @@ type DiscoverPort = NonNullable<McpDeps["discover"]>;
 // Recording ports the test expects to stay unused. Like a bare mock, each
 // returns nothing if it is called; the assertions on its calls catch that.
 function unusedCall() {
-  return spy((() => undefined) as unknown as CallPort);
+  return mock.fn((() => undefined) as unknown as CallPort);
 }
 
 function unusedDiscover() {
-  return spy((() => undefined) as unknown as DiscoverPort);
+  return mock.fn((() => undefined) as unknown as DiscoverPort);
 }
 
 // The Linear extension's issue-creation builder, as the composition root
@@ -110,8 +102,8 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    assertEquals(built.commands, []);
-    assertEquals(built.diagnostics, [
+    assert.deepStrictEqual(built.commands, []);
+    assert.deepStrictEqual(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -125,7 +117,7 @@ describe("external MCP command projection", () => {
         toolCount: 0,
       },
     ]);
-    assertSpyCalls(call, 0);
+    assert.equal(call.mock.callCount(), 0);
   });
 
   for (const upstreamTool of ["create_issue", "save_issue"] as const) {
@@ -165,10 +157,10 @@ describe("external MCP command projection", () => {
             call,
           },
         );
-        assertEquals(built.commands.map((command) => command.id), [
+        assert.deepStrictEqual(built.commands.map((command) => command.id), [
           "mcp.linear.get_issue",
         ]);
-        assertEquals(built.diagnostics, [
+        assert.deepStrictEqual(built.diagnostics, [
           {
             serverId: "linear",
             status: "withheld",
@@ -182,7 +174,7 @@ describe("external MCP command projection", () => {
             toolCount: 1,
           },
         ]);
-        assertSpyCalls(call, 0);
+        assert.equal(call.mock.callCount(), 0);
       },
     );
   }
@@ -206,8 +198,8 @@ describe("external MCP command projection", () => {
         call: unusedCall(),
       },
     );
-    assertEquals(built.commands, []);
-    assertEquals(built.diagnostics, [
+    assert.deepStrictEqual(built.commands, []);
+    assert.deepStrictEqual(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -243,19 +235,19 @@ describe("external MCP command projection", () => {
           call,
         },
       );
-      assertEquals(built.commands, []);
-      assertEquals(built.diagnostics[0], {
+      assert.deepStrictEqual(built.commands, []);
+      assert.deepStrictEqual(built.diagnostics[0], {
         serverId: "linear",
         status: "withheld",
         tool: "create_issue",
         reason,
       });
-      assertFalse(
-        (JSON.stringify(built.diagnostics)).includes(
+      assert.ok(
+        !(JSON.stringify(built.diagnostics)).includes(
           "untrusted schema details",
         ),
       );
-      assertSpyCalls(call, 0);
+      assert.equal(call.mock.callCount(), 0);
     });
   }
 
@@ -284,14 +276,14 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    assertEquals(built.commands, []);
-    assertEquals(built.diagnostics[0], {
+    assert.deepStrictEqual(built.commands, []);
+    assert.deepStrictEqual(built.diagnostics[0], {
       serverId: "other",
       status: "withheld",
       tool: "create_issue",
       reason: "binding missing",
     });
-    assertSpyCalls(call, 0);
+    assert.equal(call.mock.callCount(), 0);
   });
 
   it("registers save_issue only as bounded create_issue with a binding", async () => {
@@ -319,24 +311,24 @@ describe("external MCP command projection", () => {
           call,
         },
       );
-      assertEquals(
+      assert.deepStrictEqual(
         built.commands.map((c) => c.id),
         withBinding ? ["mcp.linear.create_issue"] : [],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         externalMcpCommandsForTransport(built.commands, "remote"),
         [],
       );
       if (withBinding) {
-        assertFalse("id" in built.commands[0].inputSchema.properties!);
-        assertStrictEquals(built.commands[0].permission.defaultDecision, "ask");
+        assert.ok(!("id" in built.commands[0].inputSchema.properties!));
+        assert.strictEqual(built.commands[0].permission.defaultDecision, "ask");
       } else {
-        assertObjectMatch(built.diagnostics[0], {
+        assert.partialDeepStrictEqual(built.diagnostics[0], {
           tool: "save_issue",
           reason: "binding missing",
         });
       }
-      assertSpyCalls(call, 0);
+      assert.equal(call.mock.callCount(), 0);
     }
   });
 
@@ -368,8 +360,10 @@ describe("external MCP command projection", () => {
         call,
       },
     );
-    assertEquals(built.commands.map((c) => c.id), ["mcp.linear.get_issue"]);
-    assertEquals(built.diagnostics, [
+    assert.deepStrictEqual(built.commands.map((c) => c.id), [
+      "mcp.linear.get_issue",
+    ]);
+    assert.deepStrictEqual(built.diagnostics, [
       {
         serverId: "linear",
         status: "withheld",
@@ -383,7 +377,7 @@ describe("external MCP command projection", () => {
         toolCount: 1,
       },
     ]);
-    assertSpyCalls(call, 0);
+    assert.equal(call.mock.callCount(), 0);
   });
 
   it("registers the bounded projection when binding and schema match", async () => {
@@ -417,21 +411,24 @@ describe("external MCP command projection", () => {
         call: unusedCall(),
       },
     );
-    assertEquals(built.commands.map((command) => command.id), [
+    assert.deepStrictEqual(built.commands.map((command) => command.id), [
       "mcp.linear.create_issue",
     ]);
-    assertFalse("team" in built.commands[0].inputSchema.properties!);
-    assertObjectMatch(built.commands[0].permission, {
+    assert.ok(!("team" in built.commands[0].inputSchema.properties!));
+    assert.partialDeepStrictEqual(built.commands[0].permission, {
       defaultDecision: "ask",
       network: "configured-external",
     });
-    assertStrictEquals(built.commands[0].minimumClearance, "loopback");
-    assertEquals(externalMcpCommandsForTransport(built.commands, "remote"), []);
-    assertEquals(
+    assert.strictEqual(built.commands[0].minimumClearance, "loopback");
+    assert.deepStrictEqual(
+      externalMcpCommandsForTransport(built.commands, "remote"),
+      [],
+    );
+    assert.deepStrictEqual(
       externalMcpCommandsForTransport(built.commands, "loopback"),
       built.commands,
     );
-    assertObjectMatch(built.diagnostics[0], { toolCount: 1 });
+    assert.partialDeepStrictEqual(built.diagnostics[0], { toolCount: 1 });
   });
 
   it("an inherited credential property is unavailable", async () => {
@@ -442,17 +439,17 @@ describe("external MCP command projection", () => {
       credentials,
       { ...WITH_LINEAR, discover },
     );
-    assertEquals(result.commands, []);
-    assertEquals(result.diagnostics, [{
+    assert.deepStrictEqual(result.commands, []);
+    assert.deepStrictEqual(result.diagnostics, [{
       serverId: "linear",
       status: "unavailable",
       reason: "credential unavailable",
     }]);
-    assertSpyCalls(discover, 0);
+    assert.equal(discover.mock.callCount(), 0);
   });
 
   it("registers only the configured and discovered intersection", async () => {
-    const call = spy(async () => ({
+    const call = mock.fn(async () => ({
       content: [{ type: "text", text: "issue" }],
       isError: false,
     }));
@@ -493,20 +490,23 @@ describe("external MCP command projection", () => {
       },
     );
 
-    assertEquals(result.diagnostics, [{
+    assert.deepStrictEqual(result.diagnostics, [{
       serverId: "linear",
       status: "ready",
       revision: "2026-07-28",
       toolCount: 1,
     }]);
-    assertEquals(result.commands.map((command: { id: string }) => command.id), [
-      "mcp.linear.get_issue",
-    ]);
-    assertObjectMatch(result.commands[0]?.permission, {
+    assert.deepStrictEqual(
+      result.commands.map((command: { id: string }) => command.id),
+      [
+        "mcp.linear.get_issue",
+      ],
+    );
+    assert.partialDeepStrictEqual(result.commands[0]?.permission, {
       defaultDecision: "allow",
       network: "configured-external",
     });
-    assertStrictEquals(result.commands[0]?.minimumClearance, "loopback");
+    assert.strictEqual(result.commands[0]?.minimumClearance, "loopback");
 
     const registry = createCommandRegistry(result.commands);
     const events: Record<string, unknown>[] = [];
@@ -533,31 +533,39 @@ describe("external MCP command projection", () => {
       { loopback: true },
     );
 
-    assertObjectMatch(invocation, {
+    assert.partialDeepStrictEqual(invocation, {
       decision: "allow",
       isError: false,
       authzBasis: "policy:allow:operator-configured-external-read",
     });
-    assertSpyCalls(call, 1);
-    assertStringIncludes(
-      String(invocation.isError ? "" : invocation.result),
-      "<untrusted-mcp-result>",
+    assert.equal(call.mock.callCount(), 1);
+    assert.ok(
+      String(invocation.isError ? "" : invocation.result).includes(
+        "<untrusted-mcp-result>",
+      ),
+      `expected String(invocation.isError ? "" : invocation.result) to include "<untrusted-mcp-result>"`,
     );
-    assertObjectMatch(events[0], {
+    assert.partialDeepStrictEqual(events[0], {
       tool_name: "mcp.linear.get_issue",
       tool_arguments:
         '{"id":"[redacted]","labels":"[redacted]","filter":"[redacted]"}',
       tool_result: "[redacted]",
       span_kind: "client",
     });
-    assertStringIncludes(String(events[0]?.content), '"server":"linear"');
-    assertStringIncludes(String(events[0]?.content), '"revision":"2026-07-28"');
-    assertFalse((JSON.stringify(events[0])).includes("secret-value"));
-    assertFalse((JSON.stringify(events[0])).includes("mcp.linear.app"));
+    assert.ok(
+      String(events[0]?.content).includes('"server":"linear"'),
+      `expected String(events[0]?.content) to include '"server":"linear"'`,
+    );
+    assert.ok(
+      String(events[0]?.content).includes('"revision":"2026-07-28"'),
+      `expected String(events[0]?.content) to include '"revision":"2026-07-28"'`,
+    );
+    assert.ok(!(JSON.stringify(events[0])).includes("secret-value"));
+    assert.ok(!(JSON.stringify(events[0])).includes("mcp.linear.app"));
   });
 
   it("write tools always ask and preserve one operator-approved call", async () => {
-    const call = spy(async () => ({
+    const call = mock.fn(async () => ({
       content: [{ type: "text", text: "created" }],
       isError: false,
     }));
@@ -586,7 +594,7 @@ describe("external MCP command projection", () => {
       },
     );
     const registry = createCommandRegistry(discovered.commands);
-    const approve = spy(async () => ({ decision: "approve" as const }));
+    const approve = mock.fn(async () => ({ decision: "approve" as const }));
     const result = await invokeCommandWithEvent(
       registry,
       {
@@ -603,12 +611,12 @@ describe("external MCP command projection", () => {
       approve,
       { permissionLevel: "operator", loopback: true },
     );
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-approved",
     });
-    assertSpyCalls(approve, 1);
-    assertSpyCalls(call, 1);
+    assert.equal(approve.mock.callCount(), 1);
+    assert.equal(call.mock.callCount(), 1);
   });
 
   it("an unavailable credential disables only its server with a value-free diagnostic", async () => {
@@ -618,13 +626,13 @@ describe("external MCP command projection", () => {
       {},
       { ...WITH_LINEAR, discover, call: unusedCall() },
     );
-    assertEquals(result.commands, []);
-    assertEquals(result.diagnostics, [{
+    assert.deepStrictEqual(result.commands, []);
+    assert.deepStrictEqual(result.diagnostics, [{
       serverId: "linear",
       status: "unavailable",
       reason: "credential unavailable",
     }]);
-    assertSpyCalls(discover, 0);
+    assert.equal(discover.mock.callCount(), 0);
   });
 
   it("a call failure becomes one fixed tool error and one redacted receipt", async () => {
@@ -668,20 +676,23 @@ describe("external MCP command projection", () => {
       undefined,
       { loopback: true },
     );
-    assertEquals(result, {
+    assert.deepStrictEqual(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-configured-external-read",
       isError: true,
       reason: "External MCP tool call failed",
     });
-    assertObjectMatch(events[0], {
+    assert.partialDeepStrictEqual(events[0], {
       action: "invoke",
       tool_is_error: true,
       tool_result: "External MCP tool call failed",
     });
-    assertStringIncludes(String(events[0]?.content), '"outcome":"error"');
-    assertFalse((JSON.stringify(events[0])).includes("secret-value"));
-    assertFalse((JSON.stringify(result)).includes("secret-value"));
+    assert.ok(
+      String(events[0]?.content).includes('"outcome":"error"'),
+      `expected String(events[0]?.content) to include '"outcome":"error"'`,
+    );
+    assert.ok(!(JSON.stringify(events[0])).includes("secret-value"));
+    assert.ok(!(JSON.stringify(result)).includes("secret-value"));
   });
 });
 
@@ -691,22 +702,25 @@ describe("MCP HTTP containment", () => {
       type: "object",
       properties: { query: { type: "string" } },
     });
-    assertStrictEquals(omitted.additionalProperties, undefined);
-    assertStrictEquals(
+    assert.strictEqual(omitted.additionalProperties, undefined);
+    assert.strictEqual(
       sanitizeMcpInputSchema({
         type: "object",
         additionalProperties: true,
       }).additionalProperties,
       true,
     );
-    assertThrows(
+    assert.throws(
       () =>
         sanitizeMcpInputSchema({
           type: "object",
           additionalProperties: { type: "string" },
         }),
-      Error,
-      "schema-valued additionalProperties are not supported",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "schema-valued additionalProperties are not supported",
+        ),
     );
   });
 
@@ -714,15 +728,15 @@ describe("MCP HTTP containment", () => {
     const schema = sanitizeMcpInputSchema(JSON.parse(
       '{"type":"object","properties":{"__proto__":{"type":"string"}},"required":["__proto__"]}',
     ));
-    assertStrictEquals(
+    assert.strictEqual(
       Object.hasOwn(schema.properties ?? {}, "__proto__"),
       true,
     );
-    assertStrictEquals(Object.getPrototypeOf(schema.properties ?? {}), null);
+    assert.strictEqual(Object.getPrototypeOf(schema.properties ?? {}), null);
   });
 
   it("retains only configured tools from an aggregated discovery result", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       retainConfiguredMcpTools(
         [{ name: "keep" }, { name: "also_keep" }],
         [
@@ -757,7 +771,7 @@ describe("MCP HTTP containment", () => {
         call,
       },
     );
-    assertStrictEquals(
+    assert.strictEqual(
       built.commands[0].inputSchema.properties?.count?.type,
       "integer",
     );
@@ -777,28 +791,29 @@ describe("MCP HTTP containment", () => {
       undefined,
       { loopback: true },
     );
-    assertObjectMatch(result, { decision: "deny", isError: true });
-    assertSpyCalls(call, 0);
+    assert.partialDeepStrictEqual(result, { decision: "deny", isError: true });
+    assert.equal(call.mock.callCount(), 0);
   });
 
   it("accepts only the observed pinned protocol revision", () => {
-    const matching = spy(() => "2026-07-28");
-    assertStrictEquals(
+    const matching = mock.fn(() => "2026-07-28");
+    assert.strictEqual(
       requireNegotiatedMcpRevision({
         getNegotiatedProtocolVersion: matching,
       }),
       "2026-07-28",
     );
-    assertSpyCalls(matching, 1);
+    assert.equal(matching.mock.callCount(), 1);
 
     for (const revision of [undefined, "unsupported-2020-01-01"]) {
-      assertThrows(
+      assert.throws(
         () =>
           requireNegotiatedMcpRevision({
             getNegotiatedProtocolVersion: () => revision,
           }),
-        Error,
-        "external MCP protocol revision mismatch",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("external MCP protocol revision mismatch"),
       );
     }
   });
@@ -812,14 +827,14 @@ describe("MCP HTTP containment", () => {
       id: "mcp.public.search",
       minimumClearance: "remote",
     } as never;
-    assertEquals(
+    assert.deepStrictEqual(
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "remote",
       ).map((command: { id: string }) => command.id),
       ["mcp.public.search"],
     );
-    assertEquals(
+    assert.deepStrictEqual(
       externalMcpCommandsForTransport(
         [loopbackOnly, remoteEligible],
         "loopback",
@@ -840,7 +855,7 @@ describe("MCP HTTP containment", () => {
         CONFIG_PATH,
       ),
     ];
-    assertEquals(mcpServerNetGrants(configs), [
+    assert.deepStrictEqual(mcpServerNetGrants(configs), [
       "mcp.linear.app:443",
       "127.0.0.1:43137",
     ]);

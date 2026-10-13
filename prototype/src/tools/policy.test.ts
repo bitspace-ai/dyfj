@@ -1,12 +1,6 @@
 // Tests for the call-shape policy (`policy.ts`).
 
-import {
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
@@ -58,7 +52,7 @@ describe("evaluateCommandPolicy", () => {
   it("allows a valid read-only memory command for a human caller", () => {
     const result = evaluateCommandPolicy(readCommand(), call());
 
-    assertEquals(result, {
+    assert.deepStrictEqual(result, {
       decision: "allow",
       authzBasis: "policy:allow:read-only-local",
     });
@@ -73,7 +67,7 @@ describe("evaluateCommandPolicy", () => {
       ),
     );
 
-    assertStrictEquals(result.decision, "allow");
+    assert.strictEqual(result.decision, "allow");
   });
 
   it("auto-allows a read-only filesystem command", () => {
@@ -98,7 +92,7 @@ describe("evaluateCommandPolicy", () => {
       readFile,
       call({ path: "src/cli.ts" }, { commandId: "read_file" }),
     );
-    assertStrictEquals(result.decision, "allow");
+    assert.strictEqual(result.decision, "allow");
   });
 
   it("does NOT auto-allow a write-filesystem command (falls to ask)", () => {
@@ -123,7 +117,7 @@ describe("evaluateCommandPolicy", () => {
       writeFile,
       call({ path: "x" }, { commandId: "write_file" }),
     );
-    assertStrictEquals(result.decision, "ask");
+    assert.strictEqual(result.decision, "ask");
   });
 
   it("denies malformed command arguments before execution", () => {
@@ -134,13 +128,15 @@ describe("evaluateCommandPolicy", () => {
       }),
     );
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       decision: "deny",
       authzBasis: "policy:deny:invalid-arguments",
     });
-    assertStringIncludes(
-      result.reason ?? "",
-      "invalid arguments for memory.read: slug does not match required pattern",
+    assert.ok(
+      (result.reason ?? "").includes(
+        "invalid arguments for memory.read: slug does not match required pattern",
+      ),
+      `expected result.reason ?? "" to include "invalid arguments for memory.read: slug does not match required pattern"`,
     );
   });
 
@@ -155,7 +151,7 @@ describe("evaluateCommandPolicy", () => {
       ),
     );
 
-    assertObjectMatch(await result, {
+    assert.partialDeepStrictEqual(await result, {
       decision: "deny",
       authzBasis: "policy:deny:unknown-command",
       isError: true,
@@ -174,17 +170,22 @@ describe("evaluateCommandPolicy", () => {
       reason: string;
     };
 
-    assertStrictEquals(result.decision, "deny");
-    assertStrictEquals(result.authzBasis, "policy:deny:invalid-arguments");
-    assertStringIncludes(
-      result.reason,
-      "invalid arguments for memory.read: unexpected argument not declared",
+    assert.strictEqual(result.decision, "deny");
+    assert.strictEqual(result.authzBasis, "policy:deny:invalid-arguments");
+    assert.ok(
+      result.reason.includes(
+        "invalid arguments for memory.read: unexpected argument not declared",
+      ),
+      `expected result.reason to include "invalid arguments for memory.read: unexpected argument not declared"`,
     );
     // The unrecognized name is untrusted model output and is never echoed —
     // neither the name nor its persuasion text reaches the durable reason.
-    assertFalse(result.reason.includes("rationale"));
-    assertFalse(result.reason.includes("safe and urgent"));
-    assertStringIncludes(result.reason, "1 not declared in the schema");
+    assert.ok(!result.reason.includes("rationale"));
+    assert.ok(!result.reason.includes("safe and urgent"));
+    assert.ok(
+      result.reason.includes("1 not declared in the schema"),
+      `expected result.reason to include "1 not declared in the schema"`,
+    );
   });
 });
 
@@ -216,11 +217,11 @@ describe("operator permission profile", () => {
   const wcall = () => call({ path: "x" }, { commandId: "write_file" });
 
   it("strict (default): a contained mutation still prompts for approval", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(writeCmd(), wcall()).decision,
       "ask",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(writeCmd(), wcall(), {
         permissionLevel: "strict",
         loopback: true,
@@ -234,12 +235,12 @@ describe("operator permission profile", () => {
       permissionLevel: "operator",
       loopback: true,
     });
-    assertStrictEquals(policy.decision, "allow");
-    assertStrictEquals(policy.authzBasis, "policy:allow:operator-profile");
+    assert.strictEqual(policy.decision, "allow");
+    assert.strictEqual(policy.authzBasis, "policy:allow:operator-profile");
   });
 
   it("the operator profile is loopback-only", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(writeCmd(), wcall(), {
         permissionLevel: "operator",
         loopback: false,
@@ -249,14 +250,14 @@ describe("operator permission profile", () => {
   });
 
   it("operator does NOT cover paid or networked mutations (bash-class stays gated)", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(writeCmd({ cost: "paid" }), wcall(), {
         permissionLevel: "operator",
         loopback: true,
       }).decision,
       "ask",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       evaluateCommandPolicy(writeCmd({ network: "external" }), wcall(), {
         permissionLevel: "operator",
         loopback: true,
@@ -279,7 +280,7 @@ describe("operator permission profile", () => {
         permissionLevel: "operator",
         loopback: true,
       });
-      assertStrictEquals(policy.decision, "ask");
+      assert.strictEqual(policy.decision, "ask");
     }
   });
 
@@ -295,8 +296,8 @@ describe("operator permission profile", () => {
       },
       { permissionLevel: "operator", loopback: true },
     );
-    assertStrictEquals(approverCalled, false);
-    assertObjectMatch(result, {
+    assert.strictEqual(approverCalled, false);
+    assert.partialDeepStrictEqual(result, {
       decision: "allow",
       authzBasis: "policy:allow:operator-profile",
       result: "wrote x",

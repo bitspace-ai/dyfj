@@ -5,7 +5,7 @@
 // capabilities). No executor runs and nothing reaches the network: discovery
 // and calls are injected.
 
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { toolConformance } from "../../testing/conformance/tool.ts";
 import { parseMcpServersConfig } from "../config/mod.ts";
 import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
@@ -96,7 +96,7 @@ const external = await buildExternalMcpCommands(
 );
 
 Deno.test("the kit's external MCP fixture derives every command shape", () => {
-  assertEquals(external.commands.map((command) => command.id), [
+  assert.deepStrictEqual(external.commands.map((command) => command.id), [
     "mcp.linear.get_issue",
     "mcp.linear.create_comment",
     "mcp.linear.create_issue",
@@ -106,7 +106,7 @@ Deno.test("the kit's external MCP fixture derives every command shape", () => {
 });
 
 Deno.test("the kit covers every builtin tool", () => {
-  assertEquals(builtins.list().map((command) => command.id), [
+  assert.deepStrictEqual(builtins.list().map((command) => command.id), [
     "memory.read",
     "memory.search",
     "read_file",

@@ -1,16 +1,10 @@
-import { describe, it } from "@std/testing/bdd";
 import {
-  assert,
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertLessOrEqual,
-  assertMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+  captureRejection,
+  captureThrow,
+} from "../../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { describe, it } from "@std/testing/bdd";
+import { assertArrayIncludes } from "@std/assert";
 import {
   createWebToolsSessionState,
   defineWebCommands,
@@ -36,9 +30,9 @@ import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-tran
 
 /** The thrown error's message must match `pattern`. */
 function assertThrowsMatching(fn: () => unknown, pattern: RegExp): void {
-  const err = assertThrows(fn);
-  assert(err instanceof Error, "expected an Error to be thrown");
-  assertMatch(err.message, pattern);
+  const err = captureThrow(fn);
+  assert.ok(err instanceof Error, "expected an Error to be thrown");
+  assert.match(err.message, pattern);
 }
 
 /** The rejection message must match `pattern`. */
@@ -46,11 +40,11 @@ async function assertRejectsMatching(
   fn: () => unknown,
   pattern: RegExp,
 ): Promise<void> {
-  const err = await assertRejects(async () => {
+  const err = await captureRejection(async () => {
     await fn();
   });
-  assert(err instanceof Error, "expected an Error rejection");
-  assertMatch(err.message, pattern);
+  assert.ok(err instanceof Error, "expected an Error rejection");
+  assert.match(err.message, pattern);
 }
 
 /**
@@ -70,67 +64,67 @@ function publicDns(): ScriptedDnsResolver {
 
 describe("isPrivateOrLoopbackIp", () => {
   it("identifies loopback, private, link-local, CGNAT, benchmark, and documentation IPv4 addresses", () => {
-    assertStrictEquals(isPrivateOrLoopbackIp("127.0.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("127.10.20.30"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("10.0.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("10.255.255.255"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("100.64.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("100.127.255.255"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("172.16.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("172.31.255.255"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("192.168.1.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("169.254.169.254"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("0.0.0.0"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("255.255.255.255"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("224.0.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("192.0.2.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("198.18.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("198.51.100.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("203.0.113.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("127.0.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("127.10.20.30"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("10.0.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("10.255.255.255"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("100.64.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("100.127.255.255"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("172.16.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("172.31.255.255"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("192.168.1.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("169.254.169.254"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("0.0.0.0"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("255.255.255.255"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("224.0.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("192.0.2.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("198.18.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("198.51.100.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("203.0.113.1"), true);
   });
 
   it("identifies IPv4-mapped IPv6 addresses targeting loopback or private ranges", () => {
-    assertStrictEquals(isPrivateOrLoopbackIp("::ffff:127.0.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("::ffff:7f00:1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("[::ffff:7f00:1]"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("0:0:0:0:0:ffff:7f00:1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("::ffff:10.0.0.1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("::ffff:192.168.1.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::ffff:127.0.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::ffff:7f00:1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("[::ffff:7f00:1]"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("0:0:0:0:0:ffff:7f00:1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::ffff:10.0.0.1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::ffff:192.168.1.1"), true);
   });
 
   it("identifies loopback, link-local, unique-local, documentation, and multicast IPv6 addresses", () => {
-    assertStrictEquals(isPrivateOrLoopbackIp("::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("::"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("fe80::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("fc00::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("fd12:3456::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("ff02::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("2001:db8::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("2001:2::1"), true);
-    assertStrictEquals(isPrivateOrLoopbackIp("64:ff9b::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("::"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("fe80::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("fc00::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("fd12:3456::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("ff02::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("2001:db8::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("2001:2::1"), true);
+    assert.strictEqual(isPrivateOrLoopbackIp("64:ff9b::1"), true);
   });
 
   it("allows public IP addresses and domain names with special prefixes", () => {
-    assertStrictEquals(isPrivateOrLoopbackIp("8.8.8.8"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("1.1.1.1"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("93.184.216.34"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("172.15.0.1"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("172.32.0.1"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("2606:4700:4700::1111"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("8.8.8.8"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("1.1.1.1"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("93.184.216.34"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("172.15.0.1"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("172.32.0.1"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("2606:4700:4700::1111"), false);
     // Domain names starting with fd or ff must NOT be classified as private IPv6
-    assertStrictEquals(isPrivateOrLoopbackIp("fda.gov"), false);
-    assertStrictEquals(isPrivateOrLoopbackIp("ffmpeg.org"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("fda.gov"), false);
+    assert.strictEqual(isPrivateOrLoopbackIp("ffmpeg.org"), false);
   });
 });
 
 describe("assertPublicHttpsUrl", () => {
   it("accepts valid public HTTPS URLs including fda.gov and ffmpeg.org", () => {
     const url1 = assertPublicHttpsUrl("https://fda.gov/drugs");
-    assertStrictEquals(url1.hostname, "fda.gov");
-    assertStrictEquals(url1.protocol, "https:");
+    assert.strictEqual(url1.hostname, "fda.gov");
+    assert.strictEqual(url1.protocol, "https:");
 
     const url2 = assertPublicHttpsUrl("https://ffmpeg.org/documentation.html");
-    assertStrictEquals(url2.hostname, "ffmpeg.org");
+    assert.strictEqual(url2.hostname, "ffmpeg.org");
   });
 
   it("rejects non-HTTPS protocols", () => {
@@ -194,14 +188,14 @@ describe("assertPublicHttpsUrl", () => {
 
   it("allows loopback HTTP in testing mode when requested", () => {
     const url = assertPublicHttpsUrl("http://127.0.0.1:8787/test", true);
-    assertStrictEquals(url.hostname, "127.0.0.1");
-    assertStrictEquals(url.protocol, "http:");
+    assert.strictEqual(url.hostname, "127.0.0.1");
+    assert.strictEqual(url.protocol, "http:");
   });
 });
 
 describe("decodeHtmlEntities", () => {
   it("decodes named and numeric entities", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       decodeHtmlEntities(
         "&lt;div&gt;&amp;&quot;&#39;&nbsp;&copy;&reg;&trade;&ndash;&mdash;&hellip;&ldquo;&rdquo;&lsquo;&rsquo;&bull;&cent;&pound;&yen;&euro;&#65;&#x42;",
       ),
@@ -237,15 +231,32 @@ describe("extractReadableContentFromHtml", () => {
       </html>
     `;
     const markdown = extractReadableContentFromHtml(html);
-    assertStringIncludes(markdown, "# Main Title");
-    assertStringIncludes(markdown, "[link text](https://example.com/link)");
-    assertStringIncludes(markdown, "## Subheading");
-    assertStringIncludes(markdown, "- Item 1");
-    assertStringIncludes(markdown, "- Item 2");
-    assertFalse(markdown.includes("alert"));
-    assertFalse(markdown.includes("color: red"));
-    assertFalse(markdown.includes("Site Header"));
-    assertFalse(markdown.includes("Footer text"));
+    assert.ok(
+      markdown.includes("# Main Title"),
+      `expected ${JSON.stringify(markdown)} to include "# Main Title"`,
+    );
+    assert.ok(
+      markdown.includes("[link text](https://example.com/link)"),
+      `expected ${
+        JSON.stringify(markdown)
+      } to include "[link text](https://example.com/link)"`,
+    );
+    assert.ok(
+      markdown.includes("## Subheading"),
+      `expected ${JSON.stringify(markdown)} to include "## Subheading"`,
+    );
+    assert.ok(
+      markdown.includes("- Item 1"),
+      `expected ${JSON.stringify(markdown)} to include "- Item 1"`,
+    );
+    assert.ok(
+      markdown.includes("- Item 2"),
+      `expected ${JSON.stringify(markdown)} to include "- Item 2"`,
+    );
+    assert.ok(!markdown.includes("alert"));
+    assert.ok(!markdown.includes("color: red"));
+    assert.ok(!markdown.includes("Site Header"));
+    assert.ok(!markdown.includes("Footer text"));
   });
 });
 
@@ -268,7 +279,7 @@ describe("normalizeSearchResults", () => {
     };
 
     const items = normalizeSearchResults(tavilyOutput);
-    assertEquals(items, [
+    assert.deepStrictEqual(items, [
       {
         id: "s1",
         title: "First Result",
@@ -296,7 +307,7 @@ describe("normalizeSearchResults", () => {
       },
     ];
     const items = normalizeSearchResults(genericArray);
-    assertEquals(items, [
+    assert.deepStrictEqual(items, [
       {
         id: "s1",
         title: "Item Alpha",
@@ -312,7 +323,7 @@ describe("assertPublicDnsResolution", () => {
   it("accepts a host whose A and AAAA answers are public", async () => {
     const dns = publicDns();
     await assertPublicDnsResolution("example.com", false, undefined, dns);
-    assertEquals(dns.lookups, [
+    assert.deepStrictEqual(dns.lookups, [
       { hostname: "example.com", recordType: "A" },
       { hostname: "example.com", recordType: "AAAA" },
     ]);
@@ -393,7 +404,7 @@ describe("assertPublicDnsResolution", () => {
         ),
       /DNS lookup timed out/,
     );
-    assertEquals(dns.lookups, []);
+    assert.deepStrictEqual(dns.lookups, []);
   });
 
   it("rejects a lookup that outlives the deadline", async () => {
@@ -425,7 +436,7 @@ describe("assertPublicDnsResolution", () => {
       undefined,
       dns,
     );
-    assertEquals(dns.lookups, []);
+    assert.deepStrictEqual(dns.lookups, []);
   });
 
   it("rejects a private IP literal before any lookup", async () => {
@@ -434,7 +445,7 @@ describe("assertPublicDnsResolution", () => {
       () => assertPublicDnsResolution("192.168.1.1", false, undefined, dns),
       /enumerated private or internal IP address/,
     );
-    assertEquals(dns.lookups, []);
+    assert.deepStrictEqual(dns.lookups, []);
   });
 });
 
@@ -454,14 +465,20 @@ describe("safeFetchDocument", () => {
       false,
       dns,
     );
-    assertEquals(dns.lookups, [
+    assert.deepStrictEqual(dns.lookups, [
       { hostname: "example.com", recordType: "A" },
       { hostname: "example.com", recordType: "AAAA" },
     ]);
-    assertStrictEquals(doc.url, "https://example.com/page");
-    assertStrictEquals(doc.contentType, "text/html");
-    assertStringIncludes(doc.text, "# Hello World");
-    assertStringIncludes(doc.text, "Test body");
+    assert.strictEqual(doc.url, "https://example.com/page");
+    assert.strictEqual(doc.contentType, "text/html");
+    assert.ok(
+      doc.text.includes("# Hello World"),
+      `expected doc.text to include "# Hello World"`,
+    );
+    assert.ok(
+      doc.text.includes("Test body"),
+      `expected doc.text to include "Test body"`,
+    );
   });
 
   it("rejects unsupported content types and cancels response stream", async () => {
@@ -491,8 +508,8 @@ describe("safeFetchDocument", () => {
         ),
       /Unsupported content type/,
     );
-    assertStrictEquals(bodyCancelled, true);
-    assertEquals(dns.lookups.length, 2);
+    assert.strictEqual(bodyCancelled, true);
+    assert.deepStrictEqual(dns.lookups.length, 2);
   });
 
   it("truncates content exceeding character limit", async () => {
@@ -509,12 +526,12 @@ describe("safeFetchDocument", () => {
       false,
       dns,
     );
-    assertEquals(dns.lookups.length, 2);
-    assertStrictEquals(
+    assert.deepStrictEqual(dns.lookups.length, 2);
+    assert.strictEqual(
       doc.text.endsWith("[Content truncated at 40,000 characters]"),
       true,
     );
-    assertStrictEquals(doc.text.length, MAX_EXTRACTED_CHARS_PER_FETCH);
+    assert.strictEqual(doc.text.length, MAX_EXTRACTED_CHARS_PER_FETCH);
   });
 });
 
@@ -550,7 +567,7 @@ describe("defineWebCommands", () => {
     const commands = defineWebCommands(customServer, "token");
     const searchCmd = commands.find((c) => c.id === "web_search")!;
     assertArrayIncludes(searchCmd.permission.effects, ["write.external"]);
-    assertStrictEquals(searchCmd.permission.defaultDecision, "ask");
+    assert.strictEqual(searchCmd.permission.defaultDecision, "ask");
   });
 
   it("registers web_search and web_fetch commands with untrusted result framing and clamps result limits", async () => {
@@ -587,7 +604,10 @@ describe("defineWebCommands", () => {
       dns,
     );
 
-    assertEquals(commands.map((c) => c.id), ["web_search", "web_fetch"]);
+    assert.deepStrictEqual(commands.map((c) => c.id), [
+      "web_search",
+      "web_fetch",
+    ]);
 
     const searchCmd = commands.find((c) => c.id === "web_search")!;
     // Request limit = 1: verify only 1 result is returned
@@ -598,15 +618,26 @@ describe("defineWebCommands", () => {
       arguments: { query: "tavily docs", limit: 1 },
     }, { authzBasis: "test" });
 
-    assertStringIncludes(searchRes, "<untrusted-mcp-result>");
-    assertStringIncludes(searchRes, "Tavily Doc 1");
-    assertFalse(searchRes.includes("Tavily Doc 2"));
-    assertStringIncludes(searchRes, "ID: s1");
-    assertStrictEquals(
+    assert.ok(
+      searchRes.includes("<untrusted-mcp-result>"),
+      `expected ${
+        JSON.stringify(searchRes)
+      } to include "<untrusted-mcp-result>"`,
+    );
+    assert.ok(
+      searchRes.includes("Tavily Doc 1"),
+      `expected ${JSON.stringify(searchRes)} to include "Tavily Doc 1"`,
+    );
+    assert.ok(!searchRes.includes("Tavily Doc 2"));
+    assert.ok(
+      searchRes.includes("ID: s1"),
+      `expected ${JSON.stringify(searchRes)} to include "ID: s1"`,
+    );
+    assert.strictEqual(
       state.getTurnState().sourceUrlMap.get("s1"),
       "https://docs.tavily.com/1",
     );
-    assertStrictEquals(state.getTurnState().sourceUrlMap.has("s2"), false);
+    assert.strictEqual(state.getTurnState().sourceUrlMap.has("s2"), false);
 
     // Test follow-up web_fetch with upstream fetchTool delegation
     let fetchToolCalled = false;
@@ -638,13 +669,23 @@ describe("defineWebCommands", () => {
       arguments: { sourceId: "s1" },
     }, { authzBasis: "test" });
 
-    assertStrictEquals(fetchToolCalled, true);
-    assertEquals(dns.lookups, [
+    assert.strictEqual(fetchToolCalled, true);
+    assert.deepStrictEqual(dns.lookups, [
       { hostname: "docs.tavily.com", recordType: "A" },
       { hostname: "docs.tavily.com", recordType: "AAAA" },
     ]);
-    assertStringIncludes(fetchRes, "<untrusted-mcp-result>");
-    assertStringIncludes(fetchRes, "# Tavily Extract Content");
+    assert.ok(
+      fetchRes.includes("<untrusted-mcp-result>"),
+      `expected ${
+        JSON.stringify(fetchRes)
+      } to include "<untrusted-mcp-result>"`,
+    );
+    assert.ok(
+      fetchRes.includes("# Tavily Extract Content"),
+      `expected ${
+        JSON.stringify(fetchRes)
+      } to include "# Tavily Extract Content"`,
+    );
 
     // Delegated fetch on private URL must still be rejected
     await assertRejectsMatching(() =>
@@ -655,7 +696,7 @@ describe("defineWebCommands", () => {
         arguments: { url: "https://192.168.1.1/admin" },
       }, { authzBasis: "test" }), /forbidden|private/);
     // Rejected on the IP literal, before any DNS lookup.
-    assertEquals(dns.lookups.length, 2);
+    assert.deepStrictEqual(dns.lookups.length, 2);
   });
 
   it("refuses a web_fetch target it cannot verify without calling upstream", async () => {
@@ -683,7 +724,7 @@ describe("defineWebCommands", () => {
         caller: { principalId: "operator", principalType: "human" },
         arguments: { url: "https://example.com/page" },
       }, { authzBasis: "test" }), /could not be verified/);
-    assertStrictEquals(upstreamCalled, false);
+    assert.strictEqual(upstreamCalled, false);
   });
 
   it("empty search result clears prior source map", async () => {
@@ -714,7 +755,7 @@ describe("defineWebCommands", () => {
       arguments: { query: "empty query" },
     }, { authzBasis: "test" });
 
-    assertStrictEquals(state.getTurnState().sourceUrlMap.size, 0);
+    assert.strictEqual(state.getTurnState().sourceUrlMap.size, 0);
   });
 
   it("resets turn state and enforces max search and fetch calls per turn", async () => {
@@ -734,8 +775,8 @@ describe("defineWebCommands", () => {
 
     // Reset turn state
     resetWebToolsTurnState(state);
-    assertStrictEquals(state.getTurnState().searchCount, 0);
-    assertStrictEquals(state.getTurnState().fetchCount, 0);
+    assert.strictEqual(state.getTurnState().searchCount, 0);
+    assert.strictEqual(state.getTurnState().fetchCount, 0);
 
     // Max fetch calls exceeded
     state.getTurnState().fetchCount = MAX_FETCH_CALLS_PER_TURN;
@@ -794,8 +835,11 @@ describe("defineWebCommands", () => {
       arguments: { query: "query 5" },
     }, { authzBasis: "test", traceId: "turn-2" });
 
-    assertStringIncludes(res, "<untrusted-mcp-result>");
-    assertStrictEquals(state.getTurnState("turn-2").searchCount, 1);
+    assert.ok(
+      res.includes("<untrusted-mcp-result>"),
+      `expected ${JSON.stringify(res)} to include "<untrusted-mcp-result>"`,
+    );
+    assert.strictEqual(state.getTurnState("turn-2").searchCount, 1);
   });
 
   it("rejects ambiguous web_fetch calls with both url and sourceId", async () => {
@@ -822,6 +866,6 @@ describe("defineWebCommands", () => {
     for (let i = 0; i < 110; i++) {
       state.getTurnState(`trace_${i}`);
     }
-    assertLessOrEqual(state.turns.size, 100);
+    assert.ok(state.turns.size <= 100, `expected state.turns.size <= 100`);
   });
 });
