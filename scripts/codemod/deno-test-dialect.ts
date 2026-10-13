@@ -2410,8 +2410,9 @@ function inRegistrationOptions(src: Source, pos: number): boolean {
 const optionPass: Pass = (src) => {
   const outcomes: Outcome[] = [];
   const options: [RegExp, Flag][] = [
-    [/\bpermissions\s*:/g, "test-permissions"],
-    [/\bsanitize(?:Ops|Resources|Exit)\s*:/g, "sanitizer-options"],
+    // A key with a value, or a shorthand key (`{ name, permissions, fn }`).
+    [/\bpermissions\s*(?::|(?=[,}]))/g, "test-permissions"],
+    [/\bsanitize(?:Ops|Resources|Exit)\s*(?::|(?=[,}]))/g, "sanitizer-options"],
   ];
   for (const [pattern, flag] of options) {
     for (const m of src.text.matchAll(pattern)) {

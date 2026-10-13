@@ -1,6 +1,6 @@
 # A per-test permissions option belongs to the registration and the lane,
-# whether its key is bare, quoted or computed. A permissions key in other data
-# is not flagged.
+# whether its key is bare, shorthand, quoted or computed. A permissions key in
+# other data is not flagged.
 rules:
 --- before
 Deno.test("data", () => {
@@ -22,6 +22,8 @@ Deno.test({
   ["permissions"]: { net: true },
   fn: () => {},
 });
+const permissions = { net: true };
+Deno.test({ name: "shorthand", permissions, fn: () => {} });
 --- after
 Deno.test("data", () => {
   const config = { permissions: { level: "strict" } };
@@ -42,7 +44,10 @@ Deno.test({
   ["permissions"]: { net: true },
   fn: () => {},
 });
+const permissions = { net: true };
+Deno.test({ name: "shorthand", permissions, fn: () => {} });
 --- findings
 hand-review test-permissions 7
 hand-review test-permissions 12
 hand-review test-permissions 17
+hand-review test-permissions 21
