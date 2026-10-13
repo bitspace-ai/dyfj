@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  capturedImportFor,
   type ConversionResult,
   convertSource,
   FLAGS,
@@ -17,7 +18,9 @@ import {
   RULES,
 } from "./deno-test-dialect.ts";
 
-const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FIXTURES = join(HERE, "fixtures");
+const ROOT = join(HERE, "..", "..");
 
 interface Fixture {
   name: string;
@@ -135,6 +138,36 @@ describe("test-dialect codemod fixtures", () => {
     assert.equal(leftover.line, 18);
     assert.equal(leftover.originalLine, 16);
     assert.match(fixture.before.split("\n")[15], /new \w+\.errors\.NotFound/);
+  });
+
+  it("imports the captured helper relative to a file under prototype/", () => {
+    assert.equal(
+      capturedImportFor(join(ROOT, "prototype/src/config/a.test.ts")),
+      "../../testing/assertions/captured.ts",
+    );
+    assert.equal(
+      capturedImportFor(join(ROOT, "prototype/testing/assertions/b.test.ts")),
+      "./captured.ts",
+    );
+  });
+
+  it("leaves a used thrown value flagged in a file outside prototype/", () => {
+    const outside = join(ROOT, "scripts/x.test.ts");
+    assert.equal(capturedImportFor(outside), undefined);
+    const before = [
+      'import { assertThrows } from "@std/assert";',
+      "",
+      'it("x", () => {',
+      "  const error = assertThrows(() => boom());",
+      "  void error;",
+      "});",
+      "",
+    ].join("\n");
+    const result = convertSource(before, {
+      capturedImport: capturedImportFor(outside),
+    });
+    assert.equal(result.source, before);
+    assert.deepEqual(findingLines(result), ["hand-review thrown-value-used 4"]);
   });
 
   it("parses its command line and rejects unknown options", () => {
