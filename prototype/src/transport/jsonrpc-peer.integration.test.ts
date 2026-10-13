@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
@@ -30,7 +31,7 @@ async function connectPair(
       listener.close();
       await loops;
       try {
-        await Deno.remove(sock);
+        await unlink(sock);
       } catch {
         // already gone
       }

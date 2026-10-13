@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertThrows } from "@std/assert";
 import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 import {
   asRecord,
@@ -8,9 +7,12 @@ import {
 } from "./rpc-params.ts";
 
 function invalidParams(run: () => unknown, message: string): void {
-  const error = assertThrows(run, RpcError);
-  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
-  assert.deepStrictEqual(error.message, message);
+  assert.throws(run, (error: unknown) => {
+    assert.ok(error instanceof RpcError);
+    assert.strictEqual(error.code, RpcErrorCode.invalidParams);
+    assert.strictEqual(error.message, message);
+    return true;
+  });
 }
 
 Deno.test("asRecord treats non-object params as empty", () => {

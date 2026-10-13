@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import {
   classify,
   dispatchRequest,
@@ -42,7 +41,7 @@ Deno.test("FrameDecoder reports a parse error for a malformed line without throw
   const frames = new FrameDecoder().push("not json\n");
   assert.deepStrictEqual(frames.length, 1);
   assert.strictEqual(frames[0].ok, false);
-  assertEquals(typeof frames[0].error, "string");
+  assert.strictEqual(typeof frames[0].error, "string");
 });
 
 Deno.test("FrameDecoder bounds the partial buffer when maxBytes is set", () => {
@@ -118,7 +117,10 @@ Deno.test("notification() and failure() omit undefined params and data", () => {
 // --- classification ---
 
 Deno.test("classify distinguishes request / notification / response / invalid", () => {
-  assert.deepStrictEqual(classify({ jsonrpc: "2.0", id: 1, method: "turn" }), "request");
+  assert.deepStrictEqual(
+    classify({ jsonrpc: "2.0", id: 1, method: "turn" }),
+    "request",
+  );
   assert.deepStrictEqual(classify(request("p1", "turn")), "request");
   assert.deepStrictEqual(
     classify(notification("stream", { delta: "x" })),
@@ -129,7 +131,10 @@ Deno.test("classify distinguishes request / notification / response / invalid", 
     classify(failure("a", RpcErrorCode.paidNotApproved, "x")),
     "response",
   );
-  assert.deepStrictEqual(classify({ jsonrpc: "1.0", id: 1, method: "x" }), "invalid");
+  assert.deepStrictEqual(
+    classify({ jsonrpc: "1.0", id: 1, method: "x" }),
+    "invalid",
+  );
   assert.deepStrictEqual(classify(null), "invalid");
 });
 
@@ -191,7 +196,10 @@ Deno.test("dispatchRequest maps a generic throw to internalError, rendered as cl
       throw new Error("boom");
     },
   });
-  assert.deepStrictEqual(res, failure(1, RpcErrorCode.internalError, "[Error, 4 bytes]"));
+  assert.deepStrictEqual(
+    res,
+    failure(1, RpcErrorCode.internalError, "[Error, 4 bytes]"),
+  );
 });
 
 Deno.test("dispatchRequest: a generic throw with an oversized message leaks no prefix of it", async () => {
@@ -203,8 +211,16 @@ Deno.test("dispatchRequest: a generic throw with an oversized message leaks no p
   });
   const message = (res as { error: { message: string } }).error.message;
   assert.ok(!message.includes(payload.slice(0, 50)));
-  assert.ok(message.includes("Error"), `expected ${JSON.stringify(message)} to include "Error"`);
-  assert.ok(message.includes(`${new TextEncoder().encode(payload).byteLength} bytes`), `expected ${JSON.stringify(message)} to include \`\${new TextEncoder().encode(payload).byteLength} bytes\``);
+  assert.ok(
+    message.includes("Error"),
+    `expected ${JSON.stringify(message)} to include "Error"`,
+  );
+  assert.ok(
+    message.includes(`${new TextEncoder().encode(payload).byteLength} bytes`),
+    `expected ${
+      JSON.stringify(message)
+    } to include \`\${new TextEncoder().encode(payload).byteLength} bytes\``,
+  );
   assert.ok(message.length < 200);
 });
 
@@ -239,5 +255,8 @@ Deno.test("dispatchRequest relays a classified provider failure's Workbench-writ
       throw thrown;
     },
   });
-  assertEquals(res, failure(1, RpcErrorCode.internalError, thrown.message));
+  assert.deepStrictEqual(
+    res,
+    failure(1, RpcErrorCode.internalError, thrown.message),
+  );
 });

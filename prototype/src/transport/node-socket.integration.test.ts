@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
+import { unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
-import { assertEquals, assertRejects } from "@std/assert";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import type { ByteConnection, ConnectionListener } from "./connection.ts";
 import { nodeSocketHost } from "./node-socket.ts";
@@ -15,7 +14,7 @@ const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path);
+    await unlink(path);
   } catch {
     // already gone
   }
@@ -137,20 +136,23 @@ Deno.test("peer half-close: after the other side's FIN read() is null and a late
   try {
     // A native client that sends a request and then its FIN, as a client
     // that half-closes does.
-    const client = await Deno.connect({ transport: "unix", path });
-    await client.write(encode("request"));
-    await client.closeWrite();
+    const client = net.createConnection({ path, allowHalfOpen: true });
+    const clientClosed = new Promise<void>((resolve) =>
+      client.once("close", () => resolve())
+    );
+    const replied = new Promise<Uint8Array>((resolve) =>
+      client.once("data", resolve)
+    );
+    client.end(encode("request"));
     const server = await listener.accept();
     assert.ok(server !== null);
     assert.deepStrictEqual(decode(await readAll(server, 7)), "request");
     assert.deepStrictEqual(await server.read(), null);
     await server.write(encode("late reply"));
-    const buf = new Uint8Array(32);
-    const n = await client.read(buf);
-    assert.ok(n !== null);
-    assert.deepStrictEqual(decode(buf.subarray(0, n)), "late reply");
+    assert.deepStrictEqual(decode(await replied), "late reply");
     server.close();
-    client.close();
+    client.destroy();
+    await clientClosed;
   } finally {
     listener.close();
     await removeIfPresent(path);
@@ -197,18 +199,25 @@ Deno.test("accept() resolves null once the listener is closed", async () => {
 Deno.test("connect() to a missing socket rejects with ENOENT", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
-  const error = await assertRejects(() => nodeSocketHost.connect(path));
-  assert.deepStrictEqual((error as { code?: string }).code, "ENOENT");
+  await assert.rejects(() => nodeSocketHost.connect(path), (error: unknown) => {
+    assert.strictEqual((error as { code?: string }).code, "ENOENT");
+    return true;
+  });
 });
 
 Deno.test("connect() with an aborted signal rejects with the signal's reason", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const reason = new Error("stop");
-  const error = await assertRejects(() =>
-    nodeSocketHost.connect(path, AbortSignal.abort(reason))
+  // The very object the signal was aborted with, not an equal copy: identity
+  // covers name, message and cause.
+  await assert.rejects(
+    () => nodeSocketHost.connect(path, AbortSignal.abort(reason)),
+    (error: unknown) => {
+      assert.strictEqual(error, reason);
+      return true;
+    },
   );
-  assertEquals(error, reason);
 });
 
 Deno.test("connect() aborted while dialing closes the connection that settles later", async () => {
@@ -219,7 +228,11 @@ Deno.test("connect() aborted while dialing closes the connection that settles la
     const ac = new AbortController();
     const dialing = nodeSocketHost.connect(path, ac.signal);
     ac.abort(new Error("stop"));
-    await assert.rejects(() => dialing, (error: unknown) => error instanceof Error && error.message.includes("stop"));
+    await assert.rejects(
+      () => dialing,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("stop"),
+    );
     const late = await listener.accept();
     assert.ok(late !== null);
     assert.deepStrictEqual(await late.read(), null);

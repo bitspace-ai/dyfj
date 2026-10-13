@@ -211,7 +211,9 @@ Deno.test("notification and response frames on the wire are unchanged", async ()
 
 Deno.test("client request -> server handler -> result", async () => {
   await using pair = connectPair({ "models/list": () => ({ models: [] }) });
-  assert.deepStrictEqual(await pair.client.request("models/list"), { models: [] });
+  assert.deepStrictEqual(await pair.client.request("models/list"), {
+    models: [],
+  });
 });
 
 Deno.test("all requests on one connection share one handler context", async () => {
@@ -233,7 +235,9 @@ Deno.test("all requests on one connection share one handler context", async () =
 Deno.test("server-initiated request -> client handler (the approval round-trip)", async () => {
   await using pair = connectPair({}, {
     approval: (params) => {
-      assert.partialDeepStrictEqual(params as Record<string, unknown>, { tool: "bash" });
+      assert.partialDeepStrictEqual(params as Record<string, unknown>, {
+        tool: "bash",
+      });
       return { decision: "approve-once" };
     },
   });
@@ -278,9 +282,12 @@ Deno.test("an aborted request removes its pending correlation and ignores a late
   releaseApproval();
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepStrictEqual(await pair.server.request("approval", { tool: "next" }), {
-    decision: "approve",
-  });
+  assert.deepStrictEqual(
+    await pair.server.request("approval", { tool: "next" }),
+    {
+      decision: "approve",
+    },
+  );
 });
 
 Deno.test("a request with an already-aborted signal rejects without writing", async () => {
@@ -365,7 +372,12 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
         error: { code: -32000, message: 42 },
       } as unknown as JsonRpcMessage,
     ));
-    await assert.rejects(() => req1, (error: unknown) => error instanceof RpcError && error.message.includes("malformed error envelope"));
+    await assert.rejects(
+      () => req1,
+      (error: unknown) =>
+        error instanceof RpcError &&
+        error.message.includes("malformed error envelope"),
+    );
 
     // Case 2: null error object — property access alone would throw.
     const req2 = client.request("turn");
@@ -373,7 +385,12 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
     await rawConn.write(encodeFrame(
       { jsonrpc: "2.0", id: id2, error: null } as unknown as JsonRpcMessage,
     ));
-    await assert.rejects(() => req2, (error: unknown) => error instanceof RpcError && error.message.includes("malformed error envelope"));
+    await assert.rejects(
+      () => req2,
+      (error: unknown) =>
+        error instanceof RpcError &&
+        error.message.includes("malformed error envelope"),
+    );
   } finally {
     client.close();
     await loop;
@@ -513,7 +530,11 @@ Deno.test("pending requests reject when the connection closes", async () => {
   });
   const pending = pair.client.request("slow");
   pair.client.close();
-  await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("connection closed"));
+  await assert.rejects(
+    () => pending,
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("connection closed"),
+  );
 });
 
 Deno.test("onRequestSettled fires after response has been written to the connection", async () => {
@@ -575,7 +596,10 @@ Deno.test("onRequestSettled error is caught and routed to onParseError without c
   assert.deepStrictEqual(await pair.client.request("ping"), { ok: true });
   await reported;
   assert.deepStrictEqual(errors.length, 1);
-  assert.ok(errors[0].includes("onRequestSettled error"), `expected errors[0] to include "onRequestSettled error"`);
+  assert.ok(
+    errors[0].includes("onRequestSettled error"),
+    `expected errors[0] to include "onRequestSettled error"`,
+  );
   // The peer still serves requests after the hook threw.
   reported = nextReport();
   assert.deepStrictEqual(await pair.client.request("ping"), { ok: true });

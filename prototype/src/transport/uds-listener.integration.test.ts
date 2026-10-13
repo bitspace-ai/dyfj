@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { lstatSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { assertRejects } from "@std/assert";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import net from "node:net";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -26,10 +26,54 @@ import {
 
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path);
+    await unlink(path);
   } catch {
     // already gone
   }
+}
+
+// A raw node:net client on the socket, outside the adapters under test.
+// allowHalfOpen keeps this side readable after end() sends its FIN; `closed`
+// settles once the socket's handle is released.
+function rawConnect(
+  path: string,
+): Promise<{ socket: net.Socket; closed: Promise<void> }> {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection({ path, allowHalfOpen: true });
+    const closed = new Promise<void>((done) =>
+      socket.once("close", () => done())
+    );
+    socket.once("error", reject);
+    socket.once("connect", () => {
+      socket.off("error", reject);
+      resolve({ socket, closed });
+    });
+  });
+}
+
+// Everything the peer sends until it closes its side, or undefined when it
+// has not closed within `ms`.
+function readToEnd(
+  socket: net.Socket,
+  ms: number,
+): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const decoder = new TextDecoder();
+    let text = "";
+    const onData = (chunk: Uint8Array) => {
+      text += decoder.decode(chunk, { stream: true });
+    };
+    const finish = (result: string | undefined) => {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("end", onEnd);
+      resolve(result);
+    };
+    const onEnd = () => finish(text + decoder.decode());
+    const timer = setTimeout(() => finish(undefined), ms);
+    socket.on("data", onData);
+    socket.once("end", onEnd);
+  });
 }
 
 // A raw client peer on a new connection; `closed` settles when its read loop
@@ -70,7 +114,9 @@ function exists(path: string): boolean {
     lstatSync(path);
     return true;
   } catch (err) {
-    if ((err instanceof Error && (err as { code?: unknown }).code === "ENOENT")) return false;
+    if (
+      (err instanceof Error && (err as { code?: unknown }).code === "ENOENT")
+    ) return false;
     throw err;
   }
 }
@@ -103,7 +149,10 @@ Deno.test("serveUnixJsonRpc serves every connection from one handler map and set
   });
   await settledOnce;
   assert.deepStrictEqual(settled.map(([req]) => req.method), ["echo", "echo"]);
-  assert.deepStrictEqual(settled.map(([, res]) => "result" in res), [true, true]);
+  assert.deepStrictEqual(settled.map(([, res]) => "result" in res), [
+    true,
+    true,
+  ]);
 });
 
 Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file", async () => {
@@ -116,9 +165,13 @@ Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file"
   const pending = client.peer.request("hang");
   // The client's read loop rejects `pending` the moment it sees the server
   // hang up, which can land before server.close() resolves. Attach the
-  // expectation first, or that rejection is briefly unhandled and Deno fails
-  // the file with an uncaught error.
-  const rejected = assertRejects(() => pending, Error, "connection closed");
+  // expectation first, or that rejection is briefly unhandled and the test
+  // runner fails the file with an uncaught error.
+  const rejected = assert.rejects(
+    () => pending,
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("connection closed"),
+  );
   // Let the request reach the server before closing.
   await new Promise((resolve) => setTimeout(resolve, 20));
   await server.close();
@@ -129,9 +182,7 @@ Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file"
   await new Promise((resolve) => setTimeout(resolve, 0));
   await rejected;
   assert.ok(!exists(socketPath));
-  await assert.rejects(() =>
-    Deno.connect({ transport: "unix", path: socketPath })
-  );
+  await assert.rejects(() => rawConnect(socketPath));
 });
 
 Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connections serving", async () => {
@@ -159,25 +210,16 @@ Deno.test({
     await using served = await serve("listener-client-eof", {
       ping: () => "pong",
     });
-    const conn = await Deno.connect({
-      transport: "unix",
-      path: served.server.socketPath,
-    });
+    const conn = await rawConnect(served.server.socketPath);
     try {
       // Half-close: the server's read loop sees end-of-file, while this side
-      // can still read. The server must answer with end-of-file of its own.
-      await conn.closeWrite();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const read = await Promise.race([
-        conn.read(new Uint8Array(16)),
-        new Promise<"timeout">((resolve) => {
-          timer = setTimeout(() => resolve("timeout"), 2_000);
-        }),
-      ]);
-      clearTimeout(timer);
-      assert.deepStrictEqual(read, null);
+      // can still read. The server must answer with end-of-file of its own,
+      // and send nothing before it.
+      conn.socket.end();
+      assert.strictEqual(await readToEnd(conn.socket, 2_000), "");
     } finally {
-      conn.close();
+      conn.socket.destroy();
+      await conn.closed;
     }
   },
 });
@@ -194,46 +236,22 @@ Deno.test({
         return "answered";
       },
     });
-    const conn = await Deno.connect({
-      transport: "unix",
-      path: served.server.socketPath,
-    });
+    const conn = await rawConnect(served.server.socketPath);
     try {
-      // write() may send fewer bytes than asked; send the whole frame before
-      // half-closing.
-      const request = new TextEncoder().encode(
-        '{"jsonrpc":"2.0","id":1,"method":"late"}\n',
-      );
-      for (let offset = 0; offset < request.length;) {
-        offset += await conn.write(request.subarray(offset));
-      }
-      await conn.closeWrite();
+      // end() sends the whole frame, then the FIN.
+      conn.socket.end('{"jsonrpc":"2.0","id":1,"method":"late"}\n');
       // Read to end-of-file: the response arrives first, then the server
       // closes its side.
-      const decoder = new TextDecoder();
-      const buf = new Uint8Array(4096);
-      let text = "";
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const timedOut = new Promise<"timeout">((resolve) => {
-        timer = setTimeout(() => resolve("timeout"), 2_000);
-      });
-      try {
-        for (;;) {
-          const n = await Promise.race([conn.read(buf), timedOut]);
-          if (n === "timeout") throw new Error("server never closed its side");
-          if (n === null) break;
-          text += decoder.decode(buf.subarray(0, n), { stream: true });
-        }
-      } finally {
-        clearTimeout(timer);
-      }
+      const text = await readToEnd(conn.socket, 2_000);
+      if (text === undefined) throw new Error("server never closed its side");
       assert.deepStrictEqual(JSON.parse(text.trim()), {
         jsonrpc: "2.0",
         id: 1,
         result: "answered",
       });
     } finally {
-      conn.close();
+      conn.socket.destroy();
+      await conn.closed;
     }
   },
 });
@@ -248,15 +266,13 @@ Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () =
       markReported();
     },
   });
-  const conn = await Deno.connect({
-    transport: "unix",
-    path: served.server.socketPath,
-  });
+  const conn = await rawConnect(served.server.socketPath);
   try {
-    await conn.write(new TextEncoder().encode("not json\n"));
+    conn.socket.write("not json\n");
     await reported;
   } finally {
-    conn.close();
+    conn.socket.destroy();
+    await conn.closed;
   }
   assert.deepStrictEqual(errors.length, 1);
 });
@@ -266,7 +282,12 @@ Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () =
 Deno.test("refuses to bind while a live runtime answers on the socket", async () => {
   await using served = await serve("listener-live", { ping: () => "pong" });
   const socketPath = served.server.socketPath;
-  await assert.rejects(() => serveUnixJsonRpc(socketPath, { handlers: {} }), (error: unknown) => error instanceof Error && error.message.includes("live runtime is already serving"));
+  await assert.rejects(
+    () => serveUnixJsonRpc(socketPath, { handlers: {} }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("live runtime is already serving"),
+  );
   // The live server is untouched: its socket file still exists and accepts.
   await using client = await dial(socketPath);
   assert.deepStrictEqual(await client.peer.request("ping"), "pong");
@@ -280,7 +301,11 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
   assert.ok(lstatSync(socketPath).isSocket());
 
   await assertSocketBindable(socketPath);
-  assert.throws(() => lstatSync(socketPath), (error: unknown) => error instanceof Error && (error as { code?: unknown }).code === "ENOENT");
+  assert.throws(
+    () => lstatSync(socketPath),
+    (error: unknown) =>
+      error instanceof Error && (error as { code?: unknown }).code === "ENOENT",
+  );
 
   // And the serve path binds over it end to end.
   const server = await serveUnixJsonRpc(socketPath, {
@@ -298,11 +323,21 @@ Deno.test("refuses to bind over a non-socket path", async () => {
   const path = udsTestSocket("listener-file");
   await writeFile(path, "not a socket");
   try {
-    await assert.rejects(() => assertSocketBindable(path), (error: unknown) => error instanceof Error && error.message.includes("exists and is not a socket"));
-    await assert.rejects(() => serveUnixJsonRpc(path, { handlers: {} }), (error: unknown) => error instanceof Error && error.message.includes("exists and is not a socket"));
+    await assert.rejects(
+      () => assertSocketBindable(path),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("exists and is not a socket"),
+    );
+    await assert.rejects(
+      () => serveUnixJsonRpc(path, { handlers: {} }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("exists and is not a socket"),
+    );
     assert.deepStrictEqual(await readFile(path, "utf8"), "not a socket");
   } finally {
-    await Deno.remove(path);
+    await unlink(path);
   }
 });
 

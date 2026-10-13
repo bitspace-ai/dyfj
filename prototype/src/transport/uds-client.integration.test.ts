@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
+import { unlink } from "node:fs/promises";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -14,7 +14,7 @@ import { serveUnixJsonRpc } from "./uds-listener.ts";
 
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path);
+    await unlink(path);
   } catch {
     // already gone
   }
@@ -125,7 +125,7 @@ Deno.test("onApproval answers the server's approval request", async () => {
     },
   });
   try {
-    assertEquals(await client.request("turn"), {
+    assert.deepStrictEqual(await client.request("turn"), {
       verdict: { decision: "deny", reason: "not now" },
     });
     assert.deepStrictEqual(asked, [{ tool: "write_file" }]);
@@ -181,12 +181,20 @@ Deno.test("close() rejects requests still in flight", async () => {
   const client = await connectUnixClient(server.socketPath);
   const pending = client.request("hang");
   client.close();
-  await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("connection closed"));
+  await assert.rejects(
+    () => pending,
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("connection closed"),
+  );
 });
 
 Deno.test("connectUnixClient rejects when nothing is listening at the path", async () => {
   const socketPath = udsTestSocket("client-missing");
   await removeIfPresent(socketPath);
   const err = await rejection(connectUnixClient(socketPath));
-  assert.deepStrictEqual((err as { code?: string }).code, "ENOENT", String(err));
+  assert.deepStrictEqual(
+    (err as { code?: string }).code,
+    "ENOENT",
+    String(err),
+  );
 });
