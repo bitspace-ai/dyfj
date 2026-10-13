@@ -1,0 +1,27 @@
+# assertAlmostEquals with fewer than two or more than four arguments, or a
+# spread, has no faithful rewrite and stays std.
+rules: assert.almost-equals
+almost-equal-import: ./almost-equal.ts
+--- before
+import { assertAlmostEquals } from "@std/assert";
+
+Deno.test("arguments", () => {
+  assertAlmostEquals(1);
+  assertAlmostEquals(...pair);
+  assertAlmostEquals(1, 1, 0, "m", extra);
+  assertAlmostEquals(1, 1);
+});
+--- after
+import { assertAlmostEqual } from "./almost-equal.ts";
+import { assertAlmostEquals } from "@std/assert";
+
+Deno.test("arguments", () => {
+  assertAlmostEquals(1);
+  assertAlmostEquals(...pair);
+  assertAlmostEquals(1, 1, 0, "m", extra);
+  assertAlmostEqual(1, 1);
+});
+--- findings
+unconverted 5
+unconverted 6
+unconverted 7

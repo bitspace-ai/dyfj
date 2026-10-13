@@ -1,0 +1,34 @@
+# assertAlmostEquals onto the helper that reproduces it
+# (prototype/testing/assertions/almost-equal.ts), every argument kept.
+rules: assert.import, assert.almost-equals, assert.equals
+almost-equal-import: ../../testing/assertions/almost-equal.ts
+--- before
+import { assertAlmostEquals, assertEquals } from "@std/assert";
+
+Deno.test("close", () => {
+  assertAlmostEquals(total(), 0.3);
+  assertAlmostEquals(rate, 1.5, 1e-9);
+  assertAlmostEquals(
+    cost.total,
+    0.0042,
+    1e-12,
+    "cost total",
+  );
+  assertEquals(count, 2);
+});
+--- after
+import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
+import assert from "node:assert/strict";
+
+Deno.test("close", () => {
+  assertAlmostEqual(total(), 0.3);
+  assertAlmostEqual(rate, 1.5, 1e-9);
+  assertAlmostEqual(
+    cost.total,
+    0.0042,
+    1e-12,
+    "cost total",
+  );
+  assert.deepStrictEqual(count, 2);
+});
+--- findings
