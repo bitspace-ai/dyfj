@@ -43,14 +43,14 @@ export function captureThrow(
  * rejection. A synchronous throw or a non-promise return fails too.
  */
 export function captureRejection(
-  fn: () => Promise<unknown>,
+  fn: () => PromiseLike<unknown>,
 ): Promise<unknown>;
 export function captureRejection<E>(
-  fn: () => Promise<unknown>,
+  fn: () => PromiseLike<unknown>,
   Cls: ErrorClass<E>,
 ): Promise<E>;
 export async function captureRejection(
-  fn: () => Promise<unknown>,
+  fn: () => PromiseLike<unknown>,
   Cls?: ErrorClass<unknown>,
 ): Promise<unknown> {
   let pending: unknown;

@@ -112,3 +112,12 @@ test("captureRejection fails when the function returns no promise", async () => 
     assert.AssertionError,
   );
 });
+
+test("captureRejection accepts a callback returning a custom thenable", async () => {
+  const error = new Error("boom");
+  const thenable: PromiseLike<never> = {
+    then: (_onFulfilled, onRejected) =>
+      Promise.reject(error).then(undefined, onRejected),
+  };
+  assert.strictEqual(await captureRejection(() => thenable), error);
+});
