@@ -6,6 +6,7 @@ Deno.test("readDir", async () => {
   const names: string[] = [];
   for await (const entry of Deno.readDir("/tmp")) {
     if (entry.isFile) names.push(entry.name);
+    if (entry?.isSymlink) names.push(entry.name);
   }
   for (const entry of Deno.readDirSync("/tmp")) {
     if (entry.isDirectory) names.push(entry.name);
@@ -21,6 +22,7 @@ Deno.test("readDir", async () => {
   const names: string[] = [];
   for (const entry of await readdir("/tmp", { withFileTypes: true })) {
     if (entry.isFile()) names.push(entry.name);
+    if (entry?.isSymbolicLink()) names.push(entry.name);
   }
   for (const entry of readdirSync("/tmp", { withFileTypes: true })) {
     if (entry.isDirectory()) names.push(entry.name);
@@ -29,4 +31,4 @@ Deno.test("readDir", async () => {
   void all;
 });
 --- findings
-unconverted 12
+unconverted 13

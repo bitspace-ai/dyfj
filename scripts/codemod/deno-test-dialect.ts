@@ -293,8 +293,12 @@ function regexAllowed(
   // starts, so `/` opens a regex; after any other `)` it divides.
   if (c === ")") {
     const opener = openerOf.get(prev);
-    return opener !== undefined &&
-      CONTROL_KEYWORDS.has(wordBefore(text, opener).word);
+    if (opener === undefined) return false;
+    const before = wordBefore(text, opener);
+    if (CONTROL_KEYWORDS.has(before.word)) return true;
+    // `for await (...)`, unlike `await (expr)`, is a loop header.
+    return before.word === "await" &&
+      wordBefore(text, before.start).word === "for";
   }
   if (IDENT.test(c)) {
     let start = prev;
@@ -774,7 +778,14 @@ function stdBindings(imports: ImportDecl[], spec: RegExp): Map<string, string> {
   return bindings;
 }
 
-const DECLARING = new Set(["const", "let", "var", "function", "class"]);
+const DECLARING = new Set([
+  "const",
+  "let",
+  "var",
+  "using",
+  "function",
+  "class",
+]);
 
 /** Words before `(` that open a control statement, not a parameter list. */
 const CONTROL_WORDS = new Set([
@@ -1354,10 +1365,15 @@ const MOCK_SYMBOLS = new Set([
  */
 function isConvertedSpy(src: Source, name: string): boolean {
   const escaped = name.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
-  return new RegExp(
+  const binding = new RegExp(
     `(?:^|[^\\w$])(?:const|let|var)\\s+${escaped}\\s*(?::[^=]+)?=\\s*` +
       "mock\\.(?:fn|method)\\s*\\(",
-  ).test(src.text);
+    "g",
+  );
+  // Only a binding in code counts, not one quoted in a comment or string.
+  return [...src.text.matchAll(binding)].some((m) =>
+    src.isCode(m.index! + m[0].search(/\S/))
+  );
 }
 
 /**
@@ -1808,6 +1824,16 @@ function convertFs(
     if (skip) return skip;
     const dir = props.get("dir") ?? "tmpdir()";
     const prefix = props.get("prefix") ?? '"tmp-"';
+    // mkdtemp appends its suffix to the path it is given: an empty prefix
+    // would name a sibling of the directory, not an entry in it.
+    if (!/^(["'])[^"'\\]+\1$|^`[^`$\\]+`$/.test(prefix)) {
+      return {
+        pos,
+        reason: `${host} with a prefix that is not a non-empty string ` +
+          "literal; mkdtemp would name a sibling if it were empty, so " +
+          "convert by hand",
+      };
+    }
     const needs: Need[] = [fsNeed(named("mkdtemp"), sync)];
     if (!props.has("dir")) needs.push("tmpdir");
     if (ctx.join.needsImport) needs.push("join");
@@ -1874,7 +1900,7 @@ function convertFs(
     if (src.text[after] === ")" && src.text[opener] === "(") {
       after = nextNonSpace(src.text, after + 1);
     }
-    const field = /^\.\s*([\w$]+)/.exec(src.text.slice(after));
+    const field = /^\??\.\s*([\w$]+)/.exec(src.text.slice(after));
     const ignoresResult = /^\.\s*then\s*\(\s*(?:async\s*)?\(\s*\)\s*=>/
       .test(src.text.slice(after));
     if (
@@ -1975,7 +2001,10 @@ function convertFs(
           "by hand",
       };
     }
-    const entry = new RegExp(`(?<![\\w$.])${loop[2]}\\s*\\.\\s*([\\w$]+)`, "g");
+    const entry = new RegExp(
+      `(?<![\\w$.])${loop[2]}\\s*\\??\\.\\s*([\\w$]+)`,
+      "g",
+    );
     for (const m of src.text.slice(bodyStart, bodyEnd).matchAll(entry)) {
       const at = bodyStart + m.index!;
       const fieldEnd = at + m[0].length;

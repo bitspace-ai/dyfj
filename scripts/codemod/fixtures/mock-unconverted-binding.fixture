@@ -6,6 +6,7 @@ rules: mock.spy, mock.restore, mock.assert-spy-calls
 import { assertSpyCalls, spy } from "@std/testing/mock";
 
 Deno.test("mixed", () => {
+  // const typed = mock.fn(...) once this test moves.
   const typed = spy<(n: number) => number>((n) => n);
   const plain = spy();
   typed(1);
@@ -22,6 +23,7 @@ import { mock } from "node:test";
 import { assertSpyCalls, spy } from "@std/testing/mock";
 
 Deno.test("mixed", () => {
+  // const typed = mock.fn(...) once this test moves.
   const typed = spy<(n: number) => number>((n) => n);
   const plain = mock.fn();
   typed(1);
@@ -33,5 +35,5 @@ Deno.test("mixed", () => {
   plain.mock.restore();
 });
 --- findings
-unconverted 6
-unconverted 10
+unconverted 7
+unconverted 11

@@ -23,6 +23,7 @@ Deno.test("scanner", () => {
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
+  for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
   assertEquals(ratio, 2);
   void [quoted, single, pattern, template, halves, quarter];
 });
@@ -46,6 +47,7 @@ Deno.test("scanner", () => {
   if (ratio) {}
   /assertEquals\(/.test(quoted);
   if (ratio) {} /assertEquals(1, 2)/.test(quoted);
+  for await (const x of [quoted]) /assertEquals(1, 2)/.test(x);
   assert.deepStrictEqual(ratio, 2);
   void [quoted, single, pattern, template, halves, quarter];
 });

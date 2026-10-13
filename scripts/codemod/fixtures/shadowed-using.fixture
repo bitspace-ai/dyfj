@@ -1,0 +1,27 @@
+# `using` (and `await using`) declare too: a std name bound that way is
+# shadowed, and its uses are left for hand conversion.
+rules:
+--- before
+import { assertEquals } from "@std/assert";
+
+Deno.test("using", () => {
+  {
+    using assertEquals = makeDisposableCheck();
+    assertEquals(1, 2);
+  }
+  assertEquals(3, 3);
+});
+--- after
+import { assertEquals } from "@std/assert";
+
+Deno.test("using", () => {
+  {
+    using assertEquals = makeDisposableCheck();
+    assertEquals(1, 2);
+  }
+  assertEquals(3, 3);
+});
+--- findings
+unconverted 5
+unconverted 6
+unconverted 8
