@@ -1,12 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertNotEquals,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import type { CommandCall } from "../definition.ts";
@@ -44,23 +36,35 @@ describe("executeBash", () => {
     const out = await executeBash("/work", "echo hi", {
       runner: cannedRunner("hi\n"),
     });
-    assertStrictEquals(out, "exit 0\nhi");
+    assert.strictEqual(out, "exit 0\nhi");
   });
 
   it("captures a non-zero exit and stderr", async () => {
     const out = await executeBash("/work", "false", {
       runner: cannedRunner("", "boom\n", 1),
     });
-    assertStringIncludes(out, "exit 1");
-    assertStringIncludes(out, "boom");
+    assert.ok(
+      out.includes("exit 1"),
+      `expected ${JSON.stringify(out)} to include "exit 1"`,
+    );
+    assert.ok(
+      out.includes("boom"),
+      `expected ${JSON.stringify(out)} to include "boom"`,
+    );
   });
 
   it("combines stdout and stderr", async () => {
     const out = await executeBash("/work", "x", {
       runner: cannedRunner("out\n", "err\n"),
     });
-    assertStringIncludes(out, "out");
-    assertStringIncludes(out, "err");
+    assert.ok(
+      out.includes("out"),
+      `expected ${JSON.stringify(out)} to include "out"`,
+    );
+    assert.ok(
+      out.includes("err"),
+      `expected ${JSON.stringify(out)} to include "err"`,
+    );
   });
 
   it("rejects an empty command without invoking the runner", async () => {
@@ -75,11 +79,11 @@ describe("executeBash", () => {
         timedOut: false,
       });
     };
-    assertStrictEquals(
+    assert.strictEqual(
       await executeBash("/work", "   ", { runner }),
       "error: empty command",
     );
-    assertStrictEquals(ran, false);
+    assert.strictEqual(ran, false);
   });
 
   it("reports a timeout", async () => {
@@ -87,7 +91,7 @@ describe("executeBash", () => {
       timeoutMs: 50,
       runner: cannedRunner("", "", 137, { timedOut: true }),
     });
-    assertMatch(out, /timed out after 50ms/);
+    assert.match(out, /timed out after 50ms/);
   });
 
   describe("timeout status line", () => {
@@ -108,48 +112,62 @@ describe("executeBash", () => {
       });
 
     it("a stopped group reads as a clean kill with output up to the deadline", async () => {
-      assertStrictEquals(
+      assert.strictEqual(
         await run({ group: "stopped", exited: true, outputClosed: true }),
         "timed out after 50ms (killed; output shown up to the deadline)\npartial",
       );
     });
 
     it("a group member that outlived SIGKILL is reported", async () => {
-      assertStringIncludes(
-        await run({ group: "survived", exited: true, outputClosed: true }),
-        "a process in its group was still running after SIGKILL",
+      assert.ok(
+        (await run({ group: "survived", exited: true, outputClosed: true }))
+          .includes("a process in its group was still running after SIGKILL"),
+        `expected await run({ group: "survived", exited: true, outputClosed: true }) to include "a process in its group was still running after SIGKILL"`,
       );
     });
 
     it("a group that could not be signalled says descendants may survive", async () => {
-      assertStringIncludes(
-        await run({ group: "unavailable", exited: true, outputClosed: true }),
-        "its process group could not be signalled, so descendants may survive",
+      assert.ok(
+        (await run({ group: "unavailable", exited: true, outputClosed: true }))
+          .includes(
+            "its process group could not be signalled, so descendants may survive",
+          ),
+        `expected await run({ group: "unavailable", exited: true, outputClosed: true }) to include "its process group could not be signalled, so descendants may survive"`,
       );
     });
 
     it("a command still present after SIGKILL is reported with its exit status unavailable", async () => {
-      assertStringIncludes(
-        await run({ group: "survived", exited: false, outputClosed: false }),
-        "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+      assert.ok(
+        (await run({ group: "survived", exited: false, outputClosed: false }))
+          .includes(
+            "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+          ),
+        `expected await run({ group: "survived", exited: false, outputClosed: false }) to include "the command itself had not exited after SIGKILL, so its exit status is unavailable"`,
       );
     });
 
     it("output held open after an emptied group points outside the group", async () => {
-      assertStringIncludes(
-        await run({ group: "stopped", exited: true, outputClosed: false }),
-        "a process outside its group held the output open and may still be running",
+      assert.ok(
+        (await run({ group: "stopped", exited: true, outputClosed: false }))
+          .includes(
+            "a process outside its group held the output open and may still be running",
+          ),
+        `expected await run({ group: "stopped", exited: true, outputClosed: false }) to include "a process outside its group held the output open and may still be running"`,
       );
     });
 
     it("output held open after a survivor or an unsignallable group does not infer where the holder is", async () => {
       for (const group of ["survived", "unavailable"] as const) {
         const out = await run({ group, exited: true, outputClosed: false });
-        assertStringIncludes(
-          out,
-          "the output was still held open after the stop, so a process may still be running",
+        assert.ok(
+          out.includes(
+            "the output was still held open after the stop, so a process may still be running",
+          ),
+          `expected ${
+            JSON.stringify(out)
+          } to include "the output was still held open after the stop, so a process may still be running"`,
         );
-        assertFalse(out.includes("outside its group"));
+        assert.ok(!out.includes("outside its group"));
       }
     });
   });
@@ -159,12 +177,17 @@ describe("executeBash", () => {
       maxBytes: 10,
       runner: cannedRunner("0123456789ABCDEF"),
     });
-    assertStringIncludes(out, "[truncated at 10 characters]");
+    assert.ok(
+      out.includes("[truncated at 10 characters]"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "[truncated at 10 characters]"`,
+    );
   });
 
   it("surfaces a runner failure as an error result (never throws)", async () => {
     const runner: BashRunner = () => Promise.reject(new Error("spawn EACCES"));
-    assertMatch(
+    assert.match(
       await executeBash("/work", "x", { runner }),
       /^error: cannot run command: spawn EACCES/,
     );
@@ -188,7 +211,7 @@ describe("buildSafeBashEnv", () => {
 
   it("forwards only non-secret keys and never the projected secrets", () => {
     // Secrets present in the parent env must NOT be forwarded to bash
-    // (CWE-532). The env is injected, so the test never touches Deno.env.
+    // (CWE-532). The env is injected, so the test never touches the process env.
     const env = buildSafeBashEnv(
       new MapEnv({
         PATH: "/usr/bin:/bin",
@@ -199,14 +222,14 @@ describe("buildSafeBashEnv", () => {
       }),
     );
     for (const key of Object.keys(env)) {
-      assertStrictEquals(SAFE.has(key), true);
+      assert.strictEqual(SAFE.has(key), true);
     }
-    assertFalse(Object.hasOwn(env, "ANTHROPIC_API_KEY"));
-    assertFalse(Object.hasOwn(env, "DOLT_PASSWORD"));
-    assertFalse(Object.hasOwn(env, "DYFJ_MEMORY_MCP_TOKEN"));
+    assert.ok(!Object.hasOwn(env, "ANTHROPIC_API_KEY"));
+    assert.ok(!Object.hasOwn(env, "DOLT_PASSWORD"));
+    assert.ok(!Object.hasOwn(env, "DYFJ_MEMORY_MCP_TOKEN"));
     // PATH must be forwarded so commands still resolve.
-    assertNotEquals(env.PATH, undefined);
-    assertEquals(env, { PATH: "/usr/bin:/bin", TERM: "dumb" });
+    assert.notStrictEqual(env.PATH, undefined);
+    assert.deepStrictEqual(env, { PATH: "/usr/bin:/bin", TERM: "dumb" });
   });
 });
 
@@ -231,7 +254,7 @@ describe("operator permission profile", () => {
       call({ command: "ls" }, { commandId: "bash" }),
       { permissionLevel: "operator", loopback: true },
     );
-    assertStrictEquals(policy.decision, "ask");
+    assert.strictEqual(policy.decision, "ask");
   });
 });
 
@@ -240,7 +263,7 @@ describe("buildCommandToolCallEventPayload", () => {
     const registry = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
       workspaceRoot: "/work",
     });
-    assertStrictEquals(registry.lookup("bash")!.redactResult, true);
+    assert.strictEqual(registry.lookup("bash")!.redactResult, true);
   });
 });
 
@@ -252,24 +275,29 @@ describe("bash timeoutSec", () => {
   const operator = { permissionLevel: "operator", loopback: true } as const;
 
   it("an absent timeout keeps the 120 s default", () => {
-    assertEquals(resolveBashTimeoutMs(undefined), { timeoutMs: 120_000 });
+    assert.deepStrictEqual(resolveBashTimeoutMs(undefined), {
+      timeoutMs: 120_000,
+    });
   });
 
   it("a requested timeout is taken in whole seconds, up to the ceiling", () => {
-    assertEquals(resolveBashTimeoutMs(300), { timeoutMs: 300_000 });
-    assertEquals(resolveBashTimeoutMs(600), { timeoutMs: 600_000 });
-    assertEquals(resolveBashTimeoutMs(1), { timeoutMs: 1_000 });
+    assert.deepStrictEqual(resolveBashTimeoutMs(300), { timeoutMs: 300_000 });
+    assert.deepStrictEqual(resolveBashTimeoutMs(600), { timeoutMs: 600_000 });
+    assert.deepStrictEqual(resolveBashTimeoutMs(1), { timeoutMs: 1_000 });
   });
 
   it("a value above the ceiling is refused with a message naming 600 s, not clamped", () => {
     const resolved = resolveBashTimeoutMs(601);
-    assert("error" in resolved, "601 must not resolve to a timeout");
-    assertStringIncludes(resolved.error, "600 s");
+    assert.ok("error" in resolved, "601 must not resolve to a timeout");
+    assert.ok(
+      resolved.error.includes("600 s"),
+      `expected resolved.error to include "600 s"`,
+    );
   });
 
   it("zero, negative and fractional values are refused", () => {
     for (const value of [0, -1, 1.5, Number.NaN, "300", null]) {
-      assert(
+      assert.ok(
         "error" in resolveBashTimeoutMs(value),
         `${String(value)} must be refused`,
       );
@@ -289,7 +317,7 @@ describe("bash timeoutSec", () => {
       });
     };
     const bash = defineBash("/work", { runner });
-    assertStrictEquals(
+    assert.strictEqual(
       await bash.executor(
         call({ command: "echo ok", timeoutSec: 300 }),
         context,
@@ -297,7 +325,7 @@ describe("bash timeoutSec", () => {
       "exit 0\nok",
     );
     await bash.executor(call({ command: "echo ok" }), context);
-    assertEquals(seen, [300_000, 120_000]);
+    assert.deepStrictEqual(seen, [300_000, 120_000]);
   });
 
   it("policy refuses a timeout above the ceiling before any approval, naming the ceiling", () => {
@@ -306,13 +334,18 @@ describe("bash timeoutSec", () => {
       call({ command: "deno task test", timeoutSec: 601 }),
       operator,
     );
-    assertStrictEquals(policy.decision, "deny");
-    assertStrictEquals(policy.authzBasis, "policy:deny:invalid-arguments");
-    assertStringIncludes(policy.reason ?? "", "timeoutSec must be at most 600");
+    assert.strictEqual(policy.decision, "deny");
+    assert.strictEqual(policy.authzBasis, "policy:deny:invalid-arguments");
+    assert.ok(
+      (policy.reason ?? "").includes("timeoutSec must be at most 600"),
+      `expected policy.reason ?? "" to include "timeoutSec must be at most 600"`,
+    );
     // The corrective feedback shows the model the accepted range.
-    assertStringIncludes(
-      policy.reason ?? "",
-      '"timeoutSec": integer (optional, 1 to 600)',
+    assert.ok(
+      (policy.reason ?? "").includes(
+        '"timeoutSec": integer (optional, 1 to 600)',
+      ),
+      `expected policy.reason ?? "" to include '"timeoutSec": integer (optional, 1 to 600)'`,
     );
   });
 
@@ -323,12 +356,12 @@ describe("bash timeoutSec", () => {
         call({ command: "ls", timeoutSec }),
         operator,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         policy.decision,
         "deny",
         `${String(timeoutSec)} must be denied`,
       );
-      assertStrictEquals(policy.authzBasis, "policy:deny:invalid-arguments");
+      assert.strictEqual(policy.authzBasis, "policy:deny:invalid-arguments");
     }
   });
 
@@ -348,31 +381,40 @@ describe("bash timeoutSec", () => {
       call({ command: "echo", timeoutSec: 601 }),
       context,
     );
-    assertMatch(out, /^error: /);
-    assertStringIncludes(out, "600 s");
-    assertStrictEquals(ran, false);
+    assert.match(out, /^error: /);
+    assert.ok(
+      out.includes("600 s"),
+      `expected ${JSON.stringify(out)} to include "600 s"`,
+    );
+    assert.strictEqual(ran, false);
   });
 
   it("the approval title shows the effective timeout", () => {
     const bash = defineBash("/work");
-    assertStrictEquals(
+    assert.strictEqual(
       bash.approvalTitle!(call({ command: "deno task test", timeoutSec: 300 })),
       "Run Bash Command (timeout 300 s)",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       bash.approvalTitle!(call({ command: "ls" })),
       "Run Bash Command (timeout 120 s)",
     );
     // The listed title stays stable; only the approval prompt varies.
-    assertStrictEquals(bash.title, "Run Bash Command");
+    assert.strictEqual(bash.title, "Run Bash Command");
   });
 
   it("the description states the default and the ceiling", () => {
     const bash = defineBash("/work");
-    assertStringIncludes(bash.description, "120 s");
-    assertStringIncludes(bash.description, "600 s");
+    assert.ok(
+      bash.description.includes("120 s"),
+      `expected bash.description to include "120 s"`,
+    );
+    assert.ok(
+      bash.description.includes("600 s"),
+      `expected bash.description to include "600 s"`,
+    );
     const property = bash.inputSchema.properties!.timeoutSec;
-    assertEquals(
+    assert.deepStrictEqual(
       {
         type: property.type,
         minimum: property.minimum,
@@ -380,7 +422,10 @@ describe("bash timeoutSec", () => {
       },
       { type: "integer", minimum: 1, maximum: 600 },
     );
-    assertStringIncludes(property.description ?? "", "600");
+    assert.ok(
+      (property.description ?? "").includes("600"),
+      `expected property.description ?? "" to include "600"`,
+    );
   });
 
   it("the timeout is recorded on the durable tool_call event like any other argument", () => {
@@ -395,10 +440,10 @@ describe("bash timeoutSec", () => {
         result: "exit 0",
       },
     );
-    assertEquals(redacted.arguments, {
+    assert.deepStrictEqual(redacted.arguments, {
       command: "deno task test",
       timeoutSec: 300,
     });
-    assertStrictEquals(redacted.result, "[redacted]");
+    assert.strictEqual(redacted.result, "[redacted]");
   });
 });

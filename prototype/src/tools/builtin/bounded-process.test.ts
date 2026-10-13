@@ -1,9 +1,4 @@
-import {
-  assertEquals,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   createGroupStopper,
@@ -16,14 +11,24 @@ import {
 describe("groupSignalArgs", () => {
   it("refuses a group id that would signal more than one group", () => {
     for (const group of [0, 1, -5, 2.5, Number.NaN, 2 ** 60]) {
-      assertThrows(() => groupSignalArgs(group, "TERM"), RangeError);
+      assert.throws(() => groupSignalArgs(group, "TERM"), RangeError);
     }
   });
 
   it("names the negated group id after the end-of-options marker", () => {
-    assertEquals(groupSignalArgs(4242, "TERM"), ["-s", "TERM", "--", "-4242"]);
-    assertEquals(groupSignalArgs(4242, "KILL"), ["-s", "KILL", "--", "-4242"]);
-    assertEquals(groupSignalArgs(4242, "0"), ["-0", "--", "-4242"]);
+    assert.deepStrictEqual(groupSignalArgs(4242, "TERM"), [
+      "-s",
+      "TERM",
+      "--",
+      "-4242",
+    ]);
+    assert.deepStrictEqual(groupSignalArgs(4242, "KILL"), [
+      "-s",
+      "KILL",
+      "--",
+      "-4242",
+    ]);
+    assert.deepStrictEqual(groupSignalArgs(4242, "0"), ["-0", "--", "-4242"]);
   });
 });
 
@@ -46,17 +51,17 @@ describe("createGroupStopper", () => {
   it("stops after TERM alone when the group empties within the grace", async () => {
     const kill = scripted({ TERM: ["delivered"], "0": ["delivered", "gone"] });
     const stop = createGroupStopper(kill.run);
-    assertStrictEquals(await stop(4242, 500), "stopped");
-    assertEquals(kill.calls, ["TERM", "0", "0"]);
+    assert.strictEqual(await stop(4242, 500), "stopped");
+    assert.deepStrictEqual(kill.calls, ["TERM", "0", "0"]);
   });
 
   it("reports a group that was already gone without waiting", async () => {
     const kill = scripted({ TERM: ["gone"] });
-    assertStrictEquals(
+    assert.strictEqual(
       await createGroupStopper(kill.run)(4242, 500),
       "stopped",
     );
-    assertEquals(kill.calls, ["TERM"]);
+    assert.deepStrictEqual(kill.calls, ["TERM"]);
   });
 
   it("escalates to KILL when the group ignores TERM through the grace", async () => {
@@ -70,12 +75,12 @@ describe("createGroupStopper", () => {
       pollMs: 10,
       killSettleMs: 200,
     })(4242, 15);
-    assertStrictEquals(result, "stopped");
+    assert.strictEqual(result, "stopped");
     const kill_at = kill.calls.indexOf("KILL");
-    assertEquals(kill.calls[0], "TERM");
-    assertEquals(kill_at > 1, true, kill.calls.join(" "));
-    assertEquals(kill.calls.slice(0, kill_at).includes("0"), true);
-    assertEquals(kill.calls.slice(kill_at + 1).includes("0"), true);
+    assert.deepStrictEqual(kill.calls[0], "TERM");
+    assert.deepStrictEqual(kill_at > 1, true, kill.calls.join(" "));
+    assert.deepStrictEqual(kill.calls.slice(0, kill_at).includes("0"), true);
+    assert.deepStrictEqual(kill.calls.slice(kill_at + 1).includes("0"), true);
   });
 
   it("reports a survivor when the group is still live after KILL and its settle bound", async () => {
@@ -88,7 +93,7 @@ describe("createGroupStopper", () => {
       pollMs: 5,
       killSettleMs: 40,
     })(4242, 10);
-    assertStrictEquals(result, "survived");
+    assert.strictEqual(result, "survived");
   });
 
   it("treats a failed probe as live, never as stopped", async () => {
@@ -101,16 +106,16 @@ describe("createGroupStopper", () => {
       pollMs: 5,
       killSettleMs: 30,
     })(4242, 10);
-    assertStrictEquals(result, "survived");
+    assert.strictEqual(result, "survived");
   });
 
   it("is unavailable when /bin/kill cannot run, and signals nothing more", async () => {
     const kill = scripted({ TERM: ["unavailable"] });
-    assertStrictEquals(
+    assert.strictEqual(
       await createGroupStopper(kill.run)(4242, 500),
       "unavailable",
     );
-    assertEquals(kill.calls, ["TERM"]);
+    assert.deepStrictEqual(kill.calls, ["TERM"]);
   });
 
   it("signals nothing once it has given up, even if a run outlives the bound", async () => {
@@ -130,34 +135,43 @@ describe("createGroupStopper", () => {
       killSettleMs: 10,
       startupMs: 10,
     });
-    assertStrictEquals(await stop(4242, 0), "unavailable");
+    assert.strictEqual(await stop(4242, 0), "unavailable");
     await new Promise((resolve) => setTimeout(resolve, 250));
-    assertEquals(calls, ["TERM"]);
+    assert.deepStrictEqual(calls, ["TERM"]);
   });
 
   it("is unavailable for a group id it must not signal, without spawning", async () => {
     const kill = scripted({});
     const stop = createGroupStopper(kill.run);
     for (const group of [0, 1, -3, 2.5]) {
-      assertStrictEquals(await stop(group, 500), "unavailable");
+      assert.strictEqual(await stop(group, 500), "unavailable");
     }
-    assertEquals(kill.calls, []);
+    assert.deepStrictEqual(kill.calls, []);
   });
 });
 
 describe("describeTimeout", () => {
   it("reads as a plain kill when the runner gave no termination detail", () => {
-    assertStringIncludes(describeTimeout(10), "timed out after 10ms (killed)");
+    assert.ok(
+      describeTimeout(10).includes("timed out after 10ms (killed)"),
+      `expected describeTimeout(10) to include "timed out after 10ms (killed)"`,
+    );
   });
 
   it("says when the command's exit status is unavailable", () => {
-    assertStringIncludes(
+    assert.ok(
       describeTimeout(10, {
         group: "survived",
         exited: false,
         outputClosed: false,
-      }),
-      "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+      }).includes(
+        "the command itself had not exited after SIGKILL, so its exit status is unavailable",
+      ),
+      `expected describeTimeout(10, {
+        group: "survived",
+        exited: false,
+        outputClosed: false,
+      }) to include "the command itself had not exited after SIGKILL, so its exit status is unavailable"`,
     );
   });
 });

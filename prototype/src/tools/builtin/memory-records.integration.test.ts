@@ -5,11 +5,7 @@
  * tools/builtin/memory.integration.test.ts.
  */
 
-import {
-  assertEquals,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   buildSystemPrompt,
@@ -39,7 +35,7 @@ describe("memory indexes (integration)", () => {
         store.memories,
         MEMORY_VISIBILITY_ALL,
       );
-      assertEquals(injected.map((memory) => memory.slug), [
+      assert.deepStrictEqual(injected.map((memory) => memory.slug), [
         "fixture_user_private",
       ]);
 
@@ -47,12 +43,12 @@ describe("memory indexes (integration)", () => {
         store.memories,
         MEMORY_VISIBILITY_ALL,
       );
-      assertEquals(indexed.map((memory) => memory.slug).sort(), [
+      assert.deepStrictEqual(indexed.map((memory) => memory.slug).sort(), [
         "fixture_feedback_shareable",
         "fixture_project_public",
         "fixture_reference_client_safe",
       ]);
-      assertStrictEquals(
+      assert.strictEqual(
         indexed.every((memory) => !("content" in memory)),
         true,
       );
@@ -64,11 +60,11 @@ describe("memory indexes (integration)", () => {
         "client_safe",
         "public",
       ]);
-      assertEquals(indexed.map((memory) => memory.slug).sort(), [
+      assert.deepStrictEqual(indexed.map((memory) => memory.slug).sort(), [
         "fixture_project_public",
         "fixture_reference_client_safe",
       ]);
-      assertEquals(
+      assert.deepStrictEqual(
         await loadInjectedMemories(store.memories, ["client_safe", "public"]),
         [],
       );
@@ -88,9 +84,27 @@ describe("full session context (integration)", () => {
       );
       const prompt = buildSystemPrompt(core, index);
 
-      assertStringIncludes(prompt, "Fixture Private User");
-      assertStringIncludes(prompt, "Fixture Shareable Feedback");
-      assertStringIncludes(prompt, "fixture_project_public");
-      assertStringIncludes(prompt, "fixture_reference_client_safe");
+      assert.ok(
+        prompt.includes("Fixture Private User"),
+        `expected ${JSON.stringify(prompt)} to include "Fixture Private User"`,
+      );
+      assert.ok(
+        prompt.includes("Fixture Shareable Feedback"),
+        `expected ${
+          JSON.stringify(prompt)
+        } to include "Fixture Shareable Feedback"`,
+      );
+      assert.ok(
+        prompt.includes("fixture_project_public"),
+        `expected ${
+          JSON.stringify(prompt)
+        } to include "fixture_project_public"`,
+      );
+      assert.ok(
+        prompt.includes("fixture_reference_client_safe"),
+        `expected ${
+          JSON.stringify(prompt)
+        } to include "fixture_reference_client_safe"`,
+      );
     }));
 });
