@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { assertEquals } from "@std/assert";
 import {
   nameserverNetGrants,
@@ -14,7 +15,7 @@ Deno.test("nameserverNetGrants grants port 53 on each IPv4 and IPv6 nameserver",
     "nameserver 2001:4860:4860::8888",
     "options edns0 trust-ad",
   ].join("\n");
-  assertEquals(nameserverNetGrants(conf), [
+  assert.deepStrictEqual(nameserverNetGrants(conf), [
     "127.0.0.53:53",
     "8.8.8.8:53",
     "[2001:4860:4860::8888]:53",
@@ -33,7 +34,7 @@ Deno.test("nameserverNetGrants ignores comments, duplicates and malformed entrie
     "nameserver",
     "nameservers 4.4.4.4",
   ].join("\n");
-  assertEquals(nameserverNetGrants(conf), ["1.1.1.1:53"]);
+  assert.deepStrictEqual(nameserverNetGrants(conf), ["1.1.1.1:53"]);
 });
 
 Deno.test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () => {
@@ -43,11 +44,11 @@ Deno.test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () =
     "nameserver [2001:db8::1]",
     "nameserver 2001:DB8::53",
   ].join("\n");
-  assertEquals(nameserverNetGrants(conf), ["[2001:db8::53]:53"]);
+  assert.deepStrictEqual(nameserverNetGrants(conf), ["[2001:db8::53]:53"]);
 });
 
 Deno.test("nameserverNetGrants gives a scoped IPv6 nameserver no grant", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     nameserverNetGrants("nameserver fe80::1%eth0\nnameserver 9.9.9.9\n"),
     ["9.9.9.9:53"],
   );
@@ -59,8 +60,8 @@ Deno.test("readNameserverNetGrants reads the resolver configuration", async () =
     read.push(path);
     return Promise.resolve("nameserver 192.0.2.53\n");
   });
-  assertEquals(read, [RESOLV_CONF_PATH]);
-  assertEquals(grants, ["192.0.2.53:53"]);
+  assert.deepStrictEqual(read, [RESOLV_CONF_PATH]);
+  assert.deepStrictEqual(grants, ["192.0.2.53:53"]);
 });
 
 Deno.test("readNameserverNetGrants yields no grants when the file cannot be read", async () => {

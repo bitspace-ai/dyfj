@@ -1,4 +1,5 @@
-import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   CONFIG_SCHEMA,
   declaredEnvVars,
@@ -11,7 +12,7 @@ import {
 // missing from another — the live failure that surfaced DYFJ_PRINCIPAL_ID on
 // serve-unix) is caught structurally, not band-aided per-pair.
 { // "config surface ⇄ deno.json permission allowlist"
-  const denoJson = JSON.parse(Deno.readTextFileSync("deno.json")) as {
+  const denoJson = JSON.parse(readFileSync("deno.json", "utf8")) as {
     permissions: Record<string, { env?: string[]; net?: string[] }>;
   };
   const profileEnv = (name: string) =>
@@ -32,7 +33,7 @@ import {
     Deno.test(`config surface ⇄ deno.json permission allowlist: ${profile} grants the resolver env base (so boot cannot NotCapable)`, () => {
       const granted = profileEnv(profile);
       for (const base of ["PATH", "HOME", "USER", "XDG_RUNTIME_DIR"]) {
-        assertStrictEquals(granted.has(base), true);
+        assert.strictEqual(granted.has(base), true);
       }
     });
   }
@@ -57,12 +58,12 @@ import {
     Deno.test(`config surface ⇄ deno.json permission allowlist: ${profile} grants every declared engine env var`, () => {
       const granted = profileEnv(profile);
       const missing = engineEnv.filter((e) => !granted.has(e));
-      assertEquals(missing, []);
+      assert.deepStrictEqual(missing, []);
     });
   }
 
   Deno.test("config surface ⇄ deno.json permission allowlist: verify-workbench-events grants the agent step-limit env var", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       profileEnv("verify-workbench-events").has("DYFJ_MAX_TOOL_STEPS"),
       true,
     );
@@ -74,12 +75,16 @@ import {
     const testKeys = CONFIG_SCHEMA.filter((s) =>
       s.domain === "test" || s.domain === "tooling"
     ).map((s) => s.envVar);
-    assert(testKeys.some((key) => key === "DYFJ_MCP_TEST_TEMP_DIR"));
-    assert(testKeys.some((key) => key === "DYFJ_LANE_TOKEN"));
+    assert.ok(testKeys.some((key) => key === "DYFJ_MCP_TEST_TEMP_DIR"));
+    assert.ok(testKeys.some((key) => key === "DYFJ_LANE_TOKEN"));
     for (const [name, profile] of Object.entries(denoJson.permissions)) {
       if (name === "test") continue;
       const granted = new Set(profile.env ?? []);
-      assertEquals(testKeys.filter((key) => granted.has(key)), [], name);
+      assert.deepStrictEqual(
+        testKeys.filter((key) => granted.has(key)),
+        [],
+        name,
+      );
     }
   });
 
@@ -91,7 +96,7 @@ import {
       const undeclared = [...profileEnv(profile)].filter(
         (e) => !declared.has(e) && !SYSTEM_ENV.has(e),
       );
-      assertEquals(undeclared, []);
+      assert.deepStrictEqual(undeclared, []);
     });
   }
 }
@@ -104,15 +109,15 @@ import {
       const spec = CONFIG_SCHEMA.find(
         (s) => s.envVar === envVar && s.domain === "engine",
       );
-      assertStrictEquals(spec?.kind, "secret-pointer");
+      assert.strictEqual(spec?.kind, "secret-pointer");
     }
     // Spot-check the providers and the recall token the resolver must cover.
-    assertStrictEquals(secrets.has("ANTHROPIC_API_KEY"), true);
-    assertStrictEquals(secrets.has("OPENAI_API_KEY"), true);
-    assertStrictEquals(secrets.has("OPENROUTER_API_KEY"), true);
-    assertStrictEquals(secrets.has("GEMINI_API_KEY"), true);
-    assertStrictEquals(secrets.has("DYFJ_MEMORY_MCP_TOKEN"), true);
+    assert.strictEqual(secrets.has("ANTHROPIC_API_KEY"), true);
+    assert.strictEqual(secrets.has("OPENAI_API_KEY"), true);
+    assert.strictEqual(secrets.has("OPENROUTER_API_KEY"), true);
+    assert.strictEqual(secrets.has("GEMINI_API_KEY"), true);
+    assert.strictEqual(secrets.has("DYFJ_MEMORY_MCP_TOKEN"), true);
     // A plain value key is never a secret pointer.
-    assertStrictEquals(secrets.has("DYFJ_MEMORY_MCP_URL"), false);
+    assert.strictEqual(secrets.has("DYFJ_MEMORY_MCP_URL"), false);
   });
 }

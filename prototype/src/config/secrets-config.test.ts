@@ -1,11 +1,5 @@
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import { captureThrow } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
   DEFAULT_SECRET_TIMEOUT_MS,
   loadSecretsConfig,
@@ -20,8 +14,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   const PATH = "/h/.dyfj/config.toml";
 
   Deno.test("parseSecretsConfig: null table or absent [secrets] → null (no resolution)", () => {
-    assertStrictEquals(parseSecretsConfig(null, PATH), null);
-    assertStrictEquals(parseSecretsConfig({ companion: {} }, PATH), null);
+    assert.strictEqual(parseSecretsConfig(null, PATH), null);
+    assert.strictEqual(parseSecretsConfig({ companion: {} }, PATH), null);
   });
 
   Deno.test("parseSecretsConfig: parses command, timeout, and declared pointers", () => {
@@ -38,7 +32,7 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       },
       PATH,
     );
-    assertEquals(cfg, {
+    assert.deepStrictEqual(cfg, {
       command: ["op", "read"],
       timeoutMs: 5000,
       pointers: {
@@ -56,10 +50,10 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       { secrets: { command: ["op", "read"] } },
       PATH,
     );
-    assertStrictEquals(cfg?.timeoutMs, DEFAULT_SECRET_TIMEOUT_MS);
-    assertEquals(cfg?.pointers, {});
-    assertEquals(cfg?.env, {});
-    assertEquals(cfg?.inheritEnv, []);
+    assert.strictEqual(cfg?.timeoutMs, DEFAULT_SECRET_TIMEOUT_MS);
+    assert.deepStrictEqual(cfg?.pointers, {});
+    assert.deepStrictEqual(cfg?.env, {});
+    assert.deepStrictEqual(cfg?.inheritEnv, []);
   });
 
   Deno.test("parseSecretsConfig: parses [secrets].inherit_env as a forward-list of ambient var names", () => {
@@ -72,13 +66,16 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       },
       PATH,
     );
-    assertEquals(cfg?.inheritEnv, ["OP_SERVICE_ACCOUNT_TOKEN", "OP_ACCOUNT"]);
+    assert.deepStrictEqual(cfg?.inheritEnv, [
+      "OP_SERVICE_ACCOUNT_TOKEN",
+      "OP_ACCOUNT",
+    ]);
   });
 
   Deno.test("parseSecretsConfig: inherit_env rejects denylisted and declared-secret names", () => {
     for (const name of ["PATH", "HOME", "LD_PRELOAD"]) {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseSecretsConfig(
             { secrets: { command: ["op", "read"], inherit_env: [name] } },
             PATH,
@@ -87,8 +84,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
         /inherit_env may not name/,
       );
     }
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           {
             secrets: {
@@ -105,8 +102,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
 
   Deno.test("parseSecretsConfig: inherit_env rejects a wildcard / metacharacter name (--allow-env=* bypass)", () => {
     for (const name of ["*", "A=B", "FOO BAR", "1BAD", "A*"]) {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseSecretsConfig(
             { secrets: { command: ["op", "read"], inherit_env: [name] } },
             PATH,
@@ -118,8 +115,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: [secrets.env] rejects an invalid environment variable name", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], env: { "*": "x" } } },
           PATH,
@@ -130,8 +127,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: inherit_env must be an array of non-empty strings", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], inherit_env: "OP_TOKEN" } },
           PATH,
@@ -139,8 +136,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       ) as Error).message,
       /must be an array/,
     );
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], inherit_env: [""] } },
           PATH,
@@ -160,15 +157,15 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       },
       PATH,
     );
-    assertEquals(cfg?.env, {
+    assert.deepStrictEqual(cfg?.env, {
       OP_ACCOUNT: "my.1password.com",
       RESOLVER_FLAG: "1",
     });
   });
 
   Deno.test("parseSecretsConfig: a non-string [secrets.env] value fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], env: { OP_DEBUG: true } } },
           PATH,
@@ -182,8 +179,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
     for (
       const name of ["PATH", "HOME", "DYLD_INSERT_LIBRARIES", "LD_PRELOAD"]
     ) {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseSecretsConfig(
             { secrets: { command: ["op", "read"], env: { [name]: "/evil" } } },
             PATH,
@@ -198,8 +195,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
     // The engine can enforce the no-plaintext-credential boundary for names it
     // knows are secret — a declared secret-pointer key must use a pointer.
     for (const name of ["ANTHROPIC_API_KEY", "DYFJ_MEMORY_MCP_TOKEN"]) {
-      assertMatch(
-        (assertThrows(() =>
+      assert.match(
+        (captureThrow(() =>
           parseSecretsConfig(
             {
               secrets: { command: ["op", "read"], env: { [name]: "sk-plain" } },
@@ -213,8 +210,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: a missing command fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig({ secrets: { timeout_ms: 1000 } }, PATH)
       ) as Error).message,
       /command is required/,
@@ -228,29 +225,29 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       throw new Error("expected a validation throw");
     } catch (err) {
       const msg = (err as Error).message;
-      assertMatch(msg, /command is required/);
-      assertFalse(msg.includes("private-account"));
-      assertFalse(msg.includes(privatePath));
+      assert.match(msg, /command is required/);
+      assert.ok(!msg.includes("private-account"));
+      assert.ok(!msg.includes(privatePath));
       // The stable public-safe label is fine.
-      assert(msg.includes("config.toml"));
+      assert.ok(msg.includes("config.toml"));
     }
   });
 
   Deno.test("parseSecretsConfig: an empty or non-string command fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig({ secrets: { command: [] } }, PATH)
       ) as Error).message,
       /non-empty array/,
     );
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig({ secrets: { command: [""] } }, PATH)
       ) as Error).message,
       /non-empty array/,
     );
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig({ secrets: { command: "op read" } }, PATH)
       ) as Error).message,
       /non-empty array/,
@@ -258,8 +255,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: a non-positive timeout fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op"], timeout_ms: 0 } },
           PATH,
@@ -270,8 +267,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: a pointer for an undeclared or non-secret key fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           {
             secrets: {
@@ -285,8 +282,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
       /not a declared secret env var/,
     );
     // A declared VALUE key (not a secret pointer) is rejected too.
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           {
             secrets: {
@@ -302,8 +299,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
   });
 
   Deno.test("parseSecretsConfig: an empty pointer value fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           {
             secrets: {
@@ -328,7 +325,7 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
           Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" }),
         ),
     });
-    assertStrictEquals(cfg, null);
+    assert.strictEqual(cfg, null);
   });
 
   Deno.test("loadSecretsConfig: parses the [secrets] section from the config file", async () => {
@@ -343,12 +340,12 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
         },
       }),
     });
-    assertEquals(cfg?.command, ["op", "read"]);
-    assertStrictEquals(
+    assert.deepStrictEqual(cfg?.command, ["op", "read"]);
+    assert.strictEqual(
       cfg?.pointers.OPENAI_API_KEY,
       "op://v/openai/credential",
     );
-    assertStrictEquals(cfg?.named?.linear_mcp, "op://v/linear/credential");
+    assert.strictEqual(cfg?.named?.linear_mcp, "op://v/linear/credential");
   });
 
   Deno.test("loadSecretsConfig: rejects more than 64 named credentials before resolver fan-out", () => {
@@ -358,8 +355,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
         `op://v/item-${index}/credential`,
       ]),
     );
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], named } },
           "/h/.dyfj/config.toml",
@@ -373,8 +370,8 @@ const FAKE_PRIVATE_HOME = ["", "Users", "private-account"].join("/");
 { // "parseSecretsConfig — strict [secrets] keys"
   const PATH = "/h/.dyfj/config.toml";
   Deno.test("parseSecretsConfig — strict [secrets] keys: an unknown [secrets] key (typo) fails loud", () => {
-    assertMatch(
-      (assertThrows(() =>
+    assert.match(
+      (captureThrow(() =>
         parseSecretsConfig(
           { secrets: { command: ["op", "read"], timeouts_ms: 5000 } },
           PATH,

@@ -1,10 +1,8 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
 import {
@@ -33,12 +31,12 @@ const table = (t: Record<string, unknown>) => () => t;
 { // "loadConfig"
   Deno.test("loadConfig: returns defaults when there is no file and no env", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
-    assertEquals(cfg, CONFIG_DEFAULTS);
-    assertStrictEquals(cfg.approvePaidDefault, false);
+    assert.deepStrictEqual(cfg, CONFIG_DEFAULTS);
+    assert.strictEqual(cfg.approvePaidDefault, false);
     // Workspace-instruction elevation defaults OFF: selecting a workspace is
     // not a trust decision; setting this posture is.
-    assertStrictEquals(cfg.trustWorkspaceInstructions, false);
-    assertStrictEquals(
+    assert.strictEqual(cfg.trustWorkspaceInstructions, false);
+    assert.strictEqual(
       cfg.defaultSessionBudgetUsd,
       BUDGET_DEFAULTS.sessionLimitUsd,
     );
@@ -56,12 +54,12 @@ const table = (t: Record<string, unknown>) => () => t;
         budget: { session_limit_usd: 2.5, per_call_limit_usd: 0.25 },
       }),
     });
-    assertStrictEquals(cfg.defaultCompanionModel, "claude-opus-4-8");
-    assertStrictEquals(cfg.permissionLevel, "operator");
-    assertStrictEquals(cfg.approvePaidDefault, true);
-    assertStrictEquals(cfg.trustWorkspaceInstructions, true);
-    assertStrictEquals(cfg.defaultSessionBudgetUsd, 2.5);
-    assertStrictEquals(cfg.defaultPerCallBudgetUsd, 0.25);
+    assert.strictEqual(cfg.defaultCompanionModel, "claude-opus-4-8");
+    assert.strictEqual(cfg.permissionLevel, "operator");
+    assert.strictEqual(cfg.approvePaidDefault, true);
+    assert.strictEqual(cfg.trustWorkspaceInstructions, true);
+    assert.strictEqual(cfg.defaultSessionBudgetUsd, 2.5);
+    assert.strictEqual(cfg.defaultPerCallBudgetUsd, 0.25);
   });
 
   Deno.test("loadConfig: environment overrides the file (precedence)", async () => {
@@ -83,16 +81,16 @@ const table = (t: Record<string, unknown>) => () => t;
         budget: { session_limit_usd: 9 },
       }),
     });
-    assertStrictEquals(cfg.defaultCompanionModel, "env-model");
-    assertStrictEquals(cfg.permissionLevel, "operator");
-    assertStrictEquals(cfg.approvePaidDefault, true);
-    assertStrictEquals(cfg.trustWorkspaceInstructions, true);
-    assertStrictEquals(cfg.defaultSessionBudgetUsd, 3);
+    assert.strictEqual(cfg.defaultCompanionModel, "env-model");
+    assert.strictEqual(cfg.permissionLevel, "operator");
+    assert.strictEqual(cfg.approvePaidDefault, true);
+    assert.strictEqual(cfg.trustWorkspaceInstructions, true);
+    assert.strictEqual(cfg.defaultSessionBudgetUsd, 3);
   });
 
   Deno.test("loadConfig: rejects an invalid permission level — fail loud at startup", async () => {
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: env(HOME),
           readTextFile: present,
@@ -104,8 +102,8 @@ const table = (t: Record<string, unknown>) => () => t;
   });
 
   Deno.test("loadConfig: an invalid permission level error is path-free (no absolute config path)", async () => {
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: env({ HOME: FAKE_PRIVATE_HOME }),
           readTextFile: present,
@@ -119,13 +117,13 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: present,
       parseToml: table({ permissions: { level: "yolo" } }),
     }).catch((e: Error) => {
-      assertFalse(e.message.includes("private-account"));
+      assert.ok(!e.message.includes("private-account"));
     });
   });
 
   Deno.test("loadConfig: rejects a wrong-typed value rather than silently coercing", async () => {
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: env(HOME),
           readTextFile: present,
@@ -137,8 +135,8 @@ const table = (t: Record<string, unknown>) => () => t;
   });
 
   Deno.test("loadConfig: surfaces a parse failure rather than silently mis-configuring", async () => {
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: env(HOME),
           readTextFile: present,
@@ -154,15 +152,15 @@ const table = (t: Record<string, unknown>) => () => t;
   Deno.test("loadConfig: a missing config.toml yields the defaults through the default reader", async () => {
     // No reader is injected: the real file read runs on a directory that holds
     // no config.toml, and its not-found error must read as "no file".
-    const dir = await Deno.makeTempDir();
+    const dir = await mkdtemp(join(tmpdir(), "tmp-"));
     try {
       const config = await loadConfig({
         env: { get: (key) => (key === "DYFJ_ROOT" ? dir : undefined) },
         parseToml: () => ({}),
       });
-      assertEquals(config, CONFIG_DEFAULTS);
+      assert.deepStrictEqual(config, CONFIG_DEFAULTS);
     } finally {
-      await Deno.remove(dir, { recursive: true });
+      await rm(dir, { recursive: true });
     }
   });
 
@@ -175,17 +173,17 @@ const table = (t: Record<string, unknown>) => () => t;
         }),
       );
     const message =
-      ((await assertRejects(() =>
+      ((await captureRejection(() =>
         loadConfig({ env: env(HOME), readTextFile: denied })
       )) as Error).message;
-    assertMatch(message, /cannot read config\.toml \(EACCES\)/);
-    assertFalse(message.includes("/x/y"));
+    assert.match(message, /cannot read config\.toml \(EACCES\)/);
+    assert.ok(!message.includes("/x/y"));
   });
 
   Deno.test("loadConfig: a non-NotFound read error surfaces as a config error", async () => {
     const denied = () => Promise.reject(new Error("EACCES"));
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({ env: env(HOME), readTextFile: denied })
       ) as Error).message,
       /cannot read/,
@@ -203,7 +201,7 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: async () => "stub",
       parseToml: () => ({ budget: { daily_limit_usd: 10.0 } }),
     });
-    assertStrictEquals(config.defaultDailyBudgetUsd, 40);
+    assert.strictEqual(config.defaultDailyBudgetUsd, 40);
   });
 
   Deno.test("loadConfig daily budget env override: the file layer sets the daily envelope when env is silent", async () => {
@@ -212,16 +210,16 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: async () => "stub",
       parseToml: () => ({ budget: { daily_limit_usd: 10.0 } }),
     });
-    assertStrictEquals(config.defaultDailyBudgetUsd, 10);
+    assert.strictEqual(config.defaultDailyBudgetUsd, 10);
   });
 }
 
 { // "anomaly multiples config surface"
   Deno.test("anomaly multiples config surface: declared defaults: turn 3×, scope 2×", async () => {
-    assertStrictEquals(ANOMALY_DEFAULTS.turnMultiple, 3.0);
-    assertStrictEquals(ANOMALY_DEFAULTS.scopeMultiple, 2.0);
-    assertStrictEquals(CONFIG_DEFAULTS.anomalyTurnMultiple, 3.0);
-    assertStrictEquals(CONFIG_DEFAULTS.anomalyScopeMultiple, 2.0);
+    assert.strictEqual(ANOMALY_DEFAULTS.turnMultiple, 3.0);
+    assert.strictEqual(ANOMALY_DEFAULTS.scopeMultiple, 2.0);
+    assert.strictEqual(CONFIG_DEFAULTS.anomalyTurnMultiple, 3.0);
+    assert.strictEqual(CONFIG_DEFAULTS.anomalyScopeMultiple, 2.0);
   });
 
   Deno.test("anomaly multiples config surface: the [anomaly] file layer sets the multiples", async () => {
@@ -230,8 +228,8 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: async () => "stub",
       parseToml: () => ({ anomaly: { turn_multiple: 4, scope_multiple: 1.5 } }),
     });
-    assertStrictEquals(config.anomalyTurnMultiple, 4);
-    assertStrictEquals(config.anomalyScopeMultiple, 1.5);
+    assert.strictEqual(config.anomalyTurnMultiple, 4);
+    assert.strictEqual(config.anomalyScopeMultiple, 1.5);
   });
 
   Deno.test("anomaly multiples config surface: env overrides the file layer", async () => {
@@ -243,12 +241,12 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: async () => "stub",
       parseToml: () => ({ anomaly: { turn_multiple: 4 } }),
     });
-    assertStrictEquals(config.anomalyTurnMultiple, 5);
+    assert.strictEqual(config.anomalyTurnMultiple, 5);
   });
 
   Deno.test("anomaly multiples config surface: a zero or negative multiple fails loud (no degenerate hard stop)", async () => {
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: { get: () => undefined },
           readTextFile: async () => "stub",
@@ -257,8 +255,8 @@ const table = (t: Record<string, unknown>) => () => t;
       ) as Error).message,
       /positive/,
     );
-    assertMatch(
-      (await assertRejects(() =>
+    assert.match(
+      (await captureRejection(() =>
         loadConfig({
           env: {
             get: (key: string) =>
@@ -277,11 +275,14 @@ const table = (t: Record<string, unknown>) => () => t;
   });
 
   Deno.test("anomaly multiples config surface: resolveAnomalyDefaultsFromEnv: defaults → env precedence", async () => {
-    assertEquals(resolveAnomalyDefaultsFromEnv({ get: () => undefined }), {
-      turnMultiple: 3.0,
-      scopeMultiple: 2.0,
-    });
-    assertStrictEquals(
+    assert.deepStrictEqual(
+      resolveAnomalyDefaultsFromEnv({ get: () => undefined }),
+      {
+        turnMultiple: 3.0,
+        scopeMultiple: 2.0,
+      },
+    );
+    assert.strictEqual(
       resolveAnomalyDefaultsFromEnv({
         get: (key: string) =>
           key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "2.5" : undefined,
@@ -294,7 +295,7 @@ const table = (t: Record<string, unknown>) => () => t;
 { // "loadConfig agent tool-step limit"
   Deno.test("loadConfig agent tool-step limit: defaults maxToolSteps to 32", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
-    assertStrictEquals(cfg.maxToolSteps, 32);
+    assert.strictEqual(cfg.maxToolSteps, 32);
   });
 
   Deno.test("loadConfig agent tool-step limit: TOML and environment layers override maxToolSteps with env precedence", async () => {
@@ -303,14 +304,14 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: present,
       parseToml: table({ agent: { max_tool_steps: 12 } }),
     });
-    assertStrictEquals(fileCfg.maxToolSteps, 12);
+    assert.strictEqual(fileCfg.maxToolSteps, 12);
 
     const envCfg = await loadConfig({
       env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: "48" }),
       readTextFile: present,
       parseToml: table({ agent: { max_tool_steps: 12 } }),
     });
-    assertStrictEquals(envCfg.maxToolSteps, 48);
+    assert.strictEqual(envCfg.maxToolSteps, 48);
   });
 
   Deno.test("loadConfig agent tool-step limit: treats whitespace-only env max tool steps as absent", async () => {
@@ -319,13 +320,13 @@ const table = (t: Record<string, unknown>) => () => t;
       readTextFile: present,
       parseToml: table({ agent: { max_tool_steps: 12 } }),
     });
-    assertStrictEquals(cfg.maxToolSteps, 12);
+    assert.strictEqual(cfg.maxToolSteps, 12);
   });
 
   for (const value of [0, -1, 1.5, 65]) {
     Deno.test(`loadConfig agent tool-step limit: rejects invalid TOML max_tool_steps ${value}`, async () => {
-      assertMatch(
-        (await assertRejects(() =>
+      assert.match(
+        (await captureRejection(() =>
           loadConfig({
             env: env(HOME),
             readTextFile: present,
@@ -339,8 +340,8 @@ const table = (t: Record<string, unknown>) => () => t;
 
   for (const value of ["0", "-1", "1.5", "many", "65"]) {
     Deno.test(`loadConfig agent tool-step limit: rejects invalid env max tool steps ${value}`, async () => {
-      assertMatch(
-        (await assertRejects(() =>
+      assert.match(
+        (await captureRejection(() =>
           loadConfig({
             env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: value }),
             readTextFile: notFound,

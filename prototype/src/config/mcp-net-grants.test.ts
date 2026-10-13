@@ -1,36 +1,31 @@
-import {
-  assertFalse,
-  assertStrictEquals,
-  assertThrows,
-  fail,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { buildDoltAllowNetGrant, validateDoltPort } from "./mcp-net-grants.ts";
 
 describe("validateDoltPort & buildDoltAllowNetGrant", () => {
   it("accepts valid boundary and ordinary port numbers and strings", () => {
-    assertStrictEquals(validateDoltPort(), 3306);
-    assertStrictEquals(validateDoltPort(undefined), 3306);
-    assertStrictEquals(validateDoltPort(null), 3306);
-    assertStrictEquals(validateDoltPort("3306"), 3306);
-    assertStrictEquals(validateDoltPort("3316"), 3316);
-    assertStrictEquals(validateDoltPort("1"), 1);
-    assertStrictEquals(validateDoltPort("65535"), 65535);
-    assertStrictEquals(validateDoltPort(3306), 3306);
-    assertStrictEquals(validateDoltPort(1), 1);
-    assertStrictEquals(validateDoltPort(65535), 65535);
+    assert.strictEqual(validateDoltPort(), 3306);
+    assert.strictEqual(validateDoltPort(undefined), 3306);
+    assert.strictEqual(validateDoltPort(null), 3306);
+    assert.strictEqual(validateDoltPort("3306"), 3306);
+    assert.strictEqual(validateDoltPort("3316"), 3316);
+    assert.strictEqual(validateDoltPort("1"), 1);
+    assert.strictEqual(validateDoltPort("65535"), 65535);
+    assert.strictEqual(validateDoltPort(3306), 3306);
+    assert.strictEqual(validateDoltPort(1), 1);
+    assert.strictEqual(validateDoltPort(65535), 65535);
 
-    assertStrictEquals(buildDoltAllowNetGrant(), "--allow-net=127.0.0.1:3306");
-    assertStrictEquals(
+    assert.strictEqual(buildDoltAllowNetGrant(), "--allow-net=127.0.0.1:3306");
+    assert.strictEqual(
       buildDoltAllowNetGrant("3306"),
       "--allow-net=127.0.0.1:3306",
     );
-    assertStrictEquals(buildDoltAllowNetGrant("1"), "--allow-net=127.0.0.1:1");
-    assertStrictEquals(
+    assert.strictEqual(buildDoltAllowNetGrant("1"), "--allow-net=127.0.0.1:1");
+    assert.strictEqual(
       buildDoltAllowNetGrant("65535"),
       "--allow-net=127.0.0.1:65535",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       buildDoltAllowNetGrant(3316),
       "--allow-net=127.0.0.1:3316",
     );
@@ -84,17 +79,23 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
     ];
 
     for (const input of invalidInputs) {
-      assertThrows(
+      assert.throws(
         () => validateDoltPort(input),
-        Error,
-        "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes(
+            "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+          ),
         `expected validateDoltPort(${JSON.stringify(input)}) to throw`,
       );
 
-      assertThrows(
+      assert.throws(
         () => buildDoltAllowNetGrant(input),
-        Error,
-        "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes(
+            "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
+          ),
         `expected buildDoltAllowNetGrant(${JSON.stringify(input)}) to throw`,
       );
     }
@@ -111,16 +112,16 @@ describe("validateDoltPort & buildDoltAllowNetGrant", () => {
     for (const input of sensitiveInputs) {
       try {
         buildDoltAllowNetGrant(input);
-        fail("should have thrown");
+        assert.fail("should have thrown");
       } catch (err: any) {
-        assertStrictEquals(
+        assert.strictEqual(
           err.message,
           "invalid DOLT_PORT: must be a decimal integer between 1 and 65535",
         );
-        assertFalse(err.message.includes("SECRET_KEY_VALUE"));
-        assertFalse(err.message.includes("/private/keys"));
-        assertFalse(err.message.includes("op://"));
-        assertFalse(err.message.includes("password123"));
+        assert.ok(!err.message.includes("SECRET_KEY_VALUE"));
+        assert.ok(!err.message.includes("/private/keys"));
+        assert.ok(!err.message.includes("op://"));
+        assert.ok(!err.message.includes("password123"));
       }
     }
   });
