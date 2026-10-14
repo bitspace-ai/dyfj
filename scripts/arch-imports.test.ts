@@ -445,7 +445,7 @@ Deno.test("dynamic local imports are violations; package imports are not", async
     [`${S}/engine/e.ts`]: [
       'const { k } = await import("../kernel/k.ts");',
       'const { k: again } = await import("../kernel/k.ts");',
-      'const { parse } = await import("@std/toml");',
+      'const { parse } = await import("smol-toml");',
     ].join("\n"),
     [`${S}/kernel/k.ts`]: "export const k = 1;",
   });

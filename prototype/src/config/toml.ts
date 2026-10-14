@@ -4,10 +4,10 @@
  * Format: TOML — hand-edited, comments, idiomatic for the future Rust core.
  * Keep the schema FLAT / SECTIONED; TOML clunks on deep nesting.
  *
- * The TOML parser (@std/toml) is imported lazily: the module must load under the
- * node-based test runner, which can't resolve jsr specifiers — and the parser
- * only runs when a real config file is read under the runtime. Node-runner
- * tests inject a parser; an integration test covers the real TOML parser.
+ * The TOML parser (smol-toml) is imported lazily, so a module that only names
+ * the config path never loads it; the parser runs only when a real config file
+ * is read. Most tests inject a parser; the TOML golden cases
+ * (`toml-parser.test.ts`) and an integration test cover the real one.
  */
 
 import { type Env, processEnv } from "./env.ts";
@@ -47,11 +47,11 @@ export interface LoadConfigDeps {
   parseToml?: TomlParser;
 }
 
-/** Lazy default parser: the jsr import resolves only when a TOML file is parsed. */
+/** Lazy default parser: the package loads only when a TOML file is parsed. */
 export async function defaultParseToml(
   raw: string,
 ): Promise<Record<string, unknown>> {
-  const { parse } = await import("@std/toml");
+  const { parse } = await import("smol-toml");
   return parse(raw) as Record<string, unknown>;
 }
 

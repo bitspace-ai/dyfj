@@ -167,7 +167,12 @@ Deno.test("client-side half-close: after the server's FIN read() is null and the
   let received!: (text: string) => void;
   const reply = new Promise<string>((resolve) => received = resolve);
   const server = net.createServer({ allowHalfOpen: true }, (socket) => {
-    socket.on("data", (chunk) => received(decode(chunk)));
+    // No encoding is set, so chunks arrive as bytes; the node:net types also
+    // admit a string, for a socket with an encoding.
+    socket.on(
+      "data",
+      (chunk) => received(typeof chunk === "string" ? chunk : decode(chunk)),
+    );
     socket.end(encode("hello"));
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));

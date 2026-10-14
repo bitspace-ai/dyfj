@@ -232,7 +232,7 @@ async function drain(
   }
 }
 
-function frictionConfig(linearUrl: string): string {
+export function frictionConfig(linearUrl: string): string {
   // The secret resolver prints its pointer; the pointer is the token.
   return [
     "[secrets]",

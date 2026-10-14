@@ -662,9 +662,9 @@ describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
 });
 
 describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
-  // Inject a parser (the real @std/toml jsr specifier can't load under the node
-  // test runner). readTextFile returns this marker for the config file; the
-  // parser maps it to a [secrets] table.
+  // Inject a parser: these test path precedence, not TOML parsing.
+  // readTextFile returns this marker for the config file; the parser maps it
+  // to a [secrets] table.
   const TOML = "(toml)";
   const parse = () => ({
     secrets: {

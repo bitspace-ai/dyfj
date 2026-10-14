@@ -4,7 +4,10 @@
 version: 2
 updates:
   # The Deno dependency manifest and lockfile live under prototype/, not the
-  # repo root (whose deno.json declares only deno tasks, no imports).
+  # repo root (whose deno.json declares only deno tasks, no imports). They now
+  # hold only the JSR test dependencies: the npm packages moved to
+  # prototype/package.json and package-lock.json, which no lane here watches
+  # yet, so the ignore rule below has nothing left to match.
   - package-ecosystem: "deno"
     directory: "/prototype"
     schedule:

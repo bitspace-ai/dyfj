@@ -1,0 +1,16 @@
+[secrets]
+command = ["op", "read"]
+
+[secrets.named]
+records_mcp = "op://vault/item/credential"
+
+[[mcp.servers]]
+id = "records"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "records_mcp" }
+tools = [
+  { name = "read_record", effect = "read", approval = "allow" },
+  { name = "create_record_comment", effect = "write_external", approval = "ask" },
+]

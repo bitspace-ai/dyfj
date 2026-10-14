@@ -25,7 +25,7 @@ const notFound = () =>
 const present = () =>
   Promise.resolve("(toml text — parsed by the injected parser)");
 // Inject the parsed table directly: these test the precedence/validation
-// logic, not @std/toml.
+// logic, not the TOML parser.
 const table = (t: Record<string, unknown>) => () => t;
 
 { // "loadConfig"

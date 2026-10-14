@@ -1,0 +1,14 @@
+[[mcp.servers]]
+id = "linear"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "linear_mcp" }
+tools = [
+  { name = "get_issue", effect = "read", approval = "allow" },
+  { name = "save_issue", effect = "write_external", approval = "ask" },
+]
+
+[mcp.servers.linear_issue_creation]
+team_id = "team_stable_id"
+projects = { "Synthetic Project" = "project_stable_id" }

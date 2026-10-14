@@ -10,6 +10,7 @@
  * properties on the workflow text so a drift fails the aggregate gate itself.
  */
 
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const WORKFLOW_URL = new URL("../.github/workflows/gate.yml", import.meta.url);
@@ -313,5 +314,33 @@ Deno.test("gate workflow run blocks fail closed on pipeline errors", async () =>
       "every multiline run block must set -euo pipefail so a failed " +
         "download or version check fails the job",
     );
+  }
+});
+
+// npm alone resolves npm packages, and the gate checks node_modules against
+// the lockfile without installing anything, so each job installs the exact
+// Node release and runs `npm ci` in prototype/ before the gate. The job is
+// split at each top-level job key so both jobs are checked on their own.
+test("each gate job installs Node 26.11.1 and runs npm ci before the gate", async () => {
+  const text = await workflowText();
+  const jobs = text.split(/^  (?=[a-z-]+:\n)/m).slice(1)
+    .filter((job) =>
+      job.startsWith("full-gate:") ||
+      job.startsWith("macos-portability:")
+    );
+  if (jobs.length !== 2) throw new Error("expected the two gate jobs");
+  for (const job of jobs) {
+    const setup = job.search(
+      /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+node-version: "26\.11\.1"\n/,
+    );
+    const install = job.search(
+      /- name: Install npm dependencies \(npm ci from the committed lockfile\)\n\s+working-directory: prototype\n\s+run: npm ci\n/,
+    );
+    const gate = job.search(/run: deno task test\n/);
+    if (setup < 0) throw new Error("a gate job does not set up Node 26.11.1");
+    if (install < 0) throw new Error("a gate job does not run npm ci");
+    if (!(setup < install && install < gate)) {
+      throw new Error("Node setup and npm ci must precede the gate");
+    }
   }
 });

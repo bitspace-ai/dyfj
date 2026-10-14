@@ -1,0 +1,10 @@
+[[mcp.servers]]
+id = "web"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+auth = { type = "bearer", secret = "web_mcp" }
+tools = [
+  { name = "search", effect = "read", approval = "allow" },
+  { name = "fetch", effect = "read", approval = "allow" },
+]
+capabilities = { search_tool = "search", fetch_tool = "fetch" }
