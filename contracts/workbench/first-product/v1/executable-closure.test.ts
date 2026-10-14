@@ -21,7 +21,8 @@ function exactIds(prefix: string, count: number, width: number): string[] {
 Deno.test("the executable-closure manifest fixes the EC denominator", async () => {
   const manifest = JSON.parse(
     await readFile(
-      new URL("./executable-closure-manifest.json", import.meta.url), "utf8",
+      new URL("./executable-closure-manifest.json", import.meta.url),
+      "utf8",
     ),
   );
   assert(manifest.denominator.targets === 24, "target denominator is not 24");
@@ -65,7 +66,8 @@ Deno.test("preserved counterexample probes match their required dispositions", a
       new URL(
         "./fixtures/positive/first-product-baseline.json",
         import.meta.url,
-      ), "utf8",
+      ),
+      "utf8",
     ),
   ) as Corpus;
   const registry = await loadSchemaRegistry();

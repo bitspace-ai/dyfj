@@ -18,6 +18,7 @@
 
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { AssertionError } from "node:assert";
+import process from "node:process";
 import {
   type ChatMessage,
   type ChatRequest,
@@ -31,7 +32,7 @@ import {
 } from "./harness.ts";
 import { OPERATOR, STRICT } from "./profiles.ts";
 
-const UPDATE = Deno.args.includes("--update");
+const UPDATE = process.argv.slice(2).includes("--update");
 const SNAPSHOT_DIR = `${prototypeRoot}/testing/golden/snapshots`;
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
@@ -220,7 +221,10 @@ async function exists(path: string): Promise<boolean> {
     await lstat(path);
     return true;
   } catch (error) {
-    if ((error instanceof Error && (error as { code?: unknown }).code === "ENOENT")) return false;
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) return false;
     throw error;
   }
 }
@@ -607,7 +611,10 @@ async function matchSnapshot(id: string, value: unknown): Promise<void> {
   try {
     expected = await readFile(path, "utf8");
   } catch (error) {
-    if ((error instanceof Error && (error as { code?: unknown }).code === "ENOENT")) {
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) {
       throw new AssertionError({
         message: `missing golden snapshot ${id}; run with -- --update`,
       });

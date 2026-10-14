@@ -40,12 +40,22 @@ Deno.test("ScriptedHttpTransport runs each exchange's request assertions", async
     expect: (request) => assert.deepStrictEqual(request.body, "expected"),
     respond: { body: "ok" },
   }]);
-  await assert.rejects(() => fake.fetch("http://fake.invalid/", { method: "POST", body: "other" }), (error: unknown) => error instanceof Error && error.message.includes("Values are not equal"));
+  await assert.rejects(
+    () => fake.fetch("http://fake.invalid/", { method: "POST", body: "other" }),
+    (error: unknown) =>
+      error instanceof assert.AssertionError &&
+      error.actual === "other" && error.expected === "expected",
+  );
 });
 
 Deno.test("ScriptedHttpTransport rejects a call beyond its script", async () => {
   const fake = new ScriptedHttpTransport();
-  await assert.rejects(() => fake.fetch("http://fake.invalid/x", { method: "POST" }), (error: unknown) => error instanceof Error && error.message.includes("unexpected request POST http://fake.invalid/x"));
+  await assert.rejects(
+    () => fake.fetch("http://fake.invalid/x", { method: "POST" }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("unexpected request POST http://fake.invalid/x"),
+  );
 });
 
 Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
@@ -55,7 +65,12 @@ Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
   ]);
   await (await fake.fetch("http://fake.invalid/", {})).text();
   assert.deepStrictEqual(fake.remaining, 1);
-  assert.throws(() => fake.assertDone(), (error: unknown) => error instanceof Error && error.message.includes("1 scripted exchange(s) unused"));
+  assert.throws(
+    () => fake.assertDone(),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("1 scripted exchange(s) unused"),
+  );
 });
 
 Deno.test("ScriptedHttpTransport passes a function responder's Response through", async () => {

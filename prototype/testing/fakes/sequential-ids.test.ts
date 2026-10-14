@@ -47,7 +47,10 @@ Deno.test("SequentialIds.issued is a copy", () => {
 
 Deno.test("SequentialIds fails once the safe-integer range is exhausted", () => {
   const ids = new SequentialIds({ start: Number.MAX_SAFE_INTEGER });
-  assert.deepStrictEqual(ids.next(), String(Number.MAX_SAFE_INTEGER).padStart(26, "0"));
+  assert.deepStrictEqual(
+    ids.next(),
+    String(Number.MAX_SAFE_INTEGER).padStart(26, "0"),
+  );
   assert.throws(() => ids.next(), RangeError);
   assert.deepStrictEqual(ids.issued.length, 1);
 });

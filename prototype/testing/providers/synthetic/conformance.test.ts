@@ -47,7 +47,10 @@ providerAdapterConformance({
       clock: [0, 4, 6, 9],
       exchanges: [{
         expect: (request) => {
-          assert.deepStrictEqual(request.url, "https://synthetic.invalid/v1/generate");
+          assert.deepStrictEqual(
+            request.url,
+            "https://synthetic.invalid/v1/generate",
+          );
           assert.deepStrictEqual(
             request.headers.authorization,
             "Bearer synthetic-test-key",
@@ -91,7 +94,10 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assert.deepStrictEqual(JSON.parse(request.body).tools[0].name, "file_read"),
+          assert.deepStrictEqual(
+            JSON.parse(request.body).tools[0].name,
+            "file_read",
+          ),
         respond: {
           body: events(
             {

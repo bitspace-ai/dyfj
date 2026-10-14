@@ -164,7 +164,8 @@ Deno.test("the generated report equals the checked-in report byte-for-byte", asy
   const report = await buildClosureReport();
   const generated = `${JSON.stringify(report, null, 2)}\n`;
   const committed = await readFile(
-    "contracts/workbench/first-product/v1/executable-closure-report.json", "utf8",
+    "contracts/workbench/first-product/v1/executable-closure-report.json",
+    "utf8",
   );
 
   assert(

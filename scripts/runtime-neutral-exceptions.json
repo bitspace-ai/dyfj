@@ -1,7 +1,7 @@
 [
   {
     "path": "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
-    "count": 6,
+    "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -11,7 +11,7 @@
   },
   {
     "path": "contracts/workbench/first-product/v1/executable-closure.test.ts",
-    "count": 4,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -806,7 +806,7 @@
   },
   {
     "path": "prototype/testing/golden/golden.test.ts",
-    "count": 8,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -906,7 +906,7 @@
   },
   {
     "path": "schema/model-catalog.test.ts",
-    "count": 3,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

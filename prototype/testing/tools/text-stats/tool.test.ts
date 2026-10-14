@@ -33,13 +33,19 @@ Deno.test("text.stats registers after the builtins and reaches the model", () =>
 });
 
 Deno.test("executeTextStats counts characters, words and lines", () => {
-  assert.deepStrictEqual(executeTextStats(""), "characters: 0\nwords: 0\nlines: 0");
+  assert.deepStrictEqual(
+    executeTextStats(""),
+    "characters: 0\nwords: 0\nlines: 0",
+  );
   assert.deepStrictEqual(
     executeTextStats("one two\nthree  four\n"),
     "characters: 20\nwords: 4\nlines: 3",
   );
   // Characters are code points, not UTF-16 units.
-  assert.deepStrictEqual(executeTextStats("😀"), "characters: 1\nwords: 1\nlines: 1");
+  assert.deepStrictEqual(
+    executeTextStats("😀"),
+    "characters: 1\nwords: 1\nlines: 1",
+  );
 });
 
 Deno.test("an invocation returns the stats and logs no text", async () => {

@@ -65,9 +65,19 @@ const memories = () => new MemoryStore({ memories: seed }).memories;
 Deno.test("standalone MCP memory projection lists and reads client-safe and public rows", async () => {
   const reader = memories();
   const listed = await listMcpMemories(reader);
-  assert.ok(listed.content[0]!.text.includes("client_safe_memory"), `expected listed.content[0]!.text to include "client_safe_memory"`);
-  assert.ok(listed.content[0]!.text.includes("public_memory"), `expected listed.content[0]!.text to include "public_memory"`);
-  assert.ok((await readMcpMemory(reader, "client_safe_memory")).content[0]!.text.includes("Client-safe content"), `expected (await readMcpMemory(reader, "client_safe_memory")).content[0]!.text to include "Client-safe content"`);
+  assert.ok(
+    listed.content[0]!.text.includes("client_safe_memory"),
+    `expected listed.content[0]!.text to include "client_safe_memory"`,
+  );
+  assert.ok(
+    listed.content[0]!.text.includes("public_memory"),
+    `expected listed.content[0]!.text to include "public_memory"`,
+  );
+  assert.ok(
+    (await readMcpMemory(reader, "client_safe_memory")).content[0]!.text
+      .includes("Client-safe content"),
+    `expected (await readMcpMemory(reader, "client_safe_memory")).content[0]!.text to include "Client-safe content"`,
+  );
   assert.deepStrictEqual(
     (await readMcpMemory(reader, "public_memory")).content[0]!.text,
     "# Public memory\n\nPublic content",
@@ -77,10 +87,19 @@ Deno.test("standalone MCP memory projection lists and reads client-safe and publ
 Deno.test("standalone MCP memory projection does not list or read private and shareable rows", async () => {
   const reader = memories();
   const listed = await listMcpMemories(reader);
-  assert.deepStrictEqual(listed.content[0]!.text.includes("private_memory"), false);
-  assert.deepStrictEqual(listed.content[0]!.text.includes("shareable_memory"), false);
+  assert.deepStrictEqual(
+    listed.content[0]!.text.includes("private_memory"),
+    false,
+  );
+  assert.deepStrictEqual(
+    listed.content[0]!.text.includes("shareable_memory"),
+    false,
+  );
   const privateMemory = await readMcpMemory(reader, "private_memory");
-  assert.deepStrictEqual(privateMemory, await readMcpMemory(reader, "shareable_memory"));
+  assert.deepStrictEqual(
+    privateMemory,
+    await readMcpMemory(reader, "shareable_memory"),
+  );
   assert.deepStrictEqual(privateMemory, {
     content: [{
       type: "text",
@@ -104,8 +123,14 @@ Deno.test("standalone MCP memory projection makes private and nonexistent slugs 
 
 Deno.test("standalone MCP memory projection filters by type within the clearance", async () => {
   const listed = await listMcpMemories(memories(), "project");
-  assert.ok(listed.content[0]!.text.includes("client_safe_memory"), `expected listed.content[0]!.text to include "client_safe_memory"`);
-  assert.deepStrictEqual(listed.content[0]!.text.includes("public_memory"), false);
+  assert.ok(
+    listed.content[0]!.text.includes("client_safe_memory"),
+    `expected listed.content[0]!.text to include "client_safe_memory"`,
+  );
+  assert.deepStrictEqual(
+    listed.content[0]!.text.includes("public_memory"),
+    false,
+  );
 });
 
 Deno.test("standalone MCP memory projection preserves empty lists and escapes Markdown table cells", async () => {

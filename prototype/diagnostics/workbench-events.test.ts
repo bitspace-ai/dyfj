@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertArrayIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   verifyWorkbenchEventSequence,
@@ -61,9 +60,12 @@ describe("verifyWorkbenchEventSequence", () => {
     ]);
 
     assert.strictEqual(result.ok, false);
-    assertArrayIncludes(result.errors, [
-      "events span multiple session_id values",
-    ]);
+    assert.deepStrictEqual(
+      ["events span multiple session_id values"].filter((item) =>
+        !result.errors.includes(item)
+      ),
+      [],
+    );
   });
 
   it("rejects a missing model_selected event", () => {
@@ -75,6 +77,11 @@ describe("verifyWorkbenchEventSequence", () => {
     ]);
 
     assert.strictEqual(result.ok, false);
-    assertArrayIncludes(result.errors, ["missing event_type: model_selected"]);
+    assert.deepStrictEqual(
+      ["missing event_type: model_selected"].filter((item) =>
+        !result.errors.includes(item)
+      ),
+      [],
+    );
   });
 });
