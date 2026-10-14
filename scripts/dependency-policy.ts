@@ -16,6 +16,11 @@
  *   cannot be resolved safely is reported rather than skipped.
  * - `core/rust-toolchain.toml` must pin an exact toolchain version, so the
  *   Rust lanes build with the same compiler everywhere.
+ * - Every tracked `package.json` must pin each dependency to an exact
+ *   version, sit beside a tracked `package-lock.json`, and sit beside a
+ *   tracked `.npmrc` that disables install scripts and holds npm's release
+ *   age at the 72-hour floor (`min-release-age` of at least 3 days), so the
+ *   floor holds for anyone installing, not only in the operator's review.
  * - The committed `dyfj.dependency.policy.manifest/v1` declaration
  *   (`scripts/dependency-policy-manifest.json`) must validate fail-closed:
  *   known schema and version, no unknown fields, unique surface ids,
@@ -497,6 +502,7 @@ export const DEPENDENCY_SURFACES: readonly RegExp[] = [
   /(^|\/)rust-toolchain\.toml$/,
   /(^|\/)package\.json$/,
   /(^|\/)package-lock\.json$/,
+  /(^|\/)\.npmrc$/,
   /^scripts\/dependency-policy-manifest\.json$/,
 ];
 
@@ -515,6 +521,7 @@ export const MINIMUM_REGISTRY_AGE_HOURS = 72;
 
 export const SOURCE_CLASSES = [
   "deno-registry",
+  "npm-registry",
   "cargo-registry",
   "rust-toolchain-release",
   "github-actions-config",
@@ -567,6 +574,7 @@ export const AGE_REASON_CLASSES = [
 // declare exactly the not-applicable reason class matching its source.
 const REGISTRY_SOURCE_CLASSES: readonly string[] = [
   "deno-registry",
+  "npm-registry",
   "cargo-registry",
 ];
 
@@ -609,6 +617,7 @@ export const REQUIRED_EVIDENCE_BY_SOURCE: Readonly<
   Record<SourceClass, readonly string[]>
 > = {
   "deno-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
+  "npm-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
   "cargo-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
   "rust-toolchain-release": [
     "immutable-upstream-revision",
@@ -1110,6 +1119,100 @@ export function scanToolchainText(
   }];
 }
 
+const PACKAGE_JSON_PATH = /(^|\/)package\.json$/;
+const NPM_DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+// An exact semver version, prerelease allowed. Ranges, tags, URLs, paths and
+// build metadata are not exact pins.
+const EXACT_NPM_VERSION =
+  /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+// npm's `min-release-age` is in days; 3 days is the 72-hour registry floor.
+const NPM_MINIMUM_RELEASE_AGE_DAYS = MINIMUM_REGISTRY_AGE_HOURS / 24;
+
+// The effective `key=value` settings of an npmrc: the last assignment of a
+// key wins, as npm reads it, and `#` or `;` lines are comments.
+function npmrcSettings(content: string): Map<string, string> {
+  const settings = new Map<string, string>();
+  for (const raw of content.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    const equals = line.indexOf("=");
+    if (equals < 0) continue;
+    settings.set(line.slice(0, equals).trim(), line.slice(equals + 1).trim());
+  }
+  return settings;
+}
+
+// The 1-based line of a dependency's entry, for the diagnostic; line 1 when
+// the key cannot be found textually.
+function entryLine(content: string, name: string): number {
+  const key = JSON.stringify(name);
+  const index = content.split(/\r?\n/).findIndex((line) =>
+    line.trimStart().startsWith(`${key}:`)
+  );
+  return index < 0 ? 1 : index + 1;
+}
+
+/**
+ * Checks one npm package manifest and the files that must sit beside it.
+ * `siblings` says whether a `package-lock.json` is tracked in the same
+ * directory, and gives the tracked `.npmrc` there, if any.
+ */
+export function scanNpmPackage(
+  path: string,
+  content: string,
+  siblings: { lockfile: boolean; npmrc: string | undefined },
+): PublicSafetyHit[] {
+  const at = (line: number, rule: string): PublicSafetyHit => ({
+    path: posixPath(path),
+    line,
+    rule,
+  });
+  const hits: PublicSafetyHit[] = [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    return [at(1, "dependency.policy/npm-unparsed-manifest")];
+  }
+  if (!isPlainObject(parsed)) {
+    return [at(1, "dependency.policy/npm-unparsed-manifest")];
+  }
+  for (const field of NPM_DEPENDENCY_FIELDS) {
+    const entries = parsed[field];
+    if (entries === undefined) continue;
+    if (!isPlainObject(entries)) {
+      return [at(1, "dependency.policy/npm-unparsed-manifest")];
+    }
+    for (const [name, version] of Object.entries(entries)) {
+      if (typeof version !== "string" || !EXACT_NPM_VERSION.test(version)) {
+        hits.push(
+          at(entryLine(content, name), "dependency.policy/npm-range-version"),
+        );
+      }
+      if (hits.length >= MAX_COLLECTED_HITS) return hits;
+    }
+  }
+  if (!siblings.lockfile) {
+    hits.push(at(1, "dependency.policy/npm-missing-lockfile"));
+  }
+  const settings = npmrcSettings(siblings.npmrc ?? "");
+  if (settings.get("ignore-scripts") !== "true") {
+    hits.push(at(1, "dependency.policy/npm-install-scripts"));
+  }
+  const age = settings.get("min-release-age") ?? "";
+  if (
+    !/^\d+$/.test(age) || Number(age) < NPM_MINIMUM_RELEASE_AGE_DAYS
+  ) {
+    hits.push(at(1, "dependency.policy/npm-release-age"));
+  }
+  return hits;
+}
+
 export async function dependencyPolicyHits(
   root: string,
   trackedPaths?: readonly string[],
@@ -1133,6 +1236,23 @@ export async function dependencyPolicyHits(
       line: 1,
       rule: "dependency.policy/unpinned-toolchain",
     });
+  }
+  const trackedSet = new Set(tracked.map((path) => posixPath(path)));
+  for (const path of trackedSet) {
+    if (!PACKAGE_JSON_PATH.test(path)) continue;
+    const dir = path.slice(0, path.length - "package.json".length);
+    const npmrcPath = `${dir}.npmrc`;
+    const npmrc = trackedSet.has(npmrcPath)
+      ? new TextDecoder().decode(
+        await readTrackedFile(root, npmrcPath, LABEL),
+      )
+      : undefined;
+    const bytes = await readTrackedFile(root, path, LABEL);
+    hits.push(...scanNpmPackage(path, new TextDecoder().decode(bytes), {
+      lockfile: trackedSet.has(`${dir}package-lock.json`),
+      npmrc,
+    }));
+    if (hits.length >= MAX_COLLECTED_HITS) return hits;
   }
   return hits;
 }

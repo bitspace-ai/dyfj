@@ -41,6 +41,44 @@
       "known_missing_evidence_classes": []
     },
     {
+      "id": "npm.prototype",
+      "source_class": "npm-registry",
+      "manifest_paths": [
+        "prototype/package.json",
+        "prototype/.npmrc"
+      ],
+      "lock_paths": [
+        "prototype/package-lock.json"
+      ],
+      "required_evidence_classes": [
+        "inspect-result",
+        "selected-version",
+        "publication-timestamp",
+        "minimum-release-age",
+        "manifest-diff",
+        "lock-diff",
+        "clean-room-resolution",
+        "operator-inspect-before-apply"
+      ],
+      "age_policy": {
+        "class": "registry-minimum-hours",
+        "minimum_hours": 72
+      },
+      "mutable_references_allowed": false,
+      "integrity_evidence_classes": [
+        "exact-version-pin",
+        "lockfile-integrity-hash"
+      ],
+      "provenance_evidence_classes": [
+        "registry-source-provenance"
+      ],
+      "clean_room_check_ids": [
+        "dependency.policy",
+        "test.aggregate"
+      ],
+      "known_missing_evidence_classes": []
+    },
+    {
       "id": "cargo.core",
       "source_class": "cargo-registry",
       "manifest_paths": [

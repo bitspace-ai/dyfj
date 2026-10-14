@@ -8,6 +8,7 @@ import {
   manifestViolations,
   mutatedSurfaces,
   REQUIRED_EVIDENCE_BY_SOURCE,
+  scanNpmPackage,
   scanToolchainText,
   scanWorkflowText,
   SOURCE_CLASSES,
@@ -291,6 +292,9 @@ Deno.test("dependency surfaces are classified deterministically", () => {
     "core/Cargo.toml",
     "core/Cargo.lock",
     "core/rust-toolchain.toml",
+    "prototype/package.json",
+    "prototype/package-lock.json",
+    "prototype/.npmrc",
     "scripts/dependency-policy-manifest.json",
   ];
   for (const path of surfaces) {
@@ -298,6 +302,134 @@ Deno.test("dependency surfaces are classified deterministically", () => {
   }
   for (const path of ["README.md", "scripts/scan-lib.ts", "schema/x.sql"]) {
     assertEquals(isDependencySurface(path), false);
+  }
+});
+
+const PKG = "prototype/package.json";
+const NPMRC = "save-exact=true\nignore-scripts=true\nmin-release-age=3\n";
+
+function packageJson(dependencies: Record<string, unknown>): string {
+  return JSON.stringify({ private: true, dependencies }, null, 2) + "\n";
+}
+
+function npmRules(
+  content: string,
+  siblings: { lockfile?: boolean; npmrc?: string | undefined } = {},
+): string[] {
+  return scanNpmPackage(PKG, content, {
+    lockfile: siblings.lockfile ?? true,
+    npmrc: "npmrc" in siblings ? siblings.npmrc : NPMRC,
+  }).map((hit) => hit.rule);
+}
+
+Deno.test("an exactly pinned npm package with its lockfile and npmrc passes", () => {
+  assertEquals(
+    npmRules(packageJson({ zod: "4.6.5", "@scope/pkg": "1.0.0-rc.1" })),
+    [],
+  );
+});
+
+Deno.test("a non-exact npm version range fails", () => {
+  for (
+    const range of [
+      "^4.6.5",
+      "~4.6.5",
+      ">=4.6.5",
+      "4.6",
+      "4.x",
+      "*",
+      "latest",
+      "4.6.5 || 5.0.0",
+      "github:owner/repo",
+      "file:../pkg",
+      "4.6.5+build",
+    ]
+  ) {
+    assertEquals(npmRules(packageJson({ zod: range })), [
+      "dependency.policy/npm-range-version",
+    ]);
+  }
+  // Every dependency field is checked, not only `dependencies`.
+  for (
+    const field of [
+      "devDependencies",
+      "optionalDependencies",
+      "peerDependencies",
+    ]
+  ) {
+    const content = JSON.stringify({ [field]: { zod: "^4.6.5" } });
+    assertEquals(npmRules(content), ["dependency.policy/npm-range-version"]);
+  }
+});
+
+Deno.test("an npm range hit names the line of the offending entry", () => {
+  const hits = scanNpmPackage(
+    PKG,
+    packageJson({ ulid: "3.0.2", zod: "^4.6.5" }),
+    { lockfile: true, npmrc: NPMRC },
+  );
+  assertEquals(hits, [{
+    path: PKG,
+    line: 5,
+    rule: "dependency.policy/npm-range-version",
+  }]);
+});
+
+Deno.test("a package.json without a tracked lockfile fails", () => {
+  assertEquals(npmRules(packageJson({ zod: "4.6.5" }), { lockfile: false }), [
+    "dependency.policy/npm-missing-lockfile",
+  ]);
+});
+
+Deno.test("install scripts must be disabled by a tracked npmrc", () => {
+  const content = packageJson({ zod: "4.6.5" });
+  for (
+    const npmrc of [
+      undefined,
+      "",
+      "save-exact=true\nmin-release-age=3\n",
+      "ignore-scripts=false\nmin-release-age=3\n",
+      "ignore-scripts=true\nignore-scripts=false\nmin-release-age=3\n",
+      "# ignore-scripts=true\nmin-release-age=3\n",
+    ]
+  ) {
+    assertEquals(
+      npmRules(content, { npmrc }).includes(
+        "dependency.policy/npm-install-scripts",
+      ),
+      true,
+    );
+  }
+  assertEquals(
+    npmRules(content, { npmrc: " ignore-scripts = true \nmin-release-age=3" }),
+    [],
+  );
+});
+
+Deno.test("the npm release-age floor must hold at install time", () => {
+  const content = packageJson({ zod: "4.6.5" });
+  for (
+    const npmrc of [
+      "ignore-scripts=true\n",
+      "ignore-scripts=true\nmin-release-age=2\n",
+      "ignore-scripts=true\nmin-release-age=three\n",
+    ]
+  ) {
+    assertEquals(npmRules(content, { npmrc }), [
+      "dependency.policy/npm-release-age",
+    ]);
+  }
+  assertEquals(
+    npmRules(content, { npmrc: "ignore-scripts=true\nmin-release-age=7\n" }),
+    [],
+  );
+});
+
+Deno.test("an unparseable package.json fails closed", () => {
+  for (const content of ["{", "[]", '{"dependencies": ["zod"]}']) {
+    assertEquals(npmRules(content), [
+      "dependency.policy/npm-unparsed-manifest",
+    ]);
   }
 });
 
@@ -458,7 +590,7 @@ Deno.test("manifest schema and shape discipline fails closed", () => {
     delete surfaceOf(m, 0).id;
   }, "dependency.manifest/invalid:id");
   assertViolation((m) => {
-    surfaceOf(m, 0).source_class = "npm-registry";
+    surfaceOf(m, 0).source_class = "pypi-registry";
   }, "dependency.manifest/unknown-source-class");
 });
 
@@ -817,5 +949,58 @@ Deno.test("the committed manifest keeps the signature gap a known unknown", asyn
         throw new Error("archive signature is misreported as verified");
       }
     }
+  }
+});
+
+Deno.test("the committed manifest declares the npm surface under the registry floor", async () => {
+  const load = await loadManifest(repoRootFromMeta());
+  assertEquals(load.violations, []);
+  const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
+  const npm = surfaces.filter((surface) => surface.id === "npm.prototype");
+  assertEquals(npm.length, 1);
+  const surface = npm[0]!;
+  assertEquals(surface.source_class, "npm-registry");
+  assertEquals(surface.manifest_paths, [
+    "prototype/package.json",
+    "prototype/.npmrc",
+  ]);
+  assertEquals(surface.lock_paths, ["prototype/package-lock.json"]);
+  assertEquals(surface.age_policy, {
+    class: "registry-minimum-hours",
+    minimum_hours: 72,
+  });
+  // deno.workspace keeps the Deno files only.
+  const deno = surfaces.find((entry) => entry.id === "deno.workspace");
+  assertEquals(deno?.manifest_paths, ["deno.json", "prototype/deno.json"]);
+  assertEquals(deno?.lock_paths, ["prototype/deno.lock"]);
+});
+
+Deno.test("tracked npm packages are checked for lockfile and npmrc", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-npm-" });
+  try {
+    await gitIn(dir, ["init", "-q"]);
+    await Deno.mkdir(`${dir}/pkg`);
+    await Deno.writeTextFile(
+      `${dir}/pkg/package.json`,
+      '{"dependencies": {"zod": "4.6.5"}}\n',
+    );
+    // The npmrc and lockfile exist on disk but are untracked: only tracked
+    // files count.
+    await Deno.writeTextFile(`${dir}/pkg/.npmrc`, "ignore-scripts=true\n");
+    await Deno.writeTextFile(`${dir}/pkg/package-lock.json`, "{}\n");
+    await gitIn(dir, ["add", "pkg/package.json"]);
+    await gitIn(dir, ["commit", "-q", "-m", "base"]);
+    const hits = await dependencyPolicyHits(dir);
+    assertEquals(
+      hits.filter((hit) => hit.path === "pkg/package.json")
+        .map((hit) => hit.rule),
+      [
+        "dependency.policy/npm-missing-lockfile",
+        "dependency.policy/npm-install-scripts",
+        "dependency.policy/npm-release-age",
+      ],
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
