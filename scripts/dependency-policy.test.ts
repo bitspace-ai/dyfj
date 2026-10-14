@@ -8,6 +8,7 @@ import {
   manifestViolations,
   mutatedSurfaces,
   REQUIRED_EVIDENCE_BY_SOURCE,
+  scanDependabotText,
   scanNpmPackage,
   scanToolchainText,
   scanWorkflowText,
@@ -453,6 +454,259 @@ test("an unparseable package.json fails closed", () => {
     assertEquals(npmRules(content), [
       "dependency.policy/npm-unparsed-manifest",
     ]);
+  }
+});
+
+const DEPENDABOT = ".github/dependabot.yml";
+
+// A Dependabot config with one npm lane and one deno lane for `prototype/`,
+// with `npm` and `deno` replaced by the given entry bodies.
+function dependabotConfig(npm: string, deno: string): string {
+  return [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/prototype"',
+    npm,
+    '  - package-ecosystem: "deno"',
+    '    directory: "/prototype"',
+    deno,
+    '  - package-ecosystem: "cargo"',
+    '    directory: "/core"',
+    "    schedule:",
+    '      interval: "weekly"',
+    "",
+  ].join("\n");
+}
+
+const NPM_LANE = [
+  "    schedule:",
+  '      interval: "weekly"',
+  '    versioning-strategy: "increase"',
+  "    cooldown:",
+  "      default-days: 3",
+  "    ignore:",
+  '      - dependency-name: "@scope/pinned"',
+].join("\n");
+const DENO_LANE = [
+  "    schedule:",
+  '      interval: "weekly"',
+  "    cooldown:",
+  "      default-days: 3",
+].join("\n");
+
+function dependabotRules(
+  content: string,
+  packagePaths: readonly string[] = [PKG],
+): string[] {
+  return scanDependabotText(DEPENDABOT, content, packagePaths)
+    .map((hit) => hit.rule);
+}
+
+test("a dependabot config watching npm with cooldown and exact bumps passes", () => {
+  assertEquals(dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE)), []);
+});
+
+test("a tracked package.json no npm update lane watches fails", () => {
+  const withoutNpm = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "deno"',
+    '    directory: "/prototype"',
+    DENO_LANE,
+    "",
+  ].join("\n");
+  assertEquals(scanDependabotText(DEPENDABOT, withoutNpm, [PKG]), [{
+    path: PKG,
+    line: 1,
+    rule: "dependency.policy/dependabot-npm-unwatched",
+  }]);
+  // An npm lane for another directory does not watch this one, and a
+  // root package.json is watched only by the "/" directory.
+  const elsewhere = dependabotConfig(NPM_LANE, DENO_LANE)
+    .replace('directory: "/prototype"', 'directory: "/other"');
+  assertEquals(dependabotRules(elsewhere), [
+    "dependency.policy/dependabot-npm-unwatched",
+  ]);
+  assertEquals(
+    dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE), ["package.json"]),
+    ["dependency.policy/dependabot-npm-unwatched"],
+  );
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('directory: "/prototype"', 'directory: "/"'),
+      ["package.json"],
+    ),
+    [],
+  );
+});
+
+test("npm and deno update lanes must hold the 72-hour cooldown", () => {
+  const cooldownLanes = [
+    // No cooldown at all: the floor would rest on an undeclared default.
+    NPM_LANE.replace("    cooldown:\n      default-days: 3\n", ""),
+    NPM_LANE.replace("default-days: 3", "default-days: 2"),
+    NPM_LANE.replace("default-days: 3", "default-days: three"),
+    NPM_LANE.replace("default-days: 3", "semver-major-days: 7"),
+    NPM_LANE.replace(
+      "default-days: 3",
+      "default-days: 3\n      semver-patch-days: 1",
+    ),
+    // include and exclude both take dependencies out of the floor.
+    NPM_LANE.replace(
+      "default-days: 3",
+      'default-days: 3\n      exclude:\n        - "zod"',
+    ),
+    NPM_LANE.replace(
+      "default-days: 3",
+      'default-days: 3\n      include:\n        - "zod"',
+    ),
+  ];
+  for (const lane of cooldownLanes) {
+    assertEquals(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+      "dependency.policy/dependabot-cooldown",
+    ]);
+  }
+  assertEquals(
+    dependabotRules(dependabotConfig(
+      NPM_LANE,
+      DENO_LANE.replace("default-days: 3", "default-days: 1"),
+    )),
+    ["dependency.policy/dependabot-cooldown"],
+  );
+  // A longer cooldown, per bump level, still holds the floor.
+  assertEquals(
+    dependabotRules(dependabotConfig(
+      NPM_LANE.replace(
+        "default-days: 3",
+        "default-days: 7\n      semver-major-days: 14",
+      ),
+      DENO_LANE,
+    )),
+    [],
+  );
+});
+
+test("the npm update lane must bump exact pins with the increase strategy", () => {
+  for (
+    const lane of [
+      NPM_LANE.replace('    versioning-strategy: "increase"\n', ""),
+      NPM_LANE.replace('"increase"', '"widen"'),
+      NPM_LANE.replace('"increase"', '"auto"'),
+      NPM_LANE.replace('"increase"', '"lockfile-only"'),
+    ]
+  ) {
+    assertEquals(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+      "dependency.policy/dependabot-versioning-strategy",
+    ]);
+  }
+});
+
+test("a lane hit names the line of its update entry", () => {
+  const content = dependabotConfig(
+    NPM_LANE,
+    DENO_LANE.replace("default-days: 3", "default-days: 1"),
+  );
+  assertEquals(scanDependabotText(DEPENDABOT, content, [PKG]), [{
+    path: DEPENDABOT,
+    line: 12,
+    rule: "dependency.policy/dependabot-cooldown",
+  }]);
+});
+
+test("an escaped quoted scalar fails closed instead of being trusted", () => {
+  // YAML decodes escapes in a double-quoted scalar, so "de\u006eo" names the
+  // deno ecosystem. The scan does not decode escapes; it rejects them, so a
+  // spelling the scan cannot read never skips the cooldown check.
+  const denoWithoutCooldown = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/prototype"',
+    NPM_LANE,
+    '  - package-ecosystem: "de\\u006eo"',
+    '    directory: "/prototype"',
+    "    schedule:",
+    '      interval: "weekly"',
+    "",
+  ].join("\n");
+  assertEquals(scanDependabotText(DEPENDABOT, denoWithoutCooldown, [PKG]), [{
+    path: DEPENDABOT,
+    line: 12,
+    rule: "dependency.policy/dependabot-unparsed",
+  }]);
+  // Every scalar the policy decides on is held to the same rule.
+  for (
+    const content of [
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('directory: "/prototype"', 'directory: "/proto\\x74ype"'),
+      dependabotConfig(
+        NPM_LANE.replace('"increase"', '"incr\\x65ase"'),
+        DENO_LANE,
+      ),
+      dependabotConfig(
+        NPM_LANE.replace("default-days: 3", 'default-days: "\\x33"'),
+        DENO_LANE,
+      ),
+    ]
+  ) {
+    assertEquals(
+      dependabotRules(content).includes(
+        "dependency.policy/dependabot-unparsed",
+      ),
+      true,
+    );
+  }
+  // A single-quoted scalar has only the '' escape, which is decoded; an
+  // unterminated quote is not understood.
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('"npm"', "'npm'")
+        .replace('"increase"', "'increase' # exact pins stay exact"),
+    ),
+    [],
+  );
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('directory: "/prototype"', "directory: '/proto''type'"),
+    ),
+    ["dependency.policy/dependabot-npm-unwatched"],
+  );
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE).replace('"npm"', "'npm"),
+    ).includes("dependency.policy/dependabot-unparsed"),
+    true,
+  );
+});
+
+test("a dependabot config whose structure is not understood fails closed", () => {
+  for (
+    const content of [
+      "version: 2\n",
+      "version: 2\nupdates: []\n",
+      dependabotConfig(
+        NPM_LANE.replace(
+          "    cooldown:\n      default-days: 3",
+          "    cooldown: { default-days: 3 }",
+        ),
+        DENO_LANE,
+      ),
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('  - package-ecosystem: "deno"\n', "  - schedule: {}\n"),
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace("    schedule:", "    directory: /x\n    schedule:"),
+    ]
+  ) {
+    assertEquals(
+      dependabotRules(content).includes(
+        "dependency.policy/dependabot-unparsed",
+      ),
+      true,
+    );
   }
 });
 
@@ -1021,6 +1275,8 @@ test("tracked npm packages are checked for lockfile and npmrc", async () => {
         "dependency.policy/npm-missing-lockfile",
         "dependency.policy/npm-install-scripts",
         "dependency.policy/npm-release-age",
+        // No tracked Dependabot config, so no npm lane watches it.
+        "dependency.policy/dependabot-npm-unwatched",
       ],
     );
   } finally {

@@ -1,17 +1,27 @@
 # Dependabot version-update configuration. See:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# The npm and deno lanes declare a cooldown of 3 days, the 72-hour registry
+# release-age floor that prototype/.npmrc (`min-release-age`) and the
+# dependency policy hold, so a bot pull request never proposes a release
+# younger than an install would accept. Dependabot's own default is also 3
+# days; declaring it keeps the floor from resting on an upstream default.
+# Cooldown applies to version updates only, not security updates.
+# `deno task test` (dependency.policy) checks these lanes.
 
 version: 2
 updates:
-  # The Deno dependency manifest and lockfile live under prototype/, not the
-  # repo root (whose deno.json declares only deno tasks, no imports). They now
-  # hold only the JSR test dependencies: the npm packages moved to
-  # prototype/package.json and package-lock.json, which no lane here watches
-  # yet, so the ignore rule below has nothing left to match.
-  - package-ecosystem: "deno"
+  # The runtime npm packages are declared in prototype/package.json, pinned
+  # exactly, and locked by prototype/package-lock.json.
+  - package-ecosystem: "npm"
     directory: "/prototype"
     schedule:
       interval: "weekly"
+    # `increase` rewrites an exact pin to the new exact version, so a bot
+    # pull request keeps the dependency policy's exact-pin rule.
+    versioning-strategy: "increase"
+    cooldown:
+      default-days: 3
     # The codex-chatgpt runner asserts an exact adapter version at launch
     # (CODEX_ACP_VERSION in prototype/src/external-agent-runtime.ts) and two
     # test fixtures pin the same string, so a bot bump of this package cannot
@@ -19,6 +29,14 @@ updates:
     # upgraded deliberately, with the pin and fixtures, when that resumes.
     ignore:
       - dependency-name: "@agentclientprotocol/codex-acp"
+  # prototype/deno.json and deno.lock now hold only the JSR test
+  # dependencies. This lane stays while those JSR imports remain.
+  - package-ecosystem: "deno"
+    directory: "/prototype"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
   # The Rust substrate's crates are declared in core/Cargo.toml and locked by
   # the committed core/Cargo.lock.
   - package-ecosystem: "cargo"
