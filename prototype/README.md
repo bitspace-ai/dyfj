@@ -243,7 +243,7 @@ Useful checks:
 deno task check          # check:sources, then check:tests
 deno task check:sources  # every non-test module under src, mcp, scripts, testing
 deno task check:tests    # every test file
-deno task test:unit      # Deno.test unit lane (test.unit)
+deno task test:unit      # unit lane (test.unit): deno test, then node --test
 deno task test           # checks, then test:unit
 deno task test:file <path>... [--filter <pattern>]
                          # named unit test files, no full typecheck
@@ -256,16 +256,36 @@ deno task test:golden --update  # rewrite snapshots (see below)
 
 Use `test:file` for tight iteration loops on a unit test file: it skips the full
 typecheck and runs only the named files, with the same grants and sanitizers as
-`test:unit`. An integration file needs the integration lane's grants and fixture, so it
+`test:unit`, routing each file to `deno test` or `node --test` as the lane does. An integration file needs the integration lane's grants and fixture, so it
 fails under `test:file` on its first ungranted access. Use `test` before commit: it
 typechecks the entire codebase and runs the unit lane.
 
 Both typecheck file lists and the `test.unit` and integration file lists are derived by
 walking the tree (`scripts/test-files.ts`); nothing is hand-listed. The tier is the file
 name: `*.integration.test.ts` files run in the isolated-Dolt integration lane,
-`testing/golden/` has its own lane, and every other `*.test.ts` is a unit test. `test:unit`
-runs `deno test --parallel --sanitize-ops --sanitize-resources` (both sanitizers are
-opt-in in the pinned Deno), with read access to the prototype and
+`testing/golden/` has its own lane, and every other `*.test.ts` is a unit test.
+
+Each lane then routes every file by its own content, while tests move onto
+`node:test` (decision D32, `specs/03-testing.md` §1). A file that registers a test
+or hook with `node:test` runs under `node --test`; a file that calls `Deno.test` or
+imports `@std/testing/bdd`, or does neither, runs under `deno test` as before; a file
+that does both fails discovery with its path in the message. The unit, integration
+and golden runners run their `deno test` subset first, then their Node subset with
+`node --test --import testing/node-handle-check.ts --test-concurrency=<jobs>
+--test-reporter=tap`, one process per file, with the same environment plus
+`DENO_BIN` (`scripts/node-test-lane.ts`). Each runner needs Node 26 on `PATH` and
+fails with a message saying so otherwise. An empty subset is reported as `0 files`,
+and the Node subset ends with a count line beside `deno test`'s own, for example
+`test.unit node --test: ok | 52 passed | 0 failed | ...`, parsed from the TAP summary.
+The handle check is preloaded into each Node file's process: it fails a file that
+leaves a server, socket, timer or child process live after its last test, naming the
+file and the leaked resource types, and exits that process so the run cannot hang. It
+is per file, so it is coarser than a per-test sanitizer: it names the file, not the
+test. Under `node --test`, tests run with no permission sandbox.
+
+`test:unit` runs its `deno test` subset with `deno test --parallel --sanitize-ops
+--sanitize-resources` (both sanitizers are opt-in in the pinned Deno), with read
+access to the prototype and
 temp roots, write access to temp roots only, env access to `TMPDIR`, `TMP` and `TEMP` only
 (`node:os` `tmpdir()` reads them), and no run or net grant, so unit and component tests
 stay off Dolt, the network, and child processes. Write fixture output to a temp directory
@@ -319,9 +339,12 @@ as `specs/03-testing.md` §4 sets out; `--update` rewrites them.
 
 The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
-lane runs every `*.integration.test.ts` with the op and resource sanitizers enabled, so a
-test that leaks an op, a timer, a resource or a child process fails at that test; a test
-may opt out only with a comment naming the leak and why it is unavoidable. Under the gate,
+lane runs every `*.integration.test.ts`: its `deno test` subset with the op and resource
+sanitizers enabled, and its Node subset with the per-file handle check. The sanitizers
+fail the test that leaks a timer, but they do not see `node:` resources: a leaked
+`node:net` server, socket or `node:child_process` child goes unseen in a `Deno.test`
+file. Only the Node handle check catches those, per file. A test may opt out of a
+sanitizer only with a comment naming the leak and why it is unavoidable. Under the gate,
 the unit, integration and golden runners are supervised test lanes
 (`scripts/lane-supervision.ts`): each has a deadline, a backstop for when the gate itself
 is gone, and stops its own process group when its work is done; the root README describes

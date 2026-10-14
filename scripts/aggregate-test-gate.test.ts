@@ -718,11 +718,12 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
     DENO_BIN: "/fixtures/runtime/deno",
   });
   assertEquals(lane.args.at(-1), "testing/golden/run.ts");
-  // The runner spawns only the selected Deno and needs no network: the
-  // tests' loopback and exact socket grants are the runner's to issue.
+  // The runner spawns only the selected Deno and `node` (for golden files
+  // that register with node:test) and needs no network: the tests' loopback
+  // and exact socket grants are the runner's to issue.
   assertEquals(
     lane.args.find((argument) => argument.startsWith("--allow-run=")),
-    "--allow-run=/fixtures/runtime/deno",
+    "--allow-run=/fixtures/runtime/deno,node",
   );
   if (lane.args.some((argument) => argument.startsWith("--allow-net"))) {
     throw new Error("golden lane runner must not hold a network grant");

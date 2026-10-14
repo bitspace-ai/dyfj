@@ -2,6 +2,7 @@
 // keeps ideas and packets in a registry the REPL session owns instead of
 // asking the engine.
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { CliConfig } from "./cli/args.ts";
 import type { ConnectFn } from "./cli/io.ts";
 import {
@@ -38,7 +39,7 @@ async function run(
   return [...stdout, ...stderr].join("\n");
 }
 
-Deno.test("/idea and /packet share the REPL session's registry", async () => {
+test("/idea and /packet share the REPL session's registry", async () => {
   const state = session();
   const marked = await run("/idea mark Local idea", state);
   const ideaId = /marked idea \[([^\]]+)\]/.exec(marked)?.[1];
@@ -59,7 +60,7 @@ Deno.test("/idea and /packet share the REPL session's registry", async () => {
   );
 });
 
-Deno.test("another REPL session starts with an empty registry", async () => {
+test("another REPL session starts with an empty registry", async () => {
   await run("/idea mark First session idea", session());
   assert.ok(
     (await run("/idea list", session())).includes(

@@ -767,7 +767,8 @@ export function productionLanes(
         "--allow-env=NODE_V8_COVERAGE,PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
         "--allow-read=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        `--allow-run=${denoExecutable},ln,git,/bin/bash`,
+        // node: the Node-subset supervision case runs `node --test`.
+        `--allow-run=${denoExecutable},ln,git,/bin/bash,node`,
         "scripts/aggregate-test-gate.test.ts",
         "scripts/ci-workflow.test.ts",
         "scripts/public-safety-scan.test.ts",
@@ -781,6 +782,7 @@ export function productionLanes(
         "scripts/node-load-probe.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
+        "scripts/node-lane-supervision.test.ts",
         "scripts/change-scope.test.ts",
         // Deleted with the test-dialect codemod once decision D32's S2 is done.
         "scripts/codemod/deno-test-dialect.test.ts",
@@ -820,9 +822,11 @@ export function productionLanes(
       // group so its end-of-run group stop reaches the group and nothing else.
       args: [
         "run",
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,${laneEnv}`,
+        // NODE_V8_COVERAGE: read by node:child_process on every spawn; node:
+        // the files that register with node:test run under `node --test`.
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,NODE_V8_COVERAGE,${laneEnv}`,
         "--allow-read=.",
-        `--allow-run=${denoExecutable}`,
+        `--allow-run=${denoExecutable},node`,
         "scripts/run-unit-tests.ts",
       ],
       cwd: prototype,
@@ -966,12 +970,12 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT,${laneEnv}`,
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT,NODE_V8_COVERAGE,${laneEnv}`,
         // Read on the temp roots lets the lane resolve the real path of the
         // temp directory it hands the Deno.test files (macOS /tmp is a symlink).
         "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-        `--allow-run=${denoExecutable},dolt,cargo`,
+        `--allow-run=${denoExecutable},dolt,cargo,node`,
         "--allow-net=127.0.0.1",
         "scripts/isolated-dolt-integration.ts",
       ],
@@ -990,10 +994,10 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,${laneEnv}`,
+        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,NODE_V8_COVERAGE,${laneEnv}`,
         "--allow-read=.",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        `--allow-run=${denoExecutable}`,
+        `--allow-run=${denoExecutable},node`,
         "testing/golden/run.ts",
       ],
       cwd: prototype,

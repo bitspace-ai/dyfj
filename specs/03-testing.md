@@ -29,6 +29,27 @@ in the same change that lands this spec's first work order.
 - **Local-model generation checks** and **evals for model-touching code**:
   carried over from README §4 unchanged.
 - **Behavior is pinned by golden tests** (§4) for the whole of phase 1.
+- **Leak checks while tests move onto `node:test`** (decision D32).
+  - Deno's op and resource sanitizers do not see `node:` resources: a server,
+    socket or child process from `node:net`, `node:http` or
+    `node:child_process`. In a `Deno.test` file, of the resources tests use
+    today, they catch only timers. In a file that registers with `node:test`
+    they check nothing.
+  - The unit, integration and golden lanes route each discovered file by its own
+    content (`prototype/scripts/test-files.ts`). A file that registers a test or
+    hook with `node:test` runs under `node --test`, one process per file. A file
+    that calls `Deno.test` or imports `@std/testing/bdd`, or does neither, runs
+    under `deno test` as before. A file that does both fails discovery with its
+    path in the message. No file is listed by hand.
+  - Each `node --test` file process preloads the per-file handle check
+    (`prototype/testing/node-handle-check.ts`). It records the live resources at
+    load, compares them with what is live after the file's last test, and fails
+    the file and exits its process when anything beyond that baseline remains,
+    so a leaked server, socket, timer or child process can neither pass nor hang
+    the run.
+  - The check is per file, so it is coarser than a per-test sanitizer: it names
+    the file that leaked, not the test, and does not see a resource one test
+    leaves open and a later test in the same file closes.
 
 ## 2. Framework
 
@@ -40,7 +61,8 @@ in the same change that lands this spec's first work order.
     `test.unit` and the integration lane do. The golden lane does not yet; it
     adopts the flags as its tests are brought under this rule.
   - A test that leaks an op, resource or child process fails at the test that
-    leaked it.
+    leaked it, when the sanitizers can see it. They do not see `node:`
+    resources; §1 sets out the per-file Node handle check that covers those.
   - A test may disable a sanitizer only with a comment naming the leak and why
     it is unavoidable.
 - **Supervision.**
@@ -219,6 +241,7 @@ internal move.
 | Lane                                         | Change                                                                                                                                                                                |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `test.unit` (new)                            | `deno test --parallel` over unit + component files. No Dolt, no network, no child processes.                                                                                          |
+| Node subset of `test.unit`, `test.integration`, `test.golden` (new) | Files that register with `node:test` (§1) run after the lane's `deno test` subset under `node --test --import <handle check> --test-concurrency=<the lane's jobs> --test-reporter=tap`, with default process isolation and the same environment as the `deno test` subset plus `DENO_BIN`. An empty subset is reported as `0 files`. The runner fails unless `node` is Node 26. The lane prints a count line for its Node files beside `deno test`'s own, parsed from the TAP summary; a run with no summary fails. `node --test` and its per-file processes stay in the lane's process group, so the deadline and group stop reach them. Decision D32. |
 | `test.integration`                           | Runs through the isolated Dolt fixture. Both frameworks during the transition; `Deno.test` only at exit.                                                                              |
 | `test.golden` (new)                          | Golden suite.                                                                                                                                                                         |
 | `arch.imports` (new)                         | `01-architecture.md` §4.                                                                                                                                                              |

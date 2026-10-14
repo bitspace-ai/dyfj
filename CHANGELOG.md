@@ -427,6 +427,33 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Test files that register with `node:test` now run under `node --test`,
+  with a per-file leak check.** Deno's sanitizers do not see `node:`
+  resources: a leaked `node:net` server or socket, or a `node:child_process`
+  child, passed unnoticed, and in a file that registers with `node:test` they
+  checked nothing. The unit, integration and golden lanes now route each
+  discovered file by its own content (`prototype/scripts/test-files.ts`): a
+  file that registers a test or hook with `node:test` runs under
+  `node --test`, one process per file, after the lane's `deno test` subset; the
+  rest run under `deno test` exactly as before; a file that registers with
+  both fails discovery, naming the file. Each Node file's process preloads a
+  handle check (`prototype/testing/node-handle-check.ts`) that fails the file
+  when a server, socket, timer or child process is still live after its last
+  test, names the leaked resource types, and exits so the run cannot hang. The
+  check is per file, coarser than a per-test sanitizer. Each lane prints a
+  count line for its Node files beside `deno test`'s own, parsed from the TAP
+  summary, and fails when the summary is missing, so moving files cannot drop
+  tests from a lane's output unnoticed. The runners require Node 26 and say
+  so when it is missing, and `node` joins their run grants. `node --test`
+  and its per-file processes stay in the lane's process group, and a gate
+  test shows a hung Node test file stopped at the lane deadline. Four test
+  files already registered with `node:test` and now run under Node, and two
+  more were converted by hand so CI exercises the Node path in the unit and
+  integration lanes: `src/cli-idea-local.test.ts` and
+  `src/acp-runner.integration.test.ts`. Test discovery reads the tree with
+  `node:fs`. The docs that said the sanitizers catch every leaked resource are
+  corrected.
+
 - **Dependabot now watches `prototype/`'s npm packages, and its npm and deno
   lanes declare the 72-hour release-age floor as a cooldown.** Since npm became the
   only resolver of npm packages, `prototype/package.json` and

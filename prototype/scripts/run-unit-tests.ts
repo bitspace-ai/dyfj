@@ -7,9 +7,14 @@
 // env access to TMPDIR, TMP and TEMP only (node:os `tmpdir()` reads them),
 // and no run, net, sys, or ffi grant. Sanitizers are on: in the pinned
 // Deno (2.9.6) the op and resource sanitizers are opt-in, so the lane enables
-// them explicitly, and a test that leaks an async op, timer, or resource fails
-// at that test. A test may opt out only with a comment naming the leak and why
-// it is unavoidable (`specs/03-testing.md` §2).
+// them explicitly, and a test that leaks an async op, timer, or resource the
+// runtime tracks fails at that test; they do not see `node:` resources. A test
+// may opt out only with a comment naming the leak and why it is unavoidable
+// (`specs/03-testing.md` §2).
+//
+// A file that registers with `node:test` is routed to `node --test` instead
+// (`test-files.ts`), after that subset, with the per-file handle check and no
+// permission sandbox (`node-test-lane.ts`, `specs/03-testing.md` §1).
 //
 // Given arguments (`deno task test:file <path>... [--filter <pattern>]`), it
 // runs those instead of the discovered files, under the same grants and
@@ -17,7 +22,13 @@
 // typecheck. An integration file needs the integration lane's grants and
 // fixture, so it fails here on its first ungranted access.
 import { selectedDenoExecutable } from "./deno-executable.ts";
-import { discoverUnitTests, isTestSource } from "./test-files.ts";
+import {
+  discoverUnitTests,
+  isTestSource,
+  partitionByRuntime,
+  type TestRuntime,
+} from "./test-files.ts";
+import { parallelJobs, requireNode, startNodeTests } from "./node-test-lane.ts";
 import {
   killChild,
   laneSupervision,
@@ -88,41 +99,64 @@ export function parseTestFileArgs(
 if (import.meta.main) {
   const root = Deno.cwd();
   let selection: { files: string[]; filter?: string };
-  if (Deno.args.length === 0) {
-    selection = { files: discoverUnitTests(root) };
-    if (selection.files.length === 0) {
-      throw new Error("no unit test files found");
-    }
-  } else {
-    try {
+  let partition: Record<TestRuntime, string[]>;
+  try {
+    if (Deno.args.length === 0) {
+      selection = { files: discoverUnitTests(root) };
+      if (selection.files.length === 0) {
+        throw new Error("no unit test files found");
+      }
+    } else {
       selection = parseTestFileArgs(Deno.args);
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
-      Deno.exit(2);
     }
+    partition = partitionByRuntime(root, selection.files);
+    requireNode();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    Deno.exit(2);
   }
   const deno = selectedDenoExecutable();
+  const env = Object.fromEntries(
+    ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "DENO_JOBS"].flatMap((name) => {
+      const value = Deno.env.get(name);
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
   const supervision = laneSupervision();
   startTokenCarrier(supervision, deno);
-  const child = new Deno.Command(deno, {
-    args: unitTestArgs(selection.files, selection.filter),
-    cwd: root,
-    clearEnv: true,
-    env: Object.fromEntries(
-      ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "DENO_JOBS"].flatMap((name) => {
-        const value = Deno.env.get(name);
-        return value === undefined ? [] : [[name, value]];
-      }),
-    ),
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const backstop = startBackstop(
-    supervision,
-    deno,
-    () => killChild(child),
-  );
-  const status = await child.status;
+  // The backstop ends whichever subset is running when it expires.
+  let stopCurrent = () => {};
+  const backstop = startBackstop(supervision, deno, () => stopCurrent());
+  let code = 0;
+  if (partition.deno.length === 0) {
+    console.log("test.unit deno test: 0 files");
+  } else {
+    const child = new Deno.Command(deno, {
+      args: unitTestArgs(partition.deno, selection.filter),
+      cwd: root,
+      clearEnv: true,
+      env,
+      stdout: "inherit",
+      stderr: "inherit",
+    }).spawn();
+    stopCurrent = () => killChild(child);
+    code = (await child.status).code;
+  }
+  if (!backstop.expired) {
+    // The Node subset runs after a failing first subset too, so one run
+    // reports both; the first failure's code is the lane's.
+    const node = startNodeTests({
+      lane: "test.unit",
+      files: partition.node,
+      cwd: root,
+      env: { ...env, DENO_BIN: deno },
+      jobs: parallelJobs(),
+      filter: selection.filter,
+    });
+    stopCurrent = node.kill;
+    const nodeCode = await node.code;
+    if (code === 0) code = nodeCode;
+  }
   backstop.clear();
   await stopOwnGroup(supervision, deno);
   if (backstop.expired) {
@@ -133,5 +167,5 @@ if (import.meta.main) {
     );
     Deno.exit(1);
   }
-  Deno.exit(status.code);
+  Deno.exit(code);
 }
