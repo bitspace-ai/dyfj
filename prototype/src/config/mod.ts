@@ -8,7 +8,7 @@
  * nameserver net grants. Nothing else in the runtime
  * reads the process environment directly.
  *
- * Allowed dependencies: none outside this directory (and `@std/toml`, loaded
+ * Allowed dependencies: none outside this directory (and `smol-toml`, loaded
  * lazily).
  */
 

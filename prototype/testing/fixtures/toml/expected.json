@@ -1,0 +1,231 @@
+{
+  "config-example": {
+    "companion": {},
+    "permissions": {
+      "level": "strict"
+    },
+    "workspace": {},
+    "agent": {},
+    "paid": {},
+    "budget": {},
+    "anomaly": {},
+    "secrets": {}
+  },
+  "golden-friction": {
+    "secrets": {
+      "command": [
+        "/bin/echo"
+      ],
+      "named": {
+        "linear_mcp": "golden-linear-token"
+      }
+    },
+    "mcp": {
+      "servers": [
+        {
+          "id": "linear",
+          "transport": "streamable_http",
+          "url": "http://127.0.0.1:1/mcp",
+          "minimum_clearance": "loopback",
+          "auth": {
+            "type": "bearer",
+            "secret": "linear_mcp"
+          },
+          "tools": [
+            {
+              "name": "get_issue",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "list_comments",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "create_comment",
+              "effect": "write_external",
+              "approval": "ask"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "mcp-adapter-documented": {
+    "secrets": {
+      "command": [
+        "op",
+        "read"
+      ],
+      "named": {
+        "records_mcp": "op://vault/item/credential"
+      }
+    },
+    "mcp": {
+      "servers": [
+        {
+          "id": "records",
+          "transport": "streamable_http",
+          "url": "https://mcp.example.com/mcp",
+          "minimum_clearance": "loopback",
+          "auth": {
+            "type": "bearer",
+            "secret": "records_mcp"
+          },
+          "tools": [
+            {
+              "name": "read_record",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "create_record_comment",
+              "effect": "write_external",
+              "approval": "ask"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "mcp-adapter-linear-binding": {
+    "secrets": {
+      "command": [
+        "secret-resolver"
+      ],
+      "named": {
+        "linear_mcp": "fixture-pointer"
+      }
+    },
+    "mcp": {
+      "servers": [
+        {
+          "id": "linear",
+          "transport": "streamable_http",
+          "url": "https://mcp.example.com/mcp",
+          "minimum_clearance": "loopback",
+          "auth": {
+            "type": "bearer",
+            "secret": "linear_mcp"
+          },
+          "tools": [
+            {
+              "name": "create_issue",
+              "effect": "write_external",
+              "approval": "ask"
+            }
+          ],
+          "linear_issue_creation": {
+            "team_id": "team_fixture_01",
+            "projects": {
+              "Synthetic Project": "project_fixture_01"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "readme-mcp-linear-binding": {
+    "mcp": {
+      "servers": [
+        {
+          "id": "linear",
+          "transport": "streamable_http",
+          "url": "https://mcp.example.com/mcp",
+          "minimum_clearance": "loopback",
+          "auth": {
+            "type": "bearer",
+            "secret": "linear_mcp"
+          },
+          "tools": [
+            {
+              "name": "get_issue",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "save_issue",
+              "effect": "write_external",
+              "approval": "ask"
+            }
+          ],
+          "linear_issue_creation": {
+            "team_id": "team_stable_id",
+            "projects": {
+              "Synthetic Project": "project_stable_id"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "readme-mcp-records": {
+    "secrets": {
+      "command": [
+        "op",
+        "read"
+      ],
+      "named": {
+        "records_mcp": "op://<vault>/<item>/credential"
+      }
+    },
+    "mcp": {
+      "servers": [
+        {
+          "id": "records",
+          "transport": "streamable_http",
+          "url": "https://mcp.example.com/mcp",
+          "minimum_clearance": "loopback",
+          "auth": {
+            "type": "bearer",
+            "secret": "records_mcp"
+          },
+          "tools": [
+            {
+              "name": "read_record",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "create_record_comment",
+              "effect": "write_external",
+              "approval": "ask"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "readme-mcp-web": {
+    "mcp": {
+      "servers": [
+        {
+          "id": "web",
+          "transport": "streamable_http",
+          "url": "https://mcp.example.com/mcp",
+          "auth": {
+            "type": "bearer",
+            "secret": "web_mcp"
+          },
+          "tools": [
+            {
+              "name": "search",
+              "effect": "read",
+              "approval": "allow"
+            },
+            {
+              "name": "fetch",
+              "effect": "read",
+              "approval": "allow"
+            }
+          ],
+          "capabilities": {
+            "search_tool": "search",
+            "fetch_tool": "fetch"
+          }
+        }
+      ]
+    }
+  }
+}

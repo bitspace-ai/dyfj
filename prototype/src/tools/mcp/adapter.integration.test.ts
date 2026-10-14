@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
-import { parse as parseToml } from "@std/toml";
+import { readFile } from "node:fs/promises";
+import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import {
   type McpHttpServerConfig,
@@ -22,6 +23,14 @@ function assertEquals(actual: unknown, expected: unknown): void {
       `expected ${JSON.stringify(actual)} to equal ${JSON.stringify(expected)}`,
     );
   }
+}
+
+// The TOML documents are shared with the TOML golden cases.
+function fixtureToml(name: string): Promise<string> {
+  return readFile(
+    new URL(`../../../testing/fixtures/toml/${name}`, import.meta.url),
+    "utf8",
+  );
 }
 
 function fixtureConfig(url: string): McpHttpServerConfig {
@@ -64,25 +73,10 @@ function fixtureServer(onCall: (id: string) => void): McpServer {
   return server;
 }
 
-Deno.test("documented external MCP TOML parses as one server with two tools", () => {
-  const table = parseToml(`
-[secrets]
-command = ["op", "read"]
-
-[secrets.named]
-records_mcp = "op://vault/item/credential"
-
-[[mcp.servers]]
-id = "records"
-transport = "streamable_http"
-url = "https://mcp.example.com/mcp"
-minimum_clearance = "loopback"
-auth = { type = "bearer", secret = "records_mcp" }
-tools = [
-  { name = "read_record", effect = "read", approval = "allow" },
-  { name = "create_record_comment", effect = "write_external", approval = "ask" },
-]
-`) as Record<string, unknown>;
+Deno.test("documented external MCP TOML parses as one server with two tools", async () => {
+  const table = parseToml(
+    await fixtureToml("mcp-adapter-documented.toml"),
+  ) as Record<string, unknown>;
   const configPath = "/operator/.dyfj/config.toml";
   const secrets = parseSecretsConfig(table, configPath);
   assert(secrets !== null, "documented secrets configuration was omitted");
@@ -103,28 +97,10 @@ tools = [
   }]);
 });
 
-Deno.test("documented bounded Linear issue binding parses with stable IDs", () => {
-  const table = parseToml(`
-[secrets]
-command = ["secret-resolver"]
-
-[secrets.named]
-linear_mcp = "fixture-pointer"
-
-[[mcp.servers]]
-id = "linear"
-transport = "streamable_http"
-url = "https://mcp.example.com/mcp"
-minimum_clearance = "loopback"
-auth = { type = "bearer", secret = "linear_mcp" }
-tools = [
-  { name = "create_issue", effect = "write_external", approval = "ask" },
-]
-
-[mcp.servers.linear_issue_creation]
-team_id = "team_fixture_01"
-projects = { "Synthetic Project" = "project_fixture_01" }
-`) as Record<string, unknown>;
+Deno.test("documented bounded Linear issue binding parses with stable IDs", async () => {
+  const table = parseToml(
+    await fixtureToml("mcp-adapter-linear-binding.toml"),
+  ) as Record<string, unknown>;
   const configPath = "/operator/.dyfj/config.toml";
   const secrets = parseSecretsConfig(table, configPath);
   assert(secrets !== null, "documented secrets configuration was omitted");
@@ -460,8 +436,14 @@ Deno.test("external search server capability registers web_search and web_fetch 
     );
 
     const commandIds = built.commands.map((c) => c.id);
-    assert(commandIds.includes("web_search"), "web_search command was not registered");
-    assert(commandIds.includes("web_fetch"), "web_fetch command was not registered");
+    assert(
+      commandIds.includes("web_search"),
+      "web_search command was not registered",
+    );
+    assert(
+      commandIds.includes("web_fetch"),
+      "web_fetch command was not registered",
+    );
     assert(
       !commandIds.includes("mcp.search_engine.tavily_search"),
       "raw capability-mapped tool must not be registered as a raw mcp command",
@@ -479,11 +461,13 @@ Deno.test("external search server capability registers web_search and web_fetch 
     );
 
     assert(
-      typeof searchRes === "string" && searchRes.includes("<untrusted-mcp-result>"),
+      typeof searchRes === "string" &&
+        searchRes.includes("<untrusted-mcp-result>"),
       "web_search output was not framed as untrusted",
     );
     assert(
-      typeof searchRes === "string" && searchRes.includes("Result for workbench architecture"),
+      typeof searchRes === "string" &&
+        searchRes.includes("Result for workbench architecture"),
       "search results were not found in output",
     );
     assert(
