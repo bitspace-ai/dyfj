@@ -206,7 +206,10 @@ README are tracked separately in its Revision history section.
   dependency needs one) and holds back releases younger than three days.
   Four transitive packages move up one patch release each, because npm
   resolves newer patches than the old lock held. The unused dax import is
-  gone, and `deno.lock` now holds only the JSR test dependencies.
+  gone, and `deno.lock` now holds only the JSR test dependencies. The
+  typecheck lanes now read Node's built-in module types from the installed
+  `@types/node` rather than the runtime's bundled copy; one test listener that
+  assumed a socket chunk is always bytes now accepts a string too.
   - **Parser:** smol-toml (TOML 1.0, no dependencies) replaces `@std/toml`
     behind the lazily loaded config parser. Every TOML shape the repository
     reads parses to the same values under both parsers, and those shapes
