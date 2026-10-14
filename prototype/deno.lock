@@ -1,68 +1,17 @@
 {
   "version": "5",
   "specifiers": {
-    "jsr:@david/console-static-text@~0.3.4": "0.3.4",
-    "jsr:@david/dax@0.50.0": "0.50.0",
-    "jsr:@david/path@~0.3.2": "0.3.3",
-    "jsr:@david/path@~0.3.3": "0.3.3",
-    "jsr:@david/shell@0.7": "0.7.0",
-    "jsr:@david/which@~0.7.3": "0.7.3",
     "jsr:@std/assert@1.0.19": "1.0.19",
     "jsr:@std/assert@^1.0.19": "1.0.19",
     "jsr:@std/async@^1.5.1": "1.5.1",
-    "jsr:@std/bytes@^1.0.6": "1.0.6",
     "jsr:@std/collections@^1.1.3": "1.3.0",
     "jsr:@std/data-structures@^1.1.3": "1.1.3",
-    "jsr:@std/fmt@1": "1.0.10",
-    "jsr:@std/fs@^1.0.24": "1.0.24",
     "jsr:@std/internal@^1.0.12": "1.0.14",
     "jsr:@std/internal@^1.0.14": "1.0.14",
-    "jsr:@std/io@0.225": "0.225.3",
-    "jsr:@std/path@1": "1.1.6",
-    "jsr:@std/path@^1.1.5": "1.1.6",
-    "jsr:@std/path@^1.1.6": "1.1.6",
     "jsr:@std/testing@1.0.21": "1.0.21",
-    "jsr:@std/toml@1.0.11": "1.0.11",
-    "npm:@agentclientprotocol/codex-acp@1.11.0": "1.11.0",
-    "npm:@agentclientprotocol/sdk@1.7.0": "1.7.0_zod@4.6.5",
-    "npm:@modelcontextprotocol/client@2.3.1": "2.3.1",
-    "npm:@modelcontextprotocol/server@2.3.1": "2.3.1",
-    "npm:mysql2@3.24.5": "3.24.5_@types+node@26.6.5",
-    "npm:ulid@3.0.2": "3.0.2",
-    "npm:zod@4.6.5": "4.6.5"
+    "jsr:@std/toml@1.0.11": "1.0.11"
   },
   "jsr": {
-    "@david/console-static-text@0.3.4": {
-      "integrity": "1c596f500b075ff3c8bab1d328ca7148a88067fd9a506b16a73eeaf230c229fd"
-    },
-    "@david/dax@0.50.0": {
-      "integrity": "a933f3b60aa1343ac069f17c946e4807b64ebfcdc3f5541b805f3d7237c568c2",
-      "dependencies": [
-        "jsr:@david/console-static-text",
-        "jsr:@david/path@~0.3.2",
-        "jsr:@david/shell"
-      ]
-    },
-    "@david/path@0.3.3": {
-      "integrity": "19887b1c4ff36d1719b1697b4c10071853f13a85cf60e8713f6a6947e86271b0",
-      "dependencies": [
-        "jsr:@std/path@^1.1.6"
-      ]
-    },
-    "@david/shell@0.7.0": {
-      "integrity": "320f6f9584c3ce582428a969457a7cf110891b66151ac11a83c78b760b3641d4",
-      "dependencies": [
-        "jsr:@david/console-static-text",
-        "jsr:@david/path@~0.3.3",
-        "jsr:@david/which",
-        "jsr:@std/fmt",
-        "jsr:@std/io",
-        "jsr:@std/path@1"
-      ]
-    },
-    "@david/which@0.7.3": {
-      "integrity": "ad6697179c4a153b774c59d06ebc056c4f87a9c27117ff74eecb120c245a2aea"
-    },
     "@std/assert@1.0.19": {
       "integrity": "eaada96ee120cb980bc47e040f82814d786fe8162ecc53c91d8df60b8755991e",
       "dependencies": [
@@ -72,38 +21,14 @@
     "@std/async@1.5.1": {
       "integrity": "c82455dc70cab29a0adf3ac8075db934785bffdd3902af5afcf25d21a74cfd86"
     },
-    "@std/bytes@1.0.6": {
-      "integrity": "f6ac6adbd8ccd99314045f5703e23af0a68d7f7e58364b47d2c7f408aeb5820a"
-    },
     "@std/collections@1.3.0": {
       "integrity": "eb36b43d784477ea0b476483ac034a14bdd182aff921c812ecf662a1fcef9498"
     },
     "@std/data-structures@1.1.3": {
       "integrity": "a5ec67199e79ee5b29123474d93fa9a47701ec08a4ef3bd1b623a36476306c5b"
     },
-    "@std/fmt@1.0.10": {
-      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
-    },
-    "@std/fs@1.0.24": {
-      "integrity": "f3061b45b81673a2bece689da041df32d174be064c89eb6397fb5718d3fb7877",
-      "dependencies": [
-        "jsr:@std/path@^1.1.5"
-      ]
-    },
     "@std/internal@1.0.14": {
       "integrity": "291516b3d4c35024d6ffbc0a9df5bf4c64116e05b50012cf846710152d2ffdf7"
-    },
-    "@std/io@0.225.3": {
-      "integrity": "27b07b591384d12d7b568f39e61dff966b8230559122df1e9fd11cc068f7ddd1",
-      "dependencies": [
-        "jsr:@std/bytes"
-      ]
-    },
-    "@std/path@1.1.6": {
-      "integrity": "c68485c2a4dfbb5ae3cc74fae4e8c4e5d874cf8a8ed12927917235c758b46cbe",
-      "dependencies": [
-        "jsr:@std/internal@^1.0.14"
-      ]
     },
     "@std/testing@1.0.21": {
       "integrity": "a0d14b2519005242821565091127c7d6fa96ca1b330e84e9249afcd602ee764f",
@@ -111,9 +36,7 @@
         "jsr:@std/assert@^1.0.19",
         "jsr:@std/async",
         "jsr:@std/data-structures",
-        "jsr:@std/fs",
-        "jsr:@std/internal@^1.0.14",
-        "jsr:@std/path@^1.1.6"
+        "jsr:@std/internal@^1.0.14"
       ]
     },
     "@std/toml@1.0.11": {
@@ -123,323 +46,23 @@
       ]
     }
   },
-  "npm": {
-    "@agentclientprotocol/codex-acp@1.11.0": {
-      "integrity": "sha512-opPKsRaekgdmQpOpHrR0EEDn9chgtiN+b+h0V78fTuQP84TNzB7vrn3EtKODwbiJQTBHJAlynjSFQazFfaT+VQ==",
-      "dependencies": [
-        "@agentclientprotocol/sdk",
-        "@openai/codex@0.153.4",
-        "diff",
-        "open",
-        "vscode-jsonrpc",
-        "zod"
-      ],
-      "bin": true
-    },
-    "@agentclientprotocol/sdk@1.7.0_zod@4.6.5": {
-      "integrity": "sha512-ZORuxsuEnLjRly7t6Ad7zAsWitjWsyprswyPUHz/yycPb+tTm3DGa8XheaHhRXqX8LS9snuxaYavXSRA50TlHw==",
-      "dependencies": [
-        "zod"
-      ]
-    },
-    "@modelcontextprotocol/client@2.3.1": {
-      "integrity": "sha512-mIGZXpHsjnZ6lD+gD/WCMpR5k8yVQQ8nNFH1N0Srf7AvnwTUMYD6pvTY8ng2+He5FfV7YMZLmrjL7cLa/cc3dQ==",
-      "dependencies": [
-        "@modelcontextprotocol/core",
-        "cross-spawn",
-        "eventsource",
-        "eventsource-parser",
-        "jose",
-        "pkce-challenge",
-        "zod"
-      ]
-    },
-    "@modelcontextprotocol/core@2.3.1": {
-      "integrity": "sha512-laVmIhPGpWi7rG9q+0UigblRN0Hws/Yjlb6qLFtVqryXVLkc4h+yN8z731POD2LnAGQlFe7/tXhUm7Bi0YB91g==",
-      "dependencies": [
-        "zod"
-      ]
-    },
-    "@modelcontextprotocol/server@2.3.1": {
-      "integrity": "sha512-e59MfWuSssj6DoQ96JCTqdW1AXT5/XtnTl0WWd6MU1Ka434fFUGGosCLJbGNySDhHGvxQWoRWK137FXYFkYNWw==",
-      "dependencies": [
-        "@modelcontextprotocol/core",
-        "zod"
-      ]
-    },
-    "@openai/codex@0.153.4": {
-      "integrity": "sha512-wbHDmit7S/YvBGVX1DQmk13xtWblZ2cApeJ/pB7xDZ10Cna+DZc5ij7f0F4OxdsXN4FW1oLT48OpogUI1+8Y2w==",
-      "optionalDependencies": [
-        "@openai/codex-darwin-arm64@npm:@openai/codex@0.153.4-darwin-arm64",
-        "@openai/codex-darwin-x64@npm:@openai/codex@0.153.4-darwin-x64",
-        "@openai/codex-linux-arm64@npm:@openai/codex@0.153.4-linux-arm64",
-        "@openai/codex-linux-x64@npm:@openai/codex@0.153.4-linux-x64",
-        "@openai/codex-win32-arm64@npm:@openai/codex@0.153.4-win32-arm64",
-        "@openai/codex-win32-x64@npm:@openai/codex@0.153.4-win32-x64"
-      ],
-      "bin": true
-    },
-    "@openai/codex@0.153.4-darwin-arm64": {
-      "integrity": "sha512-B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==",
-      "os": ["darwin"],
-      "cpu": ["arm64"]
-    },
-    "@openai/codex@0.153.4-darwin-x64": {
-      "integrity": "sha512-vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==",
-      "os": ["darwin"],
-      "cpu": ["x64"]
-    },
-    "@openai/codex@0.153.4-linux-arm64": {
-      "integrity": "sha512-QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==",
-      "os": ["linux"],
-      "cpu": ["arm64"]
-    },
-    "@openai/codex@0.153.4-linux-x64": {
-      "integrity": "sha512-x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==",
-      "os": ["linux"],
-      "cpu": ["x64"]
-    },
-    "@openai/codex@0.153.4-win32-arm64": {
-      "integrity": "sha512-/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==",
-      "os": ["win32"],
-      "cpu": ["arm64"]
-    },
-    "@openai/codex@0.153.4-win32-x64": {
-      "integrity": "sha512-lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ==",
-      "os": ["win32"],
-      "cpu": ["x64"]
-    },
-    "@types/node@26.6.5": {
-      "integrity": "sha512-uMzsv9stDdofIZBx4UGh4Z9ZgXnGC9seRDscilBcTHAeOFk67MZg/k9bWVfO+bk4qZmG+l52hRnLwUiH2LnJTg==",
-      "dependencies": [
-        "undici-types"
-      ]
-    },
-    "aws-ssl-profiles@1.1.2": {
-      "integrity": "sha512-NZKeq9AfyQvEeNlN0zSYAaWrmBffJh3IELMZfRpJVWgrpEbtEpnjvzqBPf+mxoI287JohRDoa+/nsfqqiZmF6g=="
-    },
-    "bundle-name@4.1.0": {
-      "integrity": "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q==",
-      "dependencies": [
-        "run-applescript"
-      ]
-    },
-    "cross-spawn@7.0.6": {
-      "integrity": "sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==",
-      "dependencies": [
-        "path-key",
-        "shebang-command",
-        "which"
-      ]
-    },
-    "default-browser-id@5.0.1": {
-      "integrity": "sha512-x1VCxdX4t+8wVfd1so/9w+vQ4vx7lKd2Qp5tDRutErwmR85OgmfX7RlLRMWafRMY7hbEiXIbudNrjOAPa/hL8Q=="
-    },
-    "default-browser@5.5.1": {
-      "integrity": "sha512-m1pAzaJgZ/gssEqlOhJkPJp8Xly7QyW6xcrkUa2KKcDeDSEMP7X8xipU3snUcfisTQx0w1AGae+9UtJSfVnXGw==",
-      "dependencies": [
-        "bundle-name",
-        "default-browser-id"
-      ]
-    },
-    "define-lazy-prop@3.0.0": {
-      "integrity": "sha512-N+MeXYoqr3pOgn8xfyRPREN7gHakLYjhsHhWGT3fWAiL4IkAt0iDw14QiiEm2bE30c5XX5q0FtAA3CK5f9/BUg=="
-    },
-    "diff@9.0.0": {
-      "integrity": "sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw=="
-    },
-    "eventsource-parser@3.1.1": {
-      "integrity": "sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ=="
-    },
-    "eventsource@3.0.7": {
-      "integrity": "sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==",
-      "dependencies": [
-        "eventsource-parser"
-      ]
-    },
-    "generate-function@2.3.1": {
-      "integrity": "sha512-eeB5GfMNeevm/GRYq20ShmsaGcmI81kIX2K9XQx5miC8KdHaC6Jm0qQ8ZNeGOi7wYB8OsdxKs+Y2oVuTFuVwKQ==",
-      "dependencies": [
-        "is-property"
-      ]
-    },
-    "iconv-lite@0.7.3": {
-      "integrity": "sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==",
-      "dependencies": [
-        "safer-buffer"
-      ]
-    },
-    "is-docker@3.0.0": {
-      "integrity": "sha512-eljcgEDlEns/7AXFosB5K/2nCM4P7FQPkGc/DWLy5rmFEWvZayGrik1d9/QIY5nJ4f9YsVvBkA6kJpHn9rISdQ==",
-      "bin": true
-    },
-    "is-in-ssh@1.0.0": {
-      "integrity": "sha512-jYa6Q9rH90kR1vKB6NM7qqd1mge3Fx4Dhw5TVlK1MUBqhEOuCagrEHMevNuCcbECmXZ0ThXkRm+Ymr51HwEPAw=="
-    },
-    "is-inside-container@1.0.0": {
-      "integrity": "sha512-KIYLCCJghfHZxqjYBE7rEy0OBuTd5xCHS7tHVgvCLkx7StIoaxwNW3hCALgEUjFfeRk+MG/Qxmp/vtETEF3tRA==",
-      "dependencies": [
-        "is-docker"
-      ],
-      "bin": true
-    },
-    "is-property@1.0.2": {
-      "integrity": "sha512-Ks/IoX00TtClbGQr4TWXemAnktAQvYB7HzcCxDGqEZU6oCmb2INHuOoKxbtR+HFkmYWBKv/dOZtGRiAjDhj92g=="
-    },
-    "is-wsl@3.1.1": {
-      "integrity": "sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw==",
-      "dependencies": [
-        "is-inside-container"
-      ]
-    },
-    "isexe@2.0.0": {
-      "integrity": "sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw=="
-    },
-    "jose@6.2.12": {
-      "integrity": "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw=="
-    },
-    "long@5.3.2": {
-      "integrity": "sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA=="
-    },
-    "lru.min@1.1.5": {
-      "integrity": "sha512-5J9ysMYUpYIg9RF2vJpy9SinEmSviFSe0GyPpCQ4L5QSkLAgeLXlTAOu2ZwWUU5m+0SBl6gUU1R1ZQB3aKypfA=="
-    },
-    "mysql2@3.24.5_@types+node@26.6.5": {
-      "integrity": "sha512-X6Ujsr2QSkkLpkQGjxzpKRAPn9nu4axpR63ntBzquFVEvPOArgbUQ1sJjFKI7hnaYtiVZxa17Z7q18KSubW0IQ==",
-      "dependencies": [
-        "@types/node",
-        "aws-ssl-profiles",
-        "generate-function",
-        "iconv-lite",
-        "long",
-        "lru.min",
-        "named-placeholders",
-        "sql-escaper"
-      ]
-    },
-    "named-placeholders@1.1.6": {
-      "integrity": "sha512-Tz09sEL2EEuv5fFowm419c1+a/jSMiBjI9gHxVLrVdbUkkNUUfjsVYs9pVZu5oCon/kmRh9TfLEObFtkVxmY0w==",
-      "dependencies": [
-        "lru.min"
-      ]
-    },
-    "open@11.0.3": {
-      "integrity": "sha512-b3souUgU0VaAvMmzA4+9cRgrOgMdE0vc9H9VhQ0FYnjjcyZ8R/f9DiwMU9V8rl+vjf05On9UJhbgb06fsTs87Q==",
-      "dependencies": [
-        "default-browser",
-        "define-lazy-prop",
-        "is-in-ssh",
-        "is-inside-container",
-        "powershell-utils@0.2.1",
-        "wsl-utils"
-      ]
-    },
-    "path-key@3.1.1": {
-      "integrity": "sha512-ojmeN0qd+y0jszEtoY48r0Peq5dwMEkIlCOu6Q5f41lfkswXuKtYrhgoTpLnyIcHm24Uhqx+5Tqm2InSwLhE6Q=="
-    },
-    "pkce-challenge@5.0.1": {
-      "integrity": "sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ=="
-    },
-    "powershell-utils@0.1.0": {
-      "integrity": "sha512-dM0jVuXJPsDN6DvRpea484tCUaMiXWjuCn++HGTqUWzGDjv5tZkEZldAJ/UMlqRYGFrD/etByo4/xOuC/snX2A=="
-    },
-    "powershell-utils@0.2.1": {
-      "integrity": "sha512-C+y9x90UElAddDZmV4qOx9W53B61PO7cIqWz2dQsWlwswuq4mr8NEwytdGKboYbQlGZ3awrkTeNvcZiZNHnQ8A=="
-    },
-    "run-applescript@7.1.0": {
-      "integrity": "sha512-DPe5pVFaAsinSaV6QjQ6gdiedWDcRCbUuiQfQa2wmWV7+xC9bGulGI8+TdRmoFkAPaBXk8CrAbnlY2ISniJ47Q=="
-    },
-    "safer-buffer@2.1.2": {
-      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg=="
-    },
-    "shebang-command@2.0.0": {
-      "integrity": "sha512-kHxr2zZpYtdmrN1qDjrrX/Z1rR1kG8Dx+gkpK1G4eXmvXswmcE1hTWBWYUzlraYw1/yZp6YuDY77YtvbN0dmDA==",
-      "dependencies": [
-        "shebang-regex"
-      ]
-    },
-    "shebang-regex@3.0.0": {
-      "integrity": "sha512-7++dFhtcx3353uBaq8DDR4NuxBetBzC7ZQOhmTQInHEd6bSrXdiEyzCvG07Z44UYdLShWUyXt5M/yhz8ekcb1A=="
-    },
-    "sql-escaper@1.5.2": {
-      "integrity": "sha512-6CKD38c31SENivxOADeMNLdukOnUxUcflKtzVWzace7Riv1v7cAEym5Cx9Q7gYZ3ezIJI7ZpqecQq8cqNeSSFg=="
-    },
-    "ulid@3.0.2": {
-      "integrity": "sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==",
-      "bin": true
-    },
-    "undici-types@8.9.0": {
-      "integrity": "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="
-    },
-    "vscode-jsonrpc@9.0.2": {
-      "integrity": "sha512-SbQSV9yRemARxeXw6LU5sS6Zq0e9/DgCCX5yelH263ZQWukbTk8EF8fjTrr1dziasf4GwlJbvTwFnTrnQFWZXQ=="
-    },
-    "which@2.0.2": {
-      "integrity": "sha512-BLI3Tl1TW3Pvl70l3yq3Y64i+awpwXqsGBYWkkqMtnbXgrMD+yj7rhW0kuEDxzJaYXGjEW5ogapKNMEKNMjibA==",
-      "dependencies": [
-        "isexe"
-      ],
-      "bin": true
-    },
-    "wsl-utils@1.0.0": {
-      "integrity": "sha512-Hl0ZOAs672vg+06kfujwRhoS6/jehvULrlFkuF2dRu6pHgA8U06h3xqNIqNNU1LTXPcedxByAR4GS6pwQK0mgA==",
-      "dependencies": [
-        "is-wsl",
-        "powershell-utils@0.1.0"
-      ]
-    },
-    "zod@4.6.5": {
-      "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="
-    }
-  },
-  "remote": {
-    "https://deno.land/std@0.224.0/assert/_constants.ts": "a271e8ef5a573f1df8e822a6eb9d09df064ad66a4390f21b3e31f820a38e0975",
-    "https://deno.land/std@0.224.0/assert/assert.ts": "09d30564c09de846855b7b071e62b5974b001bb72a4b797958fe0660e7849834",
-    "https://deno.land/std@0.224.0/assert/assert_almost_equals.ts": "9e416114322012c9a21fa68e187637ce2d7df25bcbdbfd957cd639e65d3cf293",
-    "https://deno.land/std@0.224.0/assert/assert_array_includes.ts": "14c5094471bc8e4a7895fc6aa5a184300d8a1879606574cb1cd715ef36a4a3c7",
-    "https://deno.land/std@0.224.0/assert/assert_equals.ts": "3bbca947d85b9d374a108687b1a8ba3785a7850436b5a8930d81f34a32cb8c74",
-    "https://deno.land/std@0.224.0/assert/assert_exists.ts": "43420cf7f956748ae6ed1230646567b3593cb7a36c5a5327269279c870c5ddfd",
-    "https://deno.land/std@0.224.0/assert/assert_false.ts": "3e9be8e33275db00d952e9acb0cd29481a44fa0a4af6d37239ff58d79e8edeff",
-    "https://deno.land/std@0.224.0/assert/assert_greater.ts": "5e57b201fd51b64ced36c828e3dfd773412c1a6120c1a5a99066c9b261974e46",
-    "https://deno.land/std@0.224.0/assert/assert_greater_or_equal.ts": "9870030f997a08361b6f63400273c2fb1856f5db86c0c3852aab2a002e425c5b",
-    "https://deno.land/std@0.224.0/assert/assert_instance_of.ts": "e22343c1fdcacfaea8f37784ad782683ec1cf599ae9b1b618954e9c22f376f2c",
-    "https://deno.land/std@0.224.0/assert/assert_is_error.ts": "f856b3bc978a7aa6a601f3fec6603491ab6255118afa6baa84b04426dd3cc491",
-    "https://deno.land/std@0.224.0/assert/assert_less.ts": "60b61e13a1982865a72726a5fa86c24fad7eb27c3c08b13883fb68882b307f68",
-    "https://deno.land/std@0.224.0/assert/assert_less_or_equal.ts": "d2c84e17faba4afe085e6c9123a63395accf4f9e00150db899c46e67420e0ec3",
-    "https://deno.land/std@0.224.0/assert/assert_match.ts": "ace1710dd3b2811c391946954234b5da910c5665aed817943d086d4d4871a8b7",
-    "https://deno.land/std@0.224.0/assert/assert_not_equals.ts": "78d45dd46133d76ce624b2c6c09392f6110f0df9b73f911d20208a68dee2ef29",
-    "https://deno.land/std@0.224.0/assert/assert_not_instance_of.ts": "3434a669b4d20cdcc5359779301a0588f941ffdc2ad68803c31eabdb4890cf7a",
-    "https://deno.land/std@0.224.0/assert/assert_not_match.ts": "df30417240aa2d35b1ea44df7e541991348a063d9ee823430e0b58079a72242a",
-    "https://deno.land/std@0.224.0/assert/assert_not_strict_equals.ts": "37f73880bd672709373d6dc2c5f148691119bed161f3020fff3548a0496f71b8",
-    "https://deno.land/std@0.224.0/assert/assert_object_match.ts": "411450fd194fdaabc0089ae68f916b545a49d7b7e6d0026e84a54c9e7eed2693",
-    "https://deno.land/std@0.224.0/assert/assert_rejects.ts": "4bee1d6d565a5b623146a14668da8f9eb1f026a4f338bbf92b37e43e0aa53c31",
-    "https://deno.land/std@0.224.0/assert/assert_strict_equals.ts": "b4f45f0fd2e54d9029171876bd0b42dd9ed0efd8f853ab92a3f50127acfa54f5",
-    "https://deno.land/std@0.224.0/assert/assert_string_includes.ts": "496b9ecad84deab72c8718735373feb6cdaa071eb91a98206f6f3cb4285e71b8",
-    "https://deno.land/std@0.224.0/assert/assert_throws.ts": "c6508b2879d465898dab2798009299867e67c570d7d34c90a2d235e4553906eb",
-    "https://deno.land/std@0.224.0/assert/assertion_error.ts": "ba8752bd27ebc51f723702fac2f54d3e94447598f54264a6653d6413738a8917",
-    "https://deno.land/std@0.224.0/assert/equal.ts": "bddf07bb5fc718e10bb72d5dc2c36c1ce5a8bdd3b647069b6319e07af181ac47",
-    "https://deno.land/std@0.224.0/assert/fail.ts": "0eba674ffb47dff083f02ced76d5130460bff1a9a68c6514ebe0cdea4abadb68",
-    "https://deno.land/std@0.224.0/assert/mod.ts": "48b8cb8a619ea0b7958ad7ee9376500fe902284bb36f0e32c598c3dc34cbd6f3",
-    "https://deno.land/std@0.224.0/assert/unimplemented.ts": "8c55a5793e9147b4f1ef68cd66496b7d5ba7a9e7ca30c6da070c1a58da723d73",
-    "https://deno.land/std@0.224.0/assert/unreachable.ts": "5ae3dbf63ef988615b93eb08d395dda771c96546565f9e521ed86f6510c29e19",
-    "https://deno.land/std@0.224.0/fmt/colors.ts": "508563c0659dd7198ba4bbf87e97f654af3c34eb56ba790260f252ad8012e1c5",
-    "https://deno.land/std@0.224.0/internal/diff.ts": "6234a4b493ebe65dc67a18a0eb97ef683626a1166a1906232ce186ae9f65f4e6",
-    "https://deno.land/std@0.224.0/internal/format.ts": "0a98ee226fd3d43450245b1844b47003419d34d210fa989900861c79820d21c2",
-    "https://deno.land/std@0.224.0/internal/mod.ts": "534125398c8e7426183e12dc255bb635d94e06d0f93c60a297723abe69d3b22e"
-  },
   "workspace": {
     "dependencies": [
-      "jsr:@david/dax@0.50.0",
       "jsr:@std/assert@1.0.19",
       "jsr:@std/testing@1.0.21",
-      "jsr:@std/toml@1.0.11",
-      "npm:@agentclientprotocol/codex-acp@1.11.0",
-      "npm:@agentclientprotocol/sdk@1.7.0",
-      "npm:@modelcontextprotocol/client@2.3.1",
-      "npm:@modelcontextprotocol/server@2.3.1",
-      "npm:mysql2@3.24.5",
-      "npm:ulid@3.0.2",
-      "npm:zod@4.6.5"
-    ]
+      "jsr:@std/toml@1.0.11"
+    ],
+    "packageJson": {
+      "dependencies": [
+        "npm:@agentclientprotocol/codex-acp@1.11.0",
+        "npm:@agentclientprotocol/sdk@1.7.0",
+        "npm:@modelcontextprotocol/client@2.3.1",
+        "npm:@modelcontextprotocol/server@2.3.1",
+        "npm:mysql2@3.24.5",
+        "npm:smol-toml@1.9.1",
+        "npm:ulid@3.0.2",
+        "npm:zod@4.6.5"
+      ]
+    }
   }
 }

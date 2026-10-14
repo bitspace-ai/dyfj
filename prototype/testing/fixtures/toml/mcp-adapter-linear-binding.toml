@@ -1,0 +1,19 @@
+[secrets]
+command = ["secret-resolver"]
+
+[secrets.named]
+linear_mcp = "fixture-pointer"
+
+[[mcp.servers]]
+id = "linear"
+transport = "streamable_http"
+url = "https://mcp.example.com/mcp"
+minimum_clearance = "loopback"
+auth = { type = "bearer", secret = "linear_mcp" }
+tools = [
+  { name = "create_issue", effect = "write_external", approval = "ask" },
+]
+
+[mcp.servers.linear_issue_creation]
+team_id = "team_fixture_01"
+projects = { "Synthetic Project" = "project_fixture_01" }
