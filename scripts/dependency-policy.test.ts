@@ -615,6 +615,74 @@ test("a lane hit names the line of its update entry", () => {
   }]);
 });
 
+test("an escaped quoted scalar fails closed instead of being trusted", () => {
+  // YAML decodes escapes in a double-quoted scalar, so "de\u006eo" names the
+  // deno ecosystem. The scan does not decode escapes; it rejects them, so a
+  // spelling the scan cannot read never skips the cooldown check.
+  const denoWithoutCooldown = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/prototype"',
+    NPM_LANE,
+    '  - package-ecosystem: "de\\u006eo"',
+    '    directory: "/prototype"',
+    "    schedule:",
+    '      interval: "weekly"',
+    "",
+  ].join("\n");
+  assertEquals(scanDependabotText(DEPENDABOT, denoWithoutCooldown, [PKG]), [{
+    path: DEPENDABOT,
+    line: 12,
+    rule: "dependency.policy/dependabot-unparsed",
+  }]);
+  // Every scalar the policy decides on is held to the same rule.
+  for (
+    const content of [
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('directory: "/prototype"', 'directory: "/proto\\x74ype"'),
+      dependabotConfig(
+        NPM_LANE.replace('"increase"', '"incr\\x65ase"'),
+        DENO_LANE,
+      ),
+      dependabotConfig(
+        NPM_LANE.replace("default-days: 3", 'default-days: "\\x33"'),
+        DENO_LANE,
+      ),
+    ]
+  ) {
+    assertEquals(
+      dependabotRules(content).includes(
+        "dependency.policy/dependabot-unparsed",
+      ),
+      true,
+    );
+  }
+  // A single-quoted scalar has only the '' escape, which is decoded; an
+  // unterminated quote is not understood.
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('"npm"', "'npm'")
+        .replace('"increase"', "'increase' # exact pins stay exact"),
+    ),
+    [],
+  );
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replace('directory: "/prototype"', "directory: '/proto''type'"),
+    ),
+    ["dependency.policy/dependabot-npm-unwatched"],
+  );
+  assertEquals(
+    dependabotRules(
+      dependabotConfig(NPM_LANE, DENO_LANE).replace('"npm"', "'npm"),
+    ).includes("dependency.policy/dependabot-unparsed"),
+    true,
+  );
+});
+
 test("a dependabot config whose structure is not understood fails closed", () => {
   for (
     const content of [

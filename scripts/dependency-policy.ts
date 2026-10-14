@@ -26,8 +26,11 @@
  *   update lane for its directory, using the `increase` versioning strategy
  *   so a bot bump keeps an exact pin exact, and its npm and deno lanes must
  *   declare a cooldown of at least 3 days with no `include` or `exclude`
- *   carve-out, so a bot pull request holds the same 72-hour floor. A config
- *   shape the scan does not follow is reported rather than skipped.
+ *   carve-out, so a bot pull request holds the same 72-hour floor. A lane
+ *   key, or a value the policy decides on, that the scan cannot read is
+ *   reported rather than skipped: an escaped double-quoted scalar, a flow
+ *   collection, an anchor, alias, tag or block scalar. Settings the policy
+ *   does not decide on, such as `schedule` and `ignore`, are not read.
  * - The committed `dyfj.dependency.policy.manifest/v1` declaration
  *   (`scripts/dependency-policy-manifest.json`) must validate fail-closed:
  *   known schema and version, no unknown fields, unique surface ids,
@@ -1251,14 +1254,45 @@ const DEPENDABOT_KEY = /^([A-Za-z][\w-]*):(?:\s+(.*))?$/;
 const UNFOLLOWED_YAML_VALUE = /^[{[&*!|>]/;
 const DEPENDABOT_UNPARSED = "dependency.policy/dependabot-unparsed";
 
-// A plain or quoted YAML scalar with any trailing comment removed.
-function dependabotScalar(raw: string): string {
+// What may follow a closing quote: nothing, or a comment.
+const AFTER_QUOTED_SCALAR = /^(?:\s+#.*)?$/;
+
+/**
+ * A plain or quoted YAML scalar with any trailing comment removed, or
+ * `undefined` when the scan does not read it. A double-quoted scalar that
+ * contains a backslash is not read: YAML decodes escapes there, so
+ * `"de\u006eo"` names `deno`, and comparing the undecoded text would let a
+ * lane skip the policy. A single-quoted scalar's only escape, `''`, is
+ * decoded. A plain scalar has no escapes, but one opening a flow
+ * collection, anchor, alias, tag or block scalar is not followed either.
+ */
+function dependabotScalar(raw: string): string | undefined {
   const value = raw.trim();
-  const quote = value[0];
-  if (quote === '"' || quote === "'") {
-    const end = value.indexOf(quote, 1);
-    if (end > 0) return value.slice(1, end);
+  if (value.startsWith('"')) {
+    const end = value.indexOf('"', 1);
+    if (end < 0) return undefined;
+    const text = value.slice(1, end);
+    if (text.includes("\\")) return undefined;
+    return AFTER_QUOTED_SCALAR.test(value.slice(end + 1)) ? text : undefined;
   }
+  if (value.startsWith("'")) {
+    let text = "";
+    for (let index = 1; index < value.length; index++) {
+      const char = value[index];
+      if (char !== "'") {
+        text += char;
+      } else if (value[index + 1] === "'") {
+        text += "'";
+        index++;
+      } else {
+        return AFTER_QUOTED_SCALAR.test(value.slice(index + 1))
+          ? text
+          : undefined;
+      }
+    }
+    return undefined;
+  }
+  if (UNFOLLOWED_YAML_VALUE.test(value)) return undefined;
   return value.replace(/\s+#.*$/, "");
 }
 
@@ -1272,7 +1306,10 @@ interface UpdateLane {
  * Reads the `updates` lanes of a Dependabot config. The scan follows only
  * the block-style shape this repository writes: a top-level `updates:`
  * sequence of mappings, scalar values, and one nested `cooldown:` mapping.
- * Anything else is reported as not understood rather than skipped.
+ * A lane key, a cooldown key, or a scalar value outside that shape is
+ * reported as not understood rather than skipped. Blocks nested under any
+ * other lane key (`schedule`, `ignore`, `groups`) are not read, because no
+ * policy decision depends on them.
  */
 function dependabotLanes(
   content: string,
@@ -1296,7 +1333,7 @@ function dependabotLanes(
     }
     const key = match[1] ?? "";
     const value = dependabotScalar(match[2] ?? "");
-    if (lane.keys.has(key) || UNFOLLOWED_YAML_VALUE.test(value)) {
+    if (lane.keys.has(key) || value === undefined) {
       unparsedLines.push(lineNumber);
       return;
     }
@@ -1360,7 +1397,7 @@ function dependabotLanes(
     const value = dependabotScalar(match?.[2] ?? "");
     if (
       indent < cooldownIndent || !match ||
-      lane.cooldown.has(match[1] ?? "") || UNFOLLOWED_YAML_VALUE.test(value)
+      lane.cooldown.has(match[1] ?? "") || value === undefined
     ) {
       unparsedLines.push(lineNumber);
       continue;
@@ -1418,7 +1455,8 @@ export function scanDependabotText(
     rule,
   });
   const { lanes, unparsedLines } = dependabotLanes(content);
-  const hits: PublicSafetyHit[] = unparsedLines
+  // One diagnostic per line, however many ways the line was not understood.
+  const hits: PublicSafetyHit[] = [...new Set(unparsedLines)]
     .map((line) => at(path, line, DEPENDABOT_UNPARSED));
   const npmDirectories = new Set<string>();
   for (const lane of lanes) {

@@ -425,8 +425,13 @@ README are tracked separately in its Revision history section.
   (`dependabot-npm-unwatched`), as does an npm or deno lane without a cooldown
   of at least 3 days or with `include`/`exclude` carve-outs
   (`dependabot-cooldown`), an npm lane with any versioning strategy other than
-  `increase` (`dependabot-versioning-strategy`), and a config shape the check
-  does not follow (`dependabot-unparsed`).
+  `increase` (`dependabot-versioning-strategy`). A lane key or a value the
+  policy decides on that the check cannot read fails as `dependabot-unparsed`
+  rather than being skipped. That includes a double-quoted scalar with a
+  backslash escape: the check rejects escapes rather than decoding them, so a
+  spelling such as an escaped `deno` cannot slip a lane past the cooldown
+  rule. Settings the policy does not decide on, such as `schedule` and
+  `ignore`, are not read.
 
 - **A `runtime.neutral` gate lane ratchets references to the `Deno` global
   down to zero.** Decision D32 moves the TypeScript tier from Deno to Node.js
