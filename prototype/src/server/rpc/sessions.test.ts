@@ -1,4 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import assert from "node:assert/strict";
+import { assertEquals } from "@std/assert";
 import type {
   WorkbenchProjectSessions,
   WorkbenchSessionSummary,
@@ -26,7 +27,7 @@ function handlers(overrides: Partial<SessionsHandlerDeps> = {}) {
 }
 
 Deno.test("sessions/list passes the project filter through", async () => {
-  assertEquals(
+  assert.deepStrictEqual(
     await callRpc(handlers(), "sessions/list", { project: "dyfj" }),
     { projects: [{ project: "dyfj", sessions: [] }] },
   );
@@ -63,7 +64,7 @@ Deno.test("sessions/inspect returns session summary, workspace, recorded model, 
     "sessions/inspect",
     { sessionId: "01TEST_SESSION" },
   );
-  assertEquals(result, {
+  assert.deepStrictEqual(result, {
     session,
     workspace: "/workspaces/project",
     model: "claude-sonnet-5",
@@ -77,8 +78,8 @@ Deno.test("sessions/inspect rejects C1 control characters in identifiers", async
   const error = await rpcFailure(handlers(), "sessions/inspect", {
     sessionId: "01TEST\u009BSESSION",
   });
-  assertEquals(error.code, RpcErrorCode.invalidParams);
-  assertStringIncludes(error.message, "cannot contain control characters");
+  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
+  assert.ok(error.message.includes("cannot contain control characters"), `expected error.message to include "cannot contain control characters"`);
 });
 
 Deno.test("sessions/inspect names the runner when the session last ran on one", async () => {
@@ -90,6 +91,6 @@ Deno.test("sessions/inspect names the runner when the session last ran on one", 
     "sessions/inspect",
     { sessionId: "01TEST_SESSION" },
   ) as { model: string | null; runner: string | null };
-  assertEquals(result.model, null);
-  assertEquals(result.runner, "codex-chatgpt");
+  assert.deepStrictEqual(result.model, null);
+  assert.deepStrictEqual(result.runner, "codex-chatgpt");
 });

@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import { callRpc } from "../../../testing/builders/rpc.ts";
 import { buildModelsHandlers } from "./models.ts";
@@ -19,7 +19,7 @@ Deno.test("models/list returns the loaded models with a server-computed routable
     { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
     { slug: "hosted-unpriced", tier: 2, costInput: 0, costOutput: 0 },
   ]);
-  assertEquals(models.map((m) => [m.slug, m.routable]), [
+  assert.deepStrictEqual(models.map((m) => [m.slug, m.routable]), [
     ["local-x", true],
     ["hosted-priced", true],
     ["hosted-unpriced", false],
@@ -45,7 +45,7 @@ Deno.test("models/list marks locality server-side", async () => {
       costOutput: 75,
     },
   ]);
-  assertEquals(models.map((m) => [m.slug, m.local]), [
+  assert.deepStrictEqual(models.map((m) => [m.slug, m.local]), [
     ["local-x", true],
     ["hosted-x", false],
   ]);
@@ -78,7 +78,7 @@ Deno.test("models/list marks access modality server-side", async () => {
       costOutput: 75,
     },
   ]);
-  assertEquals(models.map((m) => [m.slug, m.modality]), [
+  assert.deepStrictEqual(models.map((m) => [m.slug, m.modality]), [
     ["local-x", "local"],
     ["router-x", "aggregator-hosted"],
     ["frontier-x", "frontier-hosted"],

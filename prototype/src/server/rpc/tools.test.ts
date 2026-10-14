@@ -1,4 +1,4 @@
-import { assertEquals, assertObjectMatch } from "@std/assert";
+import assert from "node:assert/strict";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -27,7 +27,7 @@ Deno.test("tools/list exposes a catalog without executing tools", async () => {
     "tools/list",
     { workspace: "/workspace" },
   ) as { tools: Array<Record<string, unknown>> };
-  assertEquals(tools.map((tool) => tool.id), [
+  assert.deepStrictEqual(tools.map((tool) => tool.id), [
     "memory.read",
     "read_file",
     "list_files",
@@ -39,7 +39,7 @@ Deno.test("tools/list exposes a catalog without executing tools", async () => {
     "git",
     "mcp.linear.get_issue",
   ]);
-  assertObjectMatch(tools.find((tool) => tool.id === "bash")!, {
+  assert.partialDeepStrictEqual(tools.find((tool) => tool.id === "bash")!, {
     permission: { filesystem: "write", network: "external" },
     redactResult: true,
   });
@@ -50,7 +50,7 @@ Deno.test("tools/inspect returns one tool schema", async () => {
     workspace: "/workspace",
     commandId: "read_file",
   }) as { tool: Record<string, unknown> };
-  assertObjectMatch(result.tool, {
+  assert.partialDeepStrictEqual(result.tool, {
     id: "read_file",
     inputSchema: { required: ["path"] },
     permission: { filesystem: "read" },
@@ -59,11 +59,11 @@ Deno.test("tools/inspect returns one tool schema", async () => {
 
 Deno.test("tools/inspect rejects a missing or unknown command id", async () => {
   const handlers = buildToolsHandlers({});
-  assertEquals(await rpcFailure(handlers, "tools/inspect", {}), {
+  assert.deepStrictEqual(await rpcFailure(handlers, "tools/inspect", {}), {
     code: RpcErrorCode.invalidParams,
     message: "tools/inspect requires a string commandId",
   });
-  assertEquals(
+  assert.deepStrictEqual(
     await rpcFailure(handlers, "tools/inspect", { commandId: "nope" }),
     { code: RpcErrorCode.invalidParams, message: "unknown tool: nope" },
   );

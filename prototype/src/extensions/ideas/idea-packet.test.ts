@@ -1,15 +1,7 @@
+import { captureThrow } from "../../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertGreaterOrEqual,
-  assertMatch,
-  assertNotStrictEquals,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import { assertArrayIncludes } from "@std/assert";
 import {
   draftWorkPacketFromContext,
   formatWorkPacketMarkdown,
@@ -36,10 +28,10 @@ describe("IdeaPacketRegistry", () => {
       registry: reg,
     });
 
-    assertEquals(reg.getIdea(idea1.ideaId), idea1);
-    assertEquals(reg.listIdeas("01SESSION_A"), [idea1]);
-    assertEquals(reg.listIdeas("01SESSION_B"), [idea2]);
-    assertEquals(reg.listIdeas().length, 2);
+    assert.deepStrictEqual(reg.getIdea(idea1.ideaId), idea1);
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_A"), [idea1]);
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_B"), [idea2]);
+    assert.deepStrictEqual(reg.listIdeas().length, 2);
 
     const packet1 = draftWorkPacketFromContext({
       sessionId: "01SESSION_A",
@@ -48,28 +40,24 @@ describe("IdeaPacketRegistry", () => {
       registry: reg,
     });
 
-    assertEquals(reg.getPacket(packet1.packetId), packet1);
-    assertEquals(reg.listPackets("01SESSION_A"), [packet1]);
-    assertEquals(reg.listPackets("01SESSION_B"), []);
+    assert.deepStrictEqual(reg.getPacket(packet1.packetId), packet1);
+    assert.deepStrictEqual(reg.listPackets("01SESSION_A"), [packet1]);
+    assert.deepStrictEqual(reg.listPackets("01SESSION_B"), []);
 
     reg.clear();
-    assertEquals(reg.listIdeas(), []);
-    assertEquals(reg.listPackets(), []);
+    assert.deepStrictEqual(reg.listIdeas(), []);
+    assert.deepStrictEqual(reg.listPackets(), []);
   });
 });
 
 describe("markWorkbenchIdea", () => {
   it("throws on empty or whitespace label", () => {
-    assertThrows(
-      () =>
+    assert.throws(() =>
         markWorkbenchIdea({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_001",
           label: "   ",
-        }),
-      Error,
-      "idea label cannot be empty",
-    );
+        }), (error: unknown) => error instanceof Error && error.message.includes("idea label cannot be empty"));
   });
 
   it("strips surrounding single or double quotes from label", () => {
@@ -78,7 +66,7 @@ describe("markWorkbenchIdea", () => {
       sessionId: "01SESSION_001",
       label: '"Implement SQLite caching layer for MCP tool calls"',
     });
-    assertStrictEquals(
+    assert.strictEqual(
       idea1.label,
       "Implement SQLite caching layer for MCP tool calls",
     );
@@ -88,7 +76,7 @@ describe("markWorkbenchIdea", () => {
       sessionId: "01SESSION_001",
       label: "'Refactor error reporting'",
     });
-    assertStrictEquals(idea2.label, "Refactor error reporting");
+    assert.strictEqual(idea2.label, "Refactor error reporting");
   });
 
   it("derives description from matching eventId if not explicitly provided", () => {
@@ -117,12 +105,12 @@ describe("markWorkbenchIdea", () => {
       events,
     });
 
-    assertStrictEquals(idea.label, "Start lock with TTL");
-    assertStrictEquals(
+    assert.strictEqual(idea.label, "Start lock with TTL");
+    assert.strictEqual(
       idea.description,
       "We should use a start lock with TTL and prune dead locks.",
     );
-    assertStrictEquals(idea.eventId, "evt-002");
+    assert.strictEqual(idea.eventId, "evt-002");
   });
 
   it("derives description from latest response event if eventId not specified", () => {
@@ -150,7 +138,7 @@ describe("markWorkbenchIdea", () => {
       events,
     });
 
-    assertStrictEquals(
+    assert.strictEqual(
       idea.description,
       "Synthesizing three control loops architecture.",
     );
@@ -203,30 +191,27 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertStrictEquals(packet.sessionId, "01SESSION_100");
-    assertStrictEquals(packet.ideaId, idea.ideaId);
-    assertStrictEquals(packet.issueId, "ISSUE-384");
-    assertStrictEquals(
+    assert.strictEqual(packet.sessionId, "01SESSION_100");
+    assert.strictEqual(packet.ideaId, idea.ideaId);
+    assert.strictEqual(packet.issueId, "ISSUE-384");
+    assert.strictEqual(
       packet.title,
       "Validate DOLT_PORT before constructing MCP net grants",
     );
-    assertStrictEquals(packet.targetWorkspace, "/workspaces/project");
-    assertStrictEquals(
+    assert.strictEqual(packet.targetWorkspace, "/workspaces/project");
+    assert.strictEqual(
       packet.operatorIntent,
       "Prevent malformed ports from reaching net grants.",
     );
     assertArrayIncludes(packet.sourceContext.contextSources, [
       "prototype/src/mcp-net-grants.ts",
     ]);
-    assertGreaterOrEqual(packet.proposedAcceptanceCriteria.length, 2);
-    assertStrictEquals(
+    assert.ok(packet.proposedAcceptanceCriteria.length >= 2, `expected packet.proposedAcceptanceCriteria.length >= 2`);
+    assert.strictEqual(
       packet.verifierProvenance.verifierType,
       "human_operator",
     );
-    assertStringIncludes(
-      packet.verifierProvenance.independenceNotes,
-      "Verifier evaluation must be independent of generation",
-    );
+    assert.ok(packet.verifierProvenance.independenceNotes.includes("Verifier evaluation must be independent of generation"), `expected packet.verifierProvenance.independenceNotes to include "Verifier evaluation must be independent of generation"`);
   });
 
   it("throws when idea belongs to a different session", () => {
@@ -237,8 +222,8 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertMatch(
-      assertThrows(() =>
+    assert.match(
+      captureThrow(() =>
         draftWorkPacketFromContext({
           sessionId: "01SESSION_B",
           ideaId: idea.ideaId,
@@ -259,8 +244,8 @@ describe("draftWorkPacketFromContext", () => {
       } as any,
     ];
 
-    assertMatch(
-      assertThrows(() =>
+    assert.match(
+      captureThrow(() =>
         markWorkbenchIdea({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_001",
@@ -296,15 +281,12 @@ describe("draftWorkPacketFromContext", () => {
 
     const md = formatWorkPacketMarkdown(packet);
 
-    assertStringIncludes(
-      md,
-      "# Work Packet: Neutral session model and idea capture",
-    );
-    assertStringIncludes(md, `- **Packet ID:** \`${packet.packetId}\``);
-    assertStringIncludes(md, "- **Related Issue:** `ISSUE-258`");
-    assertStringIncludes(md, "## 1. Source Context");
-    assertStringIncludes(md, "- **Primary Verifier:** `human_operator`");
-    assertStringIncludes(md, "- **Independence Notes:**");
+    assert.ok(md.includes("# Work Packet: Neutral session model and idea capture"), `expected ${JSON.stringify(md)} to include "# Work Packet: Neutral session model and idea capture"`);
+    assert.ok(md.includes(`- **Packet ID:** \`${packet.packetId}\``), `expected ${JSON.stringify(md)} to include \`- **Packet ID:** \\\`\${packet.packetId}\\\`\``);
+    assert.ok(md.includes("- **Related Issue:** `ISSUE-258`"), `expected ${JSON.stringify(md)} to include "- **Related Issue:** \`ISSUE-258\`"`);
+    assert.ok(md.includes("## 1. Source Context"), `expected ${JSON.stringify(md)} to include "## 1. Source Context"`);
+    assert.ok(md.includes("- **Primary Verifier:** `human_operator`"), `expected ${JSON.stringify(md)} to include "- **Primary Verifier:** \`human_operator\`"`);
+    assert.ok(md.includes("- **Independence Notes:**"), `expected ${JSON.stringify(md)} to include "- **Independence Notes:**"`);
   });
 
   it("getPacket and listPackets return defensive copies", () => {
@@ -316,18 +298,18 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const retrieved = reg.getPacket(packet.packetId);
-    assertNotStrictEquals(retrieved, null);
+    assert.notStrictEqual(retrieved, null);
     retrieved!.sourceContext.contextSources.push("mutated-source");
     retrieved!.proposedAcceptanceCriteria.push("mutated-criteria");
 
     const secondRetrieval = reg.getPacket(packet.packetId);
-    assertEquals(secondRetrieval!.sourceContext.contextSources, []);
-    assertEquals(secondRetrieval!.proposedAcceptanceCriteria.length, 2);
+    assert.deepStrictEqual(secondRetrieval!.sourceContext.contextSources, []);
+    assert.deepStrictEqual(secondRetrieval!.proposedAcceptanceCriteria.length, 2);
 
     const listed = reg.listPackets("01SESSION_300");
-    assertEquals(listed.length, 1);
+    assert.deepStrictEqual(listed.length, 1);
     listed[0].sourceContext.contextSources.push("mutated-list-source");
-    assertEquals(
+    assert.deepStrictEqual(
       reg.getPacket(packet.packetId)!.sourceContext.contextSources,
       [],
     );
@@ -342,7 +324,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertEquals(reg.listIdeas("01SESSION_A").length, 1);
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_A").length, 1);
 
     markWorkbenchIdea({
       sessionId: "01SESSION_A",
@@ -351,25 +333,21 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertEquals(reg.listIdeas("01SESSION_A").length, 1);
-    assertStrictEquals(reg.getIdea("SAME_IDEA_ID")?.sessionId, "01SESSION_A");
-    assertStrictEquals(
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_A").length, 1);
+    assert.strictEqual(reg.getIdea("SAME_IDEA_ID")?.sessionId, "01SESSION_A");
+    assert.strictEqual(
       reg.getIdea("SAME_IDEA_ID")?.label,
       "Updated Idea in Same Session",
     );
 
-    assertThrows(
-      () => {
+    assert.throws(() => {
         markWorkbenchIdea({
           sessionId: "01SESSION_B",
           ideaId: "SAME_IDEA_ID",
           label: "Attempted Cross-Session Hijack",
           registry: reg,
         });
-      },
-      Error,
-      "cannot re-register idea",
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes("cannot re-register idea"));
   });
 
   it("referenced tool-call event with empty content extracts tool call details as excerpt", () => {
@@ -391,27 +369,20 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assertStrictEquals(packet.sourceContext.referencedEventId, "evt-tc-1");
-    assertStringIncludes(
-      packet.sourceContext.excerpt,
-      "[Tool Call: execute_command]",
-    );
-    assertStringIncludes(packet.sourceContext.excerpt, "deno task test");
+    assert.strictEqual(packet.sourceContext.referencedEventId, "evt-tc-1");
+    assert.ok(packet.sourceContext.excerpt.includes("[Tool Call: execute_command]"), `expected packet.sourceContext.excerpt to include "[Tool Call: execute_command]"`);
+    assert.ok(packet.sourceContext.excerpt.includes("deno task test"), `expected packet.sourceContext.excerpt to include "deno task test"`);
   });
 
   it("session ID longer than 256 chars throws validation error", () => {
     const longSessionId = "A".repeat(300);
     const reg = new IdeaPacketRegistry();
-    assertThrows(
-      () =>
+    assert.throws(() =>
         markWorkbenchIdea({
           sessionId: longSessionId,
           label: "Long session idea",
           registry: reg,
-        }),
-      Error,
-      "sessionId exceeds maximum length of 256 characters",
-    );
+        }), (error: unknown) => error instanceof Error && error.message.includes("sessionId exceeds maximum length of 256 characters"));
   });
 
   it("formatWorkPacketMarkdown neutralizes markdown heading injections and HTML headings while preserving comparison operators", () => {
@@ -431,29 +402,25 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "# Work Packet: Title with newlines");
-    assertStringIncludes(md, "\\## 4. Injected Section");
-    assertStringIncludes(md, "> > \\# Injected Section");
-    assertStringIncludes(md, "1. > \\# List Quoted Heading");
-    assertStringIncludes(md, "<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>");
-    assertStringIncludes(md, "Injected Setext\n\\=");
-    assertStringIncludes(md, "Injected H2 Setext\n\\-");
-    assertStringIncludes(md, "\\# Injected CR Heading");
-    assertStringIncludes(
-      md,
-      "```sh\n# shell comment\n<h1>inside block</h1>\n```",
-    );
-    assertStringIncludes(md, "```ts\nconst x = 1;\n```");
-    assertStringIncludes(md, "- [ ] Criterion 1 with newline");
-    assertStringIncludes(md, "- [ ] `<h1>` Injected Heading in Code Span");
-    assertStringIncludes(md, "- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;");
-    assertStringIncludes(md, "- [ ] p95 latency < 200 ms and memory > 50 MB");
+    assert.ok(md.includes("# Work Packet: Title with newlines"), `expected ${JSON.stringify(md)} to include "# Work Packet: Title with newlines"`);
+    assert.ok(md.includes("\\## 4. Injected Section"), `expected ${JSON.stringify(md)} to include "\\\\## 4. Injected Section"`);
+    assert.ok(md.includes("> > \\# Injected Section"), `expected ${JSON.stringify(md)} to include "> > \\\\# Injected Section"`);
+    assert.ok(md.includes("1. > \\# List Quoted Heading"), `expected ${JSON.stringify(md)} to include "1. > \\\\# List Quoted Heading"`);
+    assert.ok(md.includes("<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"), `expected ${JSON.stringify(md)} to include "<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"`);
+    assert.ok(md.includes("Injected Setext\n\\="), `expected ${JSON.stringify(md)} to include "Injected Setext\\n\\\\="`);
+    assert.ok(md.includes("Injected H2 Setext\n\\-"), `expected ${JSON.stringify(md)} to include "Injected H2 Setext\\n\\\\-"`);
+    assert.ok(md.includes("\\# Injected CR Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected CR Heading"`);
+    assert.ok(md.includes("```sh\n# shell comment\n<h1>inside block</h1>\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`sh\\n# shell comment\\n<h1>inside block</h1>\\n\`\`\`"`);
+    assert.ok(md.includes("```ts\nconst x = 1;\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`ts\\nconst x = 1;\\n\`\`\`"`);
+    assert.ok(md.includes("- [ ] Criterion 1 with newline"), `expected ${JSON.stringify(md)} to include "- [ ] Criterion 1 with newline"`);
+    assert.ok(md.includes("- [ ] `<h1>` Injected Heading in Code Span"), `expected ${JSON.stringify(md)} to include "- [ ] \`<h1>\` Injected Heading in Code Span"`);
+    assert.ok(md.includes("- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"`);
+    assert.ok(md.includes("- [ ] p95 latency < 200 ms and memory > 50 MB"), `expected ${JSON.stringify(md)} to include "- [ ] p95 latency < 200 ms and memory > 50 MB"`);
   });
 
   it("registerPacket rejects mismatched packet and sourceContext session IDs", () => {
     const reg = new IdeaPacketRegistry();
-    assertThrows(
-      () => {
+    assert.throws(() => {
         reg.registerPacket({
           packetId: "01PACKET000000000000000001",
           ideaId: null,
@@ -475,10 +442,7 @@ describe("draftWorkPacketFromContext", () => {
           },
           createdAt: "2026-08-15T12:00:00Z",
         });
-      },
-      Error,
-      "packet sessionId and sourceContext sessionId must match",
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes("packet sessionId and sourceContext sessionId must match"));
   });
 
   it("recent session events longer than 300 chars include truncation indicator", () => {
@@ -499,7 +463,7 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assertStringIncludes(packet.sourceContext.excerpt, "...[truncated]");
+    assert.ok(packet.sourceContext.excerpt.includes("...[truncated]"), `expected packet.sourceContext.excerpt to include "...[truncated]"`);
   });
 
   it("markWorkbenchIdea rejects event belonging to a different session", () => {
@@ -513,8 +477,8 @@ describe("draftWorkPacketFromContext", () => {
       } as any,
     ];
 
-    assertMatch(
-      assertThrows(() =>
+    assert.match(
+      captureThrow(() =>
         markWorkbenchIdea({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_TARGET",
@@ -552,15 +516,13 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assertEquals(packet.sourceContext.contextSources, ["native/file.ts"]);
-    assertFalse(
-      packet.sourceContext.contextSources.includes("foreign/secret.ts"),
-    );
+    assert.deepStrictEqual(packet.sourceContext.contextSources, ["native/file.ts"]);
+    assert.ok(!packet.sourceContext.contextSources.includes("foreign/secret.ts"));
   });
 
   it("markWorkbenchIdea throws when eventId is provided without events array", () => {
-    assertMatch(
-      assertThrows(() =>
+    assert.match(
+      captureThrow(() =>
         markWorkbenchIdea({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_TEST",
@@ -572,8 +534,8 @@ describe("draftWorkPacketFromContext", () => {
   });
 
   it("draftWorkPacketFromContext throws when eventId is provided without events array", () => {
-    assertMatch(
-      assertThrows(() =>
+    assert.match(
+      captureThrow(() =>
         draftWorkPacketFromContext({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_TEST",
@@ -595,10 +557,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, ">```ts\n> const y = 2;\n> ```");
-    assertStringIncludes(md, "\\# Heading Outside Fence");
-    assertFalse(md.includes("\x1b[31m"));
-    assertFalse(packet.operatorIntent.includes("\x1b[31m"));
+    assert.ok(md.includes(">```ts\n> const y = 2;\n> ```"), `expected ${JSON.stringify(md)} to include ">\`\`\`ts\\n> const y = 2;\\n> \`\`\`"`);
+    assert.ok(md.includes("\\# Heading Outside Fence"), `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside Fence"`);
+    assert.ok(!md.includes("\x1b[31m"));
+    assert.ok(!packet.operatorIntent.includes("\x1b[31m"));
   });
 
   it("multi-event aggregated excerpt sets referencedEventId to null", () => {
@@ -625,15 +587,9 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assertStrictEquals(packet.sourceContext.referencedEventId, null);
-    assertStringIncludes(
-      packet.sourceContext.excerpt,
-      "[User]: What is the plan?",
-    );
-    assertStringIncludes(
-      packet.sourceContext.excerpt,
-      "[Assistant]: Here is the plan.",
-    );
+    assert.strictEqual(packet.sourceContext.referencedEventId, null);
+    assert.ok(packet.sourceContext.excerpt.includes("[User]: What is the plan?"), `expected packet.sourceContext.excerpt to include "[User]: What is the plan?"`);
+    assert.ok(packet.sourceContext.excerpt.includes("[Assistant]: Here is the plan."), `expected packet.sourceContext.excerpt to include "[Assistant]: Here is the plan."`);
   });
 
   it("preserves headings inside list-nested and numbered list code fences", () => {
@@ -646,9 +602,9 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "- ```sh\n  # shell comment\n  echo hello\n  ```");
-    assertStringIncludes(md, "1. ```python\n   # python comment\n   ```");
-    assertStringIncludes(md, "\\# Real Heading");
+    assert.ok(md.includes("- ```sh\n  # shell comment\n  echo hello\n  ```"), `expected ${JSON.stringify(md)} to include "- \`\`\`sh\\n  # shell comment\\n  echo hello\\n  \`\`\`"`);
+    assert.ok(md.includes("1. ```python\n   # python comment\n   ```"), `expected ${JSON.stringify(md)} to include "1. \`\`\`python\\n   # python comment\\n   \`\`\`"`);
+    assert.ok(md.includes("\\# Real Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Real Heading"`);
   });
 
   it("strips C1 control characters from headings and criteria", () => {
@@ -662,12 +618,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertFalse(md.includes("\u009B"));
-    assertFalse(md.includes("\u0080"));
-    assertFalse(md.includes("\u009F"));
-    assertFalse(md.includes("\u0090"));
-    assertFalse(packet.title.includes("\u009B"));
-    assertFalse(packet.operatorIntent.includes("\u0080"));
+    assert.ok(!md.includes("\u009B"));
+    assert.ok(!md.includes("\u0080"));
+    assert.ok(!md.includes("\u009F"));
+    assert.ok(!md.includes("\u0090"));
+    assert.ok(!packet.title.includes("\u009B"));
+    assert.ok(!packet.operatorIntent.includes("\u0080"));
   });
 
   it("escapes multiline HTML headings outside code blocks", () => {
@@ -679,8 +635,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, '&lt;h1\nclass="injected"&gt;');
-    assertStringIncludes(md, "&lt;/h1&gt;");
+    assert.ok(md.includes('&lt;h1\nclass="injected"&gt;'), `expected ${JSON.stringify(md)} to include '&lt;h1\\nclass="injected"&gt;'`);
+    assert.ok(md.includes("&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;/h1&gt;"`);
   });
 
   it("preserves multiple internal spaces in metadata code spans and criteria", () => {
@@ -693,8 +649,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "`/work/My  Custom  Path`");
-    assertStringIncludes(md, "`printf 'a  b'`");
+    assert.ok(md.includes("`/work/My  Custom  Path`"), `expected ${JSON.stringify(md)} to include "\`/work/My  Custom  Path\`"`);
+    assert.ok(md.includes("`printf 'a  b'`"), `expected ${JSON.stringify(md)} to include "\`printf 'a  b'\`"`);
   });
 
   it("4-space indented code blocks do not suppress heading escaping", () => {
@@ -706,7 +662,7 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "\\# Injected Heading");
+    assert.ok(md.includes("\\# Injected Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`);
   });
 
   it("escaped backticks do not bypass HTML heading escaping in criteria", () => {
@@ -718,7 +674,7 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "&lt;h1&gt;Injected&lt;/h1&gt;");
+    assert.ok(md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;h1&gt;Injected&lt;/h1&gt;"`);
   });
 
   it("raw HTML blocks with attribute-bearing headings are neutralized", () => {
@@ -730,10 +686,7 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(
-      md,
-      "<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>",
-    );
+    assert.ok(md.includes("<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"), `expected ${JSON.stringify(md)} to include "<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"`);
   });
 
   it("markWorkbenchIdea strips C1 controls from event-derived description", () => {
@@ -753,7 +706,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertFalse(idea.description.includes("\u009B"));
+    assert.ok(!idea.description.includes("\u009B"));
   });
 
   it("list-nested dangling code fence closes with whitespace indentation", () => {
@@ -765,8 +718,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "- ```sh\n  echo hello\n  ```");
-    assertFalse(md.includes("- ```sh\n  echo hello\n- ```"));
+    assert.ok(md.includes("- ```sh\n  echo hello\n  ```"), `expected ${JSON.stringify(md)} to include "- \`\`\`sh\\n  echo hello\\n  \`\`\`"`);
+    assert.ok(!md.includes("- ```sh\n  echo hello\n- ```"));
   });
 
   it("multi-digit ordered list code fences close properly with matching indentation", () => {
@@ -778,8 +731,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "10. ```sh\n    echo multi\n    ```");
-    assertStringIncludes(md, "\\# Injected Heading");
+    assert.ok(md.includes("10. ```sh\n    echo multi\n    ```"), `expected ${JSON.stringify(md)} to include "10. \`\`\`sh\\n    echo multi\\n    \`\`\`"`);
+    assert.ok(md.includes("\\# Injected Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`);
   });
 
   it("tab-indented fences do not close root code fences", () => {
@@ -791,8 +744,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "```sh\necho test\n\t```\n# code comment\n```");
-    assertFalse(md.includes("\\# code comment"));
+    assert.ok(md.includes("```sh\necho test\n\t```\n# code comment\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`sh\\necho test\\n\\t\`\`\`\\n# code comment\\n\`\`\`"`);
+    assert.ok(!md.includes("\\# code comment"));
   });
 
   it("code fences inside list items protect headings until closed by matching indented fence", () => {
@@ -804,8 +757,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "# code comment");
-    assertFalse(md.includes("\\# code comment"));
+    assert.ok(md.includes("# code comment"), `expected ${JSON.stringify(md)} to include "# code comment"`);
+    assert.ok(!md.includes("\\# code comment"));
   });
 
   it("re-registering idea or packet under a different session throws an error", () => {
@@ -816,20 +769,16 @@ describe("draftWorkPacketFromContext", () => {
       label: "Idea in Session A",
       registry: reg,
     });
-    assertStrictEquals(idea1.ideaId, "01IDEA_CROSS_SESS");
+    assert.strictEqual(idea1.ideaId, "01IDEA_CROSS_SESS");
 
-    assertThrows(
-      () => {
+    assert.throws(() => {
         markWorkbenchIdea({
           sessionId: "01SESSION_B",
           ideaId: "01IDEA_CROSS_SESS",
           label: "Idea Hijack",
           registry: reg,
         });
-      },
-      Error,
-      "cannot re-register idea",
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes("cannot re-register idea"));
   });
 
   it("event resolution searches beyond 2000 events without failing", () => {
@@ -857,7 +806,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertStrictEquals(idea.description, "Early event content");
+    assert.strictEqual(idea.description, "Early event content");
   });
 
   it("idea label sanitizes ANSI escape sequences and C1 control bytes upon registration", () => {
@@ -868,9 +817,9 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertFalse(idea.label.includes("\x1b[2J"));
-    assertFalse(idea.label.includes("\u009B"));
-    assertStrictEquals(idea.label, "Clean Label with ANSI");
+    assert.ok(!idea.label.includes("\x1b[2J"));
+    assert.ok(!idea.label.includes("\u009B"));
+    assert.strictEqual(idea.label, "Clean Label with ANSI");
   });
 
   it("registering a packet referencing an idea from a different session throws an error", () => {
@@ -888,8 +837,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertThrows(
-      () => {
+    assert.throws(() => {
         reg.registerPacket({
           ...packetDraft,
           sessionId: "01SESSION_OWNER_B",
@@ -898,25 +846,18 @@ describe("draftWorkPacketFromContext", () => {
             sessionId: "01SESSION_OWNER_B",
           },
         });
-      },
-      Error,
-      'packet idea "01IDEA_OWNER_A" belongs to session "01SESSION_OWNER_A"',
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes('packet idea "01IDEA_OWNER_A" belongs to session "01SESSION_OWNER_A"'));
   });
 
   it("idea label consisting solely of ANSI escapes or whitespace is rejected", () => {
     const reg = new IdeaPacketRegistry();
-    assertThrows(
-      () => {
+    assert.throws(() => {
         markWorkbenchIdea({
           sessionId: "01SESSION_BLANK_ANSI",
           label: "\x1b[2J\x1b[0m   ",
           registry: reg,
         });
-      },
-      Error,
-      "idea label cannot be empty or whitespace-only",
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes("idea label cannot be empty or whitespace-only"));
   });
 
   it("differing nested list markers inside blockquotes exit list item and escape subsequent headings", () => {
@@ -929,7 +870,7 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "\\# code comment");
+    assert.ok(md.includes("\\# code comment"), `expected ${JSON.stringify(md)} to include "\\\\# code comment"`);
   });
 
   it("blockquote container implicit exit resets fence state and escapes subsequent headings", () => {
@@ -941,8 +882,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "\\# Heading Outside");
-    assertFalse(md.includes("\n> ```\n"));
+    assert.ok(md.includes("\\# Heading Outside"), `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside"`);
+    assert.ok(!md.includes("\n> ```\n"));
   });
 
   it("drafting packet with ANSI-only title falls back to default title without emitting empty header", () => {
@@ -955,8 +896,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "# Work Packet: Work intent");
-    assertNotStrictEquals(md, "# Work Packet: \n");
+    assert.ok(md.includes("# Work Packet: Work intent"), `expected ${JSON.stringify(md)} to include "# Work Packet: Work intent"`);
+    assert.notStrictEqual(md, "# Work Packet: \n");
   });
 
   it("OSC and Fe ANSI escape sequences are completely stripped from labels and headings", () => {
@@ -967,7 +908,7 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assertStrictEquals(idea.label, "Clean Label Escaped");
+    assert.strictEqual(idea.label, "Clean Label Escaped");
   });
 
   it("implicit container exit escapes subsequent raw HTML headings", () => {
@@ -979,7 +920,7 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "&lt;h1&gt;Injected&lt;/h1&gt;");
+    assert.ok(md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;h1&gt;Injected&lt;/h1&gt;"`);
   });
 
   it("evicted idea session prevents re-registering the same idea ID under a different session", () => {
@@ -1002,21 +943,17 @@ describe("draftWorkPacketFromContext", () => {
     }
 
     // Verify session A is evicted from active session map
-    assertEquals(reg.listIdeas("01SESSION_EVICT_A").length, 0);
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_EVICT_A").length, 0);
 
     // Attempting to re-register the same ideaId in session B should fail
-    assertThrows(
-      () => {
+    assert.throws(() => {
         markWorkbenchIdea({
           sessionId: "01SESSION_EVICT_B",
           ideaId: "01IDEA_SHARED_ID",
           label: "Hijacked Idea in B",
           registry: reg,
         });
-      },
-      Error,
-      'cannot re-register idea "01IDEA_SHARED_ID" under session "01SESSION_EVICT_B"',
-    );
+      }, (error: unknown) => error instanceof Error && error.message.includes('cannot re-register idea "01IDEA_SHARED_ID" under session "01SESSION_EVICT_B"'));
   });
 
   it("four-space indented code blocks preserve comments without heading escaping", () => {
@@ -1028,8 +965,8 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assertStringIncludes(md, "    # comment");
-    assertFalse(md.includes("    \\# comment"));
+    assert.ok(md.includes("    # comment"), `expected ${JSON.stringify(md)} to include "    # comment"`);
+    assert.ok(!md.includes("    \\# comment"));
   });
 
   it("idea remains resolvable when its session is evicted if an active packet references it", () => {
@@ -1057,9 +994,9 @@ describe("draftWorkPacketFromContext", () => {
     }
 
     // Session A is evicted from ideasBySession
-    assertEquals(reg.listIdeas("01SESSION_RETAIN_A").length, 0);
+    assert.deepStrictEqual(reg.listIdeas("01SESSION_RETAIN_A").length, 0);
     // But getIdea still resolves the idea because the packet references it!
-    assertNotStrictEquals(reg.getIdea("01IDEA_RETAINED"), null);
-    assertStrictEquals(reg.getIdea("01IDEA_RETAINED")?.label, "Retained idea");
+    assert.notStrictEqual(reg.getIdea("01IDEA_RETAINED"), null);
+    assert.strictEqual(reg.getIdea("01IDEA_RETAINED")?.label, "Retained idea");
   });
 });

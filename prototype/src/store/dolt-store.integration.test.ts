@@ -3,14 +3,10 @@
 // with tables copied from the fixture's schema (`CREATE TABLE ... LIKE`), so
 // the suite never touches the rows other integration tests read.
 
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import process from "node:process";
 import mysql from "mysql2/promise";
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
 import {
   event,
   storeConformance,
@@ -115,7 +111,7 @@ const subject: StoreConformanceSubject = {
   name: "DoltStore",
   async make(seed, options) {
     next += 1;
-    const database = `store_conformance_${Deno.pid}_${next}`;
+    const database = `store_conformance_${process.pid}_${next}`;
     const admin = adminPool(connection.database);
     try {
       await admin.query(`CREATE DATABASE ${database}`);
@@ -167,8 +163,8 @@ Deno.test("DoltStore: the pool serves the next commit after an aborted commit", 
     );
     aborted.abort();
     const error = await first.then(() => undefined, (e) => e as Error);
-    assertEquals(error?.name, "AbortError");
-    assertFalse(await store.events.exists("EV_ABORTED"));
+    assert.deepStrictEqual(error?.name, "AbortError");
+    assert.ok(!(await store.events.exists("EV_ABORTED")));
 
     // Aborting after the INSERT but before COMMIT: nothing lands either.
     const midway = new AbortController();
@@ -191,8 +187,8 @@ Deno.test("DoltStore: the pool serves the next commit after an aborted commit", 
       );
     }
     for (let i = 0; i < 8; i++) {
-      assert(await store.events.exists(`EV_NEXT_${i}`));
-      assert(await store.events.exists(`EV_SIGNAL_${i}`));
+      assert.ok(await store.events.exists(`EV_NEXT_${i}`));
+      assert.ok(await store.events.exists(`EV_SIGNAL_${i}`));
     }
   } finally {
     await subject.dispose(store);
@@ -212,12 +208,12 @@ Deno.test("DoltStore: the boot-time column check names a column a migration adde
     } finally {
       await admin.end();
     }
-    const error = await assertRejects(
+    const error = await captureRejection(
       () => (store as DoltStore).assertCanonicalColumns(),
       MissingSchemaColumnsError,
     );
-    assertEquals(error.missing, [{ table: "events", column: "trace_flags" }]);
-    assertStringIncludes(error.message, "schema/migrations/");
+    assert.deepStrictEqual(error.missing, [{ table: "events", column: "trace_flags" }]);
+    assert.ok(error.message.includes("schema/migrations/"), `expected error.message to include "schema/migrations/"`);
   } finally {
     await subject.dispose(store);
   }

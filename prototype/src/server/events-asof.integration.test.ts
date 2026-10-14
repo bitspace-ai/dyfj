@@ -13,7 +13,7 @@
  * The aggregate integration fixture provides the isolated Dolt sql-server.
  */
 
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import {
   generateSpanId,
@@ -94,10 +94,10 @@ Deno.test("events/query asOf returns the historical set; omitting it returns hea
           sessionId,
         }) as { events: Array<{ content: string | null }> };
 
-        assertEquals(historical.events.map((event) => event.content), [
+        assert.deepStrictEqual(historical.events.map((event) => event.content), [
           HISTORICAL,
         ]);
-        assertEquals(head.events.map((event) => event.content), [
+        assert.deepStrictEqual(head.events.map((event) => event.content), [
           HISTORICAL,
           HEAD,
         ]);

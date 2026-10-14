@@ -1,4 +1,5 @@
-import { assertEquals, assertObjectMatch } from "@std/assert";
+import assert from "node:assert/strict";
+import process from "node:process";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -68,13 +69,13 @@ async function warmAcpSessions() {
   const state = { closed: false };
   await map.acquire({
     sessionId: "s1",
-    workspace: Deno.cwd(),
+    workspace: process.cwd(),
     profile: {
       slug: "fixture",
-      command: Deno.execPath(),
+      command: process.execPath,
       args: ["eval", "1"],
       environment: {},
-      workspace: Deno.cwd(),
+      workspace: process.cwd(),
       transport: "local_stdio",
       accessRoute: "local_sidecar",
       costBasis: "local_free",
@@ -106,10 +107,10 @@ Deno.test("runtime close shuts down warm ACP sessions", async () => {
   await using started = await startServer("server-acp-close", {
     acpSessions: map,
   });
-  assertEquals(state.closed, false);
+  assert.deepStrictEqual(state.closed, false);
   await started.server.close();
-  assertEquals(state.closed, true);
-  assertEquals(map.size, 0);
+  assert.deepStrictEqual(state.closed, true);
+  assert.deepStrictEqual(map.size, 0);
 });
 
 Deno.test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
@@ -126,9 +127,9 @@ Deno.test("foreground SIGINT closes the server and reaps warm ACP sessions", asy
     (code) => exitCodes.push(code),
   );
   await handler();
-  assertEquals(exitCodes, [0]);
-  assertEquals(state.closed, true);
-  assertEquals(map.size, 0);
+  assert.deepStrictEqual(exitCodes, [0]);
+  assert.deepStrictEqual(state.closed, true);
+  assert.deepStrictEqual(map.size, 0);
 });
 
 Deno.test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
@@ -142,12 +143,12 @@ Deno.test("runtime/stop reaps warm ACP sessions then returns stopping", async ()
   });
   server = started.server;
   await using client = await dial(server);
-  assertEquals(state.closed, false);
-  assertEquals(await client.peer.request("runtime/stop"), {
+  assert.deepStrictEqual(state.closed, false);
+  assert.deepStrictEqual(await client.peer.request("runtime/stop"), {
     status: "stopping",
   });
-  assertEquals(state.closed, true);
-  assertEquals(map.size, 0);
+  assert.deepStrictEqual(state.closed, true);
+  assert.deepStrictEqual(map.size, 0);
 });
 
 Deno.test("an unknown method -> methodNotFound", async () => {
@@ -157,7 +158,7 @@ Deno.test("an unknown method -> methodNotFound", async () => {
     () => undefined,
     (reason: unknown) => reason,
   );
-  assertObjectMatch(error as Record<string, unknown>, {
+  assert.partialDeepStrictEqual(error as Record<string, unknown>, {
     code: RpcErrorCode.methodNotFound,
   });
 });

@@ -1,9 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -65,8 +60,8 @@ Deno.test("runtime/status resolves the bare-turn route past a hosted configured 
   ) as { runtime: Record<string, unknown> };
   // The configured default is reported and resolved as defaultTurnModel
   // when present in the catalog with pricing.
-  assertEquals(runtime.defaultCompanionModel, "hosted-x");
-  assertObjectMatch(runtime.defaultTurnModel as Record<string, unknown>, {
+  assert.deepStrictEqual(runtime.defaultCompanionModel, "hosted-x");
+  assert.partialDeepStrictEqual(runtime.defaultTurnModel as Record<string, unknown>, {
     slug: "hosted-x",
     tier: 2,
     local: false,
@@ -74,14 +69,14 @@ Deno.test("runtime/status resolves the bare-turn route past a hosted configured 
   });
   // Locality counts use the same provider+loopback classification as the
   // per-row `local` flag, not the tier label.
-  assertEquals(runtime.models, { total: 2, local: 1, hosted: 1 });
+  assert.deepStrictEqual(runtime.models, { total: 2, local: 1, hosted: 1 });
 });
 
 Deno.test("runtime/status reports a null bare-turn route when nothing is routable", async () => {
   const { runtime } = await callRpc(handlers(), "runtime/status") as {
     runtime: { defaultTurnModel: unknown };
   };
-  assertEquals(runtime.defaultTurnModel, null);
+  assert.deepStrictEqual(runtime.defaultTurnModel, null);
 });
 
 Deno.test("runtime/status returns the local transport posture", async () => {
@@ -97,7 +92,7 @@ Deno.test("runtime/status returns the local transport posture", async () => {
     }),
     "runtime/status",
   ) as { runtime: Record<string, unknown> };
-  assertObjectMatch(result.runtime, {
+  assert.partialDeepStrictEqual(result.runtime, {
     transport: "uds",
     clearance: "loopback",
     defaultCompanionModel: "local-x",
@@ -117,7 +112,7 @@ Deno.test("runtime/status falls back to the loose posture fields without an engi
     }),
     "runtime/status",
   ) as { runtime: Record<string, unknown> };
-  assertObjectMatch(runtime, {
+  assert.partialDeepStrictEqual(runtime, {
     defaultCompanionModel: "local-x",
     permissionLevel: "operator",
     defaultSessionBudgetUsd: 1,
@@ -142,13 +137,13 @@ Deno.test("runtime/status names secret pointers that failed at start", async () 
     handlers({ unavailableSecrets: failed }),
     "runtime/status",
   ) as { runtime: Record<string, unknown> };
-  assertEquals(runtime.unavailableSecrets, failed);
+  assert.deepStrictEqual(runtime.unavailableSecrets, failed);
 
   const clean = await callRpc(
     handlers({ unavailableSecrets: [] }),
     "runtime/status",
   ) as { runtime: Record<string, unknown> };
-  assert(!("unavailableSecrets" in clean.runtime));
+  assert.ok(!("unavailableSecrets" in clean.runtime));
 });
 
 Deno.test("runtime/liveness returns immediately without loading models", async () => {
@@ -162,19 +157,19 @@ Deno.test("runtime/liveness returns immediately without loading models", async (
     }),
     "runtime/liveness",
   );
-  assertEquals(result, {
+  assert.deepStrictEqual(result, {
     status: "ok",
     transport: "uds",
     clearance: "loopback",
   });
-  assertEquals(loadModelsCalled, false);
+  assert.deepStrictEqual(loadModelsCalled, false);
 });
 
 Deno.test("runtime/status exposes method catalog metadata", async () => {
   const { runtime } = await callRpc(handlers(), "runtime/status") as {
     runtime: { methods: string[]; methodCatalog: unknown[] };
   };
-  assertEquals(runtime.methods, [
+  assert.deepStrictEqual(runtime.methods, [
     "runtime/liveness",
     "runtime/status",
     "runtime/stop",
@@ -195,7 +190,7 @@ Deno.test("runtime/status exposes method catalog metadata", async () => {
     "turn",
     "turn/cancel",
   ]);
-  assertEquals(runtime.methodCatalog, [
+  assert.deepStrictEqual(runtime.methodCatalog, [
     { id: "runtime/liveness", namespace: "runtime", kind: "read" },
     { id: "runtime/status", namespace: "runtime", kind: "read" },
     { id: "runtime/stop", namespace: "runtime", kind: "interactive" },
@@ -228,14 +223,14 @@ Deno.test("runtime/stop triggers onShutdown and returns stopping status", async 
     }),
     "runtime/stop",
   );
-  assertEquals(result, { status: "stopping" });
-  assert(shutdownCalled);
+  assert.deepStrictEqual(result, { status: "stopping" });
+  assert.ok(shutdownCalled);
 });
 
 Deno.test("runtime/stop is an internalError when onShutdown is absent", async () => {
   const error = await rpcFailure(handlers(), "runtime/stop");
-  assertEquals(error.code, RpcErrorCode.internalError);
-  assertStringIncludes(error.message, "shutdown is not configured");
+  assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
+  assert.ok(error.message.includes("shutdown is not configured"), `expected error.message to include "shutdown is not configured"`);
 });
 
 Deno.test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
@@ -245,6 +240,6 @@ Deno.test("runtime/stop surfaces an onShutdown failure as internalError", async 
     }),
     "runtime/stop",
   );
-  assertEquals(error.code, RpcErrorCode.internalError);
-  assertStringIncludes(error.message, "runtime shutdown failed");
+  assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
+  assert.ok(error.message.includes("runtime shutdown failed"), `expected error.message to include "runtime shutdown failed"`);
 });

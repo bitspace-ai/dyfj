@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import type { WorkbenchSessionEvent } from "../../contract/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -20,16 +20,16 @@ function handlers(requests: SessionEventsRequest[] = []) {
 
 Deno.test("events/query returns events for a session", async () => {
   const requests: SessionEventsRequest[] = [];
-  assertEquals(
+  assert.deepStrictEqual(
     await callRpc(handlers(requests), "events/query", { sessionId: "s1" }),
     { events: [{ id: "e1", sessionId: "s1" }] },
   );
-  assertEquals(requests, [{ sessionId: "s1", asOf: undefined, limit: 500 }]);
+  assert.deepStrictEqual(requests, [{ sessionId: "s1", asOf: undefined, limit: 500 }]);
 });
 
 Deno.test("events/query without a sessionId -> invalidParams", async () => {
   const error = await rpcFailure(handlers(), "events/query", {});
-  assertEquals(error.code, RpcErrorCode.invalidParams);
+  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
 Deno.test("events/query with a malformed asOf -> invalidParams", async () => {
@@ -37,7 +37,7 @@ Deno.test("events/query with a malformed asOf -> invalidParams", async () => {
     sessionId: "s1",
     asOf: "not-a-timestamp",
   });
-  assertEquals(error.code, RpcErrorCode.invalidParams);
+  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
 Deno.test("events/query rejects asOf longer than 64 characters", async () => {
@@ -45,7 +45,7 @@ Deno.test("events/query rejects asOf longer than 64 characters", async () => {
     sessionId: "01TEST_EVENTS_SESSION",
     asOf: "2026-08-15T12:00:00.000Z" + "0".repeat(100),
   });
-  assertEquals(error.code, RpcErrorCode.invalidParams);
+  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
 Deno.test("events/query with an invalid limit -> invalidParams", async () => {
@@ -54,6 +54,6 @@ Deno.test("events/query with an invalid limit -> invalidParams", async () => {
       sessionId: "s1",
       limit,
     });
-    assertEquals(error.code, RpcErrorCode.invalidParams, `limit ${limit}`);
+    assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams, `limit ${limit}`);
   }
 });

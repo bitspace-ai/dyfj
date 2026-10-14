@@ -11,12 +11,8 @@
  * provider call, instead of falling back to the configured default.
  */
 
-import {
-  assert,
-  assertEquals,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
   chatReply,
   type EngineRun,
@@ -98,12 +94,12 @@ Deno.test("a resumed session runs on the model it last ran on, not the configure
       prompt: "start on the other model",
       routingOptions: { modelId: OTHER_MODEL.slug },
     }) as TurnReply;
-    assertEquals(first.model.slug, OTHER_MODEL.slug);
+    assert.deepStrictEqual(first.model.slug, OTHER_MODEL.slug);
 
     const inspected = await client.request("sessions/inspect", {
       sessionId: first.sessionId,
     }) as { model: string | null };
-    assertEquals(inspected.model, OTHER_MODEL.slug);
+    assert.deepStrictEqual(inspected.model, OTHER_MODEL.slug);
 
     // A new connection, as a restarted client would make, naming only the
     // session: no model of its own.
@@ -111,8 +107,8 @@ Deno.test("a resumed session runs on the model it last ran on, not the configure
       prompt: "carry on",
       sessionId: first.sessionId,
     }) as TurnReply;
-    assertEquals(resumed.model.slug, OTHER_MODEL.slug);
-    assertEquals(resumed.route.reason, "session_model");
+    assert.deepStrictEqual(resumed.model.slug, OTHER_MODEL.slug);
+    assert.deepStrictEqual(resumed.route.reason, "session_model");
   });
 });
 
@@ -131,11 +127,11 @@ Deno.test("an explicit model on a resumed turn still wins over the recorded one"
       sessionId: first.sessionId,
       routingOptions: { modelId: LOCAL_MODEL.slug },
     }) as TurnReply;
-    assertEquals(resumed.model.slug, LOCAL_MODEL.slug);
+    assert.deepStrictEqual(resumed.model.slug, LOCAL_MODEL.slug);
     const inspected = await client.request("sessions/inspect", {
       sessionId: first.sessionId,
     }) as { model: string | null };
-    assertEquals(
+    assert.deepStrictEqual(
       inspected.model,
       LOCAL_MODEL.slug,
       "the latest turn's model is the recorded one",
@@ -186,7 +182,7 @@ for (
         prompt: "start on the other model",
         routingOptions: { modelId: OTHER_MODEL.slug },
       }) as TurnReply;
-      await assertRejects(() =>
+      await assert.rejects(() =>
         client.request("turn", {
           prompt: "try another model",
           sessionId: first.sessionId,
@@ -196,12 +192,12 @@ for (
       const inspected = await client.request("sessions/inspect", {
         sessionId: first.sessionId,
       }) as { model: string | null };
-      assertEquals(inspected.model, OTHER_MODEL.slug);
+      assert.deepStrictEqual(inspected.model, OTHER_MODEL.slug);
       const resumed = await client.request("turn", {
         prompt: "carry on",
         sessionId: first.sessionId,
       }) as TurnReply;
-      assertEquals(resumed.model.slug, OTHER_MODEL.slug);
+      assert.deepStrictEqual(resumed.model.slug, OTHER_MODEL.slug);
     });
   });
 }
@@ -243,13 +239,13 @@ Deno.test("a turn whose provider_call write was skipped is still the one a resum
       sessionId: first.sessionId,
       routingOptions: { modelId: OTHER_MODEL.slug },
     }) as TurnReply;
-    assertEquals(second.model.slug, OTHER_MODEL.slug);
+    assert.deepStrictEqual(second.model.slug, OTHER_MODEL.slug);
     rejectProviderCalls = false;
     const resumed = await client.request("turn", {
       prompt: "carry on",
       sessionId: first.sessionId,
     }) as TurnReply;
-    assertEquals(resumed.model.slug, OTHER_MODEL.slug);
+    assert.deepStrictEqual(resumed.model.slug, OTHER_MODEL.slug);
   }, services);
 });
 
@@ -283,22 +279,22 @@ Deno.test("a bare resume after an external-agent turn refuses instead of routing
     const inspected = await client.request("sessions/inspect", {
       sessionId: first.sessionId,
     }) as { model: string | null; runner: string | null };
-    assertEquals(inspected, { ...inspected, model: null, runner: "fixture" });
-    const error = await assertRejects(() =>
+    assert.deepStrictEqual(inspected, { ...inspected, model: null, runner: "fixture" });
+    const error = await captureRejection(() =>
       client.request("turn", { prompt: "carry on", sessionId: first.sessionId })
     );
-    assert(error instanceof Error);
-    assertStringIncludes(error.message, "external agent runner");
-    assertStringIncludes(error.message, "fixture");
+    assert.ok(error instanceof Error);
+    assert.ok(error.message.includes("external agent runner"), `expected error.message to include "external agent runner"`);
+    assert.ok(error.message.includes("fixture"), `expected error.message to include "fixture"`);
     // An explicit model is the operator's choice and still runs.
     const explicit = await client.request("turn", {
       prompt: "carry on here",
       sessionId: first.sessionId,
       routingOptions: { modelId: LOCAL_MODEL.slug },
     }) as TurnReply;
-    assertEquals(explicit.model.slug, LOCAL_MODEL.slug);
+    assert.deepStrictEqual(explicit.model.slug, LOCAL_MODEL.slug);
   });
-  assertEquals(
+  assert.deepStrictEqual(
     run.transport.requests.length,
     2,
     "no call for the refused turn",
@@ -335,14 +331,14 @@ Deno.test("a resumed session whose recorded model is no longer routable refuses 
     })],
   });
   await withServer(run, async (client) => {
-    const error = await assertRejects(() =>
+    const error = await captureRejection(() =>
       client.request("turn", { prompt: "carry on", sessionId })
     );
-    assert(error instanceof Error);
-    assertStringIncludes(error.message, RETIRED_MODEL.slug);
-    assertStringIncludes(error.message, "no longer routable");
+    assert.ok(error instanceof Error);
+    assert.ok(error.message.includes(RETIRED_MODEL.slug), `expected error.message to include RETIRED_MODEL.slug`);
+    assert.ok(error.message.includes("no longer routable"), `expected error.message to include "no longer routable"`);
   });
-  assertEquals(run.transport.requests.length, 0, "no provider call was made");
+  assert.deepStrictEqual(run.transport.requests.length, 0, "no provider call was made");
 });
 
 Deno.test("a resumed session with no recorded model runs on the configured default", async () => {
@@ -361,11 +357,11 @@ Deno.test("a resumed session with no recorded model runs on the configured defau
     const inspected = await client.request("sessions/inspect", {
       sessionId,
     }) as { model: string | null };
-    assertEquals(inspected.model, null);
+    assert.deepStrictEqual(inspected.model, null);
     const resumed = await client.request("turn", {
       prompt: "carry on",
       sessionId,
     }) as TurnReply;
-    assertEquals(resumed.model.slug, LOCAL_MODEL.slug);
+    assert.deepStrictEqual(resumed.model.slug, LOCAL_MODEL.slug);
   });
 });
