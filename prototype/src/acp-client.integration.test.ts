@@ -335,9 +335,11 @@ describe("runAcpAgent", () => {
       },
       (value) => value as Error,
     );
-    assert.partialDeepStrictEqual(
-      error as unknown as Record<PropertyKey, unknown>,
-      { phase: "terminate" },
+    // partialDeepStrictEqual never matches an Error against a plain object,
+    // so the one field is compared directly.
+    assert.strictEqual(
+      (error as unknown as Record<PropertyKey, unknown>).phase,
+      "terminate",
     );
     assert.ok(error.message.length < 320);
   });
