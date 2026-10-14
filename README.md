@@ -1096,7 +1096,11 @@ shell, a floating Rust toolchain, and, for each tracked `package.json`, a
 dependency that is not an exact version, an `overrides` field (rejected until
 a policy for overrides exists), a missing tracked
 `package-lock.json`, or a tracked `.npmrc` that does not set
-`ignore-scripts=true` and a `min-release-age` of at least 3 days. `receipt.schema` runs the
+`ignore-scripts=true` and a `min-release-age` of at least 3 days. It also
+checks `.github/dependabot.yml`: every tracked `package.json` needs an npm update
+lane for its directory, that lane must use the `increase` versioning strategy,
+and the npm and deno lanes must declare a cooldown of at least 3 days with no
+dependency carved out by `include` or `exclude`. `receipt.schema` runs the
 `dyfj.assurance.receipt/v1` validator's tests (`scripts/assurance-receipt.ts`),
 the fail-closed schema for the public v1 assurance evidence envelope contract.
 Every scan diagnostic is value-free — rule id, path, and line only, never the
@@ -1313,19 +1317,23 @@ public deterministic checks it runs.
 
 ### Dependency updates
 
-Dependabot proposes weekly update PRs for three surfaces, configured in
-`.github/dependabot.yml`: the Deno workspace under `prototype/` (its `deno.json`
+Dependabot proposes weekly update PRs for four surfaces, configured in
+`.github/dependabot.yml`: the npm packages under `prototype/` (`package.json`
+and `package-lock.json`), the Deno workspace under `prototype/` (its `deno.json`
 imports and `deno.lock`, which now hold only the JSR test dependencies), the
 Rust crate set under `core/` (`Cargo.toml` and
 `Cargo.lock`), and the digest-pinned workflow actions under
-`.github/workflows/`. One Deno package is excluded by an `ignore` rule:
-`@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner asserts an
-exact adapter version at launch and two test fixtures pin the same string, so a
-bot bump cannot pass the gate; that adapter is upgraded deliberately, pin and
-fixtures together, when external-agent work resumes. The npm dependencies now
-live in `prototype/package.json` and `package-lock.json`, and no Dependabot
-lane watches them yet, so that `ignore` rule no longer has a package to apply
-to. Until an npm lane is added, npm updates are manual.
+`.github/workflows/`. The npm and deno lanes declare a `cooldown` of 3 days, so
+a bot PR never proposes a release younger than the 72-hour floor that
+`min-release-age` in `prototype/.npmrc` holds at install time. Dependabot's own
+default cooldown is also 3 days, and cooldown does not apply to security
+updates. The npm lane uses the `increase` versioning strategy, which rewrites
+an exact pin to the new exact version, so a bot PR keeps the exact-pin rule.
+`dependency.policy` checks all three properties. One npm package is excluded by
+an `ignore` rule: `@agentclientprotocol/codex-acp`, because the `codex-chatgpt`
+runner asserts an exact adapter version at launch and two test fixtures pin the
+same string, so a bot bump cannot pass the gate; that adapter is upgraded
+deliberately, pin and fixtures together, when external-agent work resumes.
 
 The pins Dependabot does not cover are the Rust toolchain channel in
 `core/rust-toolchain.toml`, and the exact Deno/Dolt archive versions plus their
@@ -2120,3 +2128,7 @@ Document revisions only. Code and behavior changes are tracked in
   install precondition, the npm `dependency.policy` rules, and the CI
   setup-node and `npm ci` steps are documented, and so is the absence of a
   Dependabot lane for npm.
+- 2026-10-14 - The dependency-updates section adds the npm Dependabot lane for
+  `prototype/`, its 3-day cooldown and `increase` versioning strategy, the
+  cooldown on the deno lane, and the move of the `codex-acp` ignore rule to the
+  npm lane. The `dependency.policy` description lists the Dependabot checks.

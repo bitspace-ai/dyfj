@@ -411,6 +411,28 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Dependabot now watches `prototype/`'s npm packages, and its npm and deno
+  lanes declare the 72-hour release-age floor as a cooldown.** Since npm became the
+  only resolver of npm packages, `prototype/package.json` and
+  `package-lock.json` had no update lane, so the shipped dependency tree got no
+  update pull requests. `.github/dependabot.yml` adds a weekly npm lane for
+  `prototype/` with `cooldown: default-days: 3` and
+  `versioning-strategy: increase`, which rewrites an exact pin to the new exact
+  version. The `@agentclientprotocol/codex-acp` ignore rule moves from the deno
+  lane to the npm lane, where that package now lives, and the deno lane gains
+  the same 3-day cooldown. `dependency.policy` now checks the config: a tracked
+  `package.json` with no npm lane for its directory fails
+  (`dependabot-npm-unwatched`), as does an npm or deno lane without a cooldown
+  of at least 3 days or with `include`/`exclude` carve-outs
+  (`dependabot-cooldown`), an npm lane with any versioning strategy other than
+  `increase` (`dependabot-versioning-strategy`). A lane key or a value the
+  policy decides on that the check cannot read fails as `dependabot-unparsed`
+  rather than being skipped. That includes a double-quoted scalar with a
+  backslash escape: the check rejects escapes rather than decoding them, so a
+  spelling such as an escaped `deno` cannot slip a lane past the cooldown
+  rule. Settings the policy does not decide on, such as `schedule` and
+  `ignore`, are not read.
+
 - **A `runtime.neutral` gate lane ratchets references to the `Deno` global
   down to zero.** Decision D32 moves the TypeScript tier from Deno to Node.js
   on a `node:`-only API surface, and nothing yet measured that progress or

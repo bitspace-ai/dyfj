@@ -22,6 +22,15 @@
  *   tracked `.npmrc` that disables install scripts and holds npm's release
  *   age at the 72-hour floor (`min-release-age` of at least 3 days), so the
  *   floor holds for anyone installing, not only in the operator's review.
+ * - `.github/dependabot.yml` must give every tracked `package.json` an npm
+ *   update lane for its directory, using the `increase` versioning strategy
+ *   so a bot bump keeps an exact pin exact, and its npm and deno lanes must
+ *   declare a cooldown of at least 3 days with no `include` or `exclude`
+ *   carve-out, so a bot pull request holds the same 72-hour floor. A lane
+ *   key, or a value the policy decides on, that the scan cannot read is
+ *   reported rather than skipped: an escaped double-quoted scalar, a flow
+ *   collection, an anchor, alias, tag or block scalar. Settings the policy
+ *   does not decide on, such as `schedule` and `ignore`, are not read.
  * - The committed `dyfj.dependency.policy.manifest/v1` declaration
  *   (`scripts/dependency-policy-manifest.json`) must validate fail-closed:
  *   known schema and version, no unknown fields, unique surface ids,
@@ -1225,6 +1234,264 @@ export function scanNpmPackage(
   return hits;
 }
 
+const DEPENDABOT_PATH = ".github/dependabot.yml";
+// Dependabot's `cooldown` is in days; 3 days is the 72-hour registry floor.
+const DEPENDABOT_COOLDOWN_MINIMUM_DAYS = MINIMUM_REGISTRY_AGE_HOURS / 24;
+// The update lanes whose registries the release-age floor governs here.
+const COOLDOWN_ECOSYSTEMS: ReadonlySet<string> = new Set(["npm", "deno"]);
+// The cooldown keys that set a period. `include` and `exclude` narrow which
+// dependencies the cooldown covers, so a lane declaring either lets some
+// dependency skip the floor and is rejected.
+const COOLDOWN_DAY_KEYS: ReadonlySet<string> = new Set([
+  "default-days",
+  "semver-major-days",
+  "semver-minor-days",
+  "semver-patch-days",
+]);
+const DEPENDABOT_KEY = /^([A-Za-z][\w-]*):(?:\s+(.*))?$/;
+// Values that open YAML structure this scan does not follow: flow
+// collections, anchors, aliases, tags and block scalars.
+const UNFOLLOWED_YAML_VALUE = /^[{[&*!|>]/;
+const DEPENDABOT_UNPARSED = "dependency.policy/dependabot-unparsed";
+
+// What may follow a closing quote: nothing, or a comment.
+const AFTER_QUOTED_SCALAR = /^(?:\s+#.*)?$/;
+
+/**
+ * A plain or quoted YAML scalar with any trailing comment removed, or
+ * `undefined` when the scan does not read it. A double-quoted scalar that
+ * contains a backslash is not read: YAML decodes escapes there, so
+ * `"de\u006eo"` names `deno`, and comparing the undecoded text would let a
+ * lane skip the policy. A single-quoted scalar's only escape, `''`, is
+ * decoded. A plain scalar has no escapes, but one opening a flow
+ * collection, anchor, alias, tag or block scalar is not followed either.
+ */
+function dependabotScalar(raw: string): string | undefined {
+  const value = raw.trim();
+  if (value.startsWith('"')) {
+    const end = value.indexOf('"', 1);
+    if (end < 0) return undefined;
+    const text = value.slice(1, end);
+    if (text.includes("\\")) return undefined;
+    return AFTER_QUOTED_SCALAR.test(value.slice(end + 1)) ? text : undefined;
+  }
+  if (value.startsWith("'")) {
+    let text = "";
+    for (let index = 1; index < value.length; index++) {
+      const char = value[index];
+      if (char !== "'") {
+        text += char;
+      } else if (value[index + 1] === "'") {
+        text += "'";
+        index++;
+      } else {
+        return AFTER_QUOTED_SCALAR.test(value.slice(index + 1))
+          ? text
+          : undefined;
+      }
+    }
+    return undefined;
+  }
+  if (UNFOLLOWED_YAML_VALUE.test(value)) return undefined;
+  return value.replace(/\s+#.*$/, "");
+}
+
+interface UpdateLane {
+  line: number;
+  keys: Map<string, string>;
+  cooldown: Map<string, string> | undefined;
+}
+
+/**
+ * Reads the `updates` lanes of a Dependabot config. The scan follows only
+ * the block-style shape this repository writes: a top-level `updates:`
+ * sequence of mappings, scalar values, and one nested `cooldown:` mapping.
+ * A lane key, a cooldown key, or a scalar value outside that shape is
+ * reported as not understood rather than skipped. Blocks nested under any
+ * other lane key (`schedule`, `ignore`, `groups`) are not read, because no
+ * policy decision depends on them.
+ */
+function dependabotLanes(
+  content: string,
+): { lanes: UpdateLane[]; unparsedLines: number[] } {
+  const lanes: UpdateLane[] = [];
+  const unparsedLines: number[] = [];
+  const lines = content.split(/\r?\n/);
+  let inUpdates = false;
+  let sawUpdates = false;
+  let entryIndent = -1;
+  let keyIndent = -1;
+  let cooldownIndent = -1;
+  let lane: UpdateLane | undefined;
+  let lastField: string | undefined;
+
+  const readKey = (text: string, lineNumber: number): void => {
+    const match = DEPENDABOT_KEY.exec(text);
+    if (!lane || !match) {
+      unparsedLines.push(lineNumber);
+      return;
+    }
+    const key = match[1] ?? "";
+    const value = dependabotScalar(match[2] ?? "");
+    if (lane.keys.has(key) || value === undefined) {
+      unparsedLines.push(lineNumber);
+      return;
+    }
+    if (key === "cooldown") {
+      if (value !== "") unparsedLines.push(lineNumber);
+      lane.cooldown = new Map();
+      cooldownIndent = -1;
+    }
+    lane.keys.set(key, value);
+    lastField = key;
+  };
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index] ?? "";
+    const lineNumber = index + 1;
+    const trimmed = line.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) continue;
+    const indentText = /^[ \t]*/.exec(line)?.[0] ?? "";
+    if (indentText.includes("\t")) {
+      unparsedLines.push(lineNumber);
+      continue;
+    }
+    const indent = indentText.length;
+    if (indent === 0) {
+      lane = undefined;
+      inUpdates = /^updates:/.test(trimmed);
+      if (inUpdates) {
+        sawUpdates = true;
+        if (dependabotScalar(trimmed.slice("updates:".length)) !== "") {
+          unparsedLines.push(lineNumber);
+          inUpdates = false;
+        }
+      }
+      continue;
+    }
+    if (!inUpdates) continue;
+    const dash = /^(\s*-\s+)(.*)$/.exec(line);
+    if (dash && (entryIndent < 0 || indent === entryIndent)) {
+      entryIndent = indent;
+      keyIndent = (dash[1] ?? "").length;
+      lane = { line: lineNumber, keys: new Map(), cooldown: undefined };
+      lanes.push(lane);
+      lastField = undefined;
+      readKey((dash[2] ?? "").trim(), lineNumber);
+      continue;
+    }
+    if (indent === keyIndent) {
+      readKey(trimmed, lineNumber);
+      continue;
+    }
+    if (indent < keyIndent || !lane) {
+      unparsedLines.push(lineNumber);
+      continue;
+    }
+    // Nested under the lane's last key. Only `cooldown` is read; the
+    // nested lists of its `include` and `exclude` keys sit deeper still.
+    if (lastField !== "cooldown" || !lane.cooldown) continue;
+    if (cooldownIndent < 0) cooldownIndent = indent;
+    if (indent > cooldownIndent) continue;
+    const match = DEPENDABOT_KEY.exec(trimmed);
+    const value = dependabotScalar(match?.[2] ?? "");
+    if (
+      indent < cooldownIndent || !match ||
+      lane.cooldown.has(match[1] ?? "") || value === undefined
+    ) {
+      unparsedLines.push(lineNumber);
+      continue;
+    }
+    lane.cooldown.set(match[1] ?? "", value);
+  }
+  if (!sawUpdates || lanes.length === 0) unparsedLines.push(1);
+  for (const each of lanes) {
+    if (!each.keys.get("package-ecosystem")) unparsedLines.push(each.line);
+  }
+  return { lanes, unparsedLines };
+}
+
+// A cooldown holds the floor when it sets a default period and every period
+// it sets is at least the floor, with no dependency carved out of it.
+function cooldownHoldsFloor(
+  cooldown: Map<string, string> | undefined,
+): boolean {
+  if (!cooldown || !cooldown.has("default-days")) return false;
+  for (const [key, value] of cooldown) {
+    if (!COOLDOWN_DAY_KEYS.has(key)) return false;
+    if (
+      !/^\d+$/.test(value) || Number(value) < DEPENDABOT_COOLDOWN_MINIMUM_DAYS
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The Dependabot `directory` that watches a package.json at this path.
+function dependabotDirectoryFor(packagePath: string): string {
+  const dir = posixPath(packagePath).slice(0, -"package.json".length);
+  return `/${dir.replace(/\/$/, "")}`;
+}
+
+/**
+ * Checks the Dependabot update configuration against the npm surfaces it
+ * must watch. Every tracked `package.json` needs an npm lane for its
+ * directory, so the shipped dependency tree gets update pull requests. The
+ * npm and deno lanes must declare a cooldown of at least the 72-hour
+ * registry floor, so a bot pull request never proposes a release younger
+ * than `min-release-age` would install. The npm lane must use the
+ * `increase` versioning strategy, which rewrites an exact pin to the new
+ * exact version, so a bot pull request keeps the exact-pin rule above.
+ */
+export function scanDependabotText(
+  path: string,
+  content: string,
+  packagePaths: readonly string[],
+): PublicSafetyHit[] {
+  const at = (file: string, line: number, rule: string): PublicSafetyHit => ({
+    path: posixPath(file),
+    line,
+    rule,
+  });
+  const { lanes, unparsedLines } = dependabotLanes(content);
+  // One diagnostic per line, however many ways the line was not understood.
+  const hits: PublicSafetyHit[] = [...new Set(unparsedLines)]
+    .map((line) => at(path, line, DEPENDABOT_UNPARSED));
+  const npmDirectories = new Set<string>();
+  for (const lane of lanes) {
+    const ecosystem = lane.keys.get("package-ecosystem") ?? "";
+    if (
+      COOLDOWN_ECOSYSTEMS.has(ecosystem) && !cooldownHoldsFloor(lane.cooldown)
+    ) {
+      hits.push(at(path, lane.line, "dependency.policy/dependabot-cooldown"));
+    }
+    if (ecosystem !== "npm") continue;
+    if (lane.keys.get("versioning-strategy") !== "increase") {
+      hits.push(
+        at(path, lane.line, "dependency.policy/dependabot-versioning-strategy"),
+      );
+    }
+    const directory = lane.keys.get("directory") ?? "";
+    npmDirectories.add(directory === "/" ? "/" : directory.replace(/\/$/, ""));
+  }
+  for (const packagePath of packagePaths) {
+    if (!npmDirectories.has(dependabotDirectoryFor(packagePath))) {
+      hits.push(
+        at(packagePath, 1, "dependency.policy/dependabot-npm-unwatched"),
+      );
+    }
+  }
+  hits.sort((left, right) =>
+    left.path === right.path
+      ? left.line - right.line
+      : left.path < right.path
+      ? -1
+      : 1
+  );
+  return hits.slice(0, MAX_COLLECTED_HITS);
+}
+
 export async function dependencyPolicyHits(
   root: string,
   trackedPaths?: readonly string[],
@@ -1266,7 +1533,15 @@ export async function dependencyPolicyHits(
     }));
     if (hits.length >= MAX_COLLECTED_HITS) return hits;
   }
-  return hits;
+  const packagePaths = [...trackedSet]
+    .filter((path) => PACKAGE_JSON_PATH.test(path)).sort();
+  const dependabot = trackedSet.has(DEPENDABOT_PATH)
+    ? new TextDecoder().decode(
+      await readTrackedFile(root, DEPENDABOT_PATH, LABEL),
+    )
+    : "";
+  hits.push(...scanDependabotText(DEPENDABOT_PATH, dependabot, packagePaths));
+  return hits.slice(0, MAX_COLLECTED_HITS);
 }
 
 export async function mutatedSurfaces(
