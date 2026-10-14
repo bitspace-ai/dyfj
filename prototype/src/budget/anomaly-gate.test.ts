@@ -3,14 +3,9 @@
  * warning and wire shape, the turn-scoped gate, and the halt error.
  */
 
-import {
-  assert,
-  assertLess,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import type { BudgetCeilingVerdict } from "./envelope-gate.ts";
 import {
   buildRunawayAnomalyWarning,
@@ -56,7 +51,7 @@ function makeUsage(input: number, output: number, costTotal: number) {
 }
 
 function approving() {
-  return spy(
+  return mock.fn(
     (_warning: RunawayAnomalyWarning): Promise<BudgetCeilingVerdict> =>
       Promise.resolve({ decision: "approve" }),
   );
@@ -73,11 +68,11 @@ function trippedCheck() {
 Deno.test("ensureAnomalyAllowed: no halt → no prompt, no error", async () => {
   const confirm = approving();
   await ensureAnomalyAllowed(makeTracker().checkAnomaly(2, ANOMALY), confirm);
-  assertSpyCalls(confirm, 0);
+  assert.equal(confirm.mock.callCount(), 0);
 });
 
 Deno.test("ensureAnomalyAllowed: fails closed without a confirm handler", async () => {
-  await assertRejects(
+  await assert.rejects(
     () => ensureAnomalyAllowed(trippedCheck()),
     RunawayAnomalyHaltError,
   );
@@ -90,17 +85,17 @@ Deno.test("ensureAnomalyAllowed: approval admits the call; the warning carries t
     return Promise.resolve({ decision: "approve" });
   });
   const warning = seen[0] as Record<string, unknown>;
-  assertStrictEquals(warning.kind, "runaway_anomaly");
-  assertStrictEquals(warning.trigger, "turn_spend");
-  assertStrictEquals(warning.authzBasis, "policy:halt:runaway-anomaly");
-  assertStrictEquals(
+  assert.strictEqual(warning.kind, "runaway_anomaly");
+  assert.strictEqual(warning.trigger, "turn_spend");
+  assert.strictEqual(warning.authzBasis, "policy:halt:runaway-anomaly");
+  assert.strictEqual(
     warning.approvalAuthzBasis,
     "policy:allow:operator-confirmed-anomaly",
   );
 });
 
 Deno.test("ensureAnomalyAllowed: decline throws with the trigger and figures", async () => {
-  const caught = await assertRejects(
+  const caught = await captureRejection(
     () =>
       ensureAnomalyAllowed(
         trippedCheck(),
@@ -108,10 +103,13 @@ Deno.test("ensureAnomalyAllowed: decline throws with the trigger and figures", a
       ),
     RunawayAnomalyHaltError,
   );
-  assertStrictEquals(caught.name, "RunawayAnomalyHaltError");
-  assertStrictEquals(caught.trigger, "turn_spend");
-  assertStrictEquals(caught.declined, true);
-  assertStringIncludes(caught.message, "not today");
+  assert.strictEqual(caught.name, "RunawayAnomalyHaltError");
+  assert.strictEqual(caught.trigger, "turn_spend");
+  assert.strictEqual(caught.declined, true);
+  assert.ok(
+    caught.message.includes("not today"),
+    `expected caught.message to include "not today"`,
+  );
 });
 
 Deno.test("ensureAnomalyAllowed: approvals never persist: the same tripped check prompts again", async () => {
@@ -119,7 +117,7 @@ Deno.test("ensureAnomalyAllowed: approvals never persist: the same tripped check
   const confirm = approving();
   await ensureAnomalyAllowed(check, confirm);
   await ensureAnomalyAllowed(check, confirm);
-  assertSpyCalls(confirm, 2); // no high-water mark, no coverage
+  assert.equal(confirm.mock.callCount(), 2); // no high-water mark, no coverage
 });
 
 // ── runaway anomaly warning formatting ────────────────────────────────────────
@@ -132,10 +130,26 @@ Deno.test("runaway anomaly warning formatting: format names the trigger, the act
       t.checkAnomaly(2, { turnMultiple: 3, scopeMultiple: 2 }),
     ),
   );
-  assertStringIncludes(text, "Runaway spend anomaly — hard stop");
-  assertStringIncludes(text, "turn spend at 3× the per-call limit");
-  assertStringIncludes(text, "$0.350000");
-  assertStringIncludes(text, "nothing is raised");
+  assert.ok(
+    text.includes("Runaway spend anomaly — hard stop"),
+    `expected ${
+      JSON.stringify(text)
+    } to include "Runaway spend anomaly — hard stop"`,
+  );
+  assert.ok(
+    text.includes("turn spend at 3× the per-call limit"),
+    `expected ${
+      JSON.stringify(text)
+    } to include "turn spend at 3× the per-call limit"`,
+  );
+  assert.ok(
+    text.includes("$0.350000"),
+    `expected ${JSON.stringify(text)} to include "$0.350000"`,
+  );
+  assert.ok(
+    text.includes("nothing is raised"),
+    `expected ${JSON.stringify(text)} to include "nothing is raised"`,
+  );
 });
 
 Deno.test("runaway anomaly warning formatting: approval-request wire shape carries kind, message, and both bases", () => {
@@ -149,11 +163,11 @@ Deno.test("runaway anomaly warning formatting: approval-request wire shape carri
       t.checkAnomaly(2, { turnMultiple: 3, scopeMultiple: 2 }),
     ),
   );
-  assertStrictEquals(request.kind, "runaway_anomaly");
-  assertStrictEquals(request.trigger, "session_scope");
-  assertStrictEquals(typeof request.message, "string");
-  assertStrictEquals(request.authzBasis, "policy:halt:runaway-anomaly");
-  assertStrictEquals(
+  assert.strictEqual(request.kind, "runaway_anomaly");
+  assert.strictEqual(request.trigger, "session_scope");
+  assert.strictEqual(typeof request.message, "string");
+  assert.strictEqual(request.authzBasis, "policy:halt:runaway-anomaly");
+  assert.strictEqual(
     request.approvalAuthzBasis,
     "policy:allow:operator-confirmed-anomaly",
   );
@@ -173,7 +187,7 @@ Deno.test("createRunawayAnomalyGate: one anomalous state prompts once: the same 
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
   await gate.ensureAllowed(check); // turn entry
   await gate.ensureAllowed(check); // first call, identical actuals
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
 });
 
 Deno.test("createRunawayAnomalyGate: recorded spend past the approved level re-prompts", async () => {
@@ -183,7 +197,7 @@ Deno.test("createRunawayAnomalyGate: recorded spend past the approved level re-p
   await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY)); // $0.35 approved
   t.record(makeUsage(1000, 100, 0.10), 2); // increment → $0.45
   await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 Deno.test("createRunawayAnomalyGate: approvals do not survive the gate instance (one turn)", async () => {
@@ -191,14 +205,20 @@ Deno.test("createRunawayAnomalyGate: approvals do not survive the gate instance 
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
   await createRunawayAnomalyGate(confirm).ensureAllowed(check);
   await createRunawayAnomalyGate(confirm).ensureAllowed(check); // next turn
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 Deno.test("createRunawayAnomalyGate: fails closed without a handler and records no approval level", async () => {
   const gate = createRunawayAnomalyGate();
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
-  await assertRejects(() => gate.ensureAllowed(check), RunawayAnomalyHaltError);
-  await assertRejects(() => gate.ensureAllowed(check), RunawayAnomalyHaltError);
+  await assert.rejects(
+    () => gate.ensureAllowed(check),
+    RunawayAnomalyHaltError,
+  );
+  await assert.rejects(
+    () => gate.ensureAllowed(check),
+    RunawayAnomalyHaltError,
+  );
 });
 
 // ── RunawayAnomalyHaltError — decline reason sanitization ─────────────────────
@@ -211,7 +231,10 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: a short, ord
     true,
     "operator override",
   );
-  assertStringIncludes(err.message, "operator override");
+  assert.ok(
+    err.message.includes("operator override"),
+    `expected err.message to include "operator override"`,
+  );
 });
 
 Deno.test("RunawayAnomalyHaltError — decline reason sanitization: caps an oversized decline reason", () => {
@@ -223,8 +246,11 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: caps an over
     true,
     reason,
   );
-  assert(!err.message.includes(reason));
-  assertLess(new TextEncoder().encode(err.message).byteLength, reason.length);
+  assert.ok(!err.message.includes(reason));
+  assert.ok(
+    (new TextEncoder().encode(err.message).byteLength) < reason.length,
+    `expected new TextEncoder().encode(err.message).byteLength < reason.length`,
+  );
 });
 
 Deno.test("RunawayAnomalyHaltError — decline reason sanitization: strips a terminal escape sequence from the decline reason", () => {
@@ -236,5 +262,5 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: strips a ter
     true,
     `${esc}[31mdanger${esc}[0m`,
   );
-  assert(!err.message.includes(esc));
+  assert.ok(!err.message.includes(esc));
 });

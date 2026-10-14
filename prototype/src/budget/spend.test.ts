@@ -3,7 +3,7 @@
  * reader, and the local-day boundary driven by the `Clock` port.
  */
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { fetchSpendBaselines, localDayKey, localDayStart } from "./spend.ts";
 
@@ -27,16 +27,16 @@ Deno.test("daily envelope: fetchSpendBaselines reads the store's spend rollup fo
     SESSION_ID,
     clock,
   );
-  assertEquals(baselines, {
+  assert.deepStrictEqual(baselines, {
     sessionSpentUsd: 0.12,
     sessionSpentTodayUsd: 0.05,
     dailyOtherSessionsUsd: 3.4,
   });
-  assertEquals(calls, [[SESSION_ID, "2026-07-06 00:00:00"]]);
+  assert.deepStrictEqual(calls, [[SESSION_ID, "2026-07-06 00:00:00"]]);
 });
 
 Deno.test("daily envelope: localDayStart is a local-midnight timestamp string", () => {
   const start = localDayStart(new Date(2026, 6, 6, 15, 30));
-  assertStrictEquals(start, "2026-07-06 00:00:00");
-  assertStrictEquals(localDayKey(new Date(2026, 6, 6, 15, 30)), "2026-07-06");
+  assert.strictEqual(start, "2026-07-06 00:00:00");
+  assert.strictEqual(localDayKey(new Date(2026, 6, 6, 15, 30)), "2026-07-06");
 });

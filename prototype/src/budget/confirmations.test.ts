@@ -6,7 +6,8 @@
  * between tests.
  */
 
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { CeilingConfirmationStore } from "./confirmations.ts";
 import {
@@ -22,7 +23,7 @@ function clockOn(year: number, month: number, day: number): ManualClock {
 }
 
 function approving() {
-  return spy(
+  return mock.fn(
     (_warning: BudgetCeilingWarning): Promise<BudgetCeilingVerdict> =>
       Promise.resolve({ decision: "approve" }),
   );
@@ -48,7 +49,7 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
     store.for("CONF-DAILY-A"),
   );
   await gateA.ensureAllowed(overDaily);
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
   // Turn 2 — and even a DIFFERENT session — same day, same projection: the
   // daily raise holds, no re-prompt.
   const gateB = createTurnBudgetCeilingGate(
@@ -56,7 +57,7 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
     store.for("CONF-DAILY-B"),
   );
   await gateB.ensureAllowed({ ...overDaily });
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
   // A new day forgets the raise.
   clock.set(new Date(2026, 6, 7, 12).getTime());
   const gateC = createTurnBudgetCeilingGate(
@@ -64,7 +65,7 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
     store.for("CONF-DAILY-B"),
   );
   await gateC.ensureAllowed({ ...overDaily });
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 Deno.test("daily envelope: session-scope raises persist per session id, not globally", async () => {
@@ -91,14 +92,14 @@ Deno.test("daily envelope: session-scope raises persist per session id, not glob
     store.for("CONF-SESSION-A"),
   );
   await gate2.ensureAllowed({ ...overSession });
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
   // Different session: its own envelope, re-prompts.
   const gate3 = createTurnBudgetCeilingGate(
     confirm,
     store.for("CONF-SESSION-B"),
   );
   await gate3.ensureAllowed({ ...overSession });
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 Deno.test("scope-period ceiling confirmations: one daily confirm covers later larger projections in the same period", async () => {
@@ -124,7 +125,7 @@ Deno.test("scope-period ceiling confirmations: one daily confirm covers later la
     reason: "daily_limit",
   });
   await gate.ensureAllowed(overDaily(0.038, 0.082));
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
   // Later call in the same turn, larger projection: covered.
   await gate.ensureAllowed(overDaily(0.074, 0.091));
   // Next turn, same day, even bigger: still covered.
@@ -133,7 +134,7 @@ Deno.test("scope-period ceiling confirmations: one daily confirm covers later la
     store.for("CONF-PERIOD-A"),
   );
   await nextTurnGate.ensureAllowed(overDaily(0.9, 3.0));
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
 });
 
 Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
@@ -155,9 +156,9 @@ Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-w
   });
   await gate.ensureAllowed(overPerCall(1.2));
   await gate.ensureAllowed(overPerCall(1.1)); // smaller: covered
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
   await gate.ensureAllowed(overPerCall(2.5)); // bigger single call: fresh check
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 Deno.test("CeilingConfirmationStore: separate stores share no confirmations", async () => {
@@ -181,5 +182,5 @@ Deno.test("CeilingConfirmationStore: separate stores share no confirmations", as
     confirm,
     new CeilingConfirmationStore(clock).for("CONF-ISOLATED"),
   ).ensureAllowed({ ...overSession });
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
