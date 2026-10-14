@@ -1284,9 +1284,22 @@ describe("interactive REPL front-end selection", () => {
 
   // Runs the launcher under a pseudo-terminal, as an interactive session is,
   // when `terminal` is set; otherwise its stdio are pipes. The pty joins the
-  // child's stderr to its stdout, so `out` carries both there.
-  const ON_A_PTY =
-    "import os, pty, sys; sys.exit(os.waitstatus_to_exitcode(pty.spawn(sys.argv[1:])))";
+  // child's stderr to its stdout, so `out` carries both there. Not
+  // `pty.spawn`: in older Pythons (macOS's /usr/bin/python3 is 3.9) its
+  // copy loop, once the child exits on macOS (an empty read, not EIO) with
+  // stdin already at EOF, waits on an empty `select` forever. This loop
+  // stops at the master's EOF or error.
+  const ON_A_PTY = [
+    "import os, pty, sys",
+    "pid, fd = pty.fork()",
+    "if pid == 0: os.execvp(sys.argv[1], sys.argv[1:])",
+    "while True:",
+    "    try: data = os.read(fd, 4096)",
+    "    except OSError: break",
+    "    if not data: break",
+    "    os.write(1, data)",
+    "sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))",
+  ].join("\n");
 
   async function launch(
     env: Record<string, string>,

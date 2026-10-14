@@ -19,6 +19,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The launcher's pseudo-terminal tests no longer hang on macOS when
+  `python3` is Python 3.9.** The tests ran the launcher under Python's
+  `pty.spawn`. On macOS, Python 3.9's copy loop reaches an empty `select`
+  and waits forever once the child exits while stdin is already at EOF.
+  macOS's own `/usr/bin/python3` is 3.9. That stalled the Isolated Dolt
+  integration lane until its 900 s deadline in local gate runs, though CI's
+  newer Pythons passed. The tests now fork the pty themselves and stop
+  reading at the terminal's end of file, whatever the Python version.
+
 - **The Rust REPL prints a turn receipt's safety warning.** The runtime puts
   a skipped-event-write warning in the receipt string, beside the answer
   text. The REPL read the answer and dropped that string, so a turn whose
