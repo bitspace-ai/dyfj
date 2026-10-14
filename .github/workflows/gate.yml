@@ -13,10 +13,10 @@
 # construction. Do not add secret-bearing steps, write-scoped permissions, or
 # a trigger that hands untrusted code an elevated context.
 #
-# Supply-chain posture: the checkout action is pinned by full commit digest
-# (Dependabot proposes digest updates), toolchains are downloaded from
-# exact-version release URLs — never `latest`, never piped into a shell —
-# and every archive this workflow downloads itself is checked against a
+# Supply-chain posture: the checkout and setup-node actions are pinned by
+# full commit digest (Dependabot proposes digest updates), toolchains are
+# downloaded from exact-version release URLs — never `latest`, never piped
+# into a shell — and every archive this workflow downloads itself is checked against a
 # SHA-256 digest committed in this file before it is unpacked or executed.
 # The digests are repository-owned: they are never fetched at run time,
 # because a checksum file or trust root served by the same origin as the
@@ -24,12 +24,16 @@
 # exact-version URL and the reported-version check remain as secondary
 # evidence, not as the integrity control. A digest is updated only together
 # with its version pin, from an operator inspect-before-apply.
-# The Rust toolchain is the one archive this workflow does not download
-# itself: it comes from the repository's own exact pin in
+# The Rust toolchain is not downloaded by this workflow itself: it comes from the repository's own exact pin in
 # `core/rust-toolchain.toml` via the runner's preinstalled rustup. Its
 # evidence here is therefore that exact pin plus the reported `rustc
 # --version` check — not a repository-owned archive digest like the Deno and
 # Dolt archives carry.
+# Node is not downloaded by this workflow either: the digest-pinned
+# setup-node action fetches the exact release named below. Its evidence here
+# is the action's digest pin plus the exact version — not a
+# repository-owned archive digest. npm packages are installed by `npm ci`
+# from the committed lockfile, whose integrity hashes npm checks.
 name: gate
 
 on:
@@ -72,8 +76,8 @@ jobs:
       DYFJ_GATE_SUBJECT: ${{ github.sha }}
       DYFJ_GATE_RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.range_base }}
     steps:
-      # The only third-party action; pinned by full commit digest, with
-      # Dependabot watching for digest updates.
+      # Third-party actions (this one and setup-node) are pinned by full
+      # commit digest, with Dependabot watching for digest updates.
       - name: Check out the subject commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -112,6 +116,17 @@ jobs:
           set -euo pipefail
           rustup toolchain install
           rustc --version | grep -F "rustc 1.98.0"
+      # npm is the only resolver of npm packages: npm ci installs exactly the
+      # committed prototype/package-lock.json, with install scripts off and
+      # the release-age floor from prototype/.npmrc. The gate itself never
+      # installs; it fails closed when node_modules does not match the lock.
+      - name: Install Node 26.11.1 (exact pinned version)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.11.1"
+      - name: Install npm dependencies (npm ci from the committed lockfile)
+        working-directory: prototype
+        run: npm ci
       # The single repository green bar. Lane definitions live in
       # `scripts/` and root `deno.json`; this file does not restate them.
       - name: Run the full deterministic gate
@@ -159,5 +174,12 @@ jobs:
           set -euo pipefail
           rustup toolchain install
           rustc --version | grep -F "rustc 1.98.0"
+      - name: Install Node 26.11.1 (exact pinned version)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.11.1"
+      - name: Install npm dependencies (npm ci from the committed lockfile)
+        working-directory: prototype
+        run: npm ci
       - name: Run the full deterministic gate
         run: deno task test
