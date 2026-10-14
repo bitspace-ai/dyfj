@@ -11,6 +11,7 @@ describe("isProbedModule", () => {
       isProbedModule("contracts/workbench/first-product/v1/validate.ts"),
       true,
     );
+    assert.equal(isProbedModule("prototype/testing/fakes/map-env.ts"), true);
   });
 
   it("skips every test file test discovery recognises", () => {
@@ -19,6 +20,7 @@ describe("isProbedModule", () => {
         "prototype/src/engine/turn.test.ts",
         "prototype/src/engine/turn.spec.ts",
         "prototype/src/store/dolt.integration.test.ts",
+        "prototype/testing/fakes/map-env.test.ts",
         "contracts/workbench/first-product/v1/validate.spec.ts",
       ]
     ) {
@@ -30,7 +32,7 @@ describe("isProbedModule", () => {
     for (
       const path of [
         "scripts/erasable-syntax.ts",
-        "prototype/testing/fakes/map-env.ts",
+        "prototype/scripts/test-files.ts",
         "prototype/src/README.md",
         "prototype/src/store/generated/rows.json",
       ]

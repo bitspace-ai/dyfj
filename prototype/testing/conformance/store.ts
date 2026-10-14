@@ -12,14 +12,8 @@
 // determinism); and memory clearance for loopback, non-loopback and MCP stdio
 // consumers.
 
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertNotEquals,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import { captureRejection } from "../assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
   type EventInsert,
   type EventType,
@@ -294,39 +288,42 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         model_id: null,
       });
       const receipt = await commitEvents(store, e);
-      assertEquals(receipt, { eventIds: [String(e.event_id)], mutations: 0 });
-      assert(await store.events.exists(String(e.event_id)));
-      assertFalse(await store.events.exists("missing"));
-      assertEquals(await store.events.countBySession("S1"), 1);
-      assertEquals(await store.events.countBySession("other"), 0);
+      assert.deepStrictEqual(receipt, {
+        eventIds: [String(e.event_id)],
+        mutations: 0,
+      });
+      assert.ok(await store.events.exists(String(e.event_id)));
+      assert.ok(!(await store.events.exists("missing")));
+      assert.deepStrictEqual(await store.events.countBySession("S1"), 1);
+      assert.deepStrictEqual(await store.events.countBySession("other"), 0);
       const [row] = await store.events.bySession({
         sessionId: "S1",
         limit: 10,
         order: "asc",
       });
-      assert(row !== undefined);
-      assertEquals(row.event_id, e.event_id);
-      assertEquals(row.event_type, "tool_call");
-      assertEquals(row.content, "hello");
-      assertEquals(row.cost_total, "0.250000");
-      assertEquals(row.tokens_input, "42");
-      assertEquals(row.tool_is_error, "1");
-      assertEquals(row.parent_is_remote, "0");
-      assertEquals(
+      assert.ok(row !== undefined);
+      assert.deepStrictEqual(row.event_id, e.event_id);
+      assert.deepStrictEqual(row.event_type, "tool_call");
+      assert.deepStrictEqual(row.content, "hello");
+      assert.deepStrictEqual(row.cost_total, "0.250000");
+      assert.deepStrictEqual(row.tokens_input, "42");
+      assert.deepStrictEqual(row.tool_is_error, "1");
+      assert.deepStrictEqual(row.parent_is_remote, "0");
+      assert.deepStrictEqual(
         row.tool_arguments,
         '{"a": "x", "zeta": 1, "nested": {"a": true, "bb": [1, 2]}}',
       );
-      assertEquals(row.runner_capabilities, '["text", "code"]');
-      assertEquals(row.model_id, "");
-      assertEquals(row.trace_flags, "");
-      assert(!Number.isNaN(Date.parse(row.created_at!)));
+      assert.deepStrictEqual(row.runner_capabilities, '["text", "code"]');
+      assert.deepStrictEqual(row.model_id, "");
+      assert.deepStrictEqual(row.trace_flags, "");
+      assert.ok(!Number.isNaN(Date.parse(row.created_at!)));
     },
   );
 
   run(
     "latestRun names the session's newest completed model call or runner turn",
     async (store) => {
-      assertStrictEquals(await store.events.latestRun("S1"), null);
+      assert.strictEqual(await store.events.latestRun("S1"), null);
       const call = (
         model: string | null,
         fields: Partial<EventInsert> = {},
@@ -364,15 +361,15 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         call(null),
         call("elsewhere", { session_id: "S2" }),
       );
-      assertEquals(await store.events.latestRun("S1"), {
+      assert.deepStrictEqual(await store.events.latestRun("S1"), {
         kind: "model",
         slug: "second",
       });
-      assertEquals(await store.events.latestRun("S2"), {
+      assert.deepStrictEqual(await store.events.latestRun("S2"), {
         kind: "model",
         slug: "elsewhere",
       });
-      assertStrictEquals(await store.events.latestRun("S3"), null);
+      assert.strictEqual(await store.events.latestRun("S3"), null);
       // A turn's completed model response counts even without a matching
       // provider_call (whose write is best-effort); a cancelled one does not.
       await subject.tick();
@@ -387,7 +384,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       await commitEvents(store, response("responded", "stop"));
       await subject.tick();
       await commitEvents(store, response("cancelled", "aborted"));
-      assertEquals(await store.events.latestRun("S1"), {
+      assert.deepStrictEqual(await store.events.latestRun("S1"), {
         kind: "model",
         slug: "responded",
       });
@@ -402,7 +399,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
           runner_profile: "fixture",
         }),
       );
-      assertEquals(await store.events.latestRun("S1"), {
+      assert.deepStrictEqual(await store.events.latestRun("S1"), {
         kind: "runner",
         profile: "fixture",
       });
@@ -421,7 +418,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       const third = event({ event_type: "session_end" });
       await commitEvents(store, third, event({ session_id: "S2" }));
       const ids = (rows: TextRow[]) => rows.map((r) => r.event_id);
-      assertEquals(
+      assert.deepStrictEqual(
         ids(
           await store.events.bySession({
             sessionId: "S1",
@@ -431,7 +428,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         ),
         [first.event_id, second.event_id, third.event_id],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         ids(
           await store.events.bySession({
             sessionId: "S1",
@@ -441,7 +438,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         ),
         [third.event_id, second.event_id],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         ids(
           await store.events.bySession({
             sessionId: "S1",
@@ -452,7 +449,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         ),
         [second.event_id],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         await store.events.bySession({
           sessionId: "S2",
           eventId: String(second.event_id),
@@ -476,15 +473,15 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       const ids = async (order: "asc" | "desc") =>
         (await store.events.bySession({ sessionId: "S1", limit: 10, order }))
           .map((r) => r.event_id);
-      assertEquals(await ids("asc"), ["EV_TIE_A", "EV_TIE_B"]);
-      assertEquals(await ids("desc"), ["EV_TIE_B", "EV_TIE_A"]);
+      assert.deepStrictEqual(await ids("asc"), ["EV_TIE_A", "EV_TIE_B"]);
+      assert.deepStrictEqual(await ids("desc"), ["EV_TIE_B", "EV_TIE_A"]);
     },
   );
 
   run(
     "bySession rejects a malformed asOf and a non-positive limit",
     async (store) => {
-      await assertRejects(
+      await assert.rejects(
         () =>
           store.events.bySession({
             sessionId: "S1",
@@ -492,14 +489,16 @@ export function storeConformance(subject: StoreConformanceSubject): void {
             limit: 10,
             order: "asc",
           }),
-        Error,
-        "asOf must be a timestamp",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("asOf must be a timestamp"),
       );
-      await assertRejects(
+      await assert.rejects(
         () =>
           store.events.bySession({ sessionId: "S1", limit: 0, order: "asc" }),
-        Error,
-        "limit must be a positive integer",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("limit must be a positive integer"),
       );
     },
   );
@@ -508,9 +507,9 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     const good = event();
     // Deliberately invalid: an event without its NOT NULL trace_id.
     const { trace_id: _omitted, ...bad } = event();
-    await assertRejects(() => commitEvents(store, good, bad as EventInsert));
-    assertFalse(await store.events.exists(String(good.event_id)));
-    assertEquals(await store.events.countBySession("S1"), 0);
+    await assert.rejects(() => commitEvents(store, good, bad as EventInsert));
+    assert.ok(!(await store.events.exists(String(good.event_id))));
+    assert.deepStrictEqual(await store.events.countBySession("S1"), 0);
   });
 
   run(
@@ -521,15 +520,15 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         mutations: [sessionInsert("A")],
       });
       const e = event({ session_id: "B" });
-      await assertRejects(() =>
+      await assert.rejects(() =>
         store.journal.commit({
           events: [e],
           // Same slug as A: a unique-key violation.
           mutations: [sessionInsert("B", { slug: "slug-A" })],
         })
       );
-      assertFalse(await store.events.exists(String(e.event_id)));
-      assertStrictEquals(await store.sessions.summary("B"), null);
+      assert.ok(!(await store.events.exists(String(e.event_id))));
+      assert.strictEqual(await store.sessions.summary("B"), null);
     },
   );
 
@@ -542,13 +541,13 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       });
       const before = await store.sessions.summary("S1");
       const e = event({ content: "never projected" });
-      await assertRejects(
+      await assert.rejects(
         () => commitEvents(store, e),
-        Error,
-        "projector failed",
+        (error: unknown) =>
+          error instanceof Error && error.message.includes("projector failed"),
       );
-      assertFalse(await store.events.exists(String(e.event_id)));
-      assertEquals(await store.sessions.summary("S1"), before);
+      assert.ok(!(await store.events.exists(String(e.event_id))));
+      assert.deepStrictEqual(await store.sessions.summary("S1"), before);
     },
     { projectors: [failingProjector()] },
   );
@@ -558,18 +557,18 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     async (store) => {
       await commitEvents(store, event({ content: "first" }));
       const created = await store.sessions.summary("S1");
-      assertEquals(created?.slug, "projected-S1");
-      assertEquals(created?.task_description, "first");
+      assert.deepStrictEqual(created?.slug, "projected-S1");
+      assert.deepStrictEqual(created?.task_description, "first");
       await commitEvents(store, event({ content: "second" }));
       const detail = await store.sessions.detail({ sessionId: "S1" });
-      assertEquals(detail?.task_description, "second");
-      assertEquals(detail?.progress_done, "2");
+      assert.deepStrictEqual(detail?.task_description, "second");
+      assert.deepStrictEqual(detail?.progress_done, "2");
       // An event the projector does not select leaves the table alone.
       await commitEvents(
         store,
         event({ session_id: "S9", event_type: "error" }),
       );
-      assertStrictEquals(await store.sessions.summary("S9"), null);
+      assert.strictEqual(await store.sessions.summary("S9"), null);
     },
     { projectors: [sessionStartProjector()] },
   );
@@ -597,23 +596,26 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         }
       };
       const first = await project();
-      assertNotEquals(first[0], null);
-      assertEquals(await project(), first);
+      assert.notDeepStrictEqual(first[0], null);
+      assert.deepStrictEqual(await project(), first);
     },
   );
 
   run("the events table has no update or delete path", async (store) => {
     // The mutation surface is `journal.commit` and nothing else, and the event
     // reader only reads.
-    assertEquals(Object.keys(store.journal).filter((k) => k !== "commit"), []);
-    assertEquals(
+    assert.deepStrictEqual(
+      Object.keys(store.journal).filter((k) => k !== "commit"),
+      [],
+    );
+    assert.deepStrictEqual(
       Object.keys(store.events).sort(),
       ["bySession", "countBySession", "exists", "latestRun"],
     );
     // Appending an existing event id is rejected, not an overwrite.
     const original = event({ content: "original" });
     await commitEvents(store, original);
-    await assertRejects(() =>
+    await assert.rejects(() =>
       commitEvents(store, { ...original, content: "rewritten" })
     );
     const rows = await store.events.bySession({
@@ -621,14 +623,14 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       limit: 10,
       order: "asc",
     });
-    assertEquals(rows.map((r) => r.content), ["original"]);
+    assert.deepStrictEqual(rows.map((r) => r.content), ["original"]);
   });
 
   run(
     "an undeclared mutation kind is rejected and nothing is written",
     async (store) => {
       const e = event();
-      await assertRejects(
+      await assert.rejects(
         () =>
           store.journal.commit({
             events: [e],
@@ -641,7 +643,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
           }),
         UndeclaredMutationError,
       );
-      assertFalse(await store.events.exists(String(e.event_id)));
+      assert.ok(!(await store.events.exists(String(e.event_id))));
     },
   );
 
@@ -650,10 +652,10 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     async (store) => {
       const controller = new AbortController();
       controller.abort();
-      const error = await assertRejects(() =>
+      const error = await captureRejection(() =>
         store.journal.commit({ events: [] }, { signal: controller.signal })
       );
-      assertEquals((error as Error).name, "AbortError");
+      assert.deepStrictEqual((error as Error).name, "AbortError");
     },
   );
 
@@ -661,11 +663,11 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     const controller = new AbortController();
     controller.abort();
     const e = event();
-    const error = await assertRejects(() =>
+    const error = await captureRejection(() =>
       store.journal.commit({ events: [e] }, { signal: controller.signal })
     );
-    assertEquals((error as Error).name, "AbortError");
-    assertFalse(await store.events.exists(String(e.event_id)));
+    assert.deepStrictEqual((error as Error).name, "AbortError");
+    assert.ok(!(await store.events.exists(String(e.event_id))));
   });
 
   // Each declared kind has a case below; a new kind fails here until it does.
@@ -677,12 +679,12 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   Deno.test(
     `Store conformance (${subject.name}): every declared mutation kind is exercised`,
     () => {
-      assertEquals(
+      assert.deepStrictEqual(
         Object.keys(UNJOURNALED_MUTATION_KINDS).sort(),
         Object.keys(exercised).sort(),
       );
       for (const reason of Object.values(UNJOURNALED_MUTATION_KINDS)) {
-        assert(reason.length > 0);
+        assert.ok(reason.length > 0);
       }
     },
   );
@@ -711,11 +713,15 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         }),
       ],
     });
-    assertEquals(await store.sessions.workspace("A"), { workspace: "/work/a" });
-    assertEquals(await store.sessions.workspace("B"), { workspace: "" });
-    assertStrictEquals(await store.sessions.workspace("missing"), null);
+    assert.deepStrictEqual(await store.sessions.workspace("A"), {
+      workspace: "/work/a",
+    });
+    assert.deepStrictEqual(await store.sessions.workspace("B"), {
+      workspace: "",
+    });
+    assert.strictEqual(await store.sessions.workspace("missing"), null);
     const summary = await store.sessions.summary("A");
-    assertEquals(withoutTimestamps(summary), {
+    assert.deepStrictEqual(withoutTimestamps(summary), {
       session_id: "A",
       slug: "slug-A",
       session_name: "Name A",
@@ -723,21 +729,21 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       project: "",
       status: "active",
     });
-    assert(!Number.isNaN(Date.parse(summary!.created_at!)));
-    assertStrictEquals(await store.sessions.summary("missing"), null);
-    assertEquals(
+    assert.ok(!Number.isNaN(Date.parse(summary!.created_at!)));
+    assert.strictEqual(await store.sessions.summary("missing"), null);
+    assert.deepStrictEqual(
       (await store.sessions.list({ limit: 10 })).map((r) => r.session_id),
       ["B", "A"],
     );
-    assertEquals(
+    assert.deepStrictEqual(
       (await store.sessions.list({ limit: 1 })).map((r) => r.session_id),
       ["B"],
     );
-    assertEquals(
+    assert.deepStrictEqual(
       await store.sessions.list({ project: "elsewhere", limit: 10 }),
       [],
     );
-    assertEquals(
+    assert.deepStrictEqual(
       (await store.sessions.recent({ limit: 10 })).map((r) => r.session_id),
       ["B", "A"],
     );
@@ -745,30 +751,32 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       status: "completed",
       limit: 10,
     });
-    assertEquals(
+    assert.deepStrictEqual(
       completed.map((r) => [r.session_id, r.progress_done, r.progress_total]),
       [
         ["B", "2", "3"],
       ],
     );
     for (const limit of [0, -1, 1.5]) {
-      await assertRejects(
+      await assert.rejects(
         () => store.sessions.list({ limit }),
-        Error,
-        "limit must be a positive integer",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("limit must be a positive integer"),
       );
-      await assertRejects(
+      await assert.rejects(
         () => store.sessions.recent({ limit }),
-        Error,
-        "limit must be a positive integer",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("limit must be a positive integer"),
       );
     }
     const bySlug = await store.sessions.detail({ slug: "slug-A" });
-    assertEquals(bySlug?.session_id, "A");
-    assertEquals(bySlug?.mode, "interactive");
-    assertEquals(bySlug?.effort_level, "");
-    assertEquals(bySlug?.content, "content A");
-    assertStrictEquals(
+    assert.deepStrictEqual(bySlug?.session_id, "A");
+    assert.deepStrictEqual(bySlug?.mode, "interactive");
+    assert.deepStrictEqual(bySlug?.effort_level, "");
+    assert.deepStrictEqual(bySlug?.content, "content A");
+    assert.strictEqual(
       await store.sessions.detail({ sessionId: "missing" }),
       null,
     );
@@ -797,7 +805,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         }],
       });
       const a = await store.sessions.detail({ sessionId: "A" });
-      assertEquals(
+      assert.deepStrictEqual(
         [a?.status, a?.progress_done, a?.progress_total, a?.content],
         [
           "completed",
@@ -806,7 +814,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
           "kept",
         ],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         (await store.sessions.list({ limit: 10 })).map((r) => r.session_id),
         ["A", "B"],
       );
@@ -821,7 +829,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
           content: "replaced",
         }],
       });
-      assertEquals(
+      assert.deepStrictEqual(
         (await store.sessions.detail({ sessionId: "A" }))?.content,
         "replaced",
       );
@@ -837,7 +845,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
           content: null,
         }],
       });
-      assertStrictEquals(await store.sessions.summary("missing"), null);
+      assert.strictEqual(await store.sessions.summary("missing"), null);
     },
   );
 
@@ -848,19 +856,19 @@ export function storeConformance(subject: StoreConformanceSubject): void {
 
   run("loopback clearance reads every visibility class", async (store) => {
     const clearance = memoryClearanceFor("loopback");
-    assertEquals(clearance, [...MEMORY_VISIBILITY_ALL]);
+    assert.deepStrictEqual(clearance, [...MEMORY_VISIBILITY_ALL]);
     // ORDER BY type follows the ENUM declaration (user, feedback, ..., project,
     // reference), not the alphabet.
-    assertEquals(slugs(await store.memories.injected(clearance)), [
+    assert.deepStrictEqual(slugs(await store.memories.injected(clearance)), [
       "fixture_user_private",
       "fixture_project_public",
     ]);
-    assertEquals(slugs(await store.memories.indexed(clearance)), [
+    assert.deepStrictEqual(slugs(await store.memories.indexed(clearance)), [
       "fixture_feedback_shareable",
       "fixture_reference_client_safe",
     ]);
     const injected = await store.memories.injected(clearance);
-    assertEquals(injected[0], {
+    assert.deepStrictEqual(injected[0], {
       memory_id: "mem_private",
       slug: "fixture_user_private",
       type: "user",
@@ -869,12 +877,12 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       content: "private content",
     });
     const indexed = await store.memories.indexed(clearance);
-    assertFalse("content" in indexed[0]!);
-    assertEquals(
+    assert.ok(!("content" in indexed[0]!));
+    assert.deepStrictEqual(
       (await store.memories.bySlug("fixture_user_private", clearance))?.content,
       "private content",
     );
-    assertEquals(slugs(await store.memories.list(clearance)), [
+    assert.deepStrictEqual(slugs(await store.memories.list(clearance)), [
       "fixture_user_private",
       "fixture_user_public_never",
       "fixture_feedback_shareable",
@@ -887,18 +895,18 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     "non-loopback clearance reads only client-safe and public rows",
     async (store) => {
       const clearance = memoryClearanceFor("remote");
-      assertEquals(clearance, ["client_safe", "public"]);
-      assertEquals(slugs(await store.memories.injected(clearance)), [
+      assert.deepStrictEqual(clearance, ["client_safe", "public"]);
+      assert.deepStrictEqual(slugs(await store.memories.injected(clearance)), [
         "fixture_project_public",
       ]);
-      assertEquals(slugs(await store.memories.indexed(clearance)), [
+      assert.deepStrictEqual(slugs(await store.memories.indexed(clearance)), [
         "fixture_reference_client_safe",
       ]);
-      assertStrictEquals(
+      assert.strictEqual(
         await store.memories.bySlug("fixture_user_private", clearance),
         null,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         await store.memories.bySlug("fixture_feedback_shareable", clearance),
         null,
       );
@@ -910,30 +918,30 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     "MCP stdio clearance lists and reads only client-safe and public rows",
     async (store) => {
       const clearance = MCP_STDIO_MEMORY_CLEARANCE;
-      assertEquals([...clearance], ["client_safe", "public"]);
-      assertEquals(slugs(await store.memories.list(clearance)), [
+      assert.deepStrictEqual([...clearance], ["client_safe", "public"]);
+      assert.deepStrictEqual(slugs(await store.memories.list(clearance)), [
         "fixture_user_public_never",
         "fixture_project_public",
         "fixture_reference_client_safe",
       ]);
-      assertEquals(
+      assert.deepStrictEqual(
         slugs(await store.memories.list(clearance, { type: "project" })),
         ["fixture_project_public"],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         await store.memories.list(clearance, { type: "feedback" }),
         [],
       );
-      assertEquals(
+      assert.deepStrictEqual(
         (await store.memories.bySlug("fixture_project_public", clearance))
           ?.content,
         "public content",
       );
-      assertStrictEquals(
+      assert.strictEqual(
         await store.memories.bySlug("fixture_user_private", clearance),
         null,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         await store.memories.bySlug("' OR '1'='1", clearance),
         null,
       );
@@ -942,10 +950,10 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   );
 
   run("an empty clearance reads nothing", async (store) => {
-    assertEquals(await store.memories.injected([]), []);
-    assertEquals(await store.memories.indexed([]), []);
-    assertEquals(await store.memories.list([]), []);
-    assertStrictEquals(
+    assert.deepStrictEqual(await store.memories.injected([]), []);
+    assert.deepStrictEqual(await store.memories.indexed([]), []);
+    assert.deepStrictEqual(await store.memories.list([]), []);
+    assert.strictEqual(
       await store.memories.bySlug("fixture_project_public", []),
       null,
     );
@@ -967,8 +975,10 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       await store.journal.commit({ events: [], mutations: [upsert({})] });
       const remote = memoryClearanceFor("remote");
       const all = memoryClearanceFor("loopback");
-      assertStrictEquals(await store.memories.bySlug("written", remote), null);
-      assertEquals(slugs(await store.memories.indexed(all)), ["written"]);
+      assert.strictEqual(await store.memories.bySlug("written", remote), null);
+      assert.deepStrictEqual(slugs(await store.memories.indexed(all)), [
+        "written",
+      ]);
       const first = await store.memories.bySlug("written", all);
       await store.journal.commit({
         events: [],
@@ -980,7 +990,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         })],
       });
       const second = await store.memories.bySlug("written", all);
-      assertEquals(second, {
+      assert.deepStrictEqual(second, {
         memory_id: first!.memory_id,
         slug: "written",
         type: "project",
@@ -997,12 +1007,12 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     "models.listActive returns active rows by tier then slug",
     async (store) => {
       const rows = await store.models.listActive();
-      assertEquals(rows.map((r) => r.slug), [
+      assert.deepStrictEqual(rows.map((r) => r.slug), [
         "alpha-local",
         "zeta-local",
         "hosted",
       ]);
-      assertEquals(rows[1], {
+      assert.deepStrictEqual(rows[1], {
         slug: "zeta-local",
         display_name: "Zeta Local",
         provider: "ollama",
@@ -1023,7 +1033,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         resident_ram_gib: "24.00",
         reasoning_effort_control: "0",
       });
-      assertEquals(
+      assert.deepStrictEqual(
         [
           rows[2]!.cost_output,
           rows[2]!.cost_cache_read,
@@ -1040,17 +1050,19 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   run(
     "models.listInactiveSlugs returns only inactive slugs, sorted",
     async (store) => {
-      assertEquals(await store.models.listInactiveSlugs(), ["retired"]);
+      assert.deepStrictEqual(await store.models.listInactiveSlugs(), [
+        "retired",
+      ]);
     },
     { seed: { models: MODEL_FIXTURE } },
   );
 
   run("prompts.active reads an active prompt by slug", async (store) => {
-    assertEquals(await store.prompts.active("companion-base"), {
+    assert.deepStrictEqual(await store.prompts.active("companion-base"), {
       content: "active prompt",
     });
-    assertStrictEquals(await store.prompts.active("retired-prompt"), null);
-    assertStrictEquals(await store.prompts.active("missing"), null);
+    assert.strictEqual(await store.prompts.active("retired-prompt"), null);
+    assert.strictEqual(await store.prompts.active("missing"), null);
   }, { seed: { prompts: PROMPT_FIXTURE } });
 
   run(
@@ -1072,22 +1084,31 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         cost("S1", 9, "budget_summary"),
       );
       // Every write is after a day that started in the past.
-      assertEquals(await store.spend.baselines("S1", "2000-01-01 00:00:00"), {
-        sessionSpentUsd: 0.75,
-        sessionSpentTodayUsd: 0.75,
-        dailyOtherSessionsUsd: 3.125,
-      });
+      assert.deepStrictEqual(
+        await store.spend.baselines("S1", "2000-01-01 00:00:00"),
+        {
+          sessionSpentUsd: 0.75,
+          sessionSpentTodayUsd: 0.75,
+          dailyOtherSessionsUsd: 3.125,
+        },
+      );
       // A day that starts in the future has no spend yet.
-      assertEquals(await store.spend.baselines("S1", "2999-01-01 00:00:00"), {
-        sessionSpentUsd: 0.75,
-        sessionSpentTodayUsd: 0,
-        dailyOtherSessionsUsd: 0,
-      });
-      assertEquals(await store.spend.baselines("none", "2000-01-01 00:00:00"), {
-        sessionSpentUsd: 0,
-        sessionSpentTodayUsd: 0,
-        dailyOtherSessionsUsd: 3.875,
-      });
+      assert.deepStrictEqual(
+        await store.spend.baselines("S1", "2999-01-01 00:00:00"),
+        {
+          sessionSpentUsd: 0.75,
+          sessionSpentTodayUsd: 0,
+          dailyOtherSessionsUsd: 0,
+        },
+      );
+      assert.deepStrictEqual(
+        await store.spend.baselines("none", "2000-01-01 00:00:00"),
+        {
+          sessionSpentUsd: 0,
+          sessionSpentTodayUsd: 0,
+          dailyOtherSessionsUsd: 3.875,
+        },
+      );
     },
   );
 }

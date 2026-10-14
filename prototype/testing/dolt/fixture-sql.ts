@@ -20,7 +20,8 @@ interface RawPool {
 }
 
 export function openFixtureSql(): FixtureSql {
-  // Deno's npm declaration bridge drops mysql2's mixed-in promise methods.
+  // mysql2's type declarations, as the checker resolves them, drop the pool's
+  // mixed-in promise methods.
   const pool = mysql.createPool({
     ...resolveDoltConnection(processEnv),
     connectionLimit: 1,

@@ -17,13 +17,7 @@
 // redaction, the event builder), which is what a tool author controls by
 // writing a definition.
 
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertNotEquals,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import type { EventInsert } from "../../src/store/mod.ts";
 import {
   type CommandCall,
@@ -94,14 +88,14 @@ export interface ToolConformanceOptions {
 export function toolConformance(options: ToolConformanceOptions): void {
   const commands = options.catalog.list();
   Deno.test(`tool conformance: ${options.name}: the catalog is not empty`, () => {
-    assert(commands.length > 0, "a catalog under test must hold a command");
+    assert.ok(commands.length > 0, "a catalog under test must hold a command");
   });
   for (const command of commands) {
     Deno.test(
       `tool conformance: ${options.name}: ${command.id}`,
       async (t) => {
         await t.step("its schema is valid", () => {
-          assertEquals(schemaProblems(command), []);
+          assert.deepStrictEqual(schemaProblems(command), []);
         });
         await t.step(
           "invalid arguments are rejected before the executor runs",
@@ -110,7 +104,7 @@ export function toolConformance(options: ToolConformanceOptions): void {
           },
         );
         await t.step("its effect classification is declared", () => {
-          assertEquals(envelopeProblems(command), []);
+          assert.deepStrictEqual(envelopeProblems(command), []);
         });
         await t.step(
           "its policy verdict under strict and operator matches its effects",
@@ -428,14 +422,14 @@ async function assertInvalidArgumentsRejected(
     // may stop the call.
     const run = harness(command);
     const result = await run.invoke(invalid.arguments, OPERATOR, "approve");
-    assertStrictEquals(result.decision, "deny", invalid.name);
-    assertStrictEquals(
+    assert.strictEqual(result.decision, "deny", invalid.name);
+    assert.strictEqual(
       result.authzBasis,
       "policy:deny:invalid-arguments",
       invalid.name,
     );
-    assertStrictEquals(run.executorCalls, 0, invalid.name);
-    assertStrictEquals(run.approverCalls, 0, invalid.name);
+    assert.strictEqual(run.executorCalls, 0, invalid.name);
+    assert.strictEqual(run.approverCalls, 0, invalid.name);
   }
 }
 
@@ -529,7 +523,7 @@ function assertPolicyMatchesEffects(command: CommandDefinition): void {
   };
   const call = kitCall(command.id, {});
   const expected = expectedVerdicts(command);
-  assertEquals(
+  assert.deepStrictEqual(
     {
       strict: evaluateCommandPolicy(shape, call, STRICT).decision,
       operator: evaluateCommandPolicy(shape, call, OPERATOR).decision,
@@ -537,7 +531,7 @@ function assertPolicyMatchesEffects(command: CommandDefinition): void {
     expected,
   );
   // The operator profile never covers a turn that is not loopback.
-  assertStrictEquals(
+  assert.strictEqual(
     evaluateCommandPolicy(shape, call, { ...OPERATOR, loopback: false })
       .decision,
     expected.strict,
@@ -563,26 +557,26 @@ async function assertRedactionApplied(
   };
   const denied = harness(command);
   await denied.invoke(args, STRICT, "deny");
-  assertStrictEquals(denied.events.length, 1);
+  assert.strictEqual(denied.events.length, 1);
   const logged = parsedArguments(denied.events[0]);
   const serialized = JSON.stringify(denied.events[0]);
   if (command.redactArguments === true) {
     // Whole-call redaction: declared keys become the sentinel, undeclared
     // keys are dropped.
-    assertEquals(
+    assert.deepStrictEqual(
       logged,
       Object.fromEntries(Object.keys(properties).map((key) => [key, REDACTED])),
     );
     for (const key of Object.keys(args)) {
-      assertFalse(serialized.includes(argumentSentinel(key)), key);
+      assert.ok(!serialized.includes(argumentSentinel(key)), key);
     }
   } else {
     for (const [key, value] of Object.entries(args)) {
       if (properties[key]?.redact === true) {
-        assertStrictEquals(logged[key], REDACTED, key);
-        assertFalse(serialized.includes(argumentSentinel(key)), key);
+        assert.strictEqual(logged[key], REDACTED, key);
+        assert.ok(!serialized.includes(argumentSentinel(key)), key);
       } else {
-        assertEquals(logged[key], value, key);
+        assert.deepStrictEqual(logged[key], value, key);
       }
     }
   }
@@ -594,25 +588,25 @@ async function assertRedactionApplied(
     acceptAnyArguments: true,
   });
   const result = await allowed.invoke({}, OPERATOR, "approve");
-  assertStrictEquals(allowed.events.length, 1);
+  assert.strictEqual(allowed.events.length, 1);
   const event = allowed.events[0];
   if (expectedVerdicts(command).operator === "deny") {
     // A command that is always denied never produces a result to redact:
     // its event carries the policy's own deny reason.
-    assertStrictEquals(result.isError, true);
-    assertStrictEquals(allowed.executorCalls, 0);
-    if (result.isError) assertStrictEquals(event.tool_result, result.reason);
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(allowed.executorCalls, 0);
+    if (result.isError) assert.strictEqual(event.tool_result, result.reason);
     return;
   }
-  assertStrictEquals(result.isError, false);
+  assert.strictEqual(result.isError, false);
   if (command.redactResult === true) {
-    assertStrictEquals(event.tool_result, REDACTED);
-    assertFalse(JSON.stringify(event).includes(resultSentinel));
+    assert.strictEqual(event.tool_result, REDACTED);
+    assert.ok(!JSON.stringify(event).includes(resultSentinel));
   } else {
-    assertStrictEquals(event.tool_result, resultSentinel);
+    assert.strictEqual(event.tool_result, resultSentinel);
   }
   // The model still receives the unredacted result within the turn.
-  if (!result.isError) assertStrictEquals(result.result, resultSentinel);
+  if (!result.isError) assert.strictEqual(result.result, resultSentinel);
 }
 
 // ── Events ────────────────────────────────────────────────────────────────────
@@ -622,11 +616,11 @@ function assertToolCallEvent(
   events: EventInsert[],
   label: string,
 ): void {
-  assertStrictEquals(events.length, 1, label);
+  assert.strictEqual(events.length, 1, label);
   const [event] = events;
-  assertStrictEquals(event.event_type, "tool_call", label);
-  assertStrictEquals(event.tool_name, command.id, label);
-  assertNotEquals(event.tool_call_id, undefined, label);
+  assert.strictEqual(event.event_type, "tool_call", label);
+  assert.strictEqual(event.tool_name, command.id, label);
+  assert.notDeepStrictEqual(event.tool_call_id, undefined, label);
 }
 
 async function assertOneEventPerInvocation(
@@ -642,7 +636,7 @@ async function assertOneEventPerInvocation(
   const approved = harness(command, { acceptAnyArguments: true });
   await approved.invoke({}, STRICT, "approve");
   assertToolCallEvent(command, approved.events, "allowed or approved");
-  assertStrictEquals(
+  assert.strictEqual(
     approved.executorCalls,
     expectedVerdicts(command).strict === "deny" ? 0 : 1,
   );
@@ -650,7 +644,7 @@ async function assertOneEventPerInvocation(
   const refused = harness(command, { acceptAnyArguments: true });
   await refused.invoke({}, STRICT, "deny");
   assertToolCallEvent(command, refused.events, "refused by the approver");
-  assertStrictEquals(
+  assert.strictEqual(
     refused.executorCalls,
     expectedVerdicts(command).strict === "allow" ? 1 : 0,
   );
@@ -660,6 +654,6 @@ async function assertOneEventPerInvocation(
     throws: new CommandExecutionError("kit executor failure"),
   });
   const failed = await failing.invoke({}, OPERATOR, "approve");
-  assertStrictEquals(failed.isError, true);
+  assert.strictEqual(failed.isError, true);
   assertToolCallEvent(command, failing.events, "executor failed");
 }

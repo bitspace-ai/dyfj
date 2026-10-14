@@ -7,13 +7,8 @@
 // observe: what the request carried, the status, headers and body chunks of
 // the response, and how an abort, a redirect and a missing body surface.
 
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import { captureRejection } from "../assertions/captured.ts";
+import assert from "node:assert/strict";
 import type { HttpTransport } from "../../src/providers/mod.ts";
 import type {
   RecordedRequest,
@@ -67,16 +62,22 @@ export function httpTransportConformance(
         body: '{"a":1}',
         redirect: "error",
       });
-      assertEquals(response.status, 200);
-      assertEquals(response.headers.get("x-reply"), "yes");
-      assertEquals(await response.text(), "hello");
+      assert.deepStrictEqual(response.status, 200);
+      assert.deepStrictEqual(response.headers.get("x-reply"), "yes");
+      assert.deepStrictEqual(await response.text(), "hello");
       const [request] = requests();
-      assertEquals(request.method, "POST");
+      assert.deepStrictEqual(request.method, "POST");
       const url = new URL(request.url);
-      assertEquals(url.pathname + url.search, "/v1/chat/completions?x=1");
-      assertEquals(request.headers["content-type"], "application/json");
-      assertEquals(request.headers["x-api-key"], "k");
-      assertEquals(request.body, '{"a":1}');
+      assert.deepStrictEqual(
+        url.pathname + url.search,
+        "/v1/chat/completions?x=1",
+      );
+      assert.deepStrictEqual(
+        request.headers["content-type"],
+        "application/json",
+      );
+      assert.deepStrictEqual(request.headers["x-api-key"], "k");
+      assert.deepStrictEqual(request.body, '{"a":1}');
     },
   );
 
@@ -85,9 +86,9 @@ export function httpTransportConformance(
     [{ status: 503, body: "overloaded" }],
     async ({ transport, baseUrl }) => {
       const response = await transport(`${baseUrl}/x`, { method: "POST" });
-      assertEquals(response.status, 503);
-      assertEquals(response.ok, false);
-      assertEquals(await response.text(), "overloaded");
+      assert.deepStrictEqual(response.status, 503);
+      assert.deepStrictEqual(response.ok, false);
+      assert.deepStrictEqual(await response.text(), "overloaded");
     },
   );
 
@@ -96,7 +97,7 @@ export function httpTransportConformance(
     [{ body: ["data: one\n", "data: two\n", "data: [DONE]\n"] }],
     async ({ transport, baseUrl }) => {
       const response = await transport(`${baseUrl}/s`, { method: "POST" });
-      assertEquals(
+      assert.deepStrictEqual(
         await readAll(response.body!),
         "data: one\ndata: two\ndata: [DONE]\n",
       );
@@ -108,8 +109,8 @@ export function httpTransportConformance(
     [{ status: 500 }],
     async ({ transport, baseUrl }) => {
       const response = await transport(`${baseUrl}/e`, { method: "POST" });
-      assert(response.body !== null);
-      assertEquals(await response.text(), "");
+      assert.ok(response.body !== null);
+      assert.deepStrictEqual(await response.text(), "");
     },
   );
 
@@ -118,7 +119,7 @@ export function httpTransportConformance(
     [{ status: 204 }],
     async ({ transport, baseUrl }) => {
       const response = await transport(`${baseUrl}/n`, { method: "POST" });
-      assertStrictEquals(response.body, null);
+      assert.strictEqual(response.body, null);
     },
   );
 
@@ -133,8 +134,8 @@ export function httpTransportConformance(
         method: "POST",
         signal: controller.signal,
       }).then(() => undefined, (e) => e);
-      assertStrictEquals(error, reason);
-      assertEquals(requests().length, 0);
+      assert.strictEqual(error, reason);
+      assert.deepStrictEqual(requests().length, 0);
     },
   );
 
@@ -150,7 +151,7 @@ export function httpTransportConformance(
       });
       setTimeout(() => controller.abort(reason), 20);
       const error = await pending.then(() => undefined, (e) => e);
-      assertStrictEquals(error, reason);
+      assert.strictEqual(error, reason);
     },
   );
 
@@ -166,10 +167,10 @@ export function httpTransportConformance(
       });
       const reader = response.body!.getReader();
       const first = await reader.read();
-      assertEquals(new TextDecoder().decode(first.value), "first");
+      assert.deepStrictEqual(new TextDecoder().decode(first.value), "first");
       setTimeout(() => controller.abort(reason), 20);
       const error = await reader.read().then(() => undefined, (e) => e);
-      assertStrictEquals(error, reason);
+      assert.strictEqual(error, reason);
     },
   );
 
@@ -186,8 +187,8 @@ export function httpTransportConformance(
       await reader.read();
       setTimeout(() => controller.abort(), 20);
       const error = await reader.read().then(() => undefined, (e) => e);
-      assertStrictEquals(error, controller.signal.reason);
-      assertEquals((error as Error).name, "AbortError");
+      assert.strictEqual(error, controller.signal.reason);
+      assert.deepStrictEqual((error as Error).name, "AbortError");
     },
   );
 
@@ -195,10 +196,10 @@ export function httpTransportConformance(
     'redirect: "error" rejects a redirect status with a TypeError',
     [{ status: 307, headers: { location: "http://127.0.0.1:9/elsewhere" } }],
     async ({ transport, baseUrl }) => {
-      const error = await assertRejects(() =>
+      const error = await captureRejection(() =>
         transport(`${baseUrl}/r`, { method: "POST", redirect: "error" })
       );
-      assertInstanceOf(error, TypeError);
+      assert.ok(error instanceof TypeError);
     },
   );
 }

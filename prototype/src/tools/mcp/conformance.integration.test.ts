@@ -42,7 +42,7 @@ async function connectedFixture(
   client: Client,
   fetch?: FetchLike,
 ) {
-  const http = startLoopbackMcpServer(factory);
+  const http = await startLoopbackMcpServer(factory);
   const transport = new StreamableHTTPClientTransport(
     new URL(http.url),
     fetch === undefined ? undefined : { fetch },
@@ -62,7 +62,7 @@ function modernClient(options: ConstructorParameters<typeof Client>[1] = {}): Cl
 
 Deno.test("MCP recall injects and the server extracts canonical W3C context", async () => {
   let receivedMeta: Record<string, unknown> | undefined;
-  const http = startLoopbackMcpServer(() => {
+  const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "dyfj-conformance-server",
       version: "1.0.0",

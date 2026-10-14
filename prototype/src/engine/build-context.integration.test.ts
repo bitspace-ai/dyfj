@@ -36,7 +36,7 @@ function fixtureServer(): McpServer {
 
 Deno.test("recall negotiation reaches the client as a structured frame", async () => {
   const mcp = createMcpHandler(fixtureServer, { legacy: "reject" });
-  const http = startLoopbackHttp((request) => mcp.fetch(request));
+  const http = await startLoopbackHttp((request) => mcp.fetch(request));
   try {
     const fakes = enginePorts({
       env: {

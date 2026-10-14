@@ -17,6 +17,8 @@
  * Usage figures are part of the reply, so cost accounting is deterministic.
  */
 
+import { serveFetch } from "./fetch-server.ts";
+
 export interface ChatMessage {
   role: string;
   content?: unknown;
@@ -177,10 +179,11 @@ function bufferedReply(request: ChatRequest, reply: ModelReply): Response {
   });
 }
 
-export function startModelServer(script: ModelScript): ModelServer {
+export async function startModelServer(
+  script: ModelScript,
+): Promise<ModelServer> {
   const requests: ChatRequest[] = [];
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+  const server = await serveFetch(
     async (request) => {
       const url = new URL(request.url);
       if (
@@ -201,11 +204,11 @@ export function startModelServer(script: ModelScript): ModelServer {
       }
     },
   );
-  const port = (server.addr as Deno.NetAddr).port;
+  const port = server.port;
   return {
     baseUrl: `http://127.0.0.1:${port}/v1`,
     port,
     requests,
-    close: () => server.shutdown(),
+    close: () => server.close(),
   };
 }

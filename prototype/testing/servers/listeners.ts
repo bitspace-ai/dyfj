@@ -7,78 +7,168 @@
  * - `connectUdsPair` returns both ends of one Unix-socket connection, for
  *   tests that drive a protocol over a real kernel socket.
  * - `fabricateStaleUdsSocket` leaves a socket file with nothing accepting, the
- *   shape an unclean exit leaves behind. A cleanly closed Deno listener removes
- *   its file, so this needs a hard-killed process: it spawns the Deno the lane
+ *   shape an unclean exit leaves behind. A cleanly closed listener removes its
+ *   file, so this needs a hard-killed process: it spawns the `deno` the lane
  *   grants (`DENO_BIN`) and SIGKILLs it once it is listening.
  */
 
+import { spawn } from "node:child_process";
+import { rm } from "node:fs/promises";
+import {
+  type AddressInfo,
+  createConnection,
+  createServer,
+  type Server,
+  type Socket,
+} from "node:net";
+import { denoBin, inheritedEnv } from "../deno-bin.ts";
+
+export type MuteListenerAddr =
+  | { transport: "tcp"; hostname: string; port: number }
+  | { transport: "unix"; path: string };
+
+/** A connection the mute listener accepted, read from by the test. */
+export interface MuteConnection {
+  /**
+   * Reads up to `buffer.length` bytes into `buffer` and resolves with the
+   * count, or with `null` once the peer has closed its side and nothing is
+   * left to read (end of file).
+   */
+  read(buffer: Uint8Array): Promise<number | null>;
+}
+
 export interface MuteListener {
-  addr: Deno.Addr;
+  addr: MuteListenerAddr;
   /** Resolves with the first accepted connection. */
-  firstAccepted: Promise<Deno.Conn>;
+  firstAccepted: Promise<MuteConnection>;
   /** Closes the listener and every accepted connection; removes a Unix path. */
   close(): Promise<void>;
 }
 
-export function startMuteListener(
+/** Settles once `socket` has fully closed; at once if it already has. */
+function socketClosed(socket: Socket): Promise<void> {
+  return new Promise((resolve) => {
+    if (socket.closed) resolve();
+    else socket.once("close", () => resolve());
+  });
+}
+
+function listening(server: Server, listen: () => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.once("listening", () => {
+      server.off("error", reject);
+      resolve();
+    });
+    listen();
+  });
+}
+
+function muteConnection(socket: Socket): MuteConnection {
+  // Whatever arrives is queued for `read`, and the end of the peer's side is
+  // recorded as soon as it happens, so a read after it still sees it.
+  const queued: Uint8Array[] = [];
+  let ended = false;
+  let wake: () => void = () => {};
+  socket.on("data", (chunk: Uint8Array) => {
+    queued.push(chunk);
+    wake();
+  });
+  const end = () => {
+    ended = true;
+    wake();
+  };
+  socket.once("end", end);
+  socket.once("close", end);
+  return {
+    async read(buffer) {
+      while (queued.length === 0 && !ended) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+      const chunk = queued.shift();
+      if (chunk === undefined) return null;
+      const n = Math.min(chunk.length, buffer.length);
+      buffer.set(chunk.subarray(0, n));
+      if (n < chunk.length) queued.unshift(chunk.subarray(n));
+      return n;
+    },
+  };
+}
+
+export async function startMuteListener(
   options:
-    | (Deno.TcpListenOptions & { transport?: "tcp" })
-    | (Deno.UnixListenOptions & { transport: "unix" }),
-): MuteListener {
-  const listener: Deno.Listener = options.transport === "unix"
-    ? Deno.listen(options)
-    : Deno.listen(options);
-  const connections: Deno.Conn[] = [];
-  let first: (conn: Deno.Conn) => void = () => {};
-  const firstAccepted = new Promise<Deno.Conn>((resolve) => {
+    | { transport?: "tcp"; hostname: string; port: number }
+    | { transport: "unix"; path: string },
+): Promise<MuteListener> {
+  const sockets: Socket[] = [];
+  let first: (conn: MuteConnection) => void = () => {};
+  const firstAccepted = new Promise<MuteConnection>((resolve) => {
     first = resolve;
   });
-  const accepting = (async () => {
-    try {
-      for await (const conn of listener) {
-        connections.push(conn);
-        first(conn);
-      }
-    } catch (error) {
-      if (!(error instanceof Deno.errors.BadResource)) throw error;
-    }
-  })();
+  const server = createServer({ allowHalfOpen: true }, (socket) => {
+    sockets.push(socket);
+    // A peer that resets the connection is not a listener failure.
+    socket.on("error", () => {});
+    first(muteConnection(socket));
+  });
+  await listening(
+    server,
+    () =>
+      options.transport === "unix"
+        ? server.listen(options.path)
+        : server.listen(options.port, options.hostname),
+  );
+  const address = server.address();
+  const addr: MuteListenerAddr = options.transport === "unix"
+    ? { transport: "unix", path: options.path }
+    : {
+      transport: "tcp",
+      hostname: (address as AddressInfo).address,
+      port: (address as AddressInfo).port,
+    };
   return {
-    addr: listener.addr,
+    addr,
     firstAccepted,
     async close() {
-      try {
-        listener.close();
-      } catch {
-        // already closed
-      }
-      for (const conn of connections) {
-        try {
-          conn.close();
-        } catch {
-          // closed by the peer
-        }
-      }
-      await accepting;
+      const closed = new Promise<void>((resolve) =>
+        server.close(() => resolve())
+      );
+      for (const socket of sockets) socket.destroy();
+      await Promise.all(sockets.map(socketClosed));
+      await closed;
       if (options.transport === "unix") await removeIfPresent(options.path);
     },
   };
 }
 
 export interface UdsPair {
-  server: Deno.UnixConn;
-  client: Deno.UnixConn;
+  server: Socket;
+  client: Socket;
 }
 
 /** Both ends of one connection over a Unix socket at `path`. */
 export async function connectUdsPair(path: string): Promise<UdsPair> {
   await removeIfPresent(path);
-  const listener = Deno.listen({ transport: "unix", path });
+  let accept: (socket: Socket) => void = () => {};
+  const accepted = new Promise<Socket>((resolve) => {
+    accept = resolve;
+  });
+  const listener = createServer((socket) => accept(socket));
+  await listening(listener, () => listener.listen(path));
   try {
-    const accepting = listener.accept();
-    const client = await Deno.connect({ transport: "unix", path });
-    return { server: await accepting, client };
+    const client = await new Promise<Socket>((resolve, reject) => {
+      const pending = createConnection({ path });
+      pending.once("error", reject);
+      pending.once("connect", () => {
+        pending.off("error", reject);
+        resolve(pending);
+      });
+    });
+    return { server: await accepted, client };
   } finally {
+    // Stops accepting at once; its callback would wait for the pair to close.
     listener.close();
   }
 }
@@ -86,42 +176,39 @@ export async function connectUdsPair(path: string): Promise<UdsPair> {
 /** Leave a socket file at `path` that nothing accepts on. */
 export async function fabricateStaleUdsSocket(path: string): Promise<void> {
   await removeIfPresent(path);
-  const deno = Deno.env.get("DENO_BIN") ?? Deno.execPath();
-  const child = new Deno.Command(deno, {
-    args: [
+  const child = spawn(
+    denoBin(),
+    [
       "eval",
-      `Deno.listen({ transport: "unix", path: ${
+      `import { createServer } from "node:net"; createServer().listen(${
         JSON.stringify(path)
-      } }); console.log("listening"); setInterval(() => {}, 1000);`,
+      }, () => console.log("listening")); setInterval(() => {}, 1000);`,
     ],
-    stdout: "piped",
-    stderr: "inherit",
-  }).spawn();
+    { env: inheritedEnv(), stdio: ["ignore", "pipe", "inherit"] },
+  );
+  const closed = new Promise<void>((resolve) => {
+    child.once("error", () => resolve());
+    child.once("close", () => resolve());
+  });
   try {
     // A pipe may split the line across reads: collect until the newline.
-    const reader = child.stdout.getReader();
     const decoder = new TextDecoder();
     let out = "";
-    while (!out.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      out += decoder.decode(value, { stream: true });
+    for await (const chunk of child.stdout as AsyncIterable<Uint8Array>) {
+      out += decoder.decode(chunk, { stream: true });
+      if (out.includes("\n")) break;
     }
-    reader.releaseLock();
     if (out.trim() !== "listening") {
       throw new Error(`stale-socket child did not listen: ${out}`);
     }
   } finally {
     child.kill("SIGKILL");
-    await child.status;
-    await child.stdout.cancel().catch(() => {});
+    child.stdout.destroy();
+    await closed;
   }
 }
 
 async function removeIfPresent(path: string): Promise<void> {
-  try {
-    await Deno.remove(path);
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-  }
+  // `force` ignores a missing path; any other failure still throws.
+  await rm(path, { force: true });
 }

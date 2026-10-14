@@ -120,7 +120,7 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
     routeMethod: string | null;
     routeName: string | null;
   }> = [];
-  const http = startLoopbackMcpServer(
+  const http = await startLoopbackMcpServer(
     () => fixtureServer((id) => calls.push(id)),
     async (request, mcp) => {
       if (request.method === "POST") {
@@ -209,11 +209,11 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
 
 Deno.test("external MCP redirect refusal never reaches the redirect target", async () => {
   let targetRequests = 0;
-  const target = startLoopbackHttp(() => {
+  const target = await startLoopbackHttp(() => {
     targetRequests++;
     return new Response("unexpected");
   });
-  const redirect = startLoopbackHttp(() =>
+  const redirect = await startLoopbackHttp(() =>
     new Response(null, {
       status: 307,
       headers: { location: `${target.origin}/capture` },
@@ -239,7 +239,7 @@ Deno.test("external MCP redirect refusal never reaches the redirect target", asy
 Deno.test("a broken external MCP tool response fails once without replay", async () => {
   let toolCalls = 0;
   const requestIds: unknown[] = [];
-  const http = startLoopbackMcpServer(
+  const http = await startLoopbackMcpServer(
     () => fixtureServer(() => {}),
     async (request, mcp) => {
       if (request.method === "POST") {
@@ -290,7 +290,7 @@ Deno.test("a broken external MCP tool response fails once without replay", async
 
 Deno.test("an oversized external MCP tool response fails at the transport bound", async () => {
   let toolCalls = 0;
-  const http = startLoopbackMcpServer(() => {
+  const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "oversized-result-fixture",
       version: "1.0.0",
@@ -353,7 +353,7 @@ Deno.test("an oversized external MCP tool response fails at the transport bound"
 
 Deno.test("external search server capability registers web_search and web_fetch commands", async () => {
   let searchCalls = 0;
-  const http = startLoopbackMcpServer(() => {
+  const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({
       name: "search-fixture",
       version: "1.0.0",

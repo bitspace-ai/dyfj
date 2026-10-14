@@ -1,8 +1,8 @@
 // Test fake for the `Env` port: an in-memory variable map.
 //
-// Structurally compatible with the `{ get(name) }` subset of `Deno.env` that
-// runtime code accepts, so it can be passed wherever `Deno.env` is the
-// default. It never reads or writes the process environment.
+// Structurally compatible with the `{ get(name) }` subset of the process
+// environment that runtime code accepts, so it can be passed wherever the
+// process environment is the default. It never reads or writes it.
 
 export class MapEnv {
   readonly #values: Map<string, string>;

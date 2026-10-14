@@ -31,7 +31,7 @@ function textResult(value: unknown) {
   };
 }
 
-export function startLinearMcpFake(): LinearMcpFake {
+export async function startLinearMcpFake(): Promise<LinearMcpFake> {
   const calls: LinearToolCall[] = [];
   let authorization: string | null = null;
   const record = (tool: string, args: Record<string, unknown>) =>
@@ -84,7 +84,7 @@ export function startLinearMcpFake(): LinearMcpFake {
     );
     return server;
   };
-  const http = startLoopbackMcpServer(build, (request, mcp) => {
+  const http = await startLoopbackMcpServer(build, (request, mcp) => {
     authorization = request.headers.get("authorization");
     return mcp.fetch(request);
   });

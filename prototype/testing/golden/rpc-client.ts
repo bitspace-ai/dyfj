@@ -8,12 +8,13 @@
  * scripted approver, recording each request with its answer.
  */
 
+import { createConnection, type Socket } from "node:net";
+
 export type Approver = (request: unknown) => unknown;
 
 export type RpcOutcome = { result?: unknown; error?: unknown };
 
 const decoder = new TextDecoder();
-const encoder = new TextEncoder();
 
 const denyAll: Approver = () => ({
   decision: "deny",
@@ -23,7 +24,7 @@ const denyAll: Approver = () => ({
 export class RawRpcClient {
   readonly received: unknown[] = [];
   readonly approvals: Array<{ request: unknown; response: unknown }> = [];
-  #conn: Deno.UnixConn;
+  #conn: Socket;
   #nextId = 1;
   #pending = new Map<number, (outcome: RpcOutcome) => void>();
   #listeners: Array<(message: Record<string, unknown>) => void> = [];
@@ -31,7 +32,7 @@ export class RawRpcClient {
   #approver: Approver;
   #closing = false;
 
-  private constructor(conn: Deno.UnixConn, approver: Approver) {
+  private constructor(conn: Socket, approver: Approver) {
     this.#conn = conn;
     this.#approver = approver;
     this.#reader = this.#read();
@@ -41,26 +42,29 @@ export class RawRpcClient {
     socket: string,
     approver: Approver = denyAll,
   ): Promise<RawRpcClient> {
-    const conn = await Deno.connect({ transport: "unix", path: socket });
+    const conn = await new Promise<Socket>((resolve, reject) => {
+      const pending = createConnection({ path: socket });
+      pending.once("error", reject);
+      pending.once("connect", () => {
+        pending.off("error", reject);
+        resolve(pending);
+      });
+    });
     return new RawRpcClient(conn, approver);
   }
 
   async #write(message: unknown): Promise<void> {
-    const bytes = encoder.encode(JSON.stringify(message) + "\n");
-    let offset = 0;
-    while (offset < bytes.length) {
-      offset += await this.#conn.write(bytes.subarray(offset));
-    }
+    const line = JSON.stringify(message) + "\n";
+    await new Promise<void>((resolve, reject) => {
+      this.#conn.write(line, (error) => error ? reject(error) : resolve());
+    });
   }
 
   async #read(): Promise<void> {
     let buffer = "";
-    const chunk = new Uint8Array(64 * 1024);
     try {
-      for (;;) {
-        const n = await this.#conn.read(chunk);
-        if (n === null) break;
-        buffer += decoder.decode(chunk.subarray(0, n), { stream: true });
+      for await (const chunk of this.#conn as AsyncIterable<Uint8Array>) {
+        buffer += decoder.decode(chunk, { stream: true });
         let index: number;
         while ((index = buffer.indexOf("\n")) >= 0) {
           const line = buffer.slice(0, index);
@@ -123,11 +127,13 @@ export class RawRpcClient {
 
   async close(): Promise<void> {
     this.#closing = true;
-    try {
-      this.#conn.close();
-    } catch {
-      // Already closed by the server.
-    }
+    const closed = new Promise<void>((resolve) => {
+      if (this.#conn.closed) resolve();
+      else this.#conn.once("close", () => resolve());
+    });
+    // Destroying an already closed socket is a no-op.
+    this.#conn.destroy();
     await this.#reader;
+    await closed;
   }
 }
