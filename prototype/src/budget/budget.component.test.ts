@@ -8,14 +8,10 @@
  * Each test builds its own `CeilingConfirmationStore` on the test's clock.
  */
 
-import {
-  assertAlmostEquals,
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { assertSpyCalls, spy } from "@std/testing/mock";
+import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { type EventInsert, MemoryStore } from "../store/mod.ts";
 import {
@@ -83,11 +79,11 @@ async function trackerFor(
 }
 
 function ceilingConfirm(verdict: BudgetCeilingVerdict) {
-  return spy((_w: BudgetCeilingWarning) => Promise.resolve(verdict));
+  return mock.fn((_w: BudgetCeilingWarning) => Promise.resolve(verdict));
 }
 
 function anomalyConfirm(verdict: BudgetCeilingVerdict) {
-  return spy((_w: RunawayAnomalyWarning) => Promise.resolve(verdict));
+  return mock.fn((_w: RunawayAnomalyWarning) => Promise.resolve(verdict));
 }
 
 function usage(costTotal: number) {
@@ -119,11 +115,11 @@ Deno.test("envelope: store-seeded spend crosses session and daily; one confirm c
   const { clock, tracker } = await nearLimit("COMP-A-APPROVE");
   const confirmations = new CeilingConfirmationStore(clock);
   const preCall = tracker.checkPreCall(2, 3.0, 20_000);
-  assertStrictEquals(preCall.allowed, false);
-  assertStrictEquals(preCall.reason, "daily_limit");
-  assertAlmostEquals(preCall.estimatedCost, 0.06);
-  assertAlmostEquals(preCall.sessionCostSoFar, 0.95);
-  assertAlmostEquals(preCall.dailyCostSoFar, 4.95);
+  assert.strictEqual(preCall.allowed, false);
+  assert.strictEqual(preCall.reason, "daily_limit");
+  assertAlmostEqual(preCall.estimatedCost, 0.06);
+  assertAlmostEqual(preCall.sessionCostSoFar, 0.95);
+  assertAlmostEqual(preCall.dailyCostSoFar, 4.95);
 
   const confirm = ceilingConfirm({ decision: "approve" });
   const gate = createTurnBudgetCeilingGate(
@@ -131,25 +127,28 @@ Deno.test("envelope: store-seeded spend crosses session and daily; one confirm c
     confirmations.for("COMP-A-APPROVE"),
   );
   await gate.ensureAllowed(preCall);
-  assertSpyCalls(confirm, 1);
-  const warning = confirm.calls[0].args[0];
-  assertStrictEquals(warning.kind, "budget_ceiling");
-  assertStrictEquals(warning.reason, "daily_limit");
-  assertEquals(warning.crossedScopes, ["daily_limit", "session_limit"]);
+  assert.equal(confirm.mock.callCount(), 1);
+  const warning = confirm.mock.calls[0].arguments[0];
+  assert.strictEqual(warning.kind, "budget_ceiling");
+  assert.strictEqual(warning.reason, "daily_limit");
+  assert.deepStrictEqual(warning.crossedScopes, [
+    "daily_limit",
+    "session_limit",
+  ]);
 
   // The call ran and cost what it estimated; the next call crosses again but
   // both scopes are confirmed for their periods — no second prompt.
   tracker.record(usage(0.06), 2);
   const next = tracker.checkPreCall(2, 3.0, 20_000);
-  assertStrictEquals(next.allowed, false);
-  assertAlmostEquals(next.sessionCostSoFar, 1.01);
+  assert.strictEqual(next.allowed, false);
+  assertAlmostEqual(next.sessionCostSoFar, 1.01);
   await gate.ensureAllowed(next);
   // A later turn in the same session and day reuses the persistent store.
   await createTurnBudgetCeilingGate(
     confirm,
     confirmations.for("COMP-A-APPROVE"),
   ).ensureAllowed(next);
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
 });
 
 Deno.test("envelope: without a confirm handler the crossing fails closed", async () => {
@@ -159,13 +158,13 @@ Deno.test("envelope: without a confirm handler the crossing fails closed", async
     undefined,
     confirmations.for("COMP-A-CLOSED"),
   );
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => gate.ensureAllowed(tracker.checkPreCall(2, 3.0, 20_000)),
     BudgetExceededError,
   );
-  assertStrictEquals(error.reason, "daily_limit");
-  assertStrictEquals(error.limitUsd, 5);
-  assertAlmostEquals(error.scopeCostSoFar, 4.95);
+  assert.strictEqual(error.reason, "daily_limit");
+  assert.strictEqual(error.limitUsd, 5);
+  assertAlmostEqual(error.scopeCostSoFar, 4.95);
 });
 
 Deno.test("envelope: a declined crossing throws and records no confirmation", async () => {
@@ -177,16 +176,16 @@ Deno.test("envelope: a declined crossing throws and records no confirmation", as
     confirmations.for("COMP-A-DECLINE"),
   );
   const preCall = tracker.checkPreCall(2, 3.0, 20_000);
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => gate.ensureAllowed(preCall),
     BudgetCeilingDeclinedError,
   );
-  assertStrictEquals(error.reason, "over budget");
-  await assertRejects(
+  assert.strictEqual(error.reason, "over budget");
+  await assert.rejects(
     () => gate.ensureAllowed(preCall),
     BudgetCeilingDeclinedError,
   );
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 // ── (b) the daily confirmation follows the clock's local day ──────────────────
@@ -201,50 +200,55 @@ Deno.test("envelope: the daily confirmation and spend window roll over with the 
       modelResponse("COMP-B-OTHER", 4.95),
     ],
   });
-  assertStrictEquals(localDayKey(clock.date()), "2026-07-06");
+  assert.strictEqual(localDayKey(clock.date()), "2026-07-06");
 
   // Day 1: $4.95 + $0.30 + $0.06 = $5.31 crosses the $5 daily envelope only.
   const confirm = ceilingConfirm({ decision: "approve" });
   const day1 = await trackerFor(store, clock, "COMP-B-MAIN", config);
   const day1Call = day1.checkPreCall(2, 3.0, 20_000);
-  assertStrictEquals(day1Call.reason, "daily_limit");
+  assert.strictEqual(day1Call.reason, "daily_limit");
   await createTurnBudgetCeilingGate(
     confirm,
     confirmations.for("COMP-B-MAIN"),
   ).ensureAllowed(day1Call);
-  assertSpyCalls(confirm, 1);
-  assertEquals(confirm.calls[0].args[0].crossedScopes, ["daily_limit"]);
+  assert.equal(confirm.mock.callCount(), 1);
+  assert.deepStrictEqual(confirm.mock.calls[0].arguments[0].crossedScopes, [
+    "daily_limit",
+  ]);
   // The daily mark is shared across sessions for the day: no re-prompt.
   const sibling = await trackerFor(store, clock, "COMP-B-SIBLING", config);
   await createTurnBudgetCeilingGate(
     confirm,
     confirmations.for("COMP-B-SIBLING"),
   ).ensureAllowed(sibling.checkPreCall(2, 3.0, 20_000));
-  assertSpyCalls(confirm, 1);
+  assert.equal(confirm.mock.callCount(), 1);
 
   // Day 2: yesterday's events still count for the session, not for today.
   clock.advance(DAY_MS);
-  assertStrictEquals(localDayKey(clock.date()), "2026-07-07");
-  assertEquals(await fetchSpendBaselines(store.spend, "COMP-B-MAIN", clock), {
-    sessionSpentUsd: 0.30,
-    sessionSpentTodayUsd: 0,
-    dailyOtherSessionsUsd: 0,
-  });
+  assert.strictEqual(localDayKey(clock.date()), "2026-07-07");
+  assert.deepStrictEqual(
+    await fetchSpendBaselines(store.spend, "COMP-B-MAIN", clock),
+    {
+      sessionSpentUsd: 0.30,
+      sessionSpentTodayUsd: 0,
+      dailyOtherSessionsUsd: 0,
+    },
+  );
   const quiet = await trackerFor(store, clock, "COMP-B-MAIN", config);
-  assertStrictEquals(quiet.checkPreCall(2, 3.0, 20_000).allowed, true);
+  assert.strictEqual(quiet.checkPreCall(2, 3.0, 20_000).allowed, true);
 
   // Fresh spend today crosses the daily envelope again, and yesterday's
   // confirmation no longer covers it.
   await store.journal.commit({ events: [modelResponse("COMP-B-OTHER", 4.97)] });
   const day2 = await trackerFor(store, clock, "COMP-B-MAIN", config);
   const day2Call = day2.checkPreCall(2, 3.0, 20_000);
-  assertStrictEquals(day2Call.reason, "daily_limit");
-  assertAlmostEquals(day2Call.dailyCostSoFar, 4.97);
+  assert.strictEqual(day2Call.reason, "daily_limit");
+  assertAlmostEqual(day2Call.dailyCostSoFar, 4.97);
   await createTurnBudgetCeilingGate(
     confirm,
     confirmations.for("COMP-B-MAIN"),
   ).ensureAllowed(day2Call);
-  assertSpyCalls(confirm, 2);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 // ── (c) runaway anomaly hard stop ─────────────────────────────────────────────
@@ -255,36 +259,36 @@ Deno.test("anomaly: turn spend past 3× the per-call limit halts; approvals are 
   tracker.record(usage(0.09), 2);
   tracker.record(usage(0.09), 2);
   const under = tracker.checkAnomaly(2, ANOMALY);
-  assertStrictEquals(under.halted, false); // $0.18 <= $0.30
+  assert.strictEqual(under.halted, false); // $0.18 <= $0.30
   await createRunawayAnomalyGate().ensureAllowed(under);
 
   tracker.record(usage(0.15), 2);
   const tripped = tracker.checkAnomaly(2, ANOMALY);
-  assertStrictEquals(tripped.trigger, "turn_spend");
-  assertAlmostEquals(tripped.turnSpentUsd, 0.33);
-  assertAlmostEquals(tripped.turnHaltUsd, 0.30);
+  assert.strictEqual(tripped.trigger, "turn_spend");
+  assertAlmostEqual(tripped.turnSpentUsd, 0.33);
+  assertAlmostEqual(tripped.turnHaltUsd, 0.30);
 
-  const halt = await assertRejects(
+  const halt = await captureRejection(
     () => createRunawayAnomalyGate().ensureAllowed(tripped),
     RunawayAnomalyHaltError,
   );
-  assertStrictEquals(halt.trigger, "turn_spend");
-  assertStrictEquals(halt.declined, false);
+  assert.strictEqual(halt.trigger, "turn_spend");
+  assert.strictEqual(halt.declined, false);
 
   const confirm = anomalyConfirm({ decision: "approve" });
   const gate = createRunawayAnomalyGate(confirm);
   await gate.ensureAllowed(tripped); // turn entry
   await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY)); // same level
-  assertSpyCalls(confirm, 1);
-  const warning = confirm.calls[0].args[0];
-  assertStrictEquals(warning.kind, "runaway_anomaly");
-  assertAlmostEquals(warning.spentUsd, 0.33);
-  assertAlmostEquals(warning.haltUsd, 0.30);
+  assert.equal(confirm.mock.callCount(), 1);
+  const warning = confirm.mock.calls[0].arguments[0];
+  assert.strictEqual(warning.kind, "runaway_anomaly");
+  assertAlmostEqual(warning.spentUsd, 0.33);
+  assertAlmostEqual(warning.haltUsd, 0.30);
 
   tracker.record(usage(0.05), 2); // $0.38: past the approved level
   await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
-  assertSpyCalls(confirm, 2);
-  assertAlmostEquals(confirm.calls[1].args[0].spentUsd, 0.38);
+  assert.equal(confirm.mock.callCount(), 2);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.38);
 });
 
 Deno.test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {
@@ -296,30 +300,33 @@ Deno.test("anomaly: store-seeded session spend past 2× the session envelope hal
     ],
   });
   const tracker = await trackerFor(store, clock, "COMP-C-SCOPE");
-  assertStrictEquals(tracker.checkAnomaly(2, ANOMALY).halted, false); // $1.95
+  assert.strictEqual(tracker.checkAnomaly(2, ANOMALY).halted, false); // $1.95
   tracker.record(usage(0.10), 2); // $2.05 > $2.00; turn $0.10 < $0.30
   const tripped = tracker.checkAnomaly(2, ANOMALY);
-  assertStrictEquals(tripped.trigger, "session_scope");
-  assertAlmostEquals(tripped.sessionSpentUsd, 2.05);
-  assertAlmostEquals(tripped.sessionHaltUsd, 2.00);
+  assert.strictEqual(tripped.trigger, "session_scope");
+  assertAlmostEqual(tripped.sessionSpentUsd, 2.05);
+  assertAlmostEqual(tripped.sessionHaltUsd, 2.00);
 
-  const halt = await assertRejects(
+  const halt = await captureRejection(
     () => createRunawayAnomalyGate().ensureAllowed(tripped),
     RunawayAnomalyHaltError,
   );
-  assertStrictEquals(halt.trigger, "session_scope");
-  assertAlmostEquals(halt.spentUsd, 2.05);
-  assertAlmostEquals(halt.haltUsd, 2.00);
+  assert.strictEqual(halt.trigger, "session_scope");
+  assertAlmostEqual(halt.spentUsd, 2.05);
+  assertAlmostEqual(halt.haltUsd, 2.00);
 
   const confirm = anomalyConfirm({ decision: "deny", reason: "stop here" });
-  const declined = await assertRejects(
+  const declined = await captureRejection(
     () => createRunawayAnomalyGate(confirm).ensureAllowed(tripped),
     RunawayAnomalyHaltError,
   );
-  assertSpyCalls(confirm, 1);
-  assertStrictEquals(declined.declined, true);
-  assertStrictEquals(declined.trigger, "session_scope");
-  assertStringIncludes(declined.message, "stop here");
+  assert.equal(confirm.mock.callCount(), 1);
+  assert.strictEqual(declined.declined, true);
+  assert.strictEqual(declined.trigger, "session_scope");
+  assert.ok(
+    declined.message.includes("stop here"),
+    `expected declined.message to include "stop here"`,
+  );
 });
 
 Deno.test("anomaly: tier 0 never halts, even past every threshold", async () => {
@@ -329,12 +336,12 @@ Deno.test("anomaly: tier 0 never halts, even past every threshold", async () => 
   });
   const tracker = await trackerFor(store, clock, "COMP-C-TIER0");
   tracker.record(usage(0.50), 2);
-  assertStrictEquals(tracker.checkAnomaly(2, ANOMALY).halted, true);
+  assert.strictEqual(tracker.checkAnomaly(2, ANOMALY).halted, true);
   const free = tracker.checkAnomaly(0, ANOMALY);
-  assertStrictEquals(free.halted, false);
-  assertStrictEquals(free.trigger, undefined);
+  assert.strictEqual(free.halted, false);
+  assert.strictEqual(free.trigger, undefined);
   const confirm = anomalyConfirm({ decision: "approve" });
   await createRunawayAnomalyGate(confirm).ensureAllowed(free);
   await createRunawayAnomalyGate().ensureAllowed(free);
-  assertSpyCalls(confirm, 0);
+  assert.equal(confirm.mock.callCount(), 0);
 });
