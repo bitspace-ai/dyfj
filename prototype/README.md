@@ -8,10 +8,12 @@ If you want to understand DYFJ's stance on why prototype-and-substrate coexist i
 
 ## Run it
 
-You'll need [Deno](https://deno.com) 2.9+.
+You'll need [Deno](https://deno.com) 2.9+ and [Node.js](https://nodejs.org)
+26 with npm. npm alone installs the npm dependencies; rerun `npm ci` after any
+change to `package-lock.json`.
 
 ```sh
-deno install
+npm ci
 deno task compile-cli
 ./dist/dyfj
 ```

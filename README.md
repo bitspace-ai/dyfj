@@ -318,6 +318,8 @@ How the work actually happens, separate from what gets built.
 ### Prerequisites
 
 - [Deno](https://deno.com) 2.9+
+- [Node.js](https://nodejs.org) 26 with its bundled npm, to install the npm
+  dependencies (CI uses Node 26.11.1)
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
   local default model; [Ollama](https://ollama.com) and
@@ -332,10 +334,20 @@ How the work actually happens, separate from what gets built.
 ```sh
 git clone https://github.com/bitspace-ai/dyfj
 cd dyfj/prototype
-deno install
+npm ci
 cp .env.example .env
 git config core.hooksPath .githooks
 ```
+
+`npm ci` installs `prototype/node_modules` exactly as the committed
+`package-lock.json` records it. npm is the only resolver of npm packages:
+`deno.json` sets `nodeModulesDir: "manual"`, so Deno uses that install and
+never resolves or installs npm packages itself. `prototype/.npmrc` keeps
+installs to exact versions, turns install scripts off and holds back any
+release younger than three days. After any pull or merge that changes
+`package-lock.json`, run `npm ci` in `prototype/` again, in every checkout.
+That includes the checkout a `dyfj` on your `PATH` runs from. The gate fails
+until you do (see the npm install precondition below).
 
 The last line enables the repository's git hooks, which keep AI-tool
 attribution out of history (see `AGENTS.md`, Documentation Discipline):
@@ -1052,8 +1064,16 @@ deno task verify-workbench-events
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
-`deno task test` runs a set of deterministic policy checks, each reported under
-a stable check id, ahead of the test suites. `subject.resolve` and
+`deno task test` first checks the npm install precondition: the
+`prototype/node_modules` that npm installed must match
+`prototype/package-lock.json`. The lane compares npm's record of the install
+(`node_modules/.package-lock.json`) with the lockfile, package by package and
+version by version. A locked optional package may be absent, since npm skips
+builds for other platforms. When node_modules is missing or out of date, the
+lane fails with `` run `npm ci` in prototype/ ``. The lane only reads
+`prototype/`: the gate never runs npm. It reports under `test.aggregate` and
+also runs in `test:fast`. Then the gate runs a set of deterministic policy
+checks, each reported under a stable check id, ahead of the test suites. `subject.resolve` and
 `subject.digest` bind the run to one immutable commit: in CI the workflow
 supplies the exact commit and release-range base through `DYFJ_GATE_SUBJECT` and
 `DYFJ_GATE_RANGE_BASE`, HEAD must match, the commit digest is recomputed from
@@ -1071,7 +1091,10 @@ repository-relative links (external reachability is not checked), `shell.parse`
 parses changed shell files with `bash -n` and fails closed if the parser is
 unavailable, and `dependency.policy` rejects mutable dependency shapes: unpinned
 workflow actions, `latest` installer URLs, scripts piped from the network into a
-shell, and a floating Rust toolchain. `receipt.schema` runs the
+shell, a floating Rust toolchain, and, for each tracked `package.json`, a
+dependency that is not an exact version, a missing tracked
+`package-lock.json`, or a tracked `.npmrc` that does not set
+`ignore-scripts=true` and a `min-release-age` of at least 3 days. `receipt.schema` runs the
 `dyfj.assurance.receipt/v1` validator's tests (`scripts/assurance-receipt.ts`),
 the fail-closed schema for the public v1 assurance evidence envelope contract.
 Every scan diagnostic is value-free — rule id, path, and line only, never the
@@ -1236,7 +1259,7 @@ repository root with Node 22.18 or later: `node scripts/node-load-probe.ts`.
 It imports each git-tracked non-test module under `prototype/src` and
 `contracts/` only, and reports each one. Test files are those test discovery
 recognises (`isTestSource` in `prototype/scripts/test-files.ts`). It resolves
-npm packages from `prototype/node_modules`, which Deno creates on first run.
+npm packages from `prototype/node_modules`, which `npm ci` installs.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -1261,8 +1284,8 @@ both jobs still report a status and the required checks can pass. A push to
 `main`, a manual dispatch and every local run keep the full gate, so anything a
 docs-only pull request skipped is still checked on `main`. A second job,
 `macos-portability`, runs the same command on a macOS runner so process,
-filesystem, and runtime portability are observable. The workflow pins its one
-third-party action by full commit digest (watched by Dependabot), installs Deno
+filesystem, and runtime portability are observable. The workflow pins its two
+third-party actions (checkout and setup-node) by full commit digest (watched by Dependabot), installs Deno
 2.9.6 and Dolt 2.3.1 from exact-version release URLs — never a `latest` URL,
 never a script piped into a shell — and checks each downloaded archive against a
 SHA-256 digest committed in the workflow before it is unpacked or executed.
@@ -1271,7 +1294,11 @@ file served by the same origin as the archive proves nothing against an attacker
 who controls that origin. The exact-version URL and the reported tool version
 remain as secondary evidence, not as the integrity control. Release signatures
 are still not verified, and the dependency manifest declares that gap. The Rust
-toolchain is installed from the exact pin in `core/rust-toolchain.toml`.
+toolchain is installed from the exact pin in `core/rust-toolchain.toml`. Each
+job then installs Node 26.11.1 through the digest-pinned `actions/setup-node`
+action and runs `npm ci` in `prototype/` before the gate. For Node, the
+evidence is that digest pin plus the exact version, not a repository-owned
+archive digest.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
@@ -1286,13 +1313,17 @@ public deterministic checks it runs.
 
 Dependabot proposes weekly update PRs for three surfaces, configured in
 `.github/dependabot.yml`: the Deno workspace under `prototype/` (its `deno.json`
-imports and `deno.lock`), the Rust crate set under `core/` (`Cargo.toml` and
+imports and `deno.lock`, which now hold only the JSR test dependencies), the
+Rust crate set under `core/` (`Cargo.toml` and
 `Cargo.lock`), and the digest-pinned workflow actions under
 `.github/workflows/`. One Deno package is excluded by an `ignore` rule:
 `@agentclientprotocol/codex-acp`, because the `codex-chatgpt` runner asserts an
 exact adapter version at launch and two test fixtures pin the same string, so a
 bot bump cannot pass the gate; that adapter is upgraded deliberately, pin and
-fixtures together, when external-agent work resumes.
+fixtures together, when external-agent work resumes. The npm dependencies now
+live in `prototype/package.json` and `package-lock.json`, and no Dependabot
+lane watches them yet, so that `ignore` rule no longer has a package to apply
+to. Until an npm lane is added, npm updates are manual.
 
 The pins Dependabot does not cover are the Rust toolchain channel in
 `core/rust-toolchain.toml`, and the exact Deno/Dolt archive versions plus their
@@ -1302,7 +1333,8 @@ enforces neither the inspection nor who may change them. No gate check flags
 them when they age, so keeping them fresh is a manual cadence. The
 `dependency.policy` check enforces
 pin discipline — exact versions, digests, and a declared 72-hour minimum
-release-age floor for registry-published dependencies — but it detects no
+release-age floor for registry-published dependencies (for npm, also set at
+install time by `min-release-age` in `prototype/.npmrc`) — but it detects no
 staleness: freshness is the
 operator's responsibility, not the gate's.
 
@@ -2080,3 +2112,9 @@ Document revisions only. Code and behavior changes are tracked in
   which rejects constructor parameter properties in tracked TypeScript under
   decision D32, and the manual Node load probe for non-test modules under
   `prototype/src` and `contracts/`.
+- 2026-10-14 - Setup and validation guidance: npm is the only resolver of npm
+  packages. Setup runs `npm ci` in `prototype/` (Node 26 is a prerequisite),
+  and every checkout runs it again after a lockfile change. The gate's npm
+  install precondition, the npm `dependency.policy` rules, and the CI
+  setup-node and `npm ci` steps are documented, and so is the absence of a
+  Dependabot lane for npm.
