@@ -2,28 +2,31 @@
 // turns against the real ACP fixture agent (scripts/acp-fixture-agent.ts) as a
 // child process, warm-handle reuse through AcpSessionHandleMap, the Codex
 // ChatGPT profile builder over real temp directories and symlinks, and the
-// runtime's journal writes. Child processes, environment reads and `Deno.uid`
-// put these in the integration tier; the pure transcript-projection cases live
-// in external-agent-runtime.test.ts.
+// runtime's journal writes. Child processes, environment reads and the process
+// uid put these in the integration tier; the pure transcript-projection cases
+// live in external-agent-runtime.test.ts.
 import { captureRejection } from "../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readdir,
   readFile,
   realpath,
   rm,
   stat,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { stub } from "@std/testing/mock";
 import { dirname, join } from "node:path";
 import {
   codexChatGptProfile,
@@ -281,46 +284,95 @@ function tempDir(): Promise<string> {
 }
 
 /**
- * Runs `run` while `Deno.env` reads in this test process see `overlay` on top
- * of the real environment, without changing the process environment itself:
- * child processes still inherit the real environment.
+ * Runs `run` while `process.env` reads in this test process see `overlay` on
+ * top of the real environment, without changing the process environment
+ * itself: no variable is set, so child processes still inherit the real
+ * environment. The overlay stands in for `process.env` for the duration of
+ * `run` and the original binding is restored after it.
  */
 async function withEnvOverlay<T>(
   overlay: Readonly<Record<string, string>>,
   run: () => T | Promise<T>,
 ): Promise<T> {
-  const env = Deno.env;
-  const get = env.get.bind(env);
-  const has = env.has.bind(env);
-  const toObject = env.toObject.bind(env);
-  const stubs = [
-    stub(
-      env,
-      "get",
-      (key: string) => Object.hasOwn(overlay, key) ? overlay[key] : get(key),
-    ),
-    stub(env, "has", (key: string) => Object.hasOwn(overlay, key) || has(key)),
-    stub(env, "toObject", () => ({ ...toObject(), ...overlay })),
-  ];
+  const original = Object.getOwnPropertyDescriptor(process, "env");
+  if (original === undefined) throw new Error("process.env is not defined");
+  const env = process.env;
+  const overlaid = (key: string | symbol): key is string =>
+    typeof key === "string" && Object.hasOwn(overlay, key);
+  // The target is a plain object, not `env`: a proxy's invariant checks read
+  // the target's own descriptors, and on an env-backed target that is a real
+  // environment read of every overlaid name.
+  const view = new Proxy({}, {
+    get: (_target, key) => overlaid(key) ? overlay[key] : Reflect.get(env, key),
+    has: (_target, key) => overlaid(key) || Reflect.has(env, key),
+  });
+  Object.defineProperty(process, "env", { ...original, value: view });
   try {
     return await run();
   } finally {
-    for (const s of stubs) s.restore();
+    Object.defineProperty(process, "env", original);
   }
 }
 
+// Runs a probe child to its exit and returns its exit code. Stdio is
+// discarded. A child that cannot start rejects: spawn reports that as an
+// `error` event. `close` fires once the child has exited and its streams have
+// closed, so no probe outlives the call. Given no env, spawn copies the whole
+// parent env, which needs an unscoped env grant; the integration lane grants
+// env by name, so each caller passes only what its child needs.
+function probe(
+  file: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(file, args, { env, stdio: "ignore" });
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code));
+  });
+}
+
+// `bash` and `ps` are resolved through PATH, so PATH is the one variable
+// forwarded.
+function pathOnlyEnv(): Record<string, string> {
+  const path = process.env.PATH;
+  return path === undefined ? {} : { PATH: path };
+}
+
 async function processIsAlive(pid: number): Promise<boolean> {
-  const status = await new Deno.Command("bash", {
-    args: [
-      "-c",
-      'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
-      "bash",
-      String(pid),
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).output();
-  return status.success;
+  const code = await probe("bash", [
+    "-c",
+    'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
+    "bash",
+    String(pid),
+  ], pathOnlyEnv());
+  return code === 0;
+}
+
+// `ln -s` through bash, which the lane's run grant covers.
+async function symlinkThroughBash(
+  target: string,
+  link: string,
+): Promise<boolean> {
+  const code = await probe(
+    "bash",
+    ["-c", '/bin/ln -s "$1" "$2"', "bash", target, link],
+    pathOnlyEnv(),
+  );
+  return code === 0;
+}
+
+/**
+ * A fresh private file, as the runtime creates its temporaries: an exclusive
+ * create (`wx`, mode 0600) inside a new temp directory, so no existing file is
+ * followed. The caller removes `directory`.
+ */
+async function tempFile(): Promise<{ directory: string; path: string }> {
+  const directory = await tempDir();
+  const path = join(directory, `file-${randomUUID()}`);
+  const handle = await open(path, "wx", 0o600);
+  await handle.close();
+  return { directory, path };
 }
 
 function stalledInitializeProfile(
@@ -1038,37 +1090,32 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.strictEqual(profile.toolchainDirectoryCount, 2);
       if (process.platform === "darwin") {
         for (const shell of ["/bin/zsh", "/bin/bash"]) {
-          const loginShell = await new Deno.Command(process.execPath, {
-            args: [
-              "run",
-              `--allow-run=${shell}`,
-              `data:text/typescript,${
-                encodeURIComponent(
-                  `const output = await new Deno.Command(${
-                    JSON.stringify(shell)
-                  }, {
-  args: ["-lc", ${
-                    JSON.stringify(
-                      'printf "%s\\n" "$PATH"; command -v node; if command -v brew >/dev/null; then exit 23; fi',
-                    )
-                  }],
-  stdout: "piped",
-  stderr: "piped",
-}).output();
-await Deno.stdout.write(output.stdout);
-await Deno.stderr.write(output.stderr);
-Deno.exit(output.code);`,
-                )
-              }`,
-            ],
-            env: profile.environment,
-            clearEnv: true,
-            stdout: "piped",
-            stderr: "piped",
-          }).output();
+          // `/bin/sh` execs the login shell, which the lane's run grant does
+          // not name, with exactly the profile's environment and nothing
+          // inherited.
+          const loginShell = await new Promise<
+            { code: number | null; stdout: string }
+          >((resolve, reject) => {
+            const child = spawn("/bin/sh", [
+              "-c",
+              'exec "$0" -lc "$1"',
+              shell,
+              'printf "%s\\n" "$PATH"; command -v node; if command -v brew >/dev/null; then exit 23; fi',
+            ], {
+              env: profile.environment,
+              stdio: ["ignore", "pipe", "ignore"],
+            });
+            let stdout = "";
+            child.stdout.setEncoding("utf8");
+            child.stdout.on("data", (chunk: string) => {
+              stdout += chunk;
+            });
+            child.once("error", reject);
+            child.once("close", (code) => resolve({ code, stdout }));
+          });
           assert.strictEqual(loginShell.code, 0);
           assert.deepStrictEqual(
-            new TextDecoder().decode(loginShell.stdout).trim().split("\n"),
+            loginShell.stdout.trim().split("\n"),
             [
               profile.environment.PATH,
               `${home}/.dyfj/runner-homes/codex-chatgpt/bin/node`,
@@ -1185,10 +1232,7 @@ Deno.exit(output.code);`,
       await chmod(unsafe, 0o777);
       await mkdir(unsearchable);
       await chmod(unsearchable, 0o600);
-      const linked = await new Deno.Command("bash", {
-        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", home, link],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      assert.strictEqual(await symlinkThroughBash(home, link), true);
       for (
         const toolchainPath of [
           "relative",
@@ -1259,10 +1303,7 @@ Deno.exit(output.code);`,
       for (const name of dotted) {
         await mkdir(`${home}/${name}`, { mode: 0o700 });
       }
-      const linked = await new Deno.Command("bash", {
-        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      assert.strictEqual(await symlinkThroughBash(child, alias), true);
       for (
         const [option, diagnostic] of [
           [
@@ -1350,10 +1391,7 @@ Deno.exit(output.code);`,
       await chmod(unreadable, 0o300);
       await mkdir(unwritable);
       await chmod(unwritable, 0o500);
-      const linked = await new Deno.Command("bash", {
-        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", home, link],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      assert.strictEqual(await symlinkThroughBash(home, link), true);
       for (
         const rustupHome of [
           "relative",
@@ -1417,9 +1455,7 @@ Deno.exit(output.code);`,
 
   it("resolves the locked Codex executable from managed node_modules", async () => {
     const home = await tempDir();
-    const nodePath = await Deno.makeTempFile({
-      prefix: "dyfj-external-agent-",
-    });
+    const { directory: nodeDirectory, path: nodePath } = await tempFile();
     try {
       await writeFile(
         nodePath,
@@ -1442,7 +1478,7 @@ Deno.exit(output.code);`,
       );
       assert.strictEqual(packageMetadata.version, "0.153.4");
     } finally {
-      await Deno.remove(nodePath);
+      await rm(nodeDirectory, { recursive: true });
       await rm(home, { recursive: true });
     }
   });
@@ -1481,10 +1517,7 @@ Deno.exit(output.code);`,
       const executable = `${home}/not-node`;
       await writeFile(target, "#!/bin/sh\nexit 0\n");
       await chmod(target, 0o700);
-      const linked = await new Deno.Command("bash", {
-        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, executable],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      assert.strictEqual(await symlinkThroughBash(target, executable), true);
       const profile = await codexChatGptProfile(process.cwd(), {
         home,
         prototypeRoot: process.cwd(),
@@ -1539,7 +1572,7 @@ Deno.exit(output.code);`,
     }
   });
 
-  it("rejects an operator home that Deno path grants cannot represent", async () => {
+  it("rejects an operator home that permission path grants cannot represent", async () => {
     for (const home of ["/tmp/operator,home", "/tmp/operator:home"]) {
       await assert.rejects(
         () =>
@@ -1586,10 +1619,10 @@ Deno.exit(output.code);`,
       await mkdir(target);
       await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
       await chmod(nodePath, 0o700);
-      const linked = await new Deno.Command("bash", {
-        args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, `${home}/.dyfj`],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      assert.strictEqual(
+        await symlinkThroughBash(target, `${home}/.dyfj`),
+        true,
+      );
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
@@ -1831,9 +1864,9 @@ Deno.exit(output.code);`,
       assert.strictEqual(result.stopReason, "stop");
       assertContains(result.receipt, "Session projection: update skipped");
       assert.ok(
-        warn.calls.some((call) =>
-          call.args.length === 1 &&
-          call.args[0] === "Session projection update skipped"
+        warn.mock.calls.some((call) =>
+          call.arguments.length === 1 &&
+          call.arguments[0] === "Session projection update skipped"
         ),
       );
       assert.deepStrictEqual(runtimeEvents, [
@@ -1954,9 +1987,9 @@ Deno.exit(output.code);`,
         "session_end",
       ]);
       assert.ok(
-        warn.calls.some((call) =>
-          call.args.length === 1 &&
-          call.args[0] === "Runtime event delivery skipped"
+        warn.mock.calls.some((call) =>
+          call.arguments.length === 1 &&
+          call.arguments[0] === "Runtime event delivery skipped"
         ),
       );
     } finally {
@@ -2590,7 +2623,9 @@ Deno.exit(output.code);`,
         sessionId: "01ACPSESSION000000000000004",
         workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assert.deepStrictEqual(map.size, 1);
+      // The type argument keeps `map.size` a number: the assertion would
+      // otherwise narrow it to 1 for the polling loop below.
+      assert.deepStrictEqual<number>(map.size, 1);
       const retirementDeadline = Date.now() + 2_000;
       while (map.size !== 0 && Date.now() < retirementDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2636,12 +2671,12 @@ Deno.exit(output.code);`,
 
   it("cancellation during stalled warm-path creation finalizes as aborted", async () => {
     const h = createHarness();
-    const pidFile = await Deno.makeTempFile({ prefix: "dyfj-external-agent-" });
+    const { directory: pidDirectory, path: pidFile } = await tempFile();
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     const controller = new AbortController();
     const runtimeEvents: string[] = [];
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       const startedAt = Date.now();
       const pending = runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
@@ -2689,16 +2724,14 @@ Deno.exit(output.code);`,
       assert.strictEqual(await processIsAlive(pid), false);
     } finally {
       await map.shutdown();
-      await Deno.remove(pidFile).catch(() => {});
+      await rm(pidDirectory, { recursive: true, force: true });
     }
   });
 
   it("a referential follow-up after idle expiry keeps its antecedent", async () => {
     const h = createHarness();
     const workspace = process.cwd();
-    const methodLog = await Deno.makeTempFile({
-      prefix: "dyfj-external-agent-",
-    });
+    const { directory: methodLogDirectory, path: methodLog } = await tempFile();
     const profile = methodLogProfile(workspace, methodLog);
     const idleTimers = injectedIdleTimers();
     const map = new AcpSessionHandleMap({
@@ -2792,7 +2825,7 @@ Deno.exit(output.code);`,
       ]);
     } finally {
       await map.shutdown();
-      await Deno.remove(methodLog).catch(() => {});
+      await rm(methodLogDirectory, { recursive: true, force: true });
     }
   });
 
@@ -2845,9 +2878,7 @@ Deno.exit(output.code);`,
   it("an oversized reconstruction fails before the agent is prompted", async () => {
     const h = createHarness();
     const workspace = process.cwd();
-    const methodLog = await Deno.makeTempFile({
-      prefix: "dyfj-external-agent-",
-    });
+    const { directory: methodLogDirectory, path: methodLog } = await tempFile();
     const profile = methodLogProfile(workspace, methodLog);
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     try {
@@ -2872,7 +2903,7 @@ Deno.exit(output.code);`,
       assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();
-      await Deno.remove(methodLog).catch(() => {});
+      await rm(methodLogDirectory, { recursive: true, force: true });
     }
   });
 
