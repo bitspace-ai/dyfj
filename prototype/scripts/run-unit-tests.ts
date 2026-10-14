@@ -2,10 +2,10 @@
 // (`*.integration.test.ts`) and the golden suite (`testing/golden/`, run by
 // its own lane), discovered by `scripts/test-files.ts` and run with
 // `deno test --parallel`. Unit and component
-// tests may use port fakes and temp directories only, so the child gets read
+// tests may use port fakes and temp directories only, so that child gets read
 // access to the prototype and the temp roots, write access to the temp roots,
 // env access to TMPDIR, TMP and TEMP only (node:os `tmpdir()` reads them),
-// and no run, net, sys, or ffi grant. Sanitizers are on: in the pinned
+// and no run, net, sys, or ffi grant. These grants bind that subset only. Sanitizers are on: in the pinned
 // Deno (2.9.6) the op and resource sanitizers are opt-in, so the lane enables
 // them explicitly, and a test that leaks an async op, timer, or resource the
 // runtime tracks fails at that test; they do not see `node:` resources. A test
@@ -17,13 +17,15 @@
 // permission sandbox (`node-test-lane.ts`, `specs/03-testing.md` §1).
 //
 // Given arguments (`deno task test:file <path>... [--filter <pattern>]`), it
-// runs those instead of the discovered files, under the same grants and
-// sanitizers, so a single unit test file can be iterated on without a full
-// typecheck. An integration file needs the integration lane's grants and
-// fixture, so it fails here on its first ungranted access.
+// runs those instead of the discovered files, routed and run as above, so a
+// single unit test file can be iterated on without a full typecheck. An
+// integration file (`*.integration.test.ts`) is rejected before either runtime
+// starts: it needs the isolated Dolt fixture, and a Node-routed one would run
+// unsandboxed (`integrationFileRejection`).
 import { selectedDenoExecutable } from "./deno-executable.ts";
 import {
   discoverUnitTests,
+  isIntegrationTest,
   isTestSource,
   partitionByRuntime,
   type TestRuntime,
@@ -63,6 +65,17 @@ export function unitTestArgs(
   ];
 }
 
+/**
+ * Why `test:file` turns `path` away: it runs unit files only. An integration
+ * file needs the isolated Dolt fixture, and a Node-routed one would run with
+ * no permission sandbox, so it is rejected before either runtime starts.
+ */
+export function integrationFileRejection(path: string): string {
+  return `${path} is an integration test; test:file runs unit test files ` +
+    "only, on neither runtime. Run it in the isolated-Dolt integration lane " +
+    "with `deno task test` from the repository root.";
+}
+
 export const TEST_FILE_USAGE =
   "usage: deno task test:file <path>... [--filter <pattern>]";
 
@@ -88,6 +101,8 @@ export function parseTestFileArgs(
       i++;
     } else if (arg.startsWith("-") || !isTestSource(arg)) {
       throw new Error(TEST_FILE_USAGE);
+    } else if (isIntegrationTest(arg)) {
+      throw new Error(integrationFileRejection(arg));
     } else {
       files.push(arg);
     }

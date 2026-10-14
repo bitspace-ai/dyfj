@@ -255,9 +255,12 @@ deno task test:golden --update  # rewrite snapshots (see below)
 ```
 
 Use `test:file` for tight iteration loops on a unit test file: it skips the full
-typecheck and runs only the named files, with the same grants and sanitizers as
-`test:unit`, routing each file to `deno test` or `node --test` as the lane does. An integration file needs the integration lane's grants and fixture, so it
-fails under `test:file` on its first ungranted access. Use `test` before commit: it
+typecheck and runs only the named files, routed to `deno test` or `node --test` as
+`test:unit` routes them, with the same grants and sanitizers on the `deno test`
+subset (Node-routed files run unsandboxed). It runs unit files only: a
+`*.integration.test.ts` path is rejected before either runtime starts, with exit 2
+and a message naming the file and the integration lane (`deno task test` from the
+repository root), since an integration file needs the isolated Dolt fixture. Use `test` before commit: it
 typechecks the entire codebase and runs the unit lane.
 
 Both typecheck file lists and the `test.unit` and integration file lists are derived by
@@ -288,7 +291,10 @@ test. Under `node --test`, tests run with no permission sandbox.
 access to the prototype and
 temp roots, write access to temp roots only, env access to `TMPDIR`, `TMP` and `TEMP` only
 (`node:os` `tmpdir()` reads them), and no run or net grant, so unit and component tests
-stay off Dolt, the network, and child processes. Write fixture output to a temp directory
+in that subset are kept off Dolt, the network, and child processes. These grants bind
+the `deno test` subset only: Node-routed unit files run unsandboxed, so nothing stops
+one from reaching Dolt, the network or a child process; keeping them off those is the
+test author's job. Write fixture output to a temp directory
 (`mkdtemp(join(tmpdir(), prefix))` from `node:fs/promises`, `node:os` and `node:path`),
 never the working tree.
 `src/engine/headless-host.component.test.ts` uses these fakes to exercise the

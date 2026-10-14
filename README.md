@@ -1127,7 +1127,8 @@ file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed), the prototype unit lane (`test.unit`: every
 non-integration, non-golden test file; its `deno test` subset runs in parallel
 with the op and resource sanitizers enabled, no run or net grant, and env
-access only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), current and
+access only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`, grants that
+bind that subset only, while its Node-routed files run unsandboxed), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
@@ -2169,5 +2170,6 @@ Document revisions only. Code and behavior changes are tracked in
   lanes: files that register with `node:test` run under `node --test` with a
   per-file handle check, the rest under `deno test`, and each lane prints a
   Node count line. It corrects the claim that the sanitizers catch every leaked
-  resource: they do not see `node:` resources. Node 26 joins the integration
-  lane's requirements.
+  resource: they do not see `node:` resources, and that the unit lane's grants
+  bind only its `deno test` subset. Node 26 joins the integration lane's
+  requirements.
