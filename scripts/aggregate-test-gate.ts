@@ -757,6 +757,7 @@ export function productionLanes(
         "scripts/arch-imports.test.ts",
         "scripts/runtime-neutral.test.ts",
         "scripts/erasable-syntax.test.ts",
+        "scripts/node-load-probe.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
         "scripts/change-scope.test.ts",

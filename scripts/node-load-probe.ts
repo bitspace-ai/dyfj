@@ -12,18 +12,23 @@
 // stripping is on by default from there):
 //   node scripts/node-load-probe.ts
 //
-// It is not a gate lane yet: the gate's environment has no `node`. The gate
-// tooling's port to Node makes it one.
+// It is a manual check, not a gate lane: the gate's environment has no
+// `node`. The gate tooling's port to Node makes it one. It covers non-test
+// modules under the two roots only.
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isTestSource } from "../prototype/scripts/test-files.ts";
 
 export const PROBE_ROOTS = ["prototype/src", "contracts"] as const;
 
-/** Whether a tracked path is a module the probe loads. */
+/**
+ * Whether a tracked path is a module the probe loads. Test files are those
+ * test discovery recognises, so the two share one definition.
+ */
 export function isProbedModule(path: string): boolean {
-  return path.endsWith(".ts") && !path.endsWith(".test.ts") &&
+  return path.endsWith(".ts") && !isTestSource(path) &&
     PROBE_ROOTS.some((root) => path.startsWith(`${root}/`));
 }
 

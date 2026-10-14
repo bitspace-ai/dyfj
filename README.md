@@ -1213,23 +1213,30 @@ read access to the repository, `git`, and the one environment variable the Deno
 `node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
 
 `erasable.syntax` (`scripts/erasable-syntax.ts`, reported under
-`test.aggregate`) keeps every git-tracked `.ts` file loadable by Node's type
-stripping, which removes types without transforming code (decision D32). It
-fails on any constructor parameter property (a constructor parameter with
-`public`, `private`, `protected`, `readonly` or `override`), the one such
-construct the codebase had, and on a file it cannot parse. Declare the field
-in the class body and assign it in the constructor instead. The scan parses
-with `deno lint` and the repository plugin `scripts/erasable-syntax-lint-plugin.ts`
-(configured by `scripts/erasable-syntax-lint.json`), not a pattern, so it sees
-the syntax across line breaks. It prints one report line, for example
-`erasable.syntax: 542 tracked .ts files scanned, 0 violations`, and needs read
+`test.aggregate`) rejects constructor parameter properties in git-tracked
+`.ts` files: a constructor parameter with `public`, `private`, `protected`,
+`readonly` or `override`. Node runs TypeScript by stripping types without
+transforming code (decision D32), and a parameter property was the one
+construct the codebase used that stripping cannot erase. The lane checks that
+construct only. Other syntax that needs a transform (`enum`, `namespace`,
+decorators and the like) goes unchecked until `tsc --erasableSyntaxOnly`
+takes over when the typecheck lane moves to Node. The lane also fails on a
+file it cannot parse. To fix a violation, declare the field in the class body
+and assign it in the constructor. The scan parses with `deno lint` and the
+repository plugin `scripts/erasable-syntax-lint-plugin.ts` (configured by
+`scripts/erasable-syntax-lint.json`), not a pattern, so it sees the syntax
+across line breaks. It prints one report line, for example
+`erasable.syntax: 548 tracked .ts files scanned, 0 violations`, and needs read
 access to the repository, `git`, the selected Deno binary and
-`NODE_V8_COVERAGE`. `tsc --erasableSyntaxOnly` replaces it once the typecheck
-lane moves to Node. Until the gate tooling runs on Node, the matching load
-check is run by hand from the repository root with Node 22.18 or later:
-`node scripts/node-load-probe.ts` imports every tracked non-test module under
-`prototype/src` and `contracts/` and reports each one. It resolves npm packages
-from `prototype/node_modules`, which Deno creates on first run.
+`NODE_V8_COVERAGE`.
+
+The Node load probe (`scripts/node-load-probe.ts`) is a manual check, not a
+gate lane, until the gate tooling runs on Node. Run it by hand from the
+repository root with Node 22.18 or later: `node scripts/node-load-probe.ts`.
+It imports each git-tracked non-test module under `prototype/src` and
+`contracts/` only, and reports each one. Test files are those test discovery
+recognises (`isTestSource` in `prototype/scripts/test-files.ts`). It resolves
+npm packages from `prototype/node_modules`, which Deno creates on first run.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -2069,3 +2076,7 @@ Document revisions only. Code and behavior changes are tracked in
   `/bin/kill` in the `serve-unix` spawn grant.
 - 2026-10-12 - The aggregate gate's description of `test.unit` names its env
   grant: `TMPDIR`, `TMP` and `TEMP`, which `node:os` `tmpdir()` reads.
+- 2026-10-14 - Validation guidance documents the `erasable.syntax` gate lane,
+  which rejects constructor parameter properties in tracked TypeScript under
+  decision D32, and the manual Node load probe for non-test modules under
+  `prototype/src` and `contracts/`.
