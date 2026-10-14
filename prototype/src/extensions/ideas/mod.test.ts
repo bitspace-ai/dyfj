@@ -108,19 +108,30 @@ Deno.test("packets/draft, packets/list, packets/get flow", async () => {
   };
   assert.deepStrictEqual(draft.packet.issueId, "ISSUE-258");
   assert.deepStrictEqual(draft.packet.targetWorkspace, "/workspaces/project");
-  assert.ok(draft.markdown.includes("# Work Packet: Neutral session model"), `expected draft.markdown to include "# Work Packet: Neutral session model"`);
-  assert.ok(draft.markdown.includes("- **Related Issue:** `ISSUE-258`"), `expected draft.markdown to include "- **Related Issue:** \`ISSUE-258\`"`);
+  assert.ok(
+    draft.markdown.includes("# Work Packet: Neutral session model"),
+    `expected draft.markdown to include "# Work Packet: Neutral session model"`,
+  );
+  assert.ok(
+    draft.markdown.includes("- **Related Issue:** `ISSUE-258`"),
+    `expected draft.markdown to include "- **Related Issue:** \`ISSUE-258\`"`,
+  );
 
   const { packets } = await callRpc(rpc, "packets/list", {
     sessionId: "01TEST_PACKET_SESSION",
   }) as { packets: Array<{ packetId: string }> };
-  assert.deepStrictEqual(packets.map((entry) => entry.packetId), [draft.packet.packetId]);
+  assert.deepStrictEqual(packets.map((entry) => entry.packetId), [
+    draft.packet.packetId,
+  ]);
 
   const got = await callRpc(rpc, "packets/get", {
     packetId: draft.packet.packetId,
   }) as { packet: { packetId: string }; markdown: string };
   assert.deepStrictEqual(got.packet.packetId, draft.packet.packetId);
-  assert.ok(got.markdown.includes("# Work Packet: Neutral session model"), `expected got.markdown to include "# Work Packet: Neutral session model"`);
+  assert.ok(
+    got.markdown.includes("# Work Packet: Neutral session model"),
+    `expected got.markdown to include "# Work Packet: Neutral session model"`,
+  );
 });
 
 Deno.test("ideas and packets share the pair's registry; another pair has its own", async () => {
@@ -192,6 +203,9 @@ Deno.test("packets/draft rejects idea belonging to a different session before fe
     ideaId: idea.ideaId,
   });
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
-  assert.ok(error.message.includes('belongs to session "01SESSION_OWNER_A"'), `expected error.message to include 'belongs to session "01SESSION_OWNER_A"'`);
+  assert.ok(
+    error.message.includes('belongs to session "01SESSION_OWNER_A"'),
+    `expected error.message to include 'belongs to session "01SESSION_OWNER_A"'`,
+  );
   assert.deepStrictEqual(fetches, fetchesAfterMark);
 });

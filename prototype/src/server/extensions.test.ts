@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import { callRpc } from "../../testing/builders/rpc.ts";
 import { createLinearExtension } from "../extensions/linear/mod.ts";
 import {
@@ -34,7 +33,9 @@ Deno.test("buildExtensionHandlers merges every extension's methods", async () =>
     extension("b", ["b/one"]),
   ], deps);
   assert.deepStrictEqual(Object.keys(handlers), ["a/one", "a/two", "b/one"]);
-  assert.deepStrictEqual(await callRpc(handlers, "b/one", {}), { method: "b/one" });
+  assert.deepStrictEqual(await callRpc(handlers, "b/one", {}), {
+    method: "b/one",
+  });
 });
 
 Deno.test("buildExtensionHandlers hands each extension the deps", () => {
@@ -50,13 +51,23 @@ Deno.test("buildExtensionHandlers hands each extension the deps", () => {
 });
 
 Deno.test("buildExtensionHandlers rejects a duplicate id or method", () => {
-  assert.throws(() =>
-      buildExtensionHandlers([extension("a", []), extension("a", [])], deps), (error: unknown) => error instanceof Error && error.message.includes("duplicate extension id: a"));
-  assert.throws(() =>
+  assert.throws(
+    () =>
+      buildExtensionHandlers([extension("a", []), extension("a", [])], deps),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("duplicate extension id: a"),
+  );
+  assert.throws(
+    () =>
       buildExtensionHandlers([
         extension("a", ["shared/method"]),
         extension("b", ["shared/method"]),
-      ], deps), (error: unknown) => error instanceof Error && error.message.includes("extension b redefines RPC method shared/method"));
+      ], deps),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("extension b redefines RPC method shared/method"),
+  );
 });
 
 Deno.test("rpcToolApprover approves only an explicit approval", async () => {
@@ -75,7 +86,7 @@ Deno.test("rpcToolApprover approves only an explicit approval", async () => {
     decision: "deny",
     reason: "operator denied the tool call",
   });
-  assertEquals(await ask(Promise.reject(new Error("no client"))), {
+  assert.deepStrictEqual(await ask(Promise.reject(new Error("no client"))), {
     decision: "deny",
     reason: "approval request failed (no client approver?)",
   });

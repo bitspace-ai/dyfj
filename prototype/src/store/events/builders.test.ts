@@ -64,7 +64,10 @@ Deno.test("a builder writes exactly the fields it was given, nulls included", ()
 Deno.test("a builder's event_type wins over a stray one in the fields", () => {
   // Not a fresh literal, so the stray column passes the compile-time check.
   const stray = { ...base, event_type: "error", content: "{}" };
-  assert.deepStrictEqual(modelSelectedEvent(stray).event_type, "model_selected");
+  assert.deepStrictEqual(
+    modelSelectedEvent(stray).event_type,
+    "model_selected",
+  );
   assert.deepStrictEqual(
     toolCallEvent({ ...base, tool_name: "read_file", tool_call_id: "c1" })
       .event_type,

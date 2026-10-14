@@ -180,7 +180,9 @@ Deno.test("DoltStore: the pool serves the next commit after an aborted commit", 
 
     // Every later commit and read runs on a healthy pooled connection.
     for (let i = 0; i < 8; i++) {
-      await store.journal.commit({ events: [event({ event_id: `EV_NEXT_${i}` })] });
+      await store.journal.commit({
+        events: [event({ event_id: `EV_NEXT_${i}` })],
+      });
       await store.journal.commit(
         { events: [event({ event_id: `EV_SIGNAL_${i}` })] },
         { signal: new AbortController().signal },
@@ -212,8 +214,14 @@ Deno.test("DoltStore: the boot-time column check names a column a migration adde
       () => (store as DoltStore).assertCanonicalColumns(),
       MissingSchemaColumnsError,
     );
-    assert.deepStrictEqual(error.missing, [{ table: "events", column: "trace_flags" }]);
-    assert.ok(error.message.includes("schema/migrations/"), `expected error.message to include "schema/migrations/"`);
+    assert.deepStrictEqual(error.missing, [{
+      table: "events",
+      column: "trace_flags",
+    }]);
+    assert.ok(
+      error.message.includes("schema/migrations/"),
+      `expected error.message to include "schema/migrations/"`,
+    );
   } finally {
     await subject.dispose(store);
   }

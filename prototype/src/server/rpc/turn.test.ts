@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import type { TurnStreamFrame } from "../../contract/mod.ts";
 import {
   SessionOwners,
@@ -125,9 +124,12 @@ Deno.test("turn threads the configured agent-step limit and returns the receipt 
       maxToolSteps: 7,
     },
   });
-  assert.deepStrictEqual(await callRpc(rpc, "turn", { prompt: "hi" }, client()), {
-    agent: { toolStepsUsed: 3, maxToolSteps: 7, limitReached: false },
-  });
+  assert.deepStrictEqual(
+    await callRpc(rpc, "turn", { prompt: "hi" }, client()),
+    {
+      agent: { toolStepsUsed: 3, maxToolSteps: 7, limitReached: false },
+    },
+  );
   assert.deepStrictEqual(seenMaxToolSteps, 7);
 });
 
@@ -214,7 +216,11 @@ Deno.test("a rejected supersede notification prevents the replacement provider c
     request: () => Promise.reject(new Error("no peer approver")),
   };
 
-  await assert.rejects(async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx), (error: unknown) => error instanceof Error && error.message.includes("stream channel lost"));
+  await assert.rejects(
+    async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("stream channel lost"),
+  );
   assert.deepStrictEqual(replacementProviderCalled, false);
   assert.deepStrictEqual(sent, [{ t: "delta", text: "stale partial" }]);
 });
@@ -239,7 +245,11 @@ Deno.test("a rejected unparsed-markup notification fails the turn", async () => 
         : Promise.resolve(),
     request: () => Promise.reject(new Error("no peer approver")),
   };
-  await assert.rejects(async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx), (error: unknown) => error instanceof Error && error.message.includes("stream channel lost"));
+  await assert.rejects(
+    async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("stream channel lost"),
+  );
   assert.deepStrictEqual(completed, false);
 });
 
@@ -267,9 +277,12 @@ Deno.test("a rejected plain status notification does not abort the turn", async 
   console.warn = (...args: unknown[]) => warnings.push(args);
   try {
     // Resolves (does not reject), and execution continued past the failed send.
-    assert.deepStrictEqual(await handlers(runRuntime).turn({ prompt: "hi" }, ctx), {
-      receiptId: "r1",
-    });
+    assert.deepStrictEqual(
+      await handlers(runRuntime).turn({ prompt: "hi" }, ctx),
+      {
+        receiptId: "r1",
+      },
+    );
   } finally {
     console.warn = warn;
   }
@@ -315,9 +328,12 @@ Deno.test("loopback inherits approvePaidDefault when the request omits opt-in", 
       maxToolSteps: 32,
     },
   });
-  assert.deepStrictEqual(await callRpc(rpc, "turn", { prompt: "hi" }, client()), {
-    verdict: { decision: "approve" },
-  });
+  assert.deepStrictEqual(
+    await callRpc(rpc, "turn", { prompt: "hi" }, client()),
+    {
+      verdict: { decision: "approve" },
+    },
+  );
 });
 
 Deno.test("turn applies a loopback budget override", async () => {
@@ -357,7 +373,9 @@ Deno.test("turn/cancel aborts the matching active turn and is otherwise a no-op"
     cancelled: false,
     reason: "no_active_turn",
   });
-  assert.deepStrictEqual(await rpc["turn/cancel"]({ turnId }, ctx), { cancelled: true });
+  assert.deepStrictEqual(await rpc["turn/cancel"]({ turnId }, ctx), {
+    cancelled: true,
+  });
   assert.partialDeepStrictEqual(await turn as Record<string, unknown>, {
     stopReason: "aborted",
     text: "partial",
@@ -375,7 +393,7 @@ Deno.test("turn/cancel requires a UUID turn id", async () => {
     { turnId: "not-a-uuid" },
     client(),
   );
-  assertEquals(error, {
+  assert.deepStrictEqual(error, {
     code: RpcErrorCode.invalidParams,
     message: "turnId must be a UUID",
   });
@@ -430,7 +448,9 @@ Deno.test("an approval arriving after acknowledged cancellation cannot start wor
   const turn = rpc.turn({ prompt: "edit notes", turnId }, ctx);
 
   await approvalRequested;
-  assert.deepStrictEqual(await rpc["turn/cancel"]({ turnId }, ctx), { cancelled: true });
+  assert.deepStrictEqual(await rpc["turn/cancel"]({ turnId }, ctx), {
+    cancelled: true,
+  });
   assert.partialDeepStrictEqual(await turn as Record<string, unknown>, {
     aborted: true,
     matchedSignalReason: true,
@@ -542,9 +562,12 @@ Deno.test("one connection cannot accumulate concurrent active turns", async () =
       message: "connection already has an active turn",
     },
   );
-  assert.deepStrictEqual(await rpc["turn/cancel"]({ turnId: firstTurnId }, ctx), {
-    cancelled: true,
-  });
+  assert.deepStrictEqual(
+    await rpc["turn/cancel"]({ turnId: firstTurnId }, ctx),
+    {
+      cancelled: true,
+    },
+  );
   assert.partialDeepStrictEqual(await first as Record<string, unknown>, {
     stopReason: "aborted",
   });

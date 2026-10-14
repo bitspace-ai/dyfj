@@ -6,7 +6,9 @@ import {
 } from "./memories.ts";
 
 Deno.test("memoryClearanceFor: loopback (local operator) is cleared for every visibility class", () => {
-  assert.deepStrictEqual(memoryClearanceFor("loopback"), [...MEMORY_VISIBILITY_ALL]);
+  assert.deepStrictEqual(memoryClearanceFor("loopback"), [
+    ...MEMORY_VISIBILITY_ALL,
+  ]);
   assert.ok(memoryClearanceFor("loopback").includes("private"));
 });
 
@@ -18,5 +20,8 @@ Deno.test("memoryClearanceFor: remote consumers get only client-safe + public (n
 });
 
 Deno.test("a standalone MCP stdio consumer gets the remote clearance", () => {
-  assert.deepStrictEqual([...MCP_STDIO_MEMORY_CLEARANCE], memoryClearanceFor("remote"));
+  assert.deepStrictEqual(
+    [...MCP_STDIO_MEMORY_CLEARANCE],
+    memoryClearanceFor("remote"),
+  );
 });

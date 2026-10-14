@@ -1,7 +1,6 @@
 import { captureThrow } from "../../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { assertArrayIncludes } from "@std/assert";
 import {
   draftWorkPacketFromContext,
   formatWorkPacketMarkdown,
@@ -52,12 +51,17 @@ describe("IdeaPacketRegistry", () => {
 
 describe("markWorkbenchIdea", () => {
   it("throws on empty or whitespace label", () => {
-    assert.throws(() =>
+    assert.throws(
+      () =>
         markWorkbenchIdea({
           registry: new IdeaPacketRegistry(),
           sessionId: "01SESSION_001",
           label: "   ",
-        }), (error: unknown) => error instanceof Error && error.message.includes("idea label cannot be empty"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("idea label cannot be empty"),
+    );
   });
 
   it("strips surrounding single or double quotes from label", () => {
@@ -203,15 +207,26 @@ describe("draftWorkPacketFromContext", () => {
       packet.operatorIntent,
       "Prevent malformed ports from reaching net grants.",
     );
-    assertArrayIncludes(packet.sourceContext.contextSources, [
-      "prototype/src/mcp-net-grants.ts",
-    ]);
-    assert.ok(packet.proposedAcceptanceCriteria.length >= 2, `expected packet.proposedAcceptanceCriteria.length >= 2`);
+    assert.deepStrictEqual(
+      ["prototype/src/mcp-net-grants.ts"].filter((item) =>
+        !packet.sourceContext.contextSources.includes(item)
+      ),
+      [],
+    );
+    assert.ok(
+      packet.proposedAcceptanceCriteria.length >= 2,
+      `expected packet.proposedAcceptanceCriteria.length >= 2`,
+    );
     assert.strictEqual(
       packet.verifierProvenance.verifierType,
       "human_operator",
     );
-    assert.ok(packet.verifierProvenance.independenceNotes.includes("Verifier evaluation must be independent of generation"), `expected packet.verifierProvenance.independenceNotes to include "Verifier evaluation must be independent of generation"`);
+    assert.ok(
+      packet.verifierProvenance.independenceNotes.includes(
+        "Verifier evaluation must be independent of generation",
+      ),
+      `expected packet.verifierProvenance.independenceNotes to include "Verifier evaluation must be independent of generation"`,
+    );
   });
 
   it("throws when idea belongs to a different session", () => {
@@ -281,12 +296,38 @@ describe("draftWorkPacketFromContext", () => {
 
     const md = formatWorkPacketMarkdown(packet);
 
-    assert.ok(md.includes("# Work Packet: Neutral session model and idea capture"), `expected ${JSON.stringify(md)} to include "# Work Packet: Neutral session model and idea capture"`);
-    assert.ok(md.includes(`- **Packet ID:** \`${packet.packetId}\``), `expected ${JSON.stringify(md)} to include \`- **Packet ID:** \\\`\${packet.packetId}\\\`\``);
-    assert.ok(md.includes("- **Related Issue:** `ISSUE-258`"), `expected ${JSON.stringify(md)} to include "- **Related Issue:** \`ISSUE-258\`"`);
-    assert.ok(md.includes("## 1. Source Context"), `expected ${JSON.stringify(md)} to include "## 1. Source Context"`);
-    assert.ok(md.includes("- **Primary Verifier:** `human_operator`"), `expected ${JSON.stringify(md)} to include "- **Primary Verifier:** \`human_operator\`"`);
-    assert.ok(md.includes("- **Independence Notes:**"), `expected ${JSON.stringify(md)} to include "- **Independence Notes:**"`);
+    assert.ok(
+      md.includes("# Work Packet: Neutral session model and idea capture"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "# Work Packet: Neutral session model and idea capture"`,
+    );
+    assert.ok(
+      md.includes(`- **Packet ID:** \`${packet.packetId}\``),
+      `expected ${
+        JSON.stringify(md)
+      } to include \`- **Packet ID:** \\\`\${packet.packetId}\\\`\``,
+    );
+    assert.ok(
+      md.includes("- **Related Issue:** `ISSUE-258`"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- **Related Issue:** \`ISSUE-258\`"`,
+    );
+    assert.ok(
+      md.includes("## 1. Source Context"),
+      `expected ${JSON.stringify(md)} to include "## 1. Source Context"`,
+    );
+    assert.ok(
+      md.includes("- **Primary Verifier:** `human_operator`"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- **Primary Verifier:** \`human_operator\`"`,
+    );
+    assert.ok(
+      md.includes("- **Independence Notes:**"),
+      `expected ${JSON.stringify(md)} to include "- **Independence Notes:**"`,
+    );
   });
 
   it("getPacket and listPackets return defensive copies", () => {
@@ -304,7 +345,10 @@ describe("draftWorkPacketFromContext", () => {
 
     const secondRetrieval = reg.getPacket(packet.packetId);
     assert.deepStrictEqual(secondRetrieval!.sourceContext.contextSources, []);
-    assert.deepStrictEqual(secondRetrieval!.proposedAcceptanceCriteria.length, 2);
+    assert.deepStrictEqual(
+      secondRetrieval!.proposedAcceptanceCriteria.length,
+      2,
+    );
 
     const listed = reg.listPackets("01SESSION_300");
     assert.deepStrictEqual(listed.length, 1);
@@ -340,14 +384,19 @@ describe("draftWorkPacketFromContext", () => {
       "Updated Idea in Same Session",
     );
 
-    assert.throws(() => {
+    assert.throws(
+      () => {
         markWorkbenchIdea({
           sessionId: "01SESSION_B",
           ideaId: "SAME_IDEA_ID",
           label: "Attempted Cross-Session Hijack",
           registry: reg,
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes("cannot re-register idea"));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("cannot re-register idea"),
+    );
   });
 
   it("referenced tool-call event with empty content extracts tool call details as excerpt", () => {
@@ -370,19 +419,32 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     assert.strictEqual(packet.sourceContext.referencedEventId, "evt-tc-1");
-    assert.ok(packet.sourceContext.excerpt.includes("[Tool Call: execute_command]"), `expected packet.sourceContext.excerpt to include "[Tool Call: execute_command]"`);
-    assert.ok(packet.sourceContext.excerpt.includes("deno task test"), `expected packet.sourceContext.excerpt to include "deno task test"`);
+    assert.ok(
+      packet.sourceContext.excerpt.includes("[Tool Call: execute_command]"),
+      `expected packet.sourceContext.excerpt to include "[Tool Call: execute_command]"`,
+    );
+    assert.ok(
+      packet.sourceContext.excerpt.includes("deno task test"),
+      `expected packet.sourceContext.excerpt to include "deno task test"`,
+    );
   });
 
   it("session ID longer than 256 chars throws validation error", () => {
     const longSessionId = "A".repeat(300);
     const reg = new IdeaPacketRegistry();
-    assert.throws(() =>
+    assert.throws(
+      () =>
         markWorkbenchIdea({
           sessionId: longSessionId,
           label: "Long session idea",
           registry: reg,
-        }), (error: unknown) => error instanceof Error && error.message.includes("sessionId exceeds maximum length of 256 characters"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "sessionId exceeds maximum length of 256 characters",
+        ),
+    );
   });
 
   it("formatWorkPacketMarkdown neutralizes markdown heading injections and HTML headings while preserving comparison operators", () => {
@@ -402,25 +464,86 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("# Work Packet: Title with newlines"), `expected ${JSON.stringify(md)} to include "# Work Packet: Title with newlines"`);
-    assert.ok(md.includes("\\## 4. Injected Section"), `expected ${JSON.stringify(md)} to include "\\\\## 4. Injected Section"`);
-    assert.ok(md.includes("> > \\# Injected Section"), `expected ${JSON.stringify(md)} to include "> > \\\\# Injected Section"`);
-    assert.ok(md.includes("1. > \\# List Quoted Heading"), `expected ${JSON.stringify(md)} to include "1. > \\\\# List Quoted Heading"`);
-    assert.ok(md.includes("<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"), `expected ${JSON.stringify(md)} to include "<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"`);
-    assert.ok(md.includes("Injected Setext\n\\="), `expected ${JSON.stringify(md)} to include "Injected Setext\\n\\\\="`);
-    assert.ok(md.includes("Injected H2 Setext\n\\-"), `expected ${JSON.stringify(md)} to include "Injected H2 Setext\\n\\\\-"`);
-    assert.ok(md.includes("\\# Injected CR Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected CR Heading"`);
-    assert.ok(md.includes("```sh\n# shell comment\n<h1>inside block</h1>\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`sh\\n# shell comment\\n<h1>inside block</h1>\\n\`\`\`"`);
-    assert.ok(md.includes("```ts\nconst x = 1;\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`ts\\nconst x = 1;\\n\`\`\`"`);
-    assert.ok(md.includes("- [ ] Criterion 1 with newline"), `expected ${JSON.stringify(md)} to include "- [ ] Criterion 1 with newline"`);
-    assert.ok(md.includes("- [ ] `<h1>` Injected Heading in Code Span"), `expected ${JSON.stringify(md)} to include "- [ ] \`<h1>\` Injected Heading in Code Span"`);
-    assert.ok(md.includes("- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"`);
-    assert.ok(md.includes("- [ ] p95 latency < 200 ms and memory > 50 MB"), `expected ${JSON.stringify(md)} to include "- [ ] p95 latency < 200 ms and memory > 50 MB"`);
+    assert.ok(
+      md.includes("# Work Packet: Title with newlines"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "# Work Packet: Title with newlines"`,
+    );
+    assert.ok(
+      md.includes("\\## 4. Injected Section"),
+      `expected ${JSON.stringify(md)} to include "\\\\## 4. Injected Section"`,
+    );
+    assert.ok(
+      md.includes("> > \\# Injected Section"),
+      `expected ${JSON.stringify(md)} to include "> > \\\\# Injected Section"`,
+    );
+    assert.ok(
+      md.includes("1. > \\# List Quoted Heading"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "1. > \\\\# List Quoted Heading"`,
+    );
+    assert.ok(
+      md.includes("<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "<div>&lt;h1&gt;Injected HTML&lt;/h1&gt;</div>"`,
+    );
+    assert.ok(
+      md.includes("Injected Setext\n\\="),
+      `expected ${JSON.stringify(md)} to include "Injected Setext\\n\\\\="`,
+    );
+    assert.ok(
+      md.includes("Injected H2 Setext\n\\-"),
+      `expected ${JSON.stringify(md)} to include "Injected H2 Setext\\n\\\\-"`,
+    );
+    assert.ok(
+      md.includes("\\# Injected CR Heading"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Injected CR Heading"`,
+    );
+    assert.ok(
+      md.includes("```sh\n# shell comment\n<h1>inside block</h1>\n```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "\`\`\`sh\\n# shell comment\\n<h1>inside block</h1>\\n\`\`\`"`,
+    );
+    assert.ok(
+      md.includes("```ts\nconst x = 1;\n```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "\`\`\`ts\\nconst x = 1;\\n\`\`\`"`,
+    );
+    assert.ok(
+      md.includes("- [ ] Criterion 1 with newline"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- [ ] Criterion 1 with newline"`,
+    );
+    assert.ok(
+      md.includes("- [ ] `<h1>` Injected Heading in Code Span"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- [ ] \`<h1>\` Injected Heading in Code Span"`,
+    );
+    assert.ok(
+      md.includes("- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- [ ] &lt;h1&gt;Injected Raw Heading&lt;/h1&gt;"`,
+    );
+    assert.ok(
+      md.includes("- [ ] p95 latency < 200 ms and memory > 50 MB"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- [ ] p95 latency < 200 ms and memory > 50 MB"`,
+    );
   });
 
   it("registerPacket rejects mismatched packet and sourceContext session IDs", () => {
     const reg = new IdeaPacketRegistry();
-    assert.throws(() => {
+    assert.throws(
+      () => {
         reg.registerPacket({
           packetId: "01PACKET000000000000000001",
           ideaId: null,
@@ -442,7 +565,13 @@ describe("draftWorkPacketFromContext", () => {
           },
           createdAt: "2026-08-15T12:00:00Z",
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes("packet sessionId and sourceContext sessionId must match"));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "packet sessionId and sourceContext sessionId must match",
+        ),
+    );
   });
 
   it("recent session events longer than 300 chars include truncation indicator", () => {
@@ -463,7 +592,10 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assert.ok(packet.sourceContext.excerpt.includes("...[truncated]"), `expected packet.sourceContext.excerpt to include "...[truncated]"`);
+    assert.ok(
+      packet.sourceContext.excerpt.includes("...[truncated]"),
+      `expected packet.sourceContext.excerpt to include "...[truncated]"`,
+    );
   });
 
   it("markWorkbenchIdea rejects event belonging to a different session", () => {
@@ -516,8 +648,12 @@ describe("draftWorkPacketFromContext", () => {
       events,
     });
 
-    assert.deepStrictEqual(packet.sourceContext.contextSources, ["native/file.ts"]);
-    assert.ok(!packet.sourceContext.contextSources.includes("foreign/secret.ts"));
+    assert.deepStrictEqual(packet.sourceContext.contextSources, [
+      "native/file.ts",
+    ]);
+    assert.ok(
+      !packet.sourceContext.contextSources.includes("foreign/secret.ts"),
+    );
   });
 
   it("markWorkbenchIdea throws when eventId is provided without events array", () => {
@@ -557,8 +693,16 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes(">```ts\n> const y = 2;\n> ```"), `expected ${JSON.stringify(md)} to include ">\`\`\`ts\\n> const y = 2;\\n> \`\`\`"`);
-    assert.ok(md.includes("\\# Heading Outside Fence"), `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside Fence"`);
+    assert.ok(
+      md.includes(">```ts\n> const y = 2;\n> ```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include ">\`\`\`ts\\n> const y = 2;\\n> \`\`\`"`,
+    );
+    assert.ok(
+      md.includes("\\# Heading Outside Fence"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside Fence"`,
+    );
     assert.ok(!md.includes("\x1b[31m"));
     assert.ok(!packet.operatorIntent.includes("\x1b[31m"));
   });
@@ -588,8 +732,14 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     assert.strictEqual(packet.sourceContext.referencedEventId, null);
-    assert.ok(packet.sourceContext.excerpt.includes("[User]: What is the plan?"), `expected packet.sourceContext.excerpt to include "[User]: What is the plan?"`);
-    assert.ok(packet.sourceContext.excerpt.includes("[Assistant]: Here is the plan."), `expected packet.sourceContext.excerpt to include "[Assistant]: Here is the plan."`);
+    assert.ok(
+      packet.sourceContext.excerpt.includes("[User]: What is the plan?"),
+      `expected packet.sourceContext.excerpt to include "[User]: What is the plan?"`,
+    );
+    assert.ok(
+      packet.sourceContext.excerpt.includes("[Assistant]: Here is the plan."),
+      `expected packet.sourceContext.excerpt to include "[Assistant]: Here is the plan."`,
+    );
   });
 
   it("preserves headings inside list-nested and numbered list code fences", () => {
@@ -602,9 +752,22 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("- ```sh\n  # shell comment\n  echo hello\n  ```"), `expected ${JSON.stringify(md)} to include "- \`\`\`sh\\n  # shell comment\\n  echo hello\\n  \`\`\`"`);
-    assert.ok(md.includes("1. ```python\n   # python comment\n   ```"), `expected ${JSON.stringify(md)} to include "1. \`\`\`python\\n   # python comment\\n   \`\`\`"`);
-    assert.ok(md.includes("\\# Real Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Real Heading"`);
+    assert.ok(
+      md.includes("- ```sh\n  # shell comment\n  echo hello\n  ```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- \`\`\`sh\\n  # shell comment\\n  echo hello\\n  \`\`\`"`,
+    );
+    assert.ok(
+      md.includes("1. ```python\n   # python comment\n   ```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "1. \`\`\`python\\n   # python comment\\n   \`\`\`"`,
+    );
+    assert.ok(
+      md.includes("\\# Real Heading"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Real Heading"`,
+    );
   });
 
   it("strips C1 control characters from headings and criteria", () => {
@@ -635,8 +798,16 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes('&lt;h1\nclass="injected"&gt;'), `expected ${JSON.stringify(md)} to include '&lt;h1\\nclass="injected"&gt;'`);
-    assert.ok(md.includes("&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;/h1&gt;"`);
+    assert.ok(
+      md.includes('&lt;h1\nclass="injected"&gt;'),
+      `expected ${
+        JSON.stringify(md)
+      } to include '&lt;h1\\nclass="injected"&gt;'`,
+    );
+    assert.ok(
+      md.includes("&lt;/h1&gt;"),
+      `expected ${JSON.stringify(md)} to include "&lt;/h1&gt;"`,
+    );
   });
 
   it("preserves multiple internal spaces in metadata code spans and criteria", () => {
@@ -649,8 +820,14 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("`/work/My  Custom  Path`"), `expected ${JSON.stringify(md)} to include "\`/work/My  Custom  Path\`"`);
-    assert.ok(md.includes("`printf 'a  b'`"), `expected ${JSON.stringify(md)} to include "\`printf 'a  b'\`"`);
+    assert.ok(
+      md.includes("`/work/My  Custom  Path`"),
+      `expected ${JSON.stringify(md)} to include "\`/work/My  Custom  Path\`"`,
+    );
+    assert.ok(
+      md.includes("`printf 'a  b'`"),
+      `expected ${JSON.stringify(md)} to include "\`printf 'a  b'\`"`,
+    );
   });
 
   it("4-space indented code blocks do not suppress heading escaping", () => {
@@ -662,7 +839,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("\\# Injected Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`);
+    assert.ok(
+      md.includes("\\# Injected Heading"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`,
+    );
   });
 
   it("escaped backticks do not bypass HTML heading escaping in criteria", () => {
@@ -674,7 +854,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;h1&gt;Injected&lt;/h1&gt;"`);
+    assert.ok(
+      md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "&lt;h1&gt;Injected&lt;/h1&gt;"`,
+    );
   });
 
   it("raw HTML blocks with attribute-bearing headings are neutralized", () => {
@@ -686,7 +871,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"), `expected ${JSON.stringify(md)} to include "<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"`);
+    assert.ok(
+      md.includes("<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "<div>&lt;h1 class=x&gt;Injected Heading&lt;/h1&gt;</div>"`,
+    );
   });
 
   it("markWorkbenchIdea strips C1 controls from event-derived description", () => {
@@ -718,7 +908,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("- ```sh\n  echo hello\n  ```"), `expected ${JSON.stringify(md)} to include "- \`\`\`sh\\n  echo hello\\n  \`\`\`"`);
+    assert.ok(
+      md.includes("- ```sh\n  echo hello\n  ```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "- \`\`\`sh\\n  echo hello\\n  \`\`\`"`,
+    );
     assert.ok(!md.includes("- ```sh\n  echo hello\n- ```"));
   });
 
@@ -731,8 +926,16 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("10. ```sh\n    echo multi\n    ```"), `expected ${JSON.stringify(md)} to include "10. \`\`\`sh\\n    echo multi\\n    \`\`\`"`);
-    assert.ok(md.includes("\\# Injected Heading"), `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`);
+    assert.ok(
+      md.includes("10. ```sh\n    echo multi\n    ```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "10. \`\`\`sh\\n    echo multi\\n    \`\`\`"`,
+    );
+    assert.ok(
+      md.includes("\\# Injected Heading"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Injected Heading"`,
+    );
   });
 
   it("tab-indented fences do not close root code fences", () => {
@@ -744,7 +947,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("```sh\necho test\n\t```\n# code comment\n```"), `expected ${JSON.stringify(md)} to include "\`\`\`sh\\necho test\\n\\t\`\`\`\\n# code comment\\n\`\`\`"`);
+    assert.ok(
+      md.includes("```sh\necho test\n\t```\n# code comment\n```"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "\`\`\`sh\\necho test\\n\\t\`\`\`\\n# code comment\\n\`\`\`"`,
+    );
     assert.ok(!md.includes("\\# code comment"));
   });
 
@@ -757,7 +965,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("# code comment"), `expected ${JSON.stringify(md)} to include "# code comment"`);
+    assert.ok(
+      md.includes("# code comment"),
+      `expected ${JSON.stringify(md)} to include "# code comment"`,
+    );
     assert.ok(!md.includes("\\# code comment"));
   });
 
@@ -771,14 +982,19 @@ describe("draftWorkPacketFromContext", () => {
     });
     assert.strictEqual(idea1.ideaId, "01IDEA_CROSS_SESS");
 
-    assert.throws(() => {
+    assert.throws(
+      () => {
         markWorkbenchIdea({
           sessionId: "01SESSION_B",
           ideaId: "01IDEA_CROSS_SESS",
           label: "Idea Hijack",
           registry: reg,
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes("cannot re-register idea"));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("cannot re-register idea"),
+    );
   });
 
   it("event resolution searches beyond 2000 events without failing", () => {
@@ -837,7 +1053,8 @@ describe("draftWorkPacketFromContext", () => {
       registry: reg,
     });
 
-    assert.throws(() => {
+    assert.throws(
+      () => {
         reg.registerPacket({
           ...packetDraft,
           sessionId: "01SESSION_OWNER_B",
@@ -846,18 +1063,29 @@ describe("draftWorkPacketFromContext", () => {
             sessionId: "01SESSION_OWNER_B",
           },
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes('packet idea "01IDEA_OWNER_A" belongs to session "01SESSION_OWNER_A"'));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          'packet idea "01IDEA_OWNER_A" belongs to session "01SESSION_OWNER_A"',
+        ),
+    );
   });
 
   it("idea label consisting solely of ANSI escapes or whitespace is rejected", () => {
     const reg = new IdeaPacketRegistry();
-    assert.throws(() => {
+    assert.throws(
+      () => {
         markWorkbenchIdea({
           sessionId: "01SESSION_BLANK_ANSI",
           label: "\x1b[2J\x1b[0m   ",
           registry: reg,
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes("idea label cannot be empty or whitespace-only"));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("idea label cannot be empty or whitespace-only"),
+    );
   });
 
   it("differing nested list markers inside blockquotes exit list item and escape subsequent headings", () => {
@@ -870,7 +1098,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("\\# code comment"), `expected ${JSON.stringify(md)} to include "\\\\# code comment"`);
+    assert.ok(
+      md.includes("\\# code comment"),
+      `expected ${JSON.stringify(md)} to include "\\\\# code comment"`,
+    );
   });
 
   it("blockquote container implicit exit resets fence state and escapes subsequent headings", () => {
@@ -882,7 +1113,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("\\# Heading Outside"), `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside"`);
+    assert.ok(
+      md.includes("\\# Heading Outside"),
+      `expected ${JSON.stringify(md)} to include "\\\\# Heading Outside"`,
+    );
     assert.ok(!md.includes("\n> ```\n"));
   });
 
@@ -896,7 +1130,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("# Work Packet: Work intent"), `expected ${JSON.stringify(md)} to include "# Work Packet: Work intent"`);
+    assert.ok(
+      md.includes("# Work Packet: Work intent"),
+      `expected ${JSON.stringify(md)} to include "# Work Packet: Work intent"`,
+    );
     assert.notStrictEqual(md, "# Work Packet: \n");
   });
 
@@ -920,7 +1157,12 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"), `expected ${JSON.stringify(md)} to include "&lt;h1&gt;Injected&lt;/h1&gt;"`);
+    assert.ok(
+      md.includes("&lt;h1&gt;Injected&lt;/h1&gt;"),
+      `expected ${
+        JSON.stringify(md)
+      } to include "&lt;h1&gt;Injected&lt;/h1&gt;"`,
+    );
   });
 
   it("evicted idea session prevents re-registering the same idea ID under a different session", () => {
@@ -946,14 +1188,21 @@ describe("draftWorkPacketFromContext", () => {
     assert.deepStrictEqual(reg.listIdeas("01SESSION_EVICT_A").length, 0);
 
     // Attempting to re-register the same ideaId in session B should fail
-    assert.throws(() => {
+    assert.throws(
+      () => {
         markWorkbenchIdea({
           sessionId: "01SESSION_EVICT_B",
           ideaId: "01IDEA_SHARED_ID",
           label: "Hijacked Idea in B",
           registry: reg,
         });
-      }, (error: unknown) => error instanceof Error && error.message.includes('cannot re-register idea "01IDEA_SHARED_ID" under session "01SESSION_EVICT_B"'));
+      },
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          'cannot re-register idea "01IDEA_SHARED_ID" under session "01SESSION_EVICT_B"',
+        ),
+    );
   });
 
   it("four-space indented code blocks preserve comments without heading escaping", () => {
@@ -965,7 +1214,10 @@ describe("draftWorkPacketFromContext", () => {
     });
 
     const md = formatWorkPacketMarkdown(packet);
-    assert.ok(md.includes("    # comment"), `expected ${JSON.stringify(md)} to include "    # comment"`);
+    assert.ok(
+      md.includes("    # comment"),
+      `expected ${JSON.stringify(md)} to include "    # comment"`,
+    );
     assert.ok(!md.includes("    \\# comment"));
   });
 

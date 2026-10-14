@@ -24,7 +24,11 @@ Deno.test("events/query returns events for a session", async () => {
     await callRpc(handlers(requests), "events/query", { sessionId: "s1" }),
     { events: [{ id: "e1", sessionId: "s1" }] },
   );
-  assert.deepStrictEqual(requests, [{ sessionId: "s1", asOf: undefined, limit: 500 }]);
+  assert.deepStrictEqual(requests, [{
+    sessionId: "s1",
+    asOf: undefined,
+    limit: 500,
+  }]);
 });
 
 Deno.test("events/query without a sessionId -> invalidParams", async () => {
@@ -54,6 +58,10 @@ Deno.test("events/query with an invalid limit -> invalidParams", async () => {
       sessionId: "s1",
       limit,
     });
-    assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams, `limit ${limit}`);
+    assert.deepStrictEqual(
+      error.code,
+      RpcErrorCode.invalidParams,
+      `limit ${limit}`,
+    );
   }
 });

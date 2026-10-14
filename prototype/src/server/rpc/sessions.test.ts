@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import type {
   WorkbenchProjectSessions,
   WorkbenchSessionSummary,
@@ -35,7 +34,7 @@ Deno.test("sessions/list passes the project filter through", async () => {
 
 Deno.test("sessions/list rejects a non-positive limit", async () => {
   const error = await rpcFailure(handlers(), "sessions/list", { limit: 0 });
-  assertEquals(error, {
+  assert.deepStrictEqual(error, {
     code: RpcErrorCode.invalidParams,
     message: "sessions/list limit must be a positive integer",
   });
@@ -79,7 +78,10 @@ Deno.test("sessions/inspect rejects C1 control characters in identifiers", async
     sessionId: "01TEST\u009BSESSION",
   });
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
-  assert.ok(error.message.includes("cannot contain control characters"), `expected error.message to include "cannot contain control characters"`);
+  assert.ok(
+    error.message.includes("cannot contain control characters"),
+    `expected error.message to include "cannot contain control characters"`,
+  );
 });
 
 Deno.test("sessions/inspect names the runner when the session last ran on one", async () => {

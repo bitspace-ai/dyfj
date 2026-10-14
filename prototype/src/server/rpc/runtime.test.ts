@@ -61,12 +61,15 @@ Deno.test("runtime/status resolves the bare-turn route past a hosted configured 
   // The configured default is reported and resolved as defaultTurnModel
   // when present in the catalog with pricing.
   assert.deepStrictEqual(runtime.defaultCompanionModel, "hosted-x");
-  assert.partialDeepStrictEqual(runtime.defaultTurnModel as Record<string, unknown>, {
-    slug: "hosted-x",
-    tier: 2,
-    local: false,
-    reason: "default_config",
-  });
+  assert.partialDeepStrictEqual(
+    runtime.defaultTurnModel as Record<string, unknown>,
+    {
+      slug: "hosted-x",
+      tier: 2,
+      local: false,
+      reason: "default_config",
+    },
+  );
   // Locality counts use the same provider+loopback classification as the
   // per-row `local` flag, not the tier label.
   assert.deepStrictEqual(runtime.models, { total: 2, local: 1, hosted: 1 });
@@ -230,7 +233,10 @@ Deno.test("runtime/stop triggers onShutdown and returns stopping status", async 
 Deno.test("runtime/stop is an internalError when onShutdown is absent", async () => {
   const error = await rpcFailure(handlers(), "runtime/stop");
   assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
-  assert.ok(error.message.includes("shutdown is not configured"), `expected error.message to include "shutdown is not configured"`);
+  assert.ok(
+    error.message.includes("shutdown is not configured"),
+    `expected error.message to include "shutdown is not configured"`,
+  );
 });
 
 Deno.test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
@@ -241,5 +247,8 @@ Deno.test("runtime/stop surfaces an onShutdown failure as internalError", async 
     "runtime/stop",
   );
   assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
-  assert.ok(error.message.includes("runtime shutdown failed"), `expected error.message to include "runtime shutdown failed"`);
+  assert.ok(
+    error.message.includes("runtime shutdown failed"),
+    `expected error.message to include "runtime shutdown failed"`,
+  );
 });

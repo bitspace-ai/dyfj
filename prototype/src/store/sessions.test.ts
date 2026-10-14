@@ -35,14 +35,40 @@ Deno.test("buildWorkbenchSessionContent: captures prompt, mode, trace, context s
     receipt: "Workbench receipt\nSession: 01TEST",
   });
 
-  assert.ok(content.includes("# Workbench Session"), `expected ${JSON.stringify(content)} to include "# Workbench Session"`);
-  assert.ok(content.includes("**Mode:** turn"), `expected ${JSON.stringify(content)} to include "**Mode:** turn"`);
-  assert.ok(content.includes("**Trace:** 0123456789abcdef0123456789abcdef"), `expected ${JSON.stringify(content)} to include "**Trace:** 0123456789abcdef0123456789abcdef"`);
-  assert.ok(content.includes("## Prompt"), `expected ${JSON.stringify(content)} to include "## Prompt"`);
-  assert.ok(content.includes("What next?"), `expected ${JSON.stringify(content)} to include "What next?"`);
-  assert.ok(content.includes("- AGENTS.md <AGENTS.md>"), `expected ${JSON.stringify(content)} to include "- AGENTS.md <AGENTS.md>"`);
-  assert.ok(content.includes("## Receipt"), `expected ${JSON.stringify(content)} to include "## Receipt"`);
-  assert.ok(content.includes("Workbench receipt"), `expected ${JSON.stringify(content)} to include "Workbench receipt"`);
+  assert.ok(
+    content.includes("# Workbench Session"),
+    `expected ${JSON.stringify(content)} to include "# Workbench Session"`,
+  );
+  assert.ok(
+    content.includes("**Mode:** turn"),
+    `expected ${JSON.stringify(content)} to include "**Mode:** turn"`,
+  );
+  assert.ok(
+    content.includes("**Trace:** 0123456789abcdef0123456789abcdef"),
+    `expected ${
+      JSON.stringify(content)
+    } to include "**Trace:** 0123456789abcdef0123456789abcdef"`,
+  );
+  assert.ok(
+    content.includes("## Prompt"),
+    `expected ${JSON.stringify(content)} to include "## Prompt"`,
+  );
+  assert.ok(
+    content.includes("What next?"),
+    `expected ${JSON.stringify(content)} to include "What next?"`,
+  );
+  assert.ok(
+    content.includes("- AGENTS.md <AGENTS.md>"),
+    `expected ${JSON.stringify(content)} to include "- AGENTS.md <AGENTS.md>"`,
+  );
+  assert.ok(
+    content.includes("## Receipt"),
+    `expected ${JSON.stringify(content)} to include "## Receipt"`,
+  );
+  assert.ok(
+    content.includes("Workbench receipt"),
+    `expected ${JSON.stringify(content)} to include "Workbench receipt"`,
+  );
 });
 
 /** A recording journal: the batches committed through it. */
@@ -238,7 +264,11 @@ Deno.test("listWorkbenchSessions: groups sessions by project with unfiled last",
       ],
     }),
   });
-  assert.deepStrictEqual(groups.map((g) => g.project), ["dyfj", "project-b", null]);
+  assert.deepStrictEqual(groups.map((g) => g.project), [
+    "dyfj",
+    "project-b",
+    null,
+  ]);
   assert.strictEqual(
     groups[0].sessions[0].sessionId,
     "01AAAAAAAAAAAAAAAAAAAAAAAB",
@@ -468,19 +498,29 @@ Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across d
 });
 
 Deno.test("fetchWorkbenchSessionEvents: rejects invalid limits", async () => {
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: 0,
         events: eventsReturning([]),
-      }), (error: unknown) => error instanceof Error && error.message.includes("limit must be a positive integer"));
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("limit must be a positive integer"),
+  );
 
-  await assert.rejects(() =>
+  await assert.rejects(
+    () =>
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: -3,
         events: eventsReturning([]),
-      }), (error: unknown) => error instanceof Error && error.message.includes("limit must be a positive integer"));
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("limit must be a positive integer"),
+  );
 });
 
 Deno.test("fetchWorkbenchSessionEvents: preserves explicit descending order", async () => {

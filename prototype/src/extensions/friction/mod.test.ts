@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import type { EventInsert } from "../../store/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { type RpcContext, RpcErrorCode } from "../../transport/mod.ts";
@@ -195,12 +194,20 @@ Deno.test("friction/post numbers comments and preserves write approval", async (
     "mcp.linear.list_comments",
     "mcp.linear.create_comment",
   ]);
-  assert.partialDeepStrictEqual(receiptEvents[2] as unknown as Record<string, unknown>, {
-    authz_basis: "policy:allow:operator-approved",
-    tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
-    tool_result: "[redacted]",
-  });
-  assert.ok(createdBodies[0].includes("F011 · E003 · 2026-09-03 · paper-cut · escaped? yes"), `expected createdBodies[0] to include "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes"`);
+  assert.partialDeepStrictEqual(
+    receiptEvents[2] as unknown as Record<string, unknown>,
+    {
+      authz_basis: "policy:allow:operator-approved",
+      tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
+      tool_result: "[redacted]",
+    },
+  );
+  assert.ok(
+    createdBodies[0].includes(
+      "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
+    ),
+    `expected createdBodies[0] to include "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes"`,
+  );
 });
 
 Deno.test("friction/post validates severity before reading Linear", async () => {
@@ -248,7 +255,12 @@ for (const frictionIssueId of [undefined, "   "]) {
         "friction/post",
         { severity: "minor", escaped: false, text: "moment" },
       );
-      assert.ok(error.message.includes("configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue"), `expected error.message to include "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue"`);
+      assert.ok(
+        error.message.includes(
+          "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+        ),
+        `expected error.message to include "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue"`,
+      );
       assert.deepStrictEqual(reads, 0);
       assert.deepStrictEqual(writes, 0);
       assert.deepStrictEqual(receiptEvents, []);
@@ -273,7 +285,10 @@ Deno.test("friction/post names create_comment failure", async () => {
     },
     approvingClient(),
   );
-  assert.ok(error.message.includes("comment write failed"), `expected error.message to include "comment write failed"`);
+  assert.ok(
+    error.message.includes("comment write failed"),
+    `expected error.message to include "comment write failed"`,
+  );
 });
 
 for (
@@ -296,7 +311,7 @@ for (
       { severity: "minor", escaped: false, text: "moment" },
       approvingClient(),
     );
-    assertEquals(error, {
+    assert.deepStrictEqual(error, {
       code: RpcErrorCode.internalError,
       message: `${message}: configured Linear tool is unavailable`,
     });

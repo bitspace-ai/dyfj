@@ -13,6 +13,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import {
   chatReply,
   type EngineRun,
@@ -63,7 +64,7 @@ async function withServer(
   services: WorkbenchRuntimeServices = run.services,
 ): Promise<void> {
   const socketPath = udsTestSocket("server-session-model");
-  await Deno.remove(socketPath).catch(() => {});
+  await unlink(socketPath).catch(() => {});
   const server = await serveWorkbenchUnix(socketPath, {
     store: run.store,
     env: run.env,
@@ -80,7 +81,7 @@ async function withServer(
     }
   } finally {
     await server.close();
-    await Deno.remove(socketPath).catch(() => {});
+    await unlink(socketPath).catch(() => {});
   }
 }
 
@@ -279,13 +280,23 @@ Deno.test("a bare resume after an external-agent turn refuses instead of routing
     const inspected = await client.request("sessions/inspect", {
       sessionId: first.sessionId,
     }) as { model: string | null; runner: string | null };
-    assert.deepStrictEqual(inspected, { ...inspected, model: null, runner: "fixture" });
+    assert.deepStrictEqual(inspected, {
+      ...inspected,
+      model: null,
+      runner: "fixture",
+    });
     const error = await captureRejection(() =>
       client.request("turn", { prompt: "carry on", sessionId: first.sessionId })
     );
     assert.ok(error instanceof Error);
-    assert.ok(error.message.includes("external agent runner"), `expected error.message to include "external agent runner"`);
-    assert.ok(error.message.includes("fixture"), `expected error.message to include "fixture"`);
+    assert.ok(
+      error.message.includes("external agent runner"),
+      `expected error.message to include "external agent runner"`,
+    );
+    assert.ok(
+      error.message.includes("fixture"),
+      `expected error.message to include "fixture"`,
+    );
     // An explicit model is the operator's choice and still runs.
     const explicit = await client.request("turn", {
       prompt: "carry on here",
@@ -335,10 +346,20 @@ Deno.test("a resumed session whose recorded model is no longer routable refuses 
       client.request("turn", { prompt: "carry on", sessionId })
     );
     assert.ok(error instanceof Error);
-    assert.ok(error.message.includes(RETIRED_MODEL.slug), `expected error.message to include RETIRED_MODEL.slug`);
-    assert.ok(error.message.includes("no longer routable"), `expected error.message to include "no longer routable"`);
+    assert.ok(
+      error.message.includes(RETIRED_MODEL.slug),
+      `expected error.message to include RETIRED_MODEL.slug`,
+    );
+    assert.ok(
+      error.message.includes("no longer routable"),
+      `expected error.message to include "no longer routable"`,
+    );
   });
-  assert.deepStrictEqual(run.transport.requests.length, 0, "no provider call was made");
+  assert.deepStrictEqual(
+    run.transport.requests.length,
+    0,
+    "no provider call was made",
+  );
 });
 
 Deno.test("a resumed session with no recorded model runs on the configured default", async () => {

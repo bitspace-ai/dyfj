@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { assertEquals } from "@std/assert";
 import type {
   LinearIssueCreationBinding,
   McpHttpServerConfig,
@@ -138,7 +137,11 @@ Deno.test("invoke rejects with the reason a denied call gives", async () => {
   const createComment = command("mcp.linear.create_comment", "ask");
   const { linear } = createLinearExtension([createComment]);
   const events: EventInsert[] = [];
-  await assert.rejects(() => linear.invoke(createComment, {}, callContext(events, "deny")), (error: unknown) => error instanceof Error && error.message.includes("operator said no"));
+  await assert.rejects(
+    () => linear.invoke(createComment, {}, callContext(events, "deny")),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("operator said no"),
+  );
   assert.deepStrictEqual(events.length, 1);
 });
 
@@ -164,11 +167,13 @@ Deno.test("buildLinearIssueCreationCommand builds the bounded command", () => {
     call: () => Promise.reject(new Error("not called")),
   });
   assert.deepStrictEqual(built?.id, "mcp.linear.create_issue");
-  assert.deepStrictEqual(built?.permission.resources, ["mcp:linear/save_issue"]);
+  assert.deepStrictEqual(built?.permission.resources, [
+    "mcp:linear/save_issue",
+  ]);
 });
 
 Deno.test("buildLinearIssueCreationCommand refuses an unsupported schema", () => {
-  assertEquals(
+  assert.strictEqual(
     buildLinearIssueCreationCommand({
       server,
       binding,

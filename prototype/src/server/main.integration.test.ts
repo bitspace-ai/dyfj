@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import process from "node:process";
 import {
   type UdsTestSocket,
@@ -8,7 +9,12 @@ import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import type { WorkbenchRuntimeResult } from "../engine/mod.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { MemoryStore } from "../store/mod.ts";
-import { JsonRpcPeer, nodeSocketHost, RpcErrorCode } from "../transport/mod.ts";
+import {
+  JsonRpcPeer,
+  nodeSocketHost,
+  RpcError,
+  RpcErrorCode,
+} from "../transport/mod.ts";
 import {
   serveWorkbenchUnix,
   type WorkbenchUnixServer,
@@ -24,7 +30,7 @@ const noRuntime = () => Promise.resolve({} as WorkbenchRuntimeResult);
 
 async function removeIfPresent(path: string): Promise<void> {
   try {
-    await Deno.remove(path);
+    await unlink(path);
   } catch {
     // already gone
   }
@@ -158,7 +164,6 @@ Deno.test("an unknown method -> methodNotFound", async () => {
     () => undefined,
     (reason: unknown) => reason,
   );
-  assert.partialDeepStrictEqual(error as Record<string, unknown>, {
-    code: RpcErrorCode.methodNotFound,
-  });
+  assert.ok(error instanceof RpcError);
+  assert.strictEqual(error.code, RpcErrorCode.methodNotFound);
 });

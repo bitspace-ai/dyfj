@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { type Mock, mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertSpyCalls, type Spy, spy } from "@std/testing/mock";
 import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
 import type {
   LinearIssueCreationBinding,
@@ -72,18 +71,14 @@ function callSpy(
   impl: LinearIssueMcpCall = () =>
     Promise.resolve(undefined as unknown as LinearIssueMcpResult),
 ) {
-  return spy((input: Parameters<LinearIssueMcpCall>[0]) => impl(input));
+  return mock.fn((input: Parameters<LinearIssueMcpCall>[0]) => impl(input));
 }
 
-type ApprovalSpy = Spy<
-  unknown,
-  Parameters<ConfirmToolApproval>,
-  ReturnType<ConfirmToolApproval>
->;
+type ApprovalSpy = Mock<ConfirmToolApproval>;
 
 // An approver fake that records its calls and answers every one `decision`.
 function approvalSpy(decision: "approve" | "deny"): ApprovalSpy {
-  return spy((..._request: Parameters<ConfirmToolApproval>) =>
+  return mock.fn<ConfirmToolApproval>((..._request) =>
     Promise.resolve({ decision })
   );
 }
@@ -294,12 +289,16 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
       const call = callSpy(async () => successResult());
       const { result, events, approve } = await invoke(call);
 
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 1);
-      assert.strictEqual(call.calls[0].args[0].tool, upstreamTool);
-      assert.ok(!("id" in (call.calls[0].args[0].arguments as object)));
-      assert.ok(!("patch" in (call.calls[0].args[0].arguments as object)));
-      assert.deepStrictEqual(call.calls[0].args[0].arguments, {
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 1);
+      assert.strictEqual(call.mock.calls[0].arguments[0].tool, upstreamTool);
+      assert.ok(
+        !("id" in (call.mock.calls[0].arguments[0].arguments as object)),
+      );
+      assert.ok(
+        !("patch" in (call.mock.calls[0].arguments[0].arguments as object)),
+      );
+      assert.deepStrictEqual(call.mock.calls[0].arguments[0].arguments, {
         title: "Synthetic issue",
         description: "Synthetic description",
         team: "team_fixture_01",
@@ -313,12 +312,15 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         isError: false,
         result: "SYN-101",
       });
-      assert.partialDeepStrictEqual(events[0] as unknown as Record<string, unknown>, {
-        tool_arguments:
-          '{"title":"[redacted]","description":"[redacted]","project":"[redacted]","priority":"[redacted]","relatedTo":"[redacted]"}',
-        tool_result: "[redacted]",
-        tool_is_error: false,
-      });
+      assert.partialDeepStrictEqual(
+        events[0] as unknown as Record<string, unknown>,
+        {
+          tool_arguments:
+            '{"title":"[redacted]","description":"[redacted]","project":"[redacted]","priority":"[redacted]","relatedTo":"[redacted]"}',
+          tool_result: "[redacted]",
+          tool_is_error: false,
+        },
+      );
       assert.strictEqual(
         String(events[0]?.content),
         `{"outcome":"created","externalMcp":{"server":"linear","tool":"${upstreamTool}","revision":"2026-07-28","identifier":"SYN-101"}}`,
@@ -336,14 +338,20 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         invocationArguments(),
         approve,
       );
-      assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-        decision: "deny",
-        authzBasis: "policy:deny:approval-denied",
-        isError: true,
-      });
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 0);
-      assert.ok(String(events[0]?.content).includes('"outcome":"error"'), `expected String(events[0]?.content) to include '"outcome":"error"'`);
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          decision: "deny",
+          authzBasis: "policy:deny:approval-denied",
+          isError: true,
+        },
+      );
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 0);
+      assert.ok(
+        String(events[0]?.content).includes('"outcome":"error"'),
+        `expected String(events[0]?.content) to include '"outcome":"error"'`,
+      );
       assert.ok(!String(events[0]?.content).includes('"identifier"'));
       assert.strictEqual(events[0]?.tool_is_error, true);
     });
@@ -355,11 +363,17 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           call,
           invocationArguments(override),
         );
-        assertSpyCalls(approve, _name === "duplicate relations" ? 1 : 0);
-        assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-          isError: true,
-        });
-        assertSpyCalls(call, 0);
+        assert.equal(
+          approve.mock.callCount(),
+          _name === "duplicate relations" ? 1 : 0,
+        );
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+          },
+        );
+        assert.equal(call.mock.callCount(), 0);
       });
     }
 
@@ -374,13 +388,16 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         call,
         invocationArguments({ relatedTo }),
       );
-      assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-        isError: true,
-        authzBasis: "policy:deny:invalid-arguments",
-      });
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          isError: true,
+          authzBasis: "policy:deny:invalid-arguments",
+        },
+      );
       assert.equal(readItem.mock.callCount(), 0);
-      assertSpyCalls(approve, 0);
-      assertSpyCalls(call, 0);
+      assert.equal(approve.mock.callCount(), 0);
+      assert.equal(call.mock.callCount(), 0);
     });
 
     it("accepts ten distinct relations", async () => {
@@ -391,9 +408,12 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         invocationArguments({ relatedTo }),
       );
       assert.strictEqual(result.isError, false);
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 1);
-      assert.deepStrictEqual(call.calls[0].args[0].arguments.relatedTo, relatedTo);
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 1);
+      assert.deepStrictEqual(
+        call.mock.calls[0].arguments[0].arguments.relatedTo,
+        relatedTo,
+      );
     });
 
     for (
@@ -451,18 +471,21 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
             },
           }));
           const { result, events } = await invoke(call);
-          assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-            isError: true,
-            reason: INDETERMINATE,
-          });
-          assertSpyCalls(call, 1);
+          assert.partialDeepStrictEqual(
+            result as unknown as Record<string, unknown>,
+            {
+              isError: true,
+              reason: INDETERMINATE,
+            },
+          );
+          assert.equal(call.mock.callCount(), 1);
           assert.ok(!String(events[0]?.content).includes('"identifier"'));
         }
       });
     }
 
     it("accepts issue-style id and display labels while retaining only the identifier", async () => {
-      const call = spy(async () => ({
+      const call = mock.fn(async () => ({
         content: [{
           type: "text",
           text: JSON.stringify({
@@ -477,13 +500,19 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         }],
       }));
       const { result, events, approve } = await invoke(call);
-      assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-        isError: false,
-        result: "SYN-105",
-      });
-      assertSpyCalls(call, 1);
-      assertSpyCalls(approve, 1);
-      assert.ok(JSON.stringify(events).includes("SYN-105"), `expected JSON.stringify(events) to include "SYN-105"`);
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          isError: false,
+          result: "SYN-105",
+        },
+      );
+      assert.equal(call.mock.callCount(), 1);
+      assert.equal(approve.mock.callCount(), 1);
+      assert.ok(
+        JSON.stringify(events).includes("SYN-105"),
+        `expected JSON.stringify(events) to include "SYN-105"`,
+      );
       assert.ok(!JSON.stringify(events).includes("discarded title"));
       assert.ok(!JSON.stringify(events).includes("issue_fixture"));
     });
@@ -499,7 +528,7 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
       ]
     ) {
       it(`rejects invalid alias or association evidence without retry: ${JSON.stringify(override)}`, async () => {
-        const call = spy(async () => ({
+        const call = mock.fn(async () => ({
           structuredContent: {
             teamId: binding.teamId,
             team: "Synthetic Team",
@@ -509,11 +538,14 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           },
         }));
         const { result } = await invoke(call);
-        assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-          isError: true,
-          reason: INDETERMINATE,
-        });
-        assertSpyCalls(call, 1);
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+            reason: INDETERMINATE,
+          },
+        );
+        assert.equal(call.mock.callCount(), 1);
       });
     }
 
@@ -533,18 +565,21 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           structuredContent: response,
         }));
         const { result, events } = await invoke(call);
-        assert.partialDeepStrictEqual(result as unknown as Record<string, unknown>, {
-          isError: true,
-          reason: INDETERMINATE,
-        });
-        assertSpyCalls(call, 1);
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+            reason: INDETERMINATE,
+          },
+        );
+        assert.equal(call.mock.callCount(), 1);
         assert.ok(!String(events[0]?.content).includes('"identifier"'));
       });
     }
 
     for (const [_name, behavior] of indeterminateCases) {
       it(`reports ${String(_name)} as indeterminate without replay`, async () => {
-        const call = spy(behavior);
+        const call = mock.fn(behavior);
         const { result, events } = await invoke(call);
         assert.deepStrictEqual(result, {
           decision: "allow",
@@ -553,8 +588,11 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           reason:
             "Linear issue creation is indeterminate; reconcile in Linear before retrying.",
         });
-        assertSpyCalls(call, 1);
-        assert.ok(String(events[0]?.content).includes('"outcome":"error"'), `expected String(events[0]?.content) to include '"outcome":"error"'`);
+        assert.equal(call.mock.callCount(), 1);
+        assert.ok(
+          String(events[0]?.content).includes('"outcome":"error"'),
+          `expected String(events[0]?.content) to include '"outcome":"error"'`,
+        );
         assert.ok(!JSON.stringify(result).includes("untrusted details"));
         assert.strictEqual(
           events[0]?.tool_result,

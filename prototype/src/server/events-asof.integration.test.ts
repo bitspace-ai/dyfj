@@ -14,6 +14,7 @@
  */
 
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import {
   generateSpanId,
@@ -94,9 +95,12 @@ Deno.test("events/query asOf returns the historical set; omitting it returns hea
           sessionId,
         }) as { events: Array<{ content: string | null }> };
 
-        assert.deepStrictEqual(historical.events.map((event) => event.content), [
-          HISTORICAL,
-        ]);
+        assert.deepStrictEqual(
+          historical.events.map((event) => event.content),
+          [
+            HISTORICAL,
+          ],
+        );
         assert.deepStrictEqual(head.events.map((event) => event.content), [
           HISTORICAL,
           HEAD,
@@ -109,7 +113,7 @@ Deno.test("events/query asOf returns the historical set; omitting it returns hea
     }
   } finally {
     try {
-      await Deno.remove(socketPath);
+      await unlink(socketPath);
     } catch {
       // already gone
     }

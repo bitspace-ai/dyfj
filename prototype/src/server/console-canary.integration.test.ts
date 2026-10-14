@@ -15,6 +15,7 @@
  */
 
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { startModelServer } from "../../testing/servers/model-server.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
@@ -101,7 +102,10 @@ Deno.test("a real turn keeps its canaries out of narration console methods", asy
       }
 
       // The turn really ran end to end through the stub model.
-      assert.ok((result.text ?? "").includes(STUB_REPLY), `expected result.text ?? "" to include ${JSON.stringify(STUB_REPLY)}`);
+      assert.ok(
+        (result.text ?? "").includes(STUB_REPLY),
+        `expected result.text ?? "" to include ${JSON.stringify(STUB_REPLY)}`,
+      );
 
       const consoleOutput = captured.join("\n");
       assert.match(consoleOutput, /^error: \[turn\] session=/m);
@@ -122,7 +126,7 @@ Deno.test("a real turn keeps its canaries out of narration console methods", asy
     await sql.close();
     await store.close();
     try {
-      await Deno.remove(socketPath);
+      await unlink(socketPath);
     } catch {
       // already gone
     }

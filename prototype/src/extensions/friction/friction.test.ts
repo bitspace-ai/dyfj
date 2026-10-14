@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertRejects } from "@std/assert";
-import { assertSpyCallArgs } from "@std/testing/mock";
+import { captureRejection } from "../../../testing/assertions/captured.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import {
   FrictionStageError,
@@ -118,22 +117,20 @@ describe("postFriction", () => {
         const listComments = invokerSpy();
         const createComment = invokerSpy();
 
-        assert.partialDeepStrictEqual(
-          await assertRejects(() =>
-            postFriction({
-              issueIdentifier,
-              request: { severity: "minor", escaped: false, text: "moment" },
-              getIssueCommand,
-              listCommentsCommand,
-              createCommentCommand,
-              invoke: { getIssue, listComments, createComment },
-            }), Error) as unknown as Record<string, unknown>,
-          {
-            name: "FrictionStageError",
-            stage: "configuration",
-            message:
-              "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
-          } satisfies Partial<FrictionStageError>,
+        const error = await captureRejection(() =>
+          postFriction({
+            issueIdentifier,
+            request: { severity: "minor", escaped: false, text: "moment" },
+            getIssueCommand,
+            listCommentsCommand,
+            createCommentCommand,
+            invoke: { getIssue, listComments, createComment },
+          }), FrictionStageError);
+        assert.strictEqual(error.name, "FrictionStageError");
+        assert.strictEqual(error.stage, "configuration");
+        assert.strictEqual(
+          error.message,
+          "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
         );
         assert.equal(getIssue.mock.callCount(), 0);
         assert.equal(listComments.mock.callCount(), 0);
@@ -179,7 +176,7 @@ describe("postFriction", () => {
       commentId: "comment-39",
       firstLine: "F039 · 2026-09-03 · minor · escaped? no",
     });
-    assertSpyCallArgs(createComment, 0, [{
+    assert.deepStrictEqual(createComment.mock.calls[0]!.arguments, [{
       issueId: "issue-uuid",
       body: [
         "F039 · 2026-09-03 · minor · escaped? no",
@@ -222,8 +219,16 @@ describe("postFriction", () => {
     });
 
     assert.equal(createComment.mock.callCount(), 1);
-    assert.deepStrictEqual(createComment.calls[0]!.args[0].issueId, "issue-uuid");
-    assert.ok(String(createComment.calls[0]!.args[0].body).includes("Context: model=model-slug · workspace=example-repo"), `expected String(createComment.calls[0]!.args[0].body) to include "Context: model=model-slug · workspace=example-repo"`);
+    assert.deepStrictEqual(
+      createComment.mock.calls[0]!.arguments[0].issueId,
+      "issue-uuid",
+    );
+    assert.ok(
+      String(createComment.mock.calls[0]!.arguments[0].body).includes(
+        "Context: model=model-slug · workspace=example-repo",
+      ),
+      `expected String(createComment.mock.calls[0]!.arguments[0].body) to include "Context: model=model-slug · workspace=example-repo"`,
+    );
     assert.ok(!createdBody.includes("private notes"));
     assert.ok(!createdBody.includes("command="));
   });
@@ -260,25 +265,21 @@ describe("postFriction", () => {
 
   it("labels an unreadable comments response without attempting a write", async () => {
     const createComment = invokerSpy();
-    assert.partialDeepStrictEqual(
-      await assertRejects(() =>
-        postFriction({
-          issueIdentifier: "EX-100",
-          request: { severity: "minor", escaped: false, text: "moment" },
-          getIssueCommand,
-          listCommentsCommand,
-          createCommentCommand,
-          invoke: {
-            getIssue: async () => framed({ id: "issue-uuid" }),
-            listComments: async () => framed({ unexpected: true }),
-            createComment,
-          },
-        }), Error) as unknown as Record<string, unknown>,
-      {
-        name: "FrictionStageError",
-        stage: "comment read",
-      } satisfies Partial<FrictionStageError>,
-    );
+    const error = await captureRejection(() =>
+      postFriction({
+        issueIdentifier: "EX-100",
+        request: { severity: "minor", escaped: false, text: "moment" },
+        getIssueCommand,
+        listCommentsCommand,
+        createCommentCommand,
+        invoke: {
+          getIssue: async () => framed({ id: "issue-uuid" }),
+          listComments: async () => framed({ unexpected: true }),
+          createComment,
+        },
+      }), FrictionStageError);
+    assert.strictEqual(error.name, "FrictionStageError");
+    assert.strictEqual(error.stage, "comment read");
     assert.equal(createComment.mock.callCount(), 0);
   });
 
@@ -296,26 +297,22 @@ describe("postFriction", () => {
   ) {
     it(`stages a ${label} get_issue response as the issue read`, async () => {
       const createComment = invokerSpy();
-      assert.partialDeepStrictEqual(
-        await assertRejects(() =>
-          postFriction({
-            issueIdentifier: "EX-100",
-            request: { severity: "minor", escaped: false, text: "moment" },
-            getIssueCommand,
-            listCommentsCommand,
-            createCommentCommand,
-            invoke: {
-              getIssue: async () => response,
-              listComments: commentsPage(),
-              createComment,
-            },
-          }), Error) as unknown as Record<string, unknown>,
-        {
-          name: "FrictionStageError",
-          stage: "get_issue",
-          publicReason,
-        } satisfies Partial<FrictionStageError>,
-      );
+      const error = await captureRejection(() =>
+        postFriction({
+          issueIdentifier: "EX-100",
+          request: { severity: "minor", escaped: false, text: "moment" },
+          getIssueCommand,
+          listCommentsCommand,
+          createCommentCommand,
+          invoke: {
+            getIssue: async () => response,
+            listComments: commentsPage(),
+            createComment,
+          },
+        }), FrictionStageError);
+      assert.strictEqual(error.name, "FrictionStageError");
+      assert.strictEqual(error.stage, "get_issue");
+      assert.strictEqual(error.publicReason, publicReason);
       assert.equal(createComment.mock.callCount(), 0);
     });
   }
@@ -324,7 +321,8 @@ describe("postFriction", () => {
   // read must name that tool and not the issue read that precedes it.
   it("names list_comments when a comment carries no readable text", async () => {
     const createComment = invokerSpy();
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -337,13 +335,20 @@ describe("postFriction", () => {
               framed({ comments: [{ author: "someone" }], hasNextPage: false }),
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("list_comments returned a comment without readable text"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "list_comments returned a comment without readable text",
+        ),
+    );
     assert.equal(createComment.mock.callCount(), 0);
   });
 
   it("labels a get_issue failure without attempting a write", async () => {
     const createComment = invokerSpy();
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -357,12 +362,17 @@ describe("postFriction", () => {
             listComments: commentsPage(),
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("get_issue failed: fixture read refused"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("get_issue failed: fixture read refused"),
+    );
     assert.equal(createComment.mock.callCount(), 0);
   });
 
   it("labels a create failure and returns no false receipt", async () => {
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -376,7 +386,11 @@ describe("postFriction", () => {
               throw new Error("fixture write refused");
             },
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("comment write failed: fixture write refused"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("comment write failed: fixture write refused"),
+    );
   });
 
   it("accepts save_comment as the upstream comment tool", async () => {
@@ -402,8 +416,16 @@ describe("postFriction", () => {
 
     assert.strictEqual(result.commentId, "comment-42");
     assert.equal(createComment.mock.callCount(), 1);
-    assert.deepStrictEqual(createComment.calls[0]!.args[0].issueId, "issue-uuid");
-    assert.ok(String(createComment.calls[0]!.args[0].body).includes("Saved via alternate tool."), `expected String(createComment.calls[0]!.args[0].body) to include "Saved via alternate tool."`);
+    assert.deepStrictEqual(
+      createComment.mock.calls[0]!.arguments[0].issueId,
+      "issue-uuid",
+    );
+    assert.ok(
+      String(createComment.mock.calls[0]!.arguments[0].body).includes(
+        "Saved via alternate tool.",
+      ),
+      `expected String(createComment.mock.calls[0]!.arguments[0].body) to include "Saved via alternate tool."`,
+    );
   });
 });
 
@@ -455,7 +477,8 @@ describe("paged comment reading", () => {
 
   it("refuses to number when another page is promised without a cursor", async () => {
     const createComment = invokerSpy();
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -471,14 +494,21 @@ describe("paged comment reading", () => {
               }),
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("comment read failed: list_comments reported another page without a cursor"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "comment read failed: list_comments reported another page without a cursor",
+        ),
+    );
     assert.equal(createComment.mock.callCount(), 0);
   });
 
   it("refuses to number when paging exceeds its bound", async () => {
     const createComment = invokerSpy();
     let calls = 0;
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -497,14 +527,21 @@ describe("paged comment reading", () => {
             },
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes(`comment read failed: list_comments did not finish within ${MAX_COMMENT_PAGES} pages`));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          `comment read failed: list_comments did not finish within ${MAX_COMMENT_PAGES} pages`,
+        ),
+    );
     assert.strictEqual(calls, MAX_COMMENT_PAGES);
     assert.equal(createComment.mock.callCount(), 0);
   });
 
   it("names a truncated page instead of calling it unreadable", async () => {
     const createComment = invokerSpy();
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -525,7 +562,13 @@ describe("paged comment reading", () => {
               }),
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("comment read failed: list_comments returned more than the tool-result ceiling allows"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "comment read failed: list_comments returned more than the tool-result ceiling allows",
+        ),
+    );
     // The marker lands inside the frame, before the closing tag: a check
     // against the end of the whole string would miss it.
     assert.equal(createComment.mock.callCount(), 0);
@@ -570,9 +613,12 @@ describe("paged comment reading", () => {
     // Reading only top-level continuation metadata would stop after page one
     // and return F043, which page two already holds.
     assert.strictEqual(result.number, "F044");
-    assert.partialDeepStrictEqual(seen[1] as unknown as Record<string, unknown>, {
-      cursor: "cursor-2",
-    });
+    assert.partialDeepStrictEqual(
+      seen[1] as unknown as Record<string, unknown>,
+      {
+        cursor: "cursor-2",
+      },
+    );
   });
 
   it("refuses when pages remain but the tool accepts no cursor", async () => {
@@ -587,7 +633,8 @@ describe("paged comment reading", () => {
       },
     };
     let calls = 0;
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -606,7 +653,13 @@ describe("paged comment reading", () => {
             },
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("comment read failed: list_comments has more pages but the configured tool declares no cursor argument"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "comment read failed: list_comments has more pages but the configured tool declares no cursor argument",
+        ),
+    );
     // Refused on the first continuation rather than refetching to the bound.
     assert.strictEqual(calls, 1);
     assert.equal(createComment.mock.callCount(), 0);
@@ -614,7 +667,8 @@ describe("paged comment reading", () => {
 
   it("labels a list_comments failure without attempting a write", async () => {
     const createComment = invokerSpy();
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         postFriction({
           issueIdentifier: "EX-100",
           request: { severity: "minor", escaped: false, text: "moment" },
@@ -628,7 +682,11 @@ describe("paged comment reading", () => {
             },
             createComment,
           },
-        }), (error: unknown) => error instanceof Error && error.message.includes("comment read failed: fixture list refused"));
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("comment read failed: fixture list refused"),
+    );
     assert.equal(createComment.mock.callCount(), 0);
   });
 });
