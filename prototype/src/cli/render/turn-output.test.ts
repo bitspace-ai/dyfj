@@ -1,11 +1,4 @@
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertNotMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   supersedeEvent,
@@ -32,32 +25,32 @@ function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
 
 describe("wrapColumns", () => {
   it("falls back to 80 when the width is unknown", () => {
-    assertStrictEquals(wrapColumns(undefined), 80);
+    assert.strictEqual(wrapColumns(undefined), 80);
   });
 
   it("falls back to 80 when a sizeless pty reports zero columns", () => {
-    assertStrictEquals(wrapColumns(0), 80);
+    assert.strictEqual(wrapColumns(0), 80);
   });
 
   it("caps a wide terminal at 100", () => {
-    assertStrictEquals(wrapColumns(140), 100);
+    assert.strictEqual(wrapColumns(140), 100);
   });
 });
 
 describe("formatRuntimeEvent", () => {
   it("ignores routine non-tool lifecycle events", () => {
-    assertStrictEquals(formatRuntimeEvent({ type: "modelSelected" }), null);
+    assert.strictEqual(formatRuntimeEvent({ type: "modelSelected" }), null);
   });
 
   it("marks an aborted turn", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatRuntimeEvent({ type: "turnAborted" }),
       "[interrupted]",
     );
   });
 
   it("marks the forced conclusion after the tool-step limit", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatRuntimeEvent({
         type: "toolStepLimitReached",
         maxSteps: 8,
@@ -68,12 +61,12 @@ describe("formatRuntimeEvent", () => {
 
   it("warns about unparsed markup without model-supplied text", () => {
     const warning = formatRuntimeEvent(unparsedMarkupEvent());
-    assertStrictEquals(
+    assert.strictEqual(
       warning,
       "WARNING: unparsed tool-call markup was present (at least 64 unrun tool call(s)); " +
         "no tools were executed from it",
     );
-    assertNotMatch(warning, /edit_file|read_file|<tool_call>/);
+    assert.doesNotMatch(warning, /edit_file|read_file|<tool_call>/);
   });
 
   it("words a single unrun tool-call block as a call, not an opening", () => {
@@ -82,16 +75,16 @@ describe("formatRuntimeEvent", () => {
       count: 1,
       countIsLowerBound: false,
     });
-    assertStrictEquals(
+    assert.strictEqual(
       warning,
       "WARNING: unparsed tool-call markup was present (1 unrun tool call(s)); " +
         "no tools were executed from it",
     );
-    assertNotMatch(warning, /unmatched opening/);
+    assert.doesNotMatch(warning, /unmatched opening/);
   });
 
   it("renders negotiated memory-recall diagnostics from structured fields", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatRuntimeEvent({
         type: "memoryRecallNegotiated",
         era: "modern",
@@ -105,7 +98,7 @@ describe("formatRuntimeEvent", () => {
   });
 
   it("drops malformed recall evidence instead of rendering foreign text", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatRuntimeEvent({
         type: "memoryRecallNegotiated",
         era: "modern",
@@ -117,7 +110,7 @@ describe("formatRuntimeEvent", () => {
   });
 
   it("drops an over-limit extension list instead of reporting none", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatRuntimeEvent({
         type: "memoryRecallNegotiated",
         era: "modern",
@@ -137,8 +130,8 @@ describe("handleTurnRuntimeEvent", () => {
     const { io, stdout, stderr } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
     handleTurnRuntimeEvent(supersedeEvent(), output, io);
-    assertStringIncludes(stdout.join(""), "retrying with recovered context");
-    assertEquals(stderr.length, 0);
+    assert.ok(stdout.join("").includes("retrying with recovered context"), `expected stdout.join("") to include "retrying with recovered context"`);
+    assert.deepStrictEqual(stderr.length, 0);
   });
 
   it("still renders tool progress lines to stderr", () => {
@@ -149,8 +142,8 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertArrayIncludes(stderr, ["tool: bash started"]);
-    assertEquals(stdout.length, 0);
+    assert.deepStrictEqual(["tool: bash started"].filter((item) => !stderr.includes(item)), []);
+    assert.deepStrictEqual(stdout.length, 0);
   });
 
   it("renders a refused call as a refusal, with no duration", () => {
@@ -168,7 +161,7 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertEquals(stderr, ["  ⊘ bash not approved"]);
+    assert.deepStrictEqual(stderr, ["  ⊘ bash not approved"]);
   });
 
   it("still renders a failed call as a failure, with its duration", () => {
@@ -185,7 +178,7 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertEquals(stderr, ["tool: bash failed (40ms)"]);
+    assert.deepStrictEqual(stderr, ["tool: bash failed (40ms)"]);
   });
 
   it("flushes preserved partial text before the interrupted marker", () => {
@@ -201,8 +194,8 @@ describe("handleTurnRuntimeEvent", () => {
 
     handleTurnRuntimeEvent({ type: "turnAborted" }, output, io);
 
-    assertStrictEquals(writes.some((write) => write.startsWith("out:")), true);
-    assertStrictEquals(writes.at(-1), "err:[interrupted]");
+    assert.strictEqual(writes.some((write) => write.startsWith("out:")), true);
+    assert.strictEqual(writes.at(-1), "err:[interrupted]");
   });
 
   it("renders a context-compression status line to stderr", () => {
@@ -221,10 +214,7 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "context: compressed 4 elder turn(s)",
-    );
+    assert.ok(stderr.join("\n").includes("context: compressed 4 elder turn(s)"), `expected stderr.join("\\n") to include "context: compressed 4 elder turn(s)"`);
   });
 
   it("renders the window-fit status lines to stderr", () => {
@@ -259,17 +249,14 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "context: trimmed read_file result to fit the 32768-token window " +
-        "(8192 of 65536 characters kept)",
-    );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "context: fitted to the 32768-token window after the provider " +
+    assert.ok(stderr.join("\n").includes("context: trimmed read_file result to fit the 32768-token window " +
+        "(8192 of 65536 characters kept)"), `expected stderr.join("\\n") to include "context: trimmed read_file result to fit the 32768-token window " +
+        "(8192 of 65536 characters kept)"`);
+    assert.ok(stderr.join("\n").includes("context: fitted to the 32768-token window after the provider " +
         "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
-        "trimmed, elder turns compressed)",
-    );
+        "trimmed, elder turns compressed)"), `expected stderr.join("\\n") to include "context: fitted to the 32768-token window after the provider " +
+        "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
+        "trimmed, elder turns compressed)"`);
   });
 
   // Both clients decode the transport JSON but never schema-validate the frame,
@@ -286,8 +273,8 @@ describe("handleTurnRuntimeEvent", () => {
       const { io, stdout, stderr } = fakeIo();
       const output = createTurnOutputHandlers(cfg(), io);
       handleTurnRuntimeEvent(event, output, io);
-      assertEquals(stdout.length, 0);
-      assertEquals(stderr.length, 0);
+      assert.deepStrictEqual(stdout.length, 0);
+      assert.deepStrictEqual(stderr.length, 0);
     });
   }
 
@@ -296,7 +283,7 @@ describe("handleTurnRuntimeEvent", () => {
     const output = createTurnOutputHandlers(cfg(), io);
     // type matches but the pinned payload fields are absent: not a valid signal.
     handleTurnRuntimeEvent({ type: "supersedingRetryStarted" }, output, io);
-    assertFalse((stdout.join("")).includes("retrying with recovered context"));
+    assert.ok(!(stdout.join("")).includes("retrying with recovered context"));
   });
 
   // reason is an open union: a consumer that does not recognize a future reason
@@ -309,13 +296,13 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assertStringIncludes(stdout.join(""), "retrying with recovered context");
+    assert.ok(stdout.join("").includes("retrying with recovered context"), `expected stdout.join("") to include "retrying with recovered context"`);
   });
 
   it("does not supersede on an empty reason", () => {
     const { io, stdout } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
     handleTurnRuntimeEvent({ ...supersedeEvent(), reason: "" }, output, io);
-    assertFalse((stdout.join("")).includes("retrying with recovered context"));
+    assert.ok(!(stdout.join("")).includes("retrying with recovered context"));
   });
 });

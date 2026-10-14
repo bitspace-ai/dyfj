@@ -1,12 +1,8 @@
 // `dyfj stop` against real sockets: a live runtime, a missing socket, a dead
 // listener and a mute one. Socket paths come from the integration lane's
 // exact grants (testing/servers/uds-sockets.ts).
-import {
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { stat } from "node:fs/promises";
 import { afterEach, describe, it } from "@std/testing/bdd";
 import { MemoryStore } from "../../store/mod.ts";
 import {
@@ -67,15 +63,12 @@ describe("runStop behavior over real sockets", () => {
     const { io, stdout } = fakeIo();
     const exitCode = await runStop(cfg({ socket: socketPath }), io);
 
-    assertStrictEquals(exitCode, 0);
-    assertStrictEquals(shutdownInvoked, true);
-    assertStringIncludes(
-      stdout.join(""),
-      `dyfj: runtime at ${socketPath} stopped`,
-    );
+    assert.strictEqual(exitCode, 0);
+    assert.strictEqual(shutdownInvoked, true);
+    assert.ok(stdout.join("").includes(`dyfj: runtime at ${socketPath} stopped`), `expected stdout.join("") to include \`dyfj: runtime at \${socketPath} stopped\``);
 
     // Verify the socket is no longer present
-    await assertRejects(() => Deno.stat(socketPath), Deno.errors.NotFound);
+    await assert.rejects(() => stat(socketPath), (error: unknown) => error instanceof Error && (error as { code?: unknown }).code === "ENOENT");
   });
 
   it("reports failure via io.err and returns 1 when runtime shutdown fails", async () => {
@@ -102,9 +95,9 @@ describe("runStop behavior over real sockets", () => {
     const { io, stdout, stderr } = fakeIo();
     const exitCode = await runStop(cfg({ socket: socketPath }), io);
 
-    assertStrictEquals(exitCode, 1);
-    assertEquals(stdout, []);
-    assertStringIncludes(stderr.join(""), "runtime shutdown failed");
+    assert.strictEqual(exitCode, 1);
+    assert.deepStrictEqual(stdout, []);
+    assert.ok(stderr.join("").includes("runtime shutdown failed"), `expected stderr.join("") to include "runtime shutdown failed"`);
   });
 
   it("is idempotent when socket does not exist", async () => {
@@ -113,12 +106,9 @@ describe("runStop behavior over real sockets", () => {
     const { io, stdout, stderr } = fakeIo();
     const exitCode = await runStop(cfg({ socket: socketPath }), io);
 
-    assertStrictEquals(exitCode, 0);
-    assertEquals(stderr, []);
-    assertStringIncludes(
-      stdout.join(""),
-      `dyfj: runtime is not running at ${socketPath}`,
-    );
+    assert.strictEqual(exitCode, 0);
+    assert.deepStrictEqual(stderr, []);
+    assert.ok(stdout.join("").includes(`dyfj: runtime is not running at ${socketPath}`), `expected stdout.join("") to include \`dyfj: runtime is not running at \${socketPath}\``);
   });
 
   it("reports not running when connection is refused by a dead listener", async () => {
@@ -136,12 +126,9 @@ describe("runStop behavior over real sockets", () => {
     const { io, stdout, stderr } = fakeIo();
     const exitCode = await runStop(cfg({ socket: socketPath }), io);
 
-    assertStrictEquals(exitCode, 0);
-    assertEquals(stderr, []);
-    assertStringIncludes(
-      stdout.join(""),
-      `dyfj: runtime is not running at ${socketPath}`,
-    );
+    assert.strictEqual(exitCode, 0);
+    assert.deepStrictEqual(stderr, []);
+    assert.ok(stdout.join("").includes(`dyfj: runtime is not running at ${socketPath}`), `expected stdout.join("") to include \`dyfj: runtime is not running at \${socketPath}\``);
   });
 
   it("reports failure via io.err and returns 1 when connected to a mute socket exceeding deadline", async () => {
@@ -157,9 +144,9 @@ describe("runStop behavior over real sockets", () => {
       AbortSignal.timeout(100),
     );
 
-    assertStrictEquals(exitCode, 1);
-    assertEquals(stdout, []);
-    assertStringIncludes(stderr.join(""), "is unresponsive (timed out)");
+    assert.strictEqual(exitCode, 1);
+    assert.deepStrictEqual(stdout, []);
+    assert.ok(stderr.join("").includes("is unresponsive (timed out)"), `expected stderr.join("") to include "is unresponsive (timed out)"`);
   });
 
   it(
@@ -190,9 +177,9 @@ describe("runStop behavior over real sockets", () => {
       const { io, stdout, stderr } = fakeIo();
       const exitCode = await runStop(cfg({ socket: socketPath }), io);
 
-      assertStrictEquals(exitCode, 1);
-      assertEquals(stdout, []);
-      assertStringIncludes(stderr.join(""), "did not stop within deadline");
+      assert.strictEqual(exitCode, 1);
+      assert.deepStrictEqual(stdout, []);
+      assert.ok(stderr.join("").includes("did not stop within deadline"), `expected stderr.join("") to include "did not stop within deadline"`);
     },
   );
 });

@@ -1,4 +1,4 @@
-import { assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { MemoryStore } from "../store/mod.ts";
 import { serveWorkbenchUnix } from "../server/main.ts";
@@ -43,8 +43,8 @@ describe("socketTurn over a real Unix socket (integration)", () => {
         { onDelta: (t) => deltas.push(t) },
         connectUnixClient,
       );
-      assertStrictEquals(deltas.join(""), "Hello socket");
-      assertStrictEquals(r.text, "Hello socket");
+      assert.strictEqual(deltas.join(""), "Hello socket");
+      assert.strictEqual(r.text, "Hello socket");
     } finally {
       await server.close();
       await Deno.remove(sock).catch(() => {});

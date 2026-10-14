@@ -1,9 +1,4 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { fakeIo } from "../../testing/fakes/fake-io.ts";
 import { promptMidTurnApproval } from "./approval.ts";
@@ -51,7 +46,7 @@ describe("promptMidTurnApproval", () => {
   ) {
     it(`returns the exact ACP option id selected by number (${answer})`, async () => {
       const { io } = fakeIo([answer]);
-      assertEquals(
+      assert.deepStrictEqual(
         await promptMidTurnApproval(io, acpPermissionRequest, true),
         { decision: "select", optionId },
       );
@@ -71,13 +66,13 @@ describe("promptMidTurnApproval", () => {
       ],
     };
     const { io, stderr } = fakeIo(["4"]);
-    assertEquals(await promptMidTurnApproval(io, dynamic, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, dynamic, true), {
       decision: "select",
       optionId: "remember-command-id",
     });
     const rendered = stderr.join("\n");
     for (const option of dynamic.options) {
-      assertEquals(
+      assert.deepStrictEqual(
         rendered.match(
           new RegExp(option.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
         )?.length,
@@ -88,7 +83,7 @@ describe("promptMidTurnApproval", () => {
 
   it("an explicit empty ACP input selects the advertised default rejection", async () => {
     const { io } = fakeIo([""]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, true), {
       decision: "select",
       optionId: "reject-id",
     });
@@ -96,7 +91,7 @@ describe("promptMidTurnApproval", () => {
 
   it("closed ACP input defaults to policy rejection", async () => {
     const { io } = fakeIo([]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, true), {
       decision: "deny",
       reason: "ACP permission selection unavailable",
     });
@@ -104,39 +99,39 @@ describe("promptMidTurnApproval", () => {
 
   it("invalid ACP input corrects and re-prompts without duplicating the request", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "2"]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, true), {
       decision: "select",
       optionId: "allow-session-id",
     });
-    assertEquals(prompts.length, 2);
-    assertEquals(
+    assert.deepStrictEqual(prompts.length, 2);
+    assert.deepStrictEqual(
       (stderr.filter((line) => line.includes("Run shell command?"))).length,
       1,
     );
-    assertEquals(
+    assert.deepStrictEqual(
       (stderr.filter((line) => line.includes("Allow Once"))).length,
       1,
     );
-    assertStringIncludes(stderr.join("\n"), "Enter a number from 1 to 3.");
+    assert.ok(stderr.join("\n").includes("Enter a number from 1 to 3."), `expected stderr.join("\\n") to include "Enter a number from 1 to 3."`);
   });
 
   it("an oversized ACP selection is rejected before parsing", async () => {
     const { io, prompts } = fakeIo([` 2${" ".repeat(63)}`, "1"]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, true), {
       decision: "select",
       optionId: "allow-once-id",
     });
-    assertEquals(prompts.length, 2);
+    assert.deepStrictEqual(prompts.length, 2);
   });
 
   it("three invalid ACP selections exhaust the bounded prompt and reject", async () => {
     const { io, stderr, prompts } = fakeIo(["later", "0", "4", "1"]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, true), {
       decision: "deny",
       reason: "ACP permission selection unavailable",
     });
-    assertEquals(prompts.length, 3);
-    assertEquals(
+    assert.deepStrictEqual(prompts.length, 3);
+    assert.deepStrictEqual(
       (stderr.filter((line) => line === "   Enter a number from 1 to 3."))
         .length,
       3,
@@ -151,7 +146,7 @@ describe("promptMidTurnApproval", () => {
   ) {
     it(`an empty allow id with no rejection fails closed on ${label}`, async () => {
       const { io, stderr } = fakeIo(lines);
-      assertEquals(
+      assert.deepStrictEqual(
         await promptMidTurnApproval(io, emptyAllowOnlyRequest, interactive),
         {
           decision: "deny",
@@ -159,7 +154,7 @@ describe("promptMidTurnApproval", () => {
         },
       );
       if (interactive) {
-        assertEquals(
+        assert.deepStrictEqual(
           (stderr.filter((line) =>
             line === "   ACP permission options were invalid; request rejected."
           )).length,
@@ -178,12 +173,12 @@ describe("promptMidTurnApproval", () => {
         optionId: "duplicate",
       })),
     };
-    assertEquals(await promptMidTurnApproval(io, duplicate, true), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, duplicate, true), {
       decision: "deny",
       reason: "ACP rejection option unavailable",
     });
-    assertEquals(prompts.length, 0);
-    assertEquals(
+    assert.deepStrictEqual(prompts.length, 0);
+    assert.deepStrictEqual(
       (stderr.filter((line) =>
         line === "   ACP permission options were invalid; request rejected."
       )).length,
@@ -205,7 +200,7 @@ describe("promptMidTurnApproval", () => {
         }),
       close: () => {},
     };
-    assertEquals(
+    assert.deepStrictEqual(
       await promptMidTurnApproval(
         io,
         acpPermissionRequest,
@@ -218,16 +213,16 @@ describe("promptMidTurnApproval", () => {
 
   it("a non-interactive ACP request defaults to policy rejection without prompting", async () => {
     const { io, prompts } = fakeIo(["1"]);
-    assertEquals(await promptMidTurnApproval(io, acpPermissionRequest, false), {
+    assert.deepStrictEqual(await promptMidTurnApproval(io, acpPermissionRequest, false), {
       decision: "deny",
       reason: "ACP permission selection unavailable",
     });
-    assertEquals(prompts.length, 0);
+    assert.deepStrictEqual(prompts.length, 0);
   });
 
   it("approves on y", async () => {
     const { io } = fakeIo(["y"]);
-    assertEquals(
+    assert.deepStrictEqual(
       await promptMidTurnApproval(io, {
         title: "Write File",
         arguments: { path: "a" },
@@ -244,13 +239,13 @@ describe("promptMidTurnApproval", () => {
       arguments: { command: "deno task test", timeoutSec: 300 },
     }, true);
     const rendered = stderr.join("\n");
-    assertStringIncludes(rendered, "approve Run Bash Command (timeout 300 s)?");
-    assertStringIncludes(rendered, "timeoutSec: 300");
+    assert.ok(rendered.includes("approve Run Bash Command (timeout 300 s)?"), `expected ${JSON.stringify(rendered)} to include "approve Run Bash Command (timeout 300 s)?"`);
+    assert.ok(rendered.includes("timeoutSec: 300"), `expected ${JSON.stringify(rendered)} to include "timeoutSec: 300"`);
   });
 
   it("denies on anything else", async () => {
     const { io } = fakeIo(["n"]);
-    assertStrictEquals(
+    assert.strictEqual(
       (await promptMidTurnApproval(io, {}, true)).decision,
       "deny",
     );
@@ -262,12 +257,12 @@ describe("promptMidTurnApproval", () => {
       err: () => {},
       readLine: (_prompt, signal) => {
         abortController.abort();
-        assertStrictEquals(signal?.aborted, true);
+        assert.strictEqual(signal?.aborted, true);
         return Promise.resolve(null);
       },
       close: () => {},
     };
-    assertEquals(
+    assert.deepStrictEqual(
       await promptMidTurnApproval(
         io,
         {},
@@ -289,8 +284,8 @@ describe("promptMidTurnApproval", () => {
       close: () => {},
     };
     const verdict = await promptMidTurnApproval(io, {}, false);
-    assertStrictEquals(verdict.decision, "deny");
-    assertStrictEquals(asked, false);
+    assert.strictEqual(verdict.decision, "deny");
+    assert.strictEqual(asked, false);
   });
 
   it("runaway_anomaly gets its own hard-stop prompt and approves on y", async () => {
@@ -299,12 +294,9 @@ describe("promptMidTurnApproval", () => {
       kind: "runaway_anomaly",
       message: "Runaway spend anomaly — hard stop",
     }, true);
-    assertEquals(verdict, { decision: "approve" });
-    assertStringIncludes(
-      stderr.join("\n"),
-      "Runaway spend anomaly — hard stop",
-    );
-    assertFalse((stderr.join("\n")).includes("exceed budget ceiling"));
+    assert.deepStrictEqual(verdict, { decision: "approve" });
+    assert.ok(stderr.join("\n").includes("Runaway spend anomaly — hard stop"), `expected stderr.join("\\n") to include "Runaway spend anomaly — hard stop"`);
+    assert.ok(!(stderr.join("\n")).includes("exceed budget ceiling"));
   });
 
   it("runaway_anomaly denies on anything but yes", async () => {
@@ -312,6 +304,6 @@ describe("promptMidTurnApproval", () => {
     const verdict = await promptMidTurnApproval(io, {
       kind: "runaway_anomaly",
     }, true);
-    assertStrictEquals(verdict.decision, "deny");
+    assert.strictEqual(verdict.decision, "deny");
   });
 });

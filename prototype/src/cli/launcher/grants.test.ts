@@ -1,12 +1,8 @@
-import {
-  assert,
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { assertArrayIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   buildServeUnixArgs,
@@ -32,7 +28,7 @@ describe("runtime lifecycle commands", () => {
       ["127.0.0.1:3306", "localhost:18080"],
       "/run/wb.sock",
     );
-    assertEquals(args, [
+    assert.deepStrictEqual(args, [
       "run",
       "--no-prompt",
       "-P=serve-unix",
@@ -47,7 +43,7 @@ describe("runtime lifecycle commands", () => {
       ["unix:/run/wb.sock"],
       "/run/wb.sock",
     );
-    assertStrictEquals(args[3], "--allow-net=unix:/run/wb.sock");
+    assert.strictEqual(args[3], "--allow-net=unix:/run/wb.sock");
   });
 
   it("buildServeUnixArgs marks only an autostarted runtime", () => {
@@ -64,8 +60,8 @@ describe("runtime lifecycle commands", () => {
       true,
     );
 
-    assertFalse(foreground.includes("--autostarted"));
-    assertStrictEquals(autostarted.at(-1), "--autostarted");
+    assert.ok(!foreground.includes("--autostarted"));
+    assert.strictEqual(autostarted.at(-1), "--autostarted");
   });
 
   it("buildServeUnixArgs appends the launch-resolved memory endpoint grant", () => {
@@ -74,7 +70,7 @@ describe("runtime lifecycle commands", () => {
       "/run/wb.sock",
       "memory.example:443",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       args[3],
       "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,memory.example:443",
     );
@@ -90,7 +86,7 @@ describe("runtime lifecycle commands", () => {
       false,
       ["mcp.linear.app:443", "127.0.0.1:43137"],
     );
-    assertStrictEquals(
+    assert.strictEqual(
       args[3],
       "--allow-net=127.0.0.1:3306,mcp.linear.app:443,unix:/run/wb.sock,127.0.0.1:43137",
     );
@@ -107,15 +103,14 @@ describe("runtime lifecycle commands", () => {
       ["mcp.linear.app:443"],
       ["127.0.0.53:53", "[2001:db8::53]:53", "127.0.0.53:53"],
     );
-    assertStrictEquals(
+    assert.strictEqual(
       args[3],
       "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,mcp.linear.app:443,127.0.0.53:53,[2001:db8::53]:53",
     );
   });
 
   it("buildServeUnixArgs rejects comma-bearing network grants", () => {
-    assertThrows(
-      () =>
+    assert.throws(() =>
         buildServeUnixArgs(
           ["127.0.0.1:3306"],
           "/run/wb.sock",
@@ -124,15 +119,12 @@ describe("runtime lifecycle commands", () => {
           null,
           false,
           ["foo,bar.example:443"],
-        ),
-      Error,
-      "Deno network grants cannot contain commas",
-    );
+        ), (error: unknown) => error instanceof Error && error.message.includes("Deno network grants cannot contain commas"));
   });
 
   it("buildServeUnixArgs adds no memory grant when recall is unconfigured", () => {
     const args = buildServeUnixArgs(["127.0.0.1:3306"], "/run/wb.sock", null);
-    assertStrictEquals(args[3], "--allow-net=127.0.0.1:3306,unix:/run/wb.sock");
+    assert.strictEqual(args[3], "--allow-net=127.0.0.1:3306,unix:/run/wb.sock");
   });
 
   it("buildServeUnixArgs does not duplicate an already-granted memory host", () => {
@@ -141,29 +133,29 @@ describe("runtime lifecycle commands", () => {
       "/run/wb.sock",
       "memory.example:443",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       args[3],
       "--allow-net=memory.example:443,unix:/run/wb.sock",
     );
   });
 
   it("memoryMcpNetGrant derives host:port, defaulting the scheme port", () => {
-    assertStrictEquals(memoryMcpNetGrant(undefined), null);
-    assertStrictEquals(memoryMcpNetGrant(""), null);
-    assertStrictEquals(
+    assert.strictEqual(memoryMcpNetGrant(undefined), null);
+    assert.strictEqual(memoryMcpNetGrant(""), null);
+    assert.strictEqual(
       memoryMcpNetGrant("https://memory.example/mcp"),
       "memory.example:443",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       memoryMcpNetGrant("https://memory.example:8443/mcp"),
       "memory.example:8443",
     );
     // Plain http is loopback-only; the default port still derives.
-    assertStrictEquals(
+    assert.strictEqual(
       memoryMcpNetGrant("http://127.0.0.1:8080/mcp"),
       "127.0.0.1:8080",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       memoryMcpNetGrant("http://localhost/mcp"),
       "localhost:80",
     );
@@ -172,11 +164,11 @@ describe("runtime lifecycle commands", () => {
   it("memoryMcpNetGrant keeps IPv6 hosts bracketed, as Deno grants require", () => {
     // WHATWG URL.hostname returns IPv6 literals WITH brackets (unlike legacy
     // url.parse), which is exactly the shape --allow-net expects.
-    assertStrictEquals(
+    assert.strictEqual(
       memoryMcpNetGrant("http://[::1]:8443/mcp"),
       "[::1]:8443",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       memoryMcpNetGrant("https://[2001:db8::1]/mcp"),
       "[2001:db8::1]:443",
     );
@@ -186,32 +178,12 @@ describe("runtime lifecycle commands", () => {
     // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall —
     // and a grant is never derived for a destination that would carry the
     // token in cleartext off-box.
-    assertThrows(
-      () => memoryMcpNetGrant("not a url"),
-      Error,
-      "not a valid URL",
-    );
-    assertThrows(
-      () => memoryMcpNetGrant("ftp://memory.example/mcp"),
-      Error,
-      "https",
-    );
-    assertThrows(
-      () => memoryMcpNetGrant("http://memory.example/mcp"),
-      Error,
-      "https",
-    );
+    assert.throws(() => memoryMcpNetGrant("not a url"), (error: unknown) => error instanceof Error && error.message.includes("not a valid URL"));
+    assert.throws(() => memoryMcpNetGrant("ftp://memory.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
+    assert.throws(() => memoryMcpNetGrant("http://memory.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
     // A DNS name that merely starts with "127." is routable, not loopback.
-    assertThrows(
-      () => memoryMcpNetGrant("http://127.attacker.example/mcp"),
-      Error,
-      "https",
-    );
-    assertThrows(
-      () => memoryMcpNetGrant("http://127.example.com/mcp"),
-      Error,
-      "https",
-    );
+    assert.throws(() => memoryMcpNetGrant("http://127.attacker.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
+    assert.throws(() => memoryMcpNetGrant("http://127.example.com/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
   });
 
   const noAmbient = { get: () => undefined };
@@ -220,18 +192,18 @@ describe("runtime lifecycle commands", () => {
     const grant = await readMemoryMcpNetGrant(
       "/proto",
       (path) => {
-        assertStrictEquals(path, "/proto/.env");
+        assert.strictEqual(path, "/proto/.env");
         return Promise.resolve(
           "DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n",
         );
       },
       noAmbient,
     );
-    assertStrictEquals(grant, "memory.example:443");
+    assert.strictEqual(grant, "memory.example:443");
   });
 
   it("readMemoryMcpNetGrant is null without an env file or endpoint", async () => {
-    assertStrictEquals(
+    assert.strictEqual(
       await readMemoryMcpNetGrant(
         "/proto",
         () => Promise.reject(new Error("ENOENT")),
@@ -239,7 +211,7 @@ describe("runtime lifecycle commands", () => {
       ),
       null,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       await readMemoryMcpNetGrant(
         "/proto",
         () => Promise.resolve("OTHER=1\n"),
@@ -263,7 +235,7 @@ describe("runtime lifecycle commands", () => {
           : undefined),
       },
     );
-    assertStrictEquals(grant, "ambient.example:443");
+    assert.strictEqual(grant, "ambient.example:443");
   });
 
   it("readMemoryMcpNetGrant treats an empty ambient value as authoritative", async () => {
@@ -274,76 +246,76 @@ describe("runtime lifecycle commands", () => {
       () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n"),
       { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "" : undefined) },
     );
-    assertStrictEquals(grant, null);
+    assert.strictEqual(grant, null);
   });
 
   it("every dyfj CLI surface may read the memory endpoint URL", async () => {
     // The launcher derives the child's net grant from DYFJ_MEMORY_MCP_URL, so
     // all three CLI permission surfaces (profile, compiled binary, launcher
     // script) must stay in lockstep on the env grant.
-    const raw = await Deno.readTextFile("deno.json");
+    const raw = await readFile("deno.json", "utf8");
     const parsed = JSON.parse(raw) as {
       tasks: Record<string, string>;
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     const cliEnv = parsed.permissions["cli"].env;
-    assert(Array.isArray(cliEnv));
-    assertArrayIncludes(cliEnv, ["DYFJ_MEMORY_MCP_URL"]);
-    assertArrayIncludes(cliEnv, ["DYFJ_NODE_PATH"]);
-    assertArrayIncludes(cliEnv, ["DYFJ_CODEX_TOOLCHAIN_PATH"]);
-    assertArrayIncludes(cliEnv, ["DYFJ_CODEX_RUSTUP_HOME"]);
+    assert.ok(Array.isArray(cliEnv));
+    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !cliEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !cliEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !cliEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !cliEnv.includes(item)), []);
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1]?.split(",") ?? [];
-    assertArrayIncludes(compileEnv, ["DYFJ_MEMORY_MCP_URL"]);
-    assertArrayIncludes(compileEnv, ["DYFJ_NODE_PATH"]);
-    assertArrayIncludes(compileEnv, ["DYFJ_CODEX_TOOLCHAIN_PATH"]);
-    assertArrayIncludes(compileEnv, ["DYFJ_CODEX_RUSTUP_HOME"]);
-    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !compileEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !compileEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !compileEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !compileEnv.includes(item)), []);
+    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
-    assertArrayIncludes(launcherEnv, ["DYFJ_MEMORY_MCP_URL"]);
-    assertArrayIncludes(launcherEnv, ["DYFJ_NODE_PATH"]);
-    assertArrayIncludes(launcherEnv, ["DYFJ_CODEX_TOOLCHAIN_PATH"]);
-    assertArrayIncludes(launcherEnv, ["DYFJ_CODEX_RUSTUP_HOME"]);
+    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !launcherEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !launcherEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !launcherEnv.includes(item)), []);
+    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !launcherEnv.includes(item)), []);
   });
 
   it("the internal autostart marker is not ambient process state", async () => {
-    const raw = await Deno.readTextFile("deno.json");
+    const raw = await readFile("deno.json", "utf8");
     const parsed = JSON.parse(raw) as {
       tasks: Record<string, string>;
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     const cliEnv = parsed.permissions["cli"].env;
-    assert(Array.isArray(cliEnv));
-    assertFalse(cliEnv.includes("DYFJ_AUTOSTARTED"));
+    assert.ok(Array.isArray(cliEnv));
+    assert.ok(!cliEnv.includes("DYFJ_AUTOSTARTED"));
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1]?.split(",") ?? [];
-    assertFalse(compileEnv.includes("DYFJ_AUTOSTARTED"));
-    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    assert.ok(!compileEnv.includes("DYFJ_AUTOSTARTED"));
+    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
-    assertFalse(launcherEnv.includes("DYFJ_AUTOSTARTED"));
+    assert.ok(!launcherEnv.includes("DYFJ_AUTOSTARTED"));
   });
 
   it("readServeUnixNetGrants reads the real profile", async () => {
     // Guards the runtime read path: the serve-unix profile must keep a
     // declared net grant list for dyfj start to reproduce.
     const grants = await readServeUnixNetGrants(".");
-    assert(grants.length > 0);
-    assertArrayIncludes(grants, ["127.0.0.1:3306"]);
+    assert.ok(grants.length > 0);
+    assert.deepStrictEqual(["127.0.0.1:3306"].filter((item) => !grants.includes(item)), []);
   });
 });
 
 describe("readServeUnixRunGrants", () => {
   it("reads the serve-unix run grant list from the real profile", async () => {
     const grants = await readServeUnixRunGrants(".");
-    assertArrayIncludes(grants, ["bash"]);
+    assert.deepStrictEqual(["bash"].filter((item) => !grants.includes(item)), []);
   });
 });
 
 describe("nodeRunGrant", () => {
   it("allows a runtime without the optional Codex route", async () => {
-    assertStrictEquals(await nodeRunGrant({ get: () => undefined }), null);
+    assert.strictEqual(await nodeRunGrant({ get: () => undefined }), null);
   });
 });
 
@@ -353,9 +325,9 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
 
   it("omits --allow-run when no resolver is configured (null)", () => {
     const args = buildServeUnixArgs(NET, SOCK, null, null);
-    assertStrictEquals(args.some((a) => a.startsWith("--allow-run")), false);
+    assert.strictEqual(args.some((a) => a.startsWith("--allow-run")), false);
     // -P still supplies the profile's run grants unchanged.
-    assertArrayIncludes(args, ["-P=serve-unix"]);
+    assert.deepStrictEqual(["-P=serve-unix"].filter((item) => !args.includes(item)), []);
   });
 
   it("appends --allow-run with the profile grants plus the resolver binary", () => {
@@ -365,32 +337,28 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
       "/bin/kill",
       "op",
     ]);
-    assertArrayIncludes(args, [
+    assert.deepStrictEqual([
       "--allow-run=bash,/opt/node/bin/node,/bin/kill,op",
-    ]);
+    ].filter((item) => !args.includes(item)), []);
   });
 
   it("rejects delimiter-unsafe run grants", () => {
-    assertThrows(
-      () =>
+    assert.throws(() =>
         buildServeUnixArgs(NET, SOCK, null, [
           "bash",
           "/opt/Node,Inc/bin/node",
-        ]),
-      Error,
-      "Deno run grants cannot contain commas",
-    );
+        ]), (error: unknown) => error instanceof Error && error.message.includes("Deno run grants cannot contain commas"));
   });
 
   it("the socket grant is still present alongside the run grant", () => {
     const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
     const net = args.find((a) => a.startsWith("--allow-net="));
-    assertStringIncludes(net ?? "", `unix:${SOCK}`);
+    assert.ok((net ?? "").includes(`unix:${SOCK}`), `expected net ?? "" to include \`unix:\${SOCK}\``);
   });
 
   it("omits --allow-env when no inherit_env grant is needed (null)", () => {
     const args = buildServeUnixArgs(NET, SOCK, null, null, null);
-    assertStrictEquals(args.some((a) => a.startsWith("--allow-env")), false);
+    assert.strictEqual(args.some((a) => a.startsWith("--allow-env")), false);
   });
 
   it("appends --allow-env with the profile env plus the inherit_env names", () => {
@@ -399,21 +367,21 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
       "HOME",
       "OP_SERVICE_ACCOUNT_TOKEN",
     ]);
-    assertArrayIncludes(args, [
+    assert.deepStrictEqual([
       "--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN",
-    ]);
+    ].filter((item) => !args.includes(item)), []);
   });
 });
 
 describe("toolchainReadGrant", () => {
   it("validates one readable directory and preserves its selected path", async () => {
-    const directory = await Deno.makeTempDir();
+    const directory = await mkdtemp(join(tmpdir(), "tmp-"));
     try {
-      assertStrictEquals(
+      assert.strictEqual(
         await toolchainReadGrant({ get: () => directory }),
         directory,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         await toolchainReadGrant({ get: () => undefined }),
         null,
       );
@@ -423,7 +391,7 @@ describe("toolchainReadGrant", () => {
   });
 
   it("rejects whole dot components before resolving the selected path", async () => {
-    const root = await Deno.makeTempDir();
+    const root = await mkdtemp(join(tmpdir(), "tmp-"));
     const child = `${root}/child`;
     const dotted = [
       `${root}/.cargo`,
@@ -431,8 +399,8 @@ describe("toolchainReadGrant", () => {
       `${root}/..cache`,
       `${root}/tool.chain`,
     ];
-    await Deno.mkdir(child);
-    for (const directory of dotted) await Deno.mkdir(directory);
+    await mkdir(child);
+    for (const directory of dotted) await mkdir(directory);
     try {
       for (
         const value of [
@@ -454,33 +422,33 @@ describe("toolchainReadGrant", () => {
         } catch (error) {
           failure = error instanceof Error ? error : new Error(String(error));
         }
-        assertStrictEquals(
+        assert.strictEqual(
           failure?.message,
           "Codex toolchain path must not contain dot components",
         );
-        assertFalse((failure?.message).includes(value));
+        assert.ok(!(failure?.message).includes(value));
       }
       for (const directory of dotted) {
-        assertStrictEquals(
+        assert.strictEqual(
           await toolchainReadGrant({ get: () => directory }),
           directory,
         );
       }
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 });
 
 describe("rustupHomeReadGrant", () => {
   it("validates one readable directory and preserves its selected path", async () => {
-    const directory = await Deno.makeTempDir();
+    const directory = await mkdtemp(join(tmpdir(), "tmp-"));
     try {
-      assertStrictEquals(
+      assert.strictEqual(
         await rustupHomeReadGrant({ get: () => directory }),
         directory,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         await rustupHomeReadGrant({ get: () => undefined }),
         null,
       );
@@ -490,7 +458,7 @@ describe("rustupHomeReadGrant", () => {
   });
 
   it("rejects whole dot components before resolving the selected path", async () => {
-    const root = await Deno.makeTempDir();
+    const root = await mkdtemp(join(tmpdir(), "tmp-"));
     const child = `${root}/child`;
     const dotted = [
       `${root}/.cargo`,
@@ -498,8 +466,8 @@ describe("rustupHomeReadGrant", () => {
       `${root}/..cache`,
       `${root}/tool.chain`,
     ];
-    await Deno.mkdir(child);
-    for (const directory of dotted) await Deno.mkdir(directory);
+    await mkdir(child);
+    for (const directory of dotted) await mkdir(directory);
     try {
       for (
         const value of [
@@ -521,20 +489,20 @@ describe("rustupHomeReadGrant", () => {
         } catch (error) {
           failure = error instanceof Error ? error : new Error(String(error));
         }
-        assertStrictEquals(
+        assert.strictEqual(
           failure?.message,
           "Codex Rustup home must not contain dot components",
         );
-        assertFalse((failure?.message).includes(value));
+        assert.ok(!(failure?.message).includes(value));
       }
       for (const directory of dotted) {
-        assertStrictEquals(
+        assert.strictEqual(
           await rustupHomeReadGrant({ get: () => directory }),
           directory,
         );
       }
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 });
@@ -553,8 +521,8 @@ describe("Codex toolchain runtime grant", () => {
 describe("readServeUnixEnvGrants", () => {
   it("reads the serve-unix env grant list from the real profile", async () => {
     const grants = await readServeUnixEnvGrants(".");
-    assertArrayIncludes(grants, ["PATH"]);
-    assertArrayIncludes(grants, ["HOME"]);
+    assert.deepStrictEqual(["PATH"].filter((item) => !grants.includes(item)), []);
+    assert.deepStrictEqual(["HOME"].filter((item) => !grants.includes(item)), []);
   });
 });
 
@@ -563,21 +531,21 @@ describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
     // dyfj start reads ~/.dyfj/config.toml (located via DYFJ_ROOT) to derive the
     // child's --allow-run resolver-binary grant, so all three CLI permission
     // surfaces must grant DYFJ_ROOT.
-    const raw = await Deno.readTextFile("deno.json");
+    const raw = await readFile("deno.json", "utf8");
     const parsed = JSON.parse(raw) as {
       tasks: Record<string, string>;
       permissions: Record<string, { env?: string[] | boolean }>;
     };
     const cliEnv = parsed.permissions["cli"].env;
-    assert(Array.isArray(cliEnv));
-    assertArrayIncludes(cliEnv, ["DYFJ_ROOT"]);
+    assert.ok(Array.isArray(cliEnv));
+    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !cliEnv.includes(item)), []);
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1]?.split(",") ?? [];
-    assertArrayIncludes(compileEnv, ["DYFJ_ROOT"]);
-    const launcher = await Deno.readTextFile("scripts/dyfj-launcher.sh");
+    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !compileEnv.includes(item)), []);
+    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
-    assertArrayIncludes(launcherEnv, ["DYFJ_ROOT"]);
+    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !launcherEnv.includes(item)), []);
   });
 });
 
@@ -610,9 +578,9 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       env,
       parse,
     );
-    assertEquals(cfg?.command, ["op", "read"]);
+    assert.deepStrictEqual(cfg?.command, ["op", "read"]);
     // Ambient root is used directly; .env is not consulted for the root.
-    assertArrayIncludes(reads, ["/ambient/config.toml"]);
+    assert.deepStrictEqual(["/ambient/config.toml"].filter((item) => !reads.includes(item)), []);
   });
 
   it("falls back to .env DYFJ_ROOT when ambient is unset (mirrors the child)", async () => {
@@ -628,7 +596,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       env,
       parse,
     );
-    assertStrictEquals(cfg?.pointers.ANTHROPIC_API_KEY, "op://v/a/credential");
+    assert.strictEqual(cfg?.pointers.ANTHROPIC_API_KEY, "op://v/a/credential");
   });
 
   it("falls back to HOME/.dyfj when neither ambient nor .env set the root", async () => {
@@ -645,7 +613,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       env,
       parse,
     );
-    assertEquals(cfg?.command, ["op", "read"]);
+    assert.deepStrictEqual(cfg?.command, ["op", "read"]);
   });
 
   it("empty ambient DYFJ_ROOT is treated as absent, NOT read from .env (mirrors the child)", async () => {
@@ -670,10 +638,10 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       env,
       parse,
     );
-    assertEquals(cfg?.command, ["op", "read"]);
+    assert.deepStrictEqual(cfg?.command, ["op", "read"]);
     // Resolved against HOME, and .env was never consulted for the root.
-    assertArrayIncludes(readPaths, [`${FAKE_HOME}/.dyfj/config.toml`]);
-    assertFalse(readPaths.includes("/cwd/.env"));
+    assert.deepStrictEqual([`${FAKE_HOME}/.dyfj/config.toml`].filter((item) => !readPaths.includes(item)), []);
+    assert.ok(!readPaths.includes("/cwd/.env"));
   });
 
   it("loads external MCP servers from the same child-visible config", async () => {
@@ -715,6 +683,6 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
         },
       }),
     );
-    assertEquals(servers.map((server) => server.id), ["linear"]);
+    assert.deepStrictEqual(servers.map((server) => server.id), ["linear"]);
   });
 });

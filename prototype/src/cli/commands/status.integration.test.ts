@@ -1,13 +1,7 @@
 // `dyfj status` and its liveness probe against real sockets. Socket paths
 // come from the integration lane's exact grants
 // (testing/servers/uds-sockets.ts).
-import {
-  assert,
-  assertNotStrictEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { afterEach, describe, it } from "@std/testing/bdd";
 import { MemoryStore } from "../../store/mod.ts";
 import {
@@ -59,10 +53,10 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
     const { io, stdout } = fakeIo();
     const code = await runStatus(cfg({ socket: socketPath }), io);
-    assertStrictEquals(code, 0);
+    assert.strictEqual(code, 0);
     const out = stdout.join("");
-    assertStringIncludes(out, "runtime: reachable");
-    assertStringIncludes(out, socketPath);
+    assert.ok(out.includes("runtime: reachable"), `expected ${JSON.stringify(out)} to include "runtime: reachable"`);
+    assert.ok(out.includes(socketPath), `expected ${JSON.stringify(out)} to include ${JSON.stringify(socketPath)}`);
   });
 
   it("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
@@ -85,13 +79,13 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     }
     const elapsed = Date.now() - start;
 
-    assertNotStrictEquals(caughtError, undefined);
-    assertStrictEquals(isTimeoutError(caughtError), true);
-    assert(elapsed >= 80);
-    assert(elapsed < 1500);
+    assert.notStrictEqual(caughtError, undefined);
+    assert.strictEqual(isTimeoutError(caughtError), true);
+    assert.ok(elapsed >= 80);
+    assert.ok(elapsed < 1500);
 
     const formatted = socketError(caughtError, cfg({ socket: socketPath }));
-    assertStrictEquals(
+    assert.strictEqual(
       formatted,
       `dyfj: runtime at ${socketPath} is unresponsive (timed out)`,
     );
@@ -102,7 +96,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     const preAborted = AbortSignal.abort(
       new DOMException("The operation was aborted", "AbortError"),
     );
-    await assertRejects(() => connectUnixClient(socketPath, {}, preAborted));
+    await assert.rejects(() => connectUnixClient(socketPath, {}, preAborted));
   });
 
   it("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
@@ -114,11 +108,11 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     const connectPromise = connectUnixClient(socketPath, {}, ac.signal);
     // Abort immediately after connectUnixClient is called while Deno.connect is in flight
     ac.abort(new DOMException("The operation was aborted", "AbortError"));
-    await assertRejects(() => connectPromise);
+    await assert.rejects(() => connectPromise);
 
     const serverConn = await listener.firstAccepted;
     const buf = new Uint8Array(10);
     const readResult = await serverConn.read(buf);
-    assertStrictEquals(readResult, null);
+    assert.strictEqual(readResult, null);
   });
 });

@@ -1,6 +1,7 @@
 // The real terminal adapter's pieces: readline EOF and abort handling, which
 // Ctrl-C source a turn listens on, and the synchronous write-all loop.
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
 import { assertSpyCalls, spy } from "@std/testing/mock";
 import {
@@ -19,7 +20,7 @@ describe("readLineOrNull", () => {
       once: () => {},
       off: () => {},
     };
-    assertStrictEquals(await readLineOrNull(rl, "> "), "hello");
+    assert.strictEqual(await readLineOrNull(rl, "> "), "hello");
   });
 
   it("resolves null when the interface closes before answering (Ctrl-D)", async () => {
@@ -34,7 +35,7 @@ describe("readLineOrNull", () => {
     };
     const pending = readLineOrNull(rl, "> ");
     closeHandler();
-    assertStrictEquals(await pending, null);
+    assert.strictEqual(await pending, null);
   });
 
   it("resolves null when the question rejects", async () => {
@@ -46,8 +47,8 @@ describe("readLineOrNull", () => {
         removed++;
       },
     };
-    assertStrictEquals(await readLineOrNull(rl, "> "), null);
-    assertStrictEquals(removed, 1);
+    assert.strictEqual(await readLineOrNull(rl, "> "), null);
+    assert.strictEqual(removed, 1);
   });
 
   it("passes an abort signal to the pending question", async () => {
@@ -74,8 +75,8 @@ describe("readLineOrNull", () => {
 
     abortController.abort();
 
-    assertStrictEquals(await pending, null);
-    assertStrictEquals(receivedSignal, abortController.signal);
+    assert.strictEqual(await pending, null);
+    assert.strictEqual(receivedSignal, abortController.signal);
   });
 });
 
@@ -97,7 +98,7 @@ describe("readlineTurnInterruptSource", () => {
     registered?.();
     assertSpyCalls(handler, 1);
     source.remove(handler);
-    assertStrictEquals(registered, undefined);
+    assert.strictEqual(registered, undefined);
   });
 
   it("uses process SIGINT when terminal stdin has redirected stdout", () => {
@@ -110,15 +111,15 @@ describe("readlineTurnInterruptSource", () => {
       remove: () => {},
     };
 
-    assertStrictEquals(
+    assert.strictEqual(
       selectTurnInterruptSource(true, true, readlineSource, signalSource),
       readlineSource,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       selectTurnInterruptSource(true, false, readlineSource, signalSource),
       signalSource,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       selectTurnInterruptSource(false, true, readlineSource, signalSource),
       undefined,
     );
@@ -139,12 +140,12 @@ describe("writeAll", () => {
       return n;
     };
     writeAll(1, new Uint8Array([1, 2, 3, 4, 5]), write, () => {});
-    assertEquals(written, [[1, 2], [3, 4, 5]]);
+    assert.deepStrictEqual(written, [[1, 2], [3, 4, 5]]);
   });
 
   it("pauses and retries when the descriptor reports EAGAIN", () => {
     const written: number[][] = [];
-    const pause = spy(() => {});
+    const pause = mock.fn(() => {});
     let calls = 0;
     const write = (
       _fd: number,
@@ -162,8 +163,8 @@ describe("writeAll", () => {
       return length;
     };
     writeAll(2, new Uint8Array([7, 8, 9]), write, pause);
-    assertSpyCalls(pause, 1);
-    assertEquals(written, [[7, 8, 9]]);
+    assert.equal(pause.mock.callCount(), 1);
+    assert.deepStrictEqual(written, [[7, 8, 9]]);
   });
 
   it("writes nothing for an empty buffer", () => {
@@ -189,6 +190,6 @@ describe("writeLine", () => {
       return n;
     };
     writeLine(2, "oops", write, () => {});
-    assertEquals(new TextDecoder().decode(new Uint8Array(written)), "oops\n");
+    assert.deepStrictEqual(new TextDecoder().decode(new Uint8Array(written)), "oops\n");
   });
 });

@@ -1,9 +1,4 @@
-import {
-  assert,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
@@ -46,9 +41,9 @@ describe("models/sessions over UDS", () => {
         },
       }),
     );
-    assertStrictEquals(code, 0);
-    assertStringIncludes(stdout.join(""), "gemma4");
-    assertStringIncludes(stdout.join(""), "Gemma 4");
+    assert.strictEqual(code, 0);
+    assert.ok(stdout.join("").includes("gemma4"), `expected stdout.join("") to include "gemma4"`);
+    assert.ok(stdout.join("").includes("Gemma 4"), `expected stdout.join("") to include "Gemma 4"`);
   });
 
   it("runModels annotates rows the server marked unroutable", async () => {
@@ -84,18 +79,15 @@ describe("models/sessions over UDS", () => {
         },
       }),
     );
-    assertStrictEquals(code, 0);
+    assert.strictEqual(code, 0);
     const out = stdout.join("");
     const lines = out.split("\n");
-    assertStringIncludes(
-      lines.find((l) => l.includes("gpt-6-preview")) ?? "",
-      "[unpriced — not routable]",
-    );
+    assert.ok((lines.find((l) => l.includes("gpt-6-preview")) ?? "").includes("[unpriced — not routable]"), `expected lines.find((l) => l.includes("gpt-6-preview")) ?? "" to include "[unpriced — not routable]"`);
     const gemma = lines.find((l) => l.includes("gemma4"));
     const opus = lines.find((l) => l.includes("claude-opus-4-8"));
-    assert(gemma !== undefined && opus !== undefined);
-    assertFalse(gemma.includes("unpriced"));
-    assertFalse(opus.includes("unpriced"));
+    assert.ok(gemma !== undefined && opus !== undefined);
+    assert.ok(!gemma.includes("unpriced"));
+    assert.ok(!opus.includes("unpriced"));
   });
 
   it("a connection failure points the operator at dyfj start", async () => {
@@ -107,8 +99,8 @@ describe("models/sessions over UDS", () => {
         throw new Error("No such file or directory (os error 2)");
       },
     );
-    assertStrictEquals(code, 1);
-    assertStringIncludes(stderr.join("\n"), "dyfj start");
-    assertStringIncludes(stderr.join("\n"), "/run/missing.sock");
+    assert.strictEqual(code, 1);
+    assert.ok(stderr.join("\n").includes("dyfj start"), `expected stderr.join("\\n") to include "dyfj start"`);
+    assert.ok(stderr.join("\n").includes("/run/missing.sock"), `expected stderr.join("\\n") to include "/run/missing.sock"`);
   });
 });

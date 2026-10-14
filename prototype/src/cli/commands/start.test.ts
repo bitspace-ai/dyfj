@@ -1,10 +1,4 @@
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
@@ -28,9 +22,9 @@ describe("runtime lifecycle commands", () => {
       return Promise.resolve(0);
     };
     const code = await runStart(cfg({ socket: "/run/wb.sock" }), io, starter);
-    assertStrictEquals(code, 0);
-    assertEquals(calls, ["/run/wb.sock"]);
-    assertStringIncludes(stderr.join("\n"), "foreground process");
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(calls, ["/run/wb.sock"]);
+    assert.ok(stderr.join("\n").includes("foreground process"), `expected stderr.join("\\n") to include "foreground process"`);
   });
 
   it("runStart describes the autostarted signal posture accurately", async () => {
@@ -46,11 +40,11 @@ describe("runtime lifecycle commands", () => {
       true,
     );
 
-    assertStrictEquals(code, 0);
-    assertStrictEquals(receivedAutostarted, true);
-    assertStringIncludes(stderr.join("\n"), "autostarted process");
-    assertStringIncludes(stderr.join("\n"), "leaves the runtime running");
-    assertFalse((stderr.join("\n")).includes("foreground process"));
+    assert.strictEqual(code, 0);
+    assert.strictEqual(receivedAutostarted, true);
+    assert.ok(stderr.join("\n").includes("autostarted process"), `expected stderr.join("\\n") to include "autostarted process"`);
+    assert.ok(stderr.join("\n").includes("leaves the runtime running"), `expected stderr.join("\\n") to include "leaves the runtime running"`);
+    assert.ok(!(stderr.join("\n")).includes("foreground process"));
   });
 
   it("runStart fails with a precise fallback command", async () => {
@@ -58,9 +52,9 @@ describe("runtime lifecycle commands", () => {
     const code = await runStart(cfg(), io, () => {
       throw new Error("permission denied");
     });
-    assertStrictEquals(code, 1);
-    assertStringIncludes(stderr.join("\n"), "could not start");
-    assertStringIncludes(stderr.join("\n"), "deno task serve-unix");
+    assert.strictEqual(code, 1);
+    assert.ok(stderr.join("\n").includes("could not start"), `expected stderr.join("\\n") to include "could not start"`);
+    assert.ok(stderr.join("\n").includes("deno task serve-unix"), `expected stderr.join("\\n") to include "deno task serve-unix"`);
   });
 
   // Every client error printer must share one discipline: runStart's printer
@@ -71,12 +65,12 @@ describe("runtime lifecycle commands", () => {
     const code = await runStart(cfg(), io, () => {
       throw new Error(payload);
     });
-    assertStrictEquals(code, 1);
+    assert.strictEqual(code, 1);
     const out = stderr.join("\n");
-    assertFalse(out.includes(payload));
+    assert.ok(!out.includes(payload));
     const errorLine = stderr.find((line) => line.includes("could not start"))!;
-    assertStringIncludes(errorLine, "Error");
-    assertStringIncludes(errorLine, `${payload.length} bytes`);
-    assert(errorLine.length < 1000);
+    assert.ok(errorLine.includes("Error"), `expected ${JSON.stringify(errorLine)} to include "Error"`);
+    assert.ok(errorLine.includes(`${payload.length} bytes`), `expected ${JSON.stringify(errorLine)} to include \`\${payload.length} bytes\``);
+    assert.ok(errorLine.length < 1000);
   });
 });

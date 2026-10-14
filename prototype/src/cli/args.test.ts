@@ -1,34 +1,27 @@
-import {
-  assertEquals,
-  assertMatch,
-  assertNotMatch,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-  assertThrows,
-} from "@std/assert";
+import { captureThrow } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { normalizeSessionRef, parseArgs, resolveConfig } from "./args.ts";
 
 describe("parseArgs", () => {
   it("bare args is the REPL", () => {
-    assertStrictEquals(parseArgs([]).command, "repl");
+    assert.strictEqual(parseArgs([]).command, "repl");
   });
   it("exec joins the prompt words", () => {
     const p = parseArgs(["exec", "summarize", "the", "repo"]);
-    assertStrictEquals(p.command, "exec");
-    assertStrictEquals(p.prompt, "summarize the repo");
+    assert.strictEqual(p.command, "exec");
+    assert.strictEqual(p.prompt, "summarize the repo");
   });
   it("-p is an exec alias", () => {
     const p = parseArgs(["-p", "hello"]);
-    assertObjectMatch(p, { command: "exec", prompt: "hello" });
+    assert.partialDeepStrictEqual(p, { command: "exec", prompt: "hello" });
   });
   it("parses only the declared external runners", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs(["--runner", "fixture", "exec", "hi"]).overrides.runner,
       "fixture",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs([
         "--runner",
         "codex-chatgpt",
@@ -37,23 +30,20 @@ describe("parseArgs", () => {
       ]).overrides.runner,
       "codex-chatgpt",
     );
-    assertStringIncludes(
-      parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "",
-      "runner must be fixture or codex-chatgpt",
-    );
+    assert.ok((parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "").includes("runner must be fixture or codex-chatgpt"), `expected parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "" to include "runner must be fixture or codex-chatgpt"`);
   });
 
   it("parses --fast and --no-fast flags", () => {
-    assertStrictEquals(parseArgs(["--fast"]).overrides.fast, true);
-    assertStrictEquals(parseArgs(["--no-fast"]).overrides.fast, false);
+    assert.strictEqual(parseArgs(["--fast"]).overrides.fast, true);
+    assert.strictEqual(parseArgs(["--no-fast"]).overrides.fast, false);
   });
 
   it("allows the Codex ChatGPT runner in REPL and with session resume", () => {
-    assertObjectMatch(parseArgs(["--runner", "codex-chatgpt"]), {
+    assert.partialDeepStrictEqual(parseArgs(["--runner", "codex-chatgpt"]), {
       command: "repl",
       overrides: { runner: "codex-chatgpt" },
     });
-    assertObjectMatch(
+    assert.partialDeepStrictEqual(
       parseArgs([
         "--runner",
         "codex-chatgpt",
@@ -72,16 +62,11 @@ describe("parseArgs", () => {
       },
     );
     for (const command of ["status", "models", "sessions", "start", "stop"]) {
-      assertStringIncludes(
-        parseArgs(["--runner", "codex-chatgpt", command]).error ?? "",
-        `--runner cannot be combined with '${command}'`,
-      );
+      assert.ok((parseArgs(["--runner", "codex-chatgpt", command]).error ?? "").includes(`--runner cannot be combined with '${command}'`), `expected parseArgs(["--runner", "codex-chatgpt", command]).error ?? "" to include \`--runner cannot be combined with '\${command}'\``);
     }
-    assertStringIncludes(
-      parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
-        "",
-      "--runner cannot be combined with 'status'",
-    );
+    assert.ok((parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
+        "").includes("--runner cannot be combined with 'status'"), `expected parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
+        "" to include "--runner cannot be combined with 'status'"`);
   });
 
   it("rejects explicit model routing alongside a runner", () => {
@@ -94,11 +79,9 @@ describe("parseArgs", () => {
         ["--no-fast"],
       ]
     ) {
-      assertStringIncludes(
-        parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
-          "",
-        "runner cannot be combined",
-      );
+      assert.ok((parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
+          "").includes("runner cannot be combined"), `expected parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
+          "" to include "runner cannot be combined"`);
     }
   });
   it("collects routing flags", () => {
@@ -112,36 +95,30 @@ describe("parseArgs", () => {
       "exec",
       "hi",
     ]);
-    assertObjectMatch(p.overrides, {
+    assert.partialDeepStrictEqual(p.overrides, {
       model: "m",
       tier: 2,
       hint: "code",
     });
-    assertStrictEquals(p.prompt, "hi");
-    assertStrictEquals(
+    assert.strictEqual(p.prompt, "hi");
+    assert.strictEqual(
       parseArgs(["--workspace", "/ws", "exec", "hi"]).overrides.workspace,
       "/ws",
     );
   });
   it("rejects an invalid tier", () => {
-    assertStringIncludes(
-      parseArgs(["--tier", "9", "exec", "x"]).error ?? "",
-      "tier",
-    );
+    assert.ok((parseArgs(["--tier", "9", "exec", "x"]).error ?? "").includes("tier"), `expected parseArgs(["--tier", "9", "exec", "x"]).error ?? "" to include "tier"`);
   });
   it("rejects an unknown flag", () => {
-    assertStringIncludes(parseArgs(["--wat"]).error ?? "", "unknown flag");
+    assert.ok((parseArgs(["--wat"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--wat"]).error ?? "" to include "unknown flag"`);
   });
   it("rejects retired HTTP transport flags", () => {
-    assertStringIncludes(
-      parseArgs(["--server", "http://h"]).error ?? "",
-      "unknown flag",
-    );
-    assertStringIncludes(parseArgs(["--unix"]).error ?? "", "unknown flag");
-    assertStringIncludes(parseArgs(["--key", "k"]).error ?? "", "unknown flag");
+    assert.ok((parseArgs(["--server", "http://h"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--server", "http://h"]).error ?? "" to include "unknown flag"`);
+    assert.ok((parseArgs(["--unix"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--unix"]).error ?? "" to include "unknown flag"`);
+    assert.ok((parseArgs(["--key", "k"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--key", "k"]).error ?? "" to include "unknown flag"`);
   });
   it("canonicalizes a valid --session value", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs(["--session", "workbench-01ktz1xwcn7jmgs5e8kakfezkr"])
         .overrides.sessionId,
       "01KTZ1XWCN7JMGS5E8KAKFEZKR",
@@ -149,28 +126,28 @@ describe("parseArgs", () => {
   });
   it("rejects a garbage --session as a parse error, not a throw", () => {
     const p = parseArgs(["--session", "garbage-value"]);
-    assertStrictEquals(p.command, "help");
-    assertStringIncludes(p.error ?? "", "dyfj sessions");
+    assert.strictEqual(p.command, "help");
+    assert.ok((p.error ?? "").includes("dyfj sessions"), `expected p.error ?? "" to include "dyfj sessions"`);
     // main prefixes "dyfj: "; the parse error must not carry its own.
-    assertNotMatch(p.error ?? "", /^dyfj:/);
+    assert.doesNotMatch(p.error ?? "", /^dyfj:/);
   });
   it("--help asks for help", () => {
-    assertStrictEquals(parseArgs(["--help"]).command, "help");
+    assert.strictEqual(parseArgs(["--help"]).command, "help");
   });
   it("'models' and 'sessions' are their own commands", () => {
-    assertStrictEquals(parseArgs(["models"]).command, "models");
-    assertStrictEquals(parseArgs(["sessions"]).command, "sessions");
+    assert.strictEqual(parseArgs(["models"]).command, "models");
+    assert.strictEqual(parseArgs(["sessions"]).command, "sessions");
   });
   it("'status' and 'start' are their own commands", () => {
-    assertStrictEquals(parseArgs(["status"]).command, "status");
-    assertStrictEquals(parseArgs(["start"]).command, "start");
+    assert.strictEqual(parseArgs(["status"]).command, "status");
+    assert.strictEqual(parseArgs(["start"]).command, "start");
   });
   it("accepts the internal launcher marker only on start", () => {
-    assertObjectMatch(parseArgs(["start", "--launcher-autostarted"]), {
+    assert.partialDeepStrictEqual(parseArgs(["start", "--launcher-autostarted"]), {
       command: "start",
       launcherAutostarted: true,
     });
-    assertObjectMatch(parseArgs(["-p", "--launcher-autostarted"]), {
+    assert.partialDeepStrictEqual(parseArgs(["-p", "--launcher-autostarted"]), {
       command: "exec",
       prompt: "--launcher-autostarted",
     });
@@ -185,57 +162,42 @@ describe("parseArgs", () => {
         ["start", "--launcher-autostarted", "--help"],
       ]
     ) {
-      assertStringIncludes(
-        parseArgs(argv).error ?? "",
-        "--launcher-autostarted is valid only with start",
-      );
+      assert.ok((parseArgs(argv).error ?? "").includes("--launcher-autostarted is valid only with start"), `expected parseArgs(argv).error ?? "" to include "--launcher-autostarted is valid only with start"`);
     }
   });
   it("--socket overrides the socket path", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs(["--socket", "/run/x.sock", "models"]).overrides.socket,
       "/run/x.sock",
     );
   });
   it("--approve-paid sets the paid opt-in", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs(["--approve-paid", "exec", "x"]).overrides.approvePaid,
       true,
     );
   });
   it("--mode sets the context mode", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode,
       "ask",
     );
   });
   it("rejects an invalid mode", () => {
-    assertStringIncludes(
-      parseArgs(["--mode", "wat", "exec", "x"]).error ?? "",
-      "mode",
-    );
+    assert.ok((parseArgs(["--mode", "wat", "exec", "x"]).error ?? "").includes("mode"), `expected parseArgs(["--mode", "wat", "exec", "x"]).error ?? "" to include "mode"`);
   });
   it("'ask' is a one-shot ask-mode exec", () => {
     const p = parseArgs(["ask", "what", "is", "this", "repo"]);
-    assertStrictEquals(p.command, "exec");
-    assertStrictEquals(p.prompt, "what is this repo");
-    assertStrictEquals(p.overrides.mode, "ask");
+    assert.strictEqual(p.command, "exec");
+    assert.strictEqual(p.prompt, "what is this repo");
+    assert.strictEqual(p.overrides.mode, "ask");
   });
   it("'ask' requires a prompt", () => {
-    assertStringIncludes(
-      parseArgs(["ask"]).error ?? "",
-      "ask requires a prompt",
-    );
+    assert.ok((parseArgs(["ask"]).error ?? "").includes("ask requires a prompt"), `expected parseArgs(["ask"]).error ?? "" to include "ask requires a prompt"`);
   });
   it("rejects conflicting --fast and --no-fast flags", () => {
-    assertStringIncludes(
-      parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "",
-      "cannot specify both --fast and --no-fast",
-    );
-    assertStringIncludes(
-      parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "",
-      "cannot specify both --fast and --no-fast",
-    );
+    assert.ok((parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "").includes("cannot specify both --fast and --no-fast"), `expected parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`);
+    assert.ok((parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "").includes("cannot specify both --fast and --no-fast"), `expected parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`);
   });
 });
 
@@ -250,59 +212,59 @@ describe("resolveConfig", () => {
       { get: (k) => env.get(k) },
       true,
     );
-    assertStrictEquals(c.model, "flagmodel");
-    assertStrictEquals(c.color, false);
+    assert.strictEqual(c.model, "flagmodel");
+    assert.strictEqual(c.color, false);
   });
   it("enables color on a TTY", () => {
     const c = resolveConfig({}, { get: () => undefined }, true);
-    assertStrictEquals(c.color, true);
+    assert.strictEqual(c.color, true);
   });
   it("defaults unix to true; an explicit unix: false is honored", () => {
-    assertStrictEquals(resolveConfig({}, { get: () => undefined }).unix, true);
-    assertStrictEquals(
+    assert.strictEqual(resolveConfig({}, { get: () => undefined }).unix, true);
+    assert.strictEqual(
       resolveConfig({ unix: false }, { get: () => undefined }).unix,
       false,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({ unix: true }, { get: () => undefined }).unix,
       true,
     );
   });
   it("mode defaults to turn and honors the override", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: () => undefined }).mode,
       "turn",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({ mode: "ask" }, { get: () => undefined }).mode,
       "ask",
     );
   });
   it("fast option carries through resolveConfig", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({ fast: true }, { get: () => undefined }).fast,
       true,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({ fast: false }, { get: () => undefined }).fast,
       false,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: () => undefined }).fast,
       undefined,
     );
   });
   it("workspace defaults to cwd; flag and env override it", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: () => undefined }, false, "/work/dir").workspace,
       "/work/dir",
     );
     const env = new Map([["DYFJ_WORKSPACE", "/env/ws"]]);
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd").workspace,
       "/env/ws",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig(
         { workspace: "/flag/ws" },
         { get: (k) => env.get(k) },
@@ -314,12 +276,12 @@ describe("resolveConfig", () => {
     );
   });
   it("marks workspace explicit only when set via flag or env", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: () => undefined }, false, "/cwd")
         .workspaceExplicit,
       false,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig(
         { workspace: "/w" },
         { get: () => undefined },
@@ -330,7 +292,7 @@ describe("resolveConfig", () => {
       true,
     );
     const env = new Map([["DYFJ_WORKSPACE", "/env"]]);
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: (k) => env.get(k) }, false, "/cwd")
         .workspaceExplicit,
       true,
@@ -338,11 +300,11 @@ describe("resolveConfig", () => {
   });
   it("socket defaults via DYFJ_SOCKET and the --socket override", () => {
     const env = new Map([["DYFJ_SOCKET", "/run/dyfj.sock"]]);
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({}, { get: (k) => env.get(k) }).socket,
       "/run/dyfj.sock",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       resolveConfig({ socket: "/flag.sock" }, { get: (k) => env.get(k) })
         .socket,
       "/flag.sock",
@@ -352,36 +314,36 @@ describe("resolveConfig", () => {
 
 describe("normalizeSessionRef", () => {
   it("accepts the slug exactly as dyfj sessions lists it", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       normalizeSessionRef("workbench-01ktz1xwcn7jmgs5e8kakfezkr"),
       "01KTZ1XWCN7JMGS5E8KAKFEZKR",
     );
   });
 
   it("accepts a bare session id in either case", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       normalizeSessionRef("01KTZ1XWCN7JMGS5E8KAKFEZKR"),
       "01KTZ1XWCN7JMGS5E8KAKFEZKR",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       normalizeSessionRef("01ktz1xwcn7jmgs5e8kakfezkr"),
       "01KTZ1XWCN7JMGS5E8KAKFEZKR",
     );
   });
 
   it("rejects garbage with a pointer to dyfj sessions", () => {
-    const error = assertThrows(
+    const error = captureThrow(
       () => normalizeSessionRef("not-a-session"),
       Error,
     );
-    assertMatch(error.message, /dyfj sessions/);
+    assert.match(error.message, /dyfj sessions/);
   });
 });
 
 describe("parseArgs for stop subcommand", () => {
   it("parses bare stop command", () => {
     const parsed = parseArgs(["stop"]);
-    assertEquals(parsed, {
+    assert.deepStrictEqual(parsed, {
       command: "stop",
       json: false,
       overrides: {},
@@ -390,7 +352,7 @@ describe("parseArgs for stop subcommand", () => {
 
   it("parses stop with custom socket path", () => {
     const parsed = parseArgs(["stop", "--socket", "/custom/path.sock"]);
-    assertEquals(parsed, {
+    assert.deepStrictEqual(parsed, {
       command: "stop",
       json: false,
       overrides: { socket: "/custom/path.sock" },
@@ -399,16 +361,13 @@ describe("parseArgs for stop subcommand", () => {
 
   it("rejects stop with positional prompt argument", () => {
     const parsed = parseArgs(["stop", "prompt"]);
-    assertStrictEquals(parsed.command, "help");
-    assertStringIncludes(parsed.error ?? "", "unknown command: stop");
+    assert.strictEqual(parsed.command, "help");
+    assert.ok((parsed.error ?? "").includes("unknown command: stop"), `expected parsed.error ?? "" to include "unknown command: stop"`);
   });
 
   it("rejects --launcher-autostarted on stop", () => {
     const parsed = parseArgs(["--launcher-autostarted", "stop"]);
-    assertStrictEquals(parsed.command, "help");
-    assertStringIncludes(
-      parsed.error ?? "",
-      "--launcher-autostarted is valid only with start",
-    );
+    assert.strictEqual(parsed.command, "help");
+    assert.ok((parsed.error ?? "").includes("--launcher-autostarted is valid only with start"), `expected parsed.error ?? "" to include "--launcher-autostarted is valid only with start"`);
   });
 });
