@@ -454,7 +454,10 @@ README are tracked separately in its Revision history section.
   rejects any `*.integration.test.ts` path before either runtime starts, exiting
   2 with a message that names the file and the integration lane; it used to rely
   on the permission sandbox denying the file's first access, which a Node-routed
-  file does not have. Test discovery reads the tree with
+  file does not have. The testing spec and README now describe `Deno.test`
+  and `node:test` as coexisting during the move, with assertions and mocks
+  from `node:`, instead of `Deno.test` with `@std/assert` as the only
+  framework. Test discovery reads the tree with
   `node:fs`. The docs that said the sanitizers catch every leaked resource are
   corrected.
 

@@ -288,8 +288,11 @@ How the work actually happens, separate from what gets built.
   Dolt instance, real processes, real sockets) belong to the integration tier;
   third-party network services are faked at the network boundary with loopback
   servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
-  Shared fakes live in `prototype/testing/fakes/`. Tests use `Deno.test` with
-  `@std/assert` and `@std/testing`, the only test framework.
+  Shared fakes live in `prototype/testing/fakes/`. While tests move onto
+  `node:test` (decision D32), `Deno.test`/`@std/testing/bdd` and `node:test`
+  coexist: each file is routed by its own registrations, to `deno test` or
+  `node --test`, and assertions and mocks come from `node:assert/strict` and
+  `node:test` in both. The end state is `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -2171,5 +2174,7 @@ Document revisions only. Code and behavior changes are tracked in
   per-file handle check, the rest under `deno test`, and each lane prints a
   Node count line. It corrects the claim that the sanitizers catch every leaked
   resource: they do not see `node:` resources, and that the unit lane's grants
-  bind only its `deno test` subset. Node 26 joins the integration lane's
-  requirements.
+  bind only its `deno test` subset. The engineering-posture testing bullet
+  describes the two test frameworks that coexist during the move to
+  `node:test`, in place of `Deno.test` as the only one. Node 26 joins the
+  integration lane's requirements.

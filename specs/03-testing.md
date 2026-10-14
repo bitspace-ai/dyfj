@@ -13,7 +13,8 @@ in the same change that lands this spec's first work order.
   - A unit or component test replaces a port with its in-repo fake.
   - Module mocking is banned: no `vi.mock`, no import-map substitution, no
     monkey-patching another module's exports.
-  - Spying on an injected object (`@std/testing/mock` `spy`/`stub`) is allowed.
+  - Spying on an injected object (`node:test` `mock.fn`/`mock.method`) is
+    allowed.
 - **Fakes are proven against the real thing.**
   - Each fake that stands in for a real adapter (`MemoryStore`, the scripted
     `HttpTransport`) passes the same conformance suite as the real adapter.
@@ -53,16 +54,28 @@ in the same change that lands this spec's first work order.
 
 ## 2. Framework
 
-- **Framework: `Deno.test` with `@std/assert`, `@std/testing` (bdd, mock,
-  snapshot, time).** It is the only test framework.
-- **Sanitizers stay on.**
+- **Framework: two registration styles during the move to `node:test`**
+  (decision D32).
+  - `Deno.test` and `@std/testing/bdd` coexist with `node:test` (`test`,
+    `describe`/`it`, `before`/`after` and the other hooks). Each file uses one
+    style and is routed by its own registrations (§1): `node:test` files run
+    under `node --test`, the rest under `deno test`.
+  - In both styles, assertions come from `node:assert/strict` and mocks from
+    `node:test` (`mock`). `@std/assert` remains only in the gate and lane
+    tooling tests under `scripts/` and `prototype/scripts/`, which move with
+    that tooling.
+  - The end state under decision D32 is `node:test` as the only test
+    framework, with `Deno.test`, `@std/testing` and `@std/assert` gone.
+- **Sanitizers stay on for the `deno test` subset.**
+  - They apply to the files each lane runs under `deno test` only. They do not
+    see `node:` resources, and they do not run under `node --test`; those files
+    get the per-file handle check instead (§1).
   - The pinned Deno (2.9.6) runs the op and resource sanitizers only when asked,
-    so a `Deno.test` lane must pass `--sanitize-ops --sanitize-resources`.
+    so a lane's `deno test` run must pass `--sanitize-ops --sanitize-resources`.
     `test.unit` and the integration lane do. The golden lane does not yet; it
     adopts the flags as its tests are brought under this rule.
   - A test that leaks an op, resource or child process fails at the test that
-    leaked it, when the sanitizers can see it. They do not see `node:`
-    resources; §1 sets out the per-file Node handle check that covers those.
+    leaked it, when the sanitizers can see it.
   - A test may disable a sanitizer only with a comment naming the leak and why
     it is unavoidable.
 - **Supervision.**
@@ -73,7 +86,8 @@ in the same change that lands this spec's first work order.
     `specs/notes/test-supervision-evidence.md`. It lives in the aggregate gate
     (per-lane deadlines, recovery of an orphaned lane group) and in the
     test-lane runners (`prototype/scripts/lane-supervision.ts`: a backstop and
-    a stop of the runner's own process group).
+    a stop of the runner's own process group). `node --test` and its per-file
+    processes stay in the lane's process group, so both cover them.
   - Descendant (grandchild) processes are not covered by Deno's sanitizers.
     Whatever guards against them must remain.
 
