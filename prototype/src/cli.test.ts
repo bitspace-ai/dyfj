@@ -1,17 +1,4 @@
-import {
-  assert,
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertGreater,
-  assertGreaterOrEqual,
-  assertLess,
-  assertNotMatch,
-  assertNotStrictEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   fetchSessionPosture,
@@ -67,17 +54,23 @@ describe("runRepl", () => {
     const { io, stdout } = fakeIo(["first", "second"]);
     await runRepl(cfg(), io, connect, false);
 
-    assertEquals(params.length, 2);
-    assertStrictEquals(
+    assert.deepStrictEqual(params.length, 2);
+    assert.strictEqual(
       (params[0] as { sessionId?: string }).sessionId,
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       (params[1] as { sessionId?: string }).sessionId,
       "SESS1",
     );
-    assertStringIncludes(stdout.join(""), "a");
-    assertStringIncludes(stdout.join(""), "b");
+    assert.ok(
+      stdout.join("").includes("a"),
+      `expected stdout.join("") to include "a"`,
+    );
+    assert.ok(
+      stdout.join("").includes("b"),
+      `expected stdout.join("") to include "b"`,
+    );
   });
 
   it("does not treat an unhandled slash-prefixed prompt as friction command context", async () => {
@@ -106,7 +99,7 @@ describe("runRepl", () => {
 
     await runRepl(cfg({ unix: true }), io, connect, false);
 
-    assertObjectMatch(
+    assert.partialDeepStrictEqual(
       calls.find((call) => call.method === "turn")?.params as Record<
         string,
         unknown
@@ -114,10 +107,10 @@ describe("runRepl", () => {
       { prompt },
     );
     const frictionCall = calls.find((call) => call.method === "friction/post");
-    assertNotStrictEquals(frictionCall, undefined);
-    assertFalse(
-      "command" in
-        ((frictionCall?.params as { context: unknown }).context as object),
+    assert.notStrictEqual(frictionCall, undefined);
+    assert.ok(
+      !("command" in
+        ((frictionCall?.params as { context: unknown }).context as object)),
     );
   });
 
@@ -158,9 +151,12 @@ describe("runRepl", () => {
     await runRepl(cfg({ unix: true }), io, connect, false);
 
     const frictionCall = calls.find((call) => call.method === "friction/post");
-    assertObjectMatch(frictionCall?.params as Record<string, unknown>, {
-      context: { command: truncatedSlashCommand },
-    });
+    assert.partialDeepStrictEqual(
+      frictionCall?.params as Record<string, unknown>,
+      {
+        context: { command: truncatedSlashCommand },
+      },
+    );
   });
 
   it("skips blank lines and exits on /exit", async () => {
@@ -169,7 +165,7 @@ describe("runRepl", () => {
     ]);
     const { io } = fakeIo(["   ", "real", "/exit", "never"]);
     await runRepl(cfg(), io, connect, false);
-    assertEquals(params.length, 1);
+    assert.deepStrictEqual(params.length, 1);
   });
 
   it("keeps the REPL alive after a turn error", async () => {
@@ -179,8 +175,11 @@ describe("runRepl", () => {
     ]);
     const { io, stderr } = fakeIo(["one", "two"]);
     await runRepl(cfg(), io, connect, false);
-    assertEquals(params.length, 2);
-    assertStringIncludes(stderr.join("\n"), "transient");
+    assert.deepStrictEqual(params.length, 2);
+    assert.ok(
+      stderr.join("\n").includes("transient"),
+      `expected stderr.join("\\n") to include "transient"`,
+    );
   });
 
   it("exits the REPL after cancellation leaves remote work uncertain", async () => {
@@ -212,15 +211,19 @@ describe("runRepl", () => {
       interrupts,
     );
 
-    assertStrictEquals(turnCalls, 1);
-    assertStrictEquals(code, 1);
-    assertEquals(prompts.length, 1);
+    assert.strictEqual(turnCalls, 1);
+    assert.strictEqual(code, 1);
+    assert.deepStrictEqual(prompts.length, 1);
     const renderedError = stderr.join("\n");
-    assertStringIncludes(
-      renderedError,
-      "turn cancellation was not acknowledged; restart the runtime before retrying",
+    assert.ok(
+      renderedError.includes(
+        "turn cancellation was not acknowledged; restart the runtime before retrying",
+      ),
+      `expected ${
+        JSON.stringify(renderedError)
+      } to include "turn cancellation was not acknowledged; restart the runtime before retrying"`,
     );
-    assertFalse(renderedError.includes("interrupt cleanup failed"));
+    assert.ok(!renderedError.includes("interrupt cleanup failed"));
   });
 
   it("receipts carry the running session total across turns", async () => {
@@ -234,8 +237,14 @@ describe("runRepl", () => {
     await runRepl(cfg(), io, connect, false);
     const rendered = stderr.join("\n");
     // Each receipt shows the sum of every per-turn cost so far.
-    assertStringIncludes(rendered, "session $0.0100");
-    assertStringIncludes(rendered, "session $0.0300");
+    assert.ok(
+      rendered.includes("session $0.0100"),
+      `expected ${JSON.stringify(rendered)} to include "session $0.0100"`,
+    );
+    assert.ok(
+      rendered.includes("session $0.0300"),
+      `expected ${JSON.stringify(rendered)} to include "session $0.0300"`,
+    );
   });
 
   it("Ctrl-C cancels one UDS turn and carries its session into the next request", async () => {
@@ -295,15 +304,27 @@ describe("runRepl", () => {
       false,
     );
 
-    assertStringIncludes(stdout.join(""), "partial");
-    assertStringIncludes(stdout.join(""), "next");
-    assertArrayIncludes(stderr, ["[interrupted]"]);
-    assertEquals(stderr.filter((line) => line === "[interrupt requested]"), [
-      "[interrupt requested]",
-    ]);
-    assertStrictEquals(bodies[0].sessionId, undefined);
-    assertStrictEquals(bodies[1].sessionId, result().sessionId);
-    assertStrictEquals(raw[raw.length - 1], ERASE_LINE);
+    assert.ok(
+      stdout.join("").includes("partial"),
+      `expected stdout.join("") to include "partial"`,
+    );
+    assert.ok(
+      stdout.join("").includes("next"),
+      `expected stdout.join("") to include "next"`,
+    );
+    assert.deepStrictEqual(
+      ["[interrupted]"].filter((item) => !stderr.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      stderr.filter((line) => line === "[interrupt requested]"),
+      [
+        "[interrupt requested]",
+      ],
+    );
+    assert.strictEqual(bodies[0].sessionId, undefined);
+    assert.strictEqual(bodies[1].sessionId, result().sessionId);
+    assert.strictEqual(raw[raw.length - 1], ERASE_LINE);
   });
 
   it("an aborted receipt commits its session before fallible rendering", async () => {
@@ -339,9 +360,9 @@ describe("runRepl", () => {
 
     await runRepl(cfg({ unix: true }), io, connect);
 
-    assertEquals(bodies.length, 2);
-    assertStrictEquals(bodies[0].sessionId, undefined);
-    assertStrictEquals(bodies[1].sessionId, firstSessionId);
+    assert.deepStrictEqual(bodies.length, 2);
+    assert.strictEqual(bodies[0].sessionId, undefined);
+    assert.strictEqual(bodies[1].sessionId, firstSessionId);
   });
 
   it("an aborted receipt commits its session before fallible spinner cleanup", async () => {
@@ -368,9 +389,9 @@ describe("runRepl", () => {
 
     await runRepl(cfg({ unix: true }), io, connect);
 
-    assertEquals(bodies.length, 2);
-    assertStrictEquals(bodies[0].sessionId, undefined);
-    assertStrictEquals(bodies[1].sessionId, firstSessionId);
+    assert.deepStrictEqual(bodies.length, 2);
+    assert.strictEqual(bodies[0].sessionId, undefined);
+    assert.strictEqual(bodies[1].sessionId, firstSessionId);
   });
 
   it("prints buffered aborted text before the interrupted marker", async () => {
@@ -425,8 +446,11 @@ describe("runRepl", () => {
       write.includes("buffered partial text")
     );
     const markerIndex = writes.indexOf("err:[interrupted]");
-    assertGreaterOrEqual(textIndex, 0);
-    assertGreater(markerIndex, textIndex);
+    assert.ok(textIndex >= 0, `expected ${textIndex} >= 0`);
+    assert.ok(
+      markerIndex > textIndex,
+      `expected ${markerIndex} > ${textIndex}`,
+    );
   });
 
   it("Ctrl-C cancels a pending approval read before the next REPL prompt", async () => {
@@ -461,7 +485,7 @@ describe("runRepl", () => {
             );
           });
         }
-        assertStrictEquals(approvalReadSettled, true);
+        assert.strictEqual(approvalReadSettled, true);
         return Promise.resolve("/exit");
       },
       close: () => {},
@@ -498,9 +522,9 @@ describe("runRepl", () => {
       interrupts,
     );
 
-    assertStrictEquals(approvalSignal?.aborted, true);
-    assertStrictEquals(approvalReadSettled, true);
-    assertStrictEquals(readCount, 3);
+    assert.strictEqual(approvalSignal?.aborted, true);
+    assert.strictEqual(approvalReadSettled, true);
+    assert.strictEqual(readCount, 3);
   });
 
   it("a spinner startup failure never installs the in-flight interrupt handler", async () => {
@@ -532,9 +556,9 @@ describe("runRepl", () => {
       interrupts,
     );
 
-    assertStrictEquals(added, 0);
-    assertStrictEquals(removed, 0);
-    assertStrictEquals(connectCalls, 0);
+    assert.strictEqual(added, 0);
+    assert.strictEqual(removed, 0);
+    assert.strictEqual(connectCalls, 0);
   });
 
   it("does not intercept SIGINT until the UDS connection is established", async () => {
@@ -569,7 +593,7 @@ describe("runRepl", () => {
     );
 
     await connectStarted;
-    assertStrictEquals(added, 0);
+    assert.strictEqual(added, 0);
     finishConnect({
       request: (method) =>
         method === "turn"
@@ -579,8 +603,8 @@ describe("runRepl", () => {
     });
     await pending;
 
-    assertStrictEquals(added, 1);
-    assertStrictEquals(removed, 1);
+    assert.strictEqual(added, 1);
+    assert.strictEqual(removed, 1);
   });
 
   it("a spinner erase failure cannot prevent an installed turn cancellation", async () => {
@@ -624,7 +648,7 @@ describe("runRepl", () => {
       interrupts,
     );
 
-    assertStrictEquals(cancellationCalls, 1);
+    assert.strictEqual(cancellationCalls, 1);
   });
 });
 
@@ -643,13 +667,23 @@ describe("runtime lifecycle commands", () => {
           trustWorkspaceInstructions: value as unknown as boolean,
         },
       });
-      assertStringIncludes(statusText, "workspace instructions: unknown");
+      assert.ok(
+        statusText.includes("workspace instructions: unknown"),
+        `expected ${
+          JSON.stringify(statusText)
+        } to include "workspace instructions: unknown"`,
+      );
       const postureLine = formatPostureLine({
         slug: "x",
         approvePaidSession: false,
         trustWorkspaceInstructions: value as unknown as boolean,
       });
-      assertStringIncludes(postureLine, "workspace instructions: unknown");
+      assert.ok(
+        postureLine.includes("workspace instructions: unknown"),
+        `expected ${
+          JSON.stringify(postureLine)
+        } to include "workspace instructions: unknown"`,
+      );
     }
   });
 });
@@ -692,12 +726,20 @@ describe("REPL /model", () => {
         { permissionLevel: "operator" },
       ),
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(stderr.join("\n"), "active model: gpt-5.5");
-    assertStringIncludes(stderr.join("\n"), "claude-opus-4-8");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes("active model: gpt-5.5"),
+      `expected stderr.join("\\n") to include "active model: gpt-5.5"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("claude-opus-4-8"),
+      `expected stderr.join("\\n") to include "claude-opus-4-8"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes(
+        "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
+      ),
+      `expected stderr.join("\\n") to include "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown"`,
     );
   });
 
@@ -717,11 +759,13 @@ describe("REPL /model", () => {
         { permissionLevel: "strict" },
       ),
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(config.model, "gpt-5.5");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: unknown",
+    assert.strictEqual(handled, true);
+    assert.strictEqual(config.model, "gpt-5.5");
+    assert.ok(
+      stderr.join("\n").includes(
+        "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: unknown",
+      ),
+      `expected stderr.join("\\n") to include "posture: gpt-5.5 · tier 2 · hosted · paid off (hosted turns fail closed) · permission strict · workspace instructions: unknown"`,
     );
   });
 
@@ -734,8 +778,8 @@ describe("REPL /model", () => {
       io,
       fakeConnect([{ slug: "gpt-5.5", tier: 2, local: false }]),
     );
-    assertStrictEquals(config.model, "gpt-5.5");
-    assertStrictEquals(config.runner, undefined);
+    assert.strictEqual(config.model, "gpt-5.5");
+    assert.strictEqual(config.runner, undefined);
   });
 
   it("/model <slug> --approve-paid arms the session paid opt-in", async () => {
@@ -747,9 +791,12 @@ describe("REPL /model", () => {
       io,
       fakeConnect([{ slug: "gpt-5.5", tier: 2, local: false }]),
     );
-    assertStrictEquals(config.model, "gpt-5.5");
-    assertStrictEquals(config.approvePaid, true);
-    assertStringIncludes(stderr.join("\n"), "paid approved (session)");
+    assert.strictEqual(config.model, "gpt-5.5");
+    assert.strictEqual(config.approvePaid, true);
+    assert.ok(
+      stderr.join("\n").includes("paid approved (session)"),
+      `expected stderr.join("\\n") to include "paid approved (session)"`,
+    );
   });
 
   it("/model rejects an unknown slug and leaves the active model unchanged", async () => {
@@ -761,8 +808,11 @@ describe("REPL /model", () => {
       io,
       fakeConnect([{ slug: "claude-opus-4-8" }]),
     );
-    assertStrictEquals(config.model, "claude-opus-4-8");
-    assertStringIncludes(stderr.join("\n"), "unknown model");
+    assert.strictEqual(config.model, "claude-opus-4-8");
+    assert.ok(
+      stderr.join("\n").includes("unknown model"),
+      `expected stderr.join("\\n") to include "unknown model"`,
+    );
   });
 
   it("a failed switch never arms paid inference as a side effect", async () => {
@@ -774,8 +824,8 @@ describe("REPL /model", () => {
       io,
       fakeConnect([{ slug: "claude-opus-4-8" }]),
     );
-    assertStrictEquals(config.model, "claude-opus-4-8");
-    assertStrictEquals(config.approvePaid, undefined);
+    assert.strictEqual(config.model, "claude-opus-4-8");
+    assert.strictEqual(config.approvePaid, undefined);
   });
 
   it("/model <slug> --fast enables fast speed tier on supported model", async () => {
@@ -792,9 +842,12 @@ describe("REPL /model", () => {
         capabilities: ["fast-speed"],
       }]),
     );
-    assertStrictEquals(config.model, "codex-chatgpt/gpt-5.6-terra");
-    assertStrictEquals(config.fast, true);
-    assertStringIncludes(stderr.join("\n"), "⚡ fast");
+    assert.strictEqual(config.model, "codex-chatgpt/gpt-5.6-terra");
+    assert.strictEqual(config.fast, true);
+    assert.ok(
+      stderr.join("\n").includes("⚡ fast"),
+      `expected stderr.join("\\n") to include "⚡ fast"`,
+    );
   });
 
   it("/model <slug> --fast rejects fast speed tier on unsupported model", async () => {
@@ -806,8 +859,11 @@ describe("REPL /model", () => {
       io,
       fakeConnect([{ slug: "claude-opus-4-8", tier: 2, local: false }]),
     );
-    assertStrictEquals(config.fast, undefined);
-    assertStringIncludes(stderr.join("\n"), "fast speed tier is not supported");
+    assert.strictEqual(config.fast, undefined);
+    assert.ok(
+      stderr.join("\n").includes("fast speed tier is not supported"),
+      `expected stderr.join("\\n") to include "fast speed tier is not supported"`,
+    );
   });
 
   it("/model switches to unsupported model and auto-disables fast speed tier", async () => {
@@ -827,11 +883,13 @@ describe("REPL /model", () => {
         { slug: "claude-opus-4-8", tier: 2, local: false },
       ]),
     );
-    assertStrictEquals(config.model, "claude-opus-4-8");
-    assertStrictEquals(config.fast, false);
-    assertStringIncludes(
-      stderr.join("\n"),
-      'fast speed tier disabled for "claude-opus-4-8"',
+    assert.strictEqual(config.model, "claude-opus-4-8");
+    assert.strictEqual(config.fast, false);
+    assert.ok(
+      stderr.join("\n").includes(
+        'fast speed tier disabled for "claude-opus-4-8"',
+      ),
+      `expected stderr.join("\\n") to include 'fast speed tier disabled for "claude-opus-4-8"'`,
     );
   });
 
@@ -851,10 +909,10 @@ describe("REPL /model", () => {
         },
       ]),
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(
-      stderr.join("\n"),
-      "cannot specify both --fast and --no-fast",
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes("cannot specify both --fast and --no-fast"),
+      `expected stderr.join("\\n") to include "cannot specify both --fast and --no-fast"`,
     );
   });
 });
@@ -895,9 +953,12 @@ describe("REPL /fast command", () => {
         capabilities: ["fast-speed"],
       }]),
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(config.fast, true);
-    assertStringIncludes(stderr.join("\n"), "⚡ fast");
+    assert.strictEqual(handled, true);
+    assert.strictEqual(config.fast, true);
+    assert.ok(
+      stderr.join("\n").includes("⚡ fast"),
+      `expected stderr.join("\\n") to include "⚡ fast"`,
+    );
   });
 
   it("/fast rejects on unsupported model", async () => {
@@ -909,9 +970,12 @@ describe("REPL /fast command", () => {
       io,
       fakeConnect([{ slug: "claude-opus-4-8", tier: 2, local: false }]),
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(config.fast, undefined);
-    assertStringIncludes(stderr.join("\n"), "fast speed tier is not supported");
+    assert.strictEqual(handled, true);
+    assert.strictEqual(config.fast, undefined);
+    assert.ok(
+      stderr.join("\n").includes("fast speed tier is not supported"),
+      `expected stderr.join("\\n") to include "fast speed tier is not supported"`,
+    );
   });
 
   it("/fast rejects when an explicit runner is active", async () => {
@@ -923,9 +987,12 @@ describe("REPL /fast command", () => {
       io,
       fakeConnect([]),
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(config.fast, undefined);
-    assertStringIncludes(stderr.join("\n"), "explicit runner is active");
+    assert.strictEqual(handled, true);
+    assert.strictEqual(config.fast, undefined);
+    assert.ok(
+      stderr.join("\n").includes("explicit runner is active"),
+      `expected stderr.join("\\n") to include "explicit runner is active"`,
+    );
   });
 });
 
@@ -939,8 +1006,11 @@ describe("REPL /session command", () => {
       io,
       state,
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(stderr.join("\n"), "no session yet");
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes("no session yet"),
+      `expected stderr.join("\\n") to include "no session yet"`,
+    );
   });
 
   it("/session with active session displays identity, turns, spend, and resume instructions", async () => {
@@ -956,14 +1026,29 @@ describe("REPL /session command", () => {
       io,
       state,
     );
-    assertStrictEquals(handled, true);
+    assert.strictEqual(handled, true);
     const out = stderr.join("\n");
-    assertStringIncludes(out, "session: 01TEST_ACTIVE");
-    assertStringIncludes(out, "repl turns (this session): 3");
-    assertStringIncludes(out, "repl spend (this session): $0.0425");
-    assertStringIncludes(
-      out,
-      "resume later with: dyfj --session 01TEST_ACTIVE",
+    assert.ok(
+      out.includes("session: 01TEST_ACTIVE"),
+      `expected ${JSON.stringify(out)} to include "session: 01TEST_ACTIVE"`,
+    );
+    assert.ok(
+      out.includes("repl turns (this session): 3"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "repl turns (this session): 3"`,
+    );
+    assert.ok(
+      out.includes("repl spend (this session): $0.0425"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "repl spend (this session): $0.0425"`,
+    );
+    assert.ok(
+      out.includes("resume later with: dyfj --session 01TEST_ACTIVE"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "resume later with: dyfj --session 01TEST_ACTIVE"`,
     );
   });
 
@@ -981,14 +1066,16 @@ describe("REPL /session command", () => {
       io,
       state,
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(state.sessionId, "01NEW000000000000000000000");
-    assertStrictEquals(config.sessionId, "01NEW000000000000000000000");
-    assertStrictEquals(state.turnCount, 0);
-    assertStrictEquals(state.sessionSpendUsd, 0);
-    assertStringIncludes(
-      stderr.join("\n"),
-      "switched to session: 01NEW000000000000000000000",
+    assert.strictEqual(handled, true);
+    assert.strictEqual(state.sessionId, "01NEW000000000000000000000");
+    assert.strictEqual(config.sessionId, "01NEW000000000000000000000");
+    assert.strictEqual(state.turnCount, 0);
+    assert.strictEqual(state.sessionSpendUsd, 0);
+    assert.ok(
+      stderr.join("\n").includes(
+        "switched to session: 01NEW000000000000000000000",
+      ),
+      `expected stderr.join("\\n") to include "switched to session: 01NEW000000000000000000000"`,
     );
   });
 
@@ -1002,11 +1089,13 @@ describe("REPL /session command", () => {
       io,
       state,
     );
-    assertStrictEquals(handled, true);
-    assertStrictEquals(state.sessionId, "01OLD");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "session identifier must be non-empty and <= 256 characters",
+    assert.strictEqual(handled, true);
+    assert.strictEqual(state.sessionId, "01OLD");
+    assert.ok(
+      stderr.join("\n").includes(
+        "session identifier must be non-empty and <= 256 characters",
+      ),
+      `expected stderr.join("\\n") to include "session identifier must be non-empty and <= 256 characters"`,
     );
   });
 
@@ -1044,9 +1133,15 @@ describe("REPL /session command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(stderr.join("\n"), "01S1");
-    assertStringIncludes(stderr.join("\n"), "First task");
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes("01S1"),
+      `expected stderr.join("\\n") to include "01S1"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("First task"),
+      `expected stderr.join("\\n") to include "First task"`,
+    );
   });
 });
 
@@ -1059,15 +1154,24 @@ describe("REPL /friction command", () => {
       io,
       { turnCount: 0, sessionSpendUsd: 0 },
     );
-    assertArrayIncludes(stderr, [
-      "  DYFJ_FRICTION_ISSUE_ID must be set on the runtime",
-    ]);
-    assertArrayIncludes(stderr, [
-      "  posted Context: model slug, workspace basename, previous slash command (if any)",
-    ]);
-    assertArrayIncludes(stderr, [
-      "  free-text prompts and absolute workspace paths are never posted",
-    ]);
+    assert.deepStrictEqual(
+      [
+        "  DYFJ_FRICTION_ISSUE_ID must be set on the runtime",
+      ].filter((item) => !stderr.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      [
+        "  posted Context: model slug, workspace basename, previous slash command (if any)",
+      ].filter((item) => !stderr.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      [
+        "  free-text prompts and absolute workspace paths are never posted",
+      ].filter((item) => !stderr.includes(item)),
+      [],
+    );
   });
 
   it("forwards a truncated slash command and workspace basename", async () => {
@@ -1075,7 +1179,7 @@ describe("REPL /friction command", () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     const previousSlashCommand = `/packet ${"x".repeat(200)}`;
     const truncatedSlashCommand = previousSlashCommand.slice(0, 119) + "…";
-    assertEquals(Array.from(truncatedSlashCommand).length, 120);
+    assert.deepStrictEqual(Array.from(truncatedSlashCommand).length, 120);
     let approvalHandlerPresent = false;
     const fakeConnect: ConnectFn = (_socket, options) => {
       approvalHandlerPresent = options?.onApproval !== undefined;
@@ -1100,7 +1204,7 @@ describe("REPL /friction command", () => {
       lastReplCommand: previousSlashCommand,
     };
 
-    assertStrictEquals(
+    assert.strictEqual(
       await handleReplFrictionCommand(
         "/friction minor The command needed a multi-line paste.",
         cfg({ unix: true }),
@@ -1111,8 +1215,8 @@ describe("REPL /friction command", () => {
       true,
     );
 
-    assertStrictEquals(approvalHandlerPresent, true);
-    assertEquals(calls, [{
+    assert.strictEqual(approvalHandlerPresent, true);
+    assert.deepStrictEqual(calls, [{
       method: "friction/post",
       params: {
         severity: "minor",
@@ -1126,11 +1230,11 @@ describe("REPL /friction command", () => {
         },
       },
     }]);
-    assertEquals(stderr, [
+    assert.deepStrictEqual(stderr, [
       "F039 · 2026-09-03 · minor · escaped? no",
       "comment id: comment-39",
     ]);
-    assertStrictEquals(state.lastFriction?.commentId, "comment-39");
+    assert.strictEqual(state.lastFriction?.commentId, "comment-39");
   });
 
   it("does not forward a free-text previous input", async () => {
@@ -1164,7 +1268,7 @@ describe("REPL /friction command", () => {
         }),
     );
 
-    assertObjectMatch(calls[0], {
+    assert.partialDeepStrictEqual(calls[0], {
       method: "friction/post",
       params: {
         context: {
@@ -1174,9 +1278,9 @@ describe("REPL /friction command", () => {
         },
       },
     });
-    assertFalse(
-      "command" in
-        ((calls[0].params as { context: unknown }).context as object),
+    assert.ok(
+      !("command" in
+        ((calls[0].params as { context: unknown }).context as object)),
     );
   });
 
@@ -1197,7 +1301,7 @@ describe("REPL /friction command", () => {
       io,
       state,
     );
-    assertEquals(stderr, [
+    assert.deepStrictEqual(stderr, [
       "F039 · 2026-09-03 · minor · escaped? no",
       "comment id: comment-39",
     ]);
@@ -1224,12 +1328,12 @@ describe("REPL /friction command", () => {
           close: () => {},
         }),
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "create_comment failed: operator declined",
+    assert.ok(
+      stderr.join("\n").includes("create_comment failed: operator declined"),
+      `expected stderr.join("\\n") to include "create_comment failed: operator declined"`,
     );
-    assertNotMatch(stderr.join("\n"), /F\d{3}/);
-    assertFalse("lastFriction" in (state as object));
+    assert.doesNotMatch(stderr.join("\n"), /F\d{3}/);
+    assert.ok(!("lastFriction" in (state as object)));
   });
 
   it("prints the configuration stage without an unposted number", async () => {
@@ -1255,11 +1359,11 @@ describe("REPL /friction command", () => {
           close: () => {},
         }),
     );
-    assertEquals(stderr, [
+    assert.deepStrictEqual(stderr, [
       "friction capture failed: configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
     ]);
-    assertNotMatch(stderr.join("\n"), /F\d{3}/);
-    assertFalse("lastFriction" in (state as object));
+    assert.doesNotMatch(stderr.join("\n"), /F\d{3}/);
+    assert.ok(!("lastFriction" in (state as object)));
   });
 
   it("rejects an invalid severity without connecting", async () => {
@@ -1275,8 +1379,11 @@ describe("REPL /friction command", () => {
         throw new Error("must not connect");
       },
     );
-    assertStrictEquals(connected, false);
-    assertStringIncludes(stderr.join("\n"), "invalid friction severity");
+    assert.strictEqual(connected, false);
+    assert.ok(
+      stderr.join("\n").includes("invalid friction severity"),
+      `expected stderr.join("\\n") to include "invalid friction severity"`,
+    );
   });
 });
 
@@ -1311,13 +1418,20 @@ describe("REPL /idea command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
+    assert.strictEqual(handled, true);
     const out = stderr.join("\n");
-    assertStringIncludes(
-      out,
-      'marked idea [01IDEA_TEST]: "Rate limit background autostarts"',
+    assert.ok(
+      out.includes(
+        'marked idea [01IDEA_TEST]: "Rate limit background autostarts"',
+      ),
+      `expected ${
+        JSON.stringify(out)
+      } to include 'marked idea [01IDEA_TEST]: "Rate limit background autostarts"'`,
     );
-    assertStringIncludes(out, "/packet draft 01IDEA_TEST");
+    assert.ok(
+      out.includes("/packet draft 01IDEA_TEST"),
+      `expected ${JSON.stringify(out)} to include "/packet draft 01IDEA_TEST"`,
+    );
   });
 
   it("/idea list displays marked ideas", async () => {
@@ -1350,9 +1464,15 @@ describe("REPL /idea command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(stderr.join("\n"), "01IDEA_LIST_1");
-    assertStringIncludes(stderr.join("\n"), "Validate DOLT_PORT");
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes("01IDEA_LIST_1"),
+      `expected stderr.join("\\n") to include "01IDEA_LIST_1"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("Validate DOLT_PORT"),
+      `expected stderr.join("\\n") to include "Validate DOLT_PORT"`,
+    );
   });
 });
 
@@ -1390,8 +1510,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1403,10 +1523,13 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(stdout.join("\n"), "# Work Packet: Draft work packet");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "draft work packet registered: [01PACKET_1]",
+    assert.ok(
+      stdout.join("\n").includes("# Work Packet: Draft work packet"),
+      `expected stdout.join("\\n") to include "# Work Packet: Draft work packet"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("draft work packet registered: [01PACKET_1]"),
+      `expected stderr.join("\\n") to include "draft work packet registered: [01PACKET_1]"`,
     );
   });
 
@@ -1445,8 +1568,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "ideas/get",
         params: {
@@ -1464,10 +1587,13 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(stdout.join("\n"), "# Work Packet: Event packet");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "draft work packet registered: [01PACKET_2]",
+    assert.ok(
+      stdout.join("\n").includes("# Work Packet: Event packet"),
+      `expected stdout.join("\\n") to include "# Work Packet: Event packet"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("draft work packet registered: [01PACKET_2]"),
+      `expected stderr.join("\\n") to include "draft work packet registered: [01PACKET_2]"`,
     );
   });
 
@@ -1512,8 +1638,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "ideas/get",
         params: {
@@ -1531,10 +1657,13 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(stdout.join("\n"), "# Work Packet: Idea packet");
-    assertStringIncludes(
-      stderr.join("\n"),
-      "draft work packet registered: [01PACKET_3]",
+    assert.ok(
+      stdout.join("\n").includes("# Work Packet: Idea packet"),
+      `expected stdout.join("\\n") to include "# Work Packet: Idea packet"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("draft work packet registered: [01PACKET_3]"),
+      `expected stderr.join("\\n") to include "draft work packet registered: [01PACKET_3]"`,
     );
   });
 
@@ -1570,8 +1699,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1583,7 +1712,10 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(stdout.join("\n"), "# Work Packet: Fix startup");
+    assert.ok(
+      stdout.join("\n").includes("# Work Packet: Fix startup"),
+      `expected stdout.join("\\n") to include "# Work Packet: Fix startup"`,
+    );
   });
 
   it("/packet draft correctly parses multi-word title followed by --issue", async () => {
@@ -1618,8 +1750,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1631,9 +1763,9 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(
-      stdout.join("\n"),
-      "# Work Packet: Document session behavior",
+    assert.ok(
+      stdout.join("\n").includes("# Work Packet: Document session behavior"),
+      `expected stdout.join("\\n") to include "# Work Packet: Document session behavior"`,
     );
   });
 
@@ -1669,8 +1801,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1716,8 +1848,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1763,8 +1895,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "packets/draft",
         params: {
@@ -1792,9 +1924,11 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "cannot specify both positional target and explicit --idea/--event flag",
+    assert.ok(
+      stderr.join("\n").includes(
+        "cannot specify both positional target and explicit --idea/--event flag",
+      ),
+      `expected stderr.join("\\n") to include "cannot specify both positional target and explicit --idea/--event flag"`,
     );
 
     const io2 = fakeIo();
@@ -1804,9 +1938,9 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    assertStringIncludes(
-      io2.stderr.join("\n"),
-      "cannot specify both --idea and --event",
+    assert.ok(
+      io2.stderr.join("\n").includes("cannot specify both --idea and --event"),
+      `expected io2.stderr.join("\\n") to include "cannot specify both --idea and --event"`,
     );
 
     const io3 = fakeIo();
@@ -1816,9 +1950,9 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    assertStringIncludes(
-      io3.stderr.join("\n"),
-      "--issue specified multiple times",
+    assert.ok(
+      io3.stderr.join("\n").includes("--issue specified multiple times"),
+      `expected io3.stderr.join("\\n") to include "--issue specified multiple times"`,
     );
 
     const io4 = fakeIo();
@@ -1828,9 +1962,9 @@ describe("REPL /packet command", () => {
       io4.io,
       state,
     );
-    assertStringIncludes(
-      io4.stderr.join("\n"),
-      "--issue requires an issue identifier",
+    assert.ok(
+      io4.stderr.join("\n").includes("--issue requires an issue identifier"),
+      `expected io4.stderr.join("\\n") to include "--issue requires an issue identifier"`,
     );
 
     const io5 = fakeIo();
@@ -1840,7 +1974,10 @@ describe("REPL /packet command", () => {
       io5.io,
       state,
     );
-    assertStringIncludes(io5.stderr.join("\n"), "usage: /packet list");
+    assert.ok(
+      io5.stderr.join("\n").includes("usage: /packet list"),
+      `expected io5.stderr.join("\\n") to include "usage: /packet list"`,
+    );
 
     const io6 = fakeIo();
     await handleReplPacketCommand(
@@ -1849,9 +1986,9 @@ describe("REPL /packet command", () => {
       io6.io,
       state,
     );
-    assertStringIncludes(
-      io6.stderr.join("\n"),
-      "usage: /packet show <packet-id>",
+    assert.ok(
+      io6.stderr.join("\n").includes("usage: /packet show <packet-id>"),
+      `expected io6.stderr.join("\\n") to include "usage: /packet show <packet-id>"`,
     );
   });
 
@@ -1868,7 +2005,10 @@ describe("REPL /packet command", () => {
       io1.io,
       state,
     );
-    assertStringIncludes(io1.stderr.join("\n"), "usage: /idea list");
+    assert.ok(
+      io1.stderr.join("\n").includes("usage: /idea list"),
+      `expected io1.stderr.join("\\n") to include "usage: /idea list"`,
+    );
 
     const io2 = fakeIo();
     await handleReplIdeaCommand(
@@ -1877,7 +2017,10 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    assertStringIncludes(io2.stderr.join("\n"), "usage: /idea show <idea-id>");
+    assert.ok(
+      io2.stderr.join("\n").includes("usage: /idea show <idea-id>"),
+      `expected io2.stderr.join("\\n") to include "usage: /idea show <idea-id>"`,
+    );
   });
 
   it("/session list and /session switch validate trailing arguments", async () => {
@@ -1889,7 +2032,10 @@ describe("REPL /packet command", () => {
       io1.io,
       state,
     );
-    assertStringIncludes(io1.stderr.join("\n"), "usage: /session list");
+    assert.ok(
+      io1.stderr.join("\n").includes("usage: /session list"),
+      `expected io1.stderr.join("\\n") to include "usage: /session list"`,
+    );
 
     const io2 = fakeIo();
     await handleReplSessionCommand(
@@ -1898,9 +2044,9 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    assertStringIncludes(
-      io2.stderr.join("\n"),
-      "usage: /session switch <sessionId>",
+    assert.ok(
+      io2.stderr.join("\n").includes("usage: /session switch <sessionId>"),
+      `expected io2.stderr.join("\\n") to include "usage: /session switch <sessionId>"`,
     );
 
     const io3 = fakeIo();
@@ -1910,9 +2056,11 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    assertStringIncludes(
-      io3.stderr.join("\n"),
-      "error: session identifier must be a valid 26-character Crockford Base32 identifier",
+    assert.ok(
+      io3.stderr.join("\n").includes(
+        "error: session identifier must be a valid 26-character Crockford Base32 identifier",
+      ),
+      `expected io3.stderr.join("\\n") to include "error: session identifier must be a valid 26-character Crockford Base32 identifier"`,
     );
   });
 
@@ -1929,9 +2077,9 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "error: --title specified multiple times",
+    assert.ok(
+      stderr.join("\n").includes("error: --title specified multiple times"),
+      `expected stderr.join("\\n") to include "error: --title specified multiple times"`,
     );
   });
 
@@ -1948,11 +2096,14 @@ describe("REPL /packet command", () => {
       io1.io,
       state,
     );
-    assertStringIncludes(
-      io1.stdout.join("\n"),
-      "# Work Packet: Local Work Packet",
+    assert.ok(
+      io1.stdout.join("\n").includes("# Work Packet: Local Work Packet"),
+      `expected io1.stdout.join("\\n") to include "# Work Packet: Local Work Packet"`,
     );
-    assertStringIncludes(io1.stderr.join("\n"), "draft work packet registered");
+    assert.ok(
+      io1.stderr.join("\n").includes("draft work packet registered"),
+      `expected io1.stderr.join("\\n") to include "draft work packet registered"`,
+    );
 
     const match = io1.stderr.join("\n").match(
       /draft work packet registered: \[([^\]]+)\]/,
@@ -1966,11 +2117,14 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    assertStringIncludes(
-      io2.stderr.join("\n"),
-      "Work packets for session 01LOCAL_SESS:",
+    assert.ok(
+      io2.stderr.join("\n").includes("Work packets for session 01LOCAL_SESS:"),
+      `expected io2.stderr.join("\\n") to include "Work packets for session 01LOCAL_SESS:"`,
     );
-    assertStringIncludes(io2.stderr.join("\n"), "Local Work Packet");
+    assert.ok(
+      io2.stderr.join("\n").includes("Local Work Packet"),
+      `expected io2.stderr.join("\\n") to include "Local Work Packet"`,
+    );
 
     const io3 = fakeIo();
     await handleReplPacketCommand(
@@ -1979,9 +2133,9 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    assertStringIncludes(
-      io3.stdout.join("\n"),
-      "# Work Packet: Local Work Packet",
+    assert.ok(
+      io3.stdout.join("\n").includes("# Work Packet: Local Work Packet"),
+      `expected io3.stdout.join("\\n") to include "# Work Packet: Local Work Packet"`,
     );
 
     const io4 = fakeIo();
@@ -1991,7 +2145,10 @@ describe("REPL /packet command", () => {
       io4.io,
       state,
     );
-    assertStringIncludes(io4.stderr.join("\n"), "dyfj: failed to draft packet");
+    assert.ok(
+      io4.stderr.join("\n").includes("dyfj: failed to draft packet"),
+      `expected io4.stderr.join("\\n") to include "dyfj: failed to draft packet"`,
+    );
   });
 
   it("/idea mark --event rejects option-looking event ID", async () => {
@@ -2007,9 +2164,11 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "usage: /idea mark --event <event-id> <label...>",
+    assert.ok(
+      stderr.join("\n").includes(
+        "usage: /idea mark --event <event-id> <label...>",
+      ),
+      `expected stderr.join("\\n") to include "usage: /idea mark --event <event-id> <label...>"`,
     );
   });
 
@@ -2026,9 +2185,9 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      'error: unexpected argument "--evnt"',
+    assert.ok(
+      stderr.join("\n").includes('error: unexpected argument "--evnt"'),
+      `expected stderr.join("\\n") to include 'error: unexpected argument "--evnt"'`,
     );
   });
 
@@ -2045,9 +2204,9 @@ describe("REPL /packet command", () => {
       io1,
       state,
     );
-    assertStringIncludes(
-      stderr1.join("\n"),
-      'error: unexpected argument "-evnt"',
+    assert.ok(
+      stderr1.join("\n").includes('error: unexpected argument "-evnt"'),
+      `expected stderr1.join("\\n") to include 'error: unexpected argument "-evnt"'`,
     );
 
     const { io: io2, stderr: stderr2 } = fakeIo();
@@ -2057,9 +2216,11 @@ describe("REPL /packet command", () => {
       io2,
       state,
     );
-    assertStringIncludes(
-      stderr2.join("\n"),
-      "usage: /idea mark --event <event-id> <label...>",
+    assert.ok(
+      stderr2.join("\n").includes(
+        "usage: /idea mark --event <event-id> <label...>",
+      ),
+      `expected stderr2.join("\\n") to include "usage: /idea mark --event <event-id> <label...>"`,
     );
   });
 
@@ -2076,9 +2237,9 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      'error: unexpected argument "--isseu"',
+    assert.ok(
+      stderr.join("\n").includes('error: unexpected argument "--isseu"'),
+      `expected stderr.join("\\n") to include 'error: unexpected argument "--isseu"'`,
     );
   });
 
@@ -2095,9 +2256,9 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      'error: unexpected argument "-isseu"',
+    assert.ok(
+      stderr.join("\n").includes('error: unexpected argument "-isseu"'),
+      `expected stderr.join("\\n") to include 'error: unexpected argument "-isseu"'`,
     );
   });
 
@@ -2134,8 +2295,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handled, true);
-    assertEquals(recordedCalls, [
+    assert.strictEqual(handled, true);
+    assert.deepStrictEqual(recordedCalls, [
       {
         method: "ideas/mark",
         params: {
@@ -2145,9 +2306,11 @@ describe("REPL /packet command", () => {
         },
       },
     ]);
-    assertStringIncludes(
-      stderr.join("\n"),
-      'marked idea [01IDEA_EVT_LABEL]: "evt-driven architecture"',
+    assert.ok(
+      stderr.join("\n").includes(
+        'marked idea [01IDEA_EVT_LABEL]: "evt-driven architecture"',
+      ),
+      `expected stderr.join("\\n") to include 'marked idea [01IDEA_EVT_LABEL]: "evt-driven architecture"'`,
     );
   });
 
@@ -2174,8 +2337,11 @@ describe("REPL /packet command", () => {
       io1.io,
       state,
     );
-    assertStrictEquals(handledIdea, true);
-    assertStringIncludes(io1.stderr.join("\n"), "marked idea");
+    assert.strictEqual(handledIdea, true);
+    assert.ok(
+      io1.stderr.join("\n").includes("marked idea"),
+      `expected io1.stderr.join("\\n") to include "marked idea"`,
+    );
 
     const io2 = fakeIo();
     const handledPacket = await handleReplPacketCommand(
@@ -2184,12 +2350,15 @@ describe("REPL /packet command", () => {
       io2.io,
       state,
     );
-    assertStrictEquals(handledPacket, true);
-    assertStringIncludes(
-      io2.stdout.join("\n"),
-      "# Work Packet: Local Event Packet",
+    assert.strictEqual(handledPacket, true);
+    assert.ok(
+      io2.stdout.join("\n").includes("# Work Packet: Local Event Packet"),
+      `expected io2.stdout.join("\\n") to include "# Work Packet: Local Event Packet"`,
     );
-    assertStringIncludes(io2.stderr.join("\n"), "draft work packet registered");
+    assert.ok(
+      io2.stderr.join("\n").includes("draft work packet registered"),
+      `expected io2.stderr.join("\\n") to include "draft work packet registered"`,
+    );
 
     // Rejects non-existent event in local mode
     const io3 = fakeIo();
@@ -2199,9 +2368,11 @@ describe("REPL /packet command", () => {
       io3.io,
       state,
     );
-    assertStringIncludes(
-      io3.stderr.join("\n"),
-      'error: event "evt_missing" not found in current local session context',
+    assert.ok(
+      io3.stderr.join("\n").includes(
+        'error: event "evt_missing" not found in current local session context',
+      ),
+      `expected io3.stderr.join("\\n") to include 'error: event "evt_missing" not found in current local session context'`,
     );
   });
 
@@ -2245,9 +2416,9 @@ describe("REPL /packet command", () => {
     const output = stderr.join("\n");
     const oldIdx = output.indexOf("01OLD_SESS");
     const newIdx = output.indexOf("01NEW_SESS");
-    assertGreaterOrEqual(oldIdx, 0);
-    assertGreaterOrEqual(newIdx, 0);
-    assertLess(oldIdx, newIdx);
+    assert.ok(oldIdx >= 0, `expected ${oldIdx} >= 0`);
+    assert.ok(newIdx >= 0, `expected ${newIdx} >= 0`);
+    assert.ok(oldIdx < newIdx, `expected ${oldIdx} < ${newIdx}`);
   });
 
   it("/session list sorts non-ISO date strings chronologically rather than alphabetically", async () => {
@@ -2289,13 +2460,19 @@ describe("REPL /packet command", () => {
     const output = stderr.join("\n");
     const sunIdx = output.indexOf("01SUN_SESS");
     const wedIdx = output.indexOf("01WED_SESS");
-    assertGreaterOrEqual(sunIdx, 0);
-    assertGreaterOrEqual(wedIdx, 0);
+    assert.ok(sunIdx >= 0, `expected ${sunIdx} >= 0`);
+    assert.ok(wedIdx >= 0, `expected ${wedIdx} >= 0`);
     // Sunday (Aug 16) must appear before Wednesday (Aug 12) despite 'W' > 'S' alphabetically
-    assertLess(sunIdx, wedIdx);
+    assert.ok(sunIdx < wedIdx, `expected ${sunIdx} < ${wedIdx}`);
     // Verify date is formatted as YYYY-MM-DD
-    assertStringIncludes(output, "2026-08-16");
-    assertStringIncludes(output, "2026-08-12");
+    assert.ok(
+      output.includes("2026-08-16"),
+      `expected ${JSON.stringify(output)} to include "2026-08-16"`,
+    );
+    assert.ok(
+      output.includes("2026-08-12"),
+      `expected ${JSON.stringify(output)} to include "2026-08-12"`,
+    );
   });
 
   it("/idea mark and /packet draft support -- delimiter for option-looking tokens", async () => {
@@ -2339,8 +2516,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handledIdea, true);
-    assertStrictEquals(recordedCalls[0].params.label, "Support -Werror builds");
+    assert.strictEqual(handledIdea, true);
+    assert.strictEqual(recordedCalls[0].params.label, "Support -Werror builds");
 
     const handledPacket = await handleReplPacketCommand(
       "/packet draft --title -- Document -Werror",
@@ -2349,8 +2526,8 @@ describe("REPL /packet command", () => {
       state,
       fakeConnect,
     );
-    assertStrictEquals(handledPacket, true);
-    assertStrictEquals(recordedCalls[1].params.title, "Document -Werror");
+    assert.strictEqual(handledPacket, true);
+    assert.strictEqual(recordedCalls[1].params.title, "Document -Werror");
   });
 
   it("/session switch resets local session events", async () => {
@@ -2376,10 +2553,10 @@ describe("REPL /packet command", () => {
       fakeConnect,
     );
 
-    assertStrictEquals(state.sessionId, "01TESTB0000000000000000000");
-    assertStrictEquals(state.turnCount, 0);
-    assertEquals(state.events, []);
-    assertStrictEquals(state.eventCounter, 3);
+    assert.strictEqual(state.sessionId, "01TESTB0000000000000000000");
+    assert.strictEqual(state.turnCount, 0);
+    assert.deepStrictEqual(state.events, []);
+    assert.strictEqual(state.eventCounter, 3);
   });
 
   it("/session switch rejects session identifiers with control characters or whitespace", async () => {
@@ -2395,11 +2572,13 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "error: session identifier cannot contain control characters or whitespace",
+    assert.ok(
+      stderr.join("\n").includes(
+        "error: session identifier cannot contain control characters or whitespace",
+      ),
+      `expected stderr.join("\\n") to include "error: session identifier cannot contain control characters or whitespace"`,
     );
-    assertStrictEquals(state.sessionId, "01SESSION_A");
+    assert.strictEqual(state.sessionId, "01SESSION_A");
   });
 
   it("/packet draft -- rejects extra positional arguments", async () => {
@@ -2415,17 +2594,17 @@ describe("REPL /packet command", () => {
       io,
       state,
     );
-    assertStrictEquals(handled, true);
-    assertStringIncludes(
-      stderr.join("\n"),
-      'error: unexpected argument "IDEA_B"',
+    assert.strictEqual(handled, true);
+    assert.ok(
+      stderr.join("\n").includes('error: unexpected argument "IDEA_B"'),
+      `expected stderr.join("\\n") to include 'error: unexpected argument "IDEA_B"'`,
     );
   });
 });
 
 describe("session posture", () => {
   it("formatPostureLine covers paid states and locality", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({
         slug: "qwen-local",
         tier: 0,
@@ -2436,7 +2615,7 @@ describe("session posture", () => {
       }),
       "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({
         slug: "claude-opus-4-8",
         tier: 2,
@@ -2446,7 +2625,7 @@ describe("session posture", () => {
       }),
       "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (session) · permission strict · workspace instructions: unknown",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({
         slug: "claude-opus-4-8",
         tier: 2,
@@ -2457,7 +2636,7 @@ describe("session posture", () => {
       }),
       "posture: claude-opus-4-8 · tier 2 · hosted · paid approved (standing config) · permission strict · workspace instructions: unknown",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({
         slug: "codex-chatgpt/gpt-5.6-terra",
         tier: 2,
@@ -2486,16 +2665,16 @@ describe("session posture", () => {
     const line = "posture: qwen-local · tier 0 · local · " +
       "paid off (hosted turns fail closed) · permission operator · " +
       "workspace instructions: ";
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({ ...base, trustWorkspaceInstructions: true }),
       `${line}trusted`,
     );
     // Literal false pins "off" to real evidence, never inferred from absence.
-    assertStrictEquals(
+    assert.strictEqual(
       formatPostureLine({ ...base, trustWorkspaceInstructions: false }),
       `${line}off`,
     );
-    assertStrictEquals(formatPostureLine(base), `${line}unknown`);
+    assert.strictEqual(formatPostureLine(base), `${line}unknown`);
   });
 
   function postureConnect(
@@ -2523,7 +2702,7 @@ describe("session posture", () => {
         permissionLevel: "operator",
       }),
     );
-    assertEquals(posture, {
+    assert.deepStrictEqual(posture, {
       slug: "qwen-local",
       tier: 0,
       local: true,
@@ -2543,7 +2722,9 @@ describe("session posture", () => {
         trustWorkspaceInstructions: true,
       }),
     );
-    assertObjectMatch(posture, { trustWorkspaceInstructions: true });
+    assert.partialDeepStrictEqual(posture, {
+      trustWorkspaceInstructions: true,
+    });
   });
 
   it("fetchSessionPosture resolves an explicit model from the model list", async () => {
@@ -2554,7 +2735,7 @@ describe("session posture", () => {
         [{ slug: "claude-opus-4-8", tier: 2, local: false }],
       ),
     );
-    assertObjectMatch(posture, {
+    assert.partialDeepStrictEqual(posture, {
       slug: "claude-opus-4-8",
       tier: 2,
       local: false,
@@ -2576,7 +2757,7 @@ describe("session posture", () => {
         }],
       ),
     );
-    assertObjectMatch(posture, {
+    assert.partialDeepStrictEqual(posture, {
       slug: "codex-chatgpt/gpt-5.6-terra",
       fast: true,
     });
@@ -2592,7 +2773,7 @@ describe("session posture", () => {
         permissionLevel: "operator",
       }),
     );
-    assertObjectMatch(posture, {
+    assert.partialDeepStrictEqual(posture, {
       slug: "(tier 2 route)",
       tier: 2,
       local: undefined,
@@ -2602,7 +2783,7 @@ describe("session posture", () => {
       cfg({ hint: "code" }),
       postureConnect({ permissionLevel: "operator" }),
     );
-    assertObjectMatch(hinted, { slug: "(hint code route)" });
+    assert.partialDeepStrictEqual(hinted, { slug: "(hint code route)" });
   });
 
   it("fetchSessionPosture reports an error when the seam is unreachable", async () => {
@@ -2610,7 +2791,7 @@ describe("session posture", () => {
       cfg(),
       () => Promise.reject(new Error("connection refused")),
     );
-    assert("error" in (posture as object));
+    assert.ok("error" in (posture as object));
   });
 
   it("runRepl prints the posture line at session start on the UDS seam", async () => {
@@ -2623,9 +2804,11 @@ describe("session posture", () => {
         permissionLevel: "operator",
       }),
     );
-    assertStringIncludes(
-      stderr.join("\n"),
-      "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
+    assert.ok(
+      stderr.join("\n").includes(
+        "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown",
+      ),
+      `expected stderr.join("\\n") to include "posture: qwen-local · tier 0 · local · paid off (hosted turns fail closed) · permission operator · workspace instructions: unknown"`,
     );
   });
 
@@ -2636,7 +2819,7 @@ describe("session posture", () => {
       io,
       () => Promise.reject(new Error("connection refused")),
     );
-    assertFalse(stderr.join("\n").includes("posture:"));
+    assert.ok(!stderr.join("\n").includes("posture:"));
   });
 });
 
@@ -2655,15 +2838,21 @@ describe("runRepl spinner integration", () => {
     // Two turns → a pause erase and a terminal erase for each, with a fresh
     // spinner instance (and therefore a fresh first frame) per turn.
     const erases = raw.filter((write) => write === ERASE_LINE);
-    assertEquals(erases.length, 4);
-    assertStrictEquals(raw[0], `${ERASE_LINE}⠋ working… 0s`);
-    assertStrictEquals(raw[raw.length - 1], ERASE_LINE);
-    assertEquals(
+    assert.deepStrictEqual(erases.length, 4);
+    assert.strictEqual(raw[0], `${ERASE_LINE}⠋ working… 0s`);
+    assert.strictEqual(raw[raw.length - 1], ERASE_LINE);
+    assert.deepStrictEqual(
       raw.filter((write) => write === `${ERASE_LINE}⠋ working… 0s`).length,
       2,
     );
-    assertStringIncludes(stdout.join(""), "first");
-    assertStringIncludes(stdout.join(""), "second");
+    assert.ok(
+      stdout.join("").includes("first"),
+      `expected stdout.join("") to include "first"`,
+    );
+    assert.ok(
+      stdout.join("").includes("second"),
+      `expected stdout.join("") to include "second"`,
+    );
   });
 });
 
@@ -2671,11 +2860,11 @@ describe("runRepl spinner integration", () => {
 
 describe("replPrompt", () => {
   it("plain mode is byte-identical to the historical prompt", () => {
-    assertStrictEquals(replPrompt(false), "\ndyfj> ");
+    assert.strictEqual(replPrompt(false), "\ndyfj> ");
   });
 
   it("color mode carries a bold green gutter", () => {
-    assertStrictEquals(replPrompt(true), "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m ");
+    assert.strictEqual(replPrompt(true), "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m ");
   });
 
   it("runRepl prompts with the plain gutter when color is off", async () => {
@@ -2686,7 +2875,7 @@ describe("replPrompt", () => {
       fakeTurnConnect([], result()),
       false,
     );
-    assertEquals(prompts, ["\ndyfj> "]);
+    assert.deepStrictEqual(prompts, ["\ndyfj> "]);
   });
 
   it("runRepl prompts with the styled gutter when color is on", async () => {
@@ -2697,7 +2886,7 @@ describe("replPrompt", () => {
       fakeTurnConnect([], result()),
       false,
     );
-    assertEquals(prompts, [replPrompt(true)]);
+    assert.deepStrictEqual(prompts, [replPrompt(true)]);
   });
 });
 
