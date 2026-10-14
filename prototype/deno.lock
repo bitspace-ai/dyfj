@@ -24,7 +24,7 @@
     "jsr:@std/testing@1.0.21": "1.0.21",
     "jsr:@std/toml@1.0.11": "1.0.11",
     "npm:@agentclientprotocol/codex-acp@1.11.0": "1.11.0",
-    "npm:@agentclientprotocol/sdk@1.7.0": "1.7.0_zod@4.6.5",
+    "npm:@agentclientprotocol/sdk@1.8.0": "1.8.0_zod@4.6.5",
     "npm:@modelcontextprotocol/client@2.3.1": "2.3.1",
     "npm:@modelcontextprotocol/server@2.3.1": "2.3.1",
     "npm:mysql2@3.24.5": "3.24.5_@types+node@26.6.5",
@@ -136,8 +136,8 @@
       ],
       "bin": true
     },
-    "@agentclientprotocol/sdk@1.7.0_zod@4.6.5": {
-      "integrity": "sha512-ZORuxsuEnLjRly7t6Ad7zAsWitjWsyprswyPUHz/yycPb+tTm3DGa8XheaHhRXqX8LS9snuxaYavXSRA50TlHw==",
+    "@agentclientprotocol/sdk@1.8.0_zod@4.6.5": {
+      "integrity": "sha512-fbP7qHZsFyTJVT0/RPrcWJ8An26qLXHEuGCHHEKDyxD1xpXV+Ejyh2LAE6vBAFePkpVjZeeohnbgvuEhZ7wLMg==",
       "dependencies": [
         "zod"
       ]
@@ -434,7 +434,7 @@
       "jsr:@std/testing@1.0.21",
       "jsr:@std/toml@1.0.11",
       "npm:@agentclientprotocol/codex-acp@1.11.0",
-      "npm:@agentclientprotocol/sdk@1.7.0",
+      "npm:@agentclientprotocol/sdk@1.8.0",
       "npm:@modelcontextprotocol/client@2.3.1",
       "npm:@modelcontextprotocol/server@2.3.1",
       "npm:mysql2@3.24.5",
