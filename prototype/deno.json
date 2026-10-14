@@ -199,7 +199,7 @@
     }
   },
   "imports": {
-    "$dax": "jsr:@david/dax@0.50.0",
+    "$dax": "jsr:@david/dax@0.50.1",
     "@agentclientprotocol/codex-acp": "npm:@agentclientprotocol/codex-acp@1.11.0",
     "@agentclientprotocol/sdk": "npm:@agentclientprotocol/sdk@1.7.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
