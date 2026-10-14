@@ -3,7 +3,7 @@
 // yet, such as a contained exec tool), and the kit's detectors against
 // definitions that must fail them.
 
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   buildToolCatalog,
   type CommandDefinition,
@@ -102,7 +102,7 @@ toolConformance({
 });
 
 Deno.test("the kit's effect contract: one verdict pair per effect class", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     Object.fromEntries(
       effectClasses.map((command) => [command.id, expectedVerdicts(command)]),
     ),
@@ -136,7 +136,7 @@ Deno.test("schemaProblems flags an invalid schema", () => {
       },
     },
   });
-  assertEquals(schemaProblems(command), [
+  assert.deepStrictEqual(schemaProblems(command), [
     "title must be non-empty",
     "inputSchema.required names undeclared missing",
     "inputSchema.input.pattern does not compile",
@@ -148,7 +148,7 @@ Deno.test("schemaProblems flags an invalid schema", () => {
 });
 
 Deno.test("envelopeProblems flags an undeclared or contradictory envelope", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     envelopeProblems(synthetic("gaps", {
       effects: [],
       resources: [],
@@ -165,7 +165,7 @@ Deno.test("envelopeProblems flags an undeclared or contradictory envelope", () =
       "cost must be declared",
     ],
   );
-  assertEquals(
+  assert.deepStrictEqual(
     envelopeProblems(synthetic("contradictions", {
       effects: [
         "write.filesystem",
@@ -188,7 +188,7 @@ Deno.test("envelopeProblems flags an undeclared or contradictory envelope", () =
 });
 
 Deno.test("invalidArgumentCases derives every invalid shape a schema declares", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     invalidArgumentCases(synthetic("any", {}).inputSchema).map(({ name }) =>
       name
     ),
@@ -198,5 +198,5 @@ Deno.test("invalidArgumentCases derives every invalid shape a schema declares", 
       "every argument has the wrong type",
     ],
   );
-  assertEquals(invalidArgumentCases({ type: "object" }), []);
+  assert.deepStrictEqual(invalidArgumentCases({ type: "object" }), []);
 });

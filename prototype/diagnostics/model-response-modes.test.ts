@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
@@ -31,7 +31,7 @@ describe("compareResponseModes", () => {
       fetchFn: responseModeTransport().fetchLike,
     });
 
-    assertEquals(report.map(summary), [
+    assert.deepStrictEqual(report.map(summary), [
       {
         mode: "non-streaming",
         provider: "ollama",
@@ -51,7 +51,7 @@ describe("compareResponseModes", () => {
         output_tokens: 2,
       },
     ]);
-    assertStrictEquals(report[1].text, "hello world");
+    assert.strictEqual(report[1].text, "hello world");
   });
 });
 

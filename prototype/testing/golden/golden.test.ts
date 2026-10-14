@@ -16,7 +16,9 @@
  * allow:  deno task test:golden --update
  */
 
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { AssertionError } from "node:assert";
+import process from "node:process";
 import {
   type ChatMessage,
   type ChatRequest,
@@ -30,7 +32,7 @@ import {
 } from "./harness.ts";
 import { OPERATOR, STRICT } from "./profiles.ts";
 
-const UPDATE = Deno.args.includes("--update");
+const UPDATE = process.argv.slice(2).includes("--update");
 const SNAPSHOT_DIR = `${prototypeRoot}/testing/golden/snapshots`;
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
@@ -216,10 +218,13 @@ function parseJsonOrText(text: string): unknown {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.lstat(path);
+    await lstat(path);
     return true;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) return false;
     throw error;
   }
 }
@@ -598,15 +603,18 @@ async function matchSnapshot(id: string, value: unknown): Promise<void> {
   const path = `${SNAPSHOT_DIR}/${id}.json`;
   const actual = `${JSON.stringify(value, null, 2)}\n`;
   if (UPDATE) {
-    await Deno.mkdir(SNAPSHOT_DIR, { recursive: true });
-    await Deno.writeTextFile(path, actual);
+    await mkdir(SNAPSHOT_DIR, { recursive: true });
+    await writeFile(path, actual);
     return;
   }
   let expected: string;
   try {
-    expected = await Deno.readTextFile(path);
+    expected = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) {
       throw new AssertionError({
         message: `missing golden snapshot ${id}; run with -- --update`,
       });

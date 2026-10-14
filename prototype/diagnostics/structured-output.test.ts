@@ -1,4 +1,4 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
@@ -33,7 +33,7 @@ describe("compareStructuredOutputModes", () => {
       fetchFn: structuredOutputTransport().fetchLike,
     });
 
-    assertEquals(report.map(summary), [
+    assert.deepStrictEqual(report.map(summary), [
       {
         mode: "prompt-only",
         provider: "ollama",
@@ -53,7 +53,7 @@ describe("compareStructuredOutputModes", () => {
         total_latency_ms: 40,
       },
     ]);
-    assertEquals(report[1].parsed, {
+    assert.deepStrictEqual(report[1].parsed, {
       answer: "ok",
       confidence: "high",
     });
@@ -72,7 +72,7 @@ describe("compareStreamingStructuredOutputModes", () => {
       fetchFn: streamingStructuredOutputTransport().fetchLike,
     });
 
-    assertEquals(report.map(streamingSummary), [
+    assert.deepStrictEqual(report.map(streamingSummary), [
       {
         mode: "loose-streaming",
         streamed: true,
@@ -94,7 +94,7 @@ describe("compareStreamingStructuredOutputModes", () => {
         output_tokens: 4,
       },
     ]);
-    assertEquals(report[1].parsed, {
+    assert.deepStrictEqual(report[1].parsed, {
       answer: "ok",
       confidence: "high",
     });
@@ -130,7 +130,7 @@ function structuredOutputTransport(): ScriptedHttpTransport {
   return new ScriptedHttpTransport([
     {
       expect: (request) =>
-        assertStrictEquals(JSON.parse(request.body).response_format, undefined),
+        assert.strictEqual(JSON.parse(request.body).response_format, undefined),
       respond: {
         body: JSON.stringify({
           choices: [{
@@ -143,7 +143,7 @@ function structuredOutputTransport(): ScriptedHttpTransport {
     },
     {
       expect: (request) =>
-        assertEquals(JSON.parse(request.body).response_format, {
+        assert.deepStrictEqual(JSON.parse(request.body).response_format, {
           type: "json_object",
         }),
       respond: {

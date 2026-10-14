@@ -1,8 +1,4 @@
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   verifyWorkbenchEventSequence,
@@ -30,10 +26,10 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    assertStrictEquals(result.ok, true);
-    assertStrictEquals(result.sessionId, SESSION_ID);
-    assertStrictEquals(result.traceId, TRACE_ID);
-    assertEquals(result.eventTypes, [
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.sessionId, SESSION_ID);
+    assert.strictEqual(result.traceId, TRACE_ID);
+    assert.deepStrictEqual(result.eventTypes, [
       "session_start",
       "model_selected",
       "model_response",
@@ -51,7 +47,7 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    assertStrictEquals(result.ok, true);
+    assert.strictEqual(result.ok, true);
   });
 
   it("rejects mixed session ids", () => {
@@ -63,10 +59,13 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    assertStrictEquals(result.ok, false);
-    assertArrayIncludes(result.errors, [
-      "events span multiple session_id values",
-    ]);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(
+      ["events span multiple session_id values"].filter((item) =>
+        !result.errors.includes(item)
+      ),
+      [],
+    );
   });
 
   it("rejects a missing model_selected event", () => {
@@ -77,7 +76,12 @@ describe("verifyWorkbenchEventSequence", () => {
       row("budget_summary"),
     ]);
 
-    assertStrictEquals(result.ok, false);
-    assertArrayIncludes(result.errors, ["missing event_type: model_selected"]);
+    assert.strictEqual(result.ok, false);
+    assert.deepStrictEqual(
+      ["missing event_type: model_selected"].filter((item) =>
+        !result.errors.includes(item)
+      ),
+      [],
+    );
   });
 });
