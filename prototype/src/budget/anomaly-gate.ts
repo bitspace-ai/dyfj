@@ -131,11 +131,15 @@ export function runawayAnomalyApprovalRequest(
 }
 
 export class RunawayAnomalyHaltError extends DomainError {
+  public readonly trigger: AnomalyTrigger;
+  public readonly spentUsd: number;
+  public readonly haltUsd: number;
+  public readonly declined: boolean;
   constructor(
-    public readonly trigger: AnomalyTrigger,
-    public readonly spentUsd: number,
-    public readonly haltUsd: number,
-    public readonly declined: boolean = false,
+    trigger: AnomalyTrigger,
+    spentUsd: number,
+    haltUsd: number,
+    declined: boolean = false,
     // Approval-peer-supplied decline comment, not authored by this codebase
     // — capped and control-char-stripped before it reaches the message
     // (not stored on the instance, so this is the only sanitizing point).
@@ -153,6 +157,10 @@ export class RunawayAnomalyHaltError extends DomainError {
           `actual $${spentUsd.toFixed(6)} past halt $${haltUsd.toFixed(6)}` +
           " (no confirmation channel; failing closed)",
     );
+    this.trigger = trigger;
+    this.spentUsd = spentUsd;
+    this.haltUsd = haltUsd;
+    this.declined = declined;
     this.name = "RunawayAnomalyHaltError";
   }
 }

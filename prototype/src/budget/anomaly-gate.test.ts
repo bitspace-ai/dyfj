@@ -5,6 +5,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { it } from "@std/testing/bdd";
 import { mock } from "node:test";
 import type { BudgetCeilingVerdict } from "./envelope-gate.ts";
 import {
@@ -263,4 +264,27 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: strips a ter
     `${esc}[31mdanger${esc}[0m`,
   );
   assert.ok(!err.message.includes(esc));
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+it("RunawayAnomalyHaltError keeps its own properties and message", () => {
+  const err = new RunawayAnomalyHaltError("turn_spend", 1, 2);
+  assert.deepStrictEqual(Object.keys(err), [
+    "trigger",
+    "spentUsd",
+    "haltUsd",
+    "declined",
+    "name",
+  ]);
+  assert.deepStrictEqual(
+    [err.trigger, err.spentUsd, err.haltUsd, err.declined],
+    ["turn_spend", 1, 2, false],
+  );
+  assert.strictEqual(
+    err.message,
+    "Runaway spend anomaly [turn_spend]: actual $1.000000 past halt " +
+      "$2.000000 (no confirmation channel; failing closed)",
+  );
+  assert.strictEqual(err.cause, undefined);
 });

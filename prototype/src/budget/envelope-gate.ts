@@ -317,12 +317,16 @@ export function createTurnBudgetCeilingGate(
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 export class BudgetExceededError extends DomainError {
+  public readonly reason: BudgetLimitReason;
+  public readonly estimatedCost: number;
+  public readonly limitUsd: number;
+  /** Spend so far in the scope named by `reason` (session/day so far; for per-call this is the call estimate). */
+  public readonly scopeCostSoFar: number;
   constructor(
-    public readonly reason: BudgetLimitReason,
-    public readonly estimatedCost: number,
-    public readonly limitUsd: number,
-    /** Spend so far in the scope named by `reason` (session/day so far; for per-call this is the call estimate). */
-    public readonly scopeCostSoFar: number,
+    reason: BudgetLimitReason,
+    estimatedCost: number,
+    limitUsd: number,
+    scopeCostSoFar: number,
   ) {
     super(
       `Budget exceeded [${reason}]: ` +
@@ -336,6 +340,10 @@ export class BudgetExceededError extends DomainError {
             : "session total so far"
         } $${scopeCostSoFar.toFixed(6)}`,
     );
+    this.reason = reason;
+    this.estimatedCost = estimatedCost;
+    this.limitUsd = limitUsd;
+    this.scopeCostSoFar = scopeCostSoFar;
     this.name = "BudgetExceededError";
   }
 }

@@ -134,8 +134,10 @@ export function buildContextOverflowMessage(
  * hook below.
  */
 export class ContextWindowOverflowError extends DomainError {
-  constructor(public readonly details: ContextOverflowDetails) {
+  public readonly details: ContextOverflowDetails;
+  constructor(details: ContextOverflowDetails) {
     super(buildContextOverflowMessage(details));
+    this.details = details;
     this.name = "ContextWindowOverflowError";
   }
 }

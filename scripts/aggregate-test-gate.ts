@@ -705,6 +705,29 @@ export function productionLanes(
       cwd: root,
     },
     {
+      // Erasable-syntax guard (decision D32): Node strips types without
+      // transforming them, so no tracked TypeScript may hold a constructor
+      // parameter property. Under the aggregate check id; `tsc
+      // --erasableSyntaxOnly` takes it over once the typecheck lane moves to
+      // Node. It parses with `deno lint` and a repository plugin, so it runs
+      // `git` and the selected binary, and names `NODE_V8_COVERAGE` for the
+      // runtime's node:child_process shim, as runtime.neutral does.
+      label: "Erasable-syntax guard (erasable.syntax)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        "--allow-env=NODE_V8_COVERAGE",
+        `--allow-read=${root}`,
+        `--allow-run=git,${denoExecutable}`,
+        "scripts/erasable-syntax.ts",
+        `--deno=${denoExecutable}`,
+      ],
+      cwd: root,
+    },
+    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -733,6 +756,8 @@ export function productionLanes(
         "scripts/dependency-policy.test.ts",
         "scripts/arch-imports.test.ts",
         "scripts/runtime-neutral.test.ts",
+        "scripts/erasable-syntax.test.ts",
+        "scripts/node-load-probe.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
         "scripts/change-scope.test.ts",
@@ -974,6 +999,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Dependency policy check",
   "Architecture import rules (arch.imports)",
   "Runtime-neutral ratchet (runtime.neutral)",
+  "Erasable-syntax guard (erasable.syntax)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",

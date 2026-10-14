@@ -6,6 +6,7 @@
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { it } from "@std/testing/bdd";
 import { mock } from "node:test";
 import { MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
@@ -367,4 +368,27 @@ Deno.test("BudgetCeilingDeclinedError — reason field sanitization: strips a te
   const err = new BudgetCeilingDeclinedError(`${esc}[31mdanger${esc}[0m`);
   assert.ok(!(err.reason ?? "").includes(esc));
   assert.ok(!err.message.includes(esc));
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+it("BudgetExceededError keeps its own properties and message", () => {
+  const err = new BudgetExceededError("session_limit", 1, 2, 3);
+  assert.deepStrictEqual(Object.keys(err), [
+    "reason",
+    "estimatedCost",
+    "limitUsd",
+    "scopeCostSoFar",
+    "name",
+  ]);
+  assert.deepStrictEqual(
+    [err.reason, err.estimatedCost, err.limitUsd, err.scopeCostSoFar],
+    ["session_limit", 1, 2, 3],
+  );
+  assert.strictEqual(
+    err.message,
+    "Budget exceeded [session_limit]: estimated $1.000000, limit " +
+      "$2.000000, session total so far $3.000000",
+  );
+  assert.strictEqual(err.cause, undefined);
 });

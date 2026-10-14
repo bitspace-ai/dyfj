@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { it } from "@std/testing/bdd";
 import {
   buildContextOverflowMessage,
   buildContinuationMessages,
@@ -227,4 +228,15 @@ Deno.test("buildContextOverflowMessage: a request refused before sending names t
     message.includes("/model"),
     `expected ${JSON.stringify(message)} to include "/model"`,
   );
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+it("ContextWindowOverflowError keeps its own properties and message", () => {
+  const details = { modelSlug: "m", inputTokens: 1, outputTokens: 1 };
+  const err = new ContextWindowOverflowError(details);
+  assert.deepStrictEqual(Object.keys(err), ["details", "name"]);
+  assert.strictEqual(err.details, details);
+  assert.strictEqual(err.message, buildContextOverflowMessage(details));
+  assert.strictEqual(err.cause, undefined);
 });

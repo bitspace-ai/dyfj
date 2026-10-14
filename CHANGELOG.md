@@ -196,6 +196,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **A new `erasable.syntax` gate lane rejects constructor parameter
+  properties in tracked TypeScript.** Node runs `.ts` files by stripping types
+  without transforming them, and a parameter property is the one construct in
+  the codebase that stripping cannot erase. The 24 constructors that used one
+  now declare the field in the class body and assign it in the constructor,
+  with the same visibility, `readonly`, and own-property order, so the
+  serialized shape of every error is unchanged. All 215 non-test modules
+  under `prototype/src` and `contracts/` now load under Node 22 and 26. The
+  lane checks parameter properties only; other syntax that needs a transform
+  goes unchecked until `tsc --erasableSyntaxOnly` takes over. The new
+  `scripts/node-load-probe.ts` is a manual check of those two roots, not a
+  gate lane. The lane runs in the full gate and in `test:fast`, under the
+  `test.aggregate` check id (decision D32).
+
 - **The Rust core depends on sqlx 0.9.0.** Connections still use the Tokio
   runtime and rustls (`tls-rustls`: ring, with the webpki roots sqlx 0.9
   enables). A URL that keeps the default `utf8mb4` charset and does not set a

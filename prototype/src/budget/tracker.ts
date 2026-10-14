@@ -140,27 +140,38 @@ export interface BudgetSummary {
 // ── BudgetTracker ─────────────────────────────────────────────────────────────
 
 export class BudgetTracker {
+  private readonly sessionId: string;
+  private readonly traceId: string;
+  public readonly config: BudgetConfig;
+  // principal is resolved at the boundary and passed in, so the
+  // budget_summary event no longer reads DYFJ_PRINCIPAL_ID / USER from env.
+  private readonly principalId: string;
+  // Prior spend from the events table (fetchSpendBaselines): the session's
+  // earlier turns and today's spend across sessions. Without these the
+  // session and daily envelopes silently reset every turn.
+  private baselines: SpendBaselines;
   private readonly _byTier = new Map<0 | 1 | 2, TierSpend>();
   private _totalCost = 0;
   private _totalTokensInput = 0;
   private _totalTokensOutput = 0;
 
   constructor(
-    private readonly sessionId: string,
-    private readonly traceId: string,
-    public readonly config: BudgetConfig = defaultBudgetConfig(),
-    // principal is resolved at the boundary and passed in, so the
-    // budget_summary event no longer reads DYFJ_PRINCIPAL_ID / USER from env.
-    private readonly principalId: string = "user",
-    // Prior spend from the events table (fetchSpendBaselines): the session's
-    // earlier turns and today's spend across sessions. Without these the
-    // session and daily envelopes silently reset every turn.
-    private baselines: SpendBaselines = {
+    sessionId: string,
+    traceId: string,
+    config: BudgetConfig = defaultBudgetConfig(),
+    principalId: string = "user",
+    baselines: SpendBaselines = {
       sessionSpentUsd: 0,
       sessionSpentTodayUsd: 0,
       dailyOtherSessionsUsd: 0,
     },
-  ) {}
+  ) {
+    this.sessionId = sessionId;
+    this.traceId = traceId;
+    this.config = config;
+    this.principalId = principalId;
+    this.baselines = baselines;
+  }
 
   /**
    * Refresh the cross-session daily figure (called before each paid call) so
