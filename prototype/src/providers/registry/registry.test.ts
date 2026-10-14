@@ -1,9 +1,4 @@
-import {
-  assertEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertThrows,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
   createProviderRegistry,
@@ -49,30 +44,33 @@ Deno.test("each production provider is served by exactly one adapter", () => {
     google: geminiAdapter,
   };
   for (const [provider, adapter] of Object.entries(expected)) {
-    assertStrictEquals(registry.adapterFor(model(provider)), adapter, provider);
+    assert.strictEqual(registry.adapterFor(model(provider)), adapter, provider);
   }
   for (const provider of ["codex-chatgpt", "vllm", ""]) {
-    assertStrictEquals(registry.adapterFor(model(provider)), undefined);
+    assert.strictEqual(registry.adapterFor(model(provider)), undefined);
   }
 });
 
 Deno.test("dispatch keys on the provider, not the catalog api column", () => {
   const registry = createProviderRegistry(PROVIDER_ADAPTERS);
-  assertStrictEquals(
+  assert.strictEqual(
     registry.adapterFor(model("anthropic", { api: "openai-completions" })),
     anthropicAdapter,
   );
 });
 
 Deno.test("two adapters may not serve the same provider", () => {
-  assertThrows(
+  assert.throws(
     () =>
       createProviderRegistry([
         openAICompatibleAdapter,
         { ...anthropicAdapter, api: "other", providers: new Set(["openai"]) },
       ]),
-    Error,
-    "provider openai is served by both openai-compatible and other",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes(
+        "provider openai is served by both openai-compatible and other",
+      ),
   );
 });
 
@@ -84,7 +82,7 @@ Deno.test("a provider no adapter serves fails closed before any request", async 
     costInput: 0,
     costOutput: 0,
   });
-  await assertRejects(
+  await assert.rejects(
     () =>
       runWorkbenchTurn({
         systemPrompt: "system",
@@ -95,7 +93,7 @@ Deno.test("a provider no adapter serves fails closed before any request", async 
       }),
     HostedInferenceRequiresProviderError,
   );
-  assertEquals(transport.requests.length, 0);
+  assert.deepStrictEqual(transport.requests.length, 0);
 });
 
 Deno.test("capability queries answer from the serving adapter", () => {
@@ -108,8 +106,12 @@ Deno.test("capability queries answer from the serving adapter", () => {
     ["codex-chatgpt", false, false],
   ];
   for (const [provider, streams, retry] of table) {
-    assertEquals(modelStreamsToolCalls(model(provider)), streams, provider);
-    assertEquals(
+    assert.deepStrictEqual(
+      modelStreamsToolCalls(model(provider)),
+      streams,
+      provider,
+    );
+    assert.deepStrictEqual(
       modelSupportsTranscriptRetry(model(provider)),
       retry,
       provider,
@@ -132,7 +134,7 @@ Deno.test("the requested output cap applies each adapter's default ceiling", () 
       [model("codex-chatgpt", { maxOutputTokens: 1234 }), undefined, 1234],
     ];
   for (const [subject, requested, expected] of cases) {
-    assertEquals(
+    assert.deepStrictEqual(
       modelRequestedOutputCap(subject, requested),
       expected,
       `${subject.provider} requested=${requested}`,
@@ -153,7 +155,7 @@ Deno.test("modelTransmittedOutputCap is the cap on the wire: none for a local re
       [model("ollama", { maxOutputTokens: 2048 }), 1000, 1000],
     ];
   for (const [subject, requested, expected] of cases) {
-    assertEquals(
+    assert.deepStrictEqual(
       modelTransmittedOutputCap(subject, requested),
       expected,
       `${subject.provider} requested=${requested}`,

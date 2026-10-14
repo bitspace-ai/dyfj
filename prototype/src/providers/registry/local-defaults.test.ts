@@ -1,13 +1,7 @@
 // Unit tests for the built-in local model defaults and their overlay onto the
 // registry catalog.
 
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertExists,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   defaultLocalWorkbenchModels,
@@ -20,7 +14,7 @@ describe("defaultLocalWorkbenchModels", () => {
   it("provides a zero-cost Tier 0 local default served by llama.cpp", () => {
     const defaults = defaultLocalWorkbenchModels();
 
-    assertObjectMatch(defaults[0], {
+    assert.partialDeepStrictEqual(defaults[0], {
       slug: "llama-cpp/qwen3.6-35b-a3b",
       provider: "llama-cpp",
       api: "openai-completions",
@@ -36,12 +30,15 @@ describe("defaultLocalWorkbenchModels", () => {
       residentRamGiB: 24.0,
       reasoningEffortControl: false,
     });
-    assertArrayIncludes(defaults[0].capabilities, [
-      "text",
-      "code",
-      "reasoning",
-      "tools",
-    ]);
+    assert.deepStrictEqual(
+      [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+      ].filter((item) => !defaults[0].capabilities.includes(item)),
+      [],
+    );
   });
 
   it("provides zero-cost Tier 0 local fallback models", () => {
@@ -50,8 +47,8 @@ describe("defaultLocalWorkbenchModels", () => {
     const muse = defaults.find((m) => m.slug === "muse-glimmer:30b");
     const qwen36 = defaults.find((m) => m.slug === "qwen3.6:35b-a3b");
 
-    assertExists(laguna);
-    assertObjectMatch(laguna, {
+    assert.ok(laguna !== undefined && laguna !== null);
+    assert.partialDeepStrictEqual(laguna, {
       slug: "laguna-xs-2.1",
       provider: "ollama",
       tier: 0,
@@ -64,17 +61,20 @@ describe("defaultLocalWorkbenchModels", () => {
       residentRamGiB: 20.0,
       reasoningEffortControl: false,
     });
-    assertArrayIncludes(laguna.capabilities, [
-      "text",
-      "code",
-      "reasoning",
-      "tools",
-      "thinking",
-      "long-context",
-    ]);
+    assert.deepStrictEqual(
+      [
+        "text",
+        "code",
+        "reasoning",
+        "tools",
+        "thinking",
+        "long-context",
+      ].filter((item) => !laguna.capabilities.includes(item)),
+      [],
+    );
 
-    assertExists(muse);
-    assertObjectMatch(muse, {
+    assert.ok(muse !== undefined && muse !== null);
+    assert.partialDeepStrictEqual(muse, {
       slug: "muse-glimmer:30b",
       provider: "ollama",
       tier: 0,
@@ -88,8 +88,8 @@ describe("defaultLocalWorkbenchModels", () => {
       reasoningEffortControl: true,
     });
 
-    assertExists(qwen36);
-    assertObjectMatch(qwen36, {
+    assert.ok(qwen36 !== undefined && qwen36 !== null);
+    assert.partialDeepStrictEqual(qwen36, {
       slug: "qwen3.6:35b-a3b",
       provider: "ollama",
       tier: 0,
@@ -113,21 +113,35 @@ describe("withDefaultLocalWorkbenchModels", () => {
       displayName: "Gemma 4 latest",
     }]);
 
-    assertEquals(merged.slice(0, 3).map((model) => model.slug), [
+    assert.deepStrictEqual(merged.slice(0, 3).map((model) => model.slug), [
       "llama-cpp/qwen3.6-35b-a3b",
       "qwen3.6:35b-a3b",
       "muse-glimmer:30b",
     ]);
     const slugs = merged.map((model) => model.slug);
-    assertArrayIncludes(slugs, ["laguna-xs-2.1"]);
-    assertArrayIncludes(slugs, ["muse-glimmer:30b"]);
-    assertArrayIncludes(slugs, ["deepseek-r1:32b"]);
-    assertArrayIncludes(slugs, ["mistral-small:24b-instruct-2501-q4_K_M"]);
-    assertStrictEquals(
+    assert.deepStrictEqual(
+      ["laguna-xs-2.1"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["deepseek-r1:32b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["mistral-small:24b-instruct-2501-q4_K_M"].filter((item) =>
+        !slugs.includes(item)
+      ),
+      [],
+    );
+    assert.strictEqual(
       merged.filter((model) => model.slug === "gemma4:26b").length,
       1,
     );
-    assertStrictEquals(merged[merged.length - 1].displayName, "Gemma 4 latest");
+    assert.strictEqual(merged[merged.length - 1].displayName, "Gemma 4 latest");
   });
 
   it("does not restore a built-in row the catalog lists as inactive", () => {
@@ -137,14 +151,17 @@ describe("withDefaultLocalWorkbenchModels", () => {
     );
 
     const slugs = merged.map((model) => model.slug);
-    assertStrictEquals(slugs.includes("qwen3.6:35b-a3b"), false);
-    assertArrayIncludes(slugs, ["muse-glimmer:30b"]);
+    assert.strictEqual(slugs.includes("qwen3.6:35b-a3b"), false);
+    assert.deepStrictEqual(
+      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
+      [],
+    );
   });
 
   it("does not duplicate the default when the registry already has it", () => {
     const merged = withDefaultLocalWorkbenchModels(models);
 
-    assertStrictEquals(
+    assert.strictEqual(
       merged.filter((model) => model.slug === "laguna-xs-2.1").length,
       1,
     );

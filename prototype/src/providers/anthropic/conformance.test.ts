@@ -1,11 +1,6 @@
 // The Anthropic Messages adapter against the provider conformance kit.
 
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { providerAdapterConformance } from "../../../testing/conformance/provider-adapter.ts";
 import {
   WorkbenchHostedProviderBaseUrlError,
@@ -90,7 +85,10 @@ providerAdapterConformance({
       exchanges: [{
         // Dotted registry names go out wire-safe and come back mapped.
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).tools[0].name, "memory_read"),
+          assert.deepStrictEqual(
+            JSON.parse(request.body).tools[0].name,
+            "memory_read",
+          ),
         respond: {
           body: JSON.stringify({
             content: [{
@@ -157,9 +155,15 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) => {
-          assertEquals(request.url, "https://api.anthropic.com/v1/messages");
-          assertEquals(request.headers["x-api-key"], "test-key-not-real");
-          assert(request.headers["anthropic-version"]);
+          assert.deepStrictEqual(
+            request.url,
+            "https://api.anthropic.com/v1/messages",
+          );
+          assert.deepStrictEqual(
+            request.headers["x-api-key"],
+            "test-key-not-real",
+          );
+          assert.ok(request.headers["anthropic-version"]);
         },
         respond: {
           body: JSON.stringify({
@@ -209,7 +213,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).max_tokens, 2),
+          assert.deepStrictEqual(JSON.parse(request.body).max_tokens, 2),
         respond: {
           body: lines(
             'data: {"type":"message_start","message":{"usage":{"input_tokens":4}}}',
@@ -308,13 +312,16 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = requestBody(request.body);
-          assertObjectMatch(body.system[0], {
+          assert.partialDeepStrictEqual(body.system[0], {
             text: "You are the workbench.",
             cache_control: { type: "ephemeral" },
           });
-          assertStrictEquals(body.system[1].cache_control, undefined);
-          assert(body.max_tokens > 0, "max_tokens should be positive");
-          assertEquals(body.messages, [{ role: "user", content: "Say hi." }]);
+          assert.strictEqual(body.system[1].cache_control, undefined);
+          assert.ok(body.max_tokens > 0, "max_tokens should be positive");
+          assert.deepStrictEqual(body.messages, [{
+            role: "user",
+            content: "Say hi.",
+          }]);
         },
         respond: reply,
       }],
@@ -327,7 +334,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertEquals(requestBody(request.body).tools, [{
+          assert.deepStrictEqual(requestBody(request.body).tools, [{
             name: "memory_read",
             description: "Read a memory",
             input_schema: { type: "object", properties: {} },
@@ -373,8 +380,8 @@ providerAdapterConformance({
           const body = requestBody(request.body);
           // System stays top-level; the seed prompt is unused once history
           // exists.
-          assertObjectMatch(body.system[0], { text: "sys" });
-          assertEquals(body.messages, [
+          assert.partialDeepStrictEqual(body.system[0], { text: "sys" });
+          assert.deepStrictEqual(body.messages, [
             { role: "user", content: "what is this repo?" },
             // A text block, then one tool_use block per call (name sanitized).
             {
@@ -442,7 +449,7 @@ providerAdapterConformance({
         // The denial travels as a tool_result the model reads as an error,
         // not as ordinary tool output, which invites a corrected retry.
         expect: (request) =>
-          assertEquals(requestBody(request.body).messages[2], {
+          assert.deepStrictEqual(requestBody(request.body).messages[2], {
             role: "user",
             content: [{
               type: "tool_result",
