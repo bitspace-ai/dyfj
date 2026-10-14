@@ -2,10 +2,10 @@
 //
 // The `MapEnv` fake runs it in the unit lane; the real `processEnv` adapter runs
 // it in the integration lane, where the process is granted the probe key. Both
-// must agree with `Deno.env`: unset reads `undefined`, empty reads `""`, and a
-// write is visible to the next read.
+// must agree with the process environment: unset reads `undefined`, empty reads
+// `""`, and a write is visible to the next read.
 
-import { assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import type { MutableEnv } from "../../src/config/env.ts";
 
 export interface EnvConformanceSubject {
@@ -31,22 +31,22 @@ export function envConformance(subject: EnvConformanceSubject): void {
   const key = subject.probeKey;
 
   run("an unset key reads undefined", (env) => {
-    assertStrictEquals(env.get(key), undefined);
+    assert.strictEqual(env.get(key), undefined);
   });
 
   run("a set value is read back", (env) => {
     env.set(key, "value");
-    assertStrictEquals(env.get(key), "value");
+    assert.strictEqual(env.get(key), "value");
   });
 
   run("an empty value is defined and distinct from unset", (env) => {
     env.set(key, "");
-    assertStrictEquals(env.get(key), "");
+    assert.strictEqual(env.get(key), "");
   });
 
   run("a later set overwrites an earlier one", (env) => {
     env.set(key, "first");
     env.set(key, "second");
-    assertStrictEquals(env.get(key), "second");
+    assert.strictEqual(env.get(key), "second");
   });
 }

@@ -150,7 +150,10 @@ describe("runStop behavior over real sockets", () => {
 
   it("reports failure via io.err and returns 1 when connected to a mute socket exceeding deadline", async () => {
     const socketPath = udsTestSocket("cli-stop-mute");
-    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    const listener = await startMuteListener({
+      transport: "unix",
+      path: socketPath,
+    });
     cleanups.push(() => listener.close());
 
     const { io, stdout, stderr } = fakeIo();

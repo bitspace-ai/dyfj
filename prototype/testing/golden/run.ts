@@ -26,7 +26,8 @@ const tempWrite = "/tmp,/private/tmp,/var/folders,/private/var/folders";
 const deno = selectedDenoExecutable();
 const root = await Deno.makeTempDir({ prefix: "dyfj_golden_" });
 const forwarded = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
-const env: Record<string, string> = { DYFJ_GOLDEN_ROOT: root };
+// The harness spawns the product with the same executable (`testing/deno-bin.ts`).
+const env: Record<string, string> = { DYFJ_GOLDEN_ROOT: root, DENO_BIN: deno };
 for (const name of forwarded) {
   const value = Deno.env.get(name);
   if (value !== undefined) env[name] = value;
@@ -40,7 +41,11 @@ try {
   const child = new Deno.Command(deno, {
     args: [
       "test",
-      `--allow-env=${[...forwarded, "DYFJ_GOLDEN_ROOT"].join(",")}`,
+      // `node:child_process` reads NODE_V8_COVERAGE on every spawn.
+      `--allow-env=${
+        [...forwarded, "DYFJ_GOLDEN_ROOT", "DENO_BIN", "NODE_V8_COVERAGE"]
+          .join(",")
+      }`,
       `--allow-read=..,${tempWrite}`,
       // Only an explicit update may write snapshots; the lane cannot.
       `--allow-write=${tempWrite}${

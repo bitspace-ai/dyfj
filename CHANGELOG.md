@@ -196,6 +196,22 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Shared test support runs on `node:` builtins.** The loopback model, MCP
+  and scripted HTTP servers, the raw socket listeners, the golden harness and
+  its JSON-RPC client, the process helpers and the engine builders under
+  `prototype/testing/` now use `node:http`, `node:net`, `node:child_process`,
+  `node:fs` and the `Env` port, and the shared conformance suites assert with
+  `node:assert/strict` and fake time with `mock.timers` from `node:test`. The
+  test servers' start functions are now async, because a `node:http` or
+  `node:net` server knows its port only once it is listening. Support code that
+  runs the product (the golden harness and the stale-socket fixture) takes the
+  `deno` executable from `DENO_BIN` and fails with an error naming it when it
+  is unset; `deno task test:golden` and every gate lane set it. Tests still
+  register with the existing runner, so its sanitizers check every listener
+  and child. The manual Node load probe now covers `prototype/testing`: all of
+  it loads under Node 26 apart from the golden lane's runner, which still runs
+  under `deno` (decision D32).
+
 - **npm is the only resolver of npm packages, and config TOML is parsed by
   smol-toml.** Node can read neither the Deno import map nor `deno.lock`. The
   npm dependencies now live in `prototype/package.json`, pinned to exact

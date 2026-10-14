@@ -12,6 +12,7 @@ import {
   scriptedBody,
   type ScriptedResponse,
 } from "../fakes/scripted-http-transport.ts";
+import { serveFetch } from "./fetch-server.ts";
 
 export interface ScriptedHttpServer {
   /** `http://127.0.0.1:<port>`. */
@@ -21,20 +22,12 @@ export interface ScriptedHttpServer {
   close(): Promise<void>;
 }
 
-export function startScriptedHttpServer(
+export async function startScriptedHttpServer(
   script: readonly ScriptedResponse[],
-): ScriptedHttpServer {
+): Promise<ScriptedHttpServer> {
   const pending = [...script];
   const requests: RecordedRequest[] = [];
-  const server = Deno.serve(
-    {
-      hostname: "127.0.0.1",
-      port: 0,
-      onListen() {},
-      // A held-open body errors on the server side when the client aborts;
-      // that is the case under test, not a failure worth logging.
-      onError: () => new Response(null, { status: 500 }),
-    },
+  const server = await serveFetch(
     async (request) => {
       requests.push({
         url: request.url,
@@ -58,10 +51,15 @@ export function startScriptedHttpServer(
         headers: reply.headers,
       });
     },
+    {
+      // A held-open body errors on the server side when the client aborts;
+      // that is the case under test, not a failure worth logging.
+      onError: () => new Response(null, { status: 500 }),
+    },
   );
   return {
-    baseUrl: `http://127.0.0.1:${(server.addr as Deno.NetAddr).port}`,
+    baseUrl: `http://127.0.0.1:${server.port}`,
     requests,
-    close: () => server.shutdown(),
+    close: () => server.close(),
   };
 }

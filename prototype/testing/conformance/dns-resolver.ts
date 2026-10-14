@@ -8,7 +8,7 @@
 // no records, and a lookup that gets no answer says so instead of answering
 // empty.
 
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import type { DnsLookup, DnsResolver } from "../../src/tools/web/dns.ts";
 
 /** A name that can never exist (RFC 6761 reserves `.invalid`). */
@@ -43,7 +43,7 @@ export function dnsResolverConformance(
 
   run("an aborted lookup fails without an answer", async (resolver) => {
     const lookup = await resolver.resolve(host, "A", AbortSignal.abort());
-    assertEquals(lookup, { ok: false, reason: "failed" });
+    assert.deepStrictEqual(lookup, { ok: false, reason: "failed" });
   });
 
   if (subject.mode === "ungranted") {
@@ -54,7 +54,7 @@ export function dnsResolverConformance(
         resolver.resolve(NONEXISTENT_HOST, "A"),
       ]);
       for (const lookup of lookups) {
-        assertEquals(lookup, { ok: false, reason: "unavailable" });
+        assert.deepStrictEqual(lookup, { ok: false, reason: "unavailable" });
       }
     });
     return;
@@ -62,25 +62,25 @@ export function dnsResolverConformance(
 
   run("an A lookup answers with IPv4 addresses", async (resolver) => {
     const lookup = await resolver.resolve(host, "A");
-    assert(lookup.ok, `lookup failed: ${JSON.stringify(lookup)}`);
-    assert(lookup.addresses.length > 0, "expected at least one A record");
+    assert.ok(lookup.ok, `lookup failed: ${JSON.stringify(lookup)}`);
+    assert.ok(lookup.addresses.length > 0, "expected at least one A record");
     for (const address of lookup.addresses) {
-      assert(IPV4.test(address), `${address} is not an IPv4 address`);
+      assert.ok(IPV4.test(address), `${address} is not an IPv4 address`);
     }
   });
 
   run("an AAAA answer holds only IPv6 addresses", async (resolver) => {
     const lookup = await resolver.resolve(host, "AAAA");
-    assert(lookup.ok, `lookup failed: ${JSON.stringify(lookup)}`);
+    assert.ok(lookup.ok, `lookup failed: ${JSON.stringify(lookup)}`);
     for (const address of lookup.addresses) {
-      assert(address.includes(":"), `${address} is not an IPv6 address`);
+      assert.ok(address.includes(":"), `${address} is not an IPv6 address`);
     }
   });
 
   run(
     "a name that does not exist answers with no records",
     async (resolver) => {
-      assertEquals(await resolver.resolve(NONEXISTENT_HOST, "A"), {
+      assert.deepStrictEqual(await resolver.resolve(NONEXISTENT_HOST, "A"), {
         ok: true,
         addresses: [],
       });

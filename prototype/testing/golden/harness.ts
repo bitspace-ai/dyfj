@@ -15,8 +15,22 @@
  */
 
 import mysql from "mysql2/promise";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { constants, tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { startIsolatedDoltFixture } from "../../scripts/isolated-dolt-fixture.ts";
+import { processEnv } from "../../src/config/env.ts";
+import { denoBin, inheritedEnv } from "../deno-bin.ts";
 import {
   type ModelScript,
   type ModelServer,
@@ -37,8 +51,6 @@ export const prototypeRoot = fileURLToPath(new URL("../..", import.meta.url))
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url))
   .replace(/[\\/]$/, "");
 
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
 const REPL_PROMPT = "\ndyfj> ";
 const START_TIMEOUT_MS = 60_000;
 
@@ -117,12 +129,15 @@ interface LaunchContext {
 // ── Setup ───────────────────────────────────────────────────────────────────
 
 async function denoDir(): Promise<string> {
-  const output = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json"],
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  const info = JSON.parse(decoder.decode(output.stdout)) as {
+  const stdout = await new Promise<string>((resolve) => {
+    execFile(
+      denoBin(),
+      ["info", "--json"],
+      { encoding: "utf8", env: inheritedEnv(), maxBuffer: 64 * 1024 * 1024 },
+      (_error, out) => resolve(out),
+    );
+  });
+  const info = JSON.parse(stdout) as {
     denoDir?: string;
   };
   if (typeof info.denoDir !== "string") {
@@ -140,7 +155,7 @@ async function permissionProfiles(): Promise<
   { server: PermissionProfile; cli: PermissionProfile }
 > {
   const config = JSON.parse(
-    await Deno.readTextFile(`${prototypeRoot}/deno.json`),
+    await readFile(`${prototypeRoot}/deno.json`, "utf8"),
   ) as { permissions: Record<string, PermissionProfile> };
   return {
     server: config.permissions["serve-unix"],
@@ -198,36 +213,52 @@ function rowCapture(query: Query): () => Promise<RowCapture> {
 
 // ── Child processes ─────────────────────────────────────────────────────────
 
-async function stopChild(child: Deno.ChildProcess): Promise<void> {
-  try {
-    child.kill("SIGTERM");
-  } catch {
+/** A spawned child and its exit, settled once its stdio has closed too. */
+interface Child {
+  process: ChildProcess;
+  /** The exit code; a signal death reads as 128 plus the signal number. */
+  closed: Promise<number>;
+}
+
+function started(process: ChildProcess): Child {
+  const closed = new Promise<number>((resolve, reject) => {
+    process.once("error", reject);
+    process.once("close", (code, signal) => {
+      resolve(
+        code ?? 128 + (signal === null ? 0 : constants.signals[signal]),
+      );
+    });
+  });
+  return { process, closed };
+}
+
+async function stopChild(child: Child): Promise<void> {
+  if (!child.process.kill("SIGTERM")) {
+    // Already exited (or never started): wait for its stdio to close.
+    await child.closed.catch(() => undefined);
     return;
   }
   const timeout = new Promise<"timeout">((resolve) => {
     const id = setTimeout(() => resolve("timeout"), 5_000);
-    void child.status.finally(() => clearTimeout(id));
+    void child.closed.catch(() => undefined).finally(() => clearTimeout(id));
   });
   const outcome = await Promise.race([
-    child.status.then(() => "exited" as const),
+    child.closed.then(() => "exited" as const, () => "exited" as const),
     timeout,
   ]);
   if (outcome === "timeout") {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // Exited in the meantime.
-    }
-    await child.status;
+    // A no-op if it exited in the meantime.
+    child.process.kill("SIGKILL");
   }
+  await child.closed.catch(() => undefined);
 }
 
 async function drain(
-  stream: ReadableStream<Uint8Array>,
+  stream: Readable,
   sink: string[],
 ): Promise<void> {
   const streamDecoder = new TextDecoder();
-  for await (const chunk of stream) {
+  for await (const chunk of stream as AsyncIterable<Uint8Array>) {
     sink.push(streamDecoder.decode(chunk, { stream: true }));
   }
 }
@@ -286,15 +317,14 @@ async function startEngineServer(
 ): Promise<{ socket: string; stop(): Promise<void> }> {
   const socket = socketPathFor(launch.root, profile);
   const dir = socket.slice(0, socket.lastIndexOf("/"));
-  await Deno.mkdir(dir);
+  await mkdir(dir);
   if (profile.friction) {
-    await Deno.writeTextFile(
-      `${dir}/config.toml`,
-      frictionConfig(launch.linearUrl),
-    );
+    await writeFile(`${dir}/config.toml`, frictionConfig(launch.linearUrl));
   }
-  const child = new Deno.Command(Deno.execPath(), {
-    args: [
+  const deno = denoBin();
+  const child = started(spawn(
+    deno,
+    [
       "run",
       "--no-prompt",
       `--config=${prototypeRoot}/deno.json`,
@@ -305,7 +335,7 @@ async function startEngineServer(
       `--allow-run=${
         [
           ...launch.server.run,
-          Deno.execPath(),
+          deno,
           ...(profile.friction ? ["/bin/echo"] : []),
         ].join(",")
       }`,
@@ -313,25 +343,24 @@ async function startEngineServer(
       `--allow-net=127.0.0.1,unix:${socket}`,
       `${prototypeRoot}/src/server/main.ts`,
     ],
-    cwd: dir,
-    clearEnv: true,
-    env: {
-      ...launch.baseEnv,
-      ...launch.dbEnv,
-      DYFJ_SOCKET: socket,
-      DYFJ_ROOT: dir,
-      DYFJ_PRINCIPAL_ID: "golden-operator",
-      ...(profile.friction
-        ? { DYFJ_FRICTION_ISSUE_ID: LINEAR_ISSUE_IDENTIFIER }
-        : {}),
-      ...profile.env,
+    {
+      cwd: dir,
+      env: {
+        ...launch.baseEnv,
+        ...launch.dbEnv,
+        DYFJ_SOCKET: socket,
+        DYFJ_ROOT: dir,
+        DYFJ_PRINCIPAL_ID: "golden-operator",
+        ...(profile.friction
+          ? { DYFJ_FRICTION_ISSUE_ID: LINEAR_ISSUE_IDENTIFIER }
+          : {}),
+        ...profile.env,
+      },
+      stdio: ["ignore", "ignore", "pipe"],
     },
-    stdin: "null",
-    stdout: "null",
-    stderr: "piped",
-  }).spawn();
+  ));
   const stderr: string[] = [];
-  const drained = drain(child.stderr, stderr);
+  const drained = drain(child.process.stderr!, stderr);
   const stop = async () => {
     await stopChild(child);
     await drained.catch(() => undefined);
@@ -353,68 +382,90 @@ function spawnCli(
   launch: LaunchContext,
   socket: string,
   args: string[],
-): Deno.ChildProcess {
-  return new Deno.Command(Deno.execPath(), {
-    args: [
+): Child {
+  const deno = denoBin();
+  return started(spawn(
+    deno,
+    [
       "run",
       "--no-prompt",
       `--config=${prototypeRoot}/deno.json`,
       `--allow-env=${launch.cli.env.join(",")}`,
       "--allow-read",
       "--allow-write",
-      `--allow-run=${[...launch.cli.run, Deno.execPath()].join(",")}`,
+      `--allow-run=${[...launch.cli.run, deno].join(",")}`,
       `--allow-net=unix:${socket}`,
       `${prototypeRoot}/src/cli/main.ts`,
       ...args,
       "--socket",
       socket,
     ],
-    cwd: launch.workspace,
-    clearEnv: true,
-    env: launch.baseEnv,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    {
+      cwd: launch.workspace,
+      env: launch.baseEnv,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  ));
+}
+
+/** Writes `text` to the child's stdin, settling once it is flushed. */
+function writeStdin(child: Child, text: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.process.stdin!.write(
+      text,
+      (error) => error ? reject(error) : resolve(),
+    );
+  });
+}
+
+/** Ends the child's stdin, settling once the end is flushed. */
+function closeStdin(child: Child): Promise<void> {
+  return new Promise((resolve) => child.process.stdin!.end(resolve));
 }
 
 async function runCli(
-  child: Deno.ChildProcess,
+  child: Child,
   args: string[],
   stdin: string | undefined,
 ): Promise<CliRun> {
-  const writer = child.stdin.getWriter();
-  if (stdin !== undefined) await writer.write(encoder.encode(stdin));
-  await writer.close();
-  const output = await child.output();
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const drained = Promise.all([
+    drain(child.process.stdout!, stdout),
+    drain(child.process.stderr!, stderr),
+  ]);
+  if (stdin !== undefined) await writeStdin(child, stdin);
+  await closeStdin(child);
+  const code = await child.closed;
+  await drained;
   return {
     args,
     ...(stdin === undefined ? {} : { stdin }),
-    code: output.code,
-    stdout: decoder.decode(output.stdout),
-    stderr: decoder.decode(output.stderr),
+    code,
+    stdout: stdout.join(""),
+    stderr: stderr.join(""),
   };
 }
 
 async function runRepl(
-  child: Deno.ChildProcess,
+  child: Child,
   args: string[],
   lines: string[],
 ): Promise<CliRun> {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const drained = Promise.all([
-    drain(child.stdout, stdout),
-    drain(child.stderr, stderr),
+    drain(child.process.stdout!, stdout),
+    drain(child.process.stderr!, stderr),
   ]);
-  const writer = child.stdin.getWriter();
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (const [index, line] of lines.entries()) {
     // The (index + 1)th prompt means every earlier line has finished.
     while (stdout.join("").split(REPL_PROMPT).length - 1 < index + 1) {
       if (Date.now() > deadline) {
-        await writer.close().catch(() => undefined);
+        await closeStdin(child);
         await stopChild(child);
+        await drained.catch(() => undefined);
         throw new Error(
           `REPL did not prompt for line ${index + 1}:\n${stdout.join("")}\n` +
             stderr.join(""),
@@ -422,15 +473,15 @@ async function runRepl(
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    await writer.write(encoder.encode(`${line}\n`));
+    await writeStdin(child, `${line}\n`);
   }
-  await writer.close();
-  const status = await child.status;
+  await closeStdin(child);
+  const code = await child.closed;
   await drained;
   return {
     args,
     stdin: lines.join("\n"),
-    code: status.code,
+    code,
     stdout: stdout.join(""),
     stderr: stderr.join(""),
   };
@@ -445,10 +496,10 @@ export async function startHarness(options: {
 }): Promise<Harness> {
   // The lane runner creates the root up front so it can grant the exact
   // socket paths; a direct `deno test` run gets a root of its own.
-  const givenRoot = Deno.env.get("DYFJ_GOLDEN_ROOT");
-  const root = givenRoot ?? await Deno.makeTempDir({ prefix: "dyfj_golden_" });
+  const givenRoot = processEnv.get("DYFJ_GOLDEN_ROOT");
+  const root = givenRoot ?? await mkdtemp(join(tmpdir(), "dyfj_golden_"));
   const cleanups: Array<() => Promise<void>> = givenRoot === undefined
-    ? [() => Deno.remove(root, { recursive: true })]
+    ? [() => rm(root, { recursive: true })]
     : [];
   const close = async () => {
     for (const step of cleanups.reverse()) {
@@ -458,10 +509,10 @@ export async function startHarness(options: {
   try {
     const home = `${root}/home`;
     const workspace = `${root}/workspace`;
-    await Deno.mkdir(home);
-    await Deno.mkdir(workspace);
+    await mkdir(home);
+    await mkdir(workspace);
     for (const [name, content] of Object.entries(options.workspaceFiles)) {
-      await Deno.writeTextFile(`${workspace}/${name}`, content);
+      await writeFile(`${workspace}/${name}`, content);
     }
 
     const fixture = await startIsolatedDoltFixture({
@@ -485,9 +536,9 @@ export async function startHarness(options: {
     const query: Query = async (sql, params = []) =>
       (await pool.query(sql, params))[0] as Record<string, unknown>[];
 
-    const modelServer = startModelServer(options.script);
+    const modelServer = await startModelServer(options.script);
     cleanups.push(() => modelServer.close());
-    const linear = startLinearMcpFake();
+    const linear = await startLinearMcpFake();
     cleanups.push(() => linear.close());
     await seedModels(query, modelServer.baseUrl, options.models);
 
@@ -495,7 +546,7 @@ export async function startHarness(options: {
       root,
       workspace,
       baseEnv: {
-        PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+        PATH: processEnv.get("PATH") ?? "/usr/bin:/bin",
         HOME: home,
         USER: "golden",
         TZ: "UTC",
@@ -519,7 +570,7 @@ export async function startHarness(options: {
       return socket;
     };
 
-    const realRoot = await Deno.realPath(root);
+    const realRoot = await realpath(root);
     return {
       workspace,
       modelServer,

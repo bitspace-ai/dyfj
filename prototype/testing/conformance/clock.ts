@@ -14,7 +14,7 @@
 // fractional or out-of-range reading is exercising that edge on purpose, so
 // the fake does not refuse one (its own tests pin this).
 
-import { assert, assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import type { Clock } from "../../src/kernel/clock.ts";
 
 export interface ClockConformanceSubject {
@@ -32,14 +32,17 @@ export function clockConformance(subject: ClockConformanceSubject): void {
 
   run("a reading is a finite whole number of milliseconds", (clock) => {
     const ms = clock.now();
-    assert(Number.isFinite(ms), `reading ${ms} is not finite`);
-    assert(Number.isInteger(ms), `reading ${ms} is not whole milliseconds`);
+    assert.ok(Number.isFinite(ms), `reading ${ms} is not finite`);
+    assert.ok(Number.isInteger(ms), `reading ${ms} is not whole milliseconds`);
   });
 
   run("a reading converts to a valid Date at the same instant", (clock) => {
     const ms = clock.now();
     const date = new Date(ms);
-    assert(!Number.isNaN(date.getTime()), `reading ${ms} is not a valid Date`);
-    assertEquals(date.getTime(), ms);
+    assert.ok(
+      !Number.isNaN(date.getTime()),
+      `reading ${ms} is not a valid Date`,
+    );
+    assert.deepStrictEqual(date.getTime(), ms);
   });
 }

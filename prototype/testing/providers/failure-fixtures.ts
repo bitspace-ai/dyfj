@@ -486,7 +486,7 @@ export function oversizedErrorBody(bytes: number): string {
 
 /**
  * What `fetch` throws when nothing listens at the base URL. The message is
- * the Deno runtime's, and it is still never relayed.
+ * the `deno` runtime's, and it is still never relayed.
  */
 export const CONNECTION_REFUSED = () =>
   new TypeError(

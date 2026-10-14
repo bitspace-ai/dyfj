@@ -1139,7 +1139,10 @@ RPC responses, rendered CLI output, and every `events` and `sessions` row a
 scenario writes) with the snapshots committed under
 `prototype/testing/golden/snapshots/`. Its tests get loopback TCP and the exact
 Unix socket of each engine server they start, and cannot write the snapshot
-directory unless run with `--update`. The task resolves the Deno executable selected for the
+directory unless run with `--update`. The harness starts the engine server and
+CLI with the `deno` executable named by `DENO_BIN`, which `deno task
+test:golden` and the gate set; a direct `deno test` of the golden directory
+must set it too, or the harness fails with an error naming it. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. Outside Windows, each lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
@@ -1258,10 +1261,14 @@ access to the repository, `git`, the selected Deno binary and
 The Node load probe (`scripts/node-load-probe.ts`) is a manual check, not a
 gate lane, until the gate tooling runs on Node. Run it by hand from the
 repository root with Node 22.18 or later: `node scripts/node-load-probe.ts`.
-It imports each git-tracked non-test module under `prototype/src` and
-`contracts/` only, and reports each one. Test files are those test discovery
-recognises (`isTestSource` in `prototype/scripts/test-files.ts`). It resolves
-npm packages from `prototype/node_modules`, which `npm ci` installs.
+It imports each git-tracked non-test module under `prototype/src`,
+`prototype/testing` (shared test support) and `contracts/` only, and reports
+each one. Test files are those test discovery recognises (`isTestSource` in
+`prototype/scripts/test-files.ts`). It resolves npm packages from
+`prototype/node_modules`, which `npm ci` installs. One module fails by design:
+`prototype/testing/golden/run.ts`, the golden lane's runner, is a script that
+still runs under `deno` and spawns `deno test`, so the probe reports it as a
+failure until the test lanes run under Node.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -2120,3 +2127,6 @@ Document revisions only. Code and behavior changes are tracked in
   install precondition, the npm `dependency.policy` rules, and the CI
   setup-node and `npm ci` steps are documented, and so is the absence of a
   Dependabot lane for npm.
+- 2026-10-14 - The manual Node load probe covers `prototype/testing` too, with
+  the golden runner as its one expected failure, and the golden lane's
+  description names `DENO_BIN` as the executable the harness spawns.

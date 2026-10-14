@@ -71,7 +71,10 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
   it("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
     const socketPath = udsTestSocket("cli-status-mute");
     // Accepts connections but never reads or writes.
-    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    const listener = await startMuteListener({
+      transport: "unix",
+      path: socketPath,
+    });
     cleanups.push(() => listener.close());
 
     const client = await connectUnixClient(socketPath);
@@ -110,7 +113,10 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
   it("connectUnixClient closes connection if abort occurs while connect is in flight", async () => {
     const socketPath = udsTestSocket("cli-connect-inflight");
-    const listener = startMuteListener({ transport: "unix", path: socketPath });
+    const listener = await startMuteListener({
+      transport: "unix",
+      path: socketPath,
+    });
     cleanups.push(() => listener.close());
 
     const ac = new AbortController();

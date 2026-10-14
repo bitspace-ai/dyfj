@@ -33,7 +33,7 @@ const MODEL_SLUG = "canary-stub-model-cf9a";
 const STUB_REPLY = "CANARY-STUB-REPLY-cf9a the turn text itself";
 
 Deno.test("a real turn keeps its canaries out of narration console methods", async () => {
-  const stub = startModelServer(() => ({
+  const stub = await startModelServer(() => ({
     kind: "text",
     text: STUB_REPLY,
     usage: { promptTokens: 7, completionTokens: 9 },

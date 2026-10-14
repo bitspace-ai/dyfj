@@ -132,7 +132,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as {
           method?: string;
@@ -190,7 +190,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackHttp((request) => mcp.fetch(request));
+    const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
@@ -212,7 +212,7 @@ Deno.test(
       () => fixtureServer(() => {}),
       { legacy: "reject" },
     );
-    const http = startLoopbackHttp((request) => mcp.fetch(request));
+    const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch(
@@ -241,7 +241,7 @@ Deno.test(
         calls.push(query);
       })
     );
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method === "POST") {
         const body = await request.clone().json() as { method?: string };
         if (typeof body.method === "string") methods.push(body.method);
@@ -286,7 +286,7 @@ Deno.test(
     const probeRelease = new Promise<void>((resolve) => {
       releaseProbe = resolve;
     });
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return new Response(null, { status: 405 });
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") methods.push(body.method);
@@ -328,7 +328,7 @@ Deno.test(
       releaseInitialize = resolve;
     });
     const legacy = legacyStatelessFallback(() => fixtureServer(() => {}));
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return legacy(request);
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") methods.push(body.method);
@@ -377,7 +377,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return mcp.fetch(request);
       const body = await request.clone().json() as { method?: string };
       if (typeof body.method === "string") observedMethods.push(body.method);
@@ -424,7 +424,7 @@ Deno.test(
   "redirect refusal contains both fixed token header modes on the SDK probe",
   async () => {
     let targetRequests = 0;
-    const target = startLoopbackHttp(() => {
+    const target = await startLoopbackHttp(() => {
       targetRequests++;
       return new Response("unexpected redirect target");
     });
@@ -446,7 +446,7 @@ Deno.test(
       ) {
         let sourceRequests = 0;
         let tokenHeaderObserved: string | null = null;
-        const source = startLoopbackHttp((request) => {
+        const source = await startLoopbackHttp((request) => {
           sourceRequests++;
           tokenHeaderObserved = request.headers.get(tokenConfig.expectedHeader);
           return new Response(null, {
@@ -488,7 +488,7 @@ Deno.test(
       { legacy: "reject" },
     );
     const encoder = new TextEncoder();
-    const http = startLoopbackHttp(async (request) => {
+    const http = await startLoopbackHttp(async (request) => {
       if (request.method !== "POST") return mcp.fetch(request);
       const body = await request.clone().json() as {
         id?: unknown;
@@ -556,7 +556,7 @@ Deno.test(
         }),
       { legacy: "reject" },
     );
-    const http = startLoopbackHttp((request) => mcp.fetch(request));
+    const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
       const recall = buildMemorySearch(
@@ -632,7 +632,7 @@ Deno.test(
     const originalNormalize = String.prototype.normalize;
 
     try {
-      http = startLoopbackHttp((request) => mcp.fetch(request));
+      http = await startLoopbackHttp((request) => mcp.fetch(request));
       String.prototype.normalize = function (form?: string): string {
         const value = String(this);
         if (value.length > 256) {
@@ -689,7 +689,7 @@ Deno.test(
     let http: LoopbackHttp | undefined;
 
     try {
-      http = startLoopbackHttp((request) => mcp.fetch(request));
+      http = await startLoopbackHttp((request) => mcp.fetch(request));
       const recall = buildMemorySearch(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
@@ -724,7 +724,7 @@ Deno.test(
     let http: LoopbackHttp | undefined;
 
     try {
-      http = startLoopbackHttp((request) => mcp.fetch(request));
+      http = await startLoopbackHttp((request) => mcp.fetch(request));
       const recall = buildMemorySearch(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
@@ -755,7 +755,7 @@ Deno.test(
     // fetch itself, which this exercises for real; the full SDK transport path
     // is covered by the recall tests above.
     const base = { url: "https://memory.example/mcp", tool: "search" };
-    const server = startLoopbackHttp((req) =>
+    const server = await startLoopbackHttp((req) =>
       new Response(null, {
         status: 307,
         headers: { location: new URL(req.url).href },

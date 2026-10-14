@@ -3,6 +3,8 @@
 // scan of the process list finds those. Uses `/bin/ps` and `/bin/kill`, so a
 // caller needs run grants for both.
 
+import { execFile } from "node:child_process";
+
 interface ProcessInfo {
   pid: number;
   command: string;
@@ -12,15 +14,25 @@ async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Runs `file`; resolves with its stdout, or `undefined` if it failed. */
+function run(file: string, args: string[]): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      file,
+      args,
+      // An explicit, empty environment: copying the process's own would
+      // need a grant for every variable in it.
+      { encoding: "utf8", env: {}, maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => resolve(error === null ? stdout : undefined),
+    );
+  });
+}
+
 async function listProcesses(): Promise<ProcessInfo[]> {
-  const output = await new Deno.Command("/bin/ps", {
-    args: ["-ax", "-o", "pid=,command="],
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  if (!output.success) return [];
+  const output = await run("/bin/ps", ["-ax", "-o", "pid=,command="]);
+  if (output === undefined) return [];
   const processes: ProcessInfo[] = [];
-  for (const line of new TextDecoder().decode(output.stdout).split("\n")) {
+  for (const line of output.split("\n")) {
     const match = line.match(/^\s*(\d+)\s+(.*)$/);
     if (match) processes.push({ pid: Number(match[1]), command: match[2] });
   }
@@ -32,11 +44,11 @@ async function killPid(
   signal: "SIGTERM" | "SIGKILL",
 ): Promise<void> {
   if (!Number.isSafeInteger(pid) || pid <= 1) return;
-  await new Deno.Command("/bin/kill", {
-    args: [signal === "SIGKILL" ? "-KILL" : "-TERM", "--", String(pid)],
-    stdout: "null",
-    stderr: "null",
-  }).output().catch(() => undefined);
+  await run("/bin/kill", [
+    signal === "SIGKILL" ? "-KILL" : "-TERM",
+    "--",
+    String(pid),
+  ]);
 }
 
 /**

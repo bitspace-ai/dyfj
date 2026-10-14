@@ -695,39 +695,34 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/builders/engine.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/conformance/clock.ts",
     "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/dns-resolver.ts",
     "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/env.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "count": 1,
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/http-transport.ts",
     "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/provider-adapter.ts",
     "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/store.ts",
     "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/conformance/tool.test.ts",
@@ -737,12 +732,7 @@
   {
     "path": "prototype/testing/conformance/tool.ts",
     "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/dolt/fixture-sql.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
   },
   {
     "path": "prototype/testing/fakes/fake-io.test.ts",
@@ -757,11 +747,6 @@
   {
     "path": "prototype/testing/fakes/map-env.test.ts",
     "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/map-env.ts",
-    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -785,68 +770,18 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/golden/harness.ts",
-    "count": 23,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/golden/normalize.test.ts",
     "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/golden/profiles.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/golden/rpc-client.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/golden/run.ts",
     "count": 9,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/processes.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/providers/failure-fixtures.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
   },
   {
     "path": "prototype/testing/providers/synthetic/conformance.test.ts",
     "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/servers/listeners.ts",
-    "count": 23,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/servers/mcp-server.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/servers/model-server.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/servers/scripted-http-server.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/servers/uds-sockets.ts",
-    "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

@@ -29,16 +29,9 @@
 // sends no request, and an off-host base URL is https on a host other than the
 // plain-text model's).
 
-import {
-  assert,
-  assertEquals,
-  assertInstanceOf,
-  assertMatch,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { FakeTime } from "@std/testing/time";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
+import { setImmediate } from "node:timers";
 import {
   createProviderRegistry,
   PROVIDER_BUFFERED_HEADER_TIMEOUT_MS,
@@ -198,7 +191,7 @@ export function assertResultMatches(
   const defined: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(expected)) {
     if (value === undefined) {
-      assertStrictEquals(
+      assert.strictEqual(
         (result as unknown as Record<string, unknown>)[key],
         undefined,
         `result.${key} should be undefined`,
@@ -207,27 +200,35 @@ export function assertResultMatches(
       defined[key] = value;
     }
   }
-  assertObjectMatch(result as unknown as Record<string, unknown>, defined);
+  assert.partialDeepStrictEqual(
+    result as unknown as Record<string, unknown>,
+    defined,
+  );
 }
 
 function assertExpectation(run: KitRun, fixture: KitFixture): void {
   const expected = fixture.expect;
   if ("error" in expected) {
-    assert(
+    assert.ok(
       run.error !== undefined,
       `expected the turn to fail, but it resolved: ${
         JSON.stringify(run.result)
       }`,
     );
     if (expected.error.instance) {
-      assertInstanceOf(run.error, expected.error.instance);
+      assert.ok(run.error instanceof expected.error.instance);
     }
     if (expected.error.message !== undefined) {
       const message = (run.error as Error).message;
       if (typeof expected.error.message === "string") {
-        assertStringIncludes(message, expected.error.message);
+        assert.ok(
+          message.includes(expected.error.message),
+          `expected ${
+            JSON.stringify(message)
+          } to include expected.error.message`,
+        );
       } else {
-        assertMatch(message, expected.error.message);
+        assert.match(message, expected.error.message);
       }
     }
     return;
@@ -235,15 +236,17 @@ function assertExpectation(run: KitRun, fixture: KitFixture): void {
   if (run.error !== undefined) throw run.error;
   const result = run.result!;
   assertResultMatches(result, expected.result);
-  if (expected.frames !== undefined) assertEquals(run.frames, expected.frames);
+  if (expected.frames !== undefined) {
+    assert.deepStrictEqual(run.frames, expected.frames);
+  }
   if (fixture.stream) {
-    assertEquals(
+    assert.deepStrictEqual(
       run.frames.join(""),
       result.text,
       "live frames and the durable text diverged",
     );
   } else {
-    assertEquals(run.frames, [], "a buffered turn emitted frames");
+    assert.deepStrictEqual(run.frames, [], "a buffered turn emitted frames");
   }
 }
 
@@ -268,7 +271,7 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
       const run = await runKitFixture(adapter, fixture);
       assertExpectation(run, fixture);
       for (const request of run.transport.requests) {
-        assertEquals(
+        assert.deepStrictEqual(
           request.redirect,
           "error",
           `the request to ${request.url} must refuse redirects`,
@@ -280,16 +283,16 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
   };
 
   caseTest("plain text", fixtures.plainText, (run) => {
-    assert(fixtures.plainText.stream, "the plain-text fixture must stream");
+    assert.ok(fixtures.plainText.stream, "the plain-text fixture must stream");
     const result = resultOf(run);
-    assertEquals(result.stopReason, "stop");
-    assertStrictEquals(result.toolCalls, undefined);
-    assert(run.frames.length > 0, "a streamed plain-text turn emits frames");
+    assert.deepStrictEqual(result.stopReason, "stop");
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.ok(run.frames.length > 0, "a streamed plain-text turn emits frames");
   });
 
   caseTest("native tool calls", fixtures.nativeToolCalls, (run) => {
     const expected = fixtures.nativeToolCalls.expect;
-    assert(
+    assert.ok(
       "result" in expected && "toolCalls" in expected.result,
       "the native tool-call fixture must pin toolCalls",
     );
@@ -298,11 +301,11 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
 
   caseTest("text-markup tool calls", fixtures.textMarkupToolCalls, (run) => {
     const expected = fixtures.textMarkupToolCalls.expect;
-    assert(
+    assert.ok(
       "result" in expected && "toolCalls" in expected.result,
       "the text-markup fixture must pin toolCalls",
     );
-    assert(
+    assert.ok(
       (fixtures.textMarkupToolCalls.turn?.tools?.length ?? 0) > 0,
       "the text-markup fixture must offer tools",
     );
@@ -311,73 +314,92 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
 
   caseTest("usage and cost", fixtures.usage, (run) => {
     const expected = fixtures.usage.expect;
-    assert(
+    assert.ok(
       "result" in expected && "usage" in expected.result,
       "the usage fixture must pin usage",
     );
     // Usage is pinned exactly, not as a subset.
-    assertEquals(resultOf(run).usage, expected.result.usage);
+    assert.deepStrictEqual(resultOf(run).usage, expected.result.usage);
   });
 
   caseTest("length stop", fixtures.lengthStop, (run) => {
-    assertEquals(resultOf(run).stopReason, "length");
+    assert.deepStrictEqual(resultOf(run).stopReason, "length");
   });
 
   caseTest("mid-stream error", fixtures.midStreamError, (run) => {
-    assert(fixtures.midStreamError.stream, "the error must arrive mid-stream");
-    assert("error" in fixtures.midStreamError.expect);
-    assert(run.error !== undefined);
+    assert.ok(
+      fixtures.midStreamError.stream,
+      "the error must arrive mid-stream",
+    );
+    assert.ok("error" in fixtures.midStreamError.expect);
+    assert.ok(run.error !== undefined);
   });
 
   caseTest("abort", fixtures.abort, (run) => {
-    assert(
+    assert.ok(
       fixtures.abort.abortAfterFrames !== undefined,
       "the abort fixture must abort after a frame",
     );
     const result = resultOf(run);
-    assertEquals(result.stopReason, "aborted");
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.deepStrictEqual(result.stopReason, "aborted");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   caseTest("base-URL rejection", fixtures.baseUrlRejection, (run) => {
-    assert(
+    assert.ok(
       !adapter.validateBaseUrl(fixtures.baseUrlRejection.model).ok,
       "validateBaseUrl must reject the fixture's model",
     );
-    assert("error" in fixtures.baseUrlRejection.expect);
-    assertEquals(run.transport.requests.length, 0, "a request was sent");
+    assert.ok("error" in fixtures.baseUrlRejection.expect);
+    assert.deepStrictEqual(
+      run.transport.requests.length,
+      0,
+      "a request was sent",
+    );
   });
 
   caseTest("off-host base-URL rejection", fixtures.offHostBaseUrl, (run) => {
     const offHost = new URL(fixtures.offHostBaseUrl.model.baseUrl);
-    assertEquals(offHost.protocol, "https:", "the off-host URL must be https");
-    assert(
+    assert.deepStrictEqual(
+      offHost.protocol,
+      "https:",
+      "the off-host URL must be https",
+    );
+    assert.ok(
       offHost.hostname !== new URL(fixtures.plainText.model.baseUrl).hostname,
       "the off-host URL must name a host other than the plain-text model's",
     );
-    assert(
+    assert.ok(
       adapter.providers.has(fixtures.offHostBaseUrl.model.provider),
       "the off-host fixture's provider must be one the adapter serves",
     );
-    assert(
+    assert.ok(
       !adapter.validateBaseUrl(fixtures.offHostBaseUrl.model).ok,
       "validateBaseUrl must reject an off-host https base URL",
     );
-    assert("error" in fixtures.offHostBaseUrl.expect);
-    assertEquals(run.transport.requests.length, 0, "a request was sent");
+    assert.ok("error" in fixtures.offHostBaseUrl.expect);
+    assert.deepStrictEqual(
+      run.transport.requests.length,
+      0,
+      "a request was sent",
+    );
   });
 
   caseTest("redirect response", fixtures.redirect, (run) => {
     const exchanges = fixtures.redirect.exchanges;
-    assertEquals(exchanges.length, 1, "the redirect fixture has one exchange");
+    assert.deepStrictEqual(
+      exchanges.length,
+      1,
+      "the redirect fixture has one exchange",
+    );
     const respond = exchanges[0].respond;
-    assert(
+    assert.ok(
       typeof respond !== "function" &&
         REDIRECT_STATUSES.has(respond.status ?? 200),
       "the redirect fixture must answer with a redirect status",
     );
-    assert("error" in fixtures.redirect.expect);
-    assertEquals(
+    assert.ok("error" in fixtures.redirect.expect);
+    assert.deepStrictEqual(
       run.transport.requests.length,
       1,
       "the redirect fixture must send exactly one request",
@@ -389,8 +411,8 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
   }
 
   Deno.test(label("the plain-text model passes validateBaseUrl"), () => {
-    assert(adapter.validateBaseUrl(fixtures.plainText.model).ok);
-    assert(adapter.providers.has(fixtures.plainText.model.provider));
+    assert.ok(adapter.validateBaseUrl(fixtures.plainText.model).ok);
+    assert.ok(adapter.providers.has(fixtures.plainText.model.provider));
   });
 
   Deno.test(label("an abort before dispatch sends nothing"), async () => {
@@ -411,9 +433,18 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
       stopReason: "aborted",
       requestDispatched: false,
     });
-    assertEquals(result.usage.input, 0);
-    assertEquals(transport.requests.length, 0);
+    assert.deepStrictEqual(result.usage.input, 0);
+    assert.deepStrictEqual(transport.requests.length, 0);
   });
+
+  // Advances the faked clock by `ms`, letting pending promise work settle on
+  // a real macrotask turn before and after, so a timer armed after an await
+  // is in place when the clock moves and its effects have run when it stops.
+  const tickAsync = async (ms: number) => {
+    await new Promise((resolve) => setImmediate(resolve));
+    mock.timers.tick(ms);
+    await new Promise((resolve) => setImmediate(resolve));
+  };
 
   const deadlineTest = (stream: boolean) => {
     const budget = stream
@@ -423,45 +454,50 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
     Deno.test(
       label(`a ${mode} request fails at its header deadline`),
       async () => {
-        using time = new FakeTime();
-        const transport = new ScriptedHttpTransport([{
-          respond: { withholdHeaders: true },
-        }]);
-        let settled = false;
-        const turn = createProviderRegistry([adapter]).runWorkbenchTurn(
-          turnParams(
-            fixtures.plainText,
-            transport,
-            new ManualClock(),
-            new AbortController().signal,
-            stream ? () => {} : undefined,
-          ),
-        );
-        const outcome = turn.then(
-          () => undefined,
-          (error: unknown) => error,
-        ).finally(() => {
-          settled = true;
-        });
-        if (!stream) {
-          // A buffered request outlives the streaming budget.
-          await time.tickAsync(PROVIDER_HEADER_TIMEOUT_MS + 1_000);
-          assertEquals(
-            settled,
-            false,
-            "the buffered request used the streaming budget",
+        // The header deadline is a `setTimeout`; only that is faked.
+        mock.timers.enable({ apis: ["setTimeout"] });
+        try {
+          const transport = new ScriptedHttpTransport([{
+            respond: { withholdHeaders: true },
+          }]);
+          let settled = false;
+          const turn = createProviderRegistry([adapter]).runWorkbenchTurn(
+            turnParams(
+              fixtures.plainText,
+              transport,
+              new ManualClock(),
+              new AbortController().signal,
+              stream ? () => {} : undefined,
+            ),
           );
+          const outcome = turn.then(
+            () => undefined,
+            (error: unknown) => error,
+          ).finally(() => {
+            settled = true;
+          });
+          if (!stream) {
+            // A buffered request outlives the streaming budget.
+            await tickAsync(PROVIDER_HEADER_TIMEOUT_MS + 1_000);
+            assert.deepStrictEqual(
+              settled,
+              false,
+              "the buffered request used the streaming budget",
+            );
+          }
+          await tickAsync(budget + 1);
+          const error = await outcome;
+          assert.ok(error instanceof Error);
+          assert.match(
+            error.message,
+            new RegExp(
+              `no response headers within ${budget}ms \\(${mode} request exceeded its budget`,
+            ),
+          );
+          transport.assertDone();
+        } finally {
+          mock.timers.reset();
         }
-        await time.tickAsync(budget + 1);
-        const error = await outcome;
-        assertInstanceOf(error, Error);
-        assertMatch(
-          error.message,
-          new RegExp(
-            `no response headers within ${budget}ms \\(${mode} request exceeded its budget`,
-          ),
-        );
-        transport.assertDone();
       },
     );
   };

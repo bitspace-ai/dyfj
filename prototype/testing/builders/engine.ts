@@ -2,6 +2,9 @@
 // against, wired to in-repo fakes, and OpenAI-compatible replies for the
 // scripted provider transport. Runtime code never imports this module.
 
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ManualClock } from "../fakes/manual-clock.ts";
 import { MapEnv } from "../fakes/map-env.ts";
 import {
@@ -198,15 +201,15 @@ export async function tempWorkspace(
   files: Record<string, string> = {},
   prefix = "engine-workspace-",
 ): Promise<{ root: string; [Symbol.asyncDispose](): Promise<void> }> {
-  const root = await Deno.makeTempDir({ prefix });
+  const root = await mkdtemp(join(tmpdir(), prefix));
   for (const [path, content] of Object.entries(files)) {
     const file = `${root}/${path}`;
-    await Deno.mkdir(file.slice(0, file.lastIndexOf("/")), { recursive: true });
-    await Deno.writeTextFile(file, content);
+    await mkdir(file.slice(0, file.lastIndexOf("/")), { recursive: true });
+    await writeFile(file, content);
   }
   return {
     root,
-    [Symbol.asyncDispose]: () => Deno.remove(root, { recursive: true }),
+    [Symbol.asyncDispose]: () => rm(root, { recursive: true }),
   };
 }
 

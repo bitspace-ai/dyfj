@@ -47,7 +47,10 @@ async function portIsClosed(port: number): Promise<boolean> {
 
 describe("isolated Dolt fixture", () => {
   it("interrupts a readiness probe stalled after TCP accept", async () => {
-    const listener = startMuteListener({ hostname: "127.0.0.1", port: 0 });
+    const listener = await startMuteListener({
+      hostname: "127.0.0.1",
+      port: 0,
+    });
     const port = (listener.addr as Deno.NetAddr).port;
     const abortController = new AbortController();
     const abortTimer = setTimeout(() => abortController.abort(), 50);

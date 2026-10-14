@@ -1,13 +1,16 @@
 /**
- * Unix socket paths for `Deno.test` integration tests that bind or dial a real
- * socket (the `src/transport/`, `src/server/` and `src/cli/` integration tests).
+ * Unix socket paths for integration tests that bind or dial a real socket (the
+ * `src/transport/`, `src/server/` and `src/cli/` integration tests).
  *
- * Deno grants Unix-socket access per exact path (`--allow-net=unix:<path>`);
+ * `deno test` grants Unix-socket access per exact path
+ * (`--allow-net=unix:<path>`);
  * a directory grant does not cover the sockets inside it. The integration
  * lane (`scripts/isolated-dolt-integration.ts`) therefore creates one
  * directory, passes it in `UDS_TEST_SOCKET_DIR_ENV`, and grants every path
  * named here. A test that needs another socket adds its name to the list.
  */
+
+import { processEnv } from "../../src/config/env.ts";
 
 export const UDS_TEST_SOCKET_DIR_ENV = "DYFJ_UDS_TEST_SOCKET_DIR";
 
@@ -58,7 +61,7 @@ export function udsTestSocketGrants(dir: string): string[] {
 
 /** The granted path for `name`, inside the directory the lane passed in. */
 export function udsTestSocket(name: UdsTestSocket): string {
-  const dir = Deno.env.get(UDS_TEST_SOCKET_DIR_ENV);
+  const dir = processEnv.get(UDS_TEST_SOCKET_DIR_ENV);
   if (!dir) {
     throw new Error(
       `${UDS_TEST_SOCKET_DIR_ENV} is unset: run this file through the integration lane`,

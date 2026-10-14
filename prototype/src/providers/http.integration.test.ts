@@ -7,8 +7,8 @@ import { startScriptedHttpServer } from "../../testing/servers/scripted-http-ser
 
 httpTransportConformance({
   name: "fetch",
-  make(script) {
-    const server = startScriptedHttpServer(script);
+  async make(script) {
+    const server = await startScriptedHttpServer(script);
     return Promise.resolve({
       transport: (url: string, init: RequestInit) => fetch(url, init),
       baseUrl: server.baseUrl,

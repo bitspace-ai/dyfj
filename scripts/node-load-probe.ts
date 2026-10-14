@@ -2,8 +2,8 @@
 //
 // Node runs `.ts` by stripping types without transforming them, so a module
 // that holds syntax stripping cannot erase fails to load. This probe imports
-// every git-tracked non-test module under `prototype/src` and `contracts/`
-// with the `node` running it, one dynamic import each, and reports each
+// every git-tracked non-test module under `prototype/src`, `prototype/testing`
+// (shared test support) and `contracts/` with the `node` running it, one dynamic import each, and reports each
 // module's result. A module whose import throws is a failure; importing runs
 // top-level code only, so runtime-specific calls inside functions are not
 // reached.
@@ -14,14 +14,20 @@
 //
 // It is a manual check, not a gate lane: the gate's environment has no
 // `node`. The gate tooling's port to Node makes it one. It covers non-test
-// modules under the two roots only.
+// modules under the three roots only. One module fails by design:
+// `prototype/testing/golden/run.ts` is the golden lane's runner, a script that
+// still runs under `deno` and spawns `deno test`; importing it runs it.
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isTestSource } from "../prototype/scripts/test-files.ts";
 
-export const PROBE_ROOTS = ["prototype/src", "contracts"] as const;
+export const PROBE_ROOTS = [
+  "prototype/src",
+  "prototype/testing",
+  "contracts",
+] as const;
 
 /**
  * Whether a tracked path is a module the probe loads. Test files are those

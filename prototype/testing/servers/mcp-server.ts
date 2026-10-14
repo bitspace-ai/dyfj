@@ -14,6 +14,7 @@
  */
 
 import { createMcpHandler, type McpServer } from "@modelcontextprotocol/server";
+import { serveFetch } from "./fetch-server.ts";
 
 export type McpHandler = ReturnType<typeof createMcpHandler>;
 
@@ -30,29 +31,25 @@ export interface LoopbackMcpServer extends LoopbackHttp {
   close(): Promise<void>;
 }
 
-export function startLoopbackHttp(
+export async function startLoopbackHttp(
   handler: (request: Request) => Response | Promise<Response>,
-): LoopbackHttp {
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-    handler,
-  );
-  const { port } = server.addr as Deno.NetAddr;
-  const origin = `http://127.0.0.1:${port}`;
+): Promise<LoopbackHttp> {
+  const server = await serveFetch(handler);
+  const origin = `http://127.0.0.1:${server.port}`;
   return {
     url: `${origin}/mcp`,
     origin,
-    close: () => server.shutdown(),
+    close: () => server.close(),
   };
 }
 
-export function startLoopbackMcpServer(
+export async function startLoopbackMcpServer(
   build: () => McpServer,
   handle: (request: Request, mcp: McpHandler) => Response | Promise<Response> =
     (request, mcp) => mcp.fetch(request),
-): LoopbackMcpServer {
+): Promise<LoopbackMcpServer> {
   const mcp = createMcpHandler(build, { legacy: "reject" });
-  const http = startLoopbackHttp((request) => handle(request, mcp));
+  const http = await startLoopbackHttp((request) => handle(request, mcp));
   return {
     url: http.url,
     origin: http.origin,
