@@ -3,14 +3,10 @@
 // logical close and cancellation, observed through the fixture's pid file and
 // ACP method log. Child processes and environment reads put these in the
 // integration tier; the fake-handle cases live in acp-session-map.test.ts.
-import {
-  assert,
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { join } from "node:path";
 import {
@@ -25,13 +21,13 @@ function fixtureProfile(
   pidFile?: string,
   methodLog?: string,
 ): AcpExecutionProfile {
-  const home = Deno.env.get("HOME") ?? "/tmp";
+  const home = process.env.HOME ?? "/tmp";
   const writePaths = [pidFile, methodLog].filter((path): path is string =>
     path !== undefined
   );
   return {
     slug: "fixture",
-    command: Deno.execPath(),
+    command: process.execPath,
     args: [
       "run",
       "--cached-only",
@@ -43,11 +39,11 @@ function fixtureProfile(
       ...(methodLog === undefined ? [] : [`--method-log=${methodLog}`]),
     ],
     environment: {
-      DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
-      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
-    workspace: Deno.cwd(),
+    workspace: process.cwd(),
     transport: "local_stdio",
     accessRoute: "local_sidecar",
     costBasis: "local_free",
@@ -63,9 +59,9 @@ function fixtureProfile(
 /** The fixture's full environment with a fixture mode selected. */
 function fixtureModeEnvironment(mode: string): Record<string, string> {
   return {
-    DENO_DIR: Deno.env.get("DENO_DIR") ??
-      join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
-    PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+    DENO_DIR: process.env.DENO_DIR ??
+      join(process.env.HOME ?? "/tmp", ".cache/deno"),
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
     ACP_FIXTURE_ALLOWED: "yes",
     ACP_FIXTURE_MODE: mode,
   };
@@ -91,18 +87,21 @@ async function processIsAlive(pid: number): Promise<boolean> {
 }
 
 async function readPid(path: string): Promise<number> {
-  const pid = Number(await Deno.readTextFile(path));
-  assertStrictEquals(Number.isSafeInteger(pid) && pid > 0, true);
+  const pid = Number(await readFile(path, "utf8"));
+  assert.strictEqual(Number.isSafeInteger(pid) && pid > 0, true);
   return pid;
 }
 
 async function readMethods(path: string): Promise<string[]> {
   try {
-    return (await Deno.readTextFile(path)).split("\n").filter((line) =>
+    return (await readFile(path, "utf8")).split("\n").filter((line) =>
       line.length > 0
     );
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return [];
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) return [];
     throw error;
   }
 }
@@ -119,9 +118,9 @@ async function assertRejectsWithFields(
   promise: Promise<unknown>,
   expected: Record<string, unknown>,
 ): Promise<void> {
-  const error = await assertRejects(() => promise);
+  const error = await captureRejection(() => promise);
   for (const [key, value] of Object.entries(expected)) {
-    assertEquals(
+    assert.deepStrictEqual(
       (error as Record<string, unknown>)[key],
       value,
       `error.${key}`,
@@ -134,7 +133,7 @@ describe("AcpSessionHandleMap sequential reuse", () => {
     const pidFile = await tempPath();
     const methodLog = await tempPath();
     try {
-      await Deno.writeTextFile(methodLog, "");
+      await writeFile(methodLog, "");
       const profile = fixtureProfile({}, pidFile, methodLog);
       const map = new AcpSessionHandleMap({
         capacity: 2,
@@ -144,21 +143,27 @@ describe("AcpSessionHandleMap sequential reuse", () => {
         const key = acquireKey(profile, "workbench-session-1");
         const first = await map.runTurn({ ...key, prompt: "first turn" });
         const pid = await readPid(pidFile);
-        assertStrictEquals(first.stopReason, "stop");
-        assertStringIncludes(first.text, "first|");
-        assertStrictEquals(await processIsAlive(pid), true);
-        assertEquals(await readMethods(methodLog), [
+        assert.strictEqual(first.stopReason, "stop");
+        assert.ok(
+          first.text.includes("first|"),
+          `expected first.text to include "first|"`,
+        );
+        assert.strictEqual(await processIsAlive(pid), true);
+        assert.deepStrictEqual(await readMethods(methodLog), [
           "initialize",
           "session/new",
           "session/prompt",
         ]);
 
         const second = await map.runTurn({ ...key, prompt: "second turn" });
-        assertStrictEquals(second.stopReason, "stop");
-        assertStringIncludes(second.text, "first|");
-        assertStrictEquals(await readPid(pidFile), pid);
-        assertStrictEquals(await processIsAlive(pid), true);
-        assertEquals(await readMethods(methodLog), [
+        assert.strictEqual(second.stopReason, "stop");
+        assert.ok(
+          second.text.includes("first|"),
+          `expected second.text to include "first|"`,
+        );
+        assert.strictEqual(await readPid(pidFile), pid);
+        assert.strictEqual(await processIsAlive(pid), true);
+        assert.deepStrictEqual(await readMethods(methodLog), [
           "initialize",
           "session/new",
           "session/prompt",
@@ -167,9 +172,9 @@ describe("AcpSessionHandleMap sequential reuse", () => {
       } finally {
         await map.shutdown();
       }
-      const pid = Number(await Deno.readTextFile(pidFile));
-      assertStrictEquals(await processIsAlive(pid), false);
-      assertEquals(await readMethods(methodLog), [
+      const pid = Number(await readFile(pidFile, "utf8"));
+      assert.strictEqual(await processIsAlive(pid), false);
+      assert.deepStrictEqual(await readMethods(methodLog), [
         "initialize",
         "session/new",
         "session/prompt",
@@ -196,10 +201,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
         await assertRejectsWithFields(map.acquire(acquireKey(profile)), {
           phase: "initialize",
         });
-        assertStrictEquals(map.stateFor(acquireKey(profile)), undefined);
-        assertStrictEquals(map.size, 0);
+        assert.strictEqual(map.stateFor(acquireKey(profile)), undefined);
+        assert.strictEqual(map.size, 0);
         const pid = await readPid(pidFile);
-        assertStrictEquals(await processIsAlive(pid), false);
+        assert.strictEqual(await processIsAlive(pid), false);
         // A fake handle stands in for the retry: only the map's bookkeeping
         // after the failed creation is under test here.
         let retryClosed = false;
@@ -220,7 +225,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
             return Promise.resolve();
           },
         };
-        assertStrictEquals(
+        assert.strictEqual(
           await map.acquire({
             ...acquireKey(profile),
             create: () => Promise.resolve(retry),
@@ -239,26 +244,26 @@ describe("AcpSessionHandleMap lifecycle", () => {
     const pidFile = await tempPath();
     const methodLog = await tempPath();
     try {
-      await Deno.writeTextFile(methodLog, "");
+      await writeFile(methodLog, "");
       const session = await startAcpSession({
         profile: fixtureProfile({}, pidFile, methodLog),
       });
       try {
         const first = session.close();
-        assertStrictEquals(session.isAlive, false);
+        assert.strictEqual(session.isAlive, false);
         const second = session.close();
-        assertStrictEquals(second, first);
-        assertStrictEquals(await first, undefined);
-        assertStrictEquals(await second, undefined);
-        assertEquals(await readMethods(methodLog), [
+        assert.strictEqual(second, first);
+        assert.strictEqual(await first, undefined);
+        assert.strictEqual(await second, undefined);
+        assert.deepStrictEqual(await readMethods(methodLog), [
           "initialize",
           "session/new",
           "session/close",
         ]);
       } finally {
         await session.close().catch(() => {});
-        const pid = Number(await Deno.readTextFile(pidFile));
-        assertStrictEquals(await processIsAlive(pid), false);
+        const pid = Number(await readFile(pidFile, "utf8"));
+        assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
       await Deno.remove(pidFile).catch(() => {});
@@ -270,7 +275,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
     const pidFile = await tempPath();
     const methodLog = await tempPath();
     try {
-      await Deno.writeTextFile(methodLog, "");
+      await writeFile(methodLog, "");
       const session = await startAcpSession({
         profile: fixtureProfile(
           {
@@ -283,20 +288,20 @@ describe("AcpSessionHandleMap lifecycle", () => {
       });
       try {
         const first = session.close();
-        assertStrictEquals(session.isAlive, false);
+        assert.strictEqual(session.isAlive, false);
         const second = session.close();
-        assertStrictEquals(second, first);
+        assert.strictEqual(second, first);
         await assertRejectsWithFields(first, { phase: "terminate" });
         await assertRejectsWithFields(second, { phase: "terminate" });
-        assertEquals(await readMethods(methodLog), [
+        assert.deepStrictEqual(await readMethods(methodLog), [
           "initialize",
           "session/new",
           "session/close",
         ]);
       } finally {
         await session.close().catch(() => {});
-        const pid = Number(await Deno.readTextFile(pidFile));
-        assertStrictEquals(await processIsAlive(pid), false);
+        const pid = Number(await readFile(pidFile, "utf8"));
+        assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
       await Deno.remove(pidFile).catch(() => {});
@@ -317,9 +322,14 @@ describe("AcpSessionHandleMap lifecycle", () => {
           prompt: "unused",
           abortSignal: controller.signal,
         });
-        assertStrictEquals(result.stopReason, "aborted");
-        assertStrictEquals(map.size, 0);
-        await assertRejects(() => Deno.stat(pidFile), Deno.errors.NotFound);
+        assert.strictEqual(result.stopReason, "aborted");
+        assert.strictEqual(map.size, 0);
+        await assert.rejects(
+          () => stat(pidFile),
+          (error: unknown) =>
+            error instanceof Error &&
+            (error as { code?: unknown }).code === "ENOENT",
+        );
       } finally {
         await map.shutdown();
       }
@@ -348,10 +358,13 @@ describe("AcpSessionHandleMap lifecycle", () => {
         const deadline = Date.now() + 1_000;
         while (true) {
           try {
-            await Deno.stat(pidFile);
+            await stat(pidFile);
             break;
           } catch (error) {
-            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            if (
+              !(error instanceof Error &&
+                (error as { code?: unknown }).code === "ENOENT")
+            ) throw error;
             if (Date.now() >= deadline) {
               throw new Error("fixture did not start");
             }
@@ -359,11 +372,11 @@ describe("AcpSessionHandleMap lifecycle", () => {
           }
         }
         controller.abort();
-        assertObjectMatch(await pending, { stopReason: "aborted" });
-        assert(Date.now() - startedAt < 1_000);
-        assertStrictEquals(map.size, 0);
-        const pid = Number(await Deno.readTextFile(pidFile));
-        assertStrictEquals(await processIsAlive(pid), false);
+        assert.partialDeepStrictEqual(await pending, { stopReason: "aborted" });
+        assert.ok(Date.now() - startedAt < 1_000);
+        assert.strictEqual(map.size, 0);
+        const pid = Number(await readFile(pidFile, "utf8"));
+        assert.strictEqual(await processIsAlive(pid), false);
       } finally {
         await map.shutdown();
       }
@@ -378,7 +391,7 @@ describe("startAcpSession", () => {
     const pidFile = await tempPath();
     const methodLog = await tempPath();
     try {
-      await Deno.writeTextFile(methodLog, "");
+      await writeFile(methodLog, "");
       const session = await startAcpSession({
         profile: fixtureProfile({}, pidFile, methodLog),
       });
@@ -389,16 +402,16 @@ describe("startAcpSession", () => {
           abortSignal: controller.signal,
           onTextDelta: () => controller.abort(),
         });
-        assertObjectMatch(aborted, {
+        assert.partialDeepStrictEqual(aborted, {
           text: "partial\n",
           stopReason: "aborted",
         });
-        assertStrictEquals(session.isAlive, true);
+        assert.strictEqual(session.isAlive, true);
         const pid = await readPid(pidFile);
-        assertStrictEquals(await processIsAlive(pid), true);
+        assert.strictEqual(await processIsAlive(pid), true);
         const next = await session.prompt({ prompt: "after cancel" });
-        assertStrictEquals(next.stopReason, "stop");
-        assertEquals(await readMethods(methodLog), [
+        assert.strictEqual(next.stopReason, "stop");
+        assert.deepStrictEqual(await readMethods(methodLog), [
           "initialize",
           "session/new",
           "session/prompt",
@@ -406,8 +419,8 @@ describe("startAcpSession", () => {
         ]);
       } finally {
         await session.close();
-        const pid = Number(await Deno.readTextFile(pidFile));
-        assertStrictEquals(await processIsAlive(pid), false);
+        const pid = Number(await readFile(pidFile, "utf8"));
+        assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
       await Deno.remove(pidFile).catch(() => {});

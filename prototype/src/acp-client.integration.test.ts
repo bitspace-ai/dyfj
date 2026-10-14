@@ -3,15 +3,10 @@
 // signaler itself. Child processes, `/bin/kill`, `bash` and environment reads
 // put these in the integration tier; the pure client cases live in
 // acp-client.test.ts.
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { chmod, readFile, stat, writeFile } from "node:fs/promises";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { join } from "node:path";
 import {
@@ -29,10 +24,10 @@ function fixtureProfile(
   pidFile?: string,
   grandchildPidFile?: string,
 ): AcpExecutionProfile {
-  const home = Deno.env.get("HOME") ?? "/tmp";
+  const home = process.env.HOME ?? "/tmp";
   return {
     slug: "fixture",
-    command: Deno.execPath(),
+    command: process.execPath,
     args: [
       "run",
       "--cached-only",
@@ -52,11 +47,11 @@ function fixtureProfile(
         : [`--grandchild-pid-file=${grandchildPidFile}`]),
     ],
     environment: {
-      DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
-      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
-    workspace: Deno.cwd(),
+    workspace: process.cwd(),
     transport: "local_stdio",
     accessRoute: "local_sidecar",
     costBasis: "local_free",
@@ -74,8 +69,8 @@ function fixtureEnvironment(
   extra: Record<string, string>,
 ): Record<string, string> {
   return {
-    DENO_DIR: Deno.env.get("DENO_DIR") ??
-      join(Deno.env.get("HOME") ?? "/tmp", ".cache/deno"),
+    DENO_DIR: process.env.DENO_DIR ??
+      join(process.env.HOME ?? "/tmp", ".cache/deno"),
     ...extra,
   };
 }
@@ -104,7 +99,7 @@ async function forceStopRecordedProcessTree(
   grandchildPidFile: string,
 ): Promise<void> {
   const readPid = async (path: string): Promise<number | null> => {
-    const pid = Number(await Deno.readTextFile(path).catch(() => ""));
+    const pid = Number(await readFile(path, "utf8").catch(() => ""));
     return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
   };
   const childPid = await readPid(pidFile);
@@ -126,9 +121,9 @@ async function assertRejectsWithFields(
   promise: Promise<unknown>,
   expected: Record<string, unknown>,
 ): Promise<Error> {
-  const error = await assertRejects(() => promise);
+  const error = await captureRejection(() => promise);
   for (const [key, value] of Object.entries(expected)) {
-    assertEquals(
+    assert.deepStrictEqual(
       (error as Record<string, unknown>)[key],
       value,
       `error.${key}`,
@@ -179,9 +174,9 @@ async function expectContainedFailure(input: {
         ...(input.message === undefined ? {} : { message: input.message }),
       },
     );
-    const pid = Number(await Deno.readTextFile(pidFile));
-    assertStrictEquals(Number.isSafeInteger(pid) && pid > 0, true);
-    assertStrictEquals(await processIsAlive(pid), false);
+    const pid = Number(await readFile(pidFile, "utf8"));
+    assert.strictEqual(Number.isSafeInteger(pid) && pid > 0, true);
+    assert.strictEqual(await processIsAlive(pid), false);
   } finally {
     await Deno.remove(pidFile).catch(() => {});
   }
@@ -189,7 +184,7 @@ async function expectContainedFailure(input: {
 
 describe("runAcpAgent", () => {
   it("contains an asynchronous spawn failure without an unhandled error", async () => {
-    await assertRejects(
+    await assert.rejects(
       () =>
         runAcpAgent({
           profile: fixtureProfile({
@@ -197,20 +192,22 @@ describe("runAcpAgent", () => {
           }),
           prompt: "unused",
         }),
-      Error,
-      "ACP child could not be started",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP child could not be started"),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
 
   it("rejects an unavailable process-group signaler before spawning", async () => {
-    await assertRejects(
+    await assert.rejects(
       () =>
         assertProcessGroupSignaler(
           "/private/tmp/dyfj-process-group-signaler-does-not-exist",
         ),
-      Error,
-      "ACP process-group signaling is unavailable",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP process-group signaling is unavailable"),
     );
   });
 
@@ -220,7 +217,7 @@ describe("runAcpAgent", () => {
       assertProcessGroupSignaler("/bin/kill", 500, ["/bin/sle\0ep", "30"]),
       { phase: "spawn" },
     );
-    assertStrictEquals(
+    assert.strictEqual(
       error.message,
       "ACP process-group signaling is unavailable on this platform",
     );
@@ -229,15 +226,16 @@ describe("runAcpAgent", () => {
   it("rejects a signaler that cannot address a negative process group", async () => {
     const signaler = await tempPath();
     try {
-      await Deno.writeTextFile(
+      await writeFile(
         signaler,
         '#!/bin/sh\ncase "$3" in -*) exit 1;; *) exit 0;; esac\n',
       );
-      await Deno.chmod(signaler, 0o700);
-      await assertRejects(
+      await chmod(signaler, 0o700);
+      await assert.rejects(
         () => assertProcessGroupSignaler(signaler),
-        Error,
-        "ACP process-group signaling is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("ACP process-group signaling is unavailable"),
       );
     } finally {
       await Deno.remove(signaler).catch(() => {});
@@ -253,11 +251,11 @@ describe("runAcpAgent", () => {
       ),
       { phase: "terminate" },
     );
-    assertStrictEquals(error.message, "ACP process-group signaling failed");
+    assert.strictEqual(error.message, "ACP process-group signaling failed");
   });
 
   it("distinguishes an absent process group from a signaling failure", async () => {
-    assertStrictEquals(
+    assert.strictEqual(
       await runSignalCommand(
         [
           "-c",
@@ -279,7 +277,10 @@ describe("runAcpAgent", () => {
       ),
       { phase: "terminate" },
     );
-    assertStringIncludes(error.message, "ACP process-group signaling failed");
+    assert.ok(
+      error.message.includes("ACP process-group signaling failed"),
+      `expected error.message to include "ACP process-group signaling failed"`,
+    );
   });
 
   it("bounds signaler diagnostics while reading them", async () => {
@@ -297,11 +298,11 @@ describe("runAcpAgent", () => {
       },
       (value) => value as Error,
     );
-    assertObjectMatch(
+    assert.partialDeepStrictEqual(
       error as unknown as Record<PropertyKey, unknown>,
       { phase: "terminate" },
     );
-    assert(error.message.length < 320);
+    assert.ok(error.message.length < 320);
   });
 
   it("negotiates v1, propagates an absolute workspace, and preserves update order", async () => {
@@ -312,16 +313,18 @@ describe("runAcpAgent", () => {
       onTextDelta: (delta) => deltas.push(delta),
     });
 
-    assertStrictEquals(result.protocolVersion, 1);
-    assertStrictEquals(result.externalSessionId, "fixture-1");
-    assertStrictEquals(result.agentName, "dyfj-acp-fixture");
-    assert(result.capabilities.includes("sessionCapabilities.close"));
-    assertFalse(result.capabilities.includes("promptCapabilities"));
-    assertEquals(deltas, ["first|", `cwd=${Deno.cwd()}|`, "last"]);
-    assertStrictEquals(result.text, `first|cwd=${Deno.cwd()}|last`);
-    assertStrictEquals(result.stopReason, "stop");
-    assertStrictEquals(result.acpStopReason, "end_turn");
-    assertEquals(result.routeEvidence, { source: "profile_declared" });
+    assert.strictEqual(result.protocolVersion, 1);
+    assert.strictEqual(result.externalSessionId, "fixture-1");
+    assert.strictEqual(result.agentName, "dyfj-acp-fixture");
+    assert.ok(result.capabilities.includes("sessionCapabilities.close"));
+    assert.ok(!result.capabilities.includes("promptCapabilities"));
+    assert.deepStrictEqual(deltas, ["first|", `cwd=${process.cwd()}|`, "last"]);
+    assert.strictEqual(result.text, `first|cwd=${process.cwd()}|last`);
+    assert.strictEqual(result.stopReason, "stop");
+    assert.strictEqual(result.acpStopReason, "end_turn");
+    assert.deepStrictEqual(result.routeEvidence, {
+      source: "profile_declared",
+    });
   });
 
   it("retains optional ACP prompt usage and the latest context/cost snapshot", async () => {
@@ -329,14 +332,14 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile(),
       prompt: "FIXTURE_USAGE",
     });
-    assertEquals(result.usage, {
+    assert.deepStrictEqual(result.usage, {
       total: 1_250,
       input: 1_000,
       output: 200,
       reasoning: 50,
       cacheRead: 400,
     });
-    assertEquals(result.usageSnapshot, {
+    assert.deepStrictEqual(result.usageSnapshot, {
       used: 1_250,
       size: 8_192,
       cost: { amount: 0.42, currency: "USD" },
@@ -359,12 +362,15 @@ describe("runAcpAgent", () => {
         evidence.push(routeEvidence);
       },
     });
-    assertStringIncludes(result.text, "first|");
-    assertEquals(result.routeEvidence, {
+    assert.ok(
+      result.text.includes("first|"),
+      `expected result.text to include "first|"`,
+    );
+    assert.deepStrictEqual(result.routeEvidence, {
       source: "profile_declared",
       authenticationType: "chat-gpt",
     });
-    assertEquals(evidence, [result.routeEvidence]);
+    assert.deepStrictEqual(evidence, [result.routeEvidence]);
   });
 
   it("returns an interrupted result when route persistence is cancelled", async () => {
@@ -380,10 +386,10 @@ describe("runAcpAgent", () => {
         }
       },
     });
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
     });
-    assertFalse("routeEvidence" in result);
+    assert.ok(!("routeEvidence" in result));
   });
 
   it("normalizes a non-Error route-verification rejection", async () => {
@@ -444,7 +450,7 @@ describe("runAcpAgent", () => {
         }),
         { name, phase: "authenticate" },
       );
-      assertStrictEquals(routeVerified, false);
+      assert.strictEqual(routeVerified, false);
     });
   }
 
@@ -463,8 +469,8 @@ describe("runAcpAgent", () => {
     const timer = setTimeout(() => controller.abort(), 50);
     try {
       const aborted = await result;
-      assertObjectMatch(aborted, { stopReason: "aborted" });
-      assertFalse("routeEvidence" in aborted);
+      assert.partialDeepStrictEqual(aborted, { stopReason: "aborted" });
+      assert.ok(!("routeEvidence" in aborted));
     } finally {
       clearTimeout(timer);
     }
@@ -483,12 +489,12 @@ describe("runAcpAgent", () => {
         profile: fixtureProfile({}, pidFile, grandchildPidFile),
         prompt: "FIXTURE_STUBBORN_DESCENDANT ordered response",
       });
-      assertStrictEquals(result.stopReason, "stop");
-      assertFalse(result.text.includes("fixture descendant spawn failed"));
-      const childPid = Number(await Deno.readTextFile(pidFile));
-      const grandchildPid = Number(await Deno.readTextFile(grandchildPidFile));
-      assertStrictEquals(await processIsAlive(childPid), false);
-      assertStrictEquals(await processIsAlive(grandchildPid), false);
+      assert.strictEqual(result.stopReason, "stop");
+      assert.ok(!result.text.includes("fixture descendant spawn failed"));
+      const childPid = Number(await readFile(pidFile, "utf8"));
+      const grandchildPid = Number(await readFile(grandchildPidFile, "utf8"));
+      assert.strictEqual(await processIsAlive(childPid), false);
+      assert.strictEqual(await processIsAlive(grandchildPid), false);
       verified = true;
     } finally {
       if (!verified) {
@@ -515,10 +521,10 @@ describe("runAcpAgent", () => {
         }),
         { phase: "prompt" },
       );
-      const childPid = Number(await Deno.readTextFile(pidFile));
-      const grandchildPid = Number(await Deno.readTextFile(grandchildPidFile));
-      assertStrictEquals(await processIsAlive(childPid), false);
-      assertStrictEquals(await processIsAlive(grandchildPid), false);
+      const childPid = Number(await readFile(pidFile, "utf8"));
+      const grandchildPid = Number(await readFile(grandchildPidFile, "utf8"));
+      assert.strictEqual(await processIsAlive(childPid), false);
+      assert.strictEqual(await processIsAlive(grandchildPid), false);
       verified = true;
     } finally {
       if (!verified) {
@@ -538,8 +544,8 @@ describe("runAcpAgent", () => {
         verdicts.push(verdict.decision);
       },
     });
-    assertStrictEquals(result.text, "denied");
-    assertEquals(verdicts, ["deny"]);
+    assert.strictEqual(result.text, "denied");
+    assert.deepStrictEqual(verdicts, ["deny"]);
   });
 
   it("cancels an allow-only request when no approval callback exists", async () => {
@@ -554,8 +560,11 @@ describe("runAcpAgent", () => {
         });
       },
     });
-    assertStrictEquals(result.text, "denied");
-    assertEquals(verdicts, [{ decision: "cancel", source: "policy" }]);
+    assert.strictEqual(result.text, "denied");
+    assert.deepStrictEqual(verdicts, [{
+      decision: "cancel",
+      source: "policy",
+    }]);
   });
 
   it("selects the agent's allow option only after explicit approval", async () => {
@@ -564,7 +573,7 @@ describe("runAcpAgent", () => {
       prompt: "FIXTURE_PERMISSION",
       confirmPermission: async () => ({ optionId: "allow" }),
     });
-    assertStrictEquals(result.text, "approved");
+    assert.strictEqual(result.text, "approved");
   });
 
   it("returns each exact permission option identifier to the agent", async () => {
@@ -573,28 +582,28 @@ describe("runAcpAgent", () => {
       prompt: "FIXTURE_PERMISSION_SCOPE",
       confirmPermission: async () => ({ optionId: "allow-always" }),
     });
-    assertStrictEquals(allowAlways.text, "allow-always");
+    assert.strictEqual(allowAlways.text, "allow-always");
 
     const allowOnce = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_SCOPE",
       confirmPermission: async () => ({ optionId: "allow-once" }),
     });
-    assertStrictEquals(allowOnce.text, "allow-once");
+    assert.strictEqual(allowOnce.text, "allow-once");
 
     const rejectAlways = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_SCOPE",
       confirmPermission: async () => ({ optionId: "reject-always" }),
     });
-    assertStrictEquals(rejectAlways.text, "reject-always");
+    assert.strictEqual(rejectAlways.text, "reject-always");
 
     const rejectOnce = await runAcpAgent({
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_SCOPE",
       confirmPermission: async () => ({ optionId: "reject-once" }),
     });
-    assertStrictEquals(rejectOnce.text, "reject-once");
+    assert.strictEqual(rejectOnce.text, "reject-once");
 
     const fallbackVerdicts: Array<{ decision: string; source: string }> = [];
     const fallbackDenied = await runAcpAgent({
@@ -608,8 +617,8 @@ describe("runAcpAgent", () => {
         });
       },
     });
-    assertStrictEquals(fallbackDenied.text, "reject");
-    assertEquals(fallbackVerdicts, [{
+    assert.strictEqual(fallbackDenied.text, "reject");
+    assert.deepStrictEqual(fallbackVerdicts, [{
       decision: "deny",
       source: "policy",
     }]);
@@ -623,23 +632,26 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile(),
       prompt: "FIXTURE_PERMISSION_HOSTILE",
       confirmPermission: async (permission) => {
-        assertStrictEquals(permission.toolCallId, "acp-permission-1");
+        assert.strictEqual(permission.toolCallId, "acp-permission-1");
         observedName = permission.options[0]?.name ?? "";
         observedTitle = permission.toolCall.title;
-        assertStrictEquals(permission.toolCall.name, "write_file");
-        assertStrictEquals(permission.toolCall.kind, "edit");
-        assertStringIncludes(permission.toolCall.inputSummary, "fixture.txt");
+        assert.strictEqual(permission.toolCall.name, "write_file");
+        assert.strictEqual(permission.toolCall.kind, "edit");
+        assert.ok(
+          permission.toolCall.inputSummary.includes("fixture.txt"),
+          `expected permission.toolCall.inputSummary to include "fixture.txt"`,
+        );
         return { optionId: "allow" };
       },
       onPermissionVerdict: (verdict) => {
         verdicts.push(verdict.toolCallId);
       },
     });
-    assertStrictEquals(result.text, "approved");
-    assertFalse(observedName.includes("\u001b"));
-    assertFalse(observedTitle.includes("\u001b"));
-    assert(new TextEncoder().encode(observedName).byteLength <= 128);
-    assertEquals(verdicts, ["acp-permission-1"]);
+    assert.strictEqual(result.text, "approved");
+    assert.ok(!observedName.includes("\u001b"));
+    assert.ok(!observedTitle.includes("\u001b"));
+    assert.ok(new TextEncoder().encode(observedName).byteLength <= 128);
+    assert.deepStrictEqual(verdicts, ["acp-permission-1"]);
   });
 
   it("does not approve after cancellation while confirmation is pending", async () => {
@@ -666,12 +678,12 @@ describe("runAcpAgent", () => {
     await prompted.promise;
     controller.abort();
     decision.resolve({ optionId: "allow" });
-    assertObjectMatch(await resultPromise, {
+    assert.partialDeepStrictEqual(await resultPromise, {
       stopReason: "aborted",
       acpStopReason: "cancelled",
     });
-    assertEquals(verdicts, ["cancel"]);
-    assertStrictEquals(confirmationCancelled, true);
+    assert.deepStrictEqual(verdicts, ["cancel"]);
+    assert.strictEqual(confirmationCancelled, true);
   });
 
   it("allows approval after a confirmation outlasts the active prompt budget", async () => {
@@ -699,12 +711,12 @@ describe("runAcpAgent", () => {
     await prompted.promise;
     await new Promise((resolve) => setTimeout(resolve, promptTimeoutMs + 100));
     decision.resolve({ optionId: "allow" });
-    assertObjectMatch(await resultPromise, {
+    assert.partialDeepStrictEqual(await resultPromise, {
       text: "approved",
       stopReason: "stop",
     });
-    assertEquals(verdicts, ["approve"]);
-    assertStrictEquals(confirmationCancelled, true);
+    assert.deepStrictEqual(verdicts, ["approve"]);
+    assert.strictEqual(confirmationCancelled, true);
   });
 
   it("keeps the deadline paused until overlapping confirmations settle and honors both verdicts", async () => {
@@ -729,7 +741,7 @@ describe("runAcpAgent", () => {
     firstDecision.resolve({ optionId: "allow" });
     await new Promise((resolve) => setTimeout(resolve, promptTimeoutMs + 100));
     secondDecision.resolve({ optionId: "deny" });
-    assertObjectMatch(await resultPromise, {
+    assert.partialDeepStrictEqual(await resultPromise, {
       text: "denied",
       stopReason: "stop",
     });
@@ -756,11 +768,11 @@ describe("runAcpAgent", () => {
     await verdictStarted.promise;
     controller.abort();
     releaseVerdict.resolve();
-    assertObjectMatch(await resultPromise, {
+    assert.partialDeepStrictEqual(await resultPromise, {
       stopReason: "aborted",
       acpStopReason: "cancelled",
     });
-    assertEquals(verdicts, ["approve", "cancel"]);
+    assert.deepStrictEqual(verdicts, ["approve", "cancel"]);
   });
 
   it("bounds permission verdict recording and closes its write signal", async () => {
@@ -780,7 +792,7 @@ describe("runAcpAgent", () => {
       }),
       { phase: "permission" },
     );
-    assertStrictEquals(writeCancelled, true);
+    assert.strictEqual(writeCancelled, true);
   });
 
   it("revokes an in-flight approval and records cancellation before an early terminal", async () => {
@@ -817,10 +829,10 @@ describe("runAcpAgent", () => {
     await cancellationStarted.promise;
     controller.abort();
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assertStrictEquals(settled, false);
+    assert.strictEqual(settled, false);
     releaseCancellation.resolve();
-    assertObjectMatch(await resultPromise, { stopReason: "stop" });
-    assertEquals(verdicts, ["approve", "cancel"]);
+    assert.partialDeepStrictEqual(await resultPromise, { stopReason: "stop" });
+    assert.deepStrictEqual(verdicts, ["approve", "cancel"]);
   });
 
   it("joins cancellation from a pending confirmation before an early terminal", async () => {
@@ -842,7 +854,7 @@ describe("runAcpAgent", () => {
         });
       },
       onPermissionVerdict: async (verdict) => {
-        assertStrictEquals(verdict.decision, "cancel");
+        assert.strictEqual(verdict.decision, "cancel");
         cancellationStarted.resolve();
         await releaseCancellation.promise;
       },
@@ -852,9 +864,9 @@ describe("runAcpAgent", () => {
     await confirmationStarted.promise;
     await cancellationStarted.promise;
     await new Promise((resolve) => setTimeout(resolve, 20));
-    assertStrictEquals(settled, false);
+    assert.strictEqual(settled, false);
     releaseCancellation.resolve();
-    assertObjectMatch(await resultPromise, { stopReason: "stop" });
+    assert.partialDeepStrictEqual(await resultPromise, { stopReason: "stop" });
   });
 
   it("attributes an unavailable operator choice to policy cancellation", async () => {
@@ -870,8 +882,11 @@ describe("runAcpAgent", () => {
         });
       },
     });
-    assertStrictEquals(result.text, "denied");
-    assertEquals(verdicts, [{ decision: "cancel", source: "policy" }]);
+    assert.strictEqual(result.text, "denied");
+    assert.deepStrictEqual(verdicts, [{
+      decision: "cancel",
+      source: "policy",
+    }]);
   });
 
   it("rejects duplicate permission option identifiers", async () => {
@@ -891,7 +906,7 @@ describe("runAcpAgent", () => {
         return { optionId: "" };
       },
     });
-    assertStrictEquals(confirmations, 0);
+    assert.strictEqual(confirmations, 0);
   });
 
   it("rejects a permission request that exceeds the bounded option list", async () => {
@@ -916,8 +931,8 @@ describe("runAcpAgent", () => {
         return { optionId: "allow" };
       },
     });
-    assertStrictEquals(result.stopReason, "stop");
-    assertStrictEquals(confirmations, 0);
+    assert.strictEqual(result.stopReason, "stop");
+    assert.strictEqual(confirmations, 0);
   });
 
   it("sends session cancellation and preserves delivered partial text", async () => {
@@ -928,7 +943,7 @@ describe("runAcpAgent", () => {
       abortSignal: controller.signal,
       onTextDelta: () => controller.abort(),
     });
-    assertObjectMatch(await resultPromise, {
+    assert.partialDeepStrictEqual(await resultPromise, {
       text: "partial\n",
       stopReason: "aborted",
     });
@@ -966,23 +981,26 @@ describe("runAcpAgent", () => {
       const deadline = Date.now() + 1_000;
       while (true) {
         try {
-          await Deno.stat(pidFile);
+          await stat(pidFile);
           break;
         } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
+          if (
+            !(error instanceof Error &&
+              (error as { code?: unknown }).code === "ENOENT")
+          ) throw error;
           if (Date.now() >= deadline) throw new Error("fixture did not start");
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
       }
       controller.abort();
-      assertObjectMatch(await resultPromise, {
+      assert.partialDeepStrictEqual(await resultPromise, {
         stopReason: "aborted",
         protocolVersion: undefined,
         externalSessionId: undefined,
       });
-      assert(Date.now() - startedAt < 1_000);
-      const pid = Number(await Deno.readTextFile(pidFile));
-      assertStrictEquals(await processIsAlive(pid), false);
+      assert.ok(Date.now() - startedAt < 1_000);
+      const pid = Number(await readFile(pidFile, "utf8"));
+      assert.strictEqual(await processIsAlive(pid), false);
     } finally {
       await Deno.remove(pidFile).catch(() => {});
     }
@@ -1045,7 +1063,12 @@ describe("runAcpAgent", () => {
         }),
         { phase: "prompt" },
       );
-      await assertRejects(() => Deno.stat(pidFile), Deno.errors.NotFound);
+      await assert.rejects(
+        () => stat(pidFile),
+        (error: unknown) =>
+          error instanceof Error &&
+          (error as { code?: unknown }).code === "ENOENT",
+      );
     } finally {
       await Deno.remove(pidFile).catch(() => {});
     }
@@ -1119,8 +1142,8 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile({ protocolMessagePolicy: "long_running" }),
       prompt: "FIXTURE_LARGE_PROTOCOL_MESSAGE",
     });
-    assertStrictEquals(result.text, "complete");
-    assertStrictEquals(result.stopReason, "stop");
+    assert.strictEqual(result.text, "complete");
+    assert.strictEqual(result.stopReason, "stop");
   });
 
   it("bounds protocol messages for a long-running profile and reaps the child", async () => {
@@ -1137,8 +1160,8 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile({ sessionUpdatePolicy: "long_running" }),
       prompt: "FIXTURE_LONG_UPDATE_STREAM",
     });
-    assertStrictEquals(result.text, "complete");
-    assertStrictEquals(result.stopReason, "stop");
+    assert.strictEqual(result.text, "complete");
+    assert.strictEqual(result.stopReason, "stop");
   });
 
   it("bounds long-running session updates and reaps the child", async () => {
@@ -1172,8 +1195,8 @@ describe("runAcpAgent", () => {
         profile: fixtureProfile(),
         prompt,
       });
-      assertStrictEquals(result.stopReason, normalized);
-      assertStrictEquals(result.acpStopReason, acpStopReason);
+      assert.strictEqual(result.stopReason, normalized);
+      assert.strictEqual(result.acpStopReason, acpStopReason);
     });
   }
 
@@ -1193,7 +1216,12 @@ describe("runAcpAgent", () => {
       "SSH_AUTH_SOCK",
     ];
     const originals = new Map(
-      names.map((name) => [name, Deno.env.get(name)]),
+      names.map((
+        name,
+      ) => [
+        name,
+        Object.hasOwn(process.env, name) ? process.env[name] : undefined,
+      ]),
     );
     for (const name of names) Deno.env.set(name, "must-not-cross");
     try {
@@ -1201,7 +1229,7 @@ describe("runAcpAgent", () => {
         profile: fixtureProfile(),
         prompt: "FIXTURE_ENV",
       });
-      assertStrictEquals(
+      assert.strictEqual(
         result.text,
         "allowed=yes;ambient=missing;ANTHROPIC_API_KEY=missing;" +
           "DOLT_PASSWORD=missing;DYFJ_MEMORY_MCP_TOKEN=missing;" +
@@ -1226,7 +1254,7 @@ describe("runAcpAgent", () => {
         progressUpdates.push(update);
       },
     });
-    assertEquals(progressUpdates, [
+    assert.deepStrictEqual(progressUpdates, [
       { kind: "thought" },
       {
         kind: "tool_call",
@@ -1235,10 +1263,10 @@ describe("runAcpAgent", () => {
         status: "in_progress",
       },
     ]);
-    assertFalse(JSON.stringify(progressUpdates).includes("pondering problem"));
-    assertEquals(deltas, ["solution found"]);
-    assertStrictEquals(result.text, "solution found");
-    assertFalse(result.text.includes("pondering problem"));
+    assert.ok(!JSON.stringify(progressUpdates).includes("pondering problem"));
+    assert.deepStrictEqual(deltas, ["solution found"]);
+    assert.strictEqual(result.text, "solution found");
+    assert.ok(!result.text.includes("pondering problem"));
   });
 
   it("merges bounded ACP tool updates into terminal evidence", async () => {
@@ -1246,8 +1274,8 @@ describe("runAcpAgent", () => {
       profile: fixtureProfile(),
       prompt: "FIXTURE_TOOL_HISTORY",
     });
-    assertStrictEquals(result.text, "recorded");
-    assertEquals(result.toolEvidence, {
+    assert.strictEqual(result.text, "recorded");
+    assert.deepStrictEqual(result.toolEvidence, {
       status: "complete",
       observedCalls: 1,
       calls: [{
@@ -1273,8 +1301,8 @@ describe("runAcpAgent", () => {
         profile: fixtureProfile(),
         prompt,
       });
-      assertStrictEquals(result.text, "recorded");
-      assertEquals(result.toolEvidence, {
+      assert.strictEqual(result.text, "recorded");
+      assert.deepStrictEqual(result.toolEvidence, {
         status: "unavailable",
         observedCalls,
         calls: [],
@@ -1292,8 +1320,8 @@ describe("runAcpAgent", () => {
         if (update.kind === "tool_call") controller.abort();
       },
     });
-    assertStrictEquals(result.stopReason, "aborted");
-    assertObjectMatch(result.toolEvidence!, {
+    assert.strictEqual(result.stopReason, "aborted");
+    assert.partialDeepStrictEqual(result.toolEvidence!, {
       status: "unavailable",
       calls: [],
     });
@@ -1309,15 +1337,15 @@ describe("runAcpAgent", () => {
         prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
         onProgress: () => new Promise(() => {}),
       });
-      assertStrictEquals(result.text, "solution found");
-      const pid = Number(await Deno.readTextFile(pidFile));
-      assertStrictEquals(Number.isInteger(pid), true);
-      assertStrictEquals(await processIsAlive(pid), false);
+      assert.strictEqual(result.text, "solution found");
+      const pid = Number(await readFile(pidFile, "utf8"));
+      assert.strictEqual(Number.isInteger(pid), true);
+      assert.strictEqual(await processIsAlive(pid), false);
       verified = true;
     } finally {
       if (!verified) {
         try {
-          const pid = Number(await Deno.readTextFile(pidFile));
+          const pid = Number(await readFile(pidFile, "utf8"));
           if (Number.isInteger(pid)) {
             await new Deno.Command("/bin/kill", {
               args: ["-KILL", String(pid)],
@@ -1344,8 +1372,8 @@ describe("runAcpAgent", () => {
         return Promise.reject(new Error("async progress observer failed"));
       },
     });
-    assertStrictEquals(calls, 2);
-    assertStrictEquals(result.text, "solution found");
+    assert.strictEqual(calls, 2);
+    assert.strictEqual(result.text, "solution found");
   });
 });
 
@@ -1360,18 +1388,18 @@ describe("startAcpSession", () => {
         const first = await session.prompt({
           prompt: "FIXTURE_NEAR_LIMIT_RESPONSE",
         });
-        assertStrictEquals(first.text, "x".repeat(50_000));
-        assertStrictEquals(first.stopReason, "stop");
+        assert.strictEqual(first.text, "x".repeat(50_000));
+        assert.strictEqual(first.stopReason, "stop");
         const second = await session.prompt({
           prompt: "FIXTURE_NEAR_LIMIT_RESPONSE",
         });
-        assertStrictEquals(second.text, "x".repeat(50_000));
-        assertStrictEquals(second.stopReason, "stop");
-        assertStrictEquals(session.isAlive, true);
+        assert.strictEqual(second.text, "x".repeat(50_000));
+        assert.strictEqual(second.stopReason, "stop");
+        assert.strictEqual(session.isAlive, true);
       } finally {
         await session.close();
-        const pid = Number(await Deno.readTextFile(pidFile));
-        assertStrictEquals(await processIsAlive(pid), false);
+        const pid = Number(await readFile(pidFile, "utf8"));
+        assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
       await Deno.remove(pidFile).catch(() => {});

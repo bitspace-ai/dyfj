@@ -2,12 +2,8 @@
 // turn (scripts/acp-fixture-agent.ts, spawned by the runtime) journals its
 // runner, permission and tool evidence, and the session replays from the
 // isolated fixture database the integration lane starts.
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import { buildConversationMessages } from "./context/mod.ts";
@@ -46,7 +42,7 @@ describe("external ACP runner persistence (integration)", () => {
         prompt: "FIXTURE_PERMISSION",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { store });
 
       try {
@@ -55,20 +51,20 @@ describe("external ACP runner persistence (integration)", () => {
           events: store.events,
         });
         const eventTypes = events.map((event) => event.eventType);
-        assertEquals(eventTypes, [
+        assert.deepStrictEqual(eventTypes, [
           "session_start",
           "runner_selected",
           "agent_permission",
           "agent_response",
           "session_end",
         ]);
-        assertFalse(eventTypes.includes("provider_call"));
-        assertFalse(eventTypes.includes("model_response"));
+        assert.ok(!eventTypes.includes("provider_call"));
+        assert.ok(!eventTypes.includes("model_response"));
 
         const permission = events.find((event) =>
           event.eventType === "agent_permission"
         );
-        assertObjectMatch(permission!, {
+        assert.partialDeepStrictEqual(permission!, {
           permissionVerdict: "denied",
           runnerKind: "external_agent",
           runnerProfile: "fixture",
@@ -78,7 +74,7 @@ describe("external ACP runner persistence (integration)", () => {
         const response = events.find((event) =>
           event.eventType === "agent_response"
         );
-        assertObjectMatch(response!, {
+        assert.partialDeepStrictEqual(response!, {
           content: "denied",
           stopReason: "stop",
           runnerKind: "external_agent",
@@ -92,7 +88,7 @@ describe("external ACP runner persistence (integration)", () => {
           runnerCostBasis: "local_free",
           runnerEvidenceScope: "outer_only",
         });
-        assert(
+        assert.ok(
           response?.runnerCapabilities?.includes("sessionCapabilities.close"),
         );
       } finally {
@@ -107,7 +103,7 @@ describe("external ACP runner persistence (integration)", () => {
         prompt: "FIXTURE_TOOL_HISTORY",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { store });
 
       try {
@@ -115,7 +111,7 @@ describe("external ACP runner persistence (integration)", () => {
           sessionId: result.sessionId,
           events: store.events,
         });
-        assertEquals(events.map((event) => event.eventType), [
+        assert.deepStrictEqual(events.map((event) => event.eventType), [
           "session_start",
           "runner_selected",
           "tool_call",
@@ -124,7 +120,7 @@ describe("external ACP runner persistence (integration)", () => {
         ]);
 
         const tool = events.find((event) => event.eventType === "tool_call");
-        assertObjectMatch(tool!, {
+        assert.partialDeepStrictEqual(tool!, {
           toolName: "acp.read",
           toolCallId: "fixture-history-call",
           toolArguments: {
@@ -137,7 +133,7 @@ describe("external ACP runner persistence (integration)", () => {
           toolHistoryValid: true,
         });
 
-        assertEquals(buildConversationMessages(events), [
+        assert.deepStrictEqual(buildConversationMessages(events), [
           { role: "user", content: "FIXTURE_TOOL_HISTORY" },
           {
             role: "assistant",
