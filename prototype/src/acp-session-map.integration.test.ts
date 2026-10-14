@@ -5,10 +5,19 @@
 // integration tier; the fake-handle cases live in acp-session-map.test.ts.
 import { captureRejection } from "../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import {
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
   type AcpSessionHandle,
@@ -67,23 +76,45 @@ function fixtureModeEnvironment(mode: string): Record<string, string> {
   };
 }
 
-/** A temp file outside the checkout; removed by the caller. */
-function tempPath(): Promise<string> {
-  return Deno.makeTempFile({ prefix: "dyfj-acp-session-map-" });
+/**
+ * A new empty file outside the checkout, alone in its own temp directory;
+ * the caller removes it with `removeTempPath`.
+ */
+async function tempPath(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-acp-session-map-"));
+  const path = join(dir, "file");
+  await writeFile(path, "", { flag: "wx", mode: 0o600 });
+  return path;
 }
 
-async function processIsAlive(pid: number): Promise<boolean> {
-  const status = await new Deno.Command("bash", {
-    args: [
+/** Removes a `tempPath` file and the directory made for it. */
+function removeTempPath(path: string): Promise<void> {
+  return rm(dirname(path), { recursive: true, force: true });
+}
+
+// Runs the ps probe to its exit. Cwd and stdin are inherited, stdout and
+// stderr are discarded. Only a probe that cannot start fails: spawn reports
+// that as an `error` event. `close` fires once the child has exited and its
+// streams have closed, so no probe outlives the call. Given no env, spawn
+// copies the whole parent env, which needs an unscoped env grant; the
+// integration lane grants env by name. PATH is the one variable the probe
+// resolves anything through (bash and the ps it runs), so it is the one
+// forwarded.
+function processIsAlive(pid: number): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    const path = process.env.PATH;
+    const child = spawn("bash", [
       "-c",
       'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
       "bash",
       String(pid),
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).output();
-  return status.success;
+    ], {
+      env: path === undefined ? {} : { PATH: path },
+      stdio: ["inherit", "ignore", "ignore"],
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code === 0));
+  });
 }
 
 async function readPid(path: string): Promise<number> {
@@ -182,8 +213,8 @@ describe("AcpSessionHandleMap sequential reuse", () => {
         "session/close",
       ]);
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(methodLog).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(methodLog).catch(() => {});
     }
   });
 });
@@ -236,7 +267,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
         await map.shutdown();
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 
@@ -266,8 +297,8 @@ describe("AcpSessionHandleMap lifecycle", () => {
         assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(methodLog).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(methodLog).catch(() => {});
     }
   });
 
@@ -304,15 +335,15 @@ describe("AcpSessionHandleMap lifecycle", () => {
         assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(methodLog).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(methodLog).catch(() => {});
     }
   });
 
   it("a pre-aborted turn finalizes as aborted without creating a handle", async () => {
     const pidFile = await tempPath();
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
       const controller = new AbortController();
       controller.abort();
@@ -334,14 +365,14 @@ describe("AcpSessionHandleMap lifecycle", () => {
         await map.shutdown();
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 
   it("cancellation during stalled creation finalizes as aborted and reaps the child", async () => {
     const pidFile = await tempPath();
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       const profile = fixtureProfile({
         initializeTimeoutMs: 2_000,
         environment: fixtureModeEnvironment("initialize_mute"),
@@ -381,7 +412,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
         await map.shutdown();
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 });
@@ -423,8 +454,8 @@ describe("startAcpSession", () => {
         assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(methodLog).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(methodLog).catch(() => {});
     }
   });
 });

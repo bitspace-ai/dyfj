@@ -5,10 +5,20 @@
 // acp-client.test.ts.
 import { captureRejection } from "../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { chmod, readFile, stat, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
   type AcpProgressUpdate,
@@ -75,23 +85,50 @@ function fixtureEnvironment(
   };
 }
 
-/** A temp file outside the checkout; removed by the caller. */
-function tempPath(): Promise<string> {
-  return Deno.makeTempFile({ prefix: "dyfj-acp-client-" });
+/**
+ * A new empty file outside the checkout, alone in its own temp directory;
+ * the caller removes it with `removeTempPath`.
+ */
+async function tempPath(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-acp-client-"));
+  const path = join(dir, "file");
+  await writeFile(path, "", { flag: "wx", mode: 0o600 });
+  return path;
+}
+
+/** Removes a `tempPath` file and the directory made for it. */
+function removeTempPath(path: string): Promise<void> {
+  return rm(dirname(path), { recursive: true, force: true });
 }
 
 async function processIsAlive(pid: number): Promise<boolean> {
-  const status = await new Deno.Command("bash", {
-    args: [
-      "-c",
-      'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
-      "bash",
-      String(pid),
-    ],
-    stdout: "null",
-    stderr: "null",
-  }).output();
-  return status.success;
+  const code = await runQuietly("bash", [
+    "-c",
+    'state=$(ps -o stat= -p "$1" 2>/dev/null) || exit 1; set -- $state; case "${1:-}" in ""|Z*) exit 1;; esac',
+    "bash",
+    String(pid),
+  ]);
+  return code === 0;
+}
+
+// Runs a helper command to its exit and returns its exit code (null when a
+// signal ended it). Cwd and stdin are inherited, stdout and stderr are
+// discarded. Only a helper that cannot start fails: spawn reports that as an
+// `error` event. `close` fires once the child has exited and its streams have
+// closed, so no helper outlives the call. Given no env, spawn copies the whole
+// parent env, which needs an unscoped env grant; the integration lane grants
+// env by name. PATH is the one variable these helpers resolve anything
+// through (bash and the ps it runs), so it is the one forwarded.
+function runQuietly(file: string, args: string[]): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const path = process.env.PATH;
+    const child = spawn(file, args, {
+      env: path === undefined ? {} : { PATH: path },
+      stdio: ["inherit", "ignore", "ignore"],
+    });
+    child.once("error", reject);
+    child.once("close", (code) => resolve(code));
+  });
 }
 
 async function forceStopRecordedProcessTree(
@@ -178,7 +215,7 @@ async function expectContainedFailure(input: {
     assert.strictEqual(Number.isSafeInteger(pid) && pid > 0, true);
     assert.strictEqual(await processIsAlive(pid), false);
   } finally {
-    await Deno.remove(pidFile).catch(() => {});
+    await removeTempPath(pidFile).catch(() => {});
   }
 }
 
@@ -238,7 +275,7 @@ describe("runAcpAgent", () => {
           error.message.includes("ACP process-group signaling is unavailable"),
       );
     } finally {
-      await Deno.remove(signaler).catch(() => {});
+      await removeTempPath(signaler).catch(() => {});
     }
   });
 
@@ -482,8 +519,8 @@ describe("runAcpAgent", () => {
     let verified = false;
     try {
       await Promise.all([
-        Deno.remove(pidFile),
-        Deno.remove(grandchildPidFile),
+        unlink(pidFile),
+        unlink(grandchildPidFile),
       ]);
       const result = await runAcpAgent({
         profile: fixtureProfile({}, pidFile, grandchildPidFile),
@@ -500,8 +537,8 @@ describe("runAcpAgent", () => {
       if (!verified) {
         await forceStopRecordedProcessTree(pidFile, grandchildPidFile);
       }
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(grandchildPidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(grandchildPidFile).catch(() => {});
     }
   });
 
@@ -511,8 +548,8 @@ describe("runAcpAgent", () => {
     let verified = false;
     try {
       await Promise.all([
-        Deno.remove(pidFile),
-        Deno.remove(grandchildPidFile),
+        unlink(pidFile),
+        unlink(grandchildPidFile),
       ]);
       await assertRejectsWithFields(
         runAcpAgent({
@@ -530,8 +567,8 @@ describe("runAcpAgent", () => {
       if (!verified) {
         await forceStopRecordedProcessTree(pidFile, grandchildPidFile);
       }
-      await Deno.remove(pidFile).catch(() => {});
-      await Deno.remove(grandchildPidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(grandchildPidFile).catch(() => {});
     }
   });
 
@@ -965,7 +1002,7 @@ describe("runAcpAgent", () => {
   it("observes cancellation while initialization is stalled", async () => {
     const pidFile = await tempPath();
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       const controller = new AbortController();
       const startedAt = Date.now();
       const resultPromise = runAcpAgent({
@@ -1002,7 +1039,7 @@ describe("runAcpAgent", () => {
       const pid = Number(await readFile(pidFile, "utf8"));
       assert.strictEqual(await processIsAlive(pid), false);
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 
@@ -1055,7 +1092,7 @@ describe("runAcpAgent", () => {
   it("rejects an oversized prompt before spawning", async () => {
     const pidFile = await tempPath();
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       await assertRejectsWithFields(
         runAcpAgent({
           profile: fixtureProfile({}, pidFile),
@@ -1070,7 +1107,7 @@ describe("runAcpAgent", () => {
           (error as { code?: unknown }).code === "ENOENT",
       );
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 
@@ -1223,7 +1260,7 @@ describe("runAcpAgent", () => {
         Object.hasOwn(process.env, name) ? process.env[name] : undefined,
       ]),
     );
-    for (const name of names) Deno.env.set(name, "must-not-cross");
+    for (const name of names) process.env[name] = "must-not-cross";
     try {
       const result = await runAcpAgent({
         profile: fixtureProfile(),
@@ -1237,8 +1274,8 @@ describe("runAcpAgent", () => {
       );
     } finally {
       for (const [name, value] of originals) {
-        if (value === undefined) Deno.env.delete(name);
-        else Deno.env.set(name, value);
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
       }
     }
   });
@@ -1331,7 +1368,7 @@ describe("runAcpAgent", () => {
     const pidFile = await tempPath();
     let verified = false;
     try {
-      await Deno.remove(pidFile);
+      await unlink(pidFile);
       const result = await runAcpAgent({
         profile: fixtureProfile({}, pidFile),
         prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
@@ -1347,17 +1384,13 @@ describe("runAcpAgent", () => {
         try {
           const pid = Number(await readFile(pidFile, "utf8"));
           if (Number.isInteger(pid)) {
-            await new Deno.Command("/bin/kill", {
-              args: ["-KILL", String(pid)],
-              stdout: "null",
-              stderr: "null",
-            }).output();
+            await runQuietly("/bin/kill", ["-KILL", String(pid)]);
           }
         } catch {
           // Best-effort cleanup if the assertion failed before reap.
         }
       }
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 
@@ -1402,7 +1435,7 @@ describe("startAcpSession", () => {
         assert.strictEqual(await processIsAlive(pid), false);
       }
     } finally {
-      await Deno.remove(pidFile).catch(() => {});
+      await removeTempPath(pidFile).catch(() => {});
     }
   });
 });
