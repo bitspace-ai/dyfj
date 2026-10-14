@@ -1,10 +1,4 @@
-import {
-  assertEquals,
-  assertFalse,
-  assertNotMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   createStreamingMarkdownRenderer,
@@ -17,28 +11,31 @@ import {
 describe("renderInlineMarkdown", () => {
   it("strips bold markers and applies ANSI when color is on", () => {
     const out = renderInlineMarkdown("say **bold** here", true);
-    assertFalse(out.includes("**"));
-    assertStringIncludes(out, "\x1b[1mbold\x1b[0m");
+    assert.ok(!out.includes("**"));
+    assert.ok(
+      out.includes("\x1b[1mbold\x1b[0m"),
+      `expected ${JSON.stringify(out)} to include "\\x1b[1mbold\\x1b[0m"`,
+    );
   });
 
   it("strips markers without ANSI when color is off", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       renderInlineMarkdown("**bold** and *em*", false),
       "bold and em",
     );
-    assertStrictEquals(renderInlineMarkdown("`code`", false), "code");
+    assert.strictEqual(renderInlineMarkdown("`code`", false), "code");
   });
 
   it("handles italic with underscore", () => {
-    assertStrictEquals(renderInlineMarkdown("_emphasis_", false), "emphasis");
+    assert.strictEqual(renderInlineMarkdown("_emphasis_", false), "emphasis");
   });
 
   it("leaves snake_case identifiers intact in prose", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       renderInlineMarkdown("set approve_paid_default in config", false),
       "set approve_paid_default in config",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       renderInlineMarkdown("_real emphasis_ not approve_paid_default", false),
       "real emphasis not approve_paid_default",
     );
@@ -49,13 +46,21 @@ describe("renderInlineMarkdown", () => {
       "See [the guide](https://example.com/guide).",
       true,
     );
-    assertFalse(out.includes("[the guide]("));
-    assertStringIncludes(out, "\x1b]8;;https://example.com/guide\x07");
-    assertStringIncludes(out, "the guide");
+    assert.ok(!out.includes("[the guide]("));
+    assert.ok(
+      out.includes("\x1b]8;;https://example.com/guide\x07"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "\\x1b]8;;https://example.com/guide\\x07"`,
+    );
+    assert.ok(
+      out.includes("the guide"),
+      `expected ${JSON.stringify(out)} to include "the guide"`,
+    );
   });
 
   it("keeps the destination visible in plain output", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       renderInlineMarkdown("[guide](README.md)", false),
       "guide (README.md)",
     );
@@ -67,13 +72,20 @@ describe("renderInlineMarkdown", () => {
       "[file](ftp://example.com/a)",
       true,
     );
-    assertStringIncludes(relative, "guide\x1b[0m (README.md)");
-    assertStringIncludes(
-      unsupportedScheme,
-      "file\x1b[0m (ftp://example.com/a)",
+    assert.ok(
+      relative.includes("guide\x1b[0m (README.md)"),
+      `expected ${
+        JSON.stringify(relative)
+      } to include "guide\\x1b[0m (README.md)"`,
     );
-    assertFalse(relative.includes("\x1b]8;;"));
-    assertFalse(unsupportedScheme.includes("\x1b]8;;"));
+    assert.ok(
+      unsupportedScheme.includes("file\x1b[0m (ftp://example.com/a)"),
+      `expected ${
+        JSON.stringify(unsupportedScheme)
+      } to include "file\\x1b[0m (ftp://example.com/a)"`,
+    );
+    assert.ok(!relative.includes("\x1b]8;;"));
+    assert.ok(!unsupportedScheme.includes("\x1b]8;;"));
   });
 
   it("never admits terminal controls from a link target", () => {
@@ -81,18 +93,21 @@ describe("renderInlineMarkdown", () => {
       "[safe](https://example.com/\x1b]8;;bad)",
       true,
     );
-    assertFalse(out.includes("\x1b]8;;https://example.com/"));
-    assertStringIncludes(out, "safe");
+    assert.ok(!out.includes("\x1b]8;;https://example.com/"));
+    assert.ok(
+      out.includes("safe"),
+      `expected ${JSON.stringify(out)} to include "safe"`,
+    );
   });
 });
 
 describe("renderMarkdownLine", () => {
   it("renders ATX headers without hash markers", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       renderMarkdownLine("## Section", false, false).text,
       "Section\n",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       renderMarkdownLine("# Title", false, false).text,
       "Title\n",
     );
@@ -100,18 +115,28 @@ describe("renderMarkdownLine", () => {
 
   it("re-asserts header styling after inline code spans", () => {
     const { text } = renderMarkdownLine("# Hello `code` rest", false, true);
-    assertStringIncludes(text, "\x1b[1m\x1b[96mHello \x1b[36mcode\x1b[0m");
-    assertStringIncludes(text, "\x1b[0m\x1b[1m\x1b[96m rest");
+    assert.ok(
+      text.includes("\x1b[1m\x1b[96mHello \x1b[36mcode\x1b[0m"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "\\x1b[1m\\x1b[96mHello \\x1b[36mcode\\x1b[0m"`,
+    );
+    assert.ok(
+      text.includes("\x1b[0m\x1b[1m\x1b[96m rest"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "\\x1b[0m\\x1b[1m\\x1b[96m rest"`,
+    );
   });
 
   it("renders list bullets without dash markers", () => {
     const { text } = renderMarkdownLine("- first item", false, false);
-    assertStrictEquals(text, "• first item\n");
-    assertFalse(text.includes("- first"));
+    assert.strictEqual(text, "• first item\n");
+    assert.ok(!text.includes("- first"));
   });
 
   it("renders ordered lists with the numeric marker", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       renderMarkdownLine("1. step one", false, false).text,
       "1. step one\n",
     );
@@ -119,9 +144,9 @@ describe("renderMarkdownLine", () => {
 
   it("renders plus-marked lists with hanging indentation", () => {
     const rendered = renderMarkdownLine("+ one two three four", false, false);
-    assertStrictEquals(rendered.text, "• one two three four\n");
-    assertStrictEquals(rendered.continuationIndent, "  ");
-    assertStrictEquals(
+    assert.strictEqual(rendered.text, "• one two three four\n");
+    assert.strictEqual(rendered.continuationIndent, "  ");
+    assert.strictEqual(
       wordWrap(rendered.text.trimEnd(), 10, rendered.continuationIndent),
       "• one two\n  three\n  four",
     );
@@ -129,23 +154,26 @@ describe("renderMarkdownLine", () => {
 
   it("toggles fenced code blocks and emits content verbatim", () => {
     let r = renderMarkdownLine("```ts", false, false);
-    assertStrictEquals(r.inCodeBlock, true);
-    assertStrictEquals(r.text, "");
+    assert.strictEqual(r.inCodeBlock, true);
+    assert.strictEqual(r.text, "");
 
     r = renderMarkdownLine('const x = "**not bold**";', true, false);
-    assertStrictEquals(r.inCodeBlock, true);
-    assertStringIncludes(r.text, '"**not bold**"');
+    assert.strictEqual(r.inCodeBlock, true);
+    assert.ok(
+      r.text.includes('"**not bold**"'),
+      `expected r.text to include '"**not bold**"'`,
+    );
 
     r = renderMarkdownLine("```", true, false);
-    assertStrictEquals(r.inCodeBlock, false);
-    assertStrictEquals(r.text, "");
+    assert.strictEqual(r.inCodeBlock, false);
+    assert.strictEqual(r.text, "");
   });
 
   it("renders block quotes and horizontal rules", () => {
     const quote = renderMarkdownLine("> cited text", false, false);
-    assertStrictEquals(quote.text, "│ cited text\n");
-    assertStrictEquals(quote.continuationIndent, "  ");
-    assertStrictEquals(
+    assert.strictEqual(quote.text, "│ cited text\n");
+    assert.strictEqual(quote.continuationIndent, "  ");
+    assert.strictEqual(
       renderMarkdownLine("---", false, false).text,
       `${"─".repeat(24)}\n`,
     );
@@ -155,22 +183,22 @@ describe("renderMarkdownLine", () => {
 describe("wordWrap", () => {
   it("wraps at spaces without mid-word breaks", () => {
     const wrapped = wordWrap("one two three four five", 10);
-    assertStrictEquals(wrapped, "one two\nthree four\nfive");
+    assert.strictEqual(wrapped, "one two\nthree four\nfive");
   });
 
   it("counts visible width ignoring ANSI", () => {
     const styled = "\x1b[1mhello\x1b[0m world";
-    assertStrictEquals(visibleWidth(styled), 11);
-    assertStrictEquals(wordWrap(styled, 8), "\x1b[1mhello\x1b[0m\nworld");
+    assert.strictEqual(visibleWidth(styled), 11);
+    assert.strictEqual(wordWrap(styled, 8), "\x1b[1mhello\x1b[0m\nworld");
   });
 
   it("counts OSC hyperlinks by their visible label only", () => {
     const linked = "\x1b]8;;https://example.com\x07guide\x1b]8;;\x07";
-    assertStrictEquals(visibleWidth(linked), 5);
+    assert.strictEqual(visibleWidth(linked), 5);
   });
 
   it("uses a hanging indent for wrapped list content", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       wordWrap("• one two three four", 10, "  "),
       "• one two\n  three\n  four",
     );
@@ -184,18 +212,21 @@ describe("wordWrap", () => {
       100,
       rendered.continuationIndent,
     );
-    assertStringIncludes(wrapped, "one two");
-    assertEquals((wrapped.split("\n")).length, 2);
+    assert.ok(
+      wrapped.includes("one two"),
+      `expected ${JSON.stringify(wrapped)} to include "one two"`,
+    );
+    assert.deepStrictEqual((wrapped.split("\n")).length, 2);
   });
 
   it("keeps quote/list continuation indentation bounded in narrow columns", () => {
     const quote = renderMarkdownLine("> one two three four", false, false);
     const list = renderMarkdownLine("  1. one two three four", false, false);
-    assertStrictEquals(
+    assert.strictEqual(
       wordWrap(quote.text.trimEnd(), 5, quote.continuationIndent),
       "│ one\n  two\nthree\nfour",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       wordWrap(list.text.trimEnd(), 5, list.continuationIndent),
       "  1.\none\ntwo\nthree\nfour",
     );
@@ -211,9 +242,9 @@ describe("createStreamingMarkdownRenderer", () => {
       columns: 80,
     });
     r.push("## Hel");
-    assertEquals(chunks.length, 0);
+    assert.deepStrictEqual(chunks.length, 0);
     r.push("lo\n");
-    assertStrictEquals(chunks.join(""), "Hello\n");
+    assert.strictEqual(chunks.join(""), "Hello\n");
   });
 
   it("flush emits a trailing line without a newline", () => {
@@ -225,7 +256,7 @@ describe("createStreamingMarkdownRenderer", () => {
     });
     r.push("**tail**");
     r.flush();
-    assertStrictEquals(chunks.join(""), "tail\n");
+    assert.strictEqual(chunks.join(""), "tail\n");
   });
 
   it("streams line-by-line as newlines arrive", () => {
@@ -236,9 +267,9 @@ describe("createStreamingMarkdownRenderer", () => {
       columns: 80,
     });
     r.push("line one\nline ");
-    assertEquals(chunks, ["line one\n"]);
+    assert.deepStrictEqual(chunks, ["line one\n"]);
     r.push("two\n");
-    assertEquals(chunks, ["line one\n", "line two\n"]);
+    assert.deepStrictEqual(chunks, ["line one\n", "line two\n"]);
   });
 
   it("reset drops the buffered partial line", () => {
@@ -252,7 +283,7 @@ describe("createStreamingMarkdownRenderer", () => {
     r.reset();
     r.push("fresh line\n");
     r.flush();
-    assertStrictEquals(chunks.join(""), "fresh line\n");
+    assert.strictEqual(chunks.join(""), "fresh line\n");
   });
 
   it("reset closes a half-open code fence so replacement text parses fresh", () => {
@@ -267,7 +298,7 @@ describe("createStreamingMarkdownRenderer", () => {
     r.push("```\nstale code\n");
     r.reset();
     r.push("**bold** replacement\n");
-    assertStrictEquals(chunks.join(""), "stale code\nbold replacement\n");
+    assert.strictEqual(chunks.join(""), "stale code\nbold replacement\n");
   });
 
   it("renders a typical companion shape end-to-end", () => {
@@ -282,10 +313,22 @@ describe("createStreamingMarkdownRenderer", () => {
     );
     r.flush();
     const out = chunks.join("");
-    assertNotMatch(out, /##|\*\*|`|^- /m);
-    assertStringIncludes(out, "Tools");
-    assertStringIncludes(out, "read_file");
-    assertStringIncludes(out, "list_files");
-    assertStringIncludes(out, "•");
+    assert.doesNotMatch(out, /##|\*\*|`|^- /m);
+    assert.ok(
+      out.includes("Tools"),
+      `expected ${JSON.stringify(out)} to include "Tools"`,
+    );
+    assert.ok(
+      out.includes("read_file"),
+      `expected ${JSON.stringify(out)} to include "read_file"`,
+    );
+    assert.ok(
+      out.includes("list_files"),
+      `expected ${JSON.stringify(out)} to include "list_files"`,
+    );
+    assert.ok(
+      out.includes("•"),
+      `expected ${JSON.stringify(out)} to include "•"`,
+    );
   });
 });

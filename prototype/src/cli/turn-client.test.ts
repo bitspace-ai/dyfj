@@ -1,12 +1,6 @@
-import {
-  assertEquals,
-  assertMatch,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { FakeTime } from "@std/testing/time";
+import { mock } from "node:test";
 import type { TurnStreamFrame } from "../contract/mod.ts";
 import {
   fakeTurnConnect,
@@ -42,9 +36,9 @@ describe("socketTurn", () => {
         result(),
       ),
     );
-    assertStrictEquals(deltas.join(""), "Hello world");
-    assertEquals(events.length, 1);
-    assertStrictEquals(r.sessionId, result().sessionId);
+    assert.strictEqual(deltas.join(""), "Hello world");
+    assert.deepStrictEqual(events.length, 1);
+    assert.strictEqual(r.sessionId, result().sessionId);
   });
 
   it("an abort signal sends turn/cancel for the generated turn id", async () => {
@@ -83,14 +77,14 @@ describe("socketTurn", () => {
     abortController.abort();
     const receipt = await pending;
 
-    assertStrictEquals(receipt.stopReason, "aborted");
+    assert.strictEqual(receipt.stopReason, "aborted");
     const turnId = (calls[0].params as { turnId: string }).turnId;
-    assertMatch(turnId, /^[0-9a-f-]{36}$/);
-    assertEquals(calls, [
+    assert.match(turnId, /^[0-9a-f-]{36}$/);
+    assert.deepStrictEqual(calls, [
       { method: "turn", params: { prompt: "hi", turnId } },
       { method: "turn/cancel", params: { turnId } },
     ]);
-    assertEquals(events, [{
+    assert.deepStrictEqual(events, [{
       type: "turnAborted",
       sessionId: receipt.sessionId,
       traceId: receipt.traceId,
@@ -125,13 +119,14 @@ describe("socketTurn", () => {
       },
     });
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn interrupted before dispatch",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("turn interrupted before dispatch"),
     );
-    assertEquals(calls, []);
-    assertStrictEquals(closed, true);
+    assert.deepStrictEqual(calls, []);
+    assert.strictEqual(closed, true);
   });
 
   it("does not surface an abort event for a normally completed turn", async () => {
@@ -164,8 +159,8 @@ describe("socketTurn", () => {
       connect,
     );
 
-    assertStrictEquals(receipt.stopReason, "stop");
-    assertEquals(events, []);
+    assert.strictEqual(receipt.stopReason, "stop");
+    assert.deepStrictEqual(events, []);
   });
 
   it("replaces stale abort-event attribution with terminal receipt identity", async () => {
@@ -199,7 +194,7 @@ describe("socketTurn", () => {
       connect,
     );
 
-    assertEquals(events, [{
+    assert.deepStrictEqual(events, [{
       type: "turnAborted",
       sessionId: aborted.sessionId,
       traceId: aborted.traceId,
@@ -231,7 +226,7 @@ describe("socketTurn", () => {
       connect,
     );
 
-    assertEquals(events, []);
+    assert.deepStrictEqual(events, []);
   });
 
   it("a rejected cancellation request returns a bounded error instead of hanging", async () => {
@@ -257,12 +252,15 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn cancellation was not acknowledged; restart the runtime before retrying",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("a synchronous turn request failure still closes the client", async () => {
@@ -277,7 +275,7 @@ describe("socketTurn", () => {
         },
       });
 
-    await assertRejects(
+    await assert.rejects(
       () =>
         socketTurn(
           cfg({ unix: true }),
@@ -285,10 +283,10 @@ describe("socketTurn", () => {
           {},
           connect,
         ),
-      Error,
-      "peer closed",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("peer closed"),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("an onConnected failure still closes the client", async () => {
@@ -301,7 +299,7 @@ describe("socketTurn", () => {
         },
       });
 
-    await assertRejects(
+    await assert.rejects(
       () =>
         socketTurn(
           cfg({ unix: true }),
@@ -313,10 +311,11 @@ describe("socketTurn", () => {
           },
           connect,
         ),
-      Error,
-      "listener registration failed",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("listener registration failed"),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("a synchronous cancellation request failure uses the bounded client error", async () => {
@@ -342,12 +341,15 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn cancellation was not acknowledged; restart the runtime before retrying",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("an unresponsive cancellation request reaches its acknowledgement deadline", async () => {
@@ -373,12 +375,15 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn cancellation was not acknowledged; restart the runtime before retrying",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("a negative cancellation acknowledgement leaves the turn authoritative but bounded", async () => {
@@ -408,12 +413,15 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn did not finish after cancellation was declined; remote work may still be running",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn did not finish after cancellation was declined; remote work may still be running",
+        ),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("a negative cancellation acknowledgement does not mask the original turn error", async () => {
@@ -444,7 +452,11 @@ describe("socketTurn", () => {
     await Promise.resolve();
     rejectTurn(new Error("provider failed"));
 
-    await assertRejects(() => pending, Error, "provider failed");
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("provider failed"),
+    );
   });
 
   it("a positive cancellation acknowledgement cannot leave the client waiting forever", async () => {
@@ -473,16 +485,19 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assertRejects(
+    await assert.rejects(
       () => pending,
-      Error,
-      "turn did not finish after cancellation was acknowledged; remote work may still be running",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn did not finish after cancellation was acknowledged; remote work may still be running",
+        ),
     );
-    assertStrictEquals(closed, true);
+    assert.strictEqual(closed, true);
   });
 
   it("a late positive acknowledgement cannot install a timer after turn cleanup", async () => {
-    const time = new FakeTime();
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 0 });
     try {
       const abortController = new AbortController();
       let finishTurn!: (value: unknown) => void;
@@ -522,17 +537,21 @@ describe("socketTurn", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      // No timer is left pending: FakeTime.next() runs the next one, if any.
-      assertStrictEquals(time.next(), false);
+      // No timer is left pending: runAll() runs every pending timer and
+      // moves the mocked clock to the last one's due time, so the clock
+      // stays at 0 only when none was installed (both cancellation timeouts
+      // have a positive delay).
+      mock.timers.runAll();
+      assert.strictEqual(Date.now(), 0);
     } finally {
-      time.restore();
+      mock.timers.reset();
     }
   });
 });
 
 describe("buildTurnBody", () => {
   it("selects the fixture runner without sending model routing", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       buildTurnBody(
         "hi",
         cfg({ runner: "fixture", model: "ignored-native-default", tier: 2 }),
@@ -542,39 +561,42 @@ describe("buildTurnBody", () => {
   });
 
   it("omits routingOptions when no routing is set", () => {
-    assertEquals(buildTurnBody("hi", cfg()), { prompt: "hi", mode: "turn" });
+    assert.deepStrictEqual(buildTurnBody("hi", cfg()), {
+      prompt: "hi",
+      mode: "turn",
+    });
   });
   it("includes routing + session when set", () => {
     const body = buildTurnBody("hi", cfg({ model: "m", tier: 1 }), "SESS");
-    assertObjectMatch(body, {
+    assert.partialDeepStrictEqual(body, {
       routingOptions: { modelId: "m", tier: 1 },
       sessionId: "SESS",
     });
   });
   it("carries the config mode into the request body", () => {
-    assertStrictEquals(buildTurnBody("x", cfg({ mode: "ask" })).mode, "ask");
+    assert.strictEqual(buildTurnBody("x", cfg({ mode: "ask" })).mode, "ask");
   });
   it("--approve-paid sets approvePaidInference; absent leaves it off", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       buildTurnBody("hi", cfg({ approvePaid: true })).approvePaidInference,
       true,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       buildTurnBody("hi", cfg()).approvePaidInference,
       undefined,
     );
   });
   it("sends the workspace only when establishing a new session", () => {
     // New session (no sessionId) on a loopback server: workspace binds the session.
-    assertStrictEquals(
+    assert.strictEqual(
       buildTurnBody("hi", cfg({ workspace: "/work/dir" })).workspace,
       "/work/dir",
     );
     // Resuming (sessionId present): omitted — the server reads it from the row.
-    assertStrictEquals(
+    assert.strictEqual(
       buildTurnBody("hi", cfg({ workspace: "/work/dir" }), "SESS").workspace,
       undefined,
     );
-    assertStrictEquals(buildTurnBody("hi", cfg()).workspace, undefined);
+    assert.strictEqual(buildTurnBody("hi", cfg()).workspace, undefined);
   });
 });

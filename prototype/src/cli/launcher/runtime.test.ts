@@ -1,4 +1,4 @@
-import { assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { installRootFromModuleUrl } from "./runtime.ts";
 
@@ -8,7 +8,7 @@ const FAKE_USERS_ROOT = ["", "Users", "x"].join("/");
 
 describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   it("derives the prototype root from this module's file: URL", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       installRootFromModuleUrl(
         `file://${FAKE_USERS_ROOT}/projects/dyfj/prototype/src/cli/launcher/runtime.ts`,
       ),
@@ -17,7 +17,7 @@ describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   });
 
   it("decodes percent-encoded path segments", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       installRootFromModuleUrl(
         `file://${FAKE_USERS_ROOT}/My%20Code/prototype/src/cli/launcher/runtime.ts`,
       ),
@@ -26,7 +26,7 @@ describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   });
 
   it("returns null for a non-file (remote) module — no trustworthy local root", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       installRootFromModuleUrl(
         "https://example.com/prototype/src/cli/launcher/runtime.ts",
       ),
@@ -35,7 +35,7 @@ describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   });
 
   it("resolves this checkout's prototype root from the module's real URL", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       installRootFromModuleUrl(new URL("./runtime.ts", import.meta.url).href),
       decodeURIComponent(new URL("../../..", import.meta.url).pathname)
         .replace(/\/$/, ""),
@@ -43,11 +43,11 @@ describe("installRootFromModuleUrl (fail-closed prototype root)", () => {
   });
 
   it("returns null when the URL is not the expected src/cli/launcher/<file> shape", () => {
-    assertStrictEquals(installRootFromModuleUrl("file:///weird/path.ts"), null);
-    assertStrictEquals(
+    assert.strictEqual(installRootFromModuleUrl("file:///weird/path.ts"), null);
+    assert.strictEqual(
       installRootFromModuleUrl("file:///x/prototype/src/cli.ts"),
       null,
     );
-    assertStrictEquals(installRootFromModuleUrl("not a url"), null);
+    assert.strictEqual(installRootFromModuleUrl("not a url"), null);
   });
 });

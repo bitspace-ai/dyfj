@@ -1,10 +1,4 @@
-import {
-  assertArrayIncludes,
-  assertEquals,
-  assertFalse,
-  assertNotMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { supersedeEvent } from "../../../testing/builders/turn-client.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
@@ -35,7 +29,7 @@ describe("createTurnSpinner", () => {
     const spinner = createTurnSpinner(cfg(), io);
     spinner.start();
     spinner.stop();
-    assertEquals(raw, [`${ERASE_LINE}⠋ working… 0s`, ERASE_LINE]);
+    assert.deepStrictEqual(raw, [`${ERASE_LINE}⠋ working… 0s`, ERASE_LINE]);
   });
 
   it("is a no-op when stderr is not a terminal", () => {
@@ -43,7 +37,7 @@ describe("createTurnSpinner", () => {
     const spinner = createTurnSpinner(cfg(), io);
     spinner.start();
     spinner.stop();
-    assertEquals(raw, []);
+    assert.deepStrictEqual(raw, []);
   });
 
   it("is a no-op when the Io exposes no raw stderr writer", () => {
@@ -57,7 +51,7 @@ describe("createTurnSpinner", () => {
     const spinner = createTurnSpinner(cfg(), io);
     spinner.start();
     spinner.stop();
-    assertEquals(stderr, []);
+    assert.deepStrictEqual(stderr, []);
   });
 });
 
@@ -95,12 +89,13 @@ describe("spinnerGuardedTurnHandlers", () => {
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onDelta("hello");
-    assertEquals(calls, []);
+    // Typed, so the assertion does not narrow `calls` to an empty tuple.
+    assert.deepStrictEqual<string[]>(calls, []);
     handlers.onDelta("\n");
-    assertStrictEquals(calls[0], "pause");
-    assertArrayIncludes(calls, ["out"]);
-    assertEquals(calls.slice(-2), ["label:working…", "start"]);
-    assertStrictEquals(stdout.join(""), "hello\n");
+    assert.strictEqual(calls[0], "pause");
+    assert.deepStrictEqual(["out"].filter((item) => !calls.includes(item)), []);
+    assert.deepStrictEqual(calls.slice(-2), ["label:working…", "start"]);
+    assert.strictEqual(stdout.join(""), "hello\n");
   });
 
   it("pauses around a visible runtime-event status line and resumes", () => {
@@ -120,9 +115,9 @@ describe("spinnerGuardedTurnHandlers", () => {
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onEvent({ type: "toolCallStarted", commandId: "read_file" });
-    assertStrictEquals(calls[0], "pause");
-    assertEquals(calls.slice(-2), ["label:working…", "start"]);
-    assertEquals(stderr, ["tool: read_file started"]);
+    assert.strictEqual(calls[0], "pause");
+    assert.deepStrictEqual(calls.slice(-2), ["label:working…", "start"]);
+    assert.deepStrictEqual(stderr, ["tool: read_file started"]);
   });
 
   it("thought activity updates the spinner before text output", () => {
@@ -149,10 +144,10 @@ describe("spinnerGuardedTurnHandlers", () => {
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onEvent({ type: "agentProgress", kind: "thought" });
-    assertEquals(calls, ["label:thinking…", "start"]);
-    assertEquals(stderr, []);
+    assert.deepStrictEqual(calls, ["label:thinking…", "start"]);
+    assert.deepStrictEqual(stderr, []);
     handlers.onDelta("solution found\n");
-    assertEquals(calls, [
+    assert.deepStrictEqual(calls, [
       "label:thinking…",
       "start",
       "pause",
@@ -160,7 +155,7 @@ describe("spinnerGuardedTurnHandlers", () => {
       "label:working…",
       "start",
     ]);
-    assertStrictEquals(stdout.join(""), "solution found\n");
+    assert.strictEqual(stdout.join(""), "solution found\n");
   });
 
   it("progress does not stop the spinner or print a status line", () => {
@@ -185,8 +180,8 @@ describe("spinnerGuardedTurnHandlers", () => {
       kind: "tool_call",
       title: "Inspecting codebase",
     });
-    assertEquals(calls, ["label:Inspecting codebase", "start"]);
-    assertEquals(stderr, []);
+    assert.deepStrictEqual(calls, ["label:Inspecting codebase", "start"]);
+    assert.deepStrictEqual(stderr, []);
   });
 
   it("keeps spinning through an invisible event (modelSelected)", () => {
@@ -210,11 +205,11 @@ describe("spinnerGuardedTurnHandlers", () => {
     // spinner must survive it — otherwise it vanishes before the wait it
     // exists to cover.
     handlers.onEvent({ type: "modelSelected", modelSlug: "x", tier: 0 });
-    assertEquals(calls, []);
-    assertEquals(stderr, []);
+    assert.deepStrictEqual(calls, []);
+    assert.deepStrictEqual(stderr, []);
     // …and yields/restarts around the first delta that follows.
     handlers.onDelta("hi\n");
-    assertEquals(calls, ["pause", "label:working…", "start"]);
+    assert.deepStrictEqual(calls, ["pause", "label:working…", "start"]);
   });
 
   it("stops the spinner before delegating a mid-turn approval", async () => {
@@ -231,89 +226,89 @@ describe("spinnerGuardedTurnHandlers", () => {
       },
     );
     const verdict = await handlers.onApproval({ kind: "tool" });
-    assertEquals(calls, [
+    assert.deepStrictEqual(calls, [
       "pause",
       "approval",
       "label:working…",
       "start",
     ]);
-    assertEquals(verdict, { decision: "approve" });
+    assert.deepStrictEqual(verdict, { decision: "approve" });
   });
 });
 
 describe("sanitizeSpinnerLabel", () => {
   it("complete ANSI, OSC, C0, and C1 inputs cannot alter terminal control flow", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       sanitizeSpinnerLabel("Malicious\x1b[31m title\nwith controls\r\n"),
       "Malicious title with controls",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       sanitizeSpinnerLabel("C1\u009b31m style\u0085 test"),
       "C1 style test",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       sanitizeSpinnerLabel("\x1b]8;;https://evil.example\x07link\x1b]8;;\x07"),
       "link",
     );
     const sanitized = sanitizeSpinnerLabel(
       "keep\x1b]8;;https://evil.example\x07text\x1b\\done",
     );
-    assertStrictEquals(sanitized, "keeptextdone");
-    assertNotMatch(sanitized, /[\x00-\x1f\x7f-\x9f]/);
+    assert.strictEqual(sanitized, "keeptextdone");
+    assert.doesNotMatch(sanitized, /[\x00-\x1f\x7f-\x9f]/);
   });
 
   it("incomplete ANSI, OSC, C0, and C1 inputs cannot alter terminal control flow", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       sanitizeSpinnerLabel("\x1b]8;;https://evil.example/no-terminator"),
       null,
     );
-    assertStrictEquals(sanitizeSpinnerLabel("\x1b[31"), null);
-    assertStrictEquals(sanitizeSpinnerLabel("\x1b"), null);
-    assertStrictEquals(sanitizeSpinnerLabel("\u009d8;;unterminated-osc"), null);
+    assert.strictEqual(sanitizeSpinnerLabel("\x1b[31"), null);
+    assert.strictEqual(sanitizeSpinnerLabel("\x1b"), null);
+    assert.strictEqual(sanitizeSpinnerLabel("\u009d8;;unterminated-osc"), null);
     const prefix = sanitizeSpinnerLabel("ok\x1b]8;;truncated");
-    assertStrictEquals(prefix, "ok");
-    assertNotMatch(prefix, /[\x00-\x1f\x7f-\x9f]/);
-    assertFalse(prefix.includes("truncated"));
+    assert.strictEqual(prefix, "ok");
+    assert.doesNotMatch(prefix, /[\x00-\x1f\x7f-\x9f]/);
+    assert.ok(!prefix.includes("truncated"));
   });
 
   it("tool status is bounded before expensive normalization", () => {
     const leak = "LEAK-AFTER-SCAN-BUDGET";
     const hugeOsc = `\x1b]8;;${"A".repeat(1_000_000)}\x07${leak}`;
-    assertStrictEquals(sanitizeSpinnerLabel(hugeOsc), null);
+    assert.strictEqual(sanitizeSpinnerLabel(hugeOsc), null);
     const longVisible = `${"x".repeat(300)}${leak}`;
     const truncated = sanitizeSpinnerLabel(longVisible);
-    assertStrictEquals(truncated, `${"x".repeat(39)}…`);
-    assertFalse(truncated.includes(leak));
+    assert.strictEqual(truncated, `${"x".repeat(39)}…`);
+    assert.ok(!truncated.includes(leak));
   });
 });
 
 describe("runtimeEventIsVisible", () => {
   it("invisible bookkeeping events render nothing", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       runtimeEventIsVisible({ type: "modelSelected", modelSlug: "x" }),
       false,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       runtimeEventIsVisible({ type: "unknownFutureEvent" }),
       false,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       runtimeEventIsVisible({ type: "agentProgress", kind: "thought" }),
       false,
     );
-    assertStrictEquals(runtimeEventIsVisible(null), false);
-    assertStrictEquals(runtimeEventIsVisible("nope"), false);
+    assert.strictEqual(runtimeEventIsVisible(null), false);
+    assert.strictEqual(runtimeEventIsVisible("nope"), false);
   });
 
   it("status-line and supersede events are visible", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       runtimeEventIsVisible({ type: "toolCallStarted", commandId: "x" }),
       true,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       runtimeEventIsVisible({ type: "toolStepStarted", step: 1 }),
       true,
     );
-    assertStrictEquals(runtimeEventIsVisible(supersedeEvent()), true);
+    assert.strictEqual(runtimeEventIsVisible(supersedeEvent()), true);
   });
 });

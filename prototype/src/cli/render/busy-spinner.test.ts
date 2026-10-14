@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { type BusySpinnerOptions, createBusySpinner } from "./busy-spinner.ts";
 
@@ -30,7 +26,7 @@ describe("createBusySpinner", () => {
   it("paints the first frame immediately on start", () => {
     const { spinner, writes } = harness();
     spinner.start();
-    assertEquals(writes, [`${ERASE}⠋ working… 0s`]);
+    assert.deepStrictEqual(writes, [`${ERASE}⠋ working… 0s`]);
   });
 
   it("advances through the frames on each timer tick", () => {
@@ -38,14 +34,14 @@ describe("createBusySpinner", () => {
     spinner.start();
     ticks[0]();
     ticks[0]();
-    assertEquals(writes, [
+    assert.deepStrictEqual(writes, [
       `${ERASE}⠋ working… 0s`,
       `${ERASE}⠙ working… 0s`,
       `${ERASE}⠹ working… 0s`,
     ]);
     // Every repaint starts with erase + carriage return: one line, rewritten.
     for (const write of writes) {
-      assertStrictEquals(write.startsWith(ERASE), true);
+      assert.strictEqual(write.startsWith(ERASE), true);
     }
   });
 
@@ -54,16 +50,16 @@ describe("createBusySpinner", () => {
     spinner.start();
     spinner.stop();
     spinner.stop();
-    assertEquals(cleared.length, 1);
-    assertEquals(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
+    assert.deepStrictEqual(cleared.length, 1);
+    assert.deepStrictEqual(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
   });
 
   it("stop before start disables the spinner permanently", () => {
     const { spinner, writes, ticks } = harness();
     spinner.stop();
     spinner.start();
-    assertEquals(writes, []);
-    assertEquals(ticks, []);
+    assert.deepStrictEqual(writes, []);
+    assert.deepStrictEqual(ticks, []);
   });
 
   it("pause erases the line and start resumes without resetting elapsed time", () => {
@@ -73,9 +69,9 @@ describe("createBusySpinner", () => {
     now = 2_500;
     spinner.pause();
     spinner.start();
-    assertEquals(cleared, [1]);
-    assertEquals(ticks.length, 2);
-    assertEquals(writes, [
+    assert.deepStrictEqual(cleared, [1]);
+    assert.deepStrictEqual(ticks.length, 2);
+    assert.deepStrictEqual(writes, [
       `${ERASE}⠋ working… 0s`,
       ERASE,
       `${ERASE}⠙ working… 2s`,
@@ -87,47 +83,50 @@ describe("createBusySpinner", () => {
     spinner.start();
     spinner.stop();
     spinner.start();
-    assertEquals(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
+    assert.deepStrictEqual(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
   });
 
   it("double start does not stack timers", () => {
     const { spinner, ticks } = harness();
     spinner.start();
     spinner.start();
-    assertEquals(ticks.length, 1);
+    assert.deepStrictEqual(ticks.length, 1);
   });
 
   it("disabled spinner never writes or schedules", () => {
     const { spinner, writes, ticks } = harness({ enabled: false });
     spinner.start();
     spinner.stop();
-    assertEquals(writes, []);
-    assertEquals(ticks, []);
+    assert.deepStrictEqual(writes, []);
+    assert.deepStrictEqual(ticks, []);
   });
 
   it("color mode dims the spinner line only", () => {
     const { spinner, writes } = harness({ color: true });
     spinner.start();
-    assertEquals(writes, [`${ERASE}\x1b[2m⠋ working… 0s\x1b[0m`]);
+    assert.deepStrictEqual(writes, [`${ERASE}\x1b[2m⠋ working… 0s\x1b[0m`]);
   });
 
   it("custom label is rendered", () => {
     const { spinner, writes } = harness({ label: "routing…" });
     spinner.start();
-    assertStringIncludes(writes[0], "routing… 0s");
+    assert.ok(
+      writes[0].includes("routing… 0s"),
+      `expected writes[0] to include "routing… 0s"`,
+    );
   });
 
   it("updateLabel repaints immediately without stacking another timer", () => {
     const { spinner, writes, ticks } = harness();
     spinner.start();
     spinner.updateLabel("thinking…");
-    assertEquals(writes, [
+    assert.deepStrictEqual(writes, [
       `${ERASE}⠋ working… 0s`,
       `${ERASE}⠙ thinking… 0s`,
     ]);
-    assertEquals(ticks.length, 1);
+    assert.deepStrictEqual(ticks.length, 1);
     ticks[0]();
-    assertStrictEquals(writes[2], `${ERASE}⠹ thinking… 0s`);
+    assert.strictEqual(writes[2], `${ERASE}⠹ thinking… 0s`);
   });
 
   it("updateLabel does not restart the elapsed-time counter", () => {
@@ -136,11 +135,11 @@ describe("createBusySpinner", () => {
     spinner.start();
     now = 2_500;
     spinner.updateLabel("thinking…");
-    assertStrictEquals(writes.at(-1), `${ERASE}⠙ thinking… 2s`);
+    assert.strictEqual(writes.at(-1), `${ERASE}⠙ thinking… 2s`);
     now = 5_000;
     ticks[0]();
-    assertStrictEquals(writes.at(-1), `${ERASE}⠹ thinking… 5s`);
-    assertEquals(ticks.length, 1);
+    assert.strictEqual(writes.at(-1), `${ERASE}⠹ thinking… 5s`);
+    assert.deepStrictEqual(ticks.length, 1);
   });
 
   it("updateLabel is a no-op after stop", () => {
@@ -149,7 +148,7 @@ describe("createBusySpinner", () => {
     spinner.stop();
     const countBefore = writes.length;
     spinner.updateLabel("thinking…");
-    assertStrictEquals(writes.length, countBefore);
+    assert.strictEqual(writes.length, countBefore);
   });
 
   it("updateLabel while paused is applied when animation resumes", () => {
@@ -158,6 +157,6 @@ describe("createBusySpinner", () => {
     spinner.pause();
     spinner.updateLabel("inspecting…");
     spinner.start();
-    assertStrictEquals(writes.at(-1), `${ERASE}⠙ inspecting… 0s`);
+    assert.strictEqual(writes.at(-1), `${ERASE}⠙ inspecting… 0s`);
   });
 });

@@ -235,24 +235,9 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/cli/commands/status.integration.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/commands/stop.integration.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/launcher/grants.integration.test.ts",
-    "count": 19,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/cli/launcher/grants.test.ts",
-    "count": 26,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "count": 3,
+    "reason": "Launcher assertions: two expected error messages and one test name describe the launcher's own grant rules; they change with the launcher under S4 of decision D32."
   },
   {
     "path": "prototype/src/cli/launcher/grants.ts",
@@ -263,11 +248,6 @@
     "path": "prototype/src/cli/launcher/runtime.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/turn-client.integration.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/config/defaults.test.ts",
