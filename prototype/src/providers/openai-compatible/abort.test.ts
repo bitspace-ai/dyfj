@@ -2,13 +2,9 @@
 // partial text, usage, and timings survive, and how leaked or ambiguous tool
 // markup is handled when the stream is cut short.
 
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertSpyCalls, spy } from "@std/testing/mock";
 import { ManualClock } from "../../../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { estimateTextTokens, runWorkbenchTurn } from "../mod.ts";
@@ -73,13 +69,13 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: {
         output: Math.ceil((name.length + argumentsFragment.length) / 4),
       },
     });
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("an aborted stream preserves excessive complete tool markup as prose", async () => {
@@ -107,9 +103,12 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertEquals(deltas, [markup]);
-    assertObjectMatch(result, { text: markup, stopReason: "aborted" });
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.deepStrictEqual(deltas, [markup]);
+    assert.partialDeepStrictEqual(result, {
+      text: markup,
+      stopReason: "aborted",
+    });
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("an aborted stream retains usage fields split across frames", async () => {
@@ -145,7 +144,7 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 100, output: 20 });
+    assert.partialDeepStrictEqual(result.usage, { input: 100, output: 20 });
   });
 
   it("an abort observed before dispatch records no provider call usage", async () => {
@@ -154,7 +153,7 @@ describe("runWorkbenchTurn streaming", () => {
     // The empty transport would itself reject an already-aborted call without
     // recording it, so a spy is what proves the call never happened.
     const transport = new ScriptedHttpTransport();
-    const fetchFn = spy(transport.fetch);
+    const fetchFn = mock.fn(transport.fetch);
 
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
@@ -165,11 +164,11 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn,
     });
 
-    assertSpyCalls(fetchFn, 0);
-    assertStrictEquals(transport.requests.length, 0);
-    assertStrictEquals(result.stopReason, "aborted");
-    assertStrictEquals(result.requestDispatched, false);
-    assertObjectMatch(result.usage, {
+    assert.equal(fetchFn.mock.callCount(), 0);
+    assert.strictEqual(transport.requests.length, 0);
+    assert.strictEqual(result.stopReason, "aborted");
+    assert.strictEqual(result.requestDispatched, false);
+    assert.partialDeepStrictEqual(result.usage, {
       input: 0,
       output: 0,
       cost: { total: 0 },
@@ -197,7 +196,7 @@ describe("runWorkbenchTurn streaming", () => {
     await firstDelta;
     abortController.abort();
 
-    assertObjectMatch(await pending, {
+    assert.partialDeepStrictEqual(await pending, {
       text: "partial",
       stopReason: "aborted",
     });
@@ -228,10 +227,10 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(result.text, "partial");
-    assertStrictEquals(result.stopReason, "aborted");
-    assertStrictEquals(result.toolCalls, undefined);
-    assertStrictEquals(result.usage.output, estimateTextTokens(generated));
+    assert.strictEqual(result.text, "partial");
+    assert.strictEqual(result.stopReason, "aborted");
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.usage.output, estimateTextTokens(generated));
   });
 
   it("an aborted stream preserves an ambiguous literal wrapper suffix", async () => {
@@ -256,9 +255,9 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.stopReason, "aborted");
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.stopReason, "aborted");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("an abort ignores a truncated buffered JSON array at the input boundary", async () => {
@@ -277,7 +276,7 @@ describe("runWorkbenchTurn streaming", () => {
     await yieldToStream();
     abortController.abort();
 
-    assertObjectMatch(await pending, { stopReason: "aborted" });
+    assert.partialDeepStrictEqual(await pending, { stopReason: "aborted" });
     transport.assertDone();
   });
 
@@ -305,8 +304,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(result.text, prefix);
-    assertStrictEquals(result.stopReason, "aborted");
+    assert.strictEqual(result.text, prefix);
+    assert.strictEqual(result.stopReason, "aborted");
   });
 
   it("an aborted stream preserves tool-like prose when no matching tool was offered", async () => {
@@ -332,8 +331,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.stopReason, "aborted");
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.stopReason, "aborted");
   });
 
   it("an aborted no-tools stream preserves complete function-like prose", async () => {
@@ -361,9 +360,9 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.stopReason, "aborted");
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.stopReason, "aborted");
   });
 
   it("an aborted stream releases an ambiguous tool prefix once later text disproves it", async () => {
@@ -394,9 +393,9 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.stopReason, "aborted");
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.stopReason, "aborted");
   });
 
   it("releases a malformed wrapped opening after a bounded prefix", async () => {
@@ -425,8 +424,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
   });
 
   it("an aborted stream preserves an empty function-name prefix", async () => {
@@ -455,8 +454,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(deltas.join(""), text);
-    assertStrictEquals(result.text, text);
+    assert.strictEqual(deltas.join(""), text);
+    assert.strictEqual(result.text, text);
   });
 
   it("a pre-header abort records elapsed time without claiming headers arrived", async () => {
@@ -479,8 +478,8 @@ describe("runWorkbenchTurn streaming", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertStrictEquals(result.stopReason, "aborted");
-    assertEquals(result.timings, {
+    assert.strictEqual(result.stopReason, "aborted");
+    assert.deepStrictEqual(result.timings, {
       responseHeadersMs: 0,
       totalMs: 25,
     });

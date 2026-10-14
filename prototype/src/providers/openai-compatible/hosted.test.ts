@@ -1,16 +1,8 @@
 // Hosted OpenAI-compatible turns (OpenAI, OpenRouter, xAI): credentials,
 // pinned hosts and ports, and request shaping through runWorkbenchTurn.
 
-import {
-  assertAlmostEquals,
-  assertEquals,
-  assertInstanceOf,
-  assertNotMatch,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import { assertAlmostEqual } from "../../../testing/assertions/almost-equal.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
@@ -37,7 +29,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
   it("fails closed when OPENAI_API_KEY is absent", async () => {
     const env = new MapEnv();
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -49,7 +41,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         }),
       HostedProviderCredentialMissingError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("an abort during credential lookup records zero pre-dispatch usage", async () => {
@@ -70,8 +62,8 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(transport.requests.length, 0);
-    assertObjectMatch(result, {
+    assert.strictEqual(transport.requests.length, 0);
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: {
         input: 0,
@@ -84,7 +76,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
   it("rejects a non-https hosted base URL before inference", async () => {
     const env = new MapEnv({ OPENAI_API_KEY: "sk-test-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -100,7 +92,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("an openai row never sends its key to another provider's https host", async () => {
@@ -109,7 +101,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
     // (still-https) endpoint.
     const env = new MapEnv({ OPENAI_API_KEY: "sk-test-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -125,7 +117,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("an openai row never reads another provider's key", async () => {
@@ -133,7 +125,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
     // an OpenRouter key alone leaves an openai row fail-closed.
     const env = new MapEnv({ OPENROUTER_API_KEY: "sk-or-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -145,7 +137,7 @@ describe("runWorkbenchTurn hosted OpenAI", () => {
         }),
       HostedProviderCredentialMissingError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 });
 
@@ -188,16 +180,16 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     transport.assertDone();
     const request = transport.requests[0];
     const requestBody = JSON.parse(request.body);
-    assertStrictEquals(
+    assert.strictEqual(
       request.url,
       "https://openrouter.ai/api/v1/chat/completions",
     );
-    assertStrictEquals(request.headers["authorization"], "Bearer sk-or-key");
-    assertStrictEquals(requestBody.max_completion_tokens, 8192);
-    assertStrictEquals(result.model.provider, "openrouter");
-    assertStrictEquals(result.text, "hello from openrouter");
+    assert.strictEqual(request.headers["authorization"], "Bearer sk-or-key");
+    assert.strictEqual(requestBody.max_completion_tokens, 8192);
+    assert.strictEqual(result.model.provider, "openrouter");
+    assert.strictEqual(result.text, "hello from openrouter");
     // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
-    assertAlmostEquals(result.usage.cost.total, 1.1136, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 1.1136, 5e-6);
   });
 
   it("calls xAI with its own bearer key, x-grok-conv-id header, and meters cost from the row", async () => {
@@ -250,17 +242,17 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     transport.assertDone();
     const request = transport.requests[0];
     const requestBody = JSON.parse(request.body);
-    assertStrictEquals(request.url, "https://api.x.ai/v1/chat/completions");
-    assertStrictEquals(
+    assert.strictEqual(request.url, "https://api.x.ai/v1/chat/completions");
+    assert.strictEqual(
       request.headers["authorization"],
       "Bearer sk-xai-test-key",
     );
-    assertStrictEquals(request.headers["x-grok-conv-id"], "session-12345");
-    assertStrictEquals(requestBody.max_completion_tokens, 8192);
-    assertStrictEquals(result.model.provider, "xai");
-    assertStrictEquals(result.text, "hello from grok 4.6");
+    assert.strictEqual(request.headers["x-grok-conv-id"], "session-12345");
+    assert.strictEqual(requestBody.max_completion_tokens, 8192);
+    assert.strictEqual(result.model.provider, "xai");
+    assert.strictEqual(result.text, "hello from grok 4.6");
     // 0.5M input * $2.0 + 0.1M output * $6.0 = $1.0 + $0.6 = $1.6
-    assertAlmostEquals(result.usage.cost.total, 1.6, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 1.6, 5e-6);
   });
 
   it("honors custom maxOutputTokens requested by caller up to catalog limit for hosted providers", async () => {
@@ -303,7 +295,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
 
     transport.assertDone();
     const requestBody = JSON.parse(transport.requests[0].body);
-    assertStrictEquals(requestBody.max_completion_tokens, 32768);
+    assert.strictEqual(requestBody.max_completion_tokens, 32768);
   });
 
   it("fails closed naming OPENROUTER_API_KEY — an OpenAI key does not satisfy it", async () => {
@@ -321,17 +313,20 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       fetchFn: transport.fetch,
     }).then(() => undefined, (error) => error);
 
-    assertInstanceOf(failure, HostedProviderCredentialMissingError);
-    assertStrictEquals(failure.envVar, "OPENROUTER_API_KEY");
-    assertStringIncludes(failure.message, "OPENROUTER_API_KEY");
-    assertNotMatch(failure.message, /sk-openai-key/);
-    assertStrictEquals(transport.requests.length, 0);
+    assert.ok(failure instanceof HostedProviderCredentialMissingError);
+    assert.strictEqual(failure.envVar, "OPENROUTER_API_KEY");
+    assert.ok(
+      failure.message.includes("OPENROUTER_API_KEY"),
+      `expected failure.message to include "OPENROUTER_API_KEY"`,
+    );
+    assert.doesNotMatch(failure.message, /sk-openai-key/);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("rejects a non-https OpenRouter base URL before inference", async () => {
     const env = new MapEnv({ OPENROUTER_API_KEY: "sk-or-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -346,7 +341,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("an openrouter row never sends its key to another provider's https host", async () => {
@@ -354,7 +349,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     // provider's https base URL must fail closed before any request leaves.
     const env = new MapEnv({ OPENROUTER_API_KEY: "sk-or-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -369,7 +364,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("rejects a pinned host on a non-default port before inference", async () => {
@@ -377,7 +372,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     // matches — the net grant and the contract both name port 443 only.
     const env = new MapEnv({ OPENROUTER_API_KEY: "sk-or-key" });
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -392,7 +387,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertStrictEquals(transport.requests.length, 0);
+    assert.strictEqual(transport.requests.length, 0);
   });
 
   it("accepts an explicit :443 on the pinned host — it is the default port", async () => {
@@ -425,10 +420,10 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertEquals(
+    assert.deepStrictEqual(
       transport.requests[0].url,
       "https://openrouter.ai:443/api/v1/chat/completions",
     );
-    assertStrictEquals(result.model.provider, "openrouter");
+    assert.strictEqual(result.model.provider, "openrouter");
   });
 });

@@ -3,7 +3,7 @@
 // into structured tool calls (streamed and buffered), and markup that does
 // not name an offered tool, or is not properly wrapped, stays prose.
 
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
@@ -50,7 +50,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(result.toolCalls, [
       {
         id: "text-tool-1",
         name: "read_file",
@@ -58,7 +58,7 @@ describe("runWorkbenchTurn streaming", () => {
       },
       { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
     ]);
-    assertStrictEquals(result.unparsedToolCallMarkup, undefined);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
   });
 
   it("withholds a standalone wrapper until the next delta confirms an offered tool", async () => {
@@ -94,8 +94,8 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "I'll check. ");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), "I'll check. ");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -129,10 +129,10 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
-    assertStrictEquals(result.stopReason, "tool_use");
+    assert.strictEqual(result.stopReason, "tool_use");
   });
 
   it("recovers multiple textual calls from JSON without warning metadata", async () => {
@@ -169,7 +169,7 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(result.toolCalls, [
       {
         id: "text-tool-1",
         name: "read_file",
@@ -177,7 +177,7 @@ describe("runWorkbenchTurn streaming", () => {
       },
       { id: "text-tool-2", name: "list_files", arguments: { path: "." } },
     ]);
-    assertStrictEquals(result.unparsedToolCallMarkup, undefined);
+    assert.strictEqual(result.unparsedToolCallMarkup, undefined);
   });
 
   it("does not recover a textual call to a tool that was not offered", async () => {
@@ -207,9 +207,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
-    assertStrictEquals(result.stopReason, "stop");
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
+    assert.strictEqual(result.stopReason, "stop");
   });
 
   it("does not recover an unwrapped textual call to an offered tool", async () => {
@@ -239,8 +239,8 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("does not recover an offered call with an unclosed wrapper", async () => {
@@ -270,8 +270,8 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(result.text, text);
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(result.text, text);
+    assert.strictEqual(result.toolCalls, undefined);
   });
 
   it("preserves unoffered function prose while recovering a later offered call", async () => {
@@ -302,9 +302,9 @@ describe("runWorkbenchTurn streaming", () => {
     transport.assertDone();
 
     const prose = "Example: <function=write_file>not available</function>.";
-    assertStrictEquals(deltas.join(""), `${prose} `);
-    assertStrictEquals(result.text, `${prose} `);
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), `${prose} `);
+    assert.strictEqual(result.text, `${prose} `);
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -336,9 +336,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertEquals(deltas, ["  before ", " after  "]);
-    assertStrictEquals(result.text, "  before  after  ");
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(deltas, ["  before ", " after  "]);
+    assert.strictEqual(result.text, "  before  after  ");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -354,7 +354,7 @@ describe("runWorkbenchTurn streaming", () => {
         )),
       },
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -369,8 +369,11 @@ describe("runWorkbenchTurn streaming", () => {
           onTextDelta: () => {},
           fetchFn: transport.fetch,
         }),
-      Error,
-      "Provider returned too many textual tool-call markers",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Provider returned too many textual tool-call markers",
+        ),
     );
     transport.assertDone();
   });
@@ -414,9 +417,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "before  between ");
-    assertStrictEquals(result.text, "before  between ");
-    assertEquals(result.toolCalls, [
+    assert.strictEqual(deltas.join(""), "before  between ");
+    assert.strictEqual(result.text, "before  between ");
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
   });
@@ -452,9 +455,9 @@ describe("runWorkbenchTurn streaming", () => {
     });
     transport.assertDone();
 
-    assertStrictEquals(deltas.join(""), "answer");
-    assertStrictEquals(result.text, "answer");
-    assertStrictEquals(result.toolCalls, undefined);
+    assert.strictEqual(deltas.join(""), "answer");
+    assert.strictEqual(result.text, "answer");
+    assert.strictEqual(result.toolCalls, undefined);
   });
 });
 
@@ -514,9 +517,9 @@ for (const streamed of [true, false]) {
       const result = await turn(transport, undefined);
       transport.assertDone();
 
-      assertStrictEquals(result.text, STORED_READ_FILE_REPLY);
-      assertStrictEquals(result.toolCalls, undefined);
-      assertEquals(result.unparsedToolCallMarkup, {
+      assert.strictEqual(result.text, STORED_READ_FILE_REPLY);
+      assert.strictEqual(result.toolCalls, undefined);
+      assert.deepStrictEqual(result.unparsedToolCallMarkup, {
         count: 1,
         countIsLowerBound: false,
       });
@@ -530,9 +533,9 @@ for (const streamed of [true, false]) {
       ]);
       transport.assertDone();
 
-      assertStrictEquals(result.text, STORED_BASH_REPLY);
-      assertStrictEquals(result.toolCalls, undefined);
-      assertEquals(result.unparsedToolCallMarkup, {
+      assert.strictEqual(result.text, STORED_BASH_REPLY);
+      assert.strictEqual(result.toolCalls, undefined);
+      assert.deepStrictEqual(result.unparsedToolCallMarkup, {
         count: 1,
         countIsLowerBound: false,
       });
@@ -543,12 +546,12 @@ for (const streamed of [true, false]) {
       const result = await turn(transport, [tool("read_file"), tool("bash")]);
       transport.assertDone();
 
-      assertEquals(result.toolCalls, [{
+      assert.deepStrictEqual(result.toolCalls, [{
         id: "text-tool-1",
         name: "bash",
         arguments: { command: STORED_BASH_COMMAND },
       }]);
-      assertStrictEquals(result.unparsedToolCallMarkup, undefined);
+      assert.strictEqual(result.unparsedToolCallMarkup, undefined);
     });
 
     it("flags only the unoffered block when an offered one is recovered", async () => {
@@ -558,12 +561,12 @@ for (const streamed of [true, false]) {
       const result = await turn(transport, [tool("read_file")]);
       transport.assertDone();
 
-      assertEquals(result.toolCalls, [{
+      assert.deepStrictEqual(result.toolCalls, [{
         id: "text-tool-1",
         name: "read_file",
         arguments: { path: "README.md" },
       }]);
-      assertEquals(result.unparsedToolCallMarkup, {
+      assert.deepStrictEqual(result.unparsedToolCallMarkup, {
         count: 1,
         countIsLowerBound: false,
       });

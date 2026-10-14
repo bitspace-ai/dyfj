@@ -2,7 +2,7 @@
 // fragment, and read limits; reader cancellation on failure; structured-call
 // count bounds; fragmented names; and dotted tool names across the wire.
 
-import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
@@ -46,23 +46,23 @@ describe("runWorkbenchTurn streaming", () => {
     const buffered = new ScriptedHttpTransport([{
       respond: () => Response.json(response),
     }]);
-    await assertRejects(
+    await assert.rejects(
       () => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
     buffered.assertDone();
 
     const streamed = sseTransport([response]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           ...common,
           onTextDelta: () => {},
           fetchFn: streamed.fetch,
         }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
     streamed.assertDone();
   });
@@ -88,25 +88,25 @@ describe("runWorkbenchTurn streaming", () => {
     const buffered = new ScriptedHttpTransport([{
       respond: () => fragmentedResponse(),
     }]);
-    await assertRejects(
+    await assert.rejects(
       () => runWorkbenchTurn({ ...common, fetchFn: buffered.fetch }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
     buffered.assertDone();
 
     const streamed = new ScriptedHttpTransport([{
       respond: () => fragmentedResponse(),
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           ...common,
           onTextDelta: () => {},
           fetchFn: streamed.fetch,
         }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
     streamed.assertDone();
   });
@@ -154,8 +154,8 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertStrictEquals(buffered.text, "ok");
-    assertStrictEquals(streamed.text, "ok");
+    assert.strictEqual(buffered.text, "ok");
+    assert.strictEqual(streamed.text, "ok");
     transport.assertDone();
   });
 
@@ -181,20 +181,20 @@ describe("runWorkbenchTurn streaming", () => {
       { respond: () => emptyReads() },
     ]);
 
-    await assertRejects(
+    await assert.rejects(
       () => runWorkbenchTurn({ ...common, fetchFn: transport.fetch }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           ...common,
           onTextDelta: () => {},
           fetchFn: transport.fetch,
         }),
-      Error,
-      LIMIT_MESSAGE,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(LIMIT_MESSAGE),
     );
     transport.assertDone();
   });
@@ -223,7 +223,7 @@ describe("runWorkbenchTurn streaming", () => {
     // The guard timer is cleared afterwards so the op sanitizer stays quiet.
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await assertRejects(
+      await assert.rejects(
         () =>
           Promise.race([
             rejection,
@@ -234,8 +234,8 @@ describe("runWorkbenchTurn streaming", () => {
               );
             }),
           ]),
-        Error,
-        LIMIT_MESSAGE,
+        (error: unknown) =>
+          error instanceof Error && error.message.includes(LIMIT_MESSAGE),
       );
     } finally {
       clearTimeout(timer);
@@ -261,10 +261,13 @@ describe("runWorkbenchTurn streaming", () => {
     const tooMany = sseTransport([{
       choices: [{ delta: { tool_calls: calls } }],
     }]);
-    await assertRejects(
+    await assert.rejects(
       () => runWorkbenchTurn({ ...common, fetchFn: tooMany.fetch }),
-      Error,
-      "Provider returned too many structured tool calls",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Provider returned too many structured tool calls",
+        ),
     );
     tooMany.assertDone();
 
@@ -278,10 +281,13 @@ describe("runWorkbenchTurn streaming", () => {
         },
       }],
     }]);
-    await assertRejects(
+    await assert.rejects(
       () => runWorkbenchTurn({ ...common, fetchFn: longName.fetch }),
-      Error,
-      "Provider returned too many structured tool calls",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Provider returned too many structured tool calls",
+        ),
     );
     longName.assertDone();
   });
@@ -310,7 +316,7 @@ describe("runWorkbenchTurn streaming", () => {
       respond: () => new Response(body),
     }]);
 
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -320,10 +326,13 @@ describe("runWorkbenchTurn streaming", () => {
           onTextDelta: () => {},
           fetchFn: transport.fetch,
         }),
-      Error,
-      "Provider returned too many structured tool calls",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "Provider returned too many structured tool calls",
+        ),
     );
-    assertStrictEquals(cancelled, true);
+    assert.strictEqual(cancelled, true);
     transport.assertDone();
   });
 
@@ -341,7 +350,7 @@ describe("runWorkbenchTurn streaming", () => {
       respond: () => new Response(body),
     }]);
 
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -353,7 +362,7 @@ describe("runWorkbenchTurn streaming", () => {
         }),
       SyntaxError,
     );
-    assertStrictEquals(cancelled, true);
+    assert.strictEqual(cancelled, true);
     transport.assertDone();
   });
 
@@ -387,7 +396,7 @@ describe("runWorkbenchTurn streaming", () => {
       respond: () => new Response(body),
     }]);
 
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -402,10 +411,11 @@ describe("runWorkbenchTurn streaming", () => {
           onTextDelta: () => {},
           fetchFn: transport.fetch,
         }),
-      Error,
-      "Provider returned oversized tool arguments",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Provider returned oversized tool arguments"),
     );
-    assertStrictEquals(cancelled, true);
+    assert.strictEqual(cancelled, true);
     transport.assertDone();
   });
 
@@ -447,7 +457,7 @@ describe("runWorkbenchTurn streaming", () => {
       fetchFn: transport.fetch,
     });
 
-    assertEquals(result.toolCalls, [{
+    assert.deepStrictEqual(result.toolCalls, [{
       id: "tc-3",
       name: "write_file",
       arguments: { path: "notes.md" },
@@ -494,9 +504,9 @@ describe("runWorkbenchTurn streaming", () => {
     const sentBody: { tools?: Array<{ function: { name: string } }> } = JSON
       .parse(transport.requests[0].body);
     // Request carried the sanitized name (OpenAI rejects the dotted form)...
-    assertStrictEquals(sentBody.tools?.[0].function.name, "memory_read");
+    assert.strictEqual(sentBody.tools?.[0].function.name, "memory_read");
     // ...and the response mapped back to the registry name for dispatch.
-    assertEquals(result.toolCalls, [
+    assert.deepStrictEqual(result.toolCalls, [
       { id: "c1", name: "memory.read", arguments: { slug: "x" } },
     ]);
     transport.assertDone();

@@ -1,12 +1,8 @@
 // Hosted OpenAI-compatible metering through runWorkbenchTurn: catalog rates,
 // reasoning-token splits, and how streamed usage frames cover later output.
 
-import {
-  assert,
-  assertAlmostEquals,
-  assertObjectMatch,
-  assertStrictEquals,
-} from "@std/assert";
+import { assertAlmostEqual } from "../../../testing/assertions/almost-equal.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
@@ -68,9 +64,9 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(result.model.slug, "deepseek/deepseek-chat");
+    assert.strictEqual(result.model.slug, "deepseek/deepseek-chat");
     // 0.1M in * 0.2574 + 0.05M out * 1.0287 = 0.02574 + 0.051435 = 0.077175
-    assertAlmostEquals(result.usage.cost.total, 0.077175, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 0.077175, 5e-6);
   });
 
   it("meters Meta Muse Spark 1.2 on OpenRouter with exact rates", async () => {
@@ -110,9 +106,9 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(result.model.slug, "meta/muse-spark-1.2");
+    assert.strictEqual(result.model.slug, "meta/muse-spark-1.2");
     // 0.2M in * 1.25 + 0.01M out * 4.25 = 0.25 + 0.0425 = 0.2925
-    assertAlmostEquals(result.usage.cost.total, 0.2925, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 0.2925, 5e-6);
   });
 
   it("meters Grok 4.6 on OpenRouter with pass-through rates", async () => {
@@ -153,9 +149,9 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(result.model.slug, "x-ai/grok-4.6");
+    assert.strictEqual(result.model.slug, "x-ai/grok-4.6");
     // 0.05M in * 2.0 + 0.01M out * 6.0 = 0.10 + 0.06 = 0.16
-    assertAlmostEquals(result.usage.cost.total, 0.16, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 0.16, 5e-6);
   });
 
   it("meters buffered structured tool calls when usage is absent", async () => {
@@ -192,11 +188,11 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertStrictEquals(
+    assert.strictEqual(
       result.usage.output,
       Math.ceil((name.length + argumentsJson.length) / 4),
     );
-    assert(result.usage.cost.total > 0, "cost should be positive");
+    assert.ok(result.usage.cost.total > 0, "cost should be positive");
   });
 
   it("splits provider-reported reasoning from visible output without double charging", async () => {
@@ -218,8 +214,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 10, output: 2, reasoning: 7 });
-    assertAlmostEquals(
+    assert.partialDeepStrictEqual(result.usage, {
+      input: 10,
+      output: 2,
+      reasoning: 7,
+    });
+    assertAlmostEqual(
       result.usage.cost.total,
       (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
       5e-13,
@@ -258,8 +258,8 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { output: 10, reasoning: 500 });
-    assertObjectMatch(result.timings ?? {}, {
+    assert.partialDeepStrictEqual(result.usage, { output: 10, reasoning: 500 });
+    assert.partialDeepStrictEqual(result.timings ?? {}, {
       generationMs: 100,
       timePerOutputTokenMs: 11,
     });
@@ -284,8 +284,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 10, output: 9, reasoning: 0 });
-    assertAlmostEquals(
+    assert.partialDeepStrictEqual(result.usage, {
+      input: 10,
+      output: 9,
+      reasoning: 0,
+    });
+    assertAlmostEqual(
       result.usage.cost.total,
       (10 * 0.2688 + 9 * 0.8448) / 1_000_000,
       5e-13,
@@ -308,7 +312,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
 
     transport.assertDone();
     const requestBody = JSON.parse(transport.requests[0].body);
-    assertStrictEquals(requestBody.max_completion_tokens, 1024);
+    assert.strictEqual(requestBody.max_completion_tokens, 1024);
   });
 
   it("estimates streamed plaintext reasoning when cancellation precedes usage", async () => {
@@ -349,12 +353,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const reasoningTokens = estimateTextTokens(reasoning);
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: "",
       stopReason: "aborted",
       usage: { input, output: 0, reasoning: reasoningTokens },
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (input * 0.2688 + reasoningTokens * 0.8448) / 1_000_000,
       5e-13,
@@ -403,12 +407,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const reasoningTokens = estimateTextTokens(reasoning);
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: visible,
       stopReason: "aborted",
       usage: { input: 7, output: 8, reasoning: reasoningTokens },
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (7 * 0.2688 + (8 + reasoningTokens) * 0.8448) / 1_000_000,
       5e-13,
@@ -458,7 +462,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: { input: 7, output: 2, reasoning: 7 },
     });
@@ -510,11 +514,11 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: { input: 7, output: 0, reasoning: 101 },
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (7 * 0.2688 + 101 * 0.8448) / 1_000_000,
       5e-13,
@@ -553,11 +557,11 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const result = await pending;
 
     transport.assertDone();
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: { input: 7, output: 0, reasoning: 7 },
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (7 * 0.2688 + 7 * 0.8448) / 1_000_000,
       5e-13,
@@ -605,12 +609,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, {
+    assert.partialDeepStrictEqual(result.usage, {
       input: 7,
       output: 0,
       reasoning: 101,
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (7 * 0.2688 + 101 * 0.8448) / 1_000_000,
       5e-13,
@@ -650,7 +654,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 7, output: 101 });
+    assert.partialDeepStrictEqual(result.usage, { input: 7, output: 101 });
   });
 
   it("adds post-snapshot text to the highest cumulative usage total", async () => {
@@ -686,7 +690,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { input: 7, output: 200 });
+    assert.partialDeepStrictEqual(result.usage, { input: 7, output: 200 });
   });
 
   it("trusts a final completion total without a repeated reasoning split", async () => {
@@ -735,12 +739,12 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, {
+    assert.partialDeepStrictEqual(result.usage, {
       input: 7,
       output: 0,
       reasoning: 10,
     });
-    assertAlmostEquals(
+    assertAlmostEqual(
       result.usage.cost.total,
       (7 * 0.2688 + 10 * 0.8448) / 1_000_000,
       5e-13,
@@ -790,14 +794,14 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
 
     transport.assertDone();
     // prompt_tokens includes cache traffic; input is the uncached remainder.
-    assertObjectMatch(result.usage, {
+    assert.partialDeepStrictEqual(result.usage, {
       input: 30_000,
       cacheRead: 60_000,
       cacheWrite: 10_000,
       output: 1_000,
     });
     // 0.03M * 1 + 0.06M * 0.1 + 0.01M * 1.25 + 0.001M * 2 = 0.0505
-    assertAlmostEquals(result.usage.cost.total, 0.0505, 5e-9);
+    assertAlmostEqual(result.usage.cost.total, 0.0505, 5e-9);
   });
 
   it("prices cache traffic at the input rate when the row has no cache price", async () => {
@@ -818,9 +822,12 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, { cacheRead: 60_000, cacheWrite: 10_000 });
+    assert.partialDeepStrictEqual(result.usage, {
+      cacheRead: 60_000,
+      cacheWrite: 10_000,
+    });
     // Same total as an uncached call: 0.1M * 1 + 0.001M * 2 = 0.102
-    assertAlmostEquals(result.usage.cost.total, 0.102, 5e-9);
+    assertAlmostEqual(result.usage.cost.total, 0.102, 5e-9);
   });
 
   it("never reports more cache traffic than prompt tokens", async () => {
@@ -843,7 +850,7 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, {
+    assert.partialDeepStrictEqual(result.usage, {
       input: 0,
       cacheRead: 40,
       cacheWrite: 10,
@@ -879,12 +886,14 @@ describe("runWorkbenchTurn hosted prompt-cache metering", () => {
     });
 
     transport.assertDone();
-    assertObjectMatch(result.usage, {
+    assert.partialDeepStrictEqual(result.usage, {
       input: 30_000,
       cacheRead: 60_000,
       cacheWrite: 10_000,
     });
     const body = JSON.parse(transport.requests[0].body);
-    assertObjectMatch(body, { stream_options: { include_usage: true } });
+    assert.partialDeepStrictEqual(body, {
+      stream_options: { include_usage: true },
+    });
   });
 });
