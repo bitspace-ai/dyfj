@@ -59,15 +59,16 @@ export function normalizeFrictionContext(
 }
 
 export class FrictionStageError extends Error {
-  constructor(
-    public readonly stage:
-      | "configuration"
-      | "get_issue"
-      | "comment read"
-      | "comment write",
-    public readonly publicReason: string,
-  ) {
+  public readonly stage:
+    | "configuration"
+    | "get_issue"
+    | "comment read"
+    | "comment write";
+  public readonly publicReason: string;
+  constructor(stage: FrictionStageError["stage"], publicReason: string) {
     super(`${stage} failed: ${publicReason}`);
+    this.stage = stage;
+    this.publicReason = publicReason;
     this.name = "FrictionStageError";
   }
 }

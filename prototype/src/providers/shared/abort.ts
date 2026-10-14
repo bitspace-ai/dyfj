@@ -11,11 +11,10 @@ export function isAbortFromSignal(
 }
 
 export class ProviderRequestAbortedError extends Error {
-  constructor(
-    public readonly elapsedMs: number,
-    options: { cause: unknown },
-  ) {
+  public readonly elapsedMs: number;
+  constructor(elapsedMs: number, options: { cause: unknown }) {
     super("provider request aborted", options);
+    this.elapsedMs = elapsedMs;
     this.name = "ProviderRequestAbortedError";
   }
 }

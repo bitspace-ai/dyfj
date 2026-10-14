@@ -35,28 +35,36 @@ function errorUrlField(raw: string): string {
 }
 
 export class WorkbenchModelNotFoundError extends DomainError {
-  constructor(public readonly slug: string) {
+  public readonly slug: string;
+  constructor(slug: string) {
     super(`Model not found: ${errorField(slug)}`);
+    this.slug = slug;
     this.name = "WorkbenchModelNotFoundError";
   }
 }
 
 export class WorkbenchModelFastSpeedUnsupportedError extends DomainError {
-  constructor(public readonly slug: string) {
+  public readonly slug: string;
+  constructor(slug: string) {
     super(`Model "${errorField(slug)}" does not support fast speed tier`);
+    this.slug = slug;
     this.name = "WorkbenchModelFastSpeedUnsupportedError";
   }
 }
 
 export class HostedInferenceRequiresProviderError extends DomainError {
-  constructor(public readonly slug: string) {
+  public readonly slug: string;
+  constructor(slug: string) {
     super(`Unsupported hosted inference provider: ${errorField(slug)}`);
+    this.slug = slug;
     this.name = "HostedInferenceRequiresProviderError";
   }
 }
 
 export class HostedProviderCredentialMissingError extends DomainError {
-  constructor(public readonly slug: string, public readonly envVar: string) {
+  public readonly slug: string;
+  public readonly envVar: string;
+  constructor(slug: string, envVar: string) {
     super(
       `Hosted provider credential missing for ${errorField(slug)}: ` +
         `${errorField(envVar)} is not in the runtime's environment. ` +
@@ -64,36 +72,48 @@ export class HostedProviderCredentialMissingError extends DomainError {
         `for it, or set it or declare it under [secrets], then restart the ` +
         `runtime (\`dyfj stop\`, then start it).`,
     );
+    this.slug = slug;
+    this.envVar = envVar;
     this.name = "HostedProviderCredentialMissingError";
   }
 }
 
 export class WorkbenchHostedProviderBaseUrlError extends DomainError {
-  constructor(public readonly slug: string, public readonly baseUrl: string) {
+  public readonly slug: string;
+  public readonly baseUrl: string;
+  constructor(slug: string, baseUrl: string) {
     super(
       `Hosted provider baseUrl is not the provider's https endpoint for ` +
         `${errorField(slug)}: ${errorUrlField(baseUrl)}`,
     );
+    this.slug = slug;
+    this.baseUrl = baseUrl;
     this.name = "WorkbenchHostedProviderBaseUrlError";
   }
 }
 
 export class WorkbenchLocalProviderBaseUrlError extends DomainError {
-  constructor(public readonly slug: string, public readonly baseUrl: string) {
+  public readonly slug: string;
+  public readonly baseUrl: string;
+  constructor(slug: string, baseUrl: string) {
     super(
       `Local provider baseUrl is not loopback-only for ${errorField(slug)}`,
     );
+    this.slug = slug;
+    this.baseUrl = baseUrl;
     this.name = "WorkbenchLocalProviderBaseUrlError";
   }
 }
 
 export class WorkbenchModelNotRoutableError extends DomainError {
-  constructor(public readonly ref: string) {
+  public readonly ref: string;
+  constructor(ref: string) {
     super(
       `Model not routable [${errorField(ref)}]: no catalog pricing row. ` +
         `Paid spend cannot be estimated, recorded, or bounded without prices; ` +
         `set cost_input and cost_output on the models row to route it.`,
     );
+    this.ref = ref;
     this.name = "WorkbenchModelNotRoutableError";
   }
 }
@@ -123,16 +143,22 @@ export type ProviderFailureKind =
  * `turnFailed` frame and the durable `error` event all say what to do next.
  */
 export abstract class ProviderFailureError extends DomainError {
+  // Declared ahead of `provider` and `slug`, the own-property order the
+  // former constructor parameter properties gave.
+  readonly kind: ProviderFailureKind;
+  /** The HTTP status the provider answered with; none when it never did. */
+  readonly status: number | undefined;
   readonly provider: string;
   readonly slug: string;
   constructor(
-    readonly kind: ProviderFailureKind,
+    kind: ProviderFailureKind,
     target: ProviderTarget,
-    /** The HTTP status the provider answered with; none when it never did. */
-    readonly status: number | undefined,
+    status: number | undefined,
     message: string,
   ) {
     super(message);
+    this.kind = kind;
+    this.status = status;
     this.provider = target.provider;
     this.slug = target.slug;
   }
@@ -153,10 +179,11 @@ function targetField(target: ProviderTarget): string {
  * body.
  */
 export class ProviderContextExceededError extends ProviderFailureError {
+  public readonly report: { requestedTokens?: number; limitTokens?: number };
   constructor(
     target: ProviderTarget,
     status: number,
-    public readonly report: { requestedTokens?: number; limitTokens?: number },
+    report: { requestedTokens?: number; limitTokens?: number },
   ) {
     const counts = report.requestedTokens !== undefined &&
         report.limitTokens !== undefined
@@ -176,6 +203,7 @@ export class ProviderContextExceededError extends ProviderFailureError {
         `${counts}). Use a model with a larger context window, or start a ` +
         `new session.`,
     );
+    this.report = report;
     this.name = "ProviderContextExceededError";
   }
 }
@@ -212,10 +240,11 @@ export type ProviderRateLimitReason = "rate_limit" | "quota" | "overloaded";
 
 /** The provider is throttling, out of quota, or overloaded. */
 export class ProviderRateLimitedError extends ProviderFailureError {
+  public readonly reason: ProviderRateLimitReason;
   constructor(
     target: ProviderTarget,
     status: number,
-    public readonly reason: ProviderRateLimitReason,
+    reason: ProviderRateLimitReason,
   ) {
     // A body that says "quota" may be a per-minute allowance that resets on
     // its own (Gemini's free tier) or an account out of credit; it does not
@@ -240,6 +269,7 @@ export class ProviderRateLimitedError extends ProviderFailureError {
       status,
       `${condition}, or switch to another model with /model.`,
     );
+    this.reason = reason;
     this.name = "ProviderRateLimitedError";
   }
 }
@@ -278,9 +308,10 @@ export type ProviderUnreachableReason =
  * resolve, the network failed, or the header deadline passed in silence.
  */
 export class ProviderUnreachableError extends ProviderFailureError {
+  public readonly reason: ProviderUnreachableReason;
   constructor(
     target: ProviderTarget,
-    public readonly reason: ProviderUnreachableReason,
+    reason: ProviderUnreachableReason,
     budget?: { timeoutMs: number; mode: "streaming" | "buffered" },
   ) {
     const field = targetField(target);
@@ -304,6 +335,7 @@ export class ProviderUnreachableError extends ProviderFailureError {
         : `Provider unreachable: the connection to ${field} failed. Check ` +
           `the network and the registry's base URL.`,
     );
+    this.reason = reason;
     this.name = "ProviderUnreachableError";
   }
 }

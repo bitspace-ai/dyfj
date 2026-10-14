@@ -213,20 +213,19 @@ type LiveSdkSession = {
 };
 
 export class AcpRunnerError extends Error {
-  constructor(
-    message: string,
-    public readonly phase:
-      | "spawn"
-      | "initialize"
-      | "authenticate"
-      | "session"
-      | "prompt"
-      | "cancel"
-      | "permission"
-      | "protocol"
-      | "terminate",
-  ) {
+  public readonly phase:
+    | "spawn"
+    | "initialize"
+    | "authenticate"
+    | "session"
+    | "prompt"
+    | "cancel"
+    | "permission"
+    | "protocol"
+    | "terminate";
+  constructor(message: string, phase: AcpRunnerError["phase"]) {
     super(message);
+    this.phase = phase;
     this.name = "AcpRunnerError";
   }
 }
@@ -295,13 +294,15 @@ const MAX_AGENT_NAME_BYTES = 128;
 const MAX_AGENT_VERSION_BYTES = 64;
 
 export class ActivePromptDeadline {
+  private readonly now: () => number;
   #remainingMs: number;
   #activeSince: number | undefined;
 
   constructor(
     timeoutMs: number,
-    private readonly now: () => number = performance.now.bind(performance),
+    now: () => number = performance.now.bind(performance),
   ) {
+    this.now = now;
     this.#remainingMs = timeoutMs;
     this.#activeSince = this.now();
   }

@@ -456,10 +456,12 @@ export function codeMask(
 }
 
 class Source {
+  readonly text: string;
   readonly mask: Uint8Array;
   /** Regexes read after a same-line `}`, where division was also possible. */
   readonly ambiguous: [start: number, end: number][] = [];
-  constructor(readonly text: string) {
+  constructor(text: string) {
+    this.text = text;
     this.mask = codeMask(text, this.ambiguous);
   }
   isCode(i: number): boolean {

@@ -70,16 +70,16 @@ export class PaidEscalationDeclinedError extends DomainError {
  * default, whose window the session's history may not fit.
  */
 export class SessionModelUnavailableError extends DomainError {
-  constructor(
-    public readonly slug: string,
-    public readonly why: "not in the catalog" | "unpriced",
-  ) {
+  public readonly slug: string;
+  public readonly why: "not in the catalog" | "unpriced";
+  constructor(slug: string, why: "not in the catalog" | "unpriced") {
     const safeSlug = sanitizeBoundaryText(slug, MAX_REASON_FIELD_BYTES);
     super(
       `This session last ran on "${safeSlug}", which is no longer routable ` +
         `(${why}); name a model to resume it on`,
     );
     this.slug = safeSlug;
+    this.why = why;
     this.name = "SessionModelUnavailableError";
   }
 }
@@ -90,7 +90,8 @@ export class SessionModelUnavailableError extends DomainError {
  * rather than route the runner's conversation to an older native model.
  */
 export class SessionRunnerNotRestorableError extends DomainError {
-  constructor(public readonly profile: string) {
+  public readonly profile: string;
+  constructor(profile: string) {
     const safeProfile = sanitizeBoundaryText(profile, MAX_REASON_FIELD_BYTES);
     super(
       `This session last ran on the external agent runner "${safeProfile}", ` +
@@ -112,16 +113,17 @@ export class SessionRunnerNotRestorableError extends DomainError {
  * and messages can quote it.
  */
 export class ContextCompressionPersistenceUncertainError extends DomainError {
-  constructor(
-    public readonly writeErrorKind: string,
-    public readonly probeErrorKind: string,
-  ) {
+  public readonly writeErrorKind: string;
+  public readonly probeErrorKind: string;
+  constructor(writeErrorKind: string, probeErrorKind: string) {
     super(
       "Context compression persistence is uncertain: the event write failed " +
         `(${writeErrorKind}) and the durability probe also failed ` +
         `(${probeErrorKind}); failing the turn rather than risking a live ` +
         "transcript that diverges from resume",
     );
+    this.writeErrorKind = writeErrorKind;
+    this.probeErrorKind = probeErrorKind;
     this.name = "ContextCompressionPersistenceUncertainError";
   }
 }

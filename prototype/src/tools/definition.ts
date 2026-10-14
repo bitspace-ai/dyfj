@@ -189,8 +189,10 @@ export type ConfirmToolApproval = (
 ) => Promise<ToolApprovalVerdict>;
 
 export class CommandExecutionError extends Error {
-  constructor(public readonly publicReason: string) {
+  public readonly publicReason: string;
+  constructor(publicReason: string) {
     super(publicReason);
+    this.publicReason = publicReason;
     this.name = "CommandExecutionError";
   }
 }
