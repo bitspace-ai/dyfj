@@ -7,6 +7,7 @@
 // @std/toml; the fixtures stay as smol-toml golden cases.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { test } from "node:test";
 import { parse as parseStd } from "@std/toml";
 import { parse as parseSmol } from "smol-toml";
 import { frictionConfig } from "../../testing/golden/harness.ts";
@@ -42,7 +43,7 @@ function plain(value: unknown): unknown {
 }
 
 for (const [name, load] of Object.entries(CASES)) {
-  Deno.test(`TOML parity: ${name} parses identically under both parsers`, async () => {
+  test(`TOML parity: ${name} parses identically under both parsers`, async () => {
     const raw = await load();
     assert.deepStrictEqual(plain(parseSmol(raw)), plain(parseStd(raw)));
   });

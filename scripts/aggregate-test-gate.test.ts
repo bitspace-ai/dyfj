@@ -24,6 +24,7 @@ import {
   REQUIRED_CHECK_IDS,
   runGate,
 } from "./aggregate-test-gate.ts";
+import { test } from "node:test";
 import { LANE_ENV_NAMES } from "../prototype/scripts/lane-supervision.ts";
 import { MANDATORY_CHECK_IDS } from "./assurance-receipt.ts";
 import { fileURLToPath } from "node:url";
@@ -79,6 +80,27 @@ Deno.test("aggregate gate source does not advertise a stale direct entrypoint", 
   if (source.startsWith("#!")) {
     throw new Error("aggregate gate retained a direct-execution shebang");
   }
+});
+
+test("the npm install precondition runs first, read-only, in full and fast", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lane = lanes[0];
+  if (!lane) throw new Error("no production lanes");
+  assertEquals(lane.label, "npm install precondition (node_modules)");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.command, "/fixtures/runtime/deno");
+  assertEquals(lane.cwd, "/repo");
+  // It checks what npm installed; it never installs, so it holds a read
+  // grant on the package directory and nothing else.
+  assertEquals(lane.args, [
+    "run",
+    "--no-prompt",
+    "--allow-read=/repo/prototype",
+    "scripts/node-modules-check.ts",
+    "/repo/prototype",
+  ]);
+  assertEquals(FAST_LANE_LABELS[0], lane.label);
+  assertEquals(DOCS_ONLY_LANE_LABELS.includes(lane.label), false);
 });
 
 Deno.test("aggregate lanes include the retired-surface scan", () => {

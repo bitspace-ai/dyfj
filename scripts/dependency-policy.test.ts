@@ -17,6 +17,10 @@ import {
 import { repoRootFromMeta, trackedFiles } from "./scan-lib.ts";
 import { formatHits } from "./public-safety-scan.ts";
 import { headCommit } from "./subject-check.ts";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -322,14 +326,14 @@ function npmRules(
   }).map((hit) => hit.rule);
 }
 
-Deno.test("an exactly pinned npm package with its lockfile and npmrc passes", () => {
+test("an exactly pinned npm package with its lockfile and npmrc passes", () => {
   assertEquals(
     npmRules(packageJson({ zod: "4.6.5", "@scope/pkg": "1.0.0-rc.1" })),
     [],
   );
 });
 
-Deno.test("a non-exact npm version range fails", () => {
+test("a non-exact npm version range fails", () => {
   for (
     const range of [
       "^4.6.5",
@@ -362,7 +366,7 @@ Deno.test("a non-exact npm version range fails", () => {
   }
 });
 
-Deno.test("an npm range hit names the line of the offending entry", () => {
+test("an npm range hit names the line of the offending entry", () => {
   const hits = scanNpmPackage(
     PKG,
     packageJson({ ulid: "3.0.2", zod: "^4.6.5" }),
@@ -375,13 +379,13 @@ Deno.test("an npm range hit names the line of the offending entry", () => {
   }]);
 });
 
-Deno.test("a package.json without a tracked lockfile fails", () => {
+test("a package.json without a tracked lockfile fails", () => {
   assertEquals(npmRules(packageJson({ zod: "4.6.5" }), { lockfile: false }), [
     "dependency.policy/npm-missing-lockfile",
   ]);
 });
 
-Deno.test("install scripts must be disabled by a tracked npmrc", () => {
+test("install scripts must be disabled by a tracked npmrc", () => {
   const content = packageJson({ zod: "4.6.5" });
   for (
     const npmrc of [
@@ -406,7 +410,7 @@ Deno.test("install scripts must be disabled by a tracked npmrc", () => {
   );
 });
 
-Deno.test("the npm release-age floor must hold at install time", () => {
+test("the npm release-age floor must hold at install time", () => {
   const content = packageJson({ zod: "4.6.5" });
   for (
     const npmrc of [
@@ -425,7 +429,7 @@ Deno.test("the npm release-age floor must hold at install time", () => {
   );
 });
 
-Deno.test("an unparseable package.json fails closed", () => {
+test("an unparseable package.json fails closed", () => {
   for (const content of ["{", "[]", '{"dependencies": ["zod"]}']) {
     assertEquals(npmRules(content), [
       "dependency.policy/npm-unparsed-manifest",
@@ -952,7 +956,7 @@ Deno.test("the committed manifest keeps the signature gap a known unknown", asyn
   }
 });
 
-Deno.test("the committed manifest declares the npm surface under the registry floor", async () => {
+test("the committed manifest declares the npm surface under the registry floor", async () => {
   const load = await loadManifest(repoRootFromMeta());
   assertEquals(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
@@ -969,25 +973,25 @@ Deno.test("the committed manifest declares the npm surface under the registry fl
     class: "registry-minimum-hours",
     minimum_hours: 72,
   });
-  // deno.workspace keeps the Deno files only.
+  // deno.workspace keeps the deno.json files and deno.lock only.
   const deno = surfaces.find((entry) => entry.id === "deno.workspace");
   assertEquals(deno?.manifest_paths, ["deno.json", "prototype/deno.json"]);
   assertEquals(deno?.lock_paths, ["prototype/deno.lock"]);
 });
 
-Deno.test("tracked npm packages are checked for lockfile and npmrc", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-npm-" });
+test("tracked npm packages are checked for lockfile and npmrc", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-npm-"));
   try {
     await gitIn(dir, ["init", "-q"]);
-    await Deno.mkdir(`${dir}/pkg`);
-    await Deno.writeTextFile(
+    await mkdir(`${dir}/pkg`);
+    await writeFile(
       `${dir}/pkg/package.json`,
       '{"dependencies": {"zod": "4.6.5"}}\n',
     );
     // The npmrc and lockfile exist on disk but are untracked: only tracked
     // files count.
-    await Deno.writeTextFile(`${dir}/pkg/.npmrc`, "ignore-scripts=true\n");
-    await Deno.writeTextFile(`${dir}/pkg/package-lock.json`, "{}\n");
+    await writeFile(`${dir}/pkg/.npmrc`, "ignore-scripts=true\n");
+    await writeFile(`${dir}/pkg/package-lock.json`, "{}\n");
     await gitIn(dir, ["add", "pkg/package.json"]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
     const hits = await dependencyPolicyHits(dir);
@@ -1001,6 +1005,6 @@ Deno.test("tracked npm packages are checked for lockfile and npmrc", async () =>
       ],
     );
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });

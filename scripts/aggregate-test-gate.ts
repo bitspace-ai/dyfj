@@ -628,6 +628,26 @@ export function productionLanes(
     env: binding,
   });
   return [
+    {
+      // npm install precondition: the test lanes run against the node_modules
+      // npm installed, so a missing or stale install fails here first, with
+      // the remedy. Under the aggregate check id because it judges this
+      // checkout's installed state, not the committed tree that
+      // dependency.policy validates from a clean checkout. It only reads: the
+      // gate never runs npm and holds no network grant for it.
+      label: "npm install precondition (node_modules)",
+      checkId: "test.aggregate",
+      command: denoExecutable,
+      commandLabel: "deno",
+      args: [
+        "run",
+        "--no-prompt",
+        `--allow-read=${prototype}`,
+        "scripts/node-modules-check.ts",
+        prototype,
+      ],
+      cwd: root,
+    },
     subjectLane("subject.resolve"),
     subjectLane("subject.digest"),
     {
@@ -754,6 +774,7 @@ export function productionLanes(
         "scripts/subject-check.test.ts",
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
+        "scripts/node-modules-check.test.ts",
         "scripts/arch-imports.test.ts",
         "scripts/runtime-neutral.test.ts",
         "scripts/erasable-syntax.test.ts",
@@ -987,6 +1008,7 @@ export function productionLanes(
 // check runs; only the heavyweight suite lanes are deferred to the full
 // gate, which stays the single repository green bar.
 export const FAST_LANE_LABELS: readonly string[] = [
+  "npm install precondition (node_modules)",
   "Subject resolution",
   "Subject digest recomputation",
   "Retired-surface scan",
