@@ -429,6 +429,25 @@ test("the npm release-age floor must hold at install time", () => {
   );
 });
 
+test("an npm overrides field fails closed at its line", () => {
+  // Overrides replace versions anywhere in the tree, so an exact pin in
+  // dependencies proves nothing about what they select. They are rejected
+  // until a policy for them exists.
+  const content = JSON.stringify(
+    { dependencies: { zod: "4.6.5" }, overrides: { ulid: "3.0.2" } },
+    null,
+    2,
+  );
+  assertEquals(
+    scanNpmPackage(PKG, content, { lockfile: true, npmrc: NPMRC }),
+    [{
+      path: PKG,
+      line: 5,
+      rule: "dependency.policy/npm-overrides-unsupported",
+    }],
+  );
+});
+
 test("an unparseable package.json fails closed", () => {
   for (const content of ["{", "[]", '{"dependencies": ["zod"]}']) {
     assertEquals(npmRules(content), [

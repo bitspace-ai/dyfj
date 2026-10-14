@@ -17,7 +17,8 @@
  * - `core/rust-toolchain.toml` must pin an exact toolchain version, so the
  *   Rust lanes build with the same compiler everywhere.
  * - Every tracked `package.json` must pin each dependency to an exact
- *   version, sit beside a tracked `package-lock.json`, and sit beside a
+ *   version, declare no `overrides` (rejected until a policy for them
+ *   exists), sit beside a tracked `package-lock.json`, and sit beside a
  *   tracked `.npmrc` that disables install scripts and holds npm's release
  *   age at the 72-hour floor (`min-release-age` of at least 3 days), so the
  *   floor holds for anyone installing, not only in the operator's review.
@@ -1181,6 +1182,17 @@ export function scanNpmPackage(
   }
   if (!isPlainObject(parsed)) {
     return [at(1, "dependency.policy/npm-unparsed-manifest")];
+  }
+  // Overrides replace versions anywhere in the tree, so the exact pins below
+  // prove nothing about what they select. Rejected until a policy for them
+  // exists.
+  if (parsed.overrides !== undefined) {
+    hits.push(
+      at(
+        entryLine(content, "overrides"),
+        "dependency.policy/npm-overrides-unsupported",
+      ),
+    );
   }
   for (const field of NPM_DEPENDENCY_FIELDS) {
     const entries = parsed[field];

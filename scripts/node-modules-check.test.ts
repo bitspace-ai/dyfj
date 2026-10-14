@@ -33,6 +33,9 @@ function hidden(packages: Record<string, Record<string, unknown>>): string {
   return JSON.stringify({ name: "fixture", lockfileVersion: 3, packages });
 }
 
+// Every installed package's directory holds its package.json.
+const present = (_path: string) => true;
+
 const LOCKED = {
   "node_modules/zod": { version: "4.6.5" },
   "node_modules/a/node_modules/b": { version: "1.0.0" },
@@ -50,13 +53,13 @@ test("node_modules matching the lockfile is current", () => {
   };
   // An optional package for another platform is not installed, and that is
   // not staleness.
-  assertEquals(nodeModulesState(lockfile(LOCKED), hidden(installed)), {
+  assertEquals(nodeModulesState(lockfile(LOCKED), hidden(installed), present), {
     state: "current",
   });
 });
 
 test("missing node_modules is reported as missing", () => {
-  assertEquals(nodeModulesState(lockfile(LOCKED), undefined), {
+  assertEquals(nodeModulesState(lockfile(LOCKED), undefined, present), {
     state: "missing",
   });
 });
@@ -78,12 +81,17 @@ test("node_modules out of date with the lockfile is stale", () => {
     },
   ];
   for (const installed of cases) {
-    const result = nodeModulesState(lockfile(LOCKED), hidden(installed));
+    const result = nodeModulesState(
+      lockfile(LOCKED),
+      hidden(installed),
+      present,
+    );
     assertEquals(result.state, "stale");
   }
   const result = nodeModulesState(
     lockfile(LOCKED),
     hidden({ "node_modules/zod": { version: "4.6.4" } }),
+    present,
   );
   assertEquals(result, {
     state: "stale",
@@ -92,9 +100,27 @@ test("node_modules out of date with the lockfile is stale", () => {
 });
 
 test("an unreadable lockfile or hidden lockfile fails closed", () => {
-  assertEquals(nodeModulesState("{", hidden({})).state, "invalid");
-  assertEquals(nodeModulesState("[]", hidden({})).state, "invalid");
-  assertEquals(nodeModulesState(lockfile(LOCKED), "{").state, "stale");
+  assertEquals(nodeModulesState("{", hidden({}), present).state, "invalid");
+  assertEquals(nodeModulesState("[]", hidden({}), present).state, "invalid");
+  assertEquals(
+    nodeModulesState(lockfile(LOCKED), "{", present).state,
+    "stale",
+  );
+});
+
+test("a package npm recorded but whose directory is gone is stale", () => {
+  const installed = {
+    "node_modules/zod": { version: "4.6.5" },
+    "node_modules/a/node_modules/b": { version: "1.0.0" },
+  };
+  assertEquals(
+    nodeModulesState(
+      lockfile(LOCKED),
+      hidden(installed),
+      (path) => path !== "node_modules/zod",
+    ),
+    { state: "stale", differing: ["node_modules/zod"] },
+  );
 });
 
 async function withPackageDir(
@@ -127,6 +153,13 @@ const INSTALLED = {
   "node_modules/zod": { version: "4.6.5" },
   "node_modules/a/node_modules/b": { version: "1.0.0" },
 };
+
+// The package.json npm writes into each installed package's directory.
+const INSTALLED_FILES = Object.fromEntries(
+  Object.entries(INSTALLED).map((
+    [path, entry],
+  ) => [`${path}/package.json`, JSON.stringify(entry)]),
+);
 
 test("the check fails with the remedy when node_modules is missing", async () => {
   await withPackageDir(
@@ -165,10 +198,28 @@ test("the check passes when node_modules matches the lockfile", async () => {
   await withPackageDir({
     "package-lock.json": lockfile(LOCKED),
     "node_modules/.package-lock.json": hidden(INSTALLED),
+    ...INSTALLED_FILES,
   }, async (dir) => {
     const { lines, out } = capture();
     assertEquals(await runNodeModulesCheck(dir, out), 0);
     assertEquals(lines, ["node_modules: matches package-lock.json"]);
+  });
+});
+
+test("the check fails when a recorded package directory was deleted", async () => {
+  const files = { ...INSTALLED_FILES };
+  delete files["node_modules/zod/package.json"];
+  await withPackageDir({
+    "package-lock.json": lockfile(LOCKED),
+    "node_modules/.package-lock.json": hidden(INSTALLED),
+    ...files,
+  }, async (dir) => {
+    const { lines, out } = capture();
+    assertEquals(await runNodeModulesCheck(dir, out), 1);
+    const text = lines.join("\n");
+    if (!text.includes("out of date") || !text.includes("node_modules/zod")) {
+      throw new Error(`deleted package not reported: ${text}`);
+    }
   });
 });
 

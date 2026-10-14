@@ -218,10 +218,12 @@ README are tracked separately in its Revision history section.
     string, so a string-typed config key rejects it.
   - **Gate:** a new first lane, the npm install precondition, fails with
     `` run `npm ci` in prototype/ `` when `node_modules` is missing or out of
-    date with the lockfile. It only reads, runs in `test:fast` too, and
+    date with the lockfile, including a package directory deleted after the
+    install. It only reads, runs in `test:fast` too, and
     reports under `test.aggregate`. `dependency.policy` gains an `npm`
     surface under the registry contract and 72-hour floor. It also gains
-    rules that fail on a non-exact npm version, a `package.json` without a
+    rules that fail on a non-exact npm version, an `overrides` field
+    (rejected until a policy for overrides exists), a `package.json` without a
     tracked lockfile, and a `.npmrc` that does not set `ignore-scripts=true`
     and a `min-release-age` of at least 3.
   - **CI:** both CI jobs install Node 26.11.1 through a digest-pinned

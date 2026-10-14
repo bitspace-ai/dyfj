@@ -10,10 +10,13 @@
  *
  * npm records what it installed in `node_modules/.package-lock.json`, in the
  * lockfile's own `packages` shape. The install is current when both name the
- * same packages at the same versions. A locked optional package may be
- * absent, because npm skips optional packages built for another platform.
+ * same packages at the same versions, and every package both name still has
+ * its `package.json` on disk, so a directory deleted after the install is
+ * caught. A locked optional package may be absent, because npm skips
+ * optional packages built for another platform.
  */
 
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
@@ -54,10 +57,13 @@ function packageEntries(text: string): PackageEntries | undefined {
 /**
  * Compares the lockfile with npm's record of the install. `hidden` is the
  * text of `node_modules/.package-lock.json`, undefined when it is absent.
+ * `hasPackage` says whether a package path (`node_modules/...`) still holds
+ * its `package.json`.
  */
 export function nodeModulesState(
   lock: string,
   hidden: string | undefined,
+  hasPackage: (path: string) => boolean,
 ): NodeModulesState {
   const locked = packageEntries(lock);
   if (locked === undefined) return { state: "invalid" };
@@ -73,7 +79,9 @@ export function nodeModulesState(
       if (entry.optional !== true) differing.add(path);
       continue;
     }
-    if (present.version !== entry.version) differing.add(path);
+    if (present.version !== entry.version || !hasPackage(path)) {
+      differing.add(path);
+    }
   }
   for (const path of Object.keys(installed)) {
     if (path !== "" && locked[path] === undefined) differing.add(path);
@@ -104,7 +112,11 @@ export async function runNodeModulesCheck(
   const hidden = await readOptional(
     join(dir, "node_modules", ".package-lock.json"),
   );
-  const result = nodeModulesState(lock, hidden);
+  const result = nodeModulesState(
+    lock,
+    hidden,
+    (path) => existsSync(join(dir, path, "package.json")),
+  );
   switch (result.state) {
     case "current":
       out.log("node_modules: matches package-lock.json");

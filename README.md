@@ -1068,7 +1068,8 @@ deno task verify-workbench-events
 `prototype/node_modules` that npm installed must match
 `prototype/package-lock.json`. The lane compares npm's record of the install
 (`node_modules/.package-lock.json`) with the lockfile, package by package and
-version by version. A locked optional package may be absent, since npm skips
+version by version, and checks that each recorded package still has its
+`package.json` on disk. A locked optional package may be absent, since npm skips
 builds for other platforms. When node_modules is missing or out of date, the
 lane fails with `` run `npm ci` in prototype/ ``. The lane only reads
 `prototype/`: the gate never runs npm. It reports under `test.aggregate` and
@@ -1092,7 +1093,8 @@ parses changed shell files with `bash -n` and fails closed if the parser is
 unavailable, and `dependency.policy` rejects mutable dependency shapes: unpinned
 workflow actions, `latest` installer URLs, scripts piped from the network into a
 shell, a floating Rust toolchain, and, for each tracked `package.json`, a
-dependency that is not an exact version, a missing tracked
+dependency that is not an exact version, an `overrides` field (rejected until
+a policy for overrides exists), a missing tracked
 `package-lock.json`, or a tracked `.npmrc` that does not set
 `ignore-scripts=true` and a `min-release-age` of at least 3 days. `receipt.schema` runs the
 `dyfj.assurance.receipt/v1` validator's tests (`scripts/assurance-receipt.ts`),
