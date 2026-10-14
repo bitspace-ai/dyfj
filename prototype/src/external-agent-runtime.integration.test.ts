@@ -285,10 +285,11 @@ function tempDir(): Promise<string> {
 
 /**
  * Runs `run` while `process.env` reads in this test process see `overlay` on
- * top of the real environment, without changing the process environment
- * itself: no variable is set, so child processes still inherit the real
- * environment. The overlay stands in for `process.env` for the duration of
- * `run` and the original binding is restored after it.
+ * top of the real environment, without setting any variable. The overlay
+ * stands in for `process.env` for the duration of `run`, and the original
+ * binding is restored after it. It answers named reads only and enumerates
+ * nothing, so a child spawned inside `run` inherits no environment: each child
+ * must be given an explicit `env`.
  */
 async function withEnvOverlay<T>(
   overlay: Readonly<Record<string, string>>,
