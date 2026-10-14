@@ -13,8 +13,12 @@ import {
   ProviderRequestTooLargeError,
   ProviderUnreachableError,
   WorkbenchHostedProviderBaseUrlError,
+  WorkbenchLocalProviderBaseUrlError,
+  WorkbenchModelFastSpeedUnsupportedError,
   WorkbenchModelNotFoundError,
+  WorkbenchModelNotRoutableError,
 } from "./mod.ts";
+import { HostedInferenceRequiresProviderError } from "./errors.ts";
 import { MAX_ERROR_SUMMARY_BYTES, summarizeError } from "../contract/mod.ts";
 
 describe("provider error field redaction", () => {
@@ -434,5 +438,90 @@ describe("provider failure messages", () => {
       );
       assert.strictEqual(summarizeError(err), err.message);
     }
+  });
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+describe("provider error own properties", () => {
+  const target = { provider: "p", slug: "s" };
+  const cases: [Error, string[], string][] = [
+    [
+      new WorkbenchModelNotFoundError("s"),
+      ["slug", "name"],
+      "Model not found: s",
+    ],
+    [
+      new WorkbenchModelFastSpeedUnsupportedError("s"),
+      ["slug", "name"],
+      'Model "s" does not support fast speed tier',
+    ],
+    [
+      new HostedInferenceRequiresProviderError("s"),
+      ["slug", "name"],
+      "Unsupported hosted inference provider: s",
+    ],
+    [
+      new HostedProviderCredentialMissingError("s", "K"),
+      ["slug", "envVar", "name"],
+      "Hosted provider credential missing for s: K is not in the runtime's environment.",
+    ],
+    [
+      new WorkbenchHostedProviderBaseUrlError("s", "https://h"),
+      ["slug", "baseUrl", "name"],
+      "Hosted provider baseUrl is not the provider's https endpoint for s: https://h",
+    ],
+    [
+      new WorkbenchLocalProviderBaseUrlError("s", "http://h"),
+      ["slug", "baseUrl", "name"],
+      "Local provider baseUrl is not loopback-only for s",
+    ],
+    [
+      new WorkbenchModelNotRoutableError("r"),
+      ["ref", "name"],
+      "Model not routable [r]: no catalog pricing row.",
+    ],
+    [
+      new ProviderContextExceededError(target, 400, { limitTokens: 5 }),
+      ["kind", "status", "provider", "slug", "report", "name"],
+      "Context exceeded for p/s: the provider rejected the request as larger " +
+      "than its context window (HTTP 400; the window is 5 tokens).",
+    ],
+    [
+      new ProviderAuthenticationError(target, 401),
+      ["kind", "status", "provider", "slug", "name"],
+      "Authentication failed for p/s: the provider rejected the request's " +
+      "credential (HTTP 401).",
+    ],
+    [
+      new ProviderRateLimitedError(target, 429, "quota"),
+      ["kind", "status", "provider", "slug", "reason", "name"],
+      "Quota exhausted at p for s (HTTP 429):",
+    ],
+    [
+      new ProviderUnreachableError(target, "dns"),
+      ["kind", "status", "provider", "slug", "reason", "name"],
+      "Provider unreachable: the host for p/s could not be resolved.",
+    ],
+  ];
+  for (const [err, keys, messageStart] of cases) {
+    it(`${err.name} keeps its own properties and message`, () => {
+      assert.deepStrictEqual(Object.keys(err), keys);
+      assert.ok(
+        err.message.startsWith(messageStart),
+        `${JSON.stringify(err.message)} starts with ${
+          JSON.stringify(messageStart)
+        }`,
+      );
+      assert.strictEqual(err.cause, undefined);
+    });
+  }
+
+  it("ProviderFailureError's fields carry the constructor's values", () => {
+    const err = new ProviderRateLimitedError(target, 429, "quota");
+    assert.deepStrictEqual(
+      [err.kind, err.status, err.provider, err.slug, err.reason],
+      ["rate_limited", 429, "p", "s", "quota"],
+    );
   });
 });

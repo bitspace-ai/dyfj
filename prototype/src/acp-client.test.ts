@@ -8,6 +8,8 @@ import { describe, it } from "@std/testing/bdd";
 import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
+  AcpRunnerError,
+  AcpSessionUpdateLimitError,
   ActivePromptDeadline,
   drainStream,
   guardedProtocolInput,
@@ -443,5 +445,35 @@ describe("runAcpAgent", () => {
         error instanceof Error &&
         error.message.includes("ACP profile command must be absolute"),
     );
+  });
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+describe("ACP client own properties", () => {
+  it("AcpRunnerError keeps its phase", () => {
+    const err = new AcpRunnerError("m", "spawn");
+    assert.deepStrictEqual(Object.keys(err), ["phase", "name"]);
+    assert.strictEqual(err.phase, "spawn");
+    assert.strictEqual(err.message, "m");
+    assert.strictEqual(err.cause, undefined);
+  });
+
+  it("an AcpRunnerError subclass keeps the phase it passes up", () => {
+    const err = new AcpSessionUpdateLimitError();
+    assert.deepStrictEqual(Object.keys(err), ["phase", "name"]);
+    assert.strictEqual(err.phase, "protocol");
+    assert.strictEqual(
+      err.message,
+      "ACP agent exceeded the session-update limit",
+    );
+    assert.strictEqual(err.cause, undefined);
+  });
+
+  it("ActivePromptDeadline has the clock as its only own property", () => {
+    const now = () => 0;
+    const deadline = new ActivePromptDeadline(5, now);
+    assert.deepStrictEqual(Object.keys(deadline), ["now"]);
+    assert.strictEqual(deadline.remainingMs, 5);
   });
 });

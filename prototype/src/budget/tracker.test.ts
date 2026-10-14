@@ -9,6 +9,7 @@
 
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import assert from "node:assert/strict";
+import { it } from "@std/testing/bdd";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { MemoryStore } from "../store/mod.ts";
 import {
@@ -512,4 +513,26 @@ Deno.test("BudgetTracker.checkAnomaly(): a lifetime-spanning session counts only
   const check = t.checkAnomaly(2, ANOMALY);
   assert.strictEqual(check.trigger, "session_scope");
   assertAlmostEqual(check.dailySpentUsd, 1.5); // not 61
+});
+
+// Own enumerable properties, in order, are what JSON.stringify sees, so the
+// order the constructor gives them is pinned.
+it("BudgetTracker keeps its own properties in order", () => {
+  const tracker = makeTracker();
+  assert.deepStrictEqual(Object.keys(tracker), [
+    "sessionId",
+    "traceId",
+    "config",
+    "principalId",
+    "baselines",
+    "_byTier",
+    "_totalCost",
+    "_totalTokensInput",
+    "_totalTokensOutput",
+  ]);
+  assert.deepStrictEqual(tracker.config, {
+    sessionLimitUsd: 1.00,
+    perCallLimitUsd: 0.10,
+    dailyLimitUsd: 25.00,
+  });
 });

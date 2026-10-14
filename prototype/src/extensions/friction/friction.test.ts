@@ -690,3 +690,19 @@ describe("paged comment reading", () => {
     assert.equal(createComment.mock.callCount(), 0);
   });
 });
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+describe("FrictionStageError own properties", () => {
+  it("keeps the stage and public reason", () => {
+    const err = new FrictionStageError("get_issue", "r");
+    assert.deepStrictEqual(Object.keys(err), [
+      "stage",
+      "publicReason",
+      "name",
+    ]);
+    assert.deepStrictEqual([err.stage, err.publicReason], ["get_issue", "r"]);
+    assert.strictEqual(err.message, "get_issue failed: r");
+    assert.strictEqual(err.cause, undefined);
+  });
+});

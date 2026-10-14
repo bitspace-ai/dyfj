@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { describe, it } from "@std/testing/bdd";
 import { BudgetExceededError } from "../budget/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
@@ -11,7 +12,13 @@ import {
   ProviderUnreachableError,
   WorkbenchModelFastSpeedUnsupportedError,
 } from "../providers/mod.ts";
-import { classifyErrorKind, PaidEscalationDeclinedError } from "./errors.ts";
+import {
+  classifyErrorKind,
+  ContextCompressionPersistenceUncertainError,
+  PaidEscalationDeclinedError,
+  SessionModelUnavailableError,
+  SessionRunnerNotRestorableError,
+} from "./errors.ts";
 
 // ── PaidEscalationDeclinedError — reason field sanitization ──────────────────
 //
@@ -156,4 +163,53 @@ Deno.test("classifyErrorKind reports each provider failure class by its own fixe
   for (const [err, label] of cases) {
     assert.strictEqual(classifyErrorKind(err), label);
   }
+});
+
+// Own enumerable properties, in order, are what JSON.stringify and error
+// serialization see, so the order each constructor gives them is pinned.
+describe("engine error own properties", () => {
+  it("SessionModelUnavailableError keeps the sanitized slug", () => {
+    const err = new SessionModelUnavailableError("s\u0007", "unpriced");
+    assert.deepStrictEqual(Object.keys(err), ["slug", "why", "name"]);
+    assert.strictEqual(err.slug, "s");
+    assert.strictEqual(err.why, "unpriced");
+    assert.strictEqual(
+      err.message,
+      'This session last ran on "s", which is no longer routable ' +
+        "(unpriced); name a model to resume it on",
+    );
+    assert.strictEqual(err.cause, undefined);
+  });
+
+  it("SessionRunnerNotRestorableError keeps the sanitized profile", () => {
+    const err = new SessionRunnerNotRestorableError("p");
+    assert.deepStrictEqual(Object.keys(err), ["profile", "name"]);
+    assert.strictEqual(err.profile, "p");
+    assert.ok(
+      err.message.startsWith(
+        'This session last ran on the external agent runner "p"',
+      ),
+    );
+    assert.strictEqual(err.cause, undefined);
+  });
+
+  it("ContextCompressionPersistenceUncertainError keeps both kinds", () => {
+    const err = new ContextCompressionPersistenceUncertainError("A", "B");
+    assert.deepStrictEqual(Object.keys(err), [
+      "writeErrorKind",
+      "probeErrorKind",
+      "name",
+    ]);
+    assert.deepStrictEqual([err.writeErrorKind, err.probeErrorKind], [
+      "A",
+      "B",
+    ]);
+    assert.ok(
+      err.message.startsWith(
+        "Context compression persistence is uncertain: the event write " +
+          "failed (A) and the durability probe also failed (B)",
+      ),
+    );
+    assert.strictEqual(err.cause, undefined);
+  });
 });
