@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
@@ -34,7 +34,7 @@ describe("compareContextPayloads", () => {
       fetchFn: streamingTransport(2).fetchLike,
     });
 
-    assertEquals(report.map(summary), [
+    assert.deepStrictEqual(report.map(summary), [
       {
         label: "small",
         provider: "ollama",

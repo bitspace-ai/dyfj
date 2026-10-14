@@ -2,7 +2,7 @@
 // the builtins, the tool conformance kit over that catalog, and unit tests of
 // its executor.
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   buildToolCatalog,
   BUILTIN_TOOLS,
@@ -29,17 +29,17 @@ toolConformance({ name: "text.stats example", catalog });
 
 Deno.test("text.stats registers after the builtins and reaches the model", () => {
   const names = catalog.projectTools().map((tool) => tool.name);
-  assertStrictEquals(names.at(-1), "text.stats");
+  assert.strictEqual(names.at(-1), "text.stats");
 });
 
 Deno.test("executeTextStats counts characters, words and lines", () => {
-  assertEquals(executeTextStats(""), "characters: 0\nwords: 0\nlines: 0");
-  assertEquals(
+  assert.deepStrictEqual(executeTextStats(""), "characters: 0\nwords: 0\nlines: 0");
+  assert.deepStrictEqual(
     executeTextStats("one two\nthree  four\n"),
     "characters: 20\nwords: 4\nlines: 3",
   );
   // Characters are code points, not UTF-16 units.
-  assertEquals(executeTextStats("😀"), "characters: 1\nwords: 1\nlines: 1");
+  assert.deepStrictEqual(executeTextStats("😀"), "characters: 1\nwords: 1\nlines: 1");
 });
 
 Deno.test("an invocation returns the stats and logs no text", async () => {
@@ -56,14 +56,14 @@ Deno.test("an invocation returns the stats and logs no text", async () => {
       events.push(event);
     },
   });
-  assertEquals(result, {
+  assert.deepStrictEqual(result, {
     decision: "allow",
     authzBasis: "policy:allow:read-only-local",
     isError: false,
     result: "characters: 13\nwords: 2\nlines: 1",
   });
-  assertEquals(events.length, 1);
-  assertEquals(JSON.parse(String(events[0].tool_arguments)), {
+  assert.deepStrictEqual(events.length, 1);
+  assert.deepStrictEqual(JSON.parse(String(events[0].tool_arguments)), {
     text: REDACTED,
   });
 });

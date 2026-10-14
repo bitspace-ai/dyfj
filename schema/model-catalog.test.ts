@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   assertSchemaApplyPlan,
   queryRows,
@@ -66,7 +67,7 @@ Deno.test("historical replay plus migrations selects Qwen and preserves operator
       });
       await runChecked("dolt", ["sql"], {
         cwd: repository,
-        input: await Deno.readTextFile(new URL(migration, schemaDir)),
+        input: await readFile(new URL(migration, schemaDir), "utf8"),
         label: `reapply schema/${migration}`,
       });
       await assertLocalModelStates(repository, 0);

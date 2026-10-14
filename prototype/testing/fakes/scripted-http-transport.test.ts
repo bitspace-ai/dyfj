@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import assert from "node:assert/strict";
 import { httpTransportConformance } from "../conformance/http-transport.ts";
 import {
   type RecordedRequest,
@@ -37,23 +37,15 @@ httpTransportConformance({
 
 Deno.test("ScriptedHttpTransport runs each exchange's request assertions", async () => {
   const fake = new ScriptedHttpTransport([{
-    expect: (request) => assertEquals(request.body, "expected"),
+    expect: (request) => assert.deepStrictEqual(request.body, "expected"),
     respond: { body: "ok" },
   }]);
-  await assertRejects(
-    () => fake.fetch("http://fake.invalid/", { method: "POST", body: "other" }),
-    Error,
-    "Values are not equal",
-  );
+  await assert.rejects(() => fake.fetch("http://fake.invalid/", { method: "POST", body: "other" }), (error: unknown) => error instanceof Error && error.message.includes("Values are not equal"));
 });
 
 Deno.test("ScriptedHttpTransport rejects a call beyond its script", async () => {
   const fake = new ScriptedHttpTransport();
-  await assertRejects(
-    () => fake.fetch("http://fake.invalid/x", { method: "POST" }),
-    Error,
-    "unexpected request POST http://fake.invalid/x",
-  );
+  await assert.rejects(() => fake.fetch("http://fake.invalid/x", { method: "POST" }), (error: unknown) => error instanceof Error && error.message.includes("unexpected request POST http://fake.invalid/x"));
 });
 
 Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
@@ -62,8 +54,8 @@ Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
     { respond: { body: "b" } },
   ]);
   await (await fake.fetch("http://fake.invalid/", {})).text();
-  assertEquals(fake.remaining, 1);
-  assertThrows(() => fake.assertDone(), Error, "1 scripted exchange(s) unused");
+  assert.deepStrictEqual(fake.remaining, 1);
+  assert.throws(() => fake.assertDone(), (error: unknown) => error instanceof Error && error.message.includes("1 scripted exchange(s) unused"));
 });
 
 Deno.test("ScriptedHttpTransport passes a function responder's Response through", async () => {
@@ -71,7 +63,7 @@ Deno.test("ScriptedHttpTransport passes a function responder's Response through"
     respond: (request) => new Response(`echo ${request.body}`),
   }]);
   const response = await fake.fetch("http://fake.invalid/", { body: "hi" });
-  assertEquals(await response.text(), "echo hi");
+  assert.deepStrictEqual(await response.text(), "echo hi");
   fake.assertDone();
 });
 
@@ -85,11 +77,11 @@ Deno.test("ScriptedHttpTransport.fetchLike reads a Request input into the port's
       redirect: "error",
     }),
   );
-  assertEquals(await response.text(), "ok");
+  assert.deepStrictEqual(await response.text(), "ok");
   const [request] = fake.requests;
-  assertEquals(request?.method, "POST");
-  assertEquals(request?.url, "http://fake.invalid/r");
-  assertEquals(request?.headers["x-fixture"], "1");
-  assertEquals(request?.body, "payload");
-  assertEquals(request?.redirect, "error");
+  assert.deepStrictEqual(request?.method, "POST");
+  assert.deepStrictEqual(request?.url, "http://fake.invalid/r");
+  assert.deepStrictEqual(request?.headers["x-fixture"], "1");
+  assert.deepStrictEqual(request?.body, "payload");
+  assert.deepStrictEqual(request?.redirect, "error");
 });

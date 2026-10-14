@@ -16,6 +16,7 @@
  * allow:  deno task test:golden --update
  */
 
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { AssertionError } from "node:assert";
 import {
   type ChatMessage,
@@ -216,10 +217,10 @@ function parseJsonOrText(text: string): unknown {
 
 async function exists(path: string): Promise<boolean> {
   try {
-    await Deno.lstat(path);
+    await lstat(path);
     return true;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
+    if ((error instanceof Error && (error as { code?: unknown }).code === "ENOENT")) return false;
     throw error;
   }
 }
@@ -598,15 +599,15 @@ async function matchSnapshot(id: string, value: unknown): Promise<void> {
   const path = `${SNAPSHOT_DIR}/${id}.json`;
   const actual = `${JSON.stringify(value, null, 2)}\n`;
   if (UPDATE) {
-    await Deno.mkdir(SNAPSHOT_DIR, { recursive: true });
-    await Deno.writeTextFile(path, actual);
+    await mkdir(SNAPSHOT_DIR, { recursive: true });
+    await writeFile(path, actual);
     return;
   }
   let expected: string;
   try {
-    expected = await Deno.readTextFile(path);
+    expected = await readFile(path, "utf8");
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if ((error instanceof Error && (error as { code?: unknown }).code === "ENOENT")) {
       throw new AssertionError({
         message: `missing golden snapshot ${id}; run with -- --update`,
       });

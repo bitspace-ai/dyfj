@@ -1,7 +1,7 @@
 // The synthetic adapter against the provider conformance kit, plus the one
 // registry line that adds it next to the production adapters.
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import {
   createProviderRegistry,
   PROVIDER_ADAPTERS,
@@ -47,13 +47,13 @@ providerAdapterConformance({
       clock: [0, 4, 6, 9],
       exchanges: [{
         expect: (request) => {
-          assertEquals(request.url, "https://synthetic.invalid/v1/generate");
-          assertEquals(
+          assert.deepStrictEqual(request.url, "https://synthetic.invalid/v1/generate");
+          assert.deepStrictEqual(
             request.headers.authorization,
             "Bearer synthetic-test-key",
           );
-          assertEquals(request.redirect, "error");
-          assertEquals(JSON.parse(request.body), {
+          assert.deepStrictEqual(request.redirect, "error");
+          assert.deepStrictEqual(JSON.parse(request.body), {
             model: "synthetic-small",
             system: "system",
             messages: [{ role: "user", content: "hello" }],
@@ -91,7 +91,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).tools[0].name, "file_read"),
+          assert.deepStrictEqual(JSON.parse(request.body).tools[0].name, "file_read"),
         respond: {
           body: events(
             {
@@ -177,7 +177,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).max_tokens, 3),
+          assert.deepStrictEqual(JSON.parse(request.body).max_tokens, 3),
         respond: {
           body: events(
             { type: "text", text: "cut" },
@@ -278,7 +278,7 @@ const registry = createProviderRegistry([
 ]);
 
 Deno.test("the synthetic adapter is dispatched beside the production adapters", async () => {
-  assertStrictEquals(registry.adapterFor(model), syntheticAdapter);
+  assert.strictEqual(registry.adapterFor(model), syntheticAdapter);
   const transport = new ScriptedHttpTransport([{
     respond: {
       body: JSON.stringify({
@@ -297,6 +297,6 @@ Deno.test("the synthetic adapter is dispatched beside the production adapters", 
     fetchFn: transport.fetch,
     getEnv: (name) => environment.get(name),
   });
-  assertEquals(result.text, "routed");
+  assert.deepStrictEqual(result.text, "routed");
   transport.assertDone();
 });
