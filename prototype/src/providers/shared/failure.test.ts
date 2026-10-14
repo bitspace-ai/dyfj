@@ -3,7 +3,7 @@
 // transport failure. The body is matched, never relayed; the verdict carries
 // only what the engine or the operator needs.
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import * as F from "../../../testing/providers/failure-fixtures.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
@@ -59,7 +59,7 @@ describe("classifyProviderResponse", () => {
         verdict === null ? "unclassified" : verdict.kind
       }`,
       () => {
-        assertEquals(
+        assert.deepStrictEqual(
           classifyProviderResponse(fixture.status, fixture.body),
           verdict,
         );
@@ -68,23 +68,26 @@ describe("classifyProviderResponse", () => {
   }
 
   it("the status alone classifies when the body is empty or opaque", () => {
-    assertEquals(classifyProviderResponse(401, ""), {
+    assert.deepStrictEqual(classifyProviderResponse(401, ""), {
       kind: "authentication",
     });
-    assertEquals(classifyProviderResponse(403, "<html>forbidden</html>"), {
-      kind: "authentication",
-    });
-    assertEquals(classifyProviderResponse(429, ""), {
+    assert.deepStrictEqual(
+      classifyProviderResponse(403, "<html>forbidden</html>"),
+      {
+        kind: "authentication",
+      },
+    );
+    assert.deepStrictEqual(classifyProviderResponse(429, ""), {
       kind: "rate_limited",
       cause: "rate_limit",
     });
-    assertEquals(classifyProviderResponse(413, ""), {
+    assert.deepStrictEqual(classifyProviderResponse(413, ""), {
       kind: "request_too_large",
     });
   });
 
   it("a context-size rejection wins over a 413 or a body that also says too large", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       classifyProviderResponse(
         413,
         "request (82366 tokens) exceeds the available context size " +
@@ -101,12 +104,12 @@ describe("classifyProviderResponse", () => {
     // A local server with a wrong base-URL path answers 404 for
     // /chat/completions with an empty or HTML body, and llama-server's own
     // not-found body names a file, not a model. Neither proves the model.
-    assertStrictEquals(classifyProviderResponse(404, ""), null);
-    assertStrictEquals(
+    assert.strictEqual(classifyProviderResponse(404, ""), null);
+    assert.strictEqual(
       classifyProviderResponse(404, "<html><body>404 Not Found</body></html>"),
       null,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       classifyProviderResponse(
         404,
         '{"error":{"code":404,"message":"File Not Found","type":"not_found_error"}}',
@@ -116,22 +119,22 @@ describe("classifyProviderResponse", () => {
   });
 
   it("a 400 without a recognised marker stays unclassified", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       classifyProviderResponse(400, '{"error":{"message":"bad model"}}'),
       null,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       classifyProviderResponse(400, "Invalid parameter: temperature"),
       null,
     );
   });
 
   it("a 5xx is never read as a client-side class, whatever its body says", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       classifyProviderResponse(500, F.OPENAI_AUTH.body),
       null,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       classifyProviderResponse(502, F.OPENAI_MODEL_NOT_FOUND.body),
       null,
     );
@@ -140,35 +143,35 @@ describe("classifyProviderResponse", () => {
 
 describe("classifyFetchFailure", () => {
   it("a refused connection", () => {
-    assertStrictEquals(classifyFetchFailure(F.CONNECTION_REFUSED()), "refused");
-    assertStrictEquals(
+    assert.strictEqual(classifyFetchFailure(F.CONNECTION_REFUSED()), "refused");
+    assert.strictEqual(
       classifyFetchFailure(new Error("connect ECONNREFUSED 127.0.0.1:8080")),
       "refused",
     );
   });
 
   it("a host that does not resolve", () => {
-    assertStrictEquals(classifyFetchFailure(F.DNS_FAILURE()), "dns");
-    assertStrictEquals(
+    assert.strictEqual(classifyFetchFailure(F.DNS_FAILURE()), "dns");
+    assert.strictEqual(
       classifyFetchFailure(new Error("getaddrinfo ENOTFOUND api.example")),
       "dns",
     );
   });
 
   it("a route or connection that fails after resolution", () => {
-    assertStrictEquals(classifyFetchFailure(F.NO_ROUTE()), "network");
-    assertStrictEquals(classifyFetchFailure(F.CONNECTION_RESET()), "network");
+    assert.strictEqual(classifyFetchFailure(F.NO_ROUTE()), "network");
+    assert.strictEqual(classifyFetchFailure(F.CONNECTION_RESET()), "network");
   });
 
   it("the cause chain is read when the top-level message is generic", () => {
     const wrapped = new TypeError("Failed to fetch", {
       cause: F.CONNECTION_REFUSED(),
     });
-    assertStrictEquals(classifyFetchFailure(wrapped), "refused");
+    assert.strictEqual(classifyFetchFailure(wrapped), "refused");
   });
 
   it("a redirect the request refused to follow", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       classifyFetchFailure(
         new TypeError(
           "Fetch failed: Encountered redirect while redirect mode is set to 'error'",
@@ -181,7 +184,7 @@ describe("classifyFetchFailure", () => {
   it("the word redirect in the request URL does not make a refusal a redirect", () => {
     // The runtime's connection errors quote the URL, so the redirect verdict
     // must come from its redirect diagnostic, never from the URL's text.
-    assertStrictEquals(
+    assert.strictEqual(
       classifyFetchFailure(
         new TypeError(
           "error sending request for url (http://127.0.0.1:8080/redirect/v1/chat/completions): " +
@@ -190,7 +193,7 @@ describe("classifyFetchFailure", () => {
       ),
       "refused",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       classifyFetchFailure(
         new Error("local model unavailable at http://host/redirect-proxy"),
       ),
@@ -199,12 +202,12 @@ describe("classifyFetchFailure", () => {
   });
 
   it("anything else is not a transport failure", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       classifyFetchFailure(new Error("local model unavailable")),
       null,
     );
-    assertStrictEquals(classifyFetchFailure("refused"), null);
-    assertStrictEquals(classifyFetchFailure(undefined), null);
+    assert.strictEqual(classifyFetchFailure("refused"), null);
+    assert.strictEqual(classifyFetchFailure(undefined), null);
   });
 });
 
@@ -236,24 +239,27 @@ describe("readBoundedErrorBody", () => {
 
   it("reads a small body whole and counts its bytes as received", async () => {
     const read = await readBoundedErrorBody(await respond("héllo"));
-    assertEquals(read, { text: "héllo", bytes: 6, truncated: false });
+    assert.deepStrictEqual(read, { text: "héllo", bytes: 6, truncated: false });
   });
 
   it("a missing body reads as empty", async () => {
     const read = await readBoundedErrorBody(await respond(undefined));
-    assertEquals(read, { text: "", bytes: 0, truncated: false });
+    assert.deepStrictEqual(read, { text: "", bytes: 0, truncated: false });
   });
 
   it("stops at the cap: the text and the count are bounded, and the cut is reported", async () => {
     const body = F.oversizedErrorBody(MAX_ERROR_BODY_BYTES * 4);
     const read = await readBoundedErrorBody(await respond(body));
-    assertEquals(read.truncated, true);
-    assertEquals(read.bytes, MAX_ERROR_BODY_BYTES);
-    assertEquals(
+    assert.deepStrictEqual(read.truncated, true);
+    assert.deepStrictEqual(read.bytes, MAX_ERROR_BODY_BYTES);
+    assert.deepStrictEqual(
       new TextEncoder().encode(read.text).byteLength <= MAX_ERROR_BODY_BYTES,
       true,
     );
-    assertEquals(read.text.startsWith('{"error":{"message":"xxx'), true);
+    assert.deepStrictEqual(
+      read.text.startsWith('{"error":{"message":"xxx'),
+      true,
+    );
   });
 
   it("a body that reaches exactly the cap and stays open settles at the cap instead of waiting", async () => {
@@ -270,8 +276,8 @@ describe("readBoundedErrorBody", () => {
     }]);
     const response = await transport.fetch("http://x/", { method: "POST" });
     const outcome = await settlesWithin(readBoundedErrorBody(response), 500);
-    assertEquals(outcome !== "hung", true, "the read never settled");
-    assertEquals(outcome, {
+    assert.deepStrictEqual(outcome !== "hung", true, "the read never settled");
+    assert.deepStrictEqual(outcome, {
       text: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES),
       bytes: MAX_ERROR_BODY_BYTES,
       truncated: true,
@@ -302,6 +308,10 @@ describe("readBoundedErrorBody", () => {
     const read = await readBoundedErrorBody(
       await transport.fetch("http://x/", { method: "POST" }),
     );
-    assertEquals(read, { text: "partial", bytes: 7, truncated: true });
+    assert.deepStrictEqual(read, {
+      text: "partial",
+      bytes: 7,
+      truncated: true,
+    });
   });
 });

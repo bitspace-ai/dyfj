@@ -1,8 +1,8 @@
 // runWorkbenchTurn against the Gemini adapter: cancellation, usage coverage,
 // timing, and fail-closed cases beyond the conformance kit.
 
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { assertEquals, assertObjectMatch, assertRejects } from "@std/assert";
 import { ManualClock } from "../../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
@@ -48,10 +48,11 @@ describe("runWorkbenchTurn Google Gemini", () => {
       getEnv,
       fetchFn: transport.fetch,
     });
-    const rejection = assertRejects(
+    const rejection = assert.rejects(
       () => pending,
-      Error,
-      "Gemini stream returned an error envelope",
+      (error) =>
+        error instanceof Error &&
+        error.message.includes("Gemini stream returned an error envelope"),
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -91,7 +92,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
     abortController.abort();
     const result = await pending;
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: { reasoning: 100 },
     });
@@ -135,7 +136,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
     abortController.abort();
     const result = await pending;
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: laterText,
       stopReason: "aborted",
       usage: { input: 9, output: 101 },
@@ -183,7 +184,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
     abortController.abort();
     const result = await pending;
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       stopReason: "aborted",
       usage: { input: 9, output: 100 },
     });
@@ -226,7 +227,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
       fetchFn: transport.fetch,
     });
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: laterText,
       usage: { input: 9, output: 101 },
     });
@@ -264,8 +265,8 @@ describe("runWorkbenchTurn Google Gemini", () => {
       fetchFn: transport.fetch,
     });
 
-    assertObjectMatch(result.usage, { output: 10, reasoning: 500 });
-    assertObjectMatch(result.timings, {
+    assert.partialDeepStrictEqual(result.usage, { output: 10, reasoning: 500 });
+    assert.partialDeepStrictEqual(result.timings, {
       generationMs: 100,
       timePerOutputTokenMs: 11,
     });
@@ -282,7 +283,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
         return new Response('data: {"candidates":[');
       },
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -302,7 +303,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
   it("fails closed when GEMINI_API_KEY is absent", async () => {
     const transport = new ScriptedHttpTransport();
     const emptyEnv = new MapEnv();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "system",
@@ -314,7 +315,7 @@ describe("runWorkbenchTurn Google Gemini", () => {
         }),
       HostedProviderCredentialMissingError,
     );
-    assertEquals(transport.requests.length, 0);
+    assert.deepStrictEqual(transport.requests.length, 0);
   });
 });
 
@@ -371,10 +372,13 @@ describe("Gemini base-URL contract and model path", () => {
 
   it("accepts only the canonical https host and base path", () => {
     for (const url of accepted) {
-      assertEquals(geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok, true);
+      assert.deepStrictEqual(
+        geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        true,
+      );
     }
     for (const url of rejected) {
-      assertEquals(
+      assert.deepStrictEqual(
         geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok,
         false,
         url,
@@ -384,7 +388,7 @@ describe("Gemini base-URL contract and model path", () => {
 
   it("accepts exactly the base URLs classified as frontier-hosted", () => {
     for (const url of [...accepted, ...rejected]) {
-      assertEquals(
+      assert.deepStrictEqual(
         geminiAdapter.validateBaseUrl(withBaseUrl(url)).ok,
         getModelAccessModality({ provider: "google", baseUrl: url }) ===
           "frontier-hosted",
@@ -395,22 +399,22 @@ describe("Gemini base-URL contract and model path", () => {
 
   it("rejects an off-host base URL before sending", async () => {
     const transport = new ScriptedHttpTransport();
-    await assertRejects(
+    await assert.rejects(
       () => turn(withBaseUrl("https://example.com"), transport),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertEquals(transport.requests.length, 0);
+    assert.deepStrictEqual(transport.requests.length, 0);
   });
 
   it("sends the canonical request unchanged, refusing redirects", async () => {
     const transport = new ScriptedHttpTransport([{
       expect: (request) => {
-        assertEquals(
+        assert.deepStrictEqual(
           request.url,
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
         );
-        assertEquals(request.redirect, "error");
-        assertEquals(request.headers, {
+        assert.deepStrictEqual(request.redirect, "error");
+        assert.deepStrictEqual(request.headers, {
           "content-type": "application/json",
           "x-goog-api-key": "gem-test-key",
         });
@@ -421,7 +425,7 @@ describe("Gemini base-URL contract and model path", () => {
       withBaseUrl("https://generativelanguage.googleapis.com/"),
       transport,
     );
-    assertEquals(result.text, "ok");
+    assert.deepStrictEqual(result.text, "ok");
     transport.assertDone();
   });
 
@@ -430,7 +434,7 @@ describe("Gemini base-URL contract and model path", () => {
       const transport = new ScriptedHttpTransport([{
         // Parsed, as fetch sends it: an explicit :443 is the default port.
         expect: (request) =>
-          assertEquals(
+          assert.deepStrictEqual(
             new URL(request.url).href,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
           ),
@@ -446,13 +450,13 @@ describe("Gemini base-URL contract and model path", () => {
     const transport = new ScriptedHttpTransport([{
       expect: (request) => {
         const url = new URL(request.url);
-        assertEquals(url.host, "generativelanguage.googleapis.com");
-        assertEquals(
+        assert.deepStrictEqual(url.host, "generativelanguage.googleapis.com");
+        assert.deepStrictEqual(
           url.pathname,
           "/v1beta/models/gemini%2F..%2Fx%3Falt%3Djson%23frag:generateContent",
         );
-        assertEquals(url.search, "");
-        assertEquals(url.hash, "");
+        assert.deepStrictEqual(url.search, "");
+        assert.deepStrictEqual(url.hash, "");
       },
       respond: { body: okBody },
     }]);

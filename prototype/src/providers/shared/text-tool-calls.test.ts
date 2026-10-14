@@ -1,7 +1,7 @@
 // Unit tests for recovering tool calls leaked into model text and detecting
 // tool-call markup left unparsed.
 
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import {
   detectUnparsedToolCallMarkup,
@@ -14,10 +14,10 @@ describe("extractTextToolCalls", () => {
     const text =
       "I'll check.\n<function=list_files>\n<parameter=path>\n.\n</parameter>\n</function>\n</tool_call>";
     const { toolCalls, cleaned } = extractTextToolCalls(text);
-    assertEquals(toolCalls, [
+    assert.deepStrictEqual(toolCalls, [
       { id: "text-tool-1", name: "list_files", arguments: { path: "." } },
     ]);
-    assertStrictEquals(cleaned, "I'll check.");
+    assert.strictEqual(cleaned, "I'll check.");
   });
 
   it("recovers multiple calls and coerces parameter values", () => {
@@ -25,7 +25,7 @@ describe("extractTextToolCalls", () => {
       "<function=read_file><parameter=path>schema/current/001_structure.sql</parameter><parameter=max>120</parameter></function>" +
       "<function=list_files><parameter=path>.</parameter></function>";
     const { toolCalls } = extractTextToolCalls(text);
-    assertEquals(toolCalls, [
+    assert.deepStrictEqual(toolCalls, [
       {
         id: "text-tool-1",
         name: "read_file",
@@ -37,8 +37,8 @@ describe("extractTextToolCalls", () => {
 
   it("leaves normal text untouched when there is no tool markup", () => {
     const { toolCalls, cleaned } = extractTextToolCalls("just a normal answer");
-    assertEquals(toolCalls, []);
-    assertStrictEquals(cleaned, "just a normal answer");
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, "just a normal answer");
   });
 
   it("recovers tool markup at the candidate limit", () => {
@@ -48,8 +48,8 @@ describe("extractTextToolCalls", () => {
         `<function=list_files><parameter=path>${index}</parameter></function>`,
     ).join("");
     const { toolCalls, cleaned } = extractTextToolCalls(text);
-    assertStrictEquals(toolCalls.length, 64);
-    assertStrictEquals(cleaned, "");
+    assert.strictEqual(toolCalls.length, 64);
+    assert.strictEqual(cleaned, "");
   });
 
   it("leaves a large batch of unwrapped offered-function examples as prose", () => {
@@ -62,15 +62,15 @@ describe("extractTextToolCalls", () => {
       text,
       new Set(["list_files"]),
     );
-    assertEquals(toolCalls, []);
-    assertStrictEquals(cleaned, text);
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
   });
 
   it("leaves excessive incomplete function candidates as prose", () => {
     const text = "<function=list_files".repeat(10_000);
     const { toolCalls, cleaned } = extractTextToolCalls(text);
-    assertEquals(toolCalls, []);
-    assertStrictEquals(cleaned, text);
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
   });
 
   it("leaves excessive incomplete parameter candidates as prose", () => {
@@ -78,26 +78,26 @@ describe("extractTextToolCalls", () => {
       "<parameter=path".repeat(10_000)
     }</function>`;
     const { toolCalls, cleaned } = extractTextToolCalls(text);
-    assertEquals(toolCalls, []);
-    assertStrictEquals(cleaned, text);
+    assert.deepStrictEqual(toolCalls, []);
+    assert.strictEqual(cleaned, text);
   });
 });
 
 describe("detectUnparsedToolCallMarkup", () => {
   it("requires at least two unmatched openings", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "The literal marker is <tool_call> in this sentence.",
       ),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "Examples: <tool_call></tool_call> and <tool_call></tool_call>.",
       ),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "One stray <tool_call> plus <tool_call></tool_call>.",
       ),
@@ -112,24 +112,24 @@ describe("detectUnparsedToolCallMarkup", () => {
       "<parameter=path>\nCHANGELOG.md\n</parameter>\n" +
       "<parameter=limit>\n200\n</parameter>\n" +
       "<parameter=offset>\n401\n</parameter>\n</function>\n</tool_call>";
-    assertEquals(detectUnparsedToolCallMarkup(block), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(block), {
       count: 1,
       countIsLowerBound: false,
     });
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(`Let me check:\n\n${block}\nthen more`),
       { count: 1, countIsLowerBound: false },
     );
   });
 
   it("adds complete blocks to repeated unmatched openings", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call>\nedit_file\n<tool_call>\nread_file\n",
       ),
       { count: 2, countIsLowerBound: false },
     );
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call><function=bash><parameter=command>ls</parameter>" +
           "</function></tool_call> <tool_call>\nedit_file\n<tool_call>\n",
@@ -140,24 +140,24 @@ describe("detectUnparsedToolCallMarkup", () => {
 
   it("counts one function element once, however many wrappers enclose it", () => {
     const block = "<tool_call><function=x></function></tool_call>";
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(`<tool_call>${block}</tool_call>`),
       {
         count: 1,
         countIsLowerBound: false,
       },
     );
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         `<tool_call>${block}</function></tool_call>`,
       ),
       { count: 1, countIsLowerBound: false },
     );
-    assertEquals(detectUnparsedToolCallMarkup(`${block} ${block}`), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(`${block} ${block}`), {
       count: 2,
       countIsLowerBound: false,
     });
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         `<tool_call>${block}<function=y></function></tool_call>`,
       ),
@@ -170,15 +170,15 @@ describe("detectUnparsedToolCallMarkup", () => {
       "<tool_call><function=b></function></tool_call></tool_call>";
     const innerFirst = "<tool_call><tool_call><function=a></function>" +
       "</tool_call><function=b></function></tool_call>";
-    assertEquals(detectUnparsedToolCallMarkup(outerFirst), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(outerFirst), {
       count: 2,
       countIsLowerBound: false,
     });
-    assertEquals(detectUnparsedToolCallMarkup(innerFirst), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(innerFirst), {
       count: 2,
       countIsLowerBound: false,
     });
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call><function=a></function><function=b></function></tool_call>",
       ),
@@ -187,13 +187,13 @@ describe("detectUnparsedToolCallMarkup", () => {
   });
 
   it("does not count a function element that a wrapper close interrupts", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call><function=x></tool_call></function></tool_call>",
       ),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call><tool_call><function=x></tool_call></function></tool_call>",
       ),
@@ -202,17 +202,17 @@ describe("detectUnparsedToolCallMarkup", () => {
   });
 
   it("keeps a balanced wrapper without a function element as prose", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup("<tool_call></tool_call>"),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "The wrapper is <tool_call>name and args</tool_call> in this dialect.",
       ),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "Unterminated: <tool_call><function=bash>ls</tool_call>",
       ),
@@ -223,11 +223,11 @@ describe("detectUnparsedToolCallMarkup", () => {
   it("caps complete blocks with the reported count", () => {
     const block =
       "<tool_call><function=bash><parameter=command>ls</parameter></function></tool_call>";
-    assertEquals(detectUnparsedToolCallMarkup(block.repeat(64)), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(block.repeat(64)), {
       count: 64,
       countIsLowerBound: false,
     });
-    assertEquals(detectUnparsedToolCallMarkup(block.repeat(65)), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(block.repeat(65)), {
       count: 64,
       countIsLowerBound: true,
     });
@@ -236,7 +236,7 @@ describe("detectUnparsedToolCallMarkup", () => {
   it("does not classify a direct input beyond the accepted-response bound", () => {
     const opening = "<tool_call>";
     const closing = "</tool_call>";
-    assertStrictEquals(
+    assert.strictEqual(
       MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS,
       4 * 1_024 * 1_024,
     );
@@ -248,43 +248,43 @@ describe("detectUnparsedToolCallMarkup", () => {
       MAX_UNPARSED_TOOL_CALL_SCAN_CHARACTERS - (2 * opening.length),
     ) + opening + closing;
 
-    assertEquals(detectUnparsedToolCallMarkup(atBound), {
+    assert.deepStrictEqual(detectUnparsedToolCallMarkup(atBound), {
       count: 2,
       countIsLowerBound: false,
     });
-    assertStrictEquals(detectUnparsedToolCallMarkup(beyondBound), undefined);
-    assertStrictEquals(
+    assert.strictEqual(detectUnparsedToolCallMarkup(beyondBound), undefined);
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(wrapperStraddlingBound),
       undefined,
     );
   });
 
   it("counts unmatched openings before capping the reported count", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "</tool_call></tool_call><tool_call><tool_call>",
       ),
       { count: 2, countIsLowerBound: false },
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call>".repeat(71) + "</tool_call>".repeat(70),
       ),
       undefined,
     );
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call>".repeat(71) + "</tool_call>".repeat(1),
       ),
       { count: 64, countIsLowerBound: true },
     );
-    assertEquals(
+    assert.deepStrictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call>".repeat(72) + "</tool_call>".repeat(70),
       ),
       { count: 2, countIsLowerBound: false },
     );
-    assertStrictEquals(
+    assert.strictEqual(
       detectUnparsedToolCallMarkup(
         "<tool_call>".repeat(71) + "</tool_call>".repeat(71),
       ),
