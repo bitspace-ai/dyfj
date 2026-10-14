@@ -1,6 +1,6 @@
 // The Gemini adapter against the provider conformance kit.
 
-import { assert, assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { providerAdapterConformance } from "../../../testing/conformance/provider-adapter.ts";
 import {
   WorkbenchHostedProviderBaseUrlError,
@@ -27,7 +27,10 @@ const frame = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
 /** A buffered reply, for cases that pin only the request. */
 const reply = {
   body: JSON.stringify({
-    candidates: [{ content: { parts: [{ text: "ok" }] }, finishReason: "STOP" }],
+    candidates: [{
+      content: { parts: [{ text: "ok" }] },
+      finishReason: "STOP",
+    }],
     usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
   }),
 };
@@ -48,7 +51,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(
+          assert.deepStrictEqual(
             request.url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:streamGenerateContent?alt=sse",
           ),
@@ -83,7 +86,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertEquals(JSON.parse(request.body).tools, undefined),
+          assert.deepStrictEqual(JSON.parse(request.body).tools, undefined),
         respond: {
           body: JSON.stringify({
             candidates: [{
@@ -136,11 +139,14 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) => {
-          assertEquals(
+          assert.deepStrictEqual(
             request.url,
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent",
           );
-          assertEquals(request.headers["x-goog-api-key"], "gem-test-key");
+          assert.deepStrictEqual(
+            request.headers["x-goog-api-key"],
+            "gem-test-key",
+          );
         },
         respond: {
           body: JSON.stringify({
@@ -178,7 +184,7 @@ providerAdapterConformance({
       stream: true,
       exchanges: [{
         expect: (request) =>
-          assertEquals(
+          assert.deepStrictEqual(
             JSON.parse(request.body).generationConfig.maxOutputTokens,
             2,
           ),
@@ -286,20 +292,20 @@ providerAdapterConformance({
       exchanges: [{
         expect: (request) => {
           const body = JSON.parse(request.body);
-          assertEquals(body.systemInstruction, {
+          assert.deepStrictEqual(body.systemInstruction, {
             parts: [{ text: "You are the workbench." }],
           });
-          assertEquals(body.contents, [
+          assert.deepStrictEqual(body.contents, [
             { role: "user", parts: [{ text: "Say hi." }] },
           ]);
-          assert(
+          assert.ok(
             body.generationConfig.maxOutputTokens > 0,
             "maxOutputTokens should be positive",
           );
-          assertStrictEquals(body.generationConfig.responseMimeType, undefined);
+          assert.strictEqual(body.generationConfig.responseMimeType, undefined);
           // Gemini 3.x thinking is bounded so it doesn't starve the answer
           // (thinking tokens come out of maxOutputTokens).
-          assertEquals(body.generationConfig.thinkingConfig, {
+          assert.deepStrictEqual(body.generationConfig.thinkingConfig, {
             thinkingLevel: "low",
           });
         },
@@ -314,7 +320,7 @@ providerAdapterConformance({
       stream: false,
       exchanges: [{
         expect: (request) =>
-          assertStrictEquals(
+          assert.strictEqual(
             JSON.parse(request.body).generationConfig.responseMimeType,
             "application/json",
           ),

@@ -1,15 +1,9 @@
 // runWorkbenchTurn against the Anthropic adapter: cancellation, usage, and
 // fail-closed cases beyond the conformance kit.
 
+import { captureRejection } from "../../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertMatch,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
@@ -89,7 +83,7 @@ describe("anthropic provider adapter", () => {
       fetchFn: transport.fetch,
     });
 
-    assertObjectMatch(result, {
+    assert.partialDeepStrictEqual(result, {
       text: "partial",
       stopReason: "aborted",
       usage: { input: 10, output: 2 },
@@ -106,7 +100,7 @@ describe("anthropic provider adapter", () => {
         return new Response('data: {"type":"content_block_delta"');
       },
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "sys",
@@ -141,10 +135,11 @@ describe("anthropic provider adapter", () => {
       getEnv,
       fetchFn: transport.fetch,
     });
-    const rejection = assertRejects(
+    const rejection = assert.rejects(
       () => pending,
-      Error,
-      "Anthropic stream returned an error envelope",
+      (error) =>
+        error instanceof Error &&
+        error.message.includes("Anthropic stream returned an error envelope"),
     );
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -176,7 +171,7 @@ describe("anthropic provider adapter", () => {
       fetchFn: transport.fetch,
     });
 
-    assertObjectMatch(result.usage, { input: 10, output: 100 });
+    assert.partialDeepStrictEqual(result.usage, { input: 10, output: 100 });
     transport.assertDone();
   });
 
@@ -185,7 +180,7 @@ describe("anthropic provider adapter", () => {
     // is attempted.
     const transport = new ScriptedHttpTransport();
     const emptyEnv = new MapEnv();
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "sys",
@@ -197,7 +192,7 @@ describe("anthropic provider adapter", () => {
         }),
       HostedProviderCredentialMissingError,
     );
-    assertEquals(transport.requests.length, 0);
+    assert.deepStrictEqual(transport.requests.length, 0);
   });
 });
 
@@ -211,7 +206,7 @@ describe("tool wire names", () => {
         }),
       },
     }]);
-    const error = await assertRejects(() =>
+    const error = await captureRejection(() =>
       runWorkbenchTurn({
         systemPrompt: "sys",
         prompt: "hi",
@@ -221,9 +216,9 @@ describe("tool wire names", () => {
         getEnv,
       })
     );
-    assertInstanceOf(error, ProviderRequestFailedError);
-    assertMatch(error.message, /anthropic\/.*HTTP 400/);
-    assertStrictEquals(error.message.includes("should match pattern"), false);
+    assert.ok(error instanceof ProviderRequestFailedError);
+    assert.match(error.message, /anthropic\/.*HTTP 400/);
+    assert.strictEqual(error.message.includes("should match pattern"), false);
     transport.assertDone();
   });
 });
@@ -252,10 +247,13 @@ describe("Anthropic base-URL contract", () => {
 
   it("accepts only the canonical https host and base path", () => {
     for (const url of accepted) {
-      assertEquals(anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok, true);
+      assert.deepStrictEqual(
+        anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
+        true,
+      );
     }
     for (const url of rejected) {
-      assertEquals(
+      assert.deepStrictEqual(
         anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
         false,
         url,
@@ -265,7 +263,7 @@ describe("Anthropic base-URL contract", () => {
 
   it("accepts exactly the base URLs classified as frontier-hosted", () => {
     for (const url of [...accepted, ...rejected]) {
-      assertEquals(
+      assert.deepStrictEqual(
         anthropicAdapter.validateBaseUrl(withBaseUrl(url)).ok,
         getModelAccessModality({ provider: "anthropic", baseUrl: url }) ===
           "frontier-hosted",
@@ -277,7 +275,7 @@ describe("Anthropic base-URL contract", () => {
   it("rejects an off-host base URL before reading the key or sending", async () => {
     const transport = new ScriptedHttpTransport();
     let keyRead = false;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runWorkbenchTurn({
           systemPrompt: "sys",
@@ -292,17 +290,20 @@ describe("Anthropic base-URL contract", () => {
         }),
       WorkbenchHostedProviderBaseUrlError,
     );
-    assertEquals(keyRead, false);
-    assertEquals(transport.requests.length, 0);
+    assert.deepStrictEqual(keyRead, false);
+    assert.deepStrictEqual(transport.requests.length, 0);
   });
 
   it("sends the canonical request unchanged, refusing redirects", async () => {
     const transport = new ScriptedHttpTransport([{
       expect: (request) => {
-        assertEquals(request.url, "https://api.anthropic.com/v1/messages");
-        assertEquals(request.method, "POST");
-        assertEquals(request.redirect, "error");
-        assertEquals(request.headers, {
+        assert.deepStrictEqual(
+          request.url,
+          "https://api.anthropic.com/v1/messages",
+        );
+        assert.deepStrictEqual(request.method, "POST");
+        assert.deepStrictEqual(request.redirect, "error");
+        assert.deepStrictEqual(request.headers, {
           "content-type": "application/json",
           "x-api-key": "test-key-not-real",
           "anthropic-version": "2023-06-01",
@@ -324,7 +325,7 @@ describe("Anthropic base-URL contract", () => {
       fetchFn: transport.fetch,
       getEnv,
     });
-    assertEquals(result.text, "ok");
+    assert.deepStrictEqual(result.text, "ok");
     transport.assertDone();
   });
 
@@ -333,7 +334,7 @@ describe("Anthropic base-URL contract", () => {
       const transport = new ScriptedHttpTransport([{
         // Parsed, as fetch sends it: an explicit :443 is the default port.
         expect: (request) =>
-          assertEquals(
+          assert.deepStrictEqual(
             new URL(request.url).href,
             "https://api.anthropic.com/v1/messages",
           ),

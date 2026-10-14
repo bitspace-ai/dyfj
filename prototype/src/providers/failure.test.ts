@@ -3,13 +3,8 @@
 // leaves an unrecognised failure as the unclassified provider error that
 // names the provider and the status, never the body.
 
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
@@ -94,21 +89,30 @@ async function replay(
   const transport = new ScriptedHttpTransport([{
     respond: { status: fixture.status, body: fixture.body },
   }]);
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => turn(model, transport),
     ProviderFailureError,
   );
   transport.assertDone();
   // The Workbench-written message names the provider, the model and the
   // status, and carries none of the provider's text.
-  assertStringIncludes(error.message, model.provider);
-  assertStringIncludes(error.message, model.slug);
-  assertStringIncludes(error.message, `HTTP ${fixture.status}`);
-  assertStrictEquals(error.message.includes(fixture.foreignText), false);
-  assertStrictEquals(error.provider, model.provider);
-  assertStrictEquals(error.slug, model.slug);
-  assertStrictEquals(error.status, fixture.status);
-  assertInstanceOf(error, DomainError);
+  assert.ok(
+    error.message.includes(model.provider),
+    `expected error.message to include model.provider`,
+  );
+  assert.ok(
+    error.message.includes(model.slug),
+    `expected error.message to include model.slug`,
+  );
+  assert.ok(
+    error.message.includes(`HTTP ${fixture.status}`),
+    `expected error.message to include \`HTTP \${fixture.status}\``,
+  );
+  assert.strictEqual(error.message.includes(fixture.foreignText), false);
+  assert.strictEqual(error.provider, model.provider);
+  assert.strictEqual(error.slug, model.slug);
+  assert.strictEqual(error.status, fixture.status);
+  assert.ok(error instanceof DomainError);
   return error;
 }
 
@@ -161,23 +165,38 @@ describe("provider failure classification at the adapter", () => {
   for (const [fixture, cls] of classified) {
     it(`${fixture.family}: ${fixture.source} HTTP ${fixture.status} is ${cls.name}`, async () => {
       const error = await replay(fixture);
-      assertInstanceOf(error, cls);
+      assert.ok(error instanceof cls);
     });
   }
 
   it("a context-size rejection still carries the provider's counts for the refit", async () => {
     const error = await replay(F.LLAMA_SERVER_CONTEXT_EXCEEDED);
-    assertInstanceOf(error, ProviderContextExceededError);
-    assertEquals(error.report, { requestedTokens: 82366, limitTokens: 32768 });
-    assertStringIncludes(error.message, "82366");
-    assertStringIncludes(error.message, "32768");
+    assert.ok(error instanceof ProviderContextExceededError);
+    assert.deepStrictEqual(error.report, {
+      requestedTokens: 82366,
+      limitTokens: 32768,
+    });
+    assert.ok(
+      error.message.includes("82366"),
+      `expected error.message to include "82366"`,
+    );
+    assert.ok(
+      error.message.includes("32768"),
+      `expected error.message to include "32768"`,
+    );
   });
 
   it("OpenAI's 404, which may mean no access rather than no such model, keeps both in the hint", async () => {
     const error = await replay(F.OPENAI_MODEL_NOT_FOUND);
-    assertInstanceOf(error, ProviderModelNotFoundError);
-    assertStringIncludes(error.message, "no access");
-    assertStringIncludes(error.message, "account's access");
+    assert.ok(error instanceof ProviderModelNotFoundError);
+    assert.ok(
+      error.message.includes("no access"),
+      `expected error.message to include "no access"`,
+    );
+    assert.ok(
+      error.message.includes("account's access"),
+      `expected error.message to include "account's access"`,
+    );
   });
 
   const unclassified = [
@@ -188,13 +207,15 @@ describe("provider failure classification at the adapter", () => {
   for (const fixture of unclassified) {
     it(`${fixture.family}: an unrecognised HTTP ${fixture.status} names the provider and status, withholds the body`, async () => {
       const error = await replay(fixture);
-      assertInstanceOf(error, ProviderRequestFailedError);
-      assertStrictEquals(error.kind, "unclassified");
+      assert.ok(error instanceof ProviderRequestFailedError);
+      assert.strictEqual(error.kind, "unclassified");
       // The body's size is reported, as the opaque label always has; the
       // body itself is not.
-      assertStringIncludes(
-        error.message,
-        `${new TextEncoder().encode(fixture.body).byteLength} bytes`,
+      assert.ok(
+        error.message.includes(
+          `${new TextEncoder().encode(fixture.body).byteLength} bytes`,
+        ),
+        `expected error.message to include \`\${new TextEncoder().encode(fixture.body).byteLength} bytes\``,
       );
     });
   }
@@ -207,13 +228,13 @@ describe("provider failure classification at the adapter", () => {
           body: F.oversizedErrorBody(MAX_ERROR_BODY_BYTES * 4),
         },
       }]);
-      const error = await assertRejects(
+      const error = await captureRejection(
         () => turn(model, transport),
         ProviderRequestFailedError,
       );
-      assertStringIncludes(
-        error.message,
-        `at least ${MAX_ERROR_BODY_BYTES} bytes`,
+      assert.ok(
+        error.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`),
+        `expected error.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``,
       );
     });
   }
@@ -230,29 +251,38 @@ describe("provider failure classification at the adapter", () => {
       turn(local, transport).then(() => "resolved", (error) => error),
       500,
     );
-    assertInstanceOf(outcome, ProviderRequestFailedError);
-    assertStringIncludes(
-      outcome.message,
-      `at least ${MAX_ERROR_BODY_BYTES} bytes`,
+    assert.ok(outcome instanceof ProviderRequestFailedError);
+    assert.ok(
+      outcome.message.includes(`at least ${MAX_ERROR_BODY_BYTES} bytes`),
+      `expected outcome.message to include \`at least \${MAX_ERROR_BODY_BYTES} bytes\``,
     );
   });
 
   it("a per-minute quota says the quota resets, not only to add credit", async () => {
     const error = await replay(F.GEMINI_QUOTA_PER_MINUTE);
-    assertInstanceOf(error, ProviderRateLimitedError);
-    assertStringIncludes(error.message, "reset");
+    assert.ok(error instanceof ProviderRateLimitedError);
+    assert.ok(
+      error.message.includes("reset"),
+      `expected error.message to include "reset"`,
+    );
   });
 
   it("an unrecognised failure with an empty body still names the provider and status", async () => {
     const transport = new ScriptedHttpTransport([{
       respond: { status: 502 },
     }]);
-    const error = await assertRejects(
+    const error = await captureRejection(
       () => turn(local, transport),
       ProviderRequestFailedError,
     );
-    assertStringIncludes(error.message, "llama-cpp/qwen3.6-35b-a3b");
-    assertStringIncludes(error.message, "HTTP 502");
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("HTTP 502"),
+      `expected error.message to include "HTTP 502"`,
+    );
   });
 });
 
@@ -262,14 +292,20 @@ describe("transport failure classification at the adapter", () => {
       const transport = new ScriptedHttpTransport([{
         respond: () => Promise.reject(F.CONNECTION_REFUSED()),
       }]);
-      const error = await assertRejects(
+      const error = await captureRejection(
         () => turn(model, transport),
         ProviderUnreachableError,
       );
-      assertStrictEquals(error.reason, "refused");
-      assertStringIncludes(error.message, model.provider);
-      assertStringIncludes(error.message, model.slug);
-      assertStrictEquals(error.message.includes("os error 61"), false);
+      assert.strictEqual(error.reason, "refused");
+      assert.ok(
+        error.message.includes(model.provider),
+        `expected error.message to include model.provider`,
+      );
+      assert.ok(
+        error.message.includes(model.slug),
+        `expected error.message to include model.slug`,
+      );
+      assert.strictEqual(error.message.includes("os error 61"), false);
     });
   }
 
@@ -277,12 +313,12 @@ describe("transport failure classification at the adapter", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Promise.reject(F.DNS_FAILURE()),
     }]);
-    const error = await assertRejects(
+    const error = await captureRejection(
       () => turn(anthropic, transport),
       ProviderUnreachableError,
     );
-    assertStrictEquals(error.reason, "dns");
-    assertStrictEquals(error.message.includes("nodename"), false);
+    assert.strictEqual(error.reason, "dns");
+    assert.strictEqual(error.message.includes("nodename"), false);
   });
 
   it("a redirect the request refused to follow is ProviderRedirectedError", async () => {
@@ -291,28 +327,43 @@ describe("transport failure classification at the adapter", () => {
     const transport = new ScriptedHttpTransport([{
       respond: { status: 307, headers: { location: "https://elsewhere/" } },
     }]);
-    const error = await assertRejects(
+    const error = await captureRejection(
       () => turn(local, transport),
       ProviderRedirectedError,
     );
-    assertStringIncludes(error.message, "redirect");
-    assertStringIncludes(error.message, "llama-cpp/qwen3.6-35b-a3b");
-    assertStringIncludes(error.message, "base URL");
-    assertStrictEquals(error.kind, "redirected");
+    assert.ok(
+      error.message.includes("redirect"),
+      `expected error.message to include "redirect"`,
+    );
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("base URL"),
+      `expected error.message to include "base URL"`,
+    );
+    assert.strictEqual(error.kind, "redirected");
   });
 
   it("an unrecognised transport throw becomes the unclassified provider error with the opaque label", async () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Promise.reject(new Error("local model unavailable")),
     }]);
-    const error = await assertRejects(
+    const error = await captureRejection(
       () => turn(local, transport),
       ProviderRequestFailedError,
     );
-    assertStrictEquals(error.status, undefined);
-    assertStringIncludes(error.message, "llama-cpp/qwen3.6-35b-a3b");
-    assertStringIncludes(error.message, "[Error, 23 bytes]");
-    assertStrictEquals(error.message.includes("unavailable"), false);
+    assert.strictEqual(error.status, undefined);
+    assert.ok(
+      error.message.includes("llama-cpp/qwen3.6-35b-a3b"),
+      `expected error.message to include "llama-cpp/qwen3.6-35b-a3b"`,
+    );
+    assert.ok(
+      error.message.includes("[Error, 23 bytes]"),
+      `expected error.message to include "[Error, 23 bytes]"`,
+    );
+    assert.strictEqual(error.message.includes("unavailable"), false);
   });
 
   it("a DomainError thrown by the transport passes through unchanged", async () => {
@@ -321,8 +372,8 @@ describe("transport failure classification at the adapter", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Promise.reject(thrown),
     }]);
-    const error = await assertRejects(() => turn(local, transport));
-    assertStrictEquals(error, thrown);
+    const error = await captureRejection(() => turn(local, transport));
+    assert.strictEqual(error, thrown);
   });
 
   it("the caller's own abort is still the aborted result, not a failure", async () => {
@@ -342,6 +393,6 @@ describe("transport failure classification at the adapter", () => {
       fetchFn: transport.fetch,
       abortSignal: controller.signal,
     });
-    assertStrictEquals(result.stopReason, "aborted");
+    assert.strictEqual(result.stopReason, "aborted");
   });
 });

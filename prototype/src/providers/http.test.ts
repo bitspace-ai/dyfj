@@ -1,12 +1,7 @@
 // Unit tests for the header deadline every provider request carries.
 
-import {
-  assertEquals,
-  assertInstanceOf,
-  assertMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
 import { fetchWithHeaderTimeout, ProviderUnreachableError } from "./mod.ts";
@@ -16,7 +11,7 @@ describe("fetchWithHeaderTimeout", () => {
     const transport = new ScriptedHttpTransport([
       { respond: { withholdHeaders: true } },
     ]);
-    const err = await assertRejects(() =>
+    const err = await captureRejection(() =>
       fetchWithHeaderTimeout(
         transport.fetch,
         "http://x/",
@@ -28,9 +23,9 @@ describe("fetchWithHeaderTimeout", () => {
     // The deadline's error is a classified provider failure: a DomainError
     // whose message the operator sees whole, naming the target and the
     // budget that elapsed.
-    assertInstanceOf(err, ProviderUnreachableError);
-    assertEquals(err.reason, "timeout");
-    assertMatch(
+    assert.ok(err instanceof ProviderUnreachableError);
+    assert.deepStrictEqual(err.reason, "timeout");
+    assert.match(
       err.message,
       /anthropic\/test .*no response headers within 30ms/,
     );
@@ -45,7 +40,7 @@ describe("fetchWithHeaderTimeout", () => {
       { provider: "l", slug: "m" },
       30,
     );
-    assertEquals(await response.text(), "hi");
+    assert.deepStrictEqual(await response.text(), "hi");
   });
 
   it("non-abort failures pass through unchanged", async () => {
@@ -54,7 +49,7 @@ describe("fetchWithHeaderTimeout", () => {
     const transport = new ScriptedHttpTransport([{
       respond: () => Promise.reject(new Error("connection refused")),
     }]);
-    await assertRejects(
+    await assert.rejects(
       () =>
         fetchWithHeaderTimeout(
           transport.fetch,
@@ -63,8 +58,8 @@ describe("fetchWithHeaderTimeout", () => {
           { provider: "l", slug: "m" },
           1000,
         ),
-      Error,
-      "connection refused",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("connection refused"),
     );
   });
 
@@ -72,7 +67,7 @@ describe("fetchWithHeaderTimeout", () => {
     const transport = new ScriptedHttpTransport([
       { respond: { withholdHeaders: true } },
     ]);
-    const err = await assertRejects(() =>
+    const err = await captureRejection(() =>
       fetchWithHeaderTimeout(
         transport.fetch,
         "http://x/",
@@ -82,7 +77,7 @@ describe("fetchWithHeaderTimeout", () => {
         "buffered",
       )
     );
-    assertMatch(
+    assert.match(
       (err as Error).message,
       /anthropic\/test .*no response headers within 30ms \(buffered request exceeded its budget/,
     );
@@ -113,6 +108,6 @@ describe("fetchWithHeaderTimeout", () => {
     rejectFetch(controller.signal.reason);
 
     const rejection = await pending.then(() => undefined, (x) => x);
-    assertStrictEquals(rejection, controller.signal.reason);
+    assert.strictEqual(rejection, controller.signal.reason);
   });
 });
