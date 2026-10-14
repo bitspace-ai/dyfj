@@ -546,12 +546,12 @@
   },
   {
     "path": "prototype/src/server/console-canary.integration.test.ts",
-    "count": 2,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/server/events-asof.integration.test.ts",
-    "count": 2,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -561,7 +561,7 @@
   },
   {
     "path": "prototype/src/server/main.integration.test.ts",
-    "count": 8,
+    "count": 4,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -606,12 +606,12 @@
   },
   {
     "path": "prototype/src/server/session-model.integration.test.ts",
-    "count": 9,
+    "count": 7,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
-    "count": 4,
+    "count": 3,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertObjectMatch } from "@std/assert";
+import assert from "node:assert/strict";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import type { WorkbenchProjectSessions } from "../../store/mod.ts";
 import { callRpc } from "../../../testing/builders/rpc.ts";
@@ -20,11 +20,11 @@ Deno.test("surface/snapshot bundles status, models, sessions, and tools", async 
     "surface/snapshot",
     { project: "dyfj", workspace: "/workspace" },
   ) as Record<string, unknown> & { tools: Array<{ id: string }> };
-  assertEquals(typeof result.generatedAt, "string");
-  assertObjectMatch(result.runtime as Record<string, unknown>, {
+  assert.deepStrictEqual(typeof result.generatedAt, "string");
+  assert.partialDeepStrictEqual(result.runtime as Record<string, unknown>, {
     transport: "uds",
   });
-  assertEquals(result.models, [{ slug: "local-x" }]);
-  assertEquals(result.projects, [{ project: "dyfj", sessions: [] }]);
-  assert(result.tools.some((tool) => tool.id === "read_file"));
+  assert.deepStrictEqual(result.models, [{ slug: "local-x" }]);
+  assert.deepStrictEqual(result.projects, [{ project: "dyfj", sessions: [] }]);
+  assert.ok(result.tools.some((tool) => tool.id === "read_file"));
 });

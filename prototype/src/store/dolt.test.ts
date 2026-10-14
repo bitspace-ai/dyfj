@@ -4,13 +4,8 @@
 // real Dolt server is the conformance suite's job
 // (`dolt-store.integration.test.ts`).
 
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertRejects,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
   type DoltConnection,
   type DoltPool,
@@ -109,17 +104,24 @@ Deno.test("events.bySession queries one session in order, bound and capped", asy
     limit: 5000,
     order: "desc",
   });
-  assertStringIncludes(calls[0]!.sql, "WHERE session_id = ?");
-  assertStringIncludes(
-    calls[0]!.sql,
-    "ORDER BY created_at DESC, event_id DESC LIMIT 5000;",
+  assert.ok(
+    calls[0]!.sql.includes("WHERE session_id = ?"),
+    `expected calls[0]!.sql to include "WHERE session_id = ?"`,
   );
-  assertFalse(calls[0]!.sql.includes("AS OF"));
-  assertStringIncludes(
-    calls[0]!.sql,
-    "CAST(runner_capabilities AS CHAR) AS runner_capabilities",
+  assert.ok(
+    calls[0]!.sql.includes(
+      "ORDER BY created_at DESC, event_id DESC LIMIT 5000;",
+    ),
+    `expected calls[0]!.sql to include "ORDER BY created_at DESC, event_id DESC LIMIT 5000;"`,
   );
-  assertEquals(calls[0]!.params, [SESSION]);
+  assert.ok(!calls[0]!.sql.includes("AS OF"));
+  assert.ok(
+    calls[0]!.sql.includes(
+      "CAST(runner_capabilities AS CHAR) AS runner_capabilities",
+    ),
+    `expected calls[0]!.sql to include "CAST(runner_capabilities AS CHAR) AS runner_capabilities"`,
+  );
+  assert.deepStrictEqual(calls[0]!.params, [SESSION]);
 });
 
 Deno.test("events.bySession binds an event id and inlines a validated AS OF timestamp", async () => {
@@ -131,16 +133,18 @@ Deno.test("events.bySession binds an event id and inlines a validated AS OF time
     limit: 10,
     order: "asc",
   });
-  assertStringIncludes(
-    calls[0]!.sql,
-    "FROM events AS OF TIMESTAMP('2026-06-12 10:00:00') WHERE session_id = ? AND event_id = ?",
+  assert.ok(
+    calls[0]!.sql.includes(
+      "FROM events AS OF TIMESTAMP('2026-06-12 10:00:00') WHERE session_id = ? AND event_id = ?",
+    ),
+    `expected calls[0]!.sql to include "FROM events AS OF TIMESTAMP('2026-06-12 10:00:00') WHERE session_id = ? AND event_id = ?"`,
   );
-  assertEquals(calls[0]!.params, [SESSION, "01EVENT"]);
+  assert.deepStrictEqual(calls[0]!.params, [SESSION, "01EVENT"]);
 });
 
 Deno.test("events.bySession rejects a malformed AS OF value before touching SQL", async () => {
   const { pool, calls } = scriptedPool();
-  await assertRejects(
+  await assert.rejects(
     () =>
       new DoltStore(pool).events.bySession({
         sessionId: SESSION,
@@ -148,10 +152,11 @@ Deno.test("events.bySession rejects a malformed AS OF value before touching SQL"
         limit: 10,
         order: "asc",
       }),
-    Error,
-    "asOf must be a timestamp",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("asOf must be a timestamp"),
   );
-  assertEquals(calls, []);
+  assert.deepStrictEqual(calls, []);
 });
 
 Deno.test("events.exists and countBySession render driver values", async () => {
@@ -159,8 +164,8 @@ Deno.test("events.exists and countBySession render driver values", async () => {
     sql.includes("COUNT(*)") ? [{ count: 3 }] : [{ event_id: "01EVENT" }]
   );
   const store = new DoltStore(pool);
-  assert(await store.events.exists("01EVENT"));
-  assertEquals(await store.events.countBySession(SESSION), 3);
+  assert.ok(await store.events.exists("01EVENT"));
+  assert.deepStrictEqual(await store.events.countBySession(SESSION), 3);
 });
 
 // ─── other readers ───────────────────────────────────────────────────────────
@@ -168,16 +173,22 @@ Deno.test("events.exists and countBySession render driver values", async () => {
 Deno.test("sessions.list filters by project through a bound parameter", async () => {
   const { pool, calls } = scriptedPool();
   await new DoltStore(pool).sessions.list({ project: "dyfj", limit: 200 });
-  assertStringIncludes(calls[0]!.sql, "WHERE project = ?");
-  assertStringIncludes(
-    calls[0]!.sql,
-    "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200;",
+  assert.ok(
+    calls[0]!.sql.includes("WHERE project = ?"),
+    `expected calls[0]!.sql to include "WHERE project = ?"`,
   );
-  assertEquals(calls[0]!.params, ["dyfj"]);
-  await assertRejects(
+  assert.ok(
+    calls[0]!.sql.includes(
+      "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200;",
+    ),
+    `expected calls[0]!.sql to include "ORDER BY COALESCE(updated_at, created_at) DESC LIMIT 200;"`,
+  );
+  assert.deepStrictEqual(calls[0]!.params, ["dyfj"]);
+  await assert.rejects(
     () => new DoltStore(pool).sessions.list({ limit: 1.5 }),
-    Error,
-    "limit must be a positive integer",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("limit must be a positive integer"),
   );
 });
 
@@ -187,29 +198,38 @@ Deno.test("memories bind slug, clearance and type values instead of interpolatin
   const injectedSlug = "private_memory' OR 1=1 --";
   await store.memories.bySlug(injectedSlug, ["client_safe", "public"]);
   await store.memories.list(["client_safe", "public"], { type: "project" });
-  assertEquals(calls[0], {
+  assert.deepStrictEqual(calls[0], {
     sql: "SELECT memory_id, slug, type, name, description, content " +
       "FROM memories WHERE slug = ? AND visibility IN (?, ?) LIMIT 1;",
     params: [injectedSlug, "client_safe", "public"],
     on: "pool",
   });
-  assertStringIncludes(
-    calls[1]!.sql,
-    "WHERE visibility IN (?, ?) AND type = ? ORDER BY type, slug;",
+  assert.ok(
+    calls[1]!.sql.includes(
+      "WHERE visibility IN (?, ?) AND type = ? ORDER BY type, slug;",
+    ),
+    `expected calls[1]!.sql to include "WHERE visibility IN (?, ?) AND type = ? ORDER BY type, slug;"`,
   );
-  assertFalse(calls[1]!.sql.includes("project"));
-  assertEquals(calls[1]!.params, ["client_safe", "public", "project"]);
+  assert.ok(!calls[1]!.sql.includes("project"));
+  assert.deepStrictEqual(calls[1]!.params, [
+    "client_safe",
+    "public",
+    "project",
+  ]);
 });
 
 Deno.test("models.listActive reads the current catalog columns, with no fallback", async () => {
   const error = new Error("Unknown column 'architecture' in 'field list'");
   const { pool, calls } = scriptedPool(() => error);
-  const rejected = await assertRejects(() =>
+  const rejected = await captureRejection(() =>
     new DoltStore(pool).models.listActive()
   );
-  assertEquals(rejected, error);
-  assertEquals(calls.length, 1);
-  assertStringIncludes(calls[0]!.sql, "architecture, total_params_b");
+  assert.strictEqual(rejected, error);
+  assert.deepStrictEqual(calls.length, 1);
+  assert.ok(
+    calls[0]!.sql.includes("architecture, total_params_b"),
+    `expected calls[0]!.sql to include "architecture, total_params_b"`,
+  );
 });
 
 Deno.test("events.bySession has no fallback for a column a snapshot predates", async () => {
@@ -217,7 +237,7 @@ Deno.test("events.bySession has no fallback for a column a snapshot predates", a
     'column "trace_flags" could not be found in any table in scope',
   );
   const { pool, calls } = scriptedPool(() => error);
-  const rejected = await assertRejects(() =>
+  const rejected = await captureRejection(() =>
     new DoltStore(pool).events.bySession({
       sessionId: SESSION,
       asOf: "2026-06-12 10:00:00",
@@ -225,8 +245,8 @@ Deno.test("events.bySession has no fallback for a column a snapshot predates", a
       order: "asc",
     })
   );
-  assertEquals(rejected, error);
-  assertEquals(calls.length, 1);
+  assert.strictEqual(rejected, error);
+  assert.deepStrictEqual(calls.length, 1);
 });
 
 // ─── boot-time column check ──────────────────────────────────────────────────
@@ -248,9 +268,15 @@ Deno.test("assertCanonicalColumns passes a database at the current baseline", as
   }];
   const { pool, calls } = scriptedPool(() => [...liveColumns(), ...extra]);
   await new DoltStore(pool).assertCanonicalColumns();
-  assertEquals(calls.length, 1);
-  assertStringIncludes(calls[0]!.sql, "FROM information_schema.columns");
-  assertStringIncludes(calls[0]!.sql, "table_schema = database()");
+  assert.deepStrictEqual(calls.length, 1);
+  assert.ok(
+    calls[0]!.sql.includes("FROM information_schema.columns"),
+    `expected calls[0]!.sql to include "FROM information_schema.columns"`,
+  );
+  assert.ok(
+    calls[0]!.sql.includes("table_schema = database()"),
+    `expected calls[0]!.sql to include "table_schema = database()"`,
+  );
 });
 
 Deno.test("assertCanonicalColumns names every missing column and points at the migrations", async () => {
@@ -261,31 +287,36 @@ Deno.test("assertCanonicalColumns names every missing column and points at the m
       "models.architecture",
     ])
   );
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => new DoltStore(pool).assertCanonicalColumns(),
     MissingSchemaColumnsError,
   );
-  assertEquals(error.missing, [
+  assert.deepStrictEqual(error.missing, [
     { table: "events", column: "trace_flags" },
     { table: "events", column: "span_kind" },
     { table: "models", column: "architecture" },
   ]);
-  assertStringIncludes(
-    error.message,
-    "events.trace_flags, events.span_kind, models.architecture",
+  assert.ok(
+    error.message.includes(
+      "events.trace_flags, events.span_kind, models.architecture",
+    ),
+    `expected error.message to include "events.trace_flags, events.span_kind, models.architecture"`,
   );
-  assertStringIncludes(error.message, "schema/migrations/");
+  assert.ok(
+    error.message.includes("schema/migrations/"),
+    `expected error.message to include "schema/migrations/"`,
+  );
 });
 
 Deno.test("assertCanonicalColumns reports a missing table as all of its columns", async () => {
   const { pool } = scriptedPool(() =>
     liveColumns().filter((row) => row.tbl !== "prompts")
   );
-  const error = await assertRejects(
+  const error = await captureRejection(
     () => new DoltStore(pool).assertCanonicalColumns(),
     MissingSchemaColumnsError,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     error.missing.map(({ column }) => column),
     [...CANONICAL_TABLE_COLUMNS.prompts],
   );
@@ -302,7 +333,7 @@ Deno.test("only connection, access and unknown-database errors count as unavaila
       "ER_BAD_DB_ERROR",
     ]
   ) {
-    assert(
+    assert.ok(
       isDatabaseUnavailableError(Object.assign(new Error(code), { code })),
     );
   }
@@ -311,12 +342,12 @@ Deno.test("only connection, access and unknown-database errors count as unavaila
   for (
     const code of ["ER_PARSE_ERROR", "ER_TABLEACCESS_DENIED_ERROR", undefined]
   ) {
-    assertFalse(
-      isDatabaseUnavailableError(Object.assign(new Error("x"), { code })),
+    assert.ok(
+      !isDatabaseUnavailableError(Object.assign(new Error("x"), { code })),
     );
   }
-  assertFalse(isDatabaseUnavailableError(new MissingSchemaColumnsError([])));
-  assertFalse(isDatabaseUnavailableError("ECONNREFUSED"));
+  assert.ok(!isDatabaseUnavailableError(new MissingSchemaColumnsError([])));
+  assert.ok(!isDatabaseUnavailableError("ECONNREFUSED"));
 });
 
 Deno.test("assertCanonicalColumns passes a connection failure through unchanged", async () => {
@@ -324,10 +355,10 @@ Deno.test("assertCanonicalColumns passes a connection failure through unchanged"
     code: "ECONNREFUSED",
   });
   const { pool } = scriptedPool(() => refused);
-  const rejected = await assertRejects(() =>
+  const rejected = await captureRejection(() =>
     new DoltStore(pool).assertCanonicalColumns()
   );
-  assertEquals(rejected, refused);
+  assert.deepStrictEqual(rejected, refused);
 });
 
 Deno.test("spend.baselines scopes by session and day and maps the rollup row", async () => {
@@ -340,12 +371,12 @@ Deno.test("spend.baselines scopes by session and day and maps the rollup row", a
     SESSION,
     "2026-07-06 00:00:00",
   );
-  assertEquals(baselines, {
+  assert.deepStrictEqual(baselines, {
     sessionSpentUsd: 0.12,
     sessionSpentTodayUsd: 0.05,
     dailyOtherSessionsUsd: 3.4,
   });
-  assertEquals(calls[0]!.params, [
+  assert.deepStrictEqual(calls[0]!.params, [
     SESSION,
     SESSION,
     "2026-07-06 00:00:00",
@@ -353,9 +384,15 @@ Deno.test("spend.baselines scopes by session and day and maps the rollup row", a
     SESSION,
   ]);
   // Other-session scoping: this session's own rows must not count twice.
-  assertStringIncludes(calls[0]!.sql, "session_id <> ?");
+  assert.ok(
+    calls[0]!.sql.includes("session_id <> ?"),
+    `expected calls[0]!.sql to include "session_id <> ?"`,
+  );
   // budget_summary rows aggregate the session and would double count.
-  assertStringIncludes(calls[0]!.sql, "event_type = 'model_response'");
+  assert.ok(
+    calls[0]!.sql.includes("event_type = 'model_response'"),
+    `expected calls[0]!.sql to include "event_type = 'model_response'"`,
+  );
 });
 
 // ─── the read-only handle ────────────────────────────────────────────────────
@@ -378,7 +415,7 @@ Deno.test("readers get a handle that runs only a single SELECT", async () => {
       "WITH x AS (SELECT 1) DELETE FROM events",
     ]
   ) {
-    assertFalse(isReadOnlySelect(write), write);
+    assert.ok(!isReadOnlySelect(write), write);
   }
   for (
     const read of [
@@ -387,15 +424,16 @@ Deno.test("readers get a handle that runs only a single SELECT", async () => {
       "SELECT COALESCE(SUM(cost_total), 0) AS s FROM events",
     ]
   ) {
-    assert(isReadOnlySelect(read), read);
+    assert.ok(isReadOnlySelect(read), read);
   }
   const { pool, calls } = scriptedPool();
-  await assertRejects(
+  await assert.rejects(
     () => selectOnly(pool).select(`INSERT INTO ${table} VALUES (?)`, [1]),
-    Error,
-    "store readers may run only a single SELECT",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("store readers may run only a single SELECT"),
   );
-  assertEquals(calls, []);
+  assert.deepStrictEqual(calls, []);
 });
 
 Deno.test("every reader query passes the read-only guard", async () => {
@@ -425,8 +463,8 @@ Deno.test("every reader query passes the read-only guard", async () => {
   await store.models.listInactiveSlugs();
   await store.prompts.active("companion-base");
   await store.spend.baselines(SESSION, "2026-07-06 00:00:00");
-  assertEquals(calls.length, 16);
-  for (const call of calls) assert(isReadOnlySelect(call.sql), call.sql);
+  assert.deepStrictEqual(calls.length, 16);
+  for (const call of calls) assert.ok(isReadOnlySelect(call.sql), call.sql);
 });
 
 // ─── journal ─────────────────────────────────────────────────────────────────
@@ -438,14 +476,17 @@ Deno.test("journal.commit writes one event as a single auto-committed INSERT", a
       event({ tool_is_error: true, model_id: null, content: undefined }),
     ],
   });
-  assertEquals(receipt, { eventIds: ["01EVENT"], mutations: 0 });
-  assertEquals(calls.length, 1);
-  assertEquals(calls[0]!.on, "pool");
+  assert.deepStrictEqual(receipt, { eventIds: ["01EVENT"], mutations: 0 });
+  assert.deepStrictEqual(calls.length, 1);
+  assert.deepStrictEqual(calls[0]!.on, "pool");
   // null columns are omitted; undefined ones bind NULL; booleans bind 0/1.
-  assertFalse(calls[0]!.sql.includes("model_id"));
-  assertStringIncludes(calls[0]!.sql, "INSERT INTO events (event_id,");
-  assertEquals(calls[0]!.params.slice(-2), [1, null]);
-  assertEquals(log, []);
+  assert.ok(!calls[0]!.sql.includes("model_id"));
+  assert.ok(
+    calls[0]!.sql.includes("INSERT INTO events (event_id,"),
+    `expected calls[0]!.sql to include "INSERT INTO events (event_id,"`,
+  );
+  assert.deepStrictEqual(calls[0]!.params.slice(-2), [1, null]);
+  assert.deepStrictEqual(log, []);
 });
 
 Deno.test("journal.commit runs a multi-statement batch in one transaction", async () => {
@@ -461,16 +502,19 @@ Deno.test("journal.commit runs a multi-statement batch in one transaction", asyn
       content: null,
     }],
   });
-  assertEquals(calls.map((c) => c.on), ["connection", "connection"]);
-  assertStringIncludes(calls[1]!.sql, "content = COALESCE(?, content)");
-  assertEquals(log, ["acquire", "begin", "commit", "release"]);
+  assert.deepStrictEqual(calls.map((c) => c.on), ["connection", "connection"]);
+  assert.ok(
+    calls[1]!.sql.includes("content = COALESCE(?, content)"),
+    `expected calls[1]!.sql to include "content = COALESCE(?, content)"`,
+  );
+  assert.deepStrictEqual(log, ["acquire", "begin", "commit", "release"]);
 });
 
 Deno.test("journal.commit rolls a failed batch back and releases the connection", async () => {
   const { pool, log } = scriptedPool((sql) =>
     sql.startsWith("INSERT INTO sessions") ? new Error("duplicate") : []
   );
-  await assertRejects(
+  await assert.rejects(
     () =>
       new DoltStore(pool).journal.commit({
         events: [event()],
@@ -488,10 +532,10 @@ Deno.test("journal.commit rolls a failed batch back and releases the connection"
           progressTotal: 0,
         }],
       }),
-    Error,
-    "duplicate",
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("duplicate"),
   );
-  assertEquals(log, ["acquire", "begin", "rollback", "release"]);
+  assert.deepStrictEqual(log, ["acquire", "begin", "rollback", "release"]);
 });
 
 Deno.test("journal.commit with a signal runs in a transaction and commits", async () => {
@@ -500,8 +544,8 @@ Deno.test("journal.commit with a signal runs in a transaction and commits", asyn
     { events: [event()] },
     { signal: new AbortController().signal },
   );
-  assertEquals(calls.map((c) => c.on), ["connection"]);
-  assertEquals(log, ["acquire", "begin", "commit", "release"]);
+  assert.deepStrictEqual(calls.map((c) => c.on), ["connection"]);
+  assert.deepStrictEqual(log, ["acquire", "begin", "commit", "release"]);
 });
 
 Deno.test("journal.commit aborted while acquiring a connection writes nothing and closes it", async () => {
@@ -513,27 +557,27 @@ Deno.test("journal.commit aborted while acquiring a connection writes nothing an
     { signal: controller.signal },
   );
   controller.abort();
-  const error = await assertRejects(() => commit);
-  assertEquals((error as Error).name, "AbortError");
+  const error = await captureRejection(() => commit);
+  assert.strictEqual((error as Error).name, "AbortError");
   release();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assertEquals(scripted.calls, []);
-  assertEquals(scripted.log, ["acquire", "destroy"]);
+  assert.deepStrictEqual(scripted.calls, []);
+  assert.deepStrictEqual(scripted.log, ["acquire", "destroy"]);
 });
 
 Deno.test("journal.commit rejects an already-aborted empty batch", async () => {
   const { pool, calls, log } = scriptedPool();
   const controller = new AbortController();
   controller.abort();
-  const error = await assertRejects(() =>
+  const error = await captureRejection(() =>
     new DoltStore(pool).journal.commit(
       { events: [] },
       { signal: controller.signal },
     )
   );
-  assertEquals((error as Error).name, "AbortError");
-  assertEquals(calls, []);
-  assertEquals(log, []);
+  assert.strictEqual((error as Error).name, "AbortError");
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(log, []);
 });
 
 Deno.test("an abort while COMMIT is in flight cannot recall an acknowledged commit", async () => {
@@ -548,8 +592,8 @@ Deno.test("an abort while COMMIT is in flight cannot recall an acknowledged comm
     { events: [event()] },
     { signal: controller.signal },
   );
-  assertEquals(receipt.eventIds, ["01EVENT"]);
-  assertEquals(log, ["acquire", "begin", "commit", "destroy"]);
+  assert.deepStrictEqual(receipt.eventIds, ["01EVENT"]);
+  assert.deepStrictEqual(log, ["acquire", "begin", "commit", "destroy"]);
 });
 
 Deno.test("a connection lost mid-COMMIT rejects with the driver's error", async () => {
@@ -559,13 +603,13 @@ Deno.test("a connection lost mid-COMMIT rejects with the driver's error", async 
     controller.abort();
     return Promise.reject(lost);
   });
-  const error = await assertRejects(() =>
+  const error = await captureRejection(() =>
     new DoltStore(pool).journal.commit(
       { events: [event()] },
       { signal: controller.signal },
     )
   );
-  assertEquals(error, lost);
+  assert.strictEqual(error, lost);
 });
 
 Deno.test("after an abort destroys its connection, the pool serves the next commit", async () => {
@@ -577,16 +621,16 @@ Deno.test("after an abort destroys its connection, the pool serves the next comm
     return [];
   });
   const store = new DoltStore(pool);
-  const error = await assertRejects(() =>
+  const error = await captureRejection(() =>
     store.journal.commit(
       { events: [event({ event_id: "01ABORTED" })] },
       { signal: controller.signal },
     )
   );
-  assertEquals((error as Error).name, "AbortError");
+  assert.strictEqual((error as Error).name, "AbortError");
   // The aborted transaction rolled back, and its connection was destroyed,
   // not returned to the pool.
-  assertEquals(log, ["acquire", "begin", "destroy", "rollback"]);
+  assert.deepStrictEqual(log, ["acquire", "begin", "destroy", "rollback"]);
 
   log.length = 0;
   calls.length = 0;
@@ -594,25 +638,29 @@ Deno.test("after an abort destroys its connection, the pool serves the next comm
     { events: [event({ event_id: "01NEXT" })] },
     { signal: new AbortController().signal },
   );
-  assertEquals(log, ["acquire", "begin", "commit", "release"]);
+  assert.deepStrictEqual(log, ["acquire", "begin", "commit", "release"]);
   await store.journal.commit({ events: [event({ event_id: "01PLAIN" })] });
-  assert(await store.events.exists("01PLAIN"));
-  assertEquals(calls.map((c) => c.on), ["connection", "pool", "pool"]);
+  assert.ok(await store.events.exists("01PLAIN"));
+  assert.deepStrictEqual(calls.map((c) => c.on), [
+    "connection",
+    "pool",
+    "pool",
+  ]);
 });
 
 Deno.test("journal.commit rejects an undeclared mutation before touching SQL", async () => {
   const { pool, calls } = scriptedPool();
-  await assertRejects(() =>
+  await assert.rejects(() =>
     new DoltStore(pool).journal.commit({
       events: [event()],
       mutations: [{ kind: "drop_everything" } as never],
     })
   );
-  assertEquals(calls, []);
+  assert.deepStrictEqual(calls, []);
 });
 
 Deno.test("close ends the pool the store was given", async () => {
   const { pool, log } = scriptedPool();
   await new DoltStore(pool).close();
-  assertEquals(log, ["end"]);
+  assert.deepStrictEqual(log, ["end"]);
 });

@@ -1,14 +1,14 @@
-import { assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertSpyCall, assertSpyCalls, spy } from "@std/testing/mock";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 
 describe("runtime SIGINT handling", () => {
   it("an autostarted runtime ignores terminal SIGINT", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = spy(() => Promise.resolve());
-    const exit = spy((_code: number) => {});
-    const add = spy((next: () => void) => handler = next);
+    const close = mock.fn(() => Promise.resolve());
+    const exit = mock.fn((_code: number) => {});
+    const add = mock.fn((next: () => void) => handler = next);
 
     installRuntimeSigintHandler(
       true,
@@ -18,15 +18,15 @@ describe("runtime SIGINT handling", () => {
     );
     await handler();
 
-    assertSpyCalls(add, 1);
-    assertSpyCalls(close, 0);
-    assertSpyCalls(exit, 0);
+    assert.equal(add.mock.callCount(), 1);
+    assert.equal(close.mock.callCount(), 0);
+    assert.equal(exit.mock.callCount(), 0);
   });
 
   it("a foreground runtime closes and exits on SIGINT", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = spy(() => Promise.resolve());
-    const exit = spy((_code: number) => {});
+    const close = mock.fn(() => Promise.resolve());
+    const exit = mock.fn((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -36,8 +36,8 @@ describe("runtime SIGINT handling", () => {
     );
     await handler();
 
-    assertSpyCalls(close, 1);
-    assertSpyCall(exit, 0, { args: [0] });
+    assert.equal(close.mock.callCount(), 1);
+    assert.deepStrictEqual(exit.mock.calls[0].arguments, [0]);
   });
 
   it("foreground SIGINT waits for startup to supply runtime cleanup", async () => {
@@ -46,8 +46,8 @@ describe("runtime SIGINT handling", () => {
     const closeReady = new Promise<() => Promise<void>>((resolve) => {
       resolveClose = resolve;
     });
-    const close = spy(() => Promise.resolve());
-    const exit = spy((_code: number) => {});
+    const close = mock.fn(() => Promise.resolve());
+    const exit = mock.fn((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -58,18 +58,18 @@ describe("runtime SIGINT handling", () => {
     const pending = handler();
     await Promise.resolve();
 
-    assertSpyCalls(exit, 0);
+    assert.equal(exit.mock.callCount(), 0);
     resolveClose(close);
     await pending;
 
-    assertSpyCalls(close, 1);
-    assertSpyCall(exit, 0, { args: [0] });
+    assert.equal(close.mock.callCount(), 1);
+    assert.deepStrictEqual(exit.mock.calls[0].arguments, [0]);
   });
 
   it("a foreground runtime exits when graceful shutdown rejects", async () => {
     let handler: () => void | Promise<void> = () => {};
-    const close = spy(() => Promise.reject(new Error("close failed")));
-    const exit = spy((_code: number) => {});
+    const close = mock.fn(() => Promise.reject(new Error("close failed")));
+    const exit = mock.fn((_code: number) => {});
 
     installRuntimeSigintHandler(
       false,
@@ -77,9 +77,9 @@ describe("runtime SIGINT handling", () => {
       { add: (next) => handler = next },
       exit,
     );
-    assertStrictEquals(await handler(), undefined);
+    assert.strictEqual(await handler(), undefined);
 
-    assertSpyCalls(close, 1);
-    assertSpyCall(exit, 0, { args: [1] });
+    assert.equal(close.mock.callCount(), 1);
+    assert.deepStrictEqual(exit.mock.calls[0].arguments, [1]);
   });
 });

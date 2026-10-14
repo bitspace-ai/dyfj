@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import assert from "node:assert/strict";
 import { EVENT_TYPE_VALUES, type EventType } from "../generated/rows.ts";
 import {
   EVENT_BUILDERS,
@@ -21,7 +21,7 @@ const base: EventFields = {
 };
 
 Deno.test("every event type has exactly one builder", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     Object.keys(EVENT_BUILDERS).sort(),
     [...EVENT_TYPE_VALUES].sort(),
   );
@@ -44,7 +44,7 @@ Deno.test("each builder sets its own event_type", () => {
       runner_profile: "fixture",
       permission_verdict: "approved",
     });
-    assertEquals(built.event_type, eventType);
+    assert.deepStrictEqual(built.event_type, eventType);
   }
 });
 
@@ -55,7 +55,7 @@ Deno.test("a builder writes exactly the fields it was given, nulls included", ()
     content: "prompt",
     duration_ms: undefined,
   };
-  assertEquals(sessionStartEvent(fields), {
+  assert.deepStrictEqual(sessionStartEvent(fields), {
     ...fields,
     event_type: "session_start",
   });
@@ -64,8 +64,11 @@ Deno.test("a builder writes exactly the fields it was given, nulls included", ()
 Deno.test("a builder's event_type wins over a stray one in the fields", () => {
   // Not a fresh literal, so the stray column passes the compile-time check.
   const stray = { ...base, event_type: "error", content: "{}" };
-  assertEquals(modelSelectedEvent(stray).event_type, "model_selected");
-  assertEquals(
+  assert.deepStrictEqual(
+    modelSelectedEvent(stray).event_type,
+    "model_selected",
+  );
+  assert.deepStrictEqual(
     toolCallEvent({ ...base, tool_name: "read_file", tool_call_id: "c1" })
       .event_type,
     "tool_call",

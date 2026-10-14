@@ -1,10 +1,4 @@
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -26,7 +20,7 @@ import {
 } from "./mod.ts";
 
 Deno.test("buildWorkbenchSessionSlug: derives a stable workbench slug from the session id", () => {
-  assertStrictEquals(
+  assert.strictEqual(
     buildWorkbenchSessionSlug("01ABCDEF0123456789ABCDEF01"),
     "workbench-01abcdef0123456789abcdef01",
   );
@@ -41,17 +35,40 @@ Deno.test("buildWorkbenchSessionContent: captures prompt, mode, trace, context s
     receipt: "Workbench receipt\nSession: 01TEST",
   });
 
-  assertStringIncludes(content, "# Workbench Session");
-  assertStringIncludes(content, "**Mode:** turn");
-  assertStringIncludes(
-    content,
-    "**Trace:** 0123456789abcdef0123456789abcdef",
+  assert.ok(
+    content.includes("# Workbench Session"),
+    `expected ${JSON.stringify(content)} to include "# Workbench Session"`,
   );
-  assertStringIncludes(content, "## Prompt");
-  assertStringIncludes(content, "What next?");
-  assertStringIncludes(content, "- AGENTS.md <AGENTS.md>");
-  assertStringIncludes(content, "## Receipt");
-  assertStringIncludes(content, "Workbench receipt");
+  assert.ok(
+    content.includes("**Mode:** turn"),
+    `expected ${JSON.stringify(content)} to include "**Mode:** turn"`,
+  );
+  assert.ok(
+    content.includes("**Trace:** 0123456789abcdef0123456789abcdef"),
+    `expected ${
+      JSON.stringify(content)
+    } to include "**Trace:** 0123456789abcdef0123456789abcdef"`,
+  );
+  assert.ok(
+    content.includes("## Prompt"),
+    `expected ${JSON.stringify(content)} to include "## Prompt"`,
+  );
+  assert.ok(
+    content.includes("What next?"),
+    `expected ${JSON.stringify(content)} to include "What next?"`,
+  );
+  assert.ok(
+    content.includes("- AGENTS.md <AGENTS.md>"),
+    `expected ${JSON.stringify(content)} to include "- AGENTS.md <AGENTS.md>"`,
+  );
+  assert.ok(
+    content.includes("## Receipt"),
+    `expected ${JSON.stringify(content)} to include "## Receipt"`,
+  );
+  assert.ok(
+    content.includes("Workbench receipt"),
+    `expected ${JSON.stringify(content)} to include "Workbench receipt"`,
+  );
 });
 
 /** A recording journal: the batches committed through it. */
@@ -112,7 +129,7 @@ Deno.test("createWorkbenchSession: commits an interactive session working view a
     journal,
   });
 
-  assertEquals(journal.batches, [{
+  assert.deepStrictEqual(journal.batches, [{
     events: [],
     mutations: [{
       kind: "session_insert",
@@ -140,7 +157,7 @@ Deno.test("createWorkbenchSession: persists the workspace when bound and caps th
     workspace: "/workspace/example-project",
     journal: store.journal,
   });
-  assertStrictEquals(
+  assert.strictEqual(
     await fetchWorkbenchSessionWorkspace({
       sessionId: "01TESTSESSION00000000000000",
       sessions: store.sessions,
@@ -148,7 +165,7 @@ Deno.test("createWorkbenchSession: persists the workspace when bound and caps th
     "/workspace/example-project",
   );
   const summary = await store.sessions.summary("01TESTSESSION00000000000000");
-  assertStrictEquals(summary?.task_description?.length, 256);
+  assert.strictEqual(summary?.task_description?.length, 256);
 });
 
 Deno.test("fetchWorkbenchSessionWorkspace: returns the persisted workspace for a session", async () => {
@@ -158,18 +175,18 @@ Deno.test("fetchWorkbenchSessionWorkspace: returns the persisted workspace for a
       workspace: { workspace: "/workspace/example-project" },
     }),
   });
-  assertStrictEquals(ws, "/workspace/example-project");
+  assert.strictEqual(ws, "/workspace/example-project");
 });
 
 Deno.test("fetchWorkbenchSessionWorkspace: returns null when the session has no workspace or does not exist", async () => {
-  assertStrictEquals(
+  assert.strictEqual(
     await fetchWorkbenchSessionWorkspace({
       sessionId: "x",
       sessions: sessionsReturning({ workspace: { workspace: "" } }),
     }),
     null,
   );
-  assertStrictEquals(
+  assert.strictEqual(
     await fetchWorkbenchSessionWorkspace({
       sessionId: "x",
       sessions: sessionsReturning({ workspace: null }),
@@ -179,14 +196,14 @@ Deno.test("fetchWorkbenchSessionWorkspace: returns null when the session has no 
 });
 
 Deno.test("fetchWorkbenchSessionWorkspaceRecord: distinguishes an existing session without a workspace from a missing session", async () => {
-  assertEquals(
+  assert.deepStrictEqual(
     await fetchWorkbenchSessionWorkspaceRecord({
       sessionId: "existing",
       sessions: sessionsReturning({ workspace: { workspace: "" } }),
     }),
     { exists: true, workspace: null },
   );
-  assertEquals(
+  assert.deepStrictEqual(
     await fetchWorkbenchSessionWorkspaceRecord({
       sessionId: "missing",
       sessions: sessionsReturning({ workspace: null }),
@@ -204,7 +221,7 @@ Deno.test("updateWorkbenchSession: marks the session complete with updated conte
     journal,
   });
 
-  assertEquals(journal.batches, [{
+  assert.deepStrictEqual(journal.batches, [{
     events: [],
     mutations: [{
       kind: "session_update",
@@ -247,12 +264,16 @@ Deno.test("listWorkbenchSessions: groups sessions by project with unfiled last",
       ],
     }),
   });
-  assertEquals(groups.map((g) => g.project), ["dyfj", "project-b", null]);
-  assertStrictEquals(
+  assert.deepStrictEqual(groups.map((g) => g.project), [
+    "dyfj",
+    "project-b",
+    null,
+  ]);
+  assert.strictEqual(
     groups[0].sessions[0].sessionId,
     "01AAAAAAAAAAAAAAAAAAAAAAAB",
   );
-  assertStrictEquals(groups[2].sessions[0].project, null);
+  assert.strictEqual(groups[2].sessions[0].project, null);
 });
 
 Deno.test("listWorkbenchSessions: passes the project filter and a clamped limit to the reader", async () => {
@@ -269,7 +290,7 @@ Deno.test("listWorkbenchSessions: passes the project filter and a clamped limit 
     limit: -1,
     sessions: sessionsReturning({}, calls),
   });
-  assertEquals(calls, [
+  assert.deepStrictEqual(calls, [
     { project: "dyfj", limit: 200 },
     { limit: 1000 },
     { limit: 1 },
@@ -285,12 +306,12 @@ Deno.test("fetchWorkbenchSessionEvents: reads a session's newest events and retu
       { event_id: "evt-1", event_type: "session_start", created_at: "a" },
     ], calls),
   });
-  assertEquals(calls, [{
+  assert.deepStrictEqual(calls, [{
     sessionId: "01ABCDEF0123456789ABCDEF01",
     limit: 5000,
     order: "desc",
   }]);
-  assertEquals(events.map((e) => e.eventId), ["evt-1", "evt-2"]);
+  assert.deepStrictEqual(events.map((e) => e.eventId), ["evt-1", "evt-2"]);
 });
 
 Deno.test("fetchWorkbenchSessionEvents: passes asOf and an event id through, capping an event lookup at 10", async () => {
@@ -301,7 +322,7 @@ Deno.test("fetchWorkbenchSessionEvents: passes asOf and an event id through, cap
     asOf: "2026-06-12T10:00:00",
     events: eventsReturning([], calls),
   });
-  assertEquals(calls, [{
+  assert.deepStrictEqual(calls, [{
     sessionId: "01ABCDEF0123456789ABCDEF01",
     eventId: "01EVENT",
     asOf: "2026-06-12T10:00:00",
@@ -328,7 +349,7 @@ Deno.test("fetchWorkbenchSessionEvents: maps row fields and nulls empty strings"
       created_at: "2026-06-12 10:00:00",
     }]),
   });
-  assertObjectMatch({ ...events[0] }, {
+  assert.partialDeepStrictEqual({ ...events[0] }, {
     eventType: "model_response",
     modelId: "gemma4:e2b",
     content: "hello",
@@ -368,7 +389,7 @@ Deno.test("fetchWorkbenchSessionEvents: round-trips typed external-runner metada
       created_at: "2026-08-05 10:00:00",
     }]),
   });
-  assertObjectMatch({ ...event }, {
+  assert.partialDeepStrictEqual({ ...event }, {
     eventType: "agent_response",
     runnerKind: "external_agent",
     runnerProfile: "fixture",
@@ -412,7 +433,7 @@ Deno.test("fetchWorkbenchSessionEvents: returns trace parentage and tool argumen
       created_at: "2026-06-12 10:00:00",
     }]),
   });
-  assertObjectMatch({ ...event }, {
+  assert.partialDeepStrictEqual({ ...event }, {
     spanId: "tool-span",
     parentSpanId: "provider-span",
     traceFlags: 1,
@@ -442,7 +463,7 @@ Deno.test("fetchWorkbenchSessionEvents: leaves array-valued tool arguments absen
       created_at: "2026-06-12 10:00:00",
     }]),
   });
-  assertStrictEquals(event.toolArguments, null);
+  assert.strictEqual(event.toolArguments, null);
 });
 
 Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across driver round-trips", async () => {
@@ -467,7 +488,7 @@ Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across d
       rows.slice().reverse() as unknown as Record<string, string>[],
     ),
   });
-  assertEquals(events.map((e) => e.toolIsError), [
+  assert.deepStrictEqual(events.map((e) => e.toolIsError), [
     true,
     true,
     false,
@@ -477,26 +498,28 @@ Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across d
 });
 
 Deno.test("fetchWorkbenchSessionEvents: rejects invalid limits", async () => {
-  await assertRejects(
+  await assert.rejects(
     () =>
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: 0,
         events: eventsReturning([]),
       }),
-    Error,
-    "limit must be a positive integer",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("limit must be a positive integer"),
   );
 
-  await assertRejects(
+  await assert.rejects(
     () =>
       fetchWorkbenchSessionEvents({
         sessionId: "s1",
         limit: -3,
         events: eventsReturning([]),
       }),
-    Error,
-    "limit must be a positive integer",
+    (error: unknown) =>
+      error instanceof Error &&
+      error.message.includes("limit must be a positive integer"),
   );
 });
 
@@ -520,6 +543,6 @@ Deno.test("fetchWorkbenchSessionEvents: preserves explicit descending order", as
     ], calls),
   });
 
-  assertObjectMatch({ ...calls[0] }, { limit: 10, order: "desc" });
-  assertEquals(events.map((e) => e.eventId), ["evt-2", "evt-1"]);
+  assert.partialDeepStrictEqual({ ...calls[0] }, { limit: 10, order: "desc" });
+  assert.deepStrictEqual(events.map((e) => e.eventId), ["evt-2", "evt-1"]);
 });

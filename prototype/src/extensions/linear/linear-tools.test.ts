@@ -1,12 +1,6 @@
+import assert from "node:assert/strict";
+import { type Mock, mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import {
-  assertEquals,
-  assertFalse,
-  assertObjectMatch,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
-import { assertSpyCalls, type Spy, spy } from "@std/testing/mock";
 import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
 import type {
   LinearIssueCreationBinding,
@@ -77,18 +71,14 @@ function callSpy(
   impl: LinearIssueMcpCall = () =>
     Promise.resolve(undefined as unknown as LinearIssueMcpResult),
 ) {
-  return spy((input: Parameters<LinearIssueMcpCall>[0]) => impl(input));
+  return mock.fn((input: Parameters<LinearIssueMcpCall>[0]) => impl(input));
 }
 
-type ApprovalSpy = Spy<
-  unknown,
-  Parameters<ConfirmToolApproval>,
-  ReturnType<ConfirmToolApproval>
->;
+type ApprovalSpy = Mock<ConfirmToolApproval>;
 
 // An approver fake that records its calls and answers every one `decision`.
 function approvalSpy(decision: "approve" | "deny"): ApprovalSpy {
-  return spy((..._request: Parameters<ConfirmToolApproval>) =>
+  return mock.fn<ConfirmToolApproval>((..._request) =>
     Promise.resolve({ decision })
   );
 }
@@ -239,27 +229,27 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
     ) => invokeWith(call, args, approve, upstreamTool);
     it("projects only bounded model fields and exact configured project names", () => {
       const schema = boundedLinearCreateIssueSchema(binding);
-      assertEquals(Object.keys(schema.properties ?? {}), [
+      assert.deepStrictEqual(Object.keys(schema.properties ?? {}), [
         "title",
         "description",
         "project",
         "priority",
         "relatedTo",
       ]);
-      assertEquals(schema.properties?.project?.enum, [
+      assert.deepStrictEqual(schema.properties?.project?.enum, [
         "Synthetic Project",
         "Second Project",
       ]);
-      assertFalse("team" in (schema.properties as object));
-      assertStrictEquals(schema.additionalProperties, false);
+      assert.ok(!("team" in (schema.properties as object)));
+      assert.strictEqual(schema.additionalProperties, false);
     });
 
     it("requires the discovered connector to accept every mapped field", () => {
-      assertStrictEquals(
+      assert.strictEqual(
         supportsBoundedLinearCreateIssue(upstreamSchema, binding),
         true,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         supportsBoundedLinearCreateIssue({
           ...upstreamSchema,
           properties: {
@@ -269,21 +259,21 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         }, binding),
         false,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         supportsBoundedLinearCreateIssue({
           ...upstreamSchema,
           required: ["title", "unsupportedRequiredField"],
         }, binding),
         false,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         supportsBoundedLinearCreateIssue({
           ...upstreamSchema,
           required: ["title", "relatedTo"],
         }, binding),
         false,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         supportsBoundedLinearCreateIssue({
           ...upstreamSchema,
           properties: {
@@ -299,12 +289,16 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
       const call = callSpy(async () => successResult());
       const { result, events, approve } = await invoke(call);
 
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 1);
-      assertStrictEquals(call.calls[0].args[0].tool, upstreamTool);
-      assertFalse("id" in (call.calls[0].args[0].arguments as object));
-      assertFalse("patch" in (call.calls[0].args[0].arguments as object));
-      assertEquals(call.calls[0].args[0].arguments, {
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 1);
+      assert.strictEqual(call.mock.calls[0].arguments[0].tool, upstreamTool);
+      assert.ok(
+        !("id" in (call.mock.calls[0].arguments[0].arguments as object)),
+      );
+      assert.ok(
+        !("patch" in (call.mock.calls[0].arguments[0].arguments as object)),
+      );
+      assert.deepStrictEqual(call.mock.calls[0].arguments[0].arguments, {
         title: "Synthetic issue",
         description: "Synthetic description",
         team: "team_fixture_01",
@@ -312,25 +306,28 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         priority: 2,
         relatedTo: ["SYN-7"],
       });
-      assertEquals(result, {
+      assert.deepStrictEqual(result, {
         decision: "allow",
         authzBasis: "policy:allow:operator-approved",
         isError: false,
         result: "SYN-101",
       });
-      assertObjectMatch(events[0] as unknown as Record<string, unknown>, {
-        tool_arguments:
-          '{"title":"[redacted]","description":"[redacted]","project":"[redacted]","priority":"[redacted]","relatedTo":"[redacted]"}',
-        tool_result: "[redacted]",
-        tool_is_error: false,
-      });
-      assertStrictEquals(
+      assert.partialDeepStrictEqual(
+        events[0] as unknown as Record<string, unknown>,
+        {
+          tool_arguments:
+            '{"title":"[redacted]","description":"[redacted]","project":"[redacted]","priority":"[redacted]","relatedTo":"[redacted]"}',
+          tool_result: "[redacted]",
+          tool_is_error: false,
+        },
+      );
+      assert.strictEqual(
         String(events[0]?.content),
         `{"outcome":"created","externalMcp":{"server":"linear","tool":"${upstreamTool}","revision":"2026-07-28","identifier":"SYN-101"}}`,
       );
-      assertFalse(JSON.stringify(events[0]).includes("must not persist"));
-      assertFalse(JSON.stringify(events[0]).includes("Synthetic description"));
-      assertFalse(JSON.stringify(events[0]).includes("fixture-token"));
+      assert.ok(!JSON.stringify(events[0]).includes("must not persist"));
+      assert.ok(!JSON.stringify(events[0]).includes("Synthetic description"));
+      assert.ok(!JSON.stringify(events[0]).includes("fixture-token"));
     });
 
     it("a denied approval never calls the connector", async () => {
@@ -341,16 +338,22 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         invocationArguments(),
         approve,
       );
-      assertObjectMatch(result as unknown as Record<string, unknown>, {
-        decision: "deny",
-        authzBasis: "policy:deny:approval-denied",
-        isError: true,
-      });
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 0);
-      assertStringIncludes(String(events[0]?.content), '"outcome":"error"');
-      assertFalse(String(events[0]?.content).includes('"identifier"'));
-      assertStrictEquals(events[0]?.tool_is_error, true);
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          decision: "deny",
+          authzBasis: "policy:deny:approval-denied",
+          isError: true,
+        },
+      );
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 0);
+      assert.ok(
+        String(events[0]?.content).includes('"outcome":"error"'),
+        `expected String(events[0]?.content) to include '"outcome":"error"'`,
+      );
+      assert.ok(!String(events[0]?.content).includes('"identifier"'));
+      assert.strictEqual(events[0]?.tool_is_error, true);
     });
 
     for (const [_name, override] of invalidArgumentCases) {
@@ -360,17 +363,23 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           call,
           invocationArguments(override),
         );
-        assertSpyCalls(approve, _name === "duplicate relations" ? 1 : 0);
-        assertObjectMatch(result as unknown as Record<string, unknown>, {
-          isError: true,
-        });
-        assertSpyCalls(call, 0);
+        assert.equal(
+          approve.mock.callCount(),
+          _name === "duplicate relations" ? 1 : 0,
+        );
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+          },
+        );
+        assert.equal(call.mock.callCount(), 0);
       });
     }
 
     it("rejects oversized relations before reading items or asking approval", async () => {
       const relatedTo = Array(11).fill("SYN-1");
-      const readItem = spy(() => {
+      const readItem = mock.fn(() => {
         throw new Error("item must not be read");
       });
       Object.defineProperty(relatedTo, "0", { get: readItem });
@@ -379,13 +388,16 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         call,
         invocationArguments({ relatedTo }),
       );
-      assertObjectMatch(result as unknown as Record<string, unknown>, {
-        isError: true,
-        authzBasis: "policy:deny:invalid-arguments",
-      });
-      assertSpyCalls(readItem, 0);
-      assertSpyCalls(approve, 0);
-      assertSpyCalls(call, 0);
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          isError: true,
+          authzBasis: "policy:deny:invalid-arguments",
+        },
+      );
+      assert.equal(readItem.mock.callCount(), 0);
+      assert.equal(approve.mock.callCount(), 0);
+      assert.equal(call.mock.callCount(), 0);
     });
 
     it("accepts ten distinct relations", async () => {
@@ -395,10 +407,13 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         call,
         invocationArguments({ relatedTo }),
       );
-      assertStrictEquals(result.isError, false);
-      assertSpyCalls(approve, 1);
-      assertSpyCalls(call, 1);
-      assertEquals(call.calls[0].args[0].arguments.relatedTo, relatedTo);
+      assert.strictEqual(result.isError, false);
+      assert.equal(approve.mock.callCount(), 1);
+      assert.equal(call.mock.callCount(), 1);
+      assert.deepStrictEqual(
+        call.mock.calls[0].arguments[0].arguments.relatedTo,
+        relatedTo,
+      );
     });
 
     for (
@@ -413,7 +428,7 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
       ]
     ) {
       it(`accepts consistent ID evidence and display labels: ${JSON.stringify(extra)}`, () => {
-        assertEquals(
+        assert.deepStrictEqual(
           projectLinearIssueCreationReceipt(
             {
               structuredContent: {
@@ -456,18 +471,21 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
             },
           }));
           const { result, events } = await invoke(call);
-          assertObjectMatch(result as unknown as Record<string, unknown>, {
-            isError: true,
-            reason: INDETERMINATE,
-          });
-          assertSpyCalls(call, 1);
-          assertFalse(String(events[0]?.content).includes('"identifier"'));
+          assert.partialDeepStrictEqual(
+            result as unknown as Record<string, unknown>,
+            {
+              isError: true,
+              reason: INDETERMINATE,
+            },
+          );
+          assert.equal(call.mock.callCount(), 1);
+          assert.ok(!String(events[0]?.content).includes('"identifier"'));
         }
       });
     }
 
     it("accepts issue-style id and display labels while retaining only the identifier", async () => {
-      const call = spy(async () => ({
+      const call = mock.fn(async () => ({
         content: [{
           type: "text",
           text: JSON.stringify({
@@ -482,15 +500,21 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
         }],
       }));
       const { result, events, approve } = await invoke(call);
-      assertObjectMatch(result as unknown as Record<string, unknown>, {
-        isError: false,
-        result: "SYN-105",
-      });
-      assertSpyCalls(call, 1);
-      assertSpyCalls(approve, 1);
-      assertStringIncludes(JSON.stringify(events), "SYN-105");
-      assertFalse(JSON.stringify(events).includes("discarded title"));
-      assertFalse(JSON.stringify(events).includes("issue_fixture"));
+      assert.partialDeepStrictEqual(
+        result as unknown as Record<string, unknown>,
+        {
+          isError: false,
+          result: "SYN-105",
+        },
+      );
+      assert.equal(call.mock.callCount(), 1);
+      assert.equal(approve.mock.callCount(), 1);
+      assert.ok(
+        JSON.stringify(events).includes("SYN-105"),
+        `expected JSON.stringify(events) to include "SYN-105"`,
+      );
+      assert.ok(!JSON.stringify(events).includes("discarded title"));
+      assert.ok(!JSON.stringify(events).includes("issue_fixture"));
     });
 
     for (
@@ -504,7 +528,7 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
       ]
     ) {
       it(`rejects invalid alias or association evidence without retry: ${JSON.stringify(override)}`, async () => {
-        const call = spy(async () => ({
+        const call = mock.fn(async () => ({
           structuredContent: {
             teamId: binding.teamId,
             team: "Synthetic Team",
@@ -514,11 +538,14 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           },
         }));
         const { result } = await invoke(call);
-        assertObjectMatch(result as unknown as Record<string, unknown>, {
-          isError: true,
-          reason: INDETERMINATE,
-        });
-        assertSpyCalls(call, 1);
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+            reason: INDETERMINATE,
+          },
+        );
+        assert.equal(call.mock.callCount(), 1);
       });
     }
 
@@ -532,40 +559,46 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           project: "Synthetic Project",
         };
         delete response[`${association}Id`];
-        assertStrictEquals(Object.hasOwn(response, `${association}Id`), false);
-        assertStrictEquals(Object.hasOwn(response, `${association}_id`), false);
+        assert.strictEqual(Object.hasOwn(response, `${association}Id`), false);
+        assert.strictEqual(Object.hasOwn(response, `${association}_id`), false);
         const call = callSpy(async () => ({
           structuredContent: response,
         }));
         const { result, events } = await invoke(call);
-        assertObjectMatch(result as unknown as Record<string, unknown>, {
-          isError: true,
-          reason: INDETERMINATE,
-        });
-        assertSpyCalls(call, 1);
-        assertFalse(String(events[0]?.content).includes('"identifier"'));
+        assert.partialDeepStrictEqual(
+          result as unknown as Record<string, unknown>,
+          {
+            isError: true,
+            reason: INDETERMINATE,
+          },
+        );
+        assert.equal(call.mock.callCount(), 1);
+        assert.ok(!String(events[0]?.content).includes('"identifier"'));
       });
     }
 
     for (const [_name, behavior] of indeterminateCases) {
       it(`reports ${String(_name)} as indeterminate without replay`, async () => {
-        const call = spy(behavior);
+        const call = mock.fn(behavior);
         const { result, events } = await invoke(call);
-        assertEquals(result, {
+        assert.deepStrictEqual(result, {
           decision: "allow",
           authzBasis: "policy:allow:operator-approved",
           isError: true,
           reason:
             "Linear issue creation is indeterminate; reconcile in Linear before retrying.",
         });
-        assertSpyCalls(call, 1);
-        assertStringIncludes(String(events[0]?.content), '"outcome":"error"');
-        assertFalse(JSON.stringify(result).includes("untrusted details"));
-        assertStrictEquals(
+        assert.equal(call.mock.callCount(), 1);
+        assert.ok(
+          String(events[0]?.content).includes('"outcome":"error"'),
+          `expected String(events[0]?.content) to include '"outcome":"error"'`,
+        );
+        assert.ok(!JSON.stringify(result).includes("untrusted details"));
+        assert.strictEqual(
           events[0]?.tool_result,
           "Linear issue creation is indeterminate; reconcile in Linear before retrying.",
         );
-        assertFalse(String(events[0]?.content).includes('"identifier"'));
+        assert.ok(!String(events[0]?.content).includes('"identifier"'));
         for (
           const value of [
             "untrusted details",
@@ -575,7 +608,7 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
             "different_project",
           ]
         ) {
-          assertFalse(JSON.stringify(events).includes(value));
+          assert.ok(!JSON.stringify(events).includes(value));
         }
       });
     }
@@ -584,7 +617,7 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
 
 describe("Linear identifier receipt projection", () => {
   it("accepts structured evidence and returns only the identifier", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       projectLinearIssueCreationReceipt(
         {
           structuredContent: {
@@ -619,7 +652,7 @@ describe("creation-only upstream schema projection", () => {
           }
           return undefined;
         };}
-      assertStrictEquals(
+      assert.strictEqual(
         projectLinearCreationUpstreamSchema(schema, binding),
         undefined,
       );
@@ -631,8 +664,8 @@ describe("creation-only upstream schema projection", () => {
       saveIssueSchema,
       binding,
     );
-    assertEquals(projected?.properties?.project, { type: "string" });
-    assertEquals(Object.keys(projected?.properties ?? {}), [
+    assert.deepStrictEqual(projected?.properties?.project, { type: "string" });
+    assert.deepStrictEqual(Object.keys(projected?.properties ?? {}), [
       "title",
       "description",
       "team",
@@ -640,7 +673,7 @@ describe("creation-only upstream schema projection", () => {
       "priority",
       "relatedTo",
     ]);
-    assertStrictEquals(projected?.additionalProperties, false);
+    assert.strictEqual(projected?.additionalProperties, false);
   });
   for (
     const override of [
@@ -686,7 +719,7 @@ describe("creation-only upstream schema projection", () => {
     ]
   ) {
     it(`withholds unsupported constraints ${JSON.stringify(override)}`, () => {
-      assertStrictEquals(
+      assert.strictEqual(
         projectLinearCreationUpstreamSchema(
           { ...saveIssueSchema, ...override },
           binding,

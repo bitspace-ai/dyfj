@@ -1,8 +1,4 @@
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertStringIncludes,
-} from "@std/assert";
+import assert from "node:assert/strict";
 import type { EventInsert } from "../../store/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { type RpcContext, RpcErrorCode } from "../../transport/mod.ts";
@@ -39,7 +35,7 @@ function approvingClient(
   return {
     notify: () => Promise.resolve(),
     request: (method, params) => {
-      assertEquals(method, "approval");
+      assert.deepStrictEqual(method, "approval");
       approvals.push(params);
       return Promise.resolve(answer);
     },
@@ -183,29 +179,34 @@ Deno.test("friction/post numbers comments and preserves write approval", async (
     },
     approvingClient(approvals),
   );
-  assertEquals(result, {
+  assert.deepStrictEqual(result, {
     number: "F011",
     escapeNumber: "E003",
     commentId: "comment-created",
     firstLine: "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
   });
-  assertEquals(approvals.length, 1);
-  assertObjectMatch(approvals[0] as Record<string, unknown>, {
+  assert.deepStrictEqual(approvals.length, 1);
+  assert.partialDeepStrictEqual(approvals[0] as Record<string, unknown>, {
     commandId: "mcp.linear.create_comment",
   });
-  assertEquals(receiptEvents.map((event) => event.tool_name), [
+  assert.deepStrictEqual(receiptEvents.map((event) => event.tool_name), [
     "mcp.linear.get_issue",
     "mcp.linear.list_comments",
     "mcp.linear.create_comment",
   ]);
-  assertObjectMatch(receiptEvents[2] as unknown as Record<string, unknown>, {
-    authz_basis: "policy:allow:operator-approved",
-    tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
-    tool_result: "[redacted]",
-  });
-  assertStringIncludes(
-    createdBodies[0],
-    "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
+  assert.partialDeepStrictEqual(
+    receiptEvents[2] as unknown as Record<string, unknown>,
+    {
+      authz_basis: "policy:allow:operator-approved",
+      tool_arguments: '{"issueId":"[redacted]","body":"[redacted]"}',
+      tool_result: "[redacted]",
+    },
+  );
+  assert.ok(
+    createdBodies[0].includes(
+      "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes",
+    ),
+    `expected createdBodies[0] to include "F011 · E003 · 2026-09-03 · paper-cut · escaped? yes"`,
   );
 });
 
@@ -221,8 +222,8 @@ Deno.test("friction/post validates severity before reading Linear", async () => 
     "friction/post",
     { severity: "trivial", escaped: false, text: "moment" },
   );
-  assertEquals(error.code, RpcErrorCode.invalidParams);
-  assertEquals(reads, 0);
+  assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
+  assert.deepStrictEqual(reads, 0);
 });
 
 for (const frictionIssueId of [undefined, "   "]) {
@@ -254,13 +255,15 @@ for (const frictionIssueId of [undefined, "   "]) {
         "friction/post",
         { severity: "minor", escaped: false, text: "moment" },
       );
-      assertStringIncludes(
-        error.message,
-        "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+      assert.ok(
+        error.message.includes(
+          "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+        ),
+        `expected error.message to include "configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue"`,
       );
-      assertEquals(reads, 0);
-      assertEquals(writes, 0);
-      assertEquals(receiptEvents, []);
+      assert.deepStrictEqual(reads, 0);
+      assert.deepStrictEqual(writes, 0);
+      assert.deepStrictEqual(receiptEvents, []);
     },
   );
 }
@@ -282,7 +285,10 @@ Deno.test("friction/post names create_comment failure", async () => {
     },
     approvingClient(),
   );
-  assertStringIncludes(error.message, "comment write failed");
+  assert.ok(
+    error.message.includes("comment write failed"),
+    `expected error.message to include "comment write failed"`,
+  );
 });
 
 for (
@@ -305,10 +311,10 @@ for (
       { severity: "minor", escaped: false, text: "moment" },
       approvingClient(),
     );
-    assertEquals(error, {
+    assert.deepStrictEqual(error, {
       code: RpcErrorCode.internalError,
       message: `${message}: configured Linear tool is unavailable`,
     });
-    assertEquals(createdBodies, []);
+    assert.deepStrictEqual(createdBodies, []);
   });
 }
