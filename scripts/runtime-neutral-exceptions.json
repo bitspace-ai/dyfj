@@ -1,7 +1,7 @@
 [
   {
     "path": "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
-    "count": 6,
+    "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -11,7 +11,7 @@
   },
   {
     "path": "contracts/workbench/first-product/v1/executable-closure.test.ts",
-    "count": 4,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -173,31 +173,6 @@
     "path": "prototype/scripts/typecheck.ts",
     "count": 6,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/src/acp-client.integration.test.ts",
-    "count": 49,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/acp-client.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/acp-runner.integration.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/acp-session-map.integration.test.ts",
-    "count": 39,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/acp-session-map.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/budget/anomaly-gate.test.ts",
@@ -806,7 +781,7 @@
   },
   {
     "path": "prototype/testing/golden/golden.test.ts",
-    "count": 8,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -906,7 +881,7 @@
   },
   {
     "path": "schema/model-catalog.test.ts",
-    "count": 3,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

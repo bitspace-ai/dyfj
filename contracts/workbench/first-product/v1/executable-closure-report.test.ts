@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   buildClosureReport,
   type ClosureState,
@@ -162,8 +163,9 @@ Deno.test("the generated report computes the fixed EC, RP, and target denominato
 Deno.test("the generated report equals the checked-in report byte-for-byte", async () => {
   const report = await buildClosureReport();
   const generated = `${JSON.stringify(report, null, 2)}\n`;
-  const committed = await Deno.readTextFile(
+  const committed = await readFile(
     "contracts/workbench/first-product/v1/executable-closure-report.json",
+    "utf8",
   );
 
   assert(

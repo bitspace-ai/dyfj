@@ -2,15 +2,9 @@
 // child process is started, so the profile below is only a map key. The cases
 // that drive the real fixture agent live in
 // acp-session-map.integration.test.ts.
-import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertNotStrictEquals,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+import { captureRejection } from "../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "@std/testing/bdd";
 import { join } from "node:path";
 import process from "node:process";
@@ -170,9 +164,9 @@ async function assertRejectsWithFields(
   promise: Promise<unknown>,
   expected: Record<string, unknown>,
 ): Promise<void> {
-  const error = await assertRejects(() => promise);
+  const error = await captureRejection(() => promise);
   for (const [key, value] of Object.entries(expected)) {
-    assertEquals(
+    assert.deepStrictEqual(
       (error as Record<string, unknown>)[key],
       value,
       `error.${key}`,
@@ -219,7 +213,7 @@ describe("AcpSessionHandleMap sequential reuse", () => {
           return Promise.resolve(firstHandle);
         },
       });
-      await assertRejects(
+      await assert.rejects(
         () =>
           map.runTurn({
             ...acquireKey(profile),
@@ -227,13 +221,14 @@ describe("AcpSessionHandleMap sequential reuse", () => {
             reconstructPrompt: () => "must not replace a warm prompt",
             create: () => Promise.resolve(fakeHandle()),
           }),
-        Error,
-        "ACP prompt exceeded the input limit",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("ACP prompt exceeded the input limit"),
       );
-      assertStrictEquals(transportSends, 1);
-      assertStrictEquals(firstHandle.isAlive, false);
-      assertStrictEquals(map.size, 0);
-      assertEquals(persistedEvents, [{ eventType: "tool_call" }]);
+      assert.strictEqual(transportSends, 1);
+      assert.strictEqual(firstHandle.isAlive, false);
+      assert.strictEqual(map.size, 0);
+      assert.deepStrictEqual(persistedEvents, [{ eventType: "tool_call" }]);
       await map.runTurn({
         ...acquireKey(profile),
         prompt: "later",
@@ -242,7 +237,7 @@ describe("AcpSessionHandleMap sequential reuse", () => {
           return Promise.resolve(fakeHandle());
         },
       });
-      assertStrictEquals(creates, 2);
+      assert.strictEqual(creates, 2);
     } finally {
       await map.shutdown();
     }
@@ -251,7 +246,7 @@ describe("AcpSessionHandleMap sequential reuse", () => {
 
 describe("ACP continuity selection", () => {
   it("a warm handle needs no replay and claims no resume", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       selectAcpContinuity({
         warmHandleReused: true,
         priorTurns: true,
@@ -263,7 +258,7 @@ describe("ACP continuity selection", () => {
   });
 
   it("a session without prior turns is new, not reconstructed", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       selectAcpContinuity({
         warmHandleReused: false,
         priorTurns: false,
@@ -274,7 +269,7 @@ describe("ACP continuity selection", () => {
   });
 
   it("prior turns without a load-capable runner reconstruct", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       selectAcpContinuity({
         warmHandleReused: false,
         priorTurns: true,
@@ -288,7 +283,7 @@ describe("ACP continuity selection", () => {
   });
 
   it("an advertised load without verified identity still reconstructs", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       selectAcpContinuity({
         warmHandleReused: false,
         priorTurns: true,
@@ -302,7 +297,7 @@ describe("ACP continuity selection", () => {
   });
 
   it("a durable resume needs both capability and verified identity", () => {
-    assertEquals(
+    assert.deepStrictEqual(
       selectAcpContinuity({
         warmHandleReused: false,
         priorTurns: true,
@@ -345,8 +340,8 @@ describe("AcpSessionHandleMap continuity", () => {
         reconstructPrompt: () => "must-not-be-replayed",
         onContinuity: (evidence) => states.push(evidence.state),
       });
-      assertEquals(states, ["new", "warm-reused"]);
-      assertEquals(prompts, ["first turn", "referential follow-up"]);
+      assert.deepStrictEqual(states, ["new", "warm-reused"]);
+      assert.deepStrictEqual(prompts, ["first turn", "referential follow-up"]);
     } finally {
       await map.shutdown();
     }
@@ -385,7 +380,7 @@ describe("AcpSessionHandleMap continuity", () => {
       const idle = [...timers.values()][0];
       idle?.();
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
 
       await map.runTurn({
         ...acquireKey(profile),
@@ -394,8 +389,8 @@ describe("AcpSessionHandleMap continuity", () => {
         reconstructPrompt: () => "transcript + referential follow-up",
         onContinuity: (evidence) => states.push(evidence.state),
       });
-      assertEquals(states, ["new", "reconstructed"]);
-      assertEquals(prompts, [
+      assert.deepStrictEqual(states, ["new", "reconstructed"]);
+      assert.deepStrictEqual(prompts, [
         "first turn",
         "transcript + referential follow-up",
       ]);
@@ -419,7 +414,7 @@ describe("AcpSessionHandleMap continuity", () => {
         reconstructPrompt: () => "transcript + referential follow-up",
         onContinuity: (value) => evidence.push(value),
       });
-      assertEquals(evidence, [{
+      assert.deepStrictEqual(evidence, [{
         state: "reconstructed",
         durableResume: "unavailable-client-verification",
       }]);
@@ -431,18 +426,18 @@ describe("AcpSessionHandleMap continuity", () => {
   it("the ACP client implements no session/load path", async () => {
     const sources = await Promise.all(
       ["acp-client.ts", "acp-session-map.ts", "external-agent-runtime.ts"].map(
-        (file) => Deno.readTextFile(join(import.meta.dirname!, file)),
+        (file) => readFile(join(import.meta.dirname!, file), "utf8"),
       ),
     );
     for (const source of sources) {
-      assertFalse(source.includes("methods.agent.session.load"));
-      assertFalse(source.includes("loadSession("));
-      assertFalse(source.includes("resumeSession("));
+      assert.ok(!source.includes("methods.agent.session.load"));
+      assert.ok(!source.includes("loadSession("));
+      assert.ok(!source.includes("resumeSession("));
     }
     // The capability is still read as runner-reported evidence.
-    assertStringIncludes(
-      sources[0],
-      "agentCapabilities?.loadSession === true",
+    assert.ok(
+      sources[0].includes("agentCapabilities?.loadSession === true"),
+      `expected sources[0] to include "agentCapabilities?.loadSession === true"`,
     );
   });
 
@@ -462,7 +457,7 @@ describe("AcpSessionHandleMap continuity", () => {
       },
     });
     try {
-      await assertRejects(
+      await assert.rejects(
         () =>
           map.runTurn({
             ...acquireKey(profile),
@@ -474,9 +469,9 @@ describe("AcpSessionHandleMap continuity", () => {
           }),
         DomainError,
       );
-      assertStrictEquals(prompted, false);
-      assertStrictEquals(handle.isAlive, false);
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(prompted, false);
+      assert.strictEqual(handle.isAlive, false);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();
     }
@@ -493,10 +488,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
         ...acquireKey(profile),
         create: () => gate.promise,
       });
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "creating");
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "creating");
       gate.resolve(fakeHandle());
       await first;
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "active");
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "active");
     } finally {
       await map.shutdown();
     }
@@ -511,7 +506,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
         ...acquireKey(profile),
         create: () => gate.promise,
       });
-      await assertRejects(
+      await assert.rejects(
         () =>
           map.acquire({
             ...acquireKey(profile),
@@ -521,8 +516,8 @@ describe("AcpSessionHandleMap lifecycle", () => {
       );
       const handle = fakeHandle();
       gate.resolve(handle);
-      assertStrictEquals(await first, handle);
-      await assertRejects(
+      assert.strictEqual(await first, handle);
+      await assert.rejects(
         () =>
           map.acquire({
             ...acquireKey(profile),
@@ -540,7 +535,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     const handle = fakeHandle();
     try {
-      assertStrictEquals(
+      assert.strictEqual(
         await map.acquire({
           ...acquireKey(profile),
           create: () => Promise.resolve(handle),
@@ -548,8 +543,8 @@ describe("AcpSessionHandleMap lifecycle", () => {
         handle,
       );
       map.release(handle);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
-      assertStrictEquals(
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(
         await map.acquire({
           ...acquireKey(profile),
           create: () => Promise.resolve(fakeHandle()),
@@ -592,8 +587,8 @@ describe("AcpSessionHandleMap lifecycle", () => {
         profile: otherProfile,
         create: () => Promise.resolve(handles[3]),
       });
-      assertStrictEquals(new Set([a, b, c, d]).size, 4);
-      assertNotStrictEquals(
+      assert.strictEqual(new Set([a, b, c, d]).size, 4);
+      assert.notStrictEqual(
         encodeAcpSessionHandleKey({
           sessionId: "s1",
           workspace: profile.workspace,
@@ -605,7 +600,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
           profile,
         }),
       );
-      assertNotStrictEquals(
+      assert.notStrictEqual(
         canonicalExecutionProfileDigest(profile),
         canonicalExecutionProfileDigest(otherProfile),
       );
@@ -631,10 +626,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
         prompt: "cancel me",
         create: () => Promise.resolve(handle),
       });
-      assertStrictEquals(result.stopReason, "aborted");
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
-      assertStrictEquals(
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(
         await map.acquire({
           ...acquireKey(profile),
           create: () => Promise.resolve(fakeHandle()),
@@ -665,9 +660,9 @@ describe("AcpSessionHandleMap lifecycle", () => {
         }),
         { phase: "protocol" },
       );
-      assertStrictEquals(broken.isAlive, false);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), undefined);
-      assertStrictEquals(
+      assert.strictEqual(broken.isAlive, false);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), undefined);
+      assert.strictEqual(
         await map.acquire({
           ...acquireKey(profile),
           create: () => Promise.resolve(replacement),
@@ -696,22 +691,22 @@ describe("AcpSessionHandleMap lifecycle", () => {
       });
       map.release(handle);
       const stale = [...timers.values()][0];
-      assert(stale !== undefined);
+      assert.ok(stale !== undefined);
       await map.acquire({
         ...acquireKey(profile),
         create: () => Promise.resolve(fakeHandle()),
       });
-      assertStrictEquals(handle.isAlive, true);
+      assert.strictEqual(handle.isAlive, true);
       stale?.();
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "active");
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "active");
       map.release(handle);
       const current = [...timers.values()][0];
       current?.();
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      assertStrictEquals(handle.isAlive, false);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), undefined);
+      assert.strictEqual(handle.isAlive, false);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), undefined);
     } finally {
       await map.shutdown();
     }
@@ -737,11 +732,11 @@ describe("AcpSessionHandleMap lifecycle", () => {
       const idle = [...timers.values()][0];
       idle?.();
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      assertEquals(captured.failures, []);
-      assertStrictEquals(handle.isAlive, false);
-      assertStrictEquals(map.size, 0);
+      assert.deepStrictEqual(captured.failures, []);
+      assert.strictEqual(handle.isAlive, false);
+      assert.strictEqual(map.size, 0);
       await map.shutdown();
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     } finally {
       captured.stop();
     }
@@ -770,17 +765,18 @@ describe("AcpSessionHandleMap lifecycle", () => {
       const idle = [...timers.values()][0];
       idle?.();
       await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
-      assertEquals(captured.failures, []);
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.size, 1);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "closing");
-      await assertRejects(
+      assert.deepStrictEqual(captured.failures, []);
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "closing");
+      await assert.rejects(
         () => map.shutdown(),
-        Error,
-        "idle close failed while alive",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("idle close failed while alive"),
       );
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.size, 1);
     } finally {
       captured.stop();
     }
@@ -797,7 +793,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
         create: () => Promise.resolve(first),
       });
       map.release(first);
-      await assertRejects(
+      await assert.rejects(
         () =>
           map.acquire({
             ...acquireKey(profile, "s2"),
@@ -805,9 +801,9 @@ describe("AcpSessionHandleMap lifecycle", () => {
           }),
         AcpSessionCapacityError,
       );
-      assertStrictEquals(first.isAlive, true);
-      assertStrictEquals(map.stateFor(acquireKey(profile, "s1")), "idle");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(first.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile, "s1")), "idle");
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -826,15 +822,15 @@ describe("AcpSessionHandleMap lifecycle", () => {
       ...acquireKey(profile),
       create: () => gate.promise,
     });
-    assertStrictEquals(map.stateFor(acquireKey(profile)), "creating");
+    assert.strictEqual(map.stateFor(acquireKey(profile)), "creating");
     const shuttingDown = map.shutdown();
     await Promise.resolve();
-    assertStrictEquals(handle.isAlive, true);
+    assert.strictEqual(handle.isAlive, true);
     gate.resolve(handle);
     await shuttingDown;
-    assertStrictEquals(handle.isAlive, false);
-    assertStrictEquals(map.size, 0);
-    await assertRejects(() => pending, AcpSessionShutdownError);
+    assert.strictEqual(handle.isAlive, false);
+    assert.strictEqual(map.size, 0);
+    await assert.rejects(() => pending, AcpSessionShutdownError);
   });
 
   it("shutdown surfaces a close failure and keeps the live entry", async () => {
@@ -848,9 +844,13 @@ describe("AcpSessionHandleMap lifecycle", () => {
       ...acquireKey(profile),
       create: () => Promise.resolve(handle),
     });
-    await assertRejects(() => map.shutdown(), Error, "close failed");
-    assertStrictEquals(handle.isAlive, true);
-    assertStrictEquals(map.size, 1);
+    await assert.rejects(
+      () => map.shutdown(),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("close failed"),
+    );
+    assert.strictEqual(handle.isAlive, true);
+    assert.strictEqual(map.size, 1);
   });
 
   it("shutdown waits for a delayed close before surfacing an earlier failure", async () => {
@@ -879,15 +879,19 @@ describe("AcpSessionHandleMap lifecycle", () => {
     });
     await Promise.resolve();
     await Promise.resolve();
-    assertStrictEquals(shutdownSettled, false);
-    assertStrictEquals(delayedFinished, false);
-    assertStrictEquals(delayed.isAlive, true);
+    assert.strictEqual(shutdownSettled, false);
+    assert.strictEqual(delayedFinished, false);
+    assert.strictEqual(delayed.isAlive, true);
     delay.resolve();
-    await assertRejects(() => shuttingDown, Error, "fast close failed");
-    assertStrictEquals(delayedFinished, true);
-    assertStrictEquals(shutdownSettled, true);
-    assertStrictEquals(delayed.isAlive, false);
-    assertStrictEquals(map.size, 0);
+    await assert.rejects(
+      () => shuttingDown,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("fast close failed"),
+    );
+    assert.strictEqual(delayedFinished, true);
+    assert.strictEqual(shutdownSettled, true);
+    assert.strictEqual(delayed.isAlive, false);
+    assert.strictEqual(map.size, 0);
   });
 
   it("shutdown rejects new acquisition and reaps every handle", async () => {
@@ -904,10 +908,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
     });
     map.release(handles[1]);
     await map.shutdown();
-    assertStrictEquals(handles[0].isAlive, false);
-    assertStrictEquals(handles[1].isAlive, false);
-    assertStrictEquals(map.size, 0);
-    await assertRejects(
+    assert.strictEqual(handles[0].isAlive, false);
+    assert.strictEqual(handles[1].isAlive, false);
+    assert.strictEqual(map.size, 0);
+    await assert.rejects(
       () =>
         map.acquire({
           ...acquireKey(profile, "s3"),
@@ -937,8 +941,8 @@ describe("AcpSessionHandleMap lifecycle", () => {
       });
       map.release(dead);
       await dead.close();
-      assertStrictEquals(dead.isAlive, false);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(dead.isAlive, false);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
       const result = await map.runTurn({
         ...acquireKey(profile),
         prompt: "replace",
@@ -948,10 +952,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
           return live;
         },
       });
-      assertStrictEquals(result.stopReason, "stop");
-      assertStrictEquals(routeCalls, 1);
-      assertStrictEquals(live.isAlive, true);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(result.stopReason, "stop");
+      assert.strictEqual(routeCalls, 1);
+      assert.strictEqual(live.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
     } finally {
       await map.shutdown();
     }
@@ -981,11 +985,11 @@ describe("AcpSessionHandleMap lifecycle", () => {
           routeCalls += 1;
         },
       });
-      assertStrictEquals(result.stopReason, "aborted");
-      assertStrictEquals(routeCalls, 0);
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.size, 1);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.strictEqual(routeCalls, 0);
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
     } finally {
       await map.shutdown();
     }
@@ -1016,10 +1020,10 @@ describe("AcpSessionHandleMap lifecycle", () => {
           );
         },
       });
-      assertStrictEquals(result.stopReason, "aborted");
-      assertStrictEquals(handle.isAlive, true);
-      assertStrictEquals(map.size, 1);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), "idle");
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "idle");
     } finally {
       await map.shutdown();
     }
@@ -1050,9 +1054,9 @@ describe("AcpSessionHandleMap lifecycle", () => {
           phase: "authenticate",
         },
       );
-      assert(Date.now() - startedAt < 1_000);
-      assertStrictEquals(map.size, 0);
-      assertStrictEquals(map.stateFor(acquireKey(profile)), undefined);
+      assert.ok(Date.now() - startedAt < 1_000);
+      assert.strictEqual(map.size, 0);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), undefined);
     } finally {
       await map.shutdown().catch(() => {});
     }
@@ -1090,11 +1094,11 @@ describe("AcpSessionHandleMap lifecycle", () => {
           phase: "authenticate",
         },
       );
-      assert(Date.now() - startedAt < 1_000);
+      assert.ok(Date.now() - startedAt < 1_000);
       await new Promise((resolve) => globalThis.setTimeout(resolve, 80));
-      assertStrictEquals(replaySignal?.aborted, true);
-      assertStrictEquals(lateWrite, false);
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(replaySignal?.aborted, true);
+      assert.strictEqual(lateWrite, false);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown().catch(() => {});
     }

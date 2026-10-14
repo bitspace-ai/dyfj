@@ -2,12 +2,8 @@
 // prompt deadline, the ingress guard, stream draining, usage parsing and the
 // pre-spawn profile checks. The cases that start the fixture agent live in
 // acp-client.integration.test.ts.
-import {
-  assertEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-} from "@std/assert";
+import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "@std/testing/bdd";
 import { Readable } from "node:stream";
 import {
@@ -57,10 +53,10 @@ describe("ActivePromptDeadline", () => {
     now = 10;
     deadline.pause();
     now = 1_000;
-    assertStrictEquals(deadline.remainingMs, 20);
+    assert.strictEqual(deadline.remainingMs, 20);
     deadline.resume();
     now = 1_019;
-    assertStrictEquals(deadline.remainingMs, 1);
+    assert.strictEqual(deadline.remainingMs, 1);
   });
 
   it("resumes with the remaining budget instead of resetting it", () => {
@@ -71,7 +67,7 @@ describe("ActivePromptDeadline", () => {
     now = 1_000;
     deadline.resume();
     now = 1_060;
-    assertStrictEquals(deadline.remainingMs, 0);
+    assert.strictEqual(deadline.remainingMs, 0);
   });
 
   it("does not pause after the prompt budget has expired", () => {
@@ -79,8 +75,8 @@ describe("ActivePromptDeadline", () => {
     const deadline = new ActivePromptDeadline(30, () => now);
     now = 31;
     deadline.pause();
-    assertStrictEquals(deadline.isPaused, false);
-    assertStrictEquals(deadline.remainingMs, 0);
+    assert.strictEqual(deadline.isPaused, false);
+    assert.strictEqual(deadline.remainingMs, 0);
   });
 
   it("does not double-count an overlapping paused interval", () => {
@@ -91,10 +87,10 @@ describe("ActivePromptDeadline", () => {
     now = 1_000;
     deadline.pause();
     now = 2_000;
-    assertStrictEquals(deadline.remainingMs, 90);
+    assert.strictEqual(deadline.remainingMs, 90);
     deadline.resume();
     now = 2_090;
-    assertStrictEquals(deadline.remainingMs, 0);
+    assert.strictEqual(deadline.remainingMs, 0);
   });
 });
 
@@ -186,24 +182,26 @@ describe("guardedProtocolInput", () => {
     const first = agentMessageChunkLine("x".repeat(50_000));
     const second = agentMessageChunkLine("x".repeat(50_000));
     const output = await runGuardedExchanges([first, second]);
-    assertEquals(output, concatBytes([first, second]));
+    assert.deepStrictEqual(output, concatBytes([first, second]));
   });
 
   it("keeps a lifetime budget without an exchange reset", async () => {
     const first = agentMessageChunkLine("x".repeat(50_000));
     const second = agentMessageChunkLine("x".repeat(50_000));
-    await assertRejects(
+    await assert.rejects(
       () => runGuardedExchanges([first, second], false),
-      Error,
-      "ACP agent response exceeded the text limit",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP agent response exceeded the text limit"),
     );
   });
 
   it("still fails closed when a single exchange exceeds 60KB", async () => {
-    await assertRejects(
+    await assert.rejects(
       () => runGuardedExchanges([agentMessageChunkLine("x".repeat(60_001))]),
-      Error,
-      "ACP agent response exceeded the text limit",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP agent response exceeded the text limit"),
     );
   });
 
@@ -212,13 +210,13 @@ describe("guardedProtocolInput", () => {
     const first = concatBytes(Array.from({ length: 1_024 }, () => line));
     const second = concatBytes(Array.from({ length: 1_024 }, () => line));
     const output = await runGuardedExchanges([first, second]);
-    assertEquals(output, concatBytes([first, second]));
+    assert.deepStrictEqual(output, concatBytes([first, second]));
   });
 });
 
 describe("runAcpAgent", () => {
   it("probes process-group signaling with a runtime-neutral child", () => {
-    assertEquals(processGroupProbeArgv(), ["/bin/sleep", "30"]);
+    assert.deepStrictEqual(processGroupProbeArgv(), ["/bin/sleep", "30"]);
   });
 
   it("cancels a stderr drain whose producer never closes", async () => {
@@ -226,7 +224,7 @@ describe("runAcpAgent", () => {
     const drain = drainStream(stream);
     await drain.cancel();
     await drain.done;
-    assertStrictEquals(stream.destroyed, true);
+    assert.strictEqual(stream.destroyed, true);
     // A late pipe error after the drain settled must not throw.
     stream.emit("error", new Error("late pipe error"));
   });
@@ -235,7 +233,7 @@ describe("runAcpAgent", () => {
     const stream = new Readable({ read() {} });
     const drain = drainStream(stream);
     await settleDrain(drain, 1);
-    assertStrictEquals(stream.destroyed, true);
+    assert.strictEqual(stream.destroyed, true);
     await drain.done;
   });
 
@@ -246,11 +244,11 @@ describe("runAcpAgent", () => {
     ]);
     const drain = drainStream(stream, 10);
     await drain.done;
-    assertStrictEquals(stream.destroyed, true);
+    assert.strictEqual(stream.destroyed, true);
   });
 
   it("drops malformed optional ACP usage without inventing accounting", () => {
-    assertStrictEquals(
+    assert.strictEqual(
       tokenUsageFromPromptResponse({
         totalTokens: 3,
         inputTokens: -1,
@@ -258,7 +256,7 @@ describe("runAcpAgent", () => {
       }),
       undefined,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       usageSnapshotFromUpdate({
         sessionUpdate: "usage_update",
         used: 9,
@@ -267,7 +265,7 @@ describe("runAcpAgent", () => {
       }),
       undefined,
     );
-    assertEquals(
+    assert.deepStrictEqual(
       usageSnapshotFromUpdate({
         sessionUpdate: "usage_update",
         used: 4,
@@ -281,7 +279,7 @@ describe("runAcpAgent", () => {
   it("does not dispatch a prompt for an already-aborted signal", async () => {
     const controller = new AbortController();
     controller.abort();
-    assertObjectMatch(
+    assert.partialDeepStrictEqual(
       await runAcpAgent({
         profile: staticProfile(),
         prompt: "FIXTURE_CANCEL",
@@ -295,8 +293,8 @@ describe("runAcpAgent", () => {
   });
 
   it("resolves protocol-message ceilings from the execution profile", () => {
-    assertStrictEquals(resolveProtocolMessageLimit(staticProfile()), 393_216);
-    assertStrictEquals(
+    assert.strictEqual(resolveProtocolMessageLimit(staticProfile()), 393_216);
+    assert.strictEqual(
       resolveProtocolMessageLimit(staticProfile({
         protocolMessagePolicy: "long_running",
       })),
@@ -305,7 +303,7 @@ describe("runAcpAgent", () => {
   });
 
   it("rejects an invalid protocol-message policy before spawning", async () => {
-    await assertRejects(
+    await assert.rejects(
       () =>
         runAcpAgent({
           profile: {
@@ -314,8 +312,11 @@ describe("runAcpAgent", () => {
           } as unknown as AcpExecutionProfile,
           prompt: "unused",
         }),
-      Error,
-      "ACP profile has an invalid protocol-message policy",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "ACP profile has an invalid protocol-message policy",
+        ),
     );
   });
 
@@ -348,10 +349,11 @@ describe("runAcpAgent", () => {
       () => "fixture-1",
       () => {},
     );
-    await assertRejects(
+    await assert.rejects(
       () => guarded.pipeTo(new WritableStream()),
-      Error,
-      "ACP agent exceeded the session-update limit",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP agent exceeded the session-update limit"),
     );
   });
 
@@ -387,12 +389,13 @@ describe("runAcpAgent", () => {
       () => {},
       limit,
     );
-    await assertRejects(
+    await assert.rejects(
       () => guarded.pipeTo(new WritableStream()),
-      Error,
-      "ACP agent exceeded the session-update limit",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP agent exceeded the session-update limit"),
     );
-    assertStrictEquals(limit, 8_192);
+    assert.strictEqual(limit, 8_192);
   });
 
   it("accepts a valid protocol line fragmented into one-byte chunks", async () => {
@@ -419,15 +422,15 @@ describe("runAcpAgent", () => {
       () => "fixture-1",
       () => {},
     );
-    assertEquals(
+    assert.deepStrictEqual(
       new Uint8Array(await new Response(guarded).arrayBuffer()),
       payload,
     );
   });
 
   it("rejects Windows absolute paths on non-Windows hosts", async () => {
-    if (Deno.build.os === "windows") return;
-    await assertRejects(
+    if (process.platform === "win32") return;
+    await assert.rejects(
       () =>
         runAcpAgent({
           profile: staticProfile({
@@ -436,8 +439,9 @@ describe("runAcpAgent", () => {
           }),
           prompt: "unused",
         }),
-      Error,
-      "ACP profile command must be absolute",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP profile command must be absolute"),
     );
   });
 });
