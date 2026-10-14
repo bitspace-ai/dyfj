@@ -5,17 +5,23 @@
 // runtime's journal writes. Child processes, environment reads and `Deno.uid`
 // put these in the integration tier; the pure transcript-projection cases live
 // in external-agent-runtime.test.ts.
+import { captureRejection } from "../testing/assertions/captured.ts";
+import assert from "node:assert/strict";
 import {
-  assert,
-  assertEquals,
-  assertFalse,
-  assertMatch,
-  assertNotStrictEquals,
-  assertObjectMatch,
-  assertRejects,
-  assertStrictEquals,
-  assertStringIncludes,
-} from "@std/assert";
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import process from "node:process";
+import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
 import { stub } from "@std/testing/mock";
 import { dirname, join } from "node:path";
@@ -168,7 +174,7 @@ function harnessStore(h: Harness): Store {
           return { workspace: h.sessionWorkspace ?? "" };
         }
         return (await base.sessions.workspace(sessionId)) ??
-          { workspace: Deno.cwd() };
+          { workspace: process.cwd() };
       },
     },
     memories: base.memories,
@@ -198,14 +204,14 @@ function assertSessionReceipt(
   session: Record<string, unknown> | undefined,
   receipt: string,
 ): void {
-  assert(
+  assert.ok(
     String(session?.content).endsWith(`\n\n## Receipt\n\n${receipt}`),
     `session content does not end with receipt ${JSON.stringify(receipt)}`,
   );
 }
 
 function asRecord(value: unknown): Record<PropertyKey, unknown> {
-  assert(
+  assert.ok(
     value !== null && typeof value === "object",
     `expected an object, got ${String(value)}`,
   );
@@ -218,10 +224,13 @@ function assertContains(
   expected: unknown,
 ): void {
   if (typeof actual === "string") {
-    assertStringIncludes(actual, String(expected));
+    assert.ok(
+      actual.includes(String(expected)),
+      `expected ${JSON.stringify(actual)} to include String(expected)`,
+    );
     return;
   }
-  assert(
+  assert.ok(
     actual !== undefined && actual.includes(expected),
     `expected ${JSON.stringify(actual)} to contain ${JSON.stringify(expected)}`,
   );
@@ -231,9 +240,9 @@ function assertNotContains(
   actual: string | readonly unknown[] | undefined,
   expected: unknown,
 ): void {
-  assert(actual !== undefined);
-  assertFalse(
-    (actual as { includes(value: unknown): boolean }).includes(expected),
+  assert.ok(actual !== undefined);
+  assert.ok(
+    !(actual as { includes(value: unknown): boolean }).includes(expected),
     `expected ${JSON.stringify(actual)} not to contain ${
       JSON.stringify(expected)
     }`,
@@ -241,14 +250,14 @@ function assertNotContains(
 }
 
 function assertNoProperty(actual: unknown, key: string): void {
-  assertFalse(
-    Object.hasOwn(asRecord(actual), key),
+  assert.ok(
+    !Object.hasOwn(asRecord(actual), key),
     `expected no property ${key}`,
   );
 }
 
 function assertLess(actual: number, bound: number): void {
-  assert(actual < bound, `expected ${actual} < ${bound}`);
+  assert.ok(actual < bound, `expected ${actual} < ${bound}`);
 }
 
 /** Asserts `promise` rejects with an error carrying each expected field. */
@@ -256,9 +265,9 @@ async function assertRejectsWithFields(
   promise: Promise<unknown>,
   expected: Record<string, unknown>,
 ): Promise<void> {
-  const error = await assertRejects(() => promise);
+  const error = await captureRejection(() => promise);
   for (const [key, value] of Object.entries(expected)) {
-    assertEquals(
+    assert.deepStrictEqual(
       (error as Record<string, unknown>)[key],
       value,
       `error.${key}`,
@@ -268,7 +277,7 @@ async function assertRejectsWithFields(
 
 /** A temp directory outside the checkout; removed by the caller. */
 function tempDir(): Promise<string> {
-  return Deno.makeTempDir({ prefix: "dyfj-external-agent-" });
+  return mkdtemp(join(tmpdir(), "dyfj-external-agent-"));
 }
 
 /**
@@ -323,7 +332,7 @@ function stalledInitializeProfile(
   if (script === undefined) {
     throw new Error("fixture profile is missing a script");
   }
-  const home = Deno.env.get("HOME") ?? "/tmp";
+  const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
     initializeTimeoutMs: 2_000,
@@ -340,8 +349,8 @@ function stalledInitializeProfile(
     ],
     environment: {
       ...base.environment,
-      DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
-      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
       ACP_FIXTURE_MODE: "initialize_mute",
     },
@@ -355,7 +364,7 @@ function methodLogProfile(
   const base = fixtureProfile(workspace);
   const script = base.args.at(-1);
   if (script === undefined) throw new Error("fixture profile has no script");
-  const home = Deno.env.get("HOME") ?? "/tmp";
+  const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
     initializeTimeoutMs: 2_000,
@@ -371,8 +380,8 @@ function methodLogProfile(
     ],
     environment: {
       ...base.environment,
-      DENO_DIR: Deno.env.get("DENO_DIR") ?? join(home, ".cache/deno"),
-      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
+      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
   };
@@ -380,11 +389,14 @@ function methodLogProfile(
 
 async function readMethods(path: string): Promise<string[]> {
   try {
-    return (await Deno.readTextFile(path)).split("\n").filter((line) =>
+    return (await readFile(path, "utf8")).split("\n").filter((line) =>
       line.length > 0
     );
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return [];
+    if (
+      (error instanceof Error &&
+        (error as { code?: unknown }).code === "ENOENT")
+    ) return [];
     throw error;
   }
 }
@@ -422,7 +434,10 @@ async function waitForRetiredHandles(map: AcpSessionHandleMap): Promise<void> {
 
 describe("runExternalAgentWorkbenchRuntime", () => {
   it("leaves the fixture prompt timeout at the generic ACP default", () => {
-    assertStrictEquals(fixtureProfile(Deno.cwd()).promptTimeoutMs, undefined);
+    assert.strictEqual(
+      fixtureProfile(process.cwd()).promptTimeoutMs,
+      undefined,
+    );
   });
 
   it("progress events do not enter durable session history", async () => {
@@ -433,7 +448,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       prompt: "operator prompt only",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       frames: {
         onRuntimeEvent: (event) => {
           runtimeEvents.push(event.type);
@@ -458,11 +473,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         };
       },
     });
-    assertStrictEquals(result.text, "solution found");
-    assertEquals(runtimeEvents.filter((type) => type === "agentProgress"), [
-      "agentProgress",
-      "agentProgress",
-    ]);
+    assert.strictEqual(result.text, "solution found");
+    assert.deepStrictEqual(
+      runtimeEvents.filter((type) => type === "agentProgress"),
+      [
+        "agentProgress",
+        "agentProgress",
+      ],
+    );
     const durable = JSON.stringify({
       events: h.events,
       created: h.createdSessions,
@@ -472,7 +490,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     assertNotContains(durable, "Inspecting codebase");
     assertNotContains(durable, "grep_search");
     assertNotContains(durable, "pondering");
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "agent_response",
       "session_end",
@@ -489,7 +507,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       newSessionId: admitted,
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       frames: {
         onRuntimeEvent: (event) => {
           if (event.type === "sessionStart") started.push(event.sessionId);
@@ -505,16 +523,19 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           elapsedMs: 1,
         }),
     });
-    assertStrictEquals(result.sessionId, admitted);
-    assertEquals(started, [admitted]);
-    assertEquals(h.events.map((event) => event.session_id), [
+    assert.strictEqual(result.sessionId, admitted);
+    assert.deepStrictEqual(started, [admitted]);
+    assert.deepStrictEqual(h.events.map((event) => event.session_id), [
       admitted,
       admitted,
       admitted,
     ]);
-    assertEquals(h.createdSessions.map((session) => session.sessionId), [
-      admitted,
-    ]);
+    assert.deepStrictEqual(
+      h.createdSessions.map((session) => session.sessionId),
+      [
+        admitted,
+      ],
+    );
   });
 
   it("labels optional ACP usage without converting it to native accounting", async () => {
@@ -524,7 +545,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       prompt: "usage evidence",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
     }, {
       runAgent: () =>
         Promise.resolve({
@@ -541,7 +562,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           elapsedMs: 5,
         }),
     });
-    assertObjectMatch(asRecord(result.runner), {
+    assert.partialDeepStrictEqual(asRecord(result.runner), {
       usage: {
         source: "acp",
         stability: "unstable",
@@ -568,14 +589,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         prompt: "bounded update stream",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, {
         runAgent: () => Promise.reject(new AcpSessionUpdateLimitError()),
       });
     } catch (error) {
       thrown = error;
     }
-    assertStrictEquals(
+    assert.strictEqual(
       summarizeError(thrown),
       "ACP agent exceeded the session-update limit",
     );
@@ -590,14 +611,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         prompt: "bounded protocol message",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, {
         runAgent: () => Promise.reject(new AcpProtocolMessageLimitError()),
       });
     } catch (error) {
       thrown = error;
     }
-    assertStrictEquals(
+    assert.strictEqual(
       summarizeError(thrown),
       "ACP agent exceeded the protocol-message limit",
     );
@@ -605,19 +626,19 @@ describe("runExternalAgentWorkbenchRuntime", () => {
 
   it("does not promote adapter authentication into route facts", () => {
     const profile = {
-      ...fixtureProfile(Deno.cwd()),
+      ...fixtureProfile(process.cwd()),
       accessRoute: "subscription_oauth" as const,
       costBasis: "subscription_quota" as const,
       requiredAuthentication: "chat-gpt" as const,
     };
-    assertEquals(
+    assert.deepStrictEqual(
       verifiedRouteFacts(profile, {
         source: "agent_auth_status",
         authenticationType: "chat-gpt",
       }),
       { costBasis: "unknown" },
     );
-    assertEquals(
+    assert.deepStrictEqual(
       verifiedRouteFacts(profile, {
         source: "profile_declared",
         authenticationType: "chat-gpt",
@@ -632,14 +653,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
   it("closes cancellation registration when rejecting a remote caller", async () => {
     const h = createHarness();
     let cancellationClosed = 0;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "ordered response",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           authContext: {
             transport: "remote",
             authnStatus: "authenticated",
@@ -651,10 +672,11 @@ describe("runExternalAgentWorkbenchRuntime", () => {
             closeCancellation: () => cancellationClosed++,
           },
         }),
-      Error,
-      "unavailable to remote callers",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("unavailable to remote callers"),
     );
-    assertStrictEquals(cancellationClosed, 1);
+    assert.strictEqual(cancellationClosed, 1);
   });
 
   it("does not claim subscription route evidence when authentication never verifies", async () => {
@@ -664,12 +686,12 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       prompt: "cancel during authentication",
       routingOptions: {},
       runner: { kind: "acp", profile: "codex-chatgpt" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       trustWorkspaceInstructions: true,
     }, {
       resolveProfile: (_profile, workspace) => ({
         slug: "codex-chatgpt",
-        command: Deno.execPath(),
+        command: process.execPath,
         args: [],
         environment: {},
         workspace,
@@ -690,7 +712,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           elapsedMs: 5,
         }),
     });
-    assertObjectMatch(asRecord(result.runner), {
+    assert.partialDeepStrictEqual(asRecord(result.runner), {
       costBasis: "unknown",
       evidence: { source: "acp", innerState: "opaque" },
     });
@@ -701,14 +723,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     assertNotContains(result.receipt, "subscription_oauth");
     assertNotContains(result.receipt, "subscription_quota");
 
-    assertStrictEquals(
+    assert.strictEqual(
       h.events.some((event) => event.event_type === "runner_selected"),
       false,
     );
     const response = h.events.find((event) =>
       event.event_type === "agent_response"
     );
-    assertObjectMatch(asRecord(response), {
+    assert.partialDeepStrictEqual(asRecord(response), {
       runner_access_route: null,
       runner_cost_basis: "unknown",
       runner_route_source: null,
@@ -720,7 +742,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     const h = createHarness();
     h.sessionExists = false;
     let cancellationClosed = 0;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
@@ -728,17 +750,18 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
           sessionId: "01UNKNOWNSESSION00000000000",
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           cancellationWindow: {
             closeCancellation: () => cancellationClosed++,
           },
         }),
-      Error,
-      "Workbench session not found",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Workbench session not found"),
     );
-    assertStrictEquals(cancellationClosed, 1);
-    assertEquals(h.events, []);
-    assertEquals(h.createdSessions, []);
+    assert.strictEqual(cancellationClosed, 1);
+    assert.deepStrictEqual(h.events, []);
+    assert.deepStrictEqual(h.createdSessions, []);
   });
 
   it("keeps a resumed external turn on its persisted workspace", async () => {
@@ -751,13 +774,13 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       sessionId: "01EXISTINGSESSION0000000000",
       workspaceRoot: "/private/tmp",
     });
-    assertStrictEquals(result.text, `first|cwd=${Deno.cwd()}|last`);
+    assert.strictEqual(result.text, `first|cwd=${process.cwd()}|last`);
   });
 
   it("rejects a resumed session without persisted workspace evidence", async () => {
     const h = createHarness();
     h.sessionWorkspace = null;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
@@ -767,18 +790,19 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           sessionId: "01LEGACYSESSION000000000000",
           workspaceRoot: "/private/tmp",
         }),
-      Error,
-      "no persisted workspace",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("no persisted workspace"),
     );
-    assertEquals(h.events, []);
+    assert.deepStrictEqual(h.events, []);
   });
 
   it("does not read or forward an ambient Deno cache path", async () => {
     await withEnvOverlay({ DENO_DIR: "/tmp/acp-declared-deno-dir" }, () => {
-      assertNoProperty(fixtureProfile(Deno.cwd()).environment, "DENO_DIR");
-      const args = fixtureProfile(Deno.cwd()).args;
+      assertNoProperty(fixtureProfile(process.cwd()).environment, "DENO_DIR");
+      const args = fixtureProfile(process.cwd()).args;
       assertContains(args, "--node-modules-dir=manual");
-      assert(
+      assert.ok(
         args.some((arg) => /^--config=\/.*\/prototype\/deno\.json$/.test(arg)),
         `no --config=<prototype>/deno.json argument in ${JSON.stringify(args)}`,
       );
@@ -790,25 +814,25 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     try {
       const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
       const home = `${root}/operator-home`;
-      await Deno.mkdir(home);
-      await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(home);
+      await mkdir(`${packageRoot}/dist`, { recursive: true });
+      await writeFile(
         `${packageRoot}/package.json`,
         JSON.stringify({ version: "1.11.0" }),
       );
-      await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
+      await writeFile(`${packageRoot}/dist/index.js`, "");
       const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
-      await Deno.mkdir(`${root}/node_modules/@openai/codex/bin`, {
+      await mkdir(`${root}/node_modules/@openai/codex/bin`, {
         recursive: true,
       });
-      await Deno.writeTextFile(codexPath, "");
-      await Deno.chmod(codexPath, 0o700);
+      await writeFile(codexPath, "");
+      await chmod(codexPath, 0o700);
       const nodePath = `${root}/node`;
-      await Deno.writeTextFile(
+      await writeFile(
         nodePath,
         `#!/bin/sh\nprintf '%s\\n' '{"execPath":"${nodePath}","release":"node"}'\n`,
       );
-      await Deno.chmod(nodePath, 0o700);
+      await chmod(nodePath, 0o700);
       const ambientNames = [
         "OPENAI_API_KEY",
         "CODEX_API_KEY",
@@ -823,16 +847,16 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       const profile = await withEnvOverlay(
         ambient,
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
             prototypeRoot: root,
             nodePath,
           }),
       );
-      assertObjectMatch(asRecord(profile), {
+      assert.partialDeepStrictEqual(asRecord(profile), {
         slug: "codex-chatgpt",
         command: nodePath,
-        args: [await Deno.realPath(`${packageRoot}/dist/index.js`)],
+        args: [await realpath(`${packageRoot}/dist/index.js`)],
         accessRoute: "subscription_oauth",
         costBasis: "subscription_quota",
         requiredAuthentication: "chat-gpt",
@@ -844,7 +868,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home`,
           CODEX_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`,
           CARGO_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.cargo`,
-          CODEX_PATH: await Deno.realPath(codexPath),
+          CODEX_PATH: await realpath(codexPath),
           NO_BROWSER: "1",
           INITIAL_AGENT_MODE: "read-only",
           PATH: `${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin`,
@@ -861,30 +885,30 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         `${home}/.dyfj/runner-homes/codex-chatgpt/home/.cargo`,
       ];
       for (const directory of privateDirectories) {
-        assertStrictEquals((await Deno.stat(directory)).mode! & 0o777, 0o700);
+        assert.strictEqual((await stat(directory)).mode! & 0o777, 0o700);
       }
       const nodeShim = `${home}/.dyfj/runner-homes/codex-chatgpt/bin/node`;
-      assertStrictEquals((await Deno.stat(nodeShim)).mode! & 0o777, 0o700);
-      assertStrictEquals(
-        await Deno.readTextFile(nodeShim),
+      assert.strictEqual((await stat(nodeShim)).mode! & 0o777, 0o700);
+      assert.strictEqual(
+        await readFile(nodeShim, "utf8"),
         `#!/bin/sh\nexec '${nodePath}' "$@"\n`,
       );
       const zshProfile =
         `${home}/.dyfj/runner-homes/codex-chatgpt/home/.zprofile`;
-      assertStrictEquals((await Deno.stat(zshProfile)).mode! & 0o777, 0o600);
-      assertStrictEquals(
-        await Deno.readTextFile(zshProfile),
+      assert.strictEqual((await stat(zshProfile)).mode! & 0o777, 0o600);
+      assert.strictEqual(
+        await readFile(zshProfile, "utf8"),
         `export PATH='${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin'\n`,
       );
       const bashProfile =
         `${home}/.dyfj/runner-homes/codex-chatgpt/home/.bash_profile`;
-      assertStrictEquals((await Deno.stat(bashProfile)).mode! & 0o777, 0o600);
-      assertStrictEquals(
-        await Deno.readTextFile(bashProfile),
+      assert.strictEqual((await stat(bashProfile)).mode! & 0o777, 0o600);
+      assert.strictEqual(
+        await readFile(bashProfile, "utf8"),
         `export PATH='${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin'\n`,
       );
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 
@@ -893,67 +917,74 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     try {
       const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
       const home = `${root}/operator-home`;
-      await Deno.mkdir(home);
-      await Deno.mkdir(`${packageRoot}/dist`, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(home);
+      await mkdir(`${packageRoot}/dist`, { recursive: true });
+      await writeFile(
         `${packageRoot}/package.json`,
         JSON.stringify({ version: "1.11.0" }),
       );
-      await Deno.writeTextFile(`${packageRoot}/dist/index.js`, "");
+      await writeFile(`${packageRoot}/dist/index.js`, "");
       const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
-      await Deno.mkdir(`${root}/node_modules/@openai/codex/bin`, {
+      await mkdir(`${root}/node_modules/@openai/codex/bin`, {
         recursive: true,
       });
-      await Deno.writeTextFile(codexPath, "");
-      await Deno.chmod(codexPath, 0o700);
+      await writeFile(codexPath, "");
+      await chmod(codexPath, 0o700);
       const nodePath = `${root}/node`;
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
       // A non-empty directory squatting on a final name makes the rename
       // fail after the temporary is written: the fixed diagnostic must not
       // disclose the path, and the temporary must not be left behind.
       const runnerRoot = `${home}/.dyfj/runner-homes/codex-chatgpt`;
       const leftovers = async (directory: string, prefix: string) => {
         const names: string[] = [];
-        for await (const entry of Deno.readDir(directory)) {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
           if (entry.name.startsWith(prefix)) names.push(entry.name);
         }
         return names;
       };
-      await Deno.mkdir(`${runnerRoot}/bin/node/occupied`, {
+      await mkdir(`${runnerRoot}/bin/node/occupied`, {
         recursive: true,
         mode: 0o700,
       });
-      await assertRejects(
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
             prototypeRoot: root,
             nodePath,
           }),
-        Error,
-        "Codex ACP private Node shim is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("Codex ACP private Node shim is unavailable"),
       );
-      assertEquals(await leftovers(`${runnerRoot}/bin`, "node-"), []);
+      assert.deepStrictEqual(await leftovers(`${runnerRoot}/bin`, "node-"), []);
 
-      await Deno.remove(`${runnerRoot}/bin/node`, { recursive: true });
-      await Deno.mkdir(`${runnerRoot}/home/.zprofile/occupied`, {
+      await rm(`${runnerRoot}/bin/node`, { recursive: true });
+      await mkdir(`${runnerRoot}/home/.zprofile/occupied`, {
         recursive: true,
         mode: 0o700,
       });
-      await assertRejects(
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
             prototypeRoot: root,
             nodePath,
           }),
-        Error,
-        "Codex ACP private shell profile is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes(
+            "Codex ACP private shell profile is unavailable",
+          ),
       );
-      assertEquals(await leftovers(`${runnerRoot}/home`, ".zprofile-"), []);
+      assert.deepStrictEqual(
+        await leftovers(`${runnerRoot}/home`, ".zprofile-"),
+        [],
+      );
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 
@@ -962,52 +993,52 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     try {
       const toolchain = `${home}/toolchain-bin`;
       const rustupHome = `${home}/rustup-home`;
-      await Deno.mkdir(toolchain, { mode: 0o700 });
-      await Deno.mkdir(rustupHome, { mode: 0o700 });
+      await mkdir(toolchain, { mode: 0o700 });
+      await mkdir(rustupHome, { mode: 0o700 });
       const nodePath = `${home}/node`;
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
       const profile = await withEnvOverlay(
         { PATH: `${home}/ambient-bin` },
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath,
             toolchainPath: toolchain,
             rustupHome,
           }),
       );
-      assertStrictEquals(
+      assert.strictEqual(
         profile.environment.PATH,
-        `${home}/.dyfj/runner-homes/codex-chatgpt/bin:${await Deno.realPath(
+        `${home}/.dyfj/runner-homes/codex-chatgpt/bin:${await realpath(
           toolchain,
         )}:/usr/bin:/bin`,
       );
       assertNotContains(profile.environment.PATH, "ambient-bin");
-      assertStrictEquals(
+      assert.strictEqual(
         profile.environment.RUSTUP_HOME,
-        await Deno.realPath(rustupHome),
+        await realpath(rustupHome),
       );
-      assertStrictEquals(
+      assert.strictEqual(
         profile.environment.CARGO_HOME,
         `${home}/.dyfj/runner-homes/codex-chatgpt/home/.cargo`,
       );
-      assertStrictEquals(
-        (await Deno.stat(profile.environment.CARGO_HOME)).mode! & 0o777,
+      assert.strictEqual(
+        (await stat(profile.environment.CARGO_HOME)).mode! & 0o777,
         0o700,
       );
-      assertStrictEquals(
+      assert.strictEqual(
         profile.environment.CODEX_CONFIG,
         JSON.stringify({
           model: "gpt-5.6-terra",
           model_reasoning_effort: "medium",
         }),
       );
-      assertStrictEquals(profile.toolchainDirectoryCount, 2);
-      if (Deno.build.os === "darwin") {
+      assert.strictEqual(profile.toolchainDirectoryCount, 2);
+      if (process.platform === "darwin") {
         for (const shell of ["/bin/zsh", "/bin/bash"]) {
-          const loginShell = await new Deno.Command(Deno.execPath(), {
+          const loginShell = await new Deno.Command(process.execPath, {
             args: [
               "run",
               `--allow-run=${shell}`,
@@ -1035,8 +1066,8 @@ Deno.exit(output.code);`,
             stdout: "piped",
             stderr: "piped",
           }).output();
-          assertStrictEquals(loginShell.code, 0);
-          assertEquals(
+          assert.strictEqual(loginShell.code, 0);
+          assert.deepStrictEqual(
             new TextDecoder().decode(loginShell.stdout).trim().split("\n"),
             [
               profile.environment.PATH,
@@ -1045,30 +1076,33 @@ Deno.exit(output.code);`,
           );
         }
       }
-      const sharedDirectoryProfile = await codexChatGptProfile(Deno.cwd(), {
+      const sharedDirectoryProfile = await codexChatGptProfile(process.cwd(), {
         home,
-        prototypeRoot: Deno.cwd(),
+        prototypeRoot: process.cwd(),
         nodePath,
         toolchainPath: toolchain,
         rustupHome: toolchain,
       });
-      assertStrictEquals(sharedDirectoryProfile.toolchainDirectoryCount, 1);
+      assert.strictEqual(sharedDirectoryProfile.toolchainDirectoryCount, 1);
 
-      const fastSolProfile = await codexChatGptProfile(Deno.cwd(), {
+      const fastSolProfile = await codexChatGptProfile(process.cwd(), {
         home,
-        prototypeRoot: Deno.cwd(),
+        prototypeRoot: process.cwd(),
         nodePath,
         modelName: "gpt-5.6-sol",
         reasoningEffort: "medium",
         fast: true,
       });
-      assertEquals(JSON.parse(fastSolProfile.environment.CODEX_CONFIG!), {
-        model: "gpt-5.6-sol",
-        model_reasoning_effort: "medium",
-        service_tier: "fast",
-      });
+      assert.deepStrictEqual(
+        JSON.parse(fastSolProfile.environment.CODEX_CONFIG!),
+        {
+          model: "gpt-5.6-sol",
+          model_reasoning_effort: "medium",
+          service_tier: "fast",
+        },
+      );
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1082,11 +1116,11 @@ Deno.exit(output.code);`,
     const rustupHome = await tempDir();
     try {
       const nodePath = `${home}/node`;
-      await Deno.writeTextFile(
+      await writeFile(
         nodePath,
         `#!/bin/sh\nif [ "$1" = "-p" ]; then printf '{"execPath":"${nodePath}","release":"node"}\\n'; exit 0; fi\nprintf '{"type":"stop"}\\n'\n`,
       );
-      await Deno.chmod(nodePath, 0o700);
+      await chmod(nodePath, 0o700);
       let capturedEnv: Record<string, string> | undefined;
       const result = await withEnvOverlay(
         {
@@ -1104,7 +1138,7 @@ Deno.exit(output.code);`,
               fast: true,
             },
             runner: { kind: "acp", profile: "codex-chatgpt" },
-            workspaceRoot: Deno.cwd(),
+            workspaceRoot: process.cwd(),
             trustWorkspaceInstructions: true,
           }, {
             runAgent: (agentInput) => {
@@ -1122,17 +1156,17 @@ Deno.exit(output.code);`,
             },
           }),
       );
-      assertStrictEquals(result.stopReason, "stop");
-      assertNotStrictEquals(capturedEnv, undefined);
-      assertEquals(JSON.parse(capturedEnv!.CODEX_CONFIG!), {
+      assert.strictEqual(result.stopReason, "stop");
+      assert.notStrictEqual(capturedEnv, undefined);
+      assert.deepStrictEqual(JSON.parse(capturedEnv!.CODEX_CONFIG!), {
         model: "gpt-5.6-sol",
         model_reasoning_effort: "medium",
         service_tier: "fast",
       });
     } finally {
-      await Deno.remove(home, { recursive: true });
-      await Deno.remove(toolchain, { recursive: true });
-      await Deno.remove(rustupHome, { recursive: true });
+      await rm(home, { recursive: true });
+      await rm(toolchain, { recursive: true });
+      await rm(rustupHome, { recursive: true });
     }
   });
 
@@ -1144,17 +1178,17 @@ Deno.exit(output.code);`,
       const file = `${home}/toolchain-file`;
       const link = `${home}/toolchain-link`;
       const nodePath = `${home}/node`;
-      await Deno.writeTextFile(file, "not a directory\n");
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
-      await Deno.mkdir(unsafe);
-      await Deno.chmod(unsafe, 0o777);
-      await Deno.mkdir(unsearchable);
-      await Deno.chmod(unsearchable, 0o600);
+      await writeFile(file, "not a directory\n");
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      await mkdir(unsafe);
+      await chmod(unsafe, 0o777);
+      await mkdir(unsearchable);
+      await chmod(unsearchable, 0o600);
       const linked = await new Deno.Command("bash", {
         args: ["-c", '/bin/ln -s "$1" "$2"', "bash", home, link],
       }).output();
-      assertStrictEquals(linked.success, true);
+      assert.strictEqual(linked.success, true);
       for (
         const toolchainPath of [
           "relative",
@@ -1162,16 +1196,19 @@ Deno.exit(output.code);`,
           `${home}/colon:dir`,
         ]
       ) {
-        await assertRejects(
+        await assert.rejects(
           () =>
-            codexChatGptProfile(Deno.cwd(), {
+            codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
               toolchainPath,
             }),
-          Error,
-          "Codex ACP requires an absolute, delimiter-safe toolchain directory",
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "Codex ACP requires an absolute, delimiter-safe toolchain directory",
+            ),
         );
       }
       for (
@@ -1186,23 +1223,26 @@ Deno.exit(output.code);`,
           `${link}/`,
         ]
       ) {
-        await assertRejects(
+        await assert.rejects(
           () =>
-            codexChatGptProfile(Deno.cwd(), {
+            codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
               toolchainPath,
             }),
-          Error,
-          "Codex ACP toolchain directory is unavailable",
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "Codex ACP toolchain directory is unavailable",
+            ),
         );
       }
-      await assertRejects(() => Deno.lstat(`${home}/.dyfj`));
+      await assert.rejects(() => lstat(`${home}/.dyfj`));
     } finally {
-      await Deno.chmod(unsafe, 0o700).catch(() => {});
-      await Deno.chmod(unsearchable, 0o700).catch(() => {});
-      await Deno.remove(home, { recursive: true });
+      await chmod(unsafe, 0o700).catch(() => {});
+      await chmod(unsearchable, 0o700).catch(() => {});
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1213,16 +1253,16 @@ Deno.exit(output.code);`,
       const alias = `${home}/alias`;
       const nodePath = `${home}/node`;
       const dotted = [`.cargo`, `.rustup`, `..cache`, `tool.chain`];
-      await Deno.mkdir(child, { mode: 0o700 });
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
+      await mkdir(child, { mode: 0o700 });
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
       for (const name of dotted) {
-        await Deno.mkdir(`${home}/${name}`, { mode: 0o700 });
+        await mkdir(`${home}/${name}`, { mode: 0o700 });
       }
       const linked = await new Deno.Command("bash", {
         args: ["-c", '/bin/ln -s "$1" "$2"', "bash", child, alias],
       }).output();
-      assertStrictEquals(linked.success, true);
+      assert.strictEqual(linked.success, true);
       for (
         const [option, diagnostic] of [
           [
@@ -1252,9 +1292,9 @@ Deno.exit(output.code);`,
         ) {
           let failure: Error | undefined;
           try {
-            await codexChatGptProfile(Deno.cwd(), {
+            await codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
               toolchainPath: option === "toolchainPath" ? value : "",
               rustupHome: option === "rustupHome" ? value : "",
@@ -1262,30 +1302,30 @@ Deno.exit(output.code);`,
           } catch (error) {
             failure = error instanceof Error ? error : new Error(String(error));
           }
-          assertStrictEquals(failure?.message, diagnostic);
+          assert.strictEqual(failure?.message, diagnostic);
           assertNotContains(failure?.message, value);
         }
         for (const name of dotted) {
           const selected = `${home}/${name}`;
-          const profile = await codexChatGptProfile(Deno.cwd(), {
+          const profile = await codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath,
             toolchainPath: option === "toolchainPath" ? selected : "",
             rustupHome: option === "rustupHome" ? selected : "",
           });
-          assertStrictEquals(profile.toolchainDirectoryCount, 1);
+          assert.strictEqual(profile.toolchainDirectoryCount, 1);
           if (option === "toolchainPath") {
             assertContains(profile.environment.PATH.split(":"), selected);
-            assertStrictEquals(profile.environment.RUSTUP_HOME, undefined);
+            assert.strictEqual(profile.environment.RUSTUP_HOME, undefined);
           } else {
-            assertStrictEquals(profile.environment.RUSTUP_HOME, selected);
+            assert.strictEqual(profile.environment.RUSTUP_HOME, selected);
             assertNotContains(profile.environment.PATH.split(":"), selected);
           }
         }
       }
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1299,21 +1339,21 @@ Deno.exit(output.code);`,
       const file = `${home}/rustup-file`;
       const link = `${home}/rustup-link`;
       const nodePath = `${home}/node`;
-      await Deno.writeTextFile(file, "not a directory\n");
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
-      await Deno.mkdir(unsafe);
-      await Deno.chmod(unsafe, 0o777);
-      await Deno.mkdir(unsearchable);
-      await Deno.chmod(unsearchable, 0o600);
-      await Deno.mkdir(unreadable);
-      await Deno.chmod(unreadable, 0o300);
-      await Deno.mkdir(unwritable);
-      await Deno.chmod(unwritable, 0o500);
+      await writeFile(file, "not a directory\n");
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      await mkdir(unsafe);
+      await chmod(unsafe, 0o777);
+      await mkdir(unsearchable);
+      await chmod(unsearchable, 0o600);
+      await mkdir(unreadable);
+      await chmod(unreadable, 0o300);
+      await mkdir(unwritable);
+      await chmod(unwritable, 0o500);
       const linked = await new Deno.Command("bash", {
         args: ["-c", '/bin/ln -s "$1" "$2"', "bash", home, link],
       }).output();
-      assertStrictEquals(linked.success, true);
+      assert.strictEqual(linked.success, true);
       for (
         const rustupHome of [
           "relative",
@@ -1321,16 +1361,19 @@ Deno.exit(output.code);`,
           `${home}/colon:dir`,
         ]
       ) {
-        await assertRejects(
+        await assert.rejects(
           () =>
-            codexChatGptProfile(Deno.cwd(), {
+            codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
               rustupHome,
             }),
-          Error,
-          "Codex ACP requires an absolute, delimiter-safe Rustup home directory",
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "Codex ACP requires an absolute, delimiter-safe Rustup home directory",
+            ),
         );
       }
       for (
@@ -1347,25 +1390,28 @@ Deno.exit(output.code);`,
           `${link}/`,
         ]
       ) {
-        await assertRejects(
+        await assert.rejects(
           () =>
-            codexChatGptProfile(Deno.cwd(), {
+            codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
               rustupHome,
             }),
-          Error,
-          "Codex ACP Rustup home directory is unavailable",
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "Codex ACP Rustup home directory is unavailable",
+            ),
         );
       }
-      await assertRejects(() => Deno.lstat(`${home}/.dyfj`));
+      await assert.rejects(() => lstat(`${home}/.dyfj`));
     } finally {
-      await Deno.chmod(unsafe, 0o700).catch(() => {});
-      await Deno.chmod(unsearchable, 0o700).catch(() => {});
-      await Deno.chmod(unreadable, 0o700).catch(() => {});
-      await Deno.chmod(unwritable, 0o700).catch(() => {});
-      await Deno.remove(home, { recursive: true });
+      await chmod(unsafe, 0o700).catch(() => {});
+      await chmod(unsearchable, 0o700).catch(() => {});
+      await chmod(unreadable, 0o700).catch(() => {});
+      await chmod(unwritable, 0o700).catch(() => {});
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1375,28 +1421,29 @@ Deno.exit(output.code);`,
       prefix: "dyfj-external-agent-",
     });
     try {
-      await Deno.writeTextFile(
+      await writeFile(
         nodePath,
         `#!/bin/sh\nprintf '%s\\n' '{"execPath":"${nodePath}","release":"node"}'\n`,
       );
-      await Deno.chmod(nodePath, 0o700);
-      const profile = await codexChatGptProfile(Deno.cwd(), {
+      await chmod(nodePath, 0o700);
+      const profile = await codexChatGptProfile(process.cwd(), {
         home,
-        prototypeRoot: Deno.cwd(),
+        prototypeRoot: process.cwd(),
         nodePath,
       });
       const codexPath = profile.environment.CODEX_PATH;
-      assertNotStrictEquals(codexPath, undefined);
-      assertNotStrictEquals((await Deno.stat(codexPath!)).mode! & 0o111, 0);
+      assert.notStrictEqual(codexPath, undefined);
+      assert.notStrictEqual((await stat(codexPath!)).mode! & 0o111, 0);
       const packageMetadata = JSON.parse(
-        await Deno.readTextFile(
+        await readFile(
           join(dirname(codexPath!), "..", "package.json"),
+          "utf8",
         ),
       );
-      assertStrictEquals(packageMetadata.version, "0.153.4");
+      assert.strictEqual(packageMetadata.version, "0.153.4");
     } finally {
       await Deno.remove(nodePath);
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1405,24 +1452,25 @@ Deno.exit(output.code);`,
     try {
       const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
       const home = `${root}/operator-home`;
-      await Deno.mkdir(home);
-      await Deno.mkdir(packageRoot, { recursive: true });
-      await Deno.writeTextFile(
+      await mkdir(home);
+      await mkdir(packageRoot, { recursive: true });
+      await writeFile(
         `${packageRoot}/package.json`,
         "x".repeat(65_537),
       );
-      await assertRejects(
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
             prototypeRoot: root,
-            nodePath: Deno.execPath(),
+            nodePath: process.execPath,
           }),
-        Error,
-        "Pinned Codex ACP package is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("Pinned Codex ACP package is unavailable"),
       );
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 
@@ -1431,20 +1479,20 @@ Deno.exit(output.code);`,
     try {
       const target = `${home}/not-node-target`;
       const executable = `${home}/not-node`;
-      await Deno.writeTextFile(target, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(target, 0o700);
+      await writeFile(target, "#!/bin/sh\nexit 0\n");
+      await chmod(target, 0o700);
       const linked = await new Deno.Command("bash", {
         args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, executable],
       }).output();
-      assertStrictEquals(linked.success, true);
-      const profile = await codexChatGptProfile(Deno.cwd(), {
+      assert.strictEqual(linked.success, true);
+      const profile = await codexChatGptProfile(process.cwd(), {
         home,
-        prototypeRoot: Deno.cwd(),
+        prototypeRoot: process.cwd(),
         nodePath: executable,
       });
-      assertStrictEquals(profile.command, executable);
+      assert.strictEqual(profile.command, executable);
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1452,7 +1500,7 @@ Deno.exit(output.code);`,
     const home = await tempDir();
     try {
       const nonExecutable = `${home}/not-executable`;
-      await Deno.writeTextFile(nonExecutable, "not executable\n");
+      await writeFile(nonExecutable, "not executable\n");
       for (
         const nodePath of [
           "node",
@@ -1460,44 +1508,49 @@ Deno.exit(output.code);`,
           `${home}/node:unsafe`,
         ]
       ) {
-        await assertRejects(
+        await assert.rejects(
           () =>
-            codexChatGptProfile(Deno.cwd(), {
+            codexChatGptProfile(process.cwd(), {
               home,
-              prototypeRoot: Deno.cwd(),
+              prototypeRoot: process.cwd(),
               nodePath,
             }),
-          Error,
-          "Codex ACP requires an absolute, delimiter-safe DYFJ_NODE_PATH",
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "Codex ACP requires an absolute, delimiter-safe DYFJ_NODE_PATH",
+            ),
         );
       }
-      await assertRejects(
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath: nonExecutable,
           }),
-        Error,
-        "Codex ACP executable is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("Codex ACP executable is unavailable"),
       );
-      await assertRejects(() => Deno.lstat(`${home}/.dyfj`));
+      await assert.rejects(() => lstat(`${home}/.dyfj`));
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
   it("rejects an operator home that Deno path grants cannot represent", async () => {
     for (const home of ["/tmp/operator,home", "/tmp/operator:home"]) {
-      await assertRejects(
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
-            nodePath: Deno.execPath(),
+            prototypeRoot: process.cwd(),
+            nodePath: process.execPath,
           }),
-        Error,
-        "absolute, delimiter-safe operator home",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("absolute, delimiter-safe operator home"),
       );
     }
   });
@@ -1505,20 +1558,21 @@ Deno.exit(output.code);`,
   it("rejects a group- or world-writable operator home", async () => {
     const home = await tempDir();
     try {
-      await Deno.chmod(home, 0o777);
-      await assertRejects(
+      await chmod(home, 0o777);
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
-            nodePath: Deno.execPath(),
+            prototypeRoot: process.cwd(),
+            nodePath: process.execPath,
           }),
-        Error,
-        "operator home is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("operator home is unavailable"),
       );
-      assertStrictEquals((await Deno.stat(home)).mode! & 0o777, 0o777);
+      assert.strictEqual((await stat(home)).mode! & 0o777, 0o777);
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1528,30 +1582,33 @@ Deno.exit(output.code);`,
       const home = `${root}/operator-home`;
       const target = `${root}/redirect-target`;
       const nodePath = `${root}/node`;
-      await Deno.mkdir(home);
-      await Deno.mkdir(target);
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
+      await mkdir(home);
+      await mkdir(target);
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
       const linked = await new Deno.Command("bash", {
         args: ["-c", '/bin/ln -s "$1" "$2"', "bash", target, `${home}/.dyfj`],
       }).output();
-      assertStrictEquals(linked.success, true);
-      await assertRejects(
+      assert.strictEqual(linked.success, true);
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath,
           }),
-        Error,
-        "runner home is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("runner home is unavailable"),
       );
-      await assertRejects(
-        () => Deno.stat(`${target}/runner-homes`),
-        Deno.errors.NotFound,
+      await assert.rejects(
+        () => stat(`${target}/runner-homes`),
+        (error: unknown) =>
+          error instanceof Error &&
+          (error as { code?: unknown }).code === "ENOENT",
       );
     } finally {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     }
   });
 
@@ -1561,25 +1618,25 @@ Deno.exit(output.code);`,
       const dyfjRoot = `${home}/.dyfj`;
       const runnerHomes = `${dyfjRoot}/runner-homes`;
       const nodePath = `${home}/node`;
-      await Deno.mkdir(dyfjRoot, { mode: 0o755 });
-      await Deno.mkdir(runnerHomes, { mode: 0o750 });
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
-      await Deno.chmod(dyfjRoot, 0o755);
-      await Deno.chmod(runnerHomes, 0o750);
-      await codexChatGptProfile(Deno.cwd(), {
+      await mkdir(dyfjRoot, { mode: 0o755 });
+      await mkdir(runnerHomes, { mode: 0o750 });
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      await chmod(dyfjRoot, 0o755);
+      await chmod(runnerHomes, 0o750);
+      await codexChatGptProfile(process.cwd(), {
         home,
-        prototypeRoot: Deno.cwd(),
+        prototypeRoot: process.cwd(),
         nodePath,
       });
-      assertStrictEquals((await Deno.stat(dyfjRoot)).mode! & 0o777, 0o755);
-      assertStrictEquals((await Deno.stat(runnerHomes)).mode! & 0o777, 0o750);
-      assertStrictEquals(
-        (await Deno.stat(`${runnerHomes}/codex-chatgpt`)).mode! & 0o777,
+      assert.strictEqual((await stat(dyfjRoot)).mode! & 0o777, 0o755);
+      assert.strictEqual((await stat(runnerHomes)).mode! & 0o777, 0o750);
+      assert.strictEqual(
+        (await stat(`${runnerHomes}/codex-chatgpt`)).mode! & 0o777,
         0o700,
       );
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1588,23 +1645,24 @@ Deno.exit(output.code);`,
     try {
       const dyfjRoot = `${home}/.dyfj`;
       const nodePath = `${home}/node`;
-      await Deno.mkdir(dyfjRoot, { mode: 0o777 });
-      await Deno.chmod(dyfjRoot, 0o777);
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
-      await assertRejects(
+      await mkdir(dyfjRoot, { mode: 0o777 });
+      await chmod(dyfjRoot, 0o777);
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath,
           }),
-        Error,
-        "runner home is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("runner home is unavailable"),
       );
-      assertStrictEquals((await Deno.stat(dyfjRoot)).mode! & 0o777, 0o777);
+      assert.strictEqual((await stat(dyfjRoot)).mode! & 0o777, 0o777);
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
@@ -1613,32 +1671,33 @@ Deno.exit(output.code);`,
     try {
       const codexHome = `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex`;
       const nodePath = `${home}/node`;
-      await Deno.mkdir(codexHome, { recursive: true, mode: 0o700 });
-      await Deno.chmod(codexHome, 0o777);
-      await Deno.writeTextFile(`${codexHome}/config.toml`, "hostile = true\n");
-      await Deno.writeTextFile(nodePath, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(nodePath, 0o700);
-      await assertRejects(
+      await mkdir(codexHome, { recursive: true, mode: 0o700 });
+      await chmod(codexHome, 0o777);
+      await writeFile(`${codexHome}/config.toml`, "hostile = true\n");
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      await assert.rejects(
         () =>
-          codexChatGptProfile(Deno.cwd(), {
+          codexChatGptProfile(process.cwd(), {
             home,
-            prototypeRoot: Deno.cwd(),
+            prototypeRoot: process.cwd(),
             nodePath,
           }),
-        Error,
-        "runner home is unavailable",
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("runner home is unavailable"),
       );
-      assertStrictEquals((await Deno.stat(codexHome)).mode! & 0o777, 0o777);
+      assert.strictEqual((await stat(codexHome)).mode! & 0o777, 0o777);
     } finally {
-      await Deno.remove(home, { recursive: true });
+      await rm(home, { recursive: true });
     }
   });
 
   it("runs the fixture from a workspace outside the prototype checkout", async () => {
     const h = createHarness();
-    const workspace = await Deno.makeTempDir();
+    const workspace = await mkdtemp(join(tmpdir(), "tmp-"));
     try {
-      const resolvedWorkspace = await Deno.realPath(workspace);
+      const resolvedWorkspace = await realpath(workspace);
       const result = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "ordered response",
@@ -1648,7 +1707,7 @@ Deno.exit(output.code);`,
       });
       assertContains(result.text, `cwd=${resolvedWorkspace}`);
     } finally {
-      await Deno.remove(workspace, { recursive: true });
+      await rm(workspace, { recursive: true });
     }
   });
 
@@ -1661,16 +1720,16 @@ Deno.exit(output.code);`,
         prompt: "x".repeat(60_001),
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         cancellationWindow: {
           closeCancellation: () => cancellationClosed++,
         },
       }),
       { phase: "prompt" },
     );
-    assertStrictEquals(cancellationClosed, 1);
-    assertEquals(h.events, []);
-    assertEquals(h.createdSessions, []);
+    assert.strictEqual(cancellationClosed, 1);
+    assert.deepStrictEqual(h.events, []);
+    assert.deepStrictEqual(h.createdSessions, []);
   });
 
   it("finalizes a session-creation failure through the outer lifecycle", async () => {
@@ -1678,14 +1737,14 @@ Deno.exit(output.code);`,
     h.failCreateSession = true;
     const runtimeEvents: string[] = [];
     let cancellationClosed = 0;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "ordered response",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           cancellationWindow: {
             closeCancellation: () => cancellationClosed++,
           },
@@ -1695,16 +1754,17 @@ Deno.exit(output.code);`,
             },
           },
         }),
-      Error,
-      "failed session creation",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("failed session creation"),
     );
-    assertStrictEquals(cancellationClosed, 1);
-    assertEquals(runtimeEvents, [
+    assert.strictEqual(cancellationClosed, 1);
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnFailed",
     ]);
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "error",
       "session_end",
@@ -1716,14 +1776,14 @@ Deno.exit(output.code);`,
     h.failEventType = "runner_selected";
     const runtimeEvents: string[] = [];
     let cancellationClosed = 0;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "ordered response",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           cancellationWindow: {
             closeCancellation: () => cancellationClosed++,
           },
@@ -1733,16 +1793,17 @@ Deno.exit(output.code);`,
             },
           },
         }),
-      Error,
-      "failed runner_selected",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("failed runner_selected"),
     );
-    assertStrictEquals(cancellationClosed, 1);
-    assertEquals(runtimeEvents, [
+    assert.strictEqual(cancellationClosed, 1);
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnFailed",
     ]);
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "error",
       "session_end",
@@ -1753,41 +1814,41 @@ Deno.exit(output.code);`,
     const h = createHarness();
     h.failUpdateSession = true;
     const runtimeEvents: string[] = [];
-    const warn = stub(console, "warn");
+    const warn = mock.method(console, "warn", () => {});
     try {
       const result = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "ordered response",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         frames: {
           onRuntimeEvent: (event) => {
             runtimeEvents.push(event.type);
           },
         },
       });
-      assertStrictEquals(result.stopReason, "stop");
+      assert.strictEqual(result.stopReason, "stop");
       assertContains(result.receipt, "Session projection: update skipped");
-      assert(
+      assert.ok(
         warn.calls.some((call) =>
           call.args.length === 1 &&
           call.args[0] === "Session projection update skipped"
         ),
       );
-      assertEquals(runtimeEvents, [
+      assert.deepStrictEqual(runtimeEvents, [
         "sessionStart",
         "inputReceived",
         "turnCompleted",
       ]);
-      assertEquals(h.events.map((event) => event.event_type), [
+      assert.deepStrictEqual(h.events.map((event) => event.event_type), [
         "session_start",
         "runner_selected",
         "agent_response",
         "session_end",
       ]);
     } finally {
-      warn.restore();
+      warn.mock.restore();
     }
   });
 
@@ -1795,29 +1856,30 @@ Deno.exit(output.code);`,
     const h = createHarness();
     h.failEventType = "error";
     const runtimeEvents: string[] = [];
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "FIXTURE_MALFORMED",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           frames: {
             onRuntimeEvent: (event) => {
               runtimeEvents.push(event.type);
             },
           },
         }),
-      Error,
-      "ACP agent sent malformed protocol data",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP agent sent malformed protocol data"),
     );
-    assertEquals(runtimeEvents, [
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnFailed",
     ]);
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "runner_selected",
       "session_end",
@@ -1828,36 +1890,37 @@ Deno.exit(output.code);`,
     const h = createHarness();
     h.failEventType = "agent_response";
     const runtimeEvents: string[] = [];
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "ordered response",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           frames: {
             onRuntimeEvent: (event) => {
               runtimeEvents.push(event.type);
             },
           },
         }),
-      Error,
-      "failed agent_response",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("failed agent_response"),
     );
     // The session projection carries the failure receipt (the mocked content
     // builder once returned the receipt alone; the real one appends it).
-    assertEquals(h.updatedSessions.length, 1);
+    assert.deepStrictEqual(h.updatedSessions.length, 1);
     assertSessionReceipt(
       h.updatedSessions[0],
       "External-agent turn failed",
     );
-    assertEquals(runtimeEvents, [
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnFailed",
     ]);
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "runner_selected",
       "error",
@@ -1867,14 +1930,14 @@ Deno.exit(output.code);`,
 
   it("does not rewrite durable success when runtime observer delivery fails", async () => {
     const h = createHarness();
-    const warn = stub(console, "warn");
+    const warn = mock.method(console, "warn", () => {});
     try {
       const result = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "ordered response",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         frames: {
           onRuntimeEvent: (event) => {
             if (event.type === "turnCompleted") {
@@ -1883,21 +1946,21 @@ Deno.exit(output.code);`,
           },
         },
       });
-      assertStrictEquals(result.stopReason, "stop");
-      assertEquals(h.events.map((event) => event.event_type), [
+      assert.strictEqual(result.stopReason, "stop");
+      assert.deepStrictEqual(h.events.map((event) => event.event_type), [
         "session_start",
         "runner_selected",
         "agent_response",
         "session_end",
       ]);
-      assert(
+      assert.ok(
         warn.calls.some((call) =>
           call.args.length === 1 &&
           call.args[0] === "Runtime event delivery skipped"
         ),
       );
     } finally {
-      warn.restore();
+      warn.mock.restore();
     }
   });
 
@@ -1905,37 +1968,37 @@ Deno.exit(output.code);`,
     const h = createHarness();
     h.failEventType = "session_end";
     const runtimeEvents: string[] = [];
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "ordered response",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           frames: {
             onRuntimeEvent: (event) => {
               runtimeEvents.push(event.type);
             },
           },
         }),
-      Error,
-      "failed session_end",
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("failed session_end"),
     );
     // The session projection carries the failure receipt (the mocked content
     // builder once returned the receipt alone; the real one appends it).
-    assertEquals(h.updatedSessions.length, 1);
+    assert.deepStrictEqual(h.updatedSessions.length, 1);
     assertSessionReceipt(
       h.updatedSessions[0],
       "External-agent turn failed",
     );
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "runner_selected",
       "agent_response",
       "error",
     ]);
-    assertEquals(runtimeEvents, [
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnFailed",
@@ -1950,16 +2013,16 @@ Deno.exit(output.code);`,
       prompt: "FIXTURE_MAX_TOKENS",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       frames: {
         onRuntimeEvent: (event) => {
           lengthEvents.push(event.type);
         },
       },
     });
-    assertStrictEquals(length.stopReason, "length");
-    assertStrictEquals(length.runner.externalStopReason, "max_tokens");
-    assertStrictEquals(lengthEvents.at(-1), "turnCompleted");
+    assert.strictEqual(length.stopReason, "length");
+    assert.strictEqual(length.runner.externalStopReason, "max_tokens");
+    assert.strictEqual(lengthEvents.at(-1), "turnCompleted");
 
     const refusalEvents: string[] = [];
     const refusal = await runExternalAgentWorkbenchRuntime(h, {
@@ -1967,16 +2030,16 @@ Deno.exit(output.code);`,
       prompt: "FIXTURE_REFUSAL",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       frames: {
         onRuntimeEvent: (event) => {
           refusalEvents.push(event.type);
         },
       },
     });
-    assertStrictEquals(refusal.stopReason, "error");
-    assertStrictEquals(refusal.runner.externalStopReason, "refusal");
-    assertStrictEquals(refusalEvents.at(-1), "turnFailed");
+    assert.strictEqual(refusal.stopReason, "error");
+    assert.strictEqual(refusal.runner.externalStopReason, "refusal");
+    assert.strictEqual(refusalEvents.at(-1), "turnFailed");
   });
 
   it("persists typed outer ACP evidence without native provider accounting", async () => {
@@ -1986,11 +2049,11 @@ Deno.exit(output.code);`,
       prompt: "ordered response",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
     });
 
-    assertStrictEquals(result.text, `first|cwd=${Deno.cwd()}|last`);
-    assertObjectMatch(asRecord(result.runner), {
+    assert.strictEqual(result.text, `first|cwd=${process.cwd()}|last`);
+    assert.partialDeepStrictEqual(asRecord(result.runner), {
       kind: "external_agent",
       profile: "fixture",
       protocol: "acp",
@@ -2009,7 +2072,7 @@ Deno.exit(output.code);`,
     assertNoProperty(result, "model");
     assertNoProperty(result, "tokens");
     assertNoProperty(result, "cost");
-    assertEquals(h.events.map((event) => event.event_type), [
+    assert.deepStrictEqual(h.events.map((event) => event.event_type), [
       "session_start",
       "runner_selected",
       "agent_response",
@@ -2023,7 +2086,7 @@ Deno.exit(output.code);`,
       h.events.map((event) => event.event_type),
       "provider_call",
     );
-    assertObjectMatch(asRecord(h.events[2]), {
+    assert.partialDeepStrictEqual(asRecord(h.events[2]), {
       runner_kind: "external_agent",
       runner_profile: "fixture",
       runner_protocol: "acp",
@@ -2045,14 +2108,14 @@ Deno.exit(output.code);`,
       prompt: "ordered response",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       cancellationWindow: {
         closeCancellation: () => {
           throw new Error("cleanup failed");
         },
       },
     });
-    assertStrictEquals(result.stopReason, "stop");
+    assert.strictEqual(result.stopReason, "stop");
     assertContains(
       h.events.map((event) => event.event_type),
       "agent_response",
@@ -2066,11 +2129,11 @@ Deno.exit(output.code);`,
       prompt: "FIXTURE_PERMISSION",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
     });
 
-    assertStrictEquals(result.text, "denied");
-    assertObjectMatch(
+    assert.strictEqual(result.text, "denied");
+    assert.partialDeepStrictEqual(
       asRecord(
         h.events.find((event) => event.event_type === "agent_permission"),
       ),
@@ -2094,7 +2157,7 @@ Deno.exit(output.code);`,
         prompt: "FIXTURE_PERMISSION_EARLY_TERMINAL",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         approver: {
           confirmExternalAgentPermission: async () => ({ optionId: "allow" }),
         },
@@ -2117,7 +2180,7 @@ Deno.exit(output.code);`,
       prompt: "FIXTURE_CANCEL",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       abortSignal: controller.signal,
       frames: {
         onTextDelta: () => controller.abort(),
@@ -2131,12 +2194,12 @@ Deno.exit(output.code);`,
         },
       },
     });
-    assertObjectMatch(asRecord(first), {
+    assert.partialDeepStrictEqual(asRecord(first), {
       text: "partial\n",
       stopReason: "aborted",
     });
-    assertStrictEquals(cancellationClosed, 1);
-    assertEquals(runtimeEvents, [
+    assert.strictEqual(cancellationClosed, 1);
+    assert.deepStrictEqual(runtimeEvents, [
       "sessionStart",
       "inputReceived",
       "turnAborted",
@@ -2149,8 +2212,8 @@ Deno.exit(output.code);`,
       runner: { kind: "acp", profile: "fixture" },
       sessionId: first.sessionId,
     });
-    assertStrictEquals(second.sessionId, first.sessionId);
-    assertStrictEquals(second.stopReason, "stop");
+    assert.strictEqual(second.sessionId, first.sessionId);
+    assert.strictEqual(second.stopReason, "stop");
     assertContains(second.text, "first|");
   });
 
@@ -2164,10 +2227,10 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000001",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(first.stopReason, "stop");
-      assertObjectMatch(asRecord(first.runner), {
+      assert.strictEqual(first.stopReason, "stop");
+      assert.partialDeepStrictEqual(asRecord(first.runner), {
         accessRoute: "local_sidecar",
         costBasis: "local_free",
         evidence: {
@@ -2178,25 +2241,25 @@ Deno.exit(output.code);`,
       assertContains(first.receipt, "Access route: local_sidecar");
       assertContains(first.receipt, "Cost basis: local_free");
       assertContains(first.receipt, "Route evidence: profile_declared");
-      assertEquals(h.events.map((event) => event.event_type), [
+      assert.deepStrictEqual(h.events.map((event) => event.event_type), [
         "session_start",
         "runner_selected",
         "agent_response",
         "session_end",
       ]);
-      assertObjectMatch(asRecord(h.events[1]), {
+      assert.partialDeepStrictEqual(asRecord(h.events[1]), {
         event_type: "runner_selected",
         runner_access_route: "local_sidecar",
         runner_cost_basis: "local_free",
         runner_route_source: "profile_declared",
       });
-      assertObjectMatch(asRecord(h.events[2]), {
+      assert.partialDeepStrictEqual(asRecord(h.events[2]), {
         event_type: "agent_response",
         runner_access_route: "local_sidecar",
         runner_cost_basis: "local_free",
         runner_route_source: "profile_declared",
       });
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
 
       h.events.length = 0;
       const second = await runExternalAgentWorkbenchRuntime(h, {
@@ -2205,10 +2268,10 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000001",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(second.stopReason, "stop");
-      assertObjectMatch(asRecord(second.runner), {
+      assert.strictEqual(second.stopReason, "stop");
+      assert.partialDeepStrictEqual(asRecord(second.runner), {
         accessRoute: "local_sidecar",
         costBasis: "local_free",
         evidence: {
@@ -2219,29 +2282,29 @@ Deno.exit(output.code);`,
       assertContains(second.receipt, "Access route: local_sidecar");
       assertContains(second.receipt, "Cost basis: local_free");
       assertContains(second.receipt, "Route evidence: profile_declared");
-      assertEquals(h.events.map((event) => event.event_type), [
+      assert.deepStrictEqual(h.events.map((event) => event.event_type), [
         "session_start",
         "runner_selected",
         "agent_response",
         "session_end",
       ]);
-      assertObjectMatch(asRecord(h.events[1]), {
+      assert.partialDeepStrictEqual(asRecord(h.events[1]), {
         event_type: "runner_selected",
         runner_access_route: "local_sidecar",
         runner_cost_basis: "local_free",
         runner_route_source: "profile_declared",
       });
-      assertObjectMatch(asRecord(h.events[2]), {
+      assert.partialDeepStrictEqual(asRecord(h.events[2]), {
         event_type: "agent_response",
         runner_access_route: "local_sidecar",
         runner_cost_basis: "local_free",
         runner_route_source: "profile_declared",
         content: second.text,
       });
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     }
   });
 
@@ -2256,10 +2319,10 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId,
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(first.stopReason, "stop");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(first.stopReason, "stop");
+      assert.strictEqual(map.size, 1);
 
       h.events.length = 0;
       const controller = new AbortController();
@@ -2271,7 +2334,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId,
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onRuntimeEvent: (event) => {
@@ -2279,14 +2342,14 @@ Deno.exit(output.code);`,
           },
         },
       }, { sessionMap: map });
-      assertStrictEquals(second.stopReason, "aborted");
+      assert.strictEqual(second.stopReason, "aborted");
       assertContains(runtimeEvents, "turnAborted");
       assertNotContains(runtimeEvents, "turnFailed");
       assertNotContains(
         h.events.map((event) => event.event_type),
         "runner_selected",
       );
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -2303,10 +2366,10 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId,
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(first.stopReason, "stop");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(first.stopReason, "stop");
+      assert.strictEqual(map.size, 1);
 
       h.events.length = 0;
       const controller = new AbortController();
@@ -2319,7 +2382,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId,
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onRuntimeEvent: (event) => {
@@ -2327,14 +2390,14 @@ Deno.exit(output.code);`,
           },
         },
       }, { sessionMap: map });
-      assertStrictEquals(second.stopReason, "aborted");
+      assert.strictEqual(second.stopReason, "aborted");
       assertContains(runtimeEvents, "turnAborted");
       assertNotContains(runtimeEvents, "turnFailed");
       assertNotContains(
         h.events.map((event) => event.event_type),
         "runner_selected",
       );
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -2342,7 +2405,7 @@ Deno.exit(output.code);`,
 
   it("a timed-out reused route replay does not emit a late runner_selected event", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const profile = {
       ...fixtureProfile(workspace),
       sessionTimeoutMs: 20,
@@ -2402,7 +2465,7 @@ Deno.exit(output.code);`,
         h.events.map((event) => event.event_type),
         "runner_selected",
       );
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown().catch(() => {});
     }
@@ -2419,24 +2482,24 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000005",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onTextDelta: () => controller.abort(),
         },
       }, { sessionMap: map });
-      assertStrictEquals(first.stopReason, "aborted");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(first.stopReason, "aborted");
+      assert.strictEqual(map.size, 1);
       const second = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "after cancel",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000005",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(second.stopReason, "stop");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(second.stopReason, "stop");
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -2454,7 +2517,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000002",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onTextDelta: () => {
@@ -2466,16 +2529,16 @@ Deno.exit(output.code);`,
       while (!sawPrompt && Date.now() < occupied) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      assertStrictEquals(sawPrompt, true);
-      assertStrictEquals(map.size, 1);
-      await assertRejects(() =>
+      assert.strictEqual(sawPrompt, true);
+      assert.strictEqual(map.size, 1);
+      await assert.rejects(() =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "should not start",
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
           sessionId: "01ACPSESSION000000000000002",
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
         }, { sessionMap: map }), AcpSessionBusyError);
       controller.abort();
       await first;
@@ -2495,21 +2558,21 @@ Deno.exit(output.code);`,
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
           sessionId: "01ACPSESSION000000000000003",
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
         }, { sessionMap: map }),
         { phase: "prompt" },
       );
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
       const replaced = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "replacement turn",
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000003",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertStrictEquals(replaced.stopReason, "stop");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(replaced.stopReason, "stop");
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -2525,14 +2588,14 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000004",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      assertEquals(map.size, 1);
+      assert.deepStrictEqual(map.size, 1);
       const retirementDeadline = Date.now() + 2_000;
       while (map.size !== 0 && Date.now() < retirementDeadline) {
         await new Promise((resolve) => setTimeout(resolve, 5));
       }
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();
     }
@@ -2551,7 +2614,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000006",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onRuntimeEvent: (event) => {
@@ -2559,13 +2622,13 @@ Deno.exit(output.code);`,
           },
         },
       }, { sessionMap: map });
-      assertStrictEquals(result.stopReason, "aborted");
-      assertEquals(runtimeEvents, [
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.deepStrictEqual(runtimeEvents, [
         "sessionStart",
         "inputReceived",
         "turnAborted",
       ]);
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();
     }
@@ -2586,7 +2649,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000007",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         abortSignal: controller.signal,
         frames: {
           onRuntimeEvent: (event) => {
@@ -2601,26 +2664,29 @@ Deno.exit(output.code);`,
       const deadline = Date.now() + 1_000;
       while (true) {
         try {
-          await Deno.stat(pidFile);
+          await stat(pidFile);
           break;
         } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
+          if (
+            !(error instanceof Error &&
+              (error as { code?: unknown }).code === "ENOENT")
+          ) throw error;
           if (Date.now() >= deadline) throw new Error("fixture did not start");
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
       }
       controller.abort();
       const result = await pending;
-      assertStrictEquals(result.stopReason, "aborted");
-      assertEquals(runtimeEvents, [
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.deepStrictEqual(runtimeEvents, [
         "sessionStart",
         "inputReceived",
         "turnAborted",
       ]);
       assertLess(Date.now() - startedAt, 1_500);
-      assertStrictEquals(map.size, 0);
-      const pid = Number(await Deno.readTextFile(pidFile));
-      assertStrictEquals(await processIsAlive(pid), false);
+      assert.strictEqual(map.size, 0);
+      const pid = Number(await readFile(pidFile, "utf8"));
+      assert.strictEqual(await processIsAlive(pid), false);
     } finally {
       await map.shutdown();
       await Deno.remove(pidFile).catch(() => {});
@@ -2629,7 +2695,7 @@ Deno.exit(output.code);`,
 
   it("a referential follow-up after idle expiry keeps its antecedent", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const methodLog = await Deno.makeTempFile({
       prefix: "dyfj-external-agent-",
     });
@@ -2643,7 +2709,7 @@ Deno.exit(output.code);`,
     });
     const sessionId = "01ACPSESSION000000000000101";
     try {
-      await Deno.writeTextFile(methodLog, "");
+      await writeFile(methodLog, "");
       const first = await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
         prompt: "the codename=zephyr-quill-7 names this project",
@@ -2652,18 +2718,18 @@ Deno.exit(output.code);`,
         sessionId,
         workspaceRoot: workspace,
       }, { sessionMap: map, resolveProfile: () => profile });
-      assertEquals(first.runner.continuity, {
+      assert.deepStrictEqual(first.runner.continuity, {
         state: "new",
         claimSource: "workbench_observed",
         durableResume: "not-required",
       });
       const priorExternalSessionId = first.runner.externalSessionId;
-      assertNotStrictEquals(priorExternalSessionId, undefined);
+      assert.notStrictEqual(priorExternalSessionId, undefined);
 
       // Retire the idle handle exactly as the wall-clock TTL would.
       idleTimers.fire();
       await waitForRetiredHandles(map);
-      assertEquals(await readMethods(methodLog), [
+      assert.deepStrictEqual(await readMethods(methodLog), [
         "initialize",
         "session/new",
         "session/prompt",
@@ -2690,7 +2756,7 @@ Deno.exit(output.code);`,
       // The fixture agent keeps no history of its own: this answer can only
       // come from the antecedent the replacement session received.
       assertContains(second.text, "recalled=zephyr-quill-7");
-      assertEquals(second.runner.continuity, {
+      assert.deepStrictEqual(second.runner.continuity, {
         state: "reconstructed",
         claimSource: "workbench_observed",
         durableResume: "unavailable-agent-capability",
@@ -2715,7 +2781,7 @@ Deno.exit(output.code);`,
         `External session: ${second.runner.externalSessionId}`,
       );
       // A second native session was created; the retired one was not revived.
-      assertEquals(await readMethods(methodLog), [
+      assert.deepStrictEqual(await readMethods(methodLog), [
         "initialize",
         "session/new",
         "session/prompt",
@@ -2732,7 +2798,7 @@ Deno.exit(output.code);`,
 
   it("a warm handle keeps its own history and receives no replay", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     const sessionId = "01ACPSESSION000000000000102";
     try {
@@ -2761,7 +2827,7 @@ Deno.exit(output.code);`,
         ],
       }, { sessionMap: map });
 
-      assertEquals(second.runner.continuity, {
+      assert.deepStrictEqual(second.runner.continuity, {
         state: "warm-reused",
         claimSource: "workbench_observed",
         durableResume: "not-required",
@@ -2770,7 +2836,7 @@ Deno.exit(output.code);`,
       // Nothing was replayed into the live session, so the memoryless fixture
       // answers from its own (empty) inner history.
       assertContains(second.text, "recalled=none");
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
     }
@@ -2778,15 +2844,15 @@ Deno.exit(output.code);`,
 
   it("an oversized reconstruction fails before the agent is prompted", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const methodLog = await Deno.makeTempFile({
       prefix: "dyfj-external-agent-",
     });
     const profile = methodLogProfile(workspace, methodLog);
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     try {
-      await Deno.writeTextFile(methodLog, "");
-      await assertRejects(() =>
+      await writeFile(methodLog, "");
+      await assert.rejects(() =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "FIXTURE_RECALL which codename did I give this project?",
@@ -2803,7 +2869,7 @@ Deno.exit(output.code);`,
       const methods = await readMethods(methodLog);
       assertContains(methods, "session/new");
       assertNotContains(methods, "session/prompt");
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();
       await Deno.remove(methodLog).catch(() => {});
@@ -2819,7 +2885,7 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01ACPSESSION000000000000105",
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       conversationMessages: [
         {
           role: "user",
@@ -2844,7 +2910,7 @@ Deno.exit(output.code);`,
       promptSeen,
       "Operator (current turn): which codename did I give this project?",
     );
-    assertEquals(result.runner.continuity, {
+    assert.deepStrictEqual(result.runner.continuity, {
       state: "reconstructed",
       claimSource: "workbench_observed",
       durableResume: "unavailable-client-verification",
@@ -2903,18 +2969,18 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01ACPSESSION000000000000130",
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       conversationMessages: [{ role: "user", content: "persisted antecedent" }],
       historyOmission: omission,
     }, { sessionMap: sessionMapStub("warm-reused", prompts) });
-    assertEquals(prompts?.length, 1);
-    assertEquals(
+    assert.deepStrictEqual(prompts?.length, 1);
+    assert.deepStrictEqual(
       (prompts[0].match(/\[Workbench-generated history notice\]/g))?.length,
       1,
     );
     assertContains(prompts[0], "current operator prompt");
     assertNotContains(prompts[0], "persisted antecedent");
-    assertObjectMatch(asRecord(result.historyOmission), {
+    assert.partialDeepStrictEqual(asRecord(result.historyOmission), {
       detectedInHistory: 2,
       withheldFromProjection: 1,
       projectedPairs: 3,
@@ -2932,20 +2998,20 @@ Deno.exit(output.code);`,
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01ACPSESSION000000000000140",
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       conversationMessages: [{ role: "user", content: "persisted antecedent" }],
       historyOmission: omission,
     }, { sessionMap: sessionMapStub("reconstructed", prompts) });
-    assertMatch(
+    assert.match(
       prompts[0],
       /^\[Workbench-generated history notice\][\s\S]+\n\n\[dyfj-workbench reconstructed transcript\]/,
     );
     assertContains(prompts[0], "  | persisted antecedent");
-    assertEquals(
+    assert.deepStrictEqual(
       (prompts[0].match(/\[Workbench-generated history notice\]/g))?.length,
       1,
     );
-    assertStrictEquals(
+    assert.strictEqual(
       result.historyOmission?.historyDelivery,
       "projected-transcript",
     );
@@ -2979,7 +3045,7 @@ Deno.exit(output.code);`,
       idleTtlMs: 60_000,
     });
     const realRunTurn = map.runTurn.bind(map);
-    const runTurn = stub(
+    const runTurn = mock.method(
       map,
       "runTurn",
       (input: Parameters<AcpSessionHandleMap["runTurn"]>[0]) =>
@@ -2996,7 +3062,7 @@ Deno.exit(output.code);`,
         routingOptions: {},
         runner: { kind: "acp", profile: "fixture" },
         sessionId: "01ACPSESSION000000000000141",
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         conversationMessages: [{
           role: "user",
           content: "persisted antecedent",
@@ -3004,8 +3070,8 @@ Deno.exit(output.code);`,
         historyOmission: omission,
       }, { sessionMap: map });
 
-      assertEquals(prompts?.length, 1);
-      assertMatch(
+      assert.deepStrictEqual(prompts?.length, 1);
+      assert.match(
         prompts[0],
         /^\[Workbench-generated history notice\][\s\S]+\n\n\[dyfj-workbench reconstructed transcript\]/,
       );
@@ -3014,23 +3080,23 @@ Deno.exit(output.code);`,
         prompts[0],
         "Operator (current turn): current operator prompt",
       );
-      assertEquals(
+      assert.deepStrictEqual(
         (prompts[0].match(/\[Workbench-generated history notice\]/g))?.length,
         1,
       );
-      assertObjectMatch(asRecord(result.runner.continuity), {
+      assert.partialDeepStrictEqual(asRecord(result.runner.continuity), {
         state: "reconstructed",
         priorMessagesProjected: 1,
       });
-      assertStrictEquals(
+      assert.strictEqual(
         result.historyOmission?.historyDelivery,
         "projected-transcript",
       );
-      assertStrictEquals(map.size, 1);
+      assert.strictEqual(map.size, 1);
     } finally {
-      runTurn.restore();
+      runTurn.mock.restore();
       await map.shutdown();
-      assertStrictEquals(map.size, 0);
+      assert.strictEqual(map.size, 0);
     }
   });
 
@@ -3051,14 +3117,14 @@ Deno.exit(output.code);`,
       prompt: "plain prompt",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
     }, { runAgent });
     await runExternalAgentWorkbenchRuntime(h, {
       mode: "turn",
       prompt: "persist exactly",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       historyOmission: omission,
     }, { runAgent });
     await runExternalAgentWorkbenchRuntime(h, {
@@ -3066,20 +3132,20 @@ Deno.exit(output.code);`,
       prompt: "referential prompt",
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
       conversationMessages: [{ role: "user", content: "prior" }],
       historyOmission: omission,
     }, { runAgent });
-    assertStrictEquals(prompts[0], "plain prompt");
-    assertEquals(
+    assert.strictEqual(prompts[0], "plain prompt");
+    assert.deepStrictEqual(
       (prompts[1].match(/\[Workbench-generated history notice\]/g))?.length,
       1,
     );
-    assertEquals(
+    assert.deepStrictEqual(
       (prompts[2].match(/\[Workbench-generated history notice\]/g))?.length,
       1,
     );
-    assertEquals(
+    assert.deepStrictEqual(
       h.events.filter((event) => event.event_type === "session_start")
         .map((event) => event.content),
       [
@@ -3093,14 +3159,14 @@ Deno.exit(output.code);`,
   it("[case 21] direct ACP refuses when the final decorated prompt exceeds the existing bound", async () => {
     const h = createHarness();
     let agentStarted = false;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
           prompt: "x".repeat(59_700),
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           historyOmission: omission,
         }, {
           runAgent: () => {
@@ -3108,10 +3174,11 @@ Deno.exit(output.code);`,
             return Promise.reject(new Error("must not start"));
           },
         }),
-      Error,
-      "ACP prompt exceeded the input limit",
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ACP prompt exceeded the input limit"),
     );
-    assertStrictEquals(agentStarted, false);
+    assert.strictEqual(agentStarted, false);
   });
 
   it("[case 26] warm and reconstructed delivery preserve identical projection counts", async () => {
@@ -3125,7 +3192,7 @@ Deno.exit(output.code);`,
         sessionId: `01ACPSESSION00000000000026${
           state === "warm-reused" ? "0" : "1"
         }`,
-        workspaceRoot: Deno.cwd(),
+        workspaceRoot: process.cwd(),
         conversationMessages: [{ role: "user", content: "prior" }],
         historyOmission: omission,
       }, { sessionMap: sessionMapStub(state, []) });
@@ -3133,13 +3200,13 @@ Deno.exit(output.code);`,
     };
     const warm = await run("warm-reused");
     const reconstructed = await run("reconstructed");
-    assertEquals({ ...warm, historyDelivery: undefined }, {
+    assert.deepStrictEqual({ ...warm, historyDelivery: undefined }, {
       ...reconstructed,
       historyDelivery: undefined,
     });
-    assertStrictEquals(warm?.withheldFromProjection, 1);
-    assertStrictEquals(warm?.historyDelivery, "warm-no-replay");
-    assertStrictEquals(reconstructed?.historyDelivery, "projected-transcript");
+    assert.strictEqual(warm?.withheldFromProjection, 1);
+    assert.strictEqual(warm?.historyDelivery, "warm-no-replay");
+    assert.strictEqual(reconstructed?.historyDelivery, "projected-transcript");
   });
 });
 
@@ -3180,7 +3247,7 @@ describe("reconstructed tool history", () => {
     expected: string,
   ): Promise<void> {
     let agentStarted = false;
-    await assertRejects(
+    await assert.rejects(
       () =>
         runExternalAgentWorkbenchRuntime(h, {
           mode: "turn",
@@ -3188,7 +3255,7 @@ describe("reconstructed tool history", () => {
           routingOptions: {},
           runner: { kind: "acp", profile: "fixture" },
           sessionId: "01ACPSESSION000000000000120",
-          workspaceRoot: Deno.cwd(),
+          workspaceRoot: process.cwd(),
           conversationMessages: priorMessages,
         }, {
           runAgent: () => {
@@ -3196,10 +3263,10 @@ describe("reconstructed tool history", () => {
             return Promise.reject(new Error("agent must not start"));
           },
         }),
-      Error,
-      expected,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes(expected),
     );
-    assertStrictEquals(agentStarted, false);
+    assert.strictEqual(agentStarted, false);
     assertNotContains(
       h.events.map((event) => event.event_type),
       "agent_response",
@@ -3230,7 +3297,7 @@ describe("reconstructed tool history", () => {
 
   it("a follow-up depends on tool evidence without re-running the call", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const idleTimers = injectedIdleTimers();
     const map = new AcpSessionHandleMap({
       capacity: 2,
@@ -3265,7 +3332,7 @@ describe("reconstructed tool history", () => {
       // The antecedent exists only inside the historical tool result, and the
       // fixture holds no history of its own.
       assertContains(second.text, "recalled=zephyr-quill-7");
-      assertObjectMatch(asRecord(second.runner.continuity), {
+      assert.partialDeepStrictEqual(asRecord(second.runner.continuity), {
         state: "reconstructed",
         priorMessagesProjected: 3,
         toolExchangesProjected: 1,
@@ -3287,7 +3354,7 @@ describe("reconstructed tool history", () => {
 
   it("real ACP updates persist through expiry and reconstruct the follow-up", async () => {
     const h = createHarness();
-    const workspace = Deno.cwd();
+    const workspace = process.cwd();
     const idleTimers = injectedIdleTimers();
     const map = new AcpSessionHandleMap({
       capacity: 2,
@@ -3305,8 +3372,8 @@ describe("reconstructed tool history", () => {
         sessionId,
         workspaceRoot: workspace,
       }, { sessionMap: map });
-      assertStrictEquals(first.text, "recorded");
-      assertEquals(first.runner.toolEvidence, {
+      assert.strictEqual(first.text, "recorded");
+      assert.deepStrictEqual(first.runner.toolEvidence, {
         status: "complete",
         observedCalls: 1,
         recordedCalls: 1,
@@ -3314,17 +3381,20 @@ describe("reconstructed tool history", () => {
       const persistedTool = h.events.find((event) =>
         event.event_type === "tool_call"
       );
-      assertObjectMatch(asRecord(persistedTool), {
+      assert.partialDeepStrictEqual(asRecord(persistedTool), {
         tool_name: "acp.read",
         tool_call_id: "fixture-history-call",
         tool_result: '{"text":"codename=zephyr-quill-7"}',
         tool_is_error: false,
       });
-      assertEquals(JSON.parse(String(persistedTool?.tool_arguments)), {
-        title: "Read fixture history",
-        kind: "read",
-        input: { path: "fixture-history.txt" },
-      });
+      assert.deepStrictEqual(
+        JSON.parse(String(persistedTool?.tool_arguments)),
+        {
+          title: "Read fixture history",
+          kind: "read",
+          input: { path: "fixture-history.txt" },
+        },
+      );
 
       // Replay the first turn from the store it was journaled to, as the
       // server does before a follow-up turn.
@@ -3347,13 +3417,13 @@ describe("reconstructed tool history", () => {
         conversationMessages: priorMessages,
       }, { sessionMap: map });
 
-      assertStrictEquals(second.text, "recalled=zephyr-quill-7");
-      assertObjectMatch(asRecord(second.runner.continuity), {
+      assert.strictEqual(second.text, "recalled=zephyr-quill-7");
+      assert.partialDeepStrictEqual(asRecord(second.runner.continuity), {
         state: "reconstructed",
         priorMessagesProjected: 4,
         toolExchangesProjected: 1,
       });
-      assertEquals(second.runner.toolEvidence, {
+      assert.deepStrictEqual(second.runner.toolEvidence, {
         status: "complete",
         observedCalls: 0,
         recordedCalls: 0,
@@ -3371,7 +3441,7 @@ describe("reconstructed tool history", () => {
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01ACPSESSION000000000000130",
-      workspaceRoot: Deno.cwd(),
+      workspaceRoot: process.cwd(),
     }, {
       runAgent: () =>
         Promise.resolve({
@@ -3394,7 +3464,7 @@ describe("reconstructed tool history", () => {
           },
         }),
     });
-    assertEquals(result.runner.toolEvidence, {
+    assert.deepStrictEqual(result.runner.toolEvidence, {
       status: "unavailable",
       observedCalls: 1,
       recordedCalls: 0,
@@ -3402,8 +3472,8 @@ describe("reconstructed tool history", () => {
     const toolEvents = h.events.filter((event) =>
       event.event_type === "tool_call"
     );
-    assertEquals(toolEvents?.length, 1);
-    assertObjectMatch(asRecord(toolEvents[0]), {
+    assert.deepStrictEqual(toolEvents?.length, 1);
+    assert.partialDeepStrictEqual(asRecord(toolEvents[0]), {
       tool_name: "acp.history_unavailable",
       tool_arguments: "{}",
       tool_result: "",
@@ -3451,7 +3521,7 @@ describe("reconstructed tool history", () => {
       toolHistory({ requestName: `sk-${"a".repeat(20)}` }),
       "secret-shaped tool history",
     );
-    assertStrictEquals(
+    assert.strictEqual(
       historyContainsSecretShape("token_count=12345678"),
       false,
     );

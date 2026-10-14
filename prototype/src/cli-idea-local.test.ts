@@ -1,7 +1,7 @@
 // The REPL's `/idea` and `/packet` commands on the `unix: false` path, which
 // keeps ideas and packets in a registry the REPL session owns instead of
 // asking the engine.
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import assert from "node:assert/strict";
 import type { CliConfig } from "./cli/args.ts";
 import type { ConnectFn } from "./cli/io.ts";
 import {
@@ -34,7 +34,7 @@ async function run(
   const handler = line.startsWith("/idea")
     ? handleReplIdeaCommand
     : handleReplPacketCommand;
-  assertEquals(await handler(line, local, io, state, noSocket), true);
+  assert.deepStrictEqual(await handler(line, local, io, state, noSocket), true);
   return [...stdout, ...stderr].join("\n");
 }
 
@@ -42,19 +42,29 @@ Deno.test("/idea and /packet share the REPL session's registry", async () => {
   const state = session();
   const marked = await run("/idea mark Local idea", state);
   const ideaId = /marked idea \[([^\]]+)\]/.exec(marked)?.[1];
-  assertEquals(typeof ideaId, "string");
-  assertStringIncludes(await run("/idea list", state), "Local idea");
-  assertStringIncludes(
-    await run(`/packet draft ${ideaId} --title Local packet`, state),
-    "# Work Packet: Local packet",
+  assert.deepStrictEqual(typeof ideaId, "string");
+  assert.ok(
+    (await run("/idea list", state)).includes("Local idea"),
+    `expected await run("/idea list", state) to include "Local idea"`,
   );
-  assertStringIncludes(await run("/packet list", state), "Local packet");
+  assert.ok(
+    (await run(`/packet draft ${ideaId} --title Local packet`, state)).includes(
+      "# Work Packet: Local packet",
+    ),
+    `expected await run(\`/packet draft \${ideaId} --title Local packet\`, state) to include "# Work Packet: Local packet"`,
+  );
+  assert.ok(
+    (await run("/packet list", state)).includes("Local packet"),
+    `expected await run("/packet list", state) to include "Local packet"`,
+  );
 });
 
 Deno.test("another REPL session starts with an empty registry", async () => {
   await run("/idea mark First session idea", session());
-  assertStringIncludes(
-    await run("/idea list", session()),
-    "no ideas marked for session 01LOCAL_SESSION",
+  assert.ok(
+    (await run("/idea list", session())).includes(
+      "no ideas marked for session 01LOCAL_SESSION",
+    ),
+    `expected await run("/idea list", session()) to include "no ideas marked for session 01LOCAL_SESSION"`,
   );
 });
