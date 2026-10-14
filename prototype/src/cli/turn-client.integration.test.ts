@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import { describe, it } from "@std/testing/bdd";
 import { MemoryStore } from "../store/mod.ts";
 import { serveWorkbenchUnix } from "../server/main.ts";
@@ -47,7 +48,7 @@ describe("socketTurn over a real Unix socket (integration)", () => {
       assert.strictEqual(r.text, "Hello socket");
     } finally {
       await server.close();
-      await Deno.remove(sock).catch(() => {});
+      await unlink(sock).catch(() => {});
     }
   });
 });

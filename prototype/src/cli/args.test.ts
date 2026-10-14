@@ -30,7 +30,12 @@ describe("parseArgs", () => {
       ]).overrides.runner,
       "codex-chatgpt",
     );
-    assert.ok((parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "").includes("runner must be fixture or codex-chatgpt"), `expected parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "" to include "runner must be fixture or codex-chatgpt"`);
+    assert.ok(
+      (parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "").includes(
+        "runner must be fixture or codex-chatgpt",
+      ),
+      `expected parseArgs(["--runner", "vendor", "exec", "hi"]).error ?? "" to include "runner must be fixture or codex-chatgpt"`,
+    );
   });
 
   it("parses --fast and --no-fast flags", () => {
@@ -62,11 +67,18 @@ describe("parseArgs", () => {
       },
     );
     for (const command of ["status", "models", "sessions", "start", "stop"]) {
-      assert.ok((parseArgs(["--runner", "codex-chatgpt", command]).error ?? "").includes(`--runner cannot be combined with '${command}'`), `expected parseArgs(["--runner", "codex-chatgpt", command]).error ?? "" to include \`--runner cannot be combined with '\${command}'\``);
+      assert.ok(
+        (parseArgs(["--runner", "codex-chatgpt", command]).error ?? "")
+          .includes(`--runner cannot be combined with '${command}'`),
+        `expected parseArgs(["--runner", "codex-chatgpt", command]).error ?? "" to include \`--runner cannot be combined with '\${command}'\``,
+      );
     }
-    assert.ok((parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
-        "").includes("--runner cannot be combined with 'status'"), `expected parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
-        "" to include "--runner cannot be combined with 'status'"`);
+    assert.ok(
+      (parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
+        "").includes("--runner cannot be combined with 'status'"),
+      `expected parseArgs(["--runner", "codex-chatgpt", "status", "-p", "hi"]).error ??
+        "" to include "--runner cannot be combined with 'status'"`,
+    );
   });
 
   it("rejects explicit model routing alongside a runner", () => {
@@ -79,9 +91,12 @@ describe("parseArgs", () => {
         ["--no-fast"],
       ]
     ) {
-      assert.ok((parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
-          "").includes("runner cannot be combined"), `expected parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
-          "" to include "runner cannot be combined"`);
+      assert.ok(
+        (parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
+          "").includes("runner cannot be combined"),
+        `expected parseArgs(["--runner", "fixture", ...routing, "exec", "hi"]).error ??
+          "" to include "runner cannot be combined"`,
+      );
     }
   });
   it("collects routing flags", () => {
@@ -107,15 +122,32 @@ describe("parseArgs", () => {
     );
   });
   it("rejects an invalid tier", () => {
-    assert.ok((parseArgs(["--tier", "9", "exec", "x"]).error ?? "").includes("tier"), `expected parseArgs(["--tier", "9", "exec", "x"]).error ?? "" to include "tier"`);
+    assert.ok(
+      (parseArgs(["--tier", "9", "exec", "x"]).error ?? "").includes("tier"),
+      `expected parseArgs(["--tier", "9", "exec", "x"]).error ?? "" to include "tier"`,
+    );
   });
   it("rejects an unknown flag", () => {
-    assert.ok((parseArgs(["--wat"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--wat"]).error ?? "" to include "unknown flag"`);
+    assert.ok(
+      (parseArgs(["--wat"]).error ?? "").includes("unknown flag"),
+      `expected parseArgs(["--wat"]).error ?? "" to include "unknown flag"`,
+    );
   });
   it("rejects retired HTTP transport flags", () => {
-    assert.ok((parseArgs(["--server", "http://h"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--server", "http://h"]).error ?? "" to include "unknown flag"`);
-    assert.ok((parseArgs(["--unix"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--unix"]).error ?? "" to include "unknown flag"`);
-    assert.ok((parseArgs(["--key", "k"]).error ?? "").includes("unknown flag"), `expected parseArgs(["--key", "k"]).error ?? "" to include "unknown flag"`);
+    assert.ok(
+      (parseArgs(["--server", "http://h"]).error ?? "").includes(
+        "unknown flag",
+      ),
+      `expected parseArgs(["--server", "http://h"]).error ?? "" to include "unknown flag"`,
+    );
+    assert.ok(
+      (parseArgs(["--unix"]).error ?? "").includes("unknown flag"),
+      `expected parseArgs(["--unix"]).error ?? "" to include "unknown flag"`,
+    );
+    assert.ok(
+      (parseArgs(["--key", "k"]).error ?? "").includes("unknown flag"),
+      `expected parseArgs(["--key", "k"]).error ?? "" to include "unknown flag"`,
+    );
   });
   it("canonicalizes a valid --session value", () => {
     assert.strictEqual(
@@ -127,7 +159,10 @@ describe("parseArgs", () => {
   it("rejects a garbage --session as a parse error, not a throw", () => {
     const p = parseArgs(["--session", "garbage-value"]);
     assert.strictEqual(p.command, "help");
-    assert.ok((p.error ?? "").includes("dyfj sessions"), `expected p.error ?? "" to include "dyfj sessions"`);
+    assert.ok(
+      (p.error ?? "").includes("dyfj sessions"),
+      `expected p.error ?? "" to include "dyfj sessions"`,
+    );
     // main prefixes "dyfj: "; the parse error must not carry its own.
     assert.doesNotMatch(p.error ?? "", /^dyfj:/);
   });
@@ -143,10 +178,13 @@ describe("parseArgs", () => {
     assert.strictEqual(parseArgs(["start"]).command, "start");
   });
   it("accepts the internal launcher marker only on start", () => {
-    assert.partialDeepStrictEqual(parseArgs(["start", "--launcher-autostarted"]), {
-      command: "start",
-      launcherAutostarted: true,
-    });
+    assert.partialDeepStrictEqual(
+      parseArgs(["start", "--launcher-autostarted"]),
+      {
+        command: "start",
+        launcherAutostarted: true,
+      },
+    );
     assert.partialDeepStrictEqual(parseArgs(["-p", "--launcher-autostarted"]), {
       command: "exec",
       prompt: "--launcher-autostarted",
@@ -162,7 +200,12 @@ describe("parseArgs", () => {
         ["start", "--launcher-autostarted", "--help"],
       ]
     ) {
-      assert.ok((parseArgs(argv).error ?? "").includes("--launcher-autostarted is valid only with start"), `expected parseArgs(argv).error ?? "" to include "--launcher-autostarted is valid only with start"`);
+      assert.ok(
+        (parseArgs(argv).error ?? "").includes(
+          "--launcher-autostarted is valid only with start",
+        ),
+        `expected parseArgs(argv).error ?? "" to include "--launcher-autostarted is valid only with start"`,
+      );
     }
   });
   it("--socket overrides the socket path", () => {
@@ -184,7 +227,10 @@ describe("parseArgs", () => {
     );
   });
   it("rejects an invalid mode", () => {
-    assert.ok((parseArgs(["--mode", "wat", "exec", "x"]).error ?? "").includes("mode"), `expected parseArgs(["--mode", "wat", "exec", "x"]).error ?? "" to include "mode"`);
+    assert.ok(
+      (parseArgs(["--mode", "wat", "exec", "x"]).error ?? "").includes("mode"),
+      `expected parseArgs(["--mode", "wat", "exec", "x"]).error ?? "" to include "mode"`,
+    );
   });
   it("'ask' is a one-shot ask-mode exec", () => {
     const p = parseArgs(["ask", "what", "is", "this", "repo"]);
@@ -193,11 +239,24 @@ describe("parseArgs", () => {
     assert.strictEqual(p.overrides.mode, "ask");
   });
   it("'ask' requires a prompt", () => {
-    assert.ok((parseArgs(["ask"]).error ?? "").includes("ask requires a prompt"), `expected parseArgs(["ask"]).error ?? "" to include "ask requires a prompt"`);
+    assert.ok(
+      (parseArgs(["ask"]).error ?? "").includes("ask requires a prompt"),
+      `expected parseArgs(["ask"]).error ?? "" to include "ask requires a prompt"`,
+    );
   });
   it("rejects conflicting --fast and --no-fast flags", () => {
-    assert.ok((parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "").includes("cannot specify both --fast and --no-fast"), `expected parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`);
-    assert.ok((parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "").includes("cannot specify both --fast and --no-fast"), `expected parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`);
+    assert.ok(
+      (parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "").includes(
+        "cannot specify both --fast and --no-fast",
+      ),
+      `expected parseArgs(["--fast", "--no-fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`,
+    );
+    assert.ok(
+      (parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "").includes(
+        "cannot specify both --fast and --no-fast",
+      ),
+      `expected parseArgs(["--no-fast", "--fast", "exec", "x"]).error ?? "" to include "cannot specify both --fast and --no-fast"`,
+    );
   });
 });
 
@@ -362,12 +421,20 @@ describe("parseArgs for stop subcommand", () => {
   it("rejects stop with positional prompt argument", () => {
     const parsed = parseArgs(["stop", "prompt"]);
     assert.strictEqual(parsed.command, "help");
-    assert.ok((parsed.error ?? "").includes("unknown command: stop"), `expected parsed.error ?? "" to include "unknown command: stop"`);
+    assert.ok(
+      (parsed.error ?? "").includes("unknown command: stop"),
+      `expected parsed.error ?? "" to include "unknown command: stop"`,
+    );
   });
 
   it("rejects --launcher-autostarted on stop", () => {
     const parsed = parseArgs(["--launcher-autostarted", "stop"]);
     assert.strictEqual(parsed.command, "help");
-    assert.ok((parsed.error ?? "").includes("--launcher-autostarted is valid only with start"), `expected parsed.error ?? "" to include "--launcher-autostarted is valid only with start"`);
+    assert.ok(
+      (parsed.error ?? "").includes(
+        "--launcher-autostarted is valid only with start",
+      ),
+      `expected parsed.error ?? "" to include "--launcher-autostarted is valid only with start"`,
+    );
   });
 });

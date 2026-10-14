@@ -42,8 +42,14 @@ describe("models/sessions over UDS", () => {
       }),
     );
     assert.strictEqual(code, 0);
-    assert.ok(stdout.join("").includes("gemma4"), `expected stdout.join("") to include "gemma4"`);
-    assert.ok(stdout.join("").includes("Gemma 4"), `expected stdout.join("") to include "Gemma 4"`);
+    assert.ok(
+      stdout.join("").includes("gemma4"),
+      `expected stdout.join("") to include "gemma4"`,
+    );
+    assert.ok(
+      stdout.join("").includes("Gemma 4"),
+      `expected stdout.join("") to include "Gemma 4"`,
+    );
   });
 
   it("runModels annotates rows the server marked unroutable", async () => {
@@ -82,7 +88,12 @@ describe("models/sessions over UDS", () => {
     assert.strictEqual(code, 0);
     const out = stdout.join("");
     const lines = out.split("\n");
-    assert.ok((lines.find((l) => l.includes("gpt-6-preview")) ?? "").includes("[unpriced — not routable]"), `expected lines.find((l) => l.includes("gpt-6-preview")) ?? "" to include "[unpriced — not routable]"`);
+    assert.ok(
+      (lines.find((l) => l.includes("gpt-6-preview")) ?? "").includes(
+        "[unpriced — not routable]",
+      ),
+      `expected lines.find((l) => l.includes("gpt-6-preview")) ?? "" to include "[unpriced — not routable]"`,
+    );
     const gemma = lines.find((l) => l.includes("gemma4"));
     const opus = lines.find((l) => l.includes("claude-opus-4-8"));
     assert.ok(gemma !== undefined && opus !== undefined);
@@ -100,7 +111,13 @@ describe("models/sessions over UDS", () => {
       },
     );
     assert.strictEqual(code, 1);
-    assert.ok(stderr.join("\n").includes("dyfj start"), `expected stderr.join("\\n") to include "dyfj start"`);
-    assert.ok(stderr.join("\n").includes("/run/missing.sock"), `expected stderr.join("\\n") to include "/run/missing.sock"`);
+    assert.ok(
+      stderr.join("\n").includes("dyfj start"),
+      `expected stderr.join("\\n") to include "dyfj start"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("/run/missing.sock"),
+      `expected stderr.join("\\n") to include "/run/missing.sock"`,
+    );
   });
 });

@@ -12,7 +12,10 @@ describe("renderInlineMarkdown", () => {
   it("strips bold markers and applies ANSI when color is on", () => {
     const out = renderInlineMarkdown("say **bold** here", true);
     assert.ok(!out.includes("**"));
-    assert.ok(out.includes("\x1b[1mbold\x1b[0m"), `expected ${JSON.stringify(out)} to include "\\x1b[1mbold\\x1b[0m"`);
+    assert.ok(
+      out.includes("\x1b[1mbold\x1b[0m"),
+      `expected ${JSON.stringify(out)} to include "\\x1b[1mbold\\x1b[0m"`,
+    );
   });
 
   it("strips markers without ANSI when color is off", () => {
@@ -44,8 +47,16 @@ describe("renderInlineMarkdown", () => {
       true,
     );
     assert.ok(!out.includes("[the guide]("));
-    assert.ok(out.includes("\x1b]8;;https://example.com/guide\x07"), `expected ${JSON.stringify(out)} to include "\\x1b]8;;https://example.com/guide\\x07"`);
-    assert.ok(out.includes("the guide"), `expected ${JSON.stringify(out)} to include "the guide"`);
+    assert.ok(
+      out.includes("\x1b]8;;https://example.com/guide\x07"),
+      `expected ${
+        JSON.stringify(out)
+      } to include "\\x1b]8;;https://example.com/guide\\x07"`,
+    );
+    assert.ok(
+      out.includes("the guide"),
+      `expected ${JSON.stringify(out)} to include "the guide"`,
+    );
   });
 
   it("keeps the destination visible in plain output", () => {
@@ -61,8 +72,18 @@ describe("renderInlineMarkdown", () => {
       "[file](ftp://example.com/a)",
       true,
     );
-    assert.ok(relative.includes("guide\x1b[0m (README.md)"), `expected ${JSON.stringify(relative)} to include "guide\\x1b[0m (README.md)"`);
-    assert.ok(unsupportedScheme.includes("file\x1b[0m (ftp://example.com/a)"), `expected ${JSON.stringify(unsupportedScheme)} to include "file\\x1b[0m (ftp://example.com/a)"`);
+    assert.ok(
+      relative.includes("guide\x1b[0m (README.md)"),
+      `expected ${
+        JSON.stringify(relative)
+      } to include "guide\\x1b[0m (README.md)"`,
+    );
+    assert.ok(
+      unsupportedScheme.includes("file\x1b[0m (ftp://example.com/a)"),
+      `expected ${
+        JSON.stringify(unsupportedScheme)
+      } to include "file\\x1b[0m (ftp://example.com/a)"`,
+    );
     assert.ok(!relative.includes("\x1b]8;;"));
     assert.ok(!unsupportedScheme.includes("\x1b]8;;"));
   });
@@ -73,7 +94,10 @@ describe("renderInlineMarkdown", () => {
       true,
     );
     assert.ok(!out.includes("\x1b]8;;https://example.com/"));
-    assert.ok(out.includes("safe"), `expected ${JSON.stringify(out)} to include "safe"`);
+    assert.ok(
+      out.includes("safe"),
+      `expected ${JSON.stringify(out)} to include "safe"`,
+    );
   });
 });
 
@@ -91,8 +115,18 @@ describe("renderMarkdownLine", () => {
 
   it("re-asserts header styling after inline code spans", () => {
     const { text } = renderMarkdownLine("# Hello `code` rest", false, true);
-    assert.ok(text.includes("\x1b[1m\x1b[96mHello \x1b[36mcode\x1b[0m"), `expected ${JSON.stringify(text)} to include "\\x1b[1m\\x1b[96mHello \\x1b[36mcode\\x1b[0m"`);
-    assert.ok(text.includes("\x1b[0m\x1b[1m\x1b[96m rest"), `expected ${JSON.stringify(text)} to include "\\x1b[0m\\x1b[1m\\x1b[96m rest"`);
+    assert.ok(
+      text.includes("\x1b[1m\x1b[96mHello \x1b[36mcode\x1b[0m"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "\\x1b[1m\\x1b[96mHello \\x1b[36mcode\\x1b[0m"`,
+    );
+    assert.ok(
+      text.includes("\x1b[0m\x1b[1m\x1b[96m rest"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "\\x1b[0m\\x1b[1m\\x1b[96m rest"`,
+    );
   });
 
   it("renders list bullets without dash markers", () => {
@@ -125,7 +159,10 @@ describe("renderMarkdownLine", () => {
 
     r = renderMarkdownLine('const x = "**not bold**";', true, false);
     assert.strictEqual(r.inCodeBlock, true);
-    assert.ok(r.text.includes('"**not bold**"'), `expected r.text to include '"**not bold**"'`);
+    assert.ok(
+      r.text.includes('"**not bold**"'),
+      `expected r.text to include '"**not bold**"'`,
+    );
 
     r = renderMarkdownLine("```", true, false);
     assert.strictEqual(r.inCodeBlock, false);
@@ -175,7 +212,10 @@ describe("wordWrap", () => {
       100,
       rendered.continuationIndent,
     );
-    assert.ok(wrapped.includes("one two"), `expected ${JSON.stringify(wrapped)} to include "one two"`);
+    assert.ok(
+      wrapped.includes("one two"),
+      `expected ${JSON.stringify(wrapped)} to include "one two"`,
+    );
     assert.deepStrictEqual((wrapped.split("\n")).length, 2);
   });
 
@@ -274,9 +314,21 @@ describe("createStreamingMarkdownRenderer", () => {
     r.flush();
     const out = chunks.join("");
     assert.doesNotMatch(out, /##|\*\*|`|^- /m);
-    assert.ok(out.includes("Tools"), `expected ${JSON.stringify(out)} to include "Tools"`);
-    assert.ok(out.includes("read_file"), `expected ${JSON.stringify(out)} to include "read_file"`);
-    assert.ok(out.includes("list_files"), `expected ${JSON.stringify(out)} to include "list_files"`);
-    assert.ok(out.includes("•"), `expected ${JSON.stringify(out)} to include "•"`);
+    assert.ok(
+      out.includes("Tools"),
+      `expected ${JSON.stringify(out)} to include "Tools"`,
+    );
+    assert.ok(
+      out.includes("read_file"),
+      `expected ${JSON.stringify(out)} to include "read_file"`,
+    );
+    assert.ok(
+      out.includes("list_files"),
+      `expected ${JSON.stringify(out)} to include "list_files"`,
+    );
+    assert.ok(
+      out.includes("•"),
+      `expected ${JSON.stringify(out)} to include "•"`,
+    );
   });
 });

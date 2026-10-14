@@ -130,7 +130,10 @@ describe("handleTurnRuntimeEvent", () => {
     const { io, stdout, stderr } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
     handleTurnRuntimeEvent(supersedeEvent(), output, io);
-    assert.ok(stdout.join("").includes("retrying with recovered context"), `expected stdout.join("") to include "retrying with recovered context"`);
+    assert.ok(
+      stdout.join("").includes("retrying with recovered context"),
+      `expected stdout.join("") to include "retrying with recovered context"`,
+    );
     assert.deepStrictEqual(stderr.length, 0);
   });
 
@@ -142,7 +145,10 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assert.deepStrictEqual(["tool: bash started"].filter((item) => !stderr.includes(item)), []);
+    assert.deepStrictEqual(
+      ["tool: bash started"].filter((item) => !stderr.includes(item)),
+      [],
+    );
     assert.deepStrictEqual(stdout.length, 0);
   });
 
@@ -214,7 +220,10 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assert.ok(stderr.join("\n").includes("context: compressed 4 elder turn(s)"), `expected stderr.join("\\n") to include "context: compressed 4 elder turn(s)"`);
+    assert.ok(
+      stderr.join("\n").includes("context: compressed 4 elder turn(s)"),
+      `expected stderr.join("\\n") to include "context: compressed 4 elder turn(s)"`,
+    );
   });
 
   it("renders the window-fit status lines to stderr", () => {
@@ -249,14 +258,24 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assert.ok(stderr.join("\n").includes("context: trimmed read_file result to fit the 32768-token window " +
-        "(8192 of 65536 characters kept)"), `expected stderr.join("\\n") to include "context: trimmed read_file result to fit the 32768-token window " +
-        "(8192 of 65536 characters kept)"`);
-    assert.ok(stderr.join("\n").includes("context: fitted to the 32768-token window after the provider " +
+    assert.ok(
+      stderr.join("\n").includes(
+        "context: trimmed read_file result to fit the 32768-token window " +
+          "(8192 of 65536 characters kept)",
+      ),
+      `expected stderr.join("\\n") to include "context: trimmed read_file result to fit the 32768-token window " +
+        "(8192 of 65536 characters kept)"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes(
+        "context: fitted to the 32768-token window after the provider " +
+          "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
+          "trimmed, elder turns compressed)",
+      ),
+      `expected stderr.join("\\n") to include "context: fitted to the 32768-token window after the provider " +
         "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
-        "trimmed, elder turns compressed)"), `expected stderr.join("\\n") to include "context: fitted to the 32768-token window after the provider " +
-        "rejected the request (~47716 → ~18200 tokens, 2 tool result(s) " +
-        "trimmed, elder turns compressed)"`);
+        "trimmed, elder turns compressed)"`,
+    );
   });
 
   // Both clients decode the transport JSON but never schema-validate the frame,
@@ -296,7 +315,10 @@ describe("handleTurnRuntimeEvent", () => {
       output,
       io,
     );
-    assert.ok(stdout.join("").includes("retrying with recovered context"), `expected stdout.join("") to include "retrying with recovered context"`);
+    assert.ok(
+      stdout.join("").includes("retrying with recovered context"),
+      `expected stdout.join("") to include "retrying with recovered context"`,
+    );
   });
 
   it("does not supersede on an empty reason", () => {

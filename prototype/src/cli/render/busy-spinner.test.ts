@@ -110,7 +110,10 @@ describe("createBusySpinner", () => {
   it("custom label is rendered", () => {
     const { spinner, writes } = harness({ label: "routing…" });
     spinner.start();
-    assert.ok(writes[0].includes("routing… 0s"), `expected writes[0] to include "routing… 0s"`);
+    assert.ok(
+      writes[0].includes("routing… 0s"),
+      `expected writes[0] to include "routing… 0s"`,
+    );
   });
 
   it("updateLabel repaints immediately without stacking another timer", () => {

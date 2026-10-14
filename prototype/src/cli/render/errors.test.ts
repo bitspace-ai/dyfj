@@ -27,9 +27,17 @@ describe("presentation", () => {
     // The label is the fixed literal "Error", not the subclass name — the
     // subclass name would come off the object (`.constructor.name`), a
     // writable property and therefore a payload channel.
-    assert.ok(s.includes("[Error,"), `expected ${JSON.stringify(s)} to include "[Error,"`);
+    assert.ok(
+      s.includes("[Error,"),
+      `expected ${JSON.stringify(s)} to include "[Error,"`,
+    );
     assert.ok(!s.includes("RangeError"));
-    assert.ok(s.includes(`${new TextEncoder().encode(payload).byteLength} bytes`), `expected ${JSON.stringify(s)} to include \`\${new TextEncoder().encode(payload).byteLength} bytes\``);
+    assert.ok(
+      s.includes(`${new TextEncoder().encode(payload).byteLength} bytes`),
+      `expected ${
+        JSON.stringify(s)
+      } to include \`\${new TextEncoder().encode(payload).byteLength} bytes\``,
+    );
   });
 
   it("socketError renders a short DomainError message unchanged — trusted by provenance", () => {
@@ -55,8 +63,14 @@ describe("presentation", () => {
     const s = socketError(new Error(payload), cfg());
     assert.ok(s.length < 1000);
     assert.ok(!s.includes(payload));
-    assert.ok(s.includes("Error"), `expected ${JSON.stringify(s)} to include "Error"`);
-    assert.ok(s.includes(`${payload.length} bytes`), `expected ${JSON.stringify(s)} to include \`\${payload.length} bytes\``);
+    assert.ok(
+      s.includes("Error"),
+      `expected ${JSON.stringify(s)} to include "Error"`,
+    );
+    assert.ok(
+      s.includes(`${payload.length} bytes`),
+      `expected ${JSON.stringify(s)} to include \`\${payload.length} bytes\``,
+    );
   });
 });
 
@@ -105,15 +119,35 @@ describe("isTimeoutError and socketError", () => {
   it("socketError produces start hint on connection refused or missing socket", () => {
     const enoentErr = new Error("No such file or directory (os error 2)");
     const msgEnoent = socketError(enoentErr, cfg({ socket: "/tmp/dyfj.sock" }));
-    assert.ok(msgEnoent.includes("dyfj: runtime not reachable at /tmp/dyfj.sock."), `expected ${JSON.stringify(msgEnoent)} to include "dyfj: runtime not reachable at /tmp/dyfj.sock."`);
-    assert.ok(msgEnoent.includes("Start it with: dyfj start"), `expected ${JSON.stringify(msgEnoent)} to include "Start it with: dyfj start"`);
+    assert.ok(
+      msgEnoent.includes("dyfj: runtime not reachable at /tmp/dyfj.sock."),
+      `expected ${
+        JSON.stringify(msgEnoent)
+      } to include "dyfj: runtime not reachable at /tmp/dyfj.sock."`,
+    );
+    assert.ok(
+      msgEnoent.includes("Start it with: dyfj start"),
+      `expected ${
+        JSON.stringify(msgEnoent)
+      } to include "Start it with: dyfj start"`,
+    );
 
     const econnrefusedErr = new Error("connect ECONNREFUSED /tmp/dyfj.sock");
     const msgRefused = socketError(
       econnrefusedErr,
       cfg({ socket: "/tmp/dyfj.sock" }),
     );
-    assert.ok(msgRefused.includes("dyfj: runtime not reachable at /tmp/dyfj.sock."), `expected ${JSON.stringify(msgRefused)} to include "dyfj: runtime not reachable at /tmp/dyfj.sock."`);
-    assert.ok(msgRefused.includes("Start it with: dyfj start"), `expected ${JSON.stringify(msgRefused)} to include "Start it with: dyfj start"`);
+    assert.ok(
+      msgRefused.includes("dyfj: runtime not reachable at /tmp/dyfj.sock."),
+      `expected ${
+        JSON.stringify(msgRefused)
+      } to include "dyfj: runtime not reachable at /tmp/dyfj.sock."`,
+    );
+    assert.ok(
+      msgRefused.includes("Start it with: dyfj start"),
+      `expected ${
+        JSON.stringify(msgRefused)
+      } to include "Start it with: dyfj start"`,
+    );
   });
 });

@@ -41,9 +41,18 @@ describe("models/sessions over UDS", () => {
     );
     assert.strictEqual(code, 0);
     const out = stdout.join("");
-    assert.ok(out.includes("dyfj"), `expected ${JSON.stringify(out)} to include "dyfj"`);
-    assert.ok(out.includes("s-1"), `expected ${JSON.stringify(out)} to include "s-1"`);
-    assert.ok(out.includes("Build"), `expected ${JSON.stringify(out)} to include "Build"`);
+    assert.ok(
+      out.includes("dyfj"),
+      `expected ${JSON.stringify(out)} to include "dyfj"`,
+    );
+    assert.ok(
+      out.includes("s-1"),
+      `expected ${JSON.stringify(out)} to include "s-1"`,
+    );
+    assert.ok(
+      out.includes("Build"),
+      `expected ${JSON.stringify(out)} to include "Build"`,
+    );
   });
 
   it("runSessions shows when each session last moved and a resume hint", async () => {
@@ -67,7 +76,13 @@ describe("models/sessions over UDS", () => {
       }),
     );
     assert.strictEqual(code, 0);
-    assert.ok(stdout.join("").includes("2026-07-05 09:12"), `expected stdout.join("") to include "2026-07-05 09:12"`);
-    assert.ok(stderr.join("\n").includes("resume one with: dyfj --session"), `expected stderr.join("\\n") to include "resume one with: dyfj --session"`);
+    assert.ok(
+      stdout.join("").includes("2026-07-05 09:12"),
+      `expected stdout.join("") to include "2026-07-05 09:12"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("resume one with: dyfj --session"),
+      `expected stderr.join("\\n") to include "resume one with: dyfj --session"`,
+    );
   });
 });

@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assertArrayIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   buildServeUnixArgs,
@@ -21,6 +20,13 @@ import {
 // Assembled at runtime so the public-boundary scan never matches this
 // fixture as a home-directory path in tracked source.
 const FAKE_HOME = ["", "home", "x"].join("/");
+
+/** A missing-file rejection, as a real file read reports it. */
+function notFound(): Error {
+  return Object.assign(new Error("No such file or directory"), {
+    code: "ENOENT",
+  });
+}
 
 describe("runtime lifecycle commands", () => {
   it("buildServeUnixArgs grants the resolved socket alongside the profile net list", () => {
@@ -110,7 +116,8 @@ describe("runtime lifecycle commands", () => {
   });
 
   it("buildServeUnixArgs rejects comma-bearing network grants", () => {
-    assert.throws(() =>
+    assert.throws(
+      () =>
         buildServeUnixArgs(
           ["127.0.0.1:3306"],
           "/run/wb.sock",
@@ -119,7 +126,11 @@ describe("runtime lifecycle commands", () => {
           null,
           false,
           ["foo,bar.example:443"],
-        ), (error: unknown) => error instanceof Error && error.message.includes("Deno network grants cannot contain commas"));
+        ),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Deno network grants cannot contain commas"),
+    );
   });
 
   it("buildServeUnixArgs adds no memory grant when recall is unconfigured", () => {
@@ -178,12 +189,32 @@ describe("runtime lifecycle commands", () => {
     // Misconfiguration surfaces at `dyfj start`, not as NotCapable mid-recall —
     // and a grant is never derived for a destination that would carry the
     // token in cleartext off-box.
-    assert.throws(() => memoryMcpNetGrant("not a url"), (error: unknown) => error instanceof Error && error.message.includes("not a valid URL"));
-    assert.throws(() => memoryMcpNetGrant("ftp://memory.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
-    assert.throws(() => memoryMcpNetGrant("http://memory.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
+    assert.throws(
+      () => memoryMcpNetGrant("not a url"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("not a valid URL"),
+    );
+    assert.throws(
+      () => memoryMcpNetGrant("ftp://memory.example/mcp"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("https"),
+    );
+    assert.throws(
+      () => memoryMcpNetGrant("http://memory.example/mcp"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("https"),
+    );
     // A DNS name that merely starts with "127." is routable, not loopback.
-    assert.throws(() => memoryMcpNetGrant("http://127.attacker.example/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
-    assert.throws(() => memoryMcpNetGrant("http://127.example.com/mcp"), (error: unknown) => error instanceof Error && error.message.includes("https"));
+    assert.throws(
+      () => memoryMcpNetGrant("http://127.attacker.example/mcp"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("https"),
+    );
+    assert.throws(
+      () => memoryMcpNetGrant("http://127.example.com/mcp"),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("https"),
+    );
   });
 
   const noAmbient = { get: () => undefined };
@@ -260,23 +291,63 @@ describe("runtime lifecycle commands", () => {
     };
     const cliEnv = parsed.permissions["cli"].env;
     assert.ok(Array.isArray(cliEnv));
-    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !cliEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !cliEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !cliEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !cliEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !cliEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_NODE_PATH"].filter((item) => !cliEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !cliEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !cliEnv.includes(item)),
+      [],
+    );
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1]?.split(",") ?? [];
-    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !compileEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !compileEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !compileEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !compileEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !compileEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_NODE_PATH"].filter((item) => !compileEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) =>
+        !compileEnv.includes(item)
+      ),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !compileEnv.includes(item)),
+      [],
+    );
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
-    assert.deepStrictEqual(["DYFJ_MEMORY_MCP_URL"].filter((item) => !launcherEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_NODE_PATH"].filter((item) => !launcherEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !launcherEnv.includes(item)), []);
-    assert.deepStrictEqual(["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !launcherEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !launcherEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_NODE_PATH"].filter((item) => !launcherEnv.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) =>
+        !launcherEnv.includes(item)
+      ),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !launcherEnv.includes(item)),
+      [],
+    );
   });
 
   it("the internal autostart marker is not ambient process state", async () => {
@@ -302,14 +373,20 @@ describe("runtime lifecycle commands", () => {
     // declared net grant list for dyfj start to reproduce.
     const grants = await readServeUnixNetGrants(".");
     assert.ok(grants.length > 0);
-    assert.deepStrictEqual(["127.0.0.1:3306"].filter((item) => !grants.includes(item)), []);
+    assert.deepStrictEqual(
+      ["127.0.0.1:3306"].filter((item) => !grants.includes(item)),
+      [],
+    );
   });
 });
 
 describe("readServeUnixRunGrants", () => {
   it("reads the serve-unix run grant list from the real profile", async () => {
     const grants = await readServeUnixRunGrants(".");
-    assert.deepStrictEqual(["bash"].filter((item) => !grants.includes(item)), []);
+    assert.deepStrictEqual(
+      ["bash"].filter((item) => !grants.includes(item)),
+      [],
+    );
   });
 });
 
@@ -327,7 +404,10 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
     const args = buildServeUnixArgs(NET, SOCK, null, null);
     assert.strictEqual(args.some((a) => a.startsWith("--allow-run")), false);
     // -P still supplies the profile's run grants unchanged.
-    assert.deepStrictEqual(["-P=serve-unix"].filter((item) => !args.includes(item)), []);
+    assert.deepStrictEqual(
+      ["-P=serve-unix"].filter((item) => !args.includes(item)),
+      [],
+    );
   });
 
   it("appends --allow-run with the profile grants plus the resolver binary", () => {
@@ -337,23 +417,34 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
       "/bin/kill",
       "op",
     ]);
-    assert.deepStrictEqual([
-      "--allow-run=bash,/opt/node/bin/node,/bin/kill,op",
-    ].filter((item) => !args.includes(item)), []);
+    assert.deepStrictEqual(
+      [
+        "--allow-run=bash,/opt/node/bin/node,/bin/kill,op",
+      ].filter((item) => !args.includes(item)),
+      [],
+    );
   });
 
   it("rejects delimiter-unsafe run grants", () => {
-    assert.throws(() =>
+    assert.throws(
+      () =>
         buildServeUnixArgs(NET, SOCK, null, [
           "bash",
           "/opt/Node,Inc/bin/node",
-        ]), (error: unknown) => error instanceof Error && error.message.includes("Deno run grants cannot contain commas"));
+        ]),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Deno run grants cannot contain commas"),
+    );
   });
 
   it("the socket grant is still present alongside the run grant", () => {
     const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
     const net = args.find((a) => a.startsWith("--allow-net="));
-    assert.ok((net ?? "").includes(`unix:${SOCK}`), `expected net ?? "" to include \`unix:\${SOCK}\``);
+    assert.ok(
+      (net ?? "").includes(`unix:${SOCK}`),
+      `expected net ?? "" to include \`unix:\${SOCK}\``,
+    );
   });
 
   it("omits --allow-env when no inherit_env grant is needed (null)", () => {
@@ -367,9 +458,12 @@ describe("buildServeUnixArgs with launch-resolved run grants", () => {
       "HOME",
       "OP_SERVICE_ACCOUNT_TOKEN",
     ]);
-    assert.deepStrictEqual([
-      "--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN",
-    ].filter((item) => !args.includes(item)), []);
+    assert.deepStrictEqual(
+      [
+        "--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN",
+      ].filter((item) => !args.includes(item)),
+      [],
+    );
   });
 });
 
@@ -386,7 +480,7 @@ describe("toolchainReadGrant", () => {
         null,
       );
     } finally {
-      await Deno.remove(directory);
+      await rmdir(directory);
     }
   });
 
@@ -453,7 +547,7 @@ describe("rustupHomeReadGrant", () => {
         null,
       );
     } finally {
-      await Deno.remove(directory);
+      await rmdir(directory);
     }
   });
 
@@ -509,20 +603,29 @@ describe("rustupHomeReadGrant", () => {
 
 describe("Codex toolchain runtime grant", () => {
   it("the serve-unix profile may read the operator selection", async () => {
-    assertArrayIncludes(await readServeUnixEnvGrants("."), [
-      "DYFJ_CODEX_TOOLCHAIN_PATH",
-    ]);
-    assertArrayIncludes(await readServeUnixEnvGrants("."), [
-      "DYFJ_CODEX_RUSTUP_HOME",
-    ]);
+    const envGrants = await readServeUnixEnvGrants(".");
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !envGrants.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !envGrants.includes(item)),
+      [],
+    );
   });
 });
 
 describe("readServeUnixEnvGrants", () => {
   it("reads the serve-unix env grant list from the real profile", async () => {
     const grants = await readServeUnixEnvGrants(".");
-    assert.deepStrictEqual(["PATH"].filter((item) => !grants.includes(item)), []);
-    assert.deepStrictEqual(["HOME"].filter((item) => !grants.includes(item)), []);
+    assert.deepStrictEqual(
+      ["PATH"].filter((item) => !grants.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["HOME"].filter((item) => !grants.includes(item)),
+      [],
+    );
   });
 });
 
@@ -538,14 +641,23 @@ describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
     };
     const cliEnv = parsed.permissions["cli"].env;
     assert.ok(Array.isArray(cliEnv));
-    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !cliEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_ROOT"].filter((item) => !cliEnv.includes(item)),
+      [],
+    );
     const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
       ?.[1]?.split(",") ?? [];
-    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !compileEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_ROOT"].filter((item) => !compileEnv.includes(item)),
+      [],
+    );
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
-    assert.deepStrictEqual(["DYFJ_ROOT"].filter((item) => !launcherEnv.includes(item)), []);
+    assert.deepStrictEqual(
+      ["DYFJ_ROOT"].filter((item) => !launcherEnv.includes(item)),
+      [],
+    );
   });
 });
 
@@ -566,7 +678,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     const readTextFile = (path: string) => {
       reads.push(path);
       if (path === "/ambient/config.toml") return Promise.resolve(TOML);
-      return Promise.reject(new Deno.errors.NotFound());
+      return Promise.reject(notFound());
     };
     const env = {
       get: (n: string) =>
@@ -580,14 +692,17 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     );
     assert.deepStrictEqual(cfg?.command, ["op", "read"]);
     // Ambient root is used directly; .env is not consulted for the root.
-    assert.deepStrictEqual(["/ambient/config.toml"].filter((item) => !reads.includes(item)), []);
+    assert.deepStrictEqual(
+      ["/ambient/config.toml"].filter((item) => !reads.includes(item)),
+      [],
+    );
   });
 
   it("falls back to .env DYFJ_ROOT when ambient is unset (mirrors the child)", async () => {
     const readTextFile = (path: string) => {
       if (path === "/cwd/.env") return Promise.resolve("DYFJ_ROOT=/from-env\n");
       if (path === "/from-env/config.toml") return Promise.resolve(TOML);
-      return Promise.reject(new Deno.errors.NotFound());
+      return Promise.reject(notFound());
     };
     const env = { get: (n: string) => (n === "HOME" ? FAKE_HOME : undefined) };
     const cfg = await readLauncherSecretsConfig(
@@ -604,7 +719,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
         return Promise.resolve(TOML);
       }
-      return Promise.reject(new Deno.errors.NotFound());
+      return Promise.reject(notFound());
     };
     const env = { get: (n: string) => (n === "HOME" ? FAKE_HOME : undefined) };
     const cfg = await readLauncherSecretsConfig(
@@ -626,7 +741,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
         return Promise.resolve(TOML);
       }
-      return Promise.reject(new Deno.errors.NotFound());
+      return Promise.reject(notFound());
     };
     const env = {
       get: (n: string) =>
@@ -640,7 +755,12 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
     );
     assert.deepStrictEqual(cfg?.command, ["op", "read"]);
     // Resolved against HOME, and .env was never consulted for the root.
-    assert.deepStrictEqual([`${FAKE_HOME}/.dyfj/config.toml`].filter((item) => !readPaths.includes(item)), []);
+    assert.deepStrictEqual(
+      [`${FAKE_HOME}/.dyfj/config.toml`].filter((item) =>
+        !readPaths.includes(item)
+      ),
+      [],
+    );
     assert.ok(!readPaths.includes("/cwd/.env"));
   });
 
@@ -649,7 +769,7 @@ describe("readLauncherSecretsConfig (.env / DYFJ_ROOT precedence)", () => {
       if (path === `${FAKE_HOME}/.dyfj/config.toml`) {
         return Promise.resolve(TOML);
       }
-      return Promise.reject(new Deno.errors.NotFound());
+      return Promise.reject(notFound());
     };
     const env = {
       get: (name: string) => name === "HOME" ? FAKE_HOME : undefined,

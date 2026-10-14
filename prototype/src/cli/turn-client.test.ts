@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "@std/testing/bdd";
-import { FakeTime } from "@std/testing/time";
+import { mock } from "node:test";
 import type { TurnStreamFrame } from "../contract/mod.ts";
 import {
   fakeTurnConnect,
@@ -119,7 +119,12 @@ describe("socketTurn", () => {
       },
     });
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn interrupted before dispatch"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("turn interrupted before dispatch"),
+    );
     assert.deepStrictEqual(calls, []);
     assert.strictEqual(closed, true);
   });
@@ -247,7 +252,14 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn cancellation was not acknowledged; restart the runtime before retrying"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -263,13 +275,17 @@ describe("socketTurn", () => {
         },
       });
 
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         socketTurn(
           cfg({ unix: true }),
           { prompt: "hi" },
           {},
           connect,
-        ), (error: unknown) => error instanceof Error && error.message.includes("peer closed"));
+        ),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("peer closed"),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -283,7 +299,8 @@ describe("socketTurn", () => {
         },
       });
 
-    await assert.rejects(() =>
+    await assert.rejects(
+      () =>
         socketTurn(
           cfg({ unix: true }),
           { prompt: "hi" },
@@ -293,7 +310,11 @@ describe("socketTurn", () => {
             },
           },
           connect,
-        ), (error: unknown) => error instanceof Error && error.message.includes("listener registration failed"));
+        ),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("listener registration failed"),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -320,7 +341,14 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn cancellation was not acknowledged; restart the runtime before retrying"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -347,7 +375,14 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn cancellation was not acknowledged; restart the runtime before retrying"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn cancellation was not acknowledged; restart the runtime before retrying",
+        ),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -378,7 +413,14 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn did not finish after cancellation was declined; remote work may still be running"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn did not finish after cancellation was declined; remote work may still be running",
+        ),
+    );
     assert.strictEqual(closed, true);
   });
 
@@ -410,7 +452,11 @@ describe("socketTurn", () => {
     await Promise.resolve();
     rejectTurn(new Error("provider failed"));
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("provider failed"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("provider failed"),
+    );
   });
 
   it("a positive cancellation acknowledgement cannot leave the client waiting forever", async () => {
@@ -439,12 +485,19 @@ describe("socketTurn", () => {
     await Promise.resolve();
     abortController.abort();
 
-    await assert.rejects(() => pending, (error: unknown) => error instanceof Error && error.message.includes("turn did not finish after cancellation was acknowledged; remote work may still be running"));
+    await assert.rejects(
+      () => pending,
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes(
+          "turn did not finish after cancellation was acknowledged; remote work may still be running",
+        ),
+    );
     assert.strictEqual(closed, true);
   });
 
   it("a late positive acknowledgement cannot install a timer after turn cleanup", async () => {
-    const time = new FakeTime();
+    mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 0 });
     try {
       const abortController = new AbortController();
       let finishTurn!: (value: unknown) => void;
@@ -484,10 +537,14 @@ describe("socketTurn", () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      // No timer is left pending: FakeTime.next() runs the next one, if any.
-      assert.strictEqual(time.next(), false);
+      // No timer is left pending: runAll() runs every pending timer and
+      // moves the mocked clock to the last one's due time, so the clock
+      // stays at 0 only when none was installed (both cancellation timeouts
+      // have a positive delay).
+      mock.timers.runAll();
+      assert.strictEqual(Date.now(), 0);
     } finally {
-      time.restore();
+      mock.timers.reset();
     }
   });
 });
@@ -504,7 +561,10 @@ describe("buildTurnBody", () => {
   });
 
   it("omits routingOptions when no routing is set", () => {
-    assert.deepStrictEqual(buildTurnBody("hi", cfg()), { prompt: "hi", mode: "turn" });
+    assert.deepStrictEqual(buildTurnBody("hi", cfg()), {
+      prompt: "hi",
+      mode: "turn",
+    });
   });
   it("includes routing + session when set", () => {
     const body = buildTurnBody("hi", cfg({ model: "m", tier: 1 }), "SESS");

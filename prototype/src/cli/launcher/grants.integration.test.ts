@@ -1,7 +1,8 @@
 // The launcher-grant cases that need a process grant the unit lane does not
-// give: each builds a symlink fixture with `ln -s`, because `Deno.symlink`
-// needs unscoped read and write. They run in the integration lane.
+// give: each builds a symlink fixture with `ln -s`, because creating a symlink
+// in-process needs unscoped read and write. They run in the integration lane.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,15 +21,20 @@ describe("nodeRunGrant", () => {
     try {
       await writeFile(target, "#!/bin/sh\nexit 0\n");
       await chmod(target, 0o700);
-      const linked = await new Deno.Command("ln", {
-        args: ["-s", target, executable],
-      }).output();
-      assert.strictEqual(linked.success, true);
+      // An explicit environment, so the spawn reads none from the process.
+      const linked = spawnSync("ln", ["-s", target, executable], { env: {} });
+      assert.ifError(linked.error);
+      assert.strictEqual(linked.status, 0);
       assert.strictEqual(
         await nodeRunGrant({ get: () => executable }),
         executable,
       );
-      await assert.rejects(() => nodeRunGrant({ get: () => "node" }), (error: unknown) => error instanceof Error && error.message.includes("must name an absolute executable"));
+      await assert.rejects(
+        () => nodeRunGrant({ get: () => "node" }),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("must name an absolute executable"),
+      );
     } finally {
       await rm(root, { recursive: true });
     }
@@ -42,14 +48,27 @@ describe("nodeRunGrant", () => {
       try {
         await writeFile(target, "#!/bin/sh\nexit 0\n");
         await chmod(target, 0o700);
-        const linked = await new Deno.Command("ln", {
-          args: ["-s", target, selected],
-          stdout: "null",
-          stderr: "null",
-        }).output();
-        assert.strictEqual(linked.success, true);
-        await assert.rejects(() => nodeRunGrant({ get: () => selected }), (error: unknown) => error instanceof Error && error.message.includes("canonical target contains an unsupported delimiter"));
-        await assert.rejects(() => nodeRunGrant({ get: () => target }), (error: unknown) => error instanceof Error && error.message.includes("contains an unsupported delimiter"));
+        // An explicit environment, so the spawn reads none from the process.
+        const linked = spawnSync("ln", ["-s", target, selected], {
+          env: {},
+          stdio: "ignore",
+        });
+        assert.ifError(linked.error);
+        assert.strictEqual(linked.status, 0);
+        await assert.rejects(
+          () => nodeRunGrant({ get: () => selected }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes(
+              "canonical target contains an unsupported delimiter",
+            ),
+        );
+        await assert.rejects(
+          () => nodeRunGrant({ get: () => target }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes("contains an unsupported delimiter"),
+        );
       } finally {
         await rm(root, { recursive: true });
       }
@@ -64,18 +83,33 @@ describe("toolchainReadGrant", () => {
     const link = `${root}/link`;
     try {
       await writeFile(file, "x");
-      const linked = await new Deno.Command("ln", {
-        args: ["-s", root, link],
-      }).output();
-      assert.strictEqual(linked.success, true);
-      await assert.rejects(() => toolchainReadGrant({ get: () => "relative" }), (error: unknown) => error instanceof Error && error.message.includes("absolute directory"));
+      // An explicit environment, so the spawn reads none from the process.
+      const linked = spawnSync("ln", ["-s", root, link], { env: {} });
+      assert.ifError(linked.error);
+      assert.strictEqual(linked.status, 0);
+      await assert.rejects(
+        () => toolchainReadGrant({ get: () => "relative" }),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("absolute directory"),
+      );
       for (const value of [`${root},other`, `${root}:other`]) {
-        await assert.rejects(() => toolchainReadGrant({ get: () => value }), (error: unknown) => error instanceof Error && error.message.includes("unsupported delimiter"));
+        await assert.rejects(
+          () => toolchainReadGrant({ get: () => value }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes("unsupported delimiter"),
+        );
       }
       for (
         const value of ["/", "///", `${root}/missing`, file, link, `${link}/`]
       ) {
-        await assert.rejects(() => toolchainReadGrant({ get: () => value }), (error: unknown) => error instanceof Error && error.message.includes("directory is unavailable"));
+        await assert.rejects(
+          () => toolchainReadGrant({ get: () => value }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes("directory is unavailable"),
+        );
       }
     } finally {
       await rm(root, { recursive: true });
@@ -90,18 +124,33 @@ describe("rustupHomeReadGrant", () => {
     const link = `${root}/link`;
     try {
       await writeFile(file, "x");
-      const linked = await new Deno.Command("ln", {
-        args: ["-s", root, link],
-      }).output();
-      assert.strictEqual(linked.success, true);
-      await assert.rejects(() => rustupHomeReadGrant({ get: () => "relative" }), (error: unknown) => error instanceof Error && error.message.includes("absolute directory"));
+      // An explicit environment, so the spawn reads none from the process.
+      const linked = spawnSync("ln", ["-s", root, link], { env: {} });
+      assert.ifError(linked.error);
+      assert.strictEqual(linked.status, 0);
+      await assert.rejects(
+        () => rustupHomeReadGrant({ get: () => "relative" }),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("absolute directory"),
+      );
       for (const value of [`${root},other`, `${root}:other`]) {
-        await assert.rejects(() => rustupHomeReadGrant({ get: () => value }), (error: unknown) => error instanceof Error && error.message.includes("unsupported delimiter"));
+        await assert.rejects(
+          () => rustupHomeReadGrant({ get: () => value }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes("unsupported delimiter"),
+        );
       }
       for (
         const value of ["/", "///", `${root}/missing`, file, link, `${link}/`]
       ) {
-        await assert.rejects(() => rustupHomeReadGrant({ get: () => value }), (error: unknown) => error instanceof Error && error.message.includes("directory is unavailable"));
+        await assert.rejects(
+          () => rustupHomeReadGrant({ get: () => value }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message.includes("directory is unavailable"),
+        );
       }
     } finally {
       await rm(root, { recursive: true });

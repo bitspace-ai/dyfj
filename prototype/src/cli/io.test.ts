@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import { mock } from "node:test";
 import { describe, it } from "@std/testing/bdd";
-import { assertSpyCalls, spy } from "@std/testing/mock";
 import {
   readLineOrNull,
   readlineTurnInterruptSource,
@@ -92,11 +91,11 @@ describe("readlineTurnInterruptSource", () => {
       },
     };
     const source = readlineTurnInterruptSource(rl);
-    const handler = spy();
+    const handler = mock.fn();
 
     source.add(handler);
     registered?.();
-    assertSpyCalls(handler, 1);
+    assert.equal(handler.mock.callCount(), 1);
     source.remove(handler);
     assert.strictEqual(registered, undefined);
   });
@@ -168,9 +167,9 @@ describe("writeAll", () => {
   });
 
   it("writes nothing for an empty buffer", () => {
-    const write = spy(() => 0);
+    const write = mock.fn(() => 0);
     writeAll(1, new Uint8Array(0), write, () => {});
-    assertSpyCalls(write, 0);
+    assert.equal(write.mock.callCount(), 0);
   });
 });
 
@@ -190,6 +189,9 @@ describe("writeLine", () => {
       return n;
     };
     writeLine(2, "oops", write, () => {});
-    assert.deepStrictEqual(new TextDecoder().decode(new Uint8Array(written)), "oops\n");
+    assert.deepStrictEqual(
+      new TextDecoder().decode(new Uint8Array(written)),
+      "oops\n",
+    );
   });
 });

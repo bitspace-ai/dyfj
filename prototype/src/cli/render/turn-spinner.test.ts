@@ -89,7 +89,8 @@ describe("spinnerGuardedTurnHandlers", () => {
       () => ({ decision: "deny" as const, reason: "n/a" }),
     );
     handlers.onDelta("hello");
-    assert.deepStrictEqual(calls, []);
+    // Typed, so the assertion does not narrow `calls` to an empty tuple.
+    assert.deepStrictEqual<string[]>(calls, []);
     handlers.onDelta("\n");
     assert.strictEqual(calls[0], "pause");
     assert.deepStrictEqual(["out"].filter((item) => !calls.includes(item)), []);

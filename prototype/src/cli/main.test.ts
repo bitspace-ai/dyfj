@@ -9,7 +9,10 @@ describe("main usage errors", () => {
     const code = await main(["--session", "garbage-value"], io);
     assert.strictEqual(code, 2);
     assert.match(stderr[0], /^dyfj: --session /);
-    assert.ok(stderr[0].includes("dyfj sessions"), `expected stderr[0] to include "dyfj sessions"`);
+    assert.ok(
+      stderr[0].includes("dyfj sessions"),
+      `expected stderr[0] to include "dyfj sessions"`,
+    );
     // The tidy path: usage message + help, never a stack trace.
     assert.doesNotMatch(stderr.join("\n"), /^\s+at /m);
   });

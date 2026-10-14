@@ -48,7 +48,10 @@ describe("runExec tool approval", () => {
     );
     assert.strictEqual(code, 0);
     assert.deepStrictEqual(captured.verdict, { decision: "approve" });
-    assert.ok(stderr.join("\n").includes("Write File"), `expected stderr.join("\\n") to include "Write File"`);
+    assert.ok(
+      stderr.join("\n").includes("Write File"),
+      `expected stderr.join("\\n") to include "Write File"`,
+    );
   });
 
   it("a non-interactive run denies without prompting", async () => {
@@ -131,7 +134,10 @@ describe("runExec", () => {
     );
     assert.strictEqual(code, 0);
     assert.strictEqual(stdout.join(""), "Hi\n");
-    assert.ok(stderr.join("\n").includes("Qwen3 Coder 30B"), `expected stderr.join("\\n") to include "Qwen3 Coder 30B"`);
+    assert.ok(
+      stderr.join("\n").includes("Qwen3 Coder 30B"),
+      `expected stderr.join("\\n") to include "Qwen3 Coder 30B"`,
+    );
   });
 
   it("surfaces reconciliation guidance for failed Linear creation independently of model prose", async () => {
@@ -154,8 +160,14 @@ describe("runExec", () => {
         { t: "delta", text: "No issue was created." },
       ], result({ text: "No issue was created." })),
     );
-    assert.ok(stderr.join("\n").includes("the issue may already exist"), `expected stderr.join("\\n") to include "the issue may already exist"`);
-    assert.ok(stderr.join("\n").includes("reconcile in Linear before retrying"), `expected stderr.join("\\n") to include "reconcile in Linear before retrying"`);
+    assert.ok(
+      stderr.join("\n").includes("the issue may already exist"),
+      `expected stderr.join("\\n") to include "the issue may already exist"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("reconcile in Linear before retrying"),
+      `expected stderr.join("\\n") to include "reconcile in Linear before retrying"`,
+    );
   });
 
   it("surfaces tool progress events to stderr", async () => {
@@ -198,9 +210,20 @@ describe("runExec", () => {
       ),
     );
     assert.strictEqual(code, 0);
-    assert.deepStrictEqual(["tool: step 1 running 1 call(s)"].filter((item) => !stderr.includes(item)), []);
-    assert.deepStrictEqual(["tool: bash started"].filter((item) => !stderr.includes(item)), []);
-    assert.deepStrictEqual(["tool: bash finished (85ms)"].filter((item) => !stderr.includes(item)), []);
+    assert.deepStrictEqual(
+      ["tool: step 1 running 1 call(s)"].filter((item) =>
+        !stderr.includes(item)
+      ),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["tool: bash started"].filter((item) => !stderr.includes(item)),
+      [],
+    );
+    assert.deepStrictEqual(
+      ["tool: bash finished (85ms)"].filter((item) => !stderr.includes(item)),
+      [],
+    );
   });
 
   it("renders the shared unparsed-markup warning before the receipt", async () => {
@@ -226,7 +249,12 @@ describe("runExec", () => {
       line.startsWith("— Qwen3 Coder 30B")
     );
     const warning = stderr[warningIndex];
-    assert.ok(warning.includes("no tools were executed from it"), `expected ${JSON.stringify(warning)} to include "no tools were executed from it"`);
+    assert.ok(
+      warning.includes("no tools were executed from it"),
+      `expected ${
+        JSON.stringify(warning)
+      } to include "no tools were executed from it"`,
+    );
     assert.ok(warningIndex >= 0);
     assert.ok(receiptIndex >= 0);
     assert.ok(warningIndex < receiptIndex);
@@ -247,8 +275,14 @@ describe("runExec", () => {
     assert.strictEqual(code, 0);
     const out = stdout.join("");
     assert.doesNotMatch(out, /##|\*\*/);
-    assert.ok(out.includes("Tools"), `expected ${JSON.stringify(out)} to include "Tools"`);
-    assert.ok(out.includes("read_file"), `expected ${JSON.stringify(out)} to include "read_file"`);
+    assert.ok(
+      out.includes("Tools"),
+      `expected ${JSON.stringify(out)} to include "Tools"`,
+    );
+    assert.ok(
+      out.includes("read_file"),
+      `expected ${JSON.stringify(out)} to include "read_file"`,
+    );
   });
 
   it("falls back to result.text when a turn streams no deltas", async () => {
@@ -315,7 +349,10 @@ describe("runExec", () => {
       ),
     );
     assert.strictEqual(code, 0);
-    assert.ok(stdout.join("").includes("authoritative answer"), `expected stdout.join("") to include "authoritative answer"`);
+    assert.ok(
+      stdout.join("").includes("authoritative answer"),
+      `expected stdout.join("") to include "authoritative answer"`,
+    );
   });
 
   it("--json prints the buffered result and no receipt", async () => {
@@ -328,7 +365,9 @@ describe("runExec", () => {
       fakeTurnConnect([], result()),
     );
     assert.strictEqual(code, 0);
-    assert.partialDeepStrictEqual(JSON.parse(stdout.join("")), { text: result().text });
+    assert.partialDeepStrictEqual(JSON.parse(stdout.join("")), {
+      text: result().text,
+    });
     assert.deepStrictEqual(stderr.length, 0);
   });
 });
@@ -345,7 +384,10 @@ describe("runExec over the socket", () => {
     );
     assert.strictEqual(code, 0);
     assert.strictEqual(stdout.join(""), "Hi\n");
-    assert.ok(stderr.join("\n").includes("Qwen3 Coder 30B"), `expected stderr.join("\\n") to include "Qwen3 Coder 30B"`);
+    assert.ok(
+      stderr.join("\n").includes("Qwen3 Coder 30B"),
+      `expected stderr.join("\\n") to include "Qwen3 Coder 30B"`,
+    );
   });
 
   it("prints buffered aborted text before the interrupted marker", async () => {
@@ -423,11 +465,20 @@ describe("runExec over the socket", () => {
 
     assert.strictEqual(code, 0);
     assert.strictEqual(cancelCalls, 1);
-    assert.ok(stdout.join("").includes("partial"), `expected stdout.join("") to include "partial"`);
-    assert.deepStrictEqual(stderr.filter((line) => line === "[interrupt requested]"), [
-      "[interrupt requested]",
-    ]);
-    assert.deepStrictEqual(["[interrupted]"].filter((item) => !stderr.includes(item)), []);
+    assert.ok(
+      stdout.join("").includes("partial"),
+      `expected stdout.join("") to include "partial"`,
+    );
+    assert.deepStrictEqual(
+      stderr.filter((line) => line === "[interrupt requested]"),
+      [
+        "[interrupt requested]",
+      ],
+    );
+    assert.deepStrictEqual(
+      ["[interrupted]"].filter((item) => !stderr.includes(item)),
+      [],
+    );
     assert.strictEqual(activeInterrupt, undefined);
   });
 
@@ -475,7 +526,10 @@ describe("runExec over the socket", () => {
     assert.deepStrictEqual(await approvalSettled.promise, {
       decision: "abort",
     });
-    assert.ok(stderr.join("\n").includes("turn failed"), `expected stderr.join("\\n") to include "turn failed"`);
+    assert.ok(
+      stderr.join("\n").includes("turn failed"),
+      `expected stderr.join("\\n") to include "turn failed"`,
+    );
     assert.ok(!(stderr.join("\n")).includes("interrupt cleanup failed"));
   });
 
@@ -545,7 +599,12 @@ describe("runExec over the socket", () => {
       line.startsWith("— Qwen3 Coder 30B")
     );
     const warning = stderr[warningIndex];
-    assert.ok(warning.includes("no tools were executed from it"), `expected ${JSON.stringify(warning)} to include "no tools were executed from it"`);
+    assert.ok(
+      warning.includes("no tools were executed from it"),
+      `expected ${
+        JSON.stringify(warning)
+      } to include "no tools were executed from it"`,
+    );
     assert.ok(warningIndex >= 0);
     assert.ok(receiptIndex >= 0);
     assert.ok(warningIndex < receiptIndex);
@@ -563,7 +622,10 @@ describe("runExec over the socket", () => {
       },
     );
     assert.strictEqual(code, 1);
-    assert.ok(stderr.join("\n").includes("dyfj start"), `expected stderr.join("\\n") to include "dyfj start"`);
+    assert.ok(
+      stderr.join("\n").includes("dyfj start"),
+      `expected stderr.join("\\n") to include "dyfj start"`,
+    );
   });
 });
 
@@ -580,7 +642,10 @@ describe("runExec spinner integration", () => {
     assert.strictEqual(code, 0);
     assert.strictEqual(raw[0], `${ERASE_LINE}⠋ working… 0s`);
     assert.strictEqual(raw[raw.length - 1], ERASE_LINE);
-    assert.ok(stdout.join("").includes("hi"), `expected stdout.join("") to include "hi"`);
+    assert.ok(
+      stdout.join("").includes("hi"),
+      `expected stdout.join("") to include "hi"`,
+    );
   });
 
   it("an invisible modelSelected event does not erase the spinner early", async () => {
@@ -603,7 +668,10 @@ describe("runExec spinner integration", () => {
     );
     assert.strictEqual(code, 0);
     assert.deepStrictEqual((raw.filter((w) => w === ERASE_LINE)).length, 2);
-    assert.deepStrictEqual([`${ERASE_LINE}⠙ working… 0s`].filter((item) => !raw.includes(item)), []);
+    assert.deepStrictEqual(
+      [`${ERASE_LINE}⠙ working… 0s`].filter((item) => !raw.includes(item)),
+      [],
+    );
     assert.strictEqual(raw[raw.length - 1], ERASE_LINE);
   });
 

@@ -24,7 +24,10 @@ describe("runtime lifecycle commands", () => {
     const code = await runStart(cfg({ socket: "/run/wb.sock" }), io, starter);
     assert.strictEqual(code, 0);
     assert.deepStrictEqual(calls, ["/run/wb.sock"]);
-    assert.ok(stderr.join("\n").includes("foreground process"), `expected stderr.join("\\n") to include "foreground process"`);
+    assert.ok(
+      stderr.join("\n").includes("foreground process"),
+      `expected stderr.join("\\n") to include "foreground process"`,
+    );
   });
 
   it("runStart describes the autostarted signal posture accurately", async () => {
@@ -42,8 +45,14 @@ describe("runtime lifecycle commands", () => {
 
     assert.strictEqual(code, 0);
     assert.strictEqual(receivedAutostarted, true);
-    assert.ok(stderr.join("\n").includes("autostarted process"), `expected stderr.join("\\n") to include "autostarted process"`);
-    assert.ok(stderr.join("\n").includes("leaves the runtime running"), `expected stderr.join("\\n") to include "leaves the runtime running"`);
+    assert.ok(
+      stderr.join("\n").includes("autostarted process"),
+      `expected stderr.join("\\n") to include "autostarted process"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("leaves the runtime running"),
+      `expected stderr.join("\\n") to include "leaves the runtime running"`,
+    );
     assert.ok(!(stderr.join("\n")).includes("foreground process"));
   });
 
@@ -53,8 +62,14 @@ describe("runtime lifecycle commands", () => {
       throw new Error("permission denied");
     });
     assert.strictEqual(code, 1);
-    assert.ok(stderr.join("\n").includes("could not start"), `expected stderr.join("\\n") to include "could not start"`);
-    assert.ok(stderr.join("\n").includes("deno task serve-unix"), `expected stderr.join("\\n") to include "deno task serve-unix"`);
+    assert.ok(
+      stderr.join("\n").includes("could not start"),
+      `expected stderr.join("\\n") to include "could not start"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("deno task serve-unix"),
+      `expected stderr.join("\\n") to include "deno task serve-unix"`,
+    );
   });
 
   // Every client error printer must share one discipline: runStart's printer
@@ -69,8 +84,16 @@ describe("runtime lifecycle commands", () => {
     const out = stderr.join("\n");
     assert.ok(!out.includes(payload));
     const errorLine = stderr.find((line) => line.includes("could not start"))!;
-    assert.ok(errorLine.includes("Error"), `expected ${JSON.stringify(errorLine)} to include "Error"`);
-    assert.ok(errorLine.includes(`${payload.length} bytes`), `expected ${JSON.stringify(errorLine)} to include \`\${payload.length} bytes\``);
+    assert.ok(
+      errorLine.includes("Error"),
+      `expected ${JSON.stringify(errorLine)} to include "Error"`,
+    );
+    assert.ok(
+      errorLine.includes(`${payload.length} bytes`),
+      `expected ${
+        JSON.stringify(errorLine)
+      } to include \`\${payload.length} bytes\``,
+    );
     assert.ok(errorLine.length < 1000);
   });
 });

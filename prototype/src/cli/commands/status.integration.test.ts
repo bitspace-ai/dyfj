@@ -2,6 +2,7 @@
 // come from the integration lane's exact grants
 // (testing/servers/uds-sockets.ts).
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import { afterEach, describe, it } from "@std/testing/bdd";
 import { MemoryStore } from "../../store/mod.ts";
 import {
@@ -47,7 +48,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     cleanups.push(async () => {
       await server.close();
       try {
-        await Deno.remove(socketPath);
+        await unlink(socketPath);
       } catch {}
     });
 
@@ -55,8 +56,16 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
     const code = await runStatus(cfg({ socket: socketPath }), io);
     assert.strictEqual(code, 0);
     const out = stdout.join("");
-    assert.ok(out.includes("runtime: reachable"), `expected ${JSON.stringify(out)} to include "runtime: reachable"`);
-    assert.ok(out.includes(socketPath), `expected ${JSON.stringify(out)} to include ${JSON.stringify(socketPath)}`);
+    assert.ok(
+      out.includes("runtime: reachable"),
+      `expected ${JSON.stringify(out)} to include "runtime: reachable"`,
+    );
+    assert.ok(
+      out.includes(socketPath),
+      `expected ${JSON.stringify(out)} to include ${
+        JSON.stringify(socketPath)
+      }`,
+    );
   });
 
   it("probe times out with a bounded deadline and cleans up when connected to a mute socket", async () => {
@@ -106,7 +115,7 @@ describe("runStatus and liveness over real Unix domain sockets", () => {
 
     const ac = new AbortController();
     const connectPromise = connectUnixClient(socketPath, {}, ac.signal);
-    // Abort immediately after connectUnixClient is called while Deno.connect is in flight
+    // Abort immediately after connectUnixClient is called, while the socket connect is in flight
     ac.abort(new DOMException("The operation was aborted", "AbortError"));
     await assert.rejects(() => connectPromise);
 

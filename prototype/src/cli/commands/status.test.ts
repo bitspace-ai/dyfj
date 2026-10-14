@@ -48,15 +48,38 @@ describe("runtime lifecycle commands", () => {
         methods: ["runtime/status", "models/list"],
       },
     });
-    assert.ok(text.includes("runtime: reachable"), `expected ${JSON.stringify(text)} to include "runtime: reachable"`);
-    assert.ok(text.includes("socket: /run/wb.sock"), `expected ${JSON.stringify(text)} to include "socket: /run/wb.sock"`);
-    assert.ok(text.includes("qwen-local"), `expected ${JSON.stringify(text)} to include "qwen-local"`);
-    assert.ok(text.includes("3 total"), `expected ${JSON.stringify(text)} to include "3 total"`);
-    assert.ok(text.includes("tool-step limit: 7"), `expected ${JSON.stringify(text)} to include "tool-step limit: 7"`);
-    assert.ok(text.includes("methods: 2"), `expected ${JSON.stringify(text)} to include "methods: 2"`);
+    assert.ok(
+      text.includes("runtime: reachable"),
+      `expected ${JSON.stringify(text)} to include "runtime: reachable"`,
+    );
+    assert.ok(
+      text.includes("socket: /run/wb.sock"),
+      `expected ${JSON.stringify(text)} to include "socket: /run/wb.sock"`,
+    );
+    assert.ok(
+      text.includes("qwen-local"),
+      `expected ${JSON.stringify(text)} to include "qwen-local"`,
+    );
+    assert.ok(
+      text.includes("3 total"),
+      `expected ${JSON.stringify(text)} to include "3 total"`,
+    );
+    assert.ok(
+      text.includes("tool-step limit: 7"),
+      `expected ${JSON.stringify(text)} to include "tool-step limit: 7"`,
+    );
+    assert.ok(
+      text.includes("methods: 2"),
+      `expected ${JSON.stringify(text)} to include "methods: 2"`,
+    );
     // The runtime omits the trust field here (older/incomplete response), so the
     // stance is unknown — never asserted "off" without evidence.
-    assert.ok(text.includes("workspace instructions: unknown"), `expected ${JSON.stringify(text)} to include "workspace instructions: unknown"`);
+    assert.ok(
+      text.includes("workspace instructions: unknown"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "workspace instructions: unknown"`,
+    );
     // No server-resolved bare-turn route in the payload (older server) — the
     // line is omitted rather than rendered with unknowns.
     assert.ok(!text.includes("bare-turn route"));
@@ -71,10 +94,19 @@ describe("runtime lifecycle commands", () => {
           ...(trust === undefined ? {} : { trustWorkspaceInstructions: trust }),
         },
       });
-    assert.ok(render(true).includes("workspace instructions: trusted"), `expected render(true) to include "workspace instructions: trusted"`);
+    assert.ok(
+      render(true).includes("workspace instructions: trusted"),
+      `expected render(true) to include "workspace instructions: trusted"`,
+    );
     // Literal false pins "off" to real evidence, never inferred from absence.
-    assert.ok(render(false).includes("workspace instructions: off"), `expected render(false) to include "workspace instructions: off"`);
-    assert.ok(render(undefined).includes("workspace instructions: unknown"), `expected render(undefined) to include "workspace instructions: unknown"`);
+    assert.ok(
+      render(false).includes("workspace instructions: off"),
+      `expected render(false) to include "workspace instructions: off"`,
+    );
+    assert.ok(
+      render(undefined).includes("workspace instructions: unknown"),
+      `expected render(undefined) to include "workspace instructions: unknown"`,
+    );
   });
 
   it("formatRuntimeStatus shows the resolved bare-turn route when reported", () => {
@@ -86,8 +118,18 @@ describe("runtime lifecycle commands", () => {
     });
     // The configured default and the actual bare-turn route can differ under
     // the local-by-default posture; status shows both.
-    assert.ok(text.includes("default model: claude-opus-4-8"), `expected ${JSON.stringify(text)} to include "default model: claude-opus-4-8"`);
-    assert.ok(text.includes("bare-turn route: qwen-local (tier 0, local)"), `expected ${JSON.stringify(text)} to include "bare-turn route: qwen-local (tier 0, local)"`);
+    assert.ok(
+      text.includes("default model: claude-opus-4-8"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "default model: claude-opus-4-8"`,
+    );
+    assert.ok(
+      text.includes("bare-turn route: qwen-local (tier 0, local)"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "bare-turn route: qwen-local (tier 0, local)"`,
+    );
   });
 
   it("formatRuntimeStatus renders an unavailable bare-turn route on explicit null", () => {
@@ -98,9 +140,16 @@ describe("runtime lifecycle commands", () => {
       runtime: { defaultTurnModel: null },
     });
     // The full line is contractual operator guidance — pin it verbatim.
-    assert.ok(text.includes("bare-turn route: unavailable (selection failed — check the model " +
-        "registry and default model)"), `expected ${JSON.stringify(text)} to include "bare-turn route: unavailable (selection failed — check the model " +
-        "registry and default model)"`);
+    assert.ok(
+      text.includes(
+        "bare-turn route: unavailable (selection failed — check the model " +
+          "registry and default model)",
+      ),
+      `expected ${
+        JSON.stringify(text)
+      } to include "bare-turn route: unavailable (selection failed — check the model " +
+        "registry and default model)"`,
+    );
   });
 
   it("runStatus reports reachable runtime details", async () => {
@@ -121,8 +170,14 @@ describe("runtime lifecycle commands", () => {
     );
     assert.strictEqual(code, 0);
     const out = stdout.join("");
-    assert.ok(out.includes("runtime: reachable"), `expected ${JSON.stringify(out)} to include "runtime: reachable"`);
-    assert.ok(out.includes("/run/wb.sock"), `expected ${JSON.stringify(out)} to include "/run/wb.sock"`);
+    assert.ok(
+      out.includes("runtime: reachable"),
+      `expected ${JSON.stringify(out)} to include "runtime: reachable"`,
+    );
+    assert.ok(
+      out.includes("/run/wb.sock"),
+      `expected ${JSON.stringify(out)} to include "/run/wb.sock"`,
+    );
   });
 
   it("runStatus reports unreachable runtime and start hint", async () => {
@@ -135,8 +190,14 @@ describe("runtime lifecycle commands", () => {
       },
     );
     assert.strictEqual(code, 1);
-    assert.ok(stdout.join("").includes("runtime: unreachable"), `expected stdout.join("") to include "runtime: unreachable"`);
-    assert.ok(stderr.join("\n").includes("dyfj start"), `expected stderr.join("\\n") to include "dyfj start"`);
+    assert.ok(
+      stdout.join("").includes("runtime: unreachable"),
+      `expected stdout.join("") to include "runtime: unreachable"`,
+    );
+    assert.ok(
+      stderr.join("\n").includes("dyfj start"),
+      `expected stderr.join("\\n") to include "dyfj start"`,
+    );
   });
 });
 
@@ -157,7 +218,12 @@ describe("formatRuntimeStatus launch annotations", () => {
         autostarted: true,
       },
     });
-    assert.ok(text.includes("launch: autostarted (background)"), `expected ${JSON.stringify(text)} to include "launch: autostarted (background)"`);
+    assert.ok(
+      text.includes("launch: autostarted (background)"),
+      `expected ${
+        JSON.stringify(text)
+      } to include "launch: autostarted (background)"`,
+    );
   });
 
   it("annotates manual launch when autostarted is false", () => {
@@ -176,7 +242,10 @@ describe("formatRuntimeStatus launch annotations", () => {
         autostarted: false,
       },
     });
-    assert.ok(text.includes("launch: manual"), `expected ${JSON.stringify(text)} to include "launch: manual"`);
+    assert.ok(
+      text.includes("launch: manual"),
+      `expected ${JSON.stringify(text)} to include "launch: manual"`,
+    );
   });
 
   it("omits launch line when autostarted is omitted", () => {
@@ -267,7 +336,11 @@ describe("probeRuntimeLiveness fallback logic", () => {
       close: () => {},
     };
 
-    await assert.rejects(() => probeRuntimeLiveness(client), (error: unknown) => error instanceof Error && error.message.includes("Internal error"));
+    await assert.rejects(
+      () => probeRuntimeLiveness(client),
+      (error: unknown) =>
+        error instanceof Error && error.message.includes("Internal error"),
+    );
     assert.deepStrictEqual(calls, ["runtime/liveness"]);
   });
 });
@@ -286,8 +359,14 @@ describe("formatUnavailableSecrets", () => {
       lines[1],
       "secret unavailable since start: [secrets.named] linear (skipped)",
     );
-    assert.ok(lines[2].includes("fix what the reason names"), `expected lines[2] to include "fix what the reason names"`);
-    assert.ok(lines[2].includes("restart it"), `expected lines[2] to include "restart it"`);
+    assert.ok(
+      lines[2].includes("fix what the reason names"),
+      `expected lines[2] to include "fix what the reason names"`,
+    );
+    assert.ok(
+      lines[2].includes("restart it"),
+      `expected lines[2] to include "restart it"`,
+    );
   });
 
   it("prints nothing for a clean start or an older runtime", () => {
@@ -304,6 +383,13 @@ describe("formatUnavailableSecrets", () => {
         }],
       },
     });
-    assert.ok(rendered.includes("secret unavailable since start: OPENROUTER_API_KEY (locked)"), `expected ${JSON.stringify(rendered)} to include "secret unavailable since start: OPENROUTER_API_KEY (locked)"`);
+    assert.ok(
+      rendered.includes(
+        "secret unavailable since start: OPENROUTER_API_KEY (locked)",
+      ),
+      `expected ${
+        JSON.stringify(rendered)
+      } to include "secret unavailable since start: OPENROUTER_API_KEY (locked)"`,
+    );
   });
 });
