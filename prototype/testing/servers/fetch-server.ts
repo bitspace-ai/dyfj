@@ -78,6 +78,25 @@ function responseHeaders(response: Response): OutgoingHttpHeaders {
   return headers;
 }
 
+/**
+ * Settles once `outgoing` can take more writes or has closed, whichever comes
+ * first. A client that leaves while the buffer is full closes the response
+ * without draining it, so waiting on `drain` alone would never settle.
+ */
+export function drainOrClose(
+  outgoing: Pick<ServerResponse, "once" | "off">,
+): Promise<void> {
+  return new Promise((resolve) => {
+    const settle = () => {
+      outgoing.off("drain", settle);
+      outgoing.off("close", settle);
+      resolve();
+    };
+    outgoing.once("drain", settle);
+    outgoing.once("close", settle);
+  });
+}
+
 async function send(response: Response, outgoing: ServerResponse) {
   outgoing.writeHead(response.status, responseHeaders(response));
   if (response.body === null) {
@@ -92,10 +111,8 @@ async function send(response: Response, outgoing: ServerResponse) {
       const { value, done } = await reader.read();
       if (done) break;
       if (outgoing.destroyed) return;
-      await new Promise<void>((resolve) => {
-        if (!outgoing.write(value)) outgoing.once("drain", resolve);
-        else resolve();
-      });
+      if (!outgoing.write(value)) await drainOrClose(outgoing);
+      if (outgoing.destroyed) return;
     }
     outgoing.end();
   } catch (error) {
