@@ -515,11 +515,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/server/events-asof.integration.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/server/extensions.test.ts",
     "count": 4,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."

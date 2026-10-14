@@ -450,7 +450,7 @@ README are tracked separately in its Revision history section.
   files already registered with `node:test` and now run under Node, and two
   more were converted by hand so CI exercises the Node path in the unit and
   integration lanes: `src/cli-idea-local.test.ts` and
-  `src/acp-runner.integration.test.ts`. Test discovery reads the tree with
+  `src/server/events-asof.integration.test.ts`. Test discovery reads the tree with
   `node:fs`. The docs that said the sanitizers catch every leaked resource are
   corrected.
 

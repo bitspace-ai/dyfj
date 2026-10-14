@@ -14,6 +14,7 @@
  */
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { unlink } from "node:fs/promises";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import {
@@ -71,7 +72,7 @@ async function doltUtcSeconds(): Promise<string> {
   return ts;
 }
 
-Deno.test("events/query asOf returns the historical set; omitting it returns head", async () => {
+test("events/query asOf returns the historical set; omitting it returns head", async () => {
   const sessionId = generateULID();
   const socketPath = udsTestSocket("server-events-asof");
   try {
