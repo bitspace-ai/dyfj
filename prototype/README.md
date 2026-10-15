@@ -356,6 +356,17 @@ endpoints only) and compared with `testing/golden/snapshots/`. During the
 phase-1 restructuring a snapshot may change only for a reason the PR states,
 as `specs/03-testing.md` §4 sets out; `--update` rewrites them.
 
+The golden suite registers with `node:test` and runs under `node --test` with the
+per-file handle check, which passes a test file no arguments and has no permission
+sandbox. So `testing/golden/run.ts` turns `--update` into `DYFJ_GOLDEN_UPDATE=1` for
+the test process, and every snapshot write goes through `writeSnapshot` in
+`testing/golden/snapshots.ts`, which throws unless that variable is `1`. A plain run
+fails on a missing or changed snapshot without writing it; `snapshots.test.ts` pins
+both cases and the update path. Before the move to `node:test`, the runner's write grant
+on `testing/golden/snapshots` enforced the same rule. Any suite argument other than
+`--update` is refused while a golden file runs under `node --test`, because nothing
+could pass it on.
+
 The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
 lane runs every `*.integration.test.ts`: its `deno test` subset with the op and resource

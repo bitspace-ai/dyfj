@@ -1,3 +1,15 @@
+// The isolated Dolt fixture: a temporary Dolt repository with the current
+// schema and catalog applied and a SQL server on a free loopback port. The
+// integration lane's runner starts it on the existing runtime and the golden
+// harness starts it under `node --test`, so it is written to node: builtins
+// and runs unchanged on either (decision D32).
+import { Buffer } from "node:buffer";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
 import mysql from "mysql2/promise";
 
 export interface IsolatedDoltFixture {
@@ -15,10 +27,18 @@ export interface IsolatedDoltFixtureOptions {
   afterReady?: (fixture: Omit<IsolatedDoltFixture, "cleanup">) => Promise<void>;
 }
 
-type Child = ReturnType<Deno.Command["spawn"]>;
+/** A spawned child and its exit, which rejects when it could not start. */
+interface Child {
+  process: ChildProcess;
+  status: Promise<number | null>;
+}
 
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
+interface ChildOutput {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
 const shutdownTimeoutMs = 2_000;
 const readinessTimeoutMs = 10_000;
 const readinessProbeTimeoutMs = 1_000;
@@ -28,7 +48,7 @@ const fixtureEnvironmentNames = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
 function fixtureEnvironment(): Record<string, string> {
   return Object.fromEntries(
     fixtureEnvironmentNames.flatMap((name) => {
-      const value = Deno.env.get(name);
+      const value = process.env[name];
       return value === undefined ? [] : [[name, value]];
     }),
   );
@@ -46,7 +66,7 @@ interface FixtureConnection {
 }
 
 function createFixturePool(env: Record<string, string>): FixturePool {
-  // Deno's npm declaration bridge drops mysql2's mixed-in promise methods.
+  // The npm declaration bridge drops mysql2's mixed-in promise methods.
   return mysql.createPool({
     host: env.DOLT_HOST,
     port: Number(env.DOLT_PORT),
@@ -81,11 +101,50 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new FixtureSetupAbortedError();
 }
 
+function spawnChild(
+  command: string,
+  args: string[],
+  options: { cwd: string; stdin: "ignore" | "pipe"; output: "ignore" | "pipe" },
+): Child {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: fixtureEnvironment(),
+    stdio: [options.stdin, options.output, options.output],
+  });
+  const status = new Promise<number | null>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) => resolve(code));
+  });
+  // A spawn failure is reported where the status is awaited; until then it
+  // must not surface as an unhandled rejection.
+  status.catch(() => undefined);
+  return { process: child, status };
+}
+
+/** Collects a piped child's output once its streams close. */
+function collectOutput(child: Child): Promise<ChildOutput> {
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.process.stdout!.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.process.stderr!.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const closed = new Promise<void>((resolve) =>
+    child.process.once("close", () => resolve())
+  );
+  return child.status.then(async (code) => {
+    await closed;
+    return {
+      code,
+      stdout: Buffer.concat(stdout).toString("utf8"),
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    };
+  });
+}
+
 async function outputOrAbort(
   child: Child,
   signal: AbortSignal | undefined,
-): Promise<Deno.CommandOutput> {
-  const output = child.output();
+): Promise<ChildOutput> {
+  const output = collectOutput(child);
   if (!signal) return await output;
   if (signal.aborted) {
     await stopChild(child);
@@ -115,33 +174,31 @@ async function runChecked(
   options: { cwd: string; input?: string; signal?: AbortSignal },
 ): Promise<string> {
   throwIfAborted(options.signal);
-  const child = new Deno.Command(command, {
-    args,
+  const child = spawnChild(command, args, {
     cwd: options.cwd,
-    clearEnv: true,
-    env: fixtureEnvironment(),
-    stdin: options.input === undefined ? "null" : "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    stdin: options.input === undefined ? "ignore" : "pipe",
+    output: "pipe",
+  });
   const outputPromise = outputOrAbort(child, options.signal);
   let inputError: unknown;
   if (options.input !== undefined) {
-    const writer = child.stdin.getWriter();
+    const stdin = child.process.stdin!;
+    // A write error after the first one (an early exit closes the pipe) is
+    // the same failure; the listener keeps it from going unhandled.
+    stdin.on("error", (error) => inputError ??= error);
     try {
-      await writer.write(encoder.encode(options.input));
-      await writer.close();
+      await new Promise<void>((resolve, reject) => {
+        stdin.once("error", reject);
+        stdin.end(options.input, () => resolve());
+      });
     } catch (error) {
       inputError = error;
       await stopChild(child);
-    } finally {
-      writer.releaseLock();
     }
   }
   const output = await outputPromise;
   if (inputError !== undefined && output.code === 0) throw inputError;
-  const stdout = decoder.decode(output.stdout);
-  const stderr = decoder.decode(output.stderr);
+  const { stdout, stderr } = output;
   if (output.code !== 0) {
     throw new Error(
       `${command} ${
@@ -153,9 +210,16 @@ async function runChecked(
 }
 
 async function freePort(): Promise<number> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
+  const listener = createServer();
+  await new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = listener.address();
+  const port = typeof address === "object" && address !== null
+    ? address.port
+    : 0;
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
   return port;
 }
 
@@ -255,12 +319,14 @@ export async function waitForSql(
   );
 }
 
+function hasExited(child: Child): boolean {
+  const { exitCode, signalCode, pid } = child.process;
+  return pid === undefined || exitCode !== null || signalCode !== null;
+}
+
 async function stopChild(child: Child): Promise<void> {
-  try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
-  }
+  if (hasExited(child)) return;
+  child.process.kill("SIGTERM");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
@@ -273,11 +339,8 @@ async function stopChild(child: Child): Promise<void> {
       }),
     ]);
   } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // The process exited while the timeout elapsed.
-    }
+    // The process may have exited while the timeout elapsed.
+    if (!hasExited(child)) child.process.kill("SIGKILL");
     await child.status.catch(() => undefined);
   } finally {
     // A child that exits in time must not leave the timeout pending.
@@ -294,14 +357,17 @@ async function applySqlFiles(
   for (const directory of directories) {
     throwIfAborted(signal);
     const files: string[] = [];
-    for await (const entry of Deno.readDir(`${schemaRoot}/${directory}`)) {
-      if (entry.isFile && entry.name.endsWith(".sql")) files.push(entry.name);
+    const entries = await readdir(`${schemaRoot}/${directory}`, {
+      withFileTypes: true,
+    });
+    for (const entry of entries) {
+      if (entry.isFile() && entry.name.endsWith(".sql")) files.push(entry.name);
     }
     for (const file of files.sort()) {
       throwIfAborted(signal);
       await runChecked("dolt", ["sql"], {
         cwd: root,
-        input: await Deno.readTextFile(`${schemaRoot}/${directory}/${file}`),
+        input: await readFile(`${schemaRoot}/${directory}/${file}`, "utf8"),
         signal,
       });
     }
@@ -327,20 +393,13 @@ async function startSqlServer(
   for (let attempt = 1; attempt <= bindAttempts; attempt++) {
     throwIfAborted(signal);
     const port = await freePort();
-    const child = new Deno.Command("dolt", {
-      args: [
-        "sql-server",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
-      cwd: root,
-      clearEnv: true,
-      env: fixtureEnvironment(),
-      stdout: "null",
-      stderr: "null",
-    }).spawn();
+    const child = spawnChild("dolt", [
+      "sql-server",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+    ], { cwd: root, stdin: "ignore", output: "ignore" });
     const env = {
       DOLT_HOST: "127.0.0.1",
       DOLT_PORT: String(port),
@@ -368,9 +427,9 @@ async function startSqlServer(
 export async function startIsolatedDoltFixture(
   options: IsolatedDoltFixtureOptions,
 ): Promise<IsolatedDoltFixture> {
-  const root = await Deno.makeTempDir({
-    prefix: options.prefix ?? "dyfj_fixture_",
-  });
+  const root = await mkdtemp(
+    join(tmpdir(), options.prefix ?? "dyfj_fixture_"),
+  );
   let child: Child | undefined;
   let cleaned = false;
   try {
@@ -404,14 +463,14 @@ export async function startIsolatedDoltFixture(
       cleanup: async () => {
         if (cleaned) return;
         if (child) await stopChild(child);
-        await Deno.remove(root, { recursive: true });
+        await rm(root, { recursive: true });
         cleaned = true;
       },
     };
   } catch (error) {
     if (child) await stopChild(child);
     try {
-      await Deno.remove(root, { recursive: true });
+      await rm(root, { recursive: true });
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],

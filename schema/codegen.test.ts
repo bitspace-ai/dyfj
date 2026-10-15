@@ -1,3 +1,4 @@
+import { test } from "node:test";
 import { renderRows } from "./codegen.ts";
 import {
   type ColumnDescription,
@@ -67,7 +68,7 @@ function schema(columns: ColumnDescription[]): SchemaDescription {
   };
 }
 
-Deno.test("enumValues reads declaration order and unescapes quotes", () => {
+test("enumValues reads declaration order and unescapes quotes", () => {
   assertEquals(enumValues("enum('active','completed')"), [
     "active",
     "completed",
@@ -75,7 +76,7 @@ Deno.test("enumValues reads declaration order and unescapes quotes", () => {
   assertEquals(enumValues("enum('it''s','a,b')"), ["it's", "a,b"]);
 });
 
-Deno.test("onUpdateClauses maps columns to their ON UPDATE expression", () => {
+test("onUpdateClauses maps columns to their ON UPDATE expression", () => {
   const clauses = onUpdateClauses(
     "CREATE TABLE `t` (\n" +
       "  `created_at` timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),\n" +
@@ -86,7 +87,7 @@ Deno.test("onUpdateClauses maps columns to their ON UPDATE expression", () => {
   assertEquals([...clauses], [["updated_at", "CURRENT_TIMESTAMP(6)"]]);
 });
 
-Deno.test("renderRows makes NOT NULL columns without a default required", () => {
+test("renderRows makes NOT NULL columns without a default required", () => {
   const output = renderRows(schema([
     column("session_id", 1, "varchar(64)"),
     column("status", 2, "enum('active','completed')", { default: "active" }),
@@ -114,7 +115,7 @@ Deno.test("renderRows makes NOT NULL columns without a default required", () => 
   assertIncludes(output, "  sessions: SESSION_COLUMNS,\n");
 });
 
-Deno.test("renderRows is deterministic", () => {
+test("renderRows is deterministic", () => {
   const columns = [
     column("session_id", 1, "varchar(64)"),
     column("cost", 2, "decimal(10,6)", { nullable: true }),
@@ -126,7 +127,7 @@ Deno.test("renderRows is deterministic", () => {
   );
 });
 
-Deno.test("renderRows refuses a table it has no type name for", () => {
+test("renderRows refuses a table it has no type name for", () => {
   const described = schema([column("id", 1, "varchar(64)")]);
   described.tables.push(table("widgets", [column("id", 1, "varchar(64)")]));
   let message = "";
@@ -138,7 +139,7 @@ Deno.test("renderRows refuses a table it has no type name for", () => {
   assertIncludes(message, "no type name for table widgets");
 });
 
-Deno.test("renderRows refuses a column type it has no mapping for", () => {
+test("renderRows refuses a column type it has no mapping for", () => {
   let message = "";
   try {
     renderRows(schema([column("blob", 1, "blob")]));
@@ -148,7 +149,7 @@ Deno.test("renderRows refuses a column type it has no mapping for", () => {
   assertIncludes(message, "no mapping for blob blob");
 });
 
-Deno.test("renderRows refuses a DDL that lacks a canonical table", () => {
+test("renderRows refuses a DDL that lacks a canonical table", () => {
   const described = schema([column("session_id", 1, "varchar(64)")]);
   described.tables = described.tables.filter((t) => t.name !== "prompts");
   let message = "";
