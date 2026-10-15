@@ -181,8 +181,8 @@ export class BoundedMatcher {
         // that dies otherwise reports only `exit`. Either way nothing will
         // answer, so this matcher is spent and the call fails closed.
         const onGone = () => {
-          this.close();
           reject(new RegexUnavailable());
+          this.close();
         };
         detach = () => {
           worker.off("message", onMessage);
@@ -192,8 +192,12 @@ export class BoundedMatcher {
         timer = setTimeout(() => {
           // The worker is mid-`test()` and will not answer. Kill it; a
           // terminated worker cannot be reused, so mark this matcher spent.
-          this.close();
+          // Settle first: one runtime reports the worker's `exit` from inside
+          // `terminate()`, which would otherwise settle this call as
+          // unavailable instead of over budget.
           reject(new RegexBudgetExceeded(this.#budgetMs));
+          detach?.();
+          this.close();
         }, remaining);
         worker.on("message", onMessage);
         worker.on("exit", onGone);
