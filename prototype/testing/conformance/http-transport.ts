@@ -9,6 +9,7 @@
 
 import { captureRejection } from "../assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { HttpTransport } from "../../src/providers/mod.ts";
 import type {
   RecordedRequest,
@@ -42,7 +43,7 @@ export function httpTransportConformance(
     script: readonly ScriptedResponse[],
     body: (under: HttpTransportUnderTest) => Promise<void>,
   ) => {
-    Deno.test(`HttpTransport conformance (${subject.name}): ${label}`, async () => {
+    test(`HttpTransport conformance (${subject.name}): ${label}`, async () => {
       const under = await subject.make(script);
       try {
         await body(under);

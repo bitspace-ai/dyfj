@@ -2,6 +2,7 @@
 // registry line that adds it next to the production adapters.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   createProviderRegistry,
   PROVIDER_ADAPTERS,
@@ -283,7 +284,7 @@ const registry = createProviderRegistry([
   syntheticAdapter,
 ]);
 
-Deno.test("the synthetic adapter is dispatched beside the production adapters", async () => {
+test("the synthetic adapter is dispatched beside the production adapters", async () => {
   assert.strictEqual(registry.adapterFor(model), syntheticAdapter);
   const transport = new ScriptedHttpTransport([{
     respond: {

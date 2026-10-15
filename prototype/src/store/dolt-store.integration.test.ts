@@ -6,6 +6,7 @@
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import process from "node:process";
+import { test } from "node:test";
 import mysql from "mysql2/promise";
 import {
   event,
@@ -153,7 +154,7 @@ storeConformance(subject);
 
 // An aborted commit destroys its connection rather than returning it to the
 // pool; the pool must replace it and serve the next commit and read normally.
-Deno.test("DoltStore: the pool serves the next commit after an aborted commit", async () => {
+test("DoltStore: the pool serves the next commit after an aborted commit", async () => {
   const store = await subject.make({});
   try {
     const aborted = new AbortController();
@@ -200,7 +201,7 @@ Deno.test("DoltStore: the pool serves the next commit after an aborted commit", 
 // The boot-time column check against a real information_schema: a copy of
 // the fixture's schema passes; the same copy with a migration-added column
 // dropped fails, naming it.
-Deno.test("DoltStore: the boot-time column check names a column a migration added", async () => {
+test("DoltStore: the boot-time column check names a column a migration added", async () => {
   const store = await subject.make({});
   try {
     await (store as DoltStore).assertCanonicalColumns();

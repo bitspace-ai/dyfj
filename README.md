@@ -1187,8 +1187,10 @@ toolchain.
 The three test lanes each run on two paths while tests move onto `node:test`
 (decision D32, `specs/03-testing.md` §1). Each discovered file goes by its own
 content (`prototype/scripts/test-files.ts`): a file that registers a test or
-hook with `node:test` runs under `node --test`, one process per file, after the
-lane's `deno test` subset; every other file runs under `deno test` as before; a
+hook with `node:test`, or imports a conformance kit from
+`prototype/testing/conformance/` (the kits register with `node:test`), runs
+under `node --test`, one process per file, after the lane's `deno test`
+subset; every other file runs under `deno test` as before; a
 file that registers with both fails discovery, naming the file. Deno's
 sanitizers do not see `node:` resources (a `node:net` server or socket, a
 `node:child_process` child), so they catch only timers among the resources
@@ -2179,6 +2181,10 @@ Document revisions only. Code and behavior changes are tracked in
   describes the two test frameworks that coexist during the move to
   `node:test`, in place of `Deno.test` as the only one. Node 26 joins the
   integration lane's requirements.
+- 2026-10-15 - The aggregate gate's two-path description adds the routing rule
+  for conformance-kit callers: a file that imports a kit from
+  `prototype/testing/conformance/` runs under `node --test`, because the kits
+  now register with `node:test`.
 - 2026-10-15 - The secrets resolver's "fail-closed on timeout" guarantee says
   that the runtime closes its ends of a timed-out resolver's output pipes,
   replacing the claim that the pipe is abandoned.
