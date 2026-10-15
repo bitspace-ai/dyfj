@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { MemoryStore } from "../store/mod.ts";
 import { serveWorkbenchUnix } from "../server/main.ts";
 import { connectUnixClient } from "../transport/mod.ts";

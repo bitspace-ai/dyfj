@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { turnResult as result } from "../../../testing/builders/turn-client.ts";
 import type { TurnResult } from "../turn-client.ts";
 import { formatReceipt } from "./receipt.ts";

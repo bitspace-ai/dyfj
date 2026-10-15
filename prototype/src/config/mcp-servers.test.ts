@@ -1,5 +1,6 @@
 import { captureThrow } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { parseMcpServersConfig } from "./mcp-servers.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
@@ -47,7 +48,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
 }
 
 { // "parseMcpServersConfig"
-  Deno.test("parseMcpServersConfig: accepts the bounded HTTP-only server and per-tool policy shape", () => {
+  test("parseMcpServersConfig: accepts the bounded HTTP-only server and per-tool policy shape", () => {
     assert.deepStrictEqual(parseMcpServersConfig(serverTable(), CONFIG_PATH), [{
       id: "linear",
       transport: "streamable_http",
@@ -65,7 +66,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     }]);
   });
 
-  Deno.test("parseMcpServersConfig: accepts declared capabilities mapping to declared tools", () => {
+  test("parseMcpServersConfig: accepts declared capabilities mapping to declared tools", () => {
     const table = serverTable({
       tools: [
         { name: "tavily_search", effect: "read", approval: "allow" },
@@ -101,7 +102,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
       ["fetch_tool", true],
     ] as const
   ) {
-    Deno.test(`parseMcpServersConfig: rejects create_issue as ${capability} with binding=${withBinding}`, () => {
+    test(`parseMcpServersConfig: rejects create_issue as ${capability} with binding=${withBinding}`, () => {
       const capabilities = { [capability]: "create_issue" };
       const table = withBinding
         ? linearCreationTable({ capabilities })
@@ -125,7 +126,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
   }
 
   for (const capability of ["search_tool", "fetch_tool"]) {
-    Deno.test(`parseMcpServersConfig: rejects save_issue as ${capability}`, () => {
+    test(`parseMcpServersConfig: rejects save_issue as ${capability}`, () => {
       for (const withBinding of [false, true]) {
         const overrides = {
           capabilities: { [capability]: "save_issue" },
@@ -150,7 +151,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     });
   }
 
-  Deno.test("parseMcpServersConfig: requires exactly one creation upstream", () => {
+  test("parseMcpServersConfig: requires exactly one creation upstream", () => {
     assert.match(
       (captureThrow(() =>
         parseMcpServersConfig(
@@ -171,7 +172,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     );
   });
 
-  Deno.test("parseMcpServersConfig: accepts fixed Linear team and exact-name project bindings", () => {
+  test("parseMcpServersConfig: accepts fixed Linear team and exact-name project bindings", () => {
     const parsed = parseMcpServersConfig(linearCreationTable(), CONFIG_PATH);
     // The parser builds `projects` without a prototype, so a project named
     // like an Object.prototype member cannot collide with one; the expected
@@ -219,7 +220,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     ],
   ];
   for (const [index, [overrides, pattern]] of malformedBindings.entries()) {
-    Deno.test(`parseMcpServersConfig: rejects malformed Linear issue binding ${index}`, () => {
+    test(`parseMcpServersConfig: rejects malformed Linear issue binding ${index}`, () => {
       assert.match(
         (captureThrow(() =>
           parseMcpServersConfig(linearCreationTable(overrides), CONFIG_PATH)
@@ -229,7 +230,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     });
   }
 
-  Deno.test("parseMcpServersConfig: rejects capabilities pointing to undeclared tools", () => {
+  test("parseMcpServersConfig: rejects capabilities pointing to undeclared tools", () => {
     const table = serverTable({
       capabilities: {
         search_tool: "undeclared_search",
@@ -262,7 +263,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     }, /write_external.*ask/],
   ];
   for (const [index, [overrides, pattern]] of unsupportedShapes.entries()) {
-    Deno.test(`parseMcpServersConfig: fails closed on unsupported authority shape ${index}`, () => {
+    test(`parseMcpServersConfig: fails closed on unsupported authority shape ${index}`, () => {
       assert.match(
         (captureThrow(() =>
           parseMcpServersConfig(serverTable(overrides), CONFIG_PATH)
@@ -272,7 +273,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     });
   }
 
-  Deno.test("parseMcpServersConfig: requires every auth reference to exist in [secrets.named]", () => {
+  test("parseMcpServersConfig: requires every auth reference to exist in [secrets.named]", () => {
     const secrets: SecretsConfig = {
       command: ["op", "read"],
       timeoutMs: 10_000,
@@ -289,7 +290,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     );
   });
 
-  Deno.test("parseMcpServersConfig: permits cleartext only for loopback IP literals", () => {
+  test("parseMcpServersConfig: permits cleartext only for loopback IP literals", () => {
     assert.match(
       (captureThrow(() =>
         parseMcpServersConfig(
@@ -308,7 +309,7 @@ function linearCreationTable(overrides: Record<string, unknown> = {}) {
     );
   });
 
-  Deno.test("parseMcpServersConfig: rejects hostnames containing net-grant list separators", () => {
+  test("parseMcpServersConfig: rejects hostnames containing net-grant list separators", () => {
     assert.match(
       (captureThrow(() =>
         parseMcpServersConfig(

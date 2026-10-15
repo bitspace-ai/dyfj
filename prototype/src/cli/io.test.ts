@@ -1,8 +1,7 @@
 // The real terminal adapter's pieces: readline EOF and abort handling, which
 // Ctrl-C source a turn listens on, and the synchronous write-all loop.
 import assert from "node:assert/strict";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import {
   readLineOrNull,
   readlineTurnInterruptSource,

@@ -196,6 +196,20 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `cli/`, `config/` and `budget/` tests, with `cli.test.ts`, register
+  with `node:test` and run under `node --test`, with the per-file leak
+  check.** The registrations codemod moved 38 files onto Node, with 188 runner
+  registrations and 26 bdd imports, and the lane totals are unchanged. Five
+  files stay on the existing runner. `config/env.test.ts` and
+  `config/env.integration.test.ts` call a conformance kit and wait for the
+  kits. `config/secrets.integration.test.ts` waits for the secret resolver to
+  release its output pipes when it times out: under the handle check, its
+  timeout case leaves both pipes held by the resolver's surviving descendant.
+  `cli/launcher/grants.test.ts` and `grants.integration.test.ts` wait for
+  the launcher's grant readers, which still read files and paths through the
+  existing runtime's global, to move onto `node:` builtins. The
+  `runtime.neutral` count falls from 2,177 to 1,989 (decision D32).
+
 - **The `kernel/` and `tools/` tests register with `node:test` and run under
   `node --test`, with the per-file leak check.** A new codemod,
   `scripts/codemod/deno-test-registrations.ts`, rewrites a test file's

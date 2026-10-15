@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { test } from "node:test";
 import {
   CONFIG_SCHEMA,
   declaredEnvVars,
@@ -30,7 +31,7 @@ import {
   // ungranted read throws NotCapable and crashes the entrypoint before startup —
   // even with no [secrets] section. Assert all engine profiles grant the base.
   for (const profile of ENGINE_PROFILES) {
-    Deno.test(`config surface ⇄ deno.json permission allowlist: ${profile} grants the resolver env base (so boot cannot NotCapable)`, () => {
+    test(`config surface ⇄ deno.json permission allowlist: ${profile} grants the resolver env base (so boot cannot NotCapable)`, () => {
       const granted = profileEnv(profile);
       for (const base of ["PATH", "HOME", "USER", "XDG_RUNTIME_DIR"]) {
         assert.strictEqual(granted.has(base), true);
@@ -55,14 +56,14 @@ import {
 
   // Forward: no engine profile may silently lag the declared runtime surface.
   for (const profile of ENGINE_PROFILES) {
-    Deno.test(`config surface ⇄ deno.json permission allowlist: ${profile} grants every declared engine env var`, () => {
+    test(`config surface ⇄ deno.json permission allowlist: ${profile} grants every declared engine env var`, () => {
       const granted = profileEnv(profile);
       const missing = engineEnv.filter((e) => !granted.has(e));
       assert.deepStrictEqual(missing, []);
     });
   }
 
-  Deno.test("config surface ⇄ deno.json permission allowlist: verify-workbench-events grants the agent step-limit env var", () => {
+  test("config surface ⇄ deno.json permission allowlist: verify-workbench-events grants the agent step-limit env var", () => {
     assert.strictEqual(
       profileEnv("verify-workbench-events").has("DYFJ_MAX_TOOL_STEPS"),
       true,
@@ -71,7 +72,7 @@ import {
 
   // Test-harness and tooling keys are declared but never granted to a
   // runtime profile.
-  Deno.test("config surface ⇄ deno.json permission allowlist: no runtime profile grants a test- or tooling-domain key", () => {
+  test("config surface ⇄ deno.json permission allowlist: no runtime profile grants a test- or tooling-domain key", () => {
     const testKeys = CONFIG_SCHEMA.filter((s) =>
       s.domain === "test" || s.domain === "tooling"
     ).map((s) => s.envVar);
@@ -91,7 +92,7 @@ import {
   // Reverse: a new runtime env var can't be added to the allowlist without
   // joining the declared surface (only system env is exempt).
   for (const profile of ENGINE_PROFILES) {
-    Deno.test(`config surface ⇄ deno.json permission allowlist: ${profile} grants no undeclared runtime env var`, () => {
+    test(`config surface ⇄ deno.json permission allowlist: ${profile} grants no undeclared runtime env var`, () => {
       const declared = new Set(CONFIG_SCHEMA.map((s) => s.envVar));
       const undeclared = [...profileEnv(profile)].filter(
         (e) => !declared.has(e) && !SYSTEM_ENV.has(e),
@@ -102,7 +103,7 @@ import {
 }
 
 { // "declaredSecretEnvVars"
-  Deno.test("declaredSecretEnvVars: lists exactly the engine secret-pointer env vars", () => {
+  test("declaredSecretEnvVars: lists exactly the engine secret-pointer env vars", () => {
     const secrets = new Set(declaredSecretEnvVars());
     // Every returned var is a declared engine secret-pointer.
     for (const envVar of secrets) {

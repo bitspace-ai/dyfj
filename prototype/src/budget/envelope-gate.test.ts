@@ -6,8 +6,7 @@
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { it } from "@std/testing/bdd";
-import { mock } from "node:test";
+import { it, mock, test } from "node:test";
 import { MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
   BudgetCeilingDeclinedError,
@@ -32,7 +31,7 @@ function approving() {
 
 // ── BudgetExceededError ───────────────────────────────────────────────────────
 
-Deno.test("BudgetExceededError: carries all fields and correct name", () => {
+test("BudgetExceededError: carries all fields and correct name", () => {
   const e = new BudgetExceededError("session_limit", 0.15, 1.00, 0.92);
   assert.strictEqual(e.name, "BudgetExceededError");
   assert.strictEqual(e.reason, "session_limit");
@@ -42,7 +41,7 @@ Deno.test("BudgetExceededError: carries all fields and correct name", () => {
   assert.ok(e instanceof Error);
 });
 
-Deno.test("BudgetExceededError: message includes reason, estimated cost, limit, and session total", () => {
+test("BudgetExceededError: message includes reason, estimated cost, limit, and session total", () => {
   const e = new BudgetExceededError("per_call_limit", 0.12, 0.10, 0.05);
   assert.ok(
     e.message.includes("per_call_limit"),
@@ -53,7 +52,7 @@ Deno.test("BudgetExceededError: message includes reason, estimated cost, limit, 
 
 // ── ensureBudgetAllowed (warn-then-confirm) ───────────────────────────────────
 
-Deno.test("ensureBudgetAllowed: under ceiling proceeds without prompting", async () => {
+test("ensureBudgetAllowed: under ceiling proceeds without prompting", async () => {
   const confirm = approving();
   await ensureBudgetAllowed(
     {
@@ -69,7 +68,7 @@ Deno.test("ensureBudgetAllowed: under ceiling proceeds without prompting", async
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("ensureBudgetAllowed: over ceiling with confirm proceeds on approve", async () => {
+test("ensureBudgetAllowed: over ceiling with confirm proceeds on approve", async () => {
   await ensureBudgetAllowed(
     {
       allowed: false,
@@ -84,7 +83,7 @@ Deno.test("ensureBudgetAllowed: over ceiling with confirm proceeds on approve", 
   );
 });
 
-Deno.test("ensureBudgetAllowed: over ceiling without confirm fails closed", async () => {
+test("ensureBudgetAllowed: over ceiling without confirm fails closed", async () => {
   await assert.rejects(
     () =>
       ensureBudgetAllowed(
@@ -102,7 +101,7 @@ Deno.test("ensureBudgetAllowed: over ceiling without confirm fails closed", asyn
   );
 });
 
-Deno.test("ensureBudgetAllowed: over ceiling denies on decline", async () => {
+test("ensureBudgetAllowed: over ceiling denies on decline", async () => {
   await assert.rejects(
     () =>
       ensureBudgetAllowed(
@@ -133,7 +132,7 @@ const overPerCall: PreCallCheck = {
   reason: "per_call_limit",
 };
 
-Deno.test("createTurnBudgetCeilingGate: dedupes identical pre-flight and per-call gates to one confirm", async () => {
+test("createTurnBudgetCeilingGate: dedupes identical pre-flight and per-call gates to one confirm", async () => {
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(confirm);
   await gate.ensureAllowed(overPerCall);
@@ -141,7 +140,7 @@ Deno.test("createTurnBudgetCeilingGate: dedupes identical pre-flight and per-cal
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-Deno.test("createTurnBudgetCeilingGate: re-prompts when session spend crosses after per-call was already confirmed", async () => {
+test("createTurnBudgetCeilingGate: re-prompts when session spend crosses after per-call was already confirmed", async () => {
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(confirm);
   await gate.ensureAllowed(overPerCall);
@@ -157,7 +156,7 @@ Deno.test("createTurnBudgetCeilingGate: re-prompts when session spend crosses af
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("createTurnBudgetCeilingGate: frames the session re-prompt as a session limit, not the per-call reason checkPreCall reports", async () => {
+test("createTurnBudgetCeilingGate: frames the session re-prompt as a session limit, not the per-call reason checkPreCall reports", async () => {
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(confirm);
   await gate.ensureAllowed(overPerCall);
@@ -180,7 +179,7 @@ Deno.test("createTurnBudgetCeilingGate: frames the session re-prompt as a sessio
   assertAlmostEqual(warnings[1].limitUsd, 1);
 });
 
-Deno.test("createTurnBudgetCeilingGate: a confirmed session overrun covers later larger projections in the scope", async () => {
+test("createTurnBudgetCeilingGate: a confirmed session overrun covers later larger projections in the scope", async () => {
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(confirm);
   await gate.ensureAllowed({
@@ -206,7 +205,7 @@ Deno.test("createTurnBudgetCeilingGate: a confirmed session overrun covers later
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-Deno.test("createTurnBudgetCeilingGate: decline still aborts without recording a confirmation", async () => {
+test("createTurnBudgetCeilingGate: decline still aborts without recording a confirmation", async () => {
   const confirm = mock.fn(
     (_warning: BudgetCeilingWarning): Promise<BudgetCeilingVerdict> =>
       Promise.resolve({ decision: "deny", reason: "too much" }),
@@ -223,7 +222,7 @@ Deno.test("createTurnBudgetCeilingGate: decline still aborts without recording a
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("createTurnBudgetCeilingGate: without a confirm handler fails closed on every gate", async () => {
+test("createTurnBudgetCeilingGate: without a confirm handler fails closed on every gate", async () => {
   const gate = createTurnBudgetCeilingGate(undefined);
   await assert.rejects(
     () => gate.ensureAllowed(overPerCall),
@@ -237,7 +236,7 @@ Deno.test("createTurnBudgetCeilingGate: without a confirm handler fails closed o
 
 // ── composite ceiling approvals ───────────────────────────────────────────────
 
-Deno.test("composite ceiling approvals: one prompt names every newly-crossed scope and raises only those", async () => {
+test("composite ceiling approvals: one prompt names every newly-crossed scope and raises only those", async () => {
   const confirm = approving();
   const confirmed: Record<string, number | undefined> = {};
   const gate = createTurnBudgetCeilingGate(confirm, confirmed);
@@ -278,7 +277,7 @@ Deno.test("composite ceiling approvals: one prompt names every newly-crossed sco
 
 // ── cross-session daily refresh ───────────────────────────────────────────────
 
-Deno.test("cross-session daily refresh: the ceiling warning projects the crossed daily scope", () => {
+test("cross-session daily refresh: the ceiling warning projects the crossed daily scope", () => {
   const message = formatBudgetCeilingWarning(buildBudgetCeilingWarning({
     allowed: false,
     estimatedCost: 0.06,
@@ -305,7 +304,7 @@ Deno.test("cross-session daily refresh: the ceiling warning projects the crossed
 
 // ── scope-aware budget errors ─────────────────────────────────────────────────
 
-Deno.test("scope-aware budget errors: a daily fail-closed error carries the daily figures and framing", async () => {
+test("scope-aware budget errors: a daily fail-closed error carries the daily figures and framing", async () => {
   const caught = await captureRejection(
     () =>
       ensureBudgetAllowed({
@@ -339,7 +338,7 @@ Deno.test("scope-aware budget errors: a daily fail-closed error carries the dail
 // message or the public `.reason` property the native runner's log branch reads
 // directly.
 
-Deno.test("BudgetCeilingDeclinedError — reason field sanitization: a short, ordinary reason passes through unchanged", () => {
+test("BudgetCeilingDeclinedError — reason field sanitization: a short, ordinary reason passes through unchanged", () => {
   const err = new BudgetCeilingDeclinedError("not now");
   assert.strictEqual(err.reason, "not now");
   assert.strictEqual(
@@ -348,7 +347,7 @@ Deno.test("BudgetCeilingDeclinedError — reason field sanitization: a short, or
   );
 });
 
-Deno.test("BudgetCeilingDeclinedError — reason field sanitization: caps an oversized reason, on both .message and the public .reason property", () => {
+test("BudgetCeilingDeclinedError — reason field sanitization: caps an oversized reason, on both .message and the public .reason property", () => {
   const reason = "SELECT ".repeat(2_000); // well over MAX_REASON_FIELD_BYTES
   const err = new BudgetCeilingDeclinedError(reason);
   assert.ok(
@@ -363,7 +362,7 @@ Deno.test("BudgetCeilingDeclinedError — reason field sanitization: caps an ove
   );
 });
 
-Deno.test("BudgetCeilingDeclinedError — reason field sanitization: strips a terminal escape sequence from the reason", () => {
+test("BudgetCeilingDeclinedError — reason field sanitization: strips a terminal escape sequence from the reason", () => {
   const esc = String.fromCharCode(27);
   const err = new BudgetCeilingDeclinedError(`${esc}[31mdanger${esc}[0m`);
   assert.ok(!(err.reason ?? "").includes(esc));

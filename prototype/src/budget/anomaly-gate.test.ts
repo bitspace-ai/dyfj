@@ -5,8 +5,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { it } from "@std/testing/bdd";
-import { mock } from "node:test";
+import { it, mock, test } from "node:test";
 import type { BudgetCeilingVerdict } from "./envelope-gate.ts";
 import {
   buildRunawayAnomalyWarning,
@@ -66,20 +65,20 @@ function trippedCheck() {
   return t.checkAnomaly(2, ANOMALY);
 }
 
-Deno.test("ensureAnomalyAllowed: no halt → no prompt, no error", async () => {
+test("ensureAnomalyAllowed: no halt → no prompt, no error", async () => {
   const confirm = approving();
   await ensureAnomalyAllowed(makeTracker().checkAnomaly(2, ANOMALY), confirm);
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("ensureAnomalyAllowed: fails closed without a confirm handler", async () => {
+test("ensureAnomalyAllowed: fails closed without a confirm handler", async () => {
   await assert.rejects(
     () => ensureAnomalyAllowed(trippedCheck()),
     RunawayAnomalyHaltError,
   );
 });
 
-Deno.test("ensureAnomalyAllowed: approval admits the call; the warning carries the halt and approval bases", async () => {
+test("ensureAnomalyAllowed: approval admits the call; the warning carries the halt and approval bases", async () => {
   const seen: unknown[] = [];
   await ensureAnomalyAllowed(trippedCheck(), (warning) => {
     seen.push(warning);
@@ -95,7 +94,7 @@ Deno.test("ensureAnomalyAllowed: approval admits the call; the warning carries t
   );
 });
 
-Deno.test("ensureAnomalyAllowed: decline throws with the trigger and figures", async () => {
+test("ensureAnomalyAllowed: decline throws with the trigger and figures", async () => {
   const caught = await captureRejection(
     () =>
       ensureAnomalyAllowed(
@@ -113,7 +112,7 @@ Deno.test("ensureAnomalyAllowed: decline throws with the trigger and figures", a
   );
 });
 
-Deno.test("ensureAnomalyAllowed: approvals never persist: the same tripped check prompts again", async () => {
+test("ensureAnomalyAllowed: approvals never persist: the same tripped check prompts again", async () => {
   const check = trippedCheck();
   const confirm = approving();
   await ensureAnomalyAllowed(check, confirm);
@@ -123,7 +122,7 @@ Deno.test("ensureAnomalyAllowed: approvals never persist: the same tripped check
 
 // ── runaway anomaly warning formatting ────────────────────────────────────────
 
-Deno.test("runaway anomaly warning formatting: format names the trigger, the actuals, and the no-raise semantics", () => {
+test("runaway anomaly warning formatting: format names the trigger, the actuals, and the no-raise semantics", () => {
   const t = makeTracker();
   t.record(makeUsage(100_000, 1000, 0.35), 2);
   const text = formatRunawayAnomalyWarning(
@@ -153,7 +152,7 @@ Deno.test("runaway anomaly warning formatting: format names the trigger, the act
   );
 });
 
-Deno.test("runaway anomaly warning formatting: approval-request wire shape carries kind, message, and both bases", () => {
+test("runaway anomaly warning formatting: approval-request wire shape carries kind, message, and both bases", () => {
   const t = makeTracker(undefined, {
     sessionSpentUsd: 2.5,
     sessionSpentTodayUsd: 2.5,
@@ -182,7 +181,7 @@ function trackerPast(turnSpent: number) {
   return t;
 }
 
-Deno.test("createRunawayAnomalyGate: one anomalous state prompts once: the same spend level re-checks silently", async () => {
+test("createRunawayAnomalyGate: one anomalous state prompts once: the same spend level re-checks silently", async () => {
   const confirm = approving();
   const gate = createRunawayAnomalyGate(confirm);
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
@@ -191,7 +190,7 @@ Deno.test("createRunawayAnomalyGate: one anomalous state prompts once: the same 
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-Deno.test("createRunawayAnomalyGate: recorded spend past the approved level re-prompts", async () => {
+test("createRunawayAnomalyGate: recorded spend past the approved level re-prompts", async () => {
   const confirm = approving();
   const gate = createRunawayAnomalyGate(confirm);
   const t = trackerPast(0.35);
@@ -201,7 +200,7 @@ Deno.test("createRunawayAnomalyGate: recorded spend past the approved level re-p
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("createRunawayAnomalyGate: approvals do not survive the gate instance (one turn)", async () => {
+test("createRunawayAnomalyGate: approvals do not survive the gate instance (one turn)", async () => {
   const confirm = approving();
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
   await createRunawayAnomalyGate(confirm).ensureAllowed(check);
@@ -209,7 +208,7 @@ Deno.test("createRunawayAnomalyGate: approvals do not survive the gate instance 
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("createRunawayAnomalyGate: fails closed without a handler and records no approval level", async () => {
+test("createRunawayAnomalyGate: fails closed without a handler and records no approval level", async () => {
   const gate = createRunawayAnomalyGate();
   const check = trackerPast(0.35).checkAnomaly(2, ANOMALY);
   await assert.rejects(
@@ -224,7 +223,7 @@ Deno.test("createRunawayAnomalyGate: fails closed without a handler and records 
 
 // ── RunawayAnomalyHaltError — decline reason sanitization ─────────────────────
 
-Deno.test("RunawayAnomalyHaltError — decline reason sanitization: a short, ordinary decline reason passes through unchanged", () => {
+test("RunawayAnomalyHaltError — decline reason sanitization: a short, ordinary decline reason passes through unchanged", () => {
   const err = new RunawayAnomalyHaltError(
     "session_scope",
     0.5,
@@ -238,7 +237,7 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: a short, ord
   );
 });
 
-Deno.test("RunawayAnomalyHaltError — decline reason sanitization: caps an oversized decline reason", () => {
+test("RunawayAnomalyHaltError — decline reason sanitization: caps an oversized decline reason", () => {
   const reason = "SELECT ".repeat(2_000);
   const err = new RunawayAnomalyHaltError(
     "session_scope",
@@ -254,7 +253,7 @@ Deno.test("RunawayAnomalyHaltError — decline reason sanitization: caps an over
   );
 });
 
-Deno.test("RunawayAnomalyHaltError — decline reason sanitization: strips a terminal escape sequence from the decline reason", () => {
+test("RunawayAnomalyHaltError — decline reason sanitization: strips a terminal escape sequence from the decline reason", () => {
   const esc = String.fromCharCode(27);
   const err = new RunawayAnomalyHaltError(
     "session_scope",

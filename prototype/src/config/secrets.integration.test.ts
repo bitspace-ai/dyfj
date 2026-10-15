@@ -3,6 +3,7 @@
 // logic is covered by `secrets.test.ts` with an in-memory env.
 import assert from "node:assert/strict";
 import process from "node:process";
+// On the host's runner until the resolver releases its pipes on timeout (BIT-653).
 import { describe, it } from "@std/testing/bdd";
 import { runSecretCommand } from "./secrets.ts";
 
