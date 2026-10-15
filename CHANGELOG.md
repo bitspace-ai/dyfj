@@ -19,6 +19,18 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A timed-out secrets resolver no longer holds pipes open in the runtime.**
+  On a resolver timeout the runtime kills the resolver and stops waiting for
+  its output, so a stuck resolver can never hold the boot. It did not close its
+  own ends of the resolver's stdout and stderr pipes, though. A resolver that
+  left a descendant running, such as a shell wrapper, kept both pipe fds open
+  in the runtime, and kept buffering whatever the descendant wrote, for as long
+  as the descendant lived. The runtime now closes both pipes and stops
+  collecting output at the timeout; the timeout reason and the fail-closed
+  result are unchanged. `config/secrets.integration.test.ts` now registers
+  with `node:test` and runs under `node --test`, where the per-file handle
+  check failed it on the two leaked pipes before this fix (decision D32).
+
 - **The launcher's pseudo-terminal tests no longer hang on macOS when
   `python3` is Python 3.9.** The tests ran the launcher under Python's
   `pty.spawn`. On macOS, Python 3.9's copy loop reaches an empty `select`

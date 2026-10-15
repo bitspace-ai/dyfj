@@ -132,7 +132,11 @@ and the secrets-resolver case was missed.)
   read pending. This is by design: on timeout the resolver stops awaiting a
   stuck child's output so it can never hold the boot, and the case's `sleep`
   grandchild keeps the pipes open for about 5 s. With the lane's sanitizers on,
-  that case runs with both off and a comment saying why.
+  that case runs with both off and a comment saying why. (Updated 2026-10-15: under
+  the per-file `node --test` handle check the case showed that the resolver
+  also kept its own ends of both pipes open, a product leak. On timeout it now
+  closes them; the file runs under `node --test` and passes the handle check
+  with the grandchild still alive.)
 
 The ACP client, session-map, external-agent-runtime, launcher, launch-grant,
 repo-context and `deno.json` task integration files already pass under both
