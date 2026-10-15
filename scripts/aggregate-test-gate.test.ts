@@ -766,12 +766,27 @@ Deno.test("aggregate lanes include schema catalog, codegen, and equivalence chec
   );
   if (!equivalence) throw new Error("schema.equivalence lane is missing");
   assertEquals(equivalence.args.at(-1), "schema/equivalence.ts");
-  for (const lane of [catalog, codegen, equivalence]) {
+  const applyLanes = lanes.filter((candidate) =>
+    candidate.label === "Current-schema apply validation" ||
+    candidate.label === "Historical replay plus forward-migration validation"
+  );
+  assertEquals(applyLanes.length, 2);
+  for (const lane of [catalog, codegen, equivalence, ...applyLanes]) {
     assertEquals(lane.checkId, "test.aggregate");
     assertEquals(lane.cwd, "/repo");
     assertEquals(
       lane.args.find((argument) => argument.startsWith("--allow-run=")),
       "--allow-run=dolt",
+    );
+    // schema/dolt-apply.ts spawns dolt through node:child_process.
+    assertEquals(
+      lane.args.find((argument) => argument.startsWith("--allow-env=")),
+      "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+    );
+    assertStringIncludes(
+      lane.args.find((argument) => argument.startsWith("--allow-read=")) ??
+        "",
+      "/private/var/folders",
     );
   }
 });

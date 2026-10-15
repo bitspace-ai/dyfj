@@ -1,3 +1,5 @@
+import { readdir, readFile, writeFile } from "node:fs/promises";
+import process from "node:process";
 import {
   type Corpus,
   loadFixtures,
@@ -957,11 +959,11 @@ async function sha256(bytes: Uint8Array): Promise<string> {
 async function contractFiles(root: string): Promise<string[]> {
   const found: string[] = [];
   async function visit(directory: string): Promise<void> {
-    for await (const entry of Deno.readDir(directory)) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = `${directory}/${entry.name}`;
-      if (entry.isDirectory) await visit(path);
+      if (entry.isDirectory()) await visit(path);
       else if (
-        entry.isFile && entry.name !== "executable-closure-report.json"
+        entry.isFile() && entry.name !== "executable-closure-report.json"
       ) found.push(path);
     }
   }
@@ -974,7 +976,7 @@ async function sourceManifest(root: string): Promise<Record<string, unknown>> {
   let lines = 0;
   const rows: string[] = [];
   for (const path of files) {
-    const bytes = await Deno.readFile(path);
+    const bytes = await readFile(path);
     const relative = path.slice(root.length + 1);
     const text = new TextDecoder().decode(bytes);
     lines += text.length === 0 ? 0 : text.split("\n").length - 1;
@@ -1001,7 +1003,7 @@ async function observePublicClaims(
 ): Promise<PublicClaimEntry[]> {
   return await Promise.all(
     Object.entries(PUBLIC_CLAIM_REQUIREMENTS).map(async ([path, required]) => {
-      const text = await Deno.readTextFile(`${root}/${path}`);
+      const text = await readFile(`${root}/${path}`, "utf8");
       const declared = new Set(
         [...text.matchAll(/<!-- closure-claim: ([a-z0-9-]+) -->/g)].map(
           (match) => match[1]!,
@@ -1177,11 +1179,11 @@ export function evaluateClosureReport(report: ClosureReport): ReportSelfCheck {
 }
 
 export async function buildClosureReport(
-  root = Deno.cwd(),
+  root = process.cwd(),
 ): Promise<ClosureReport> {
   const packageRoot = `${root}/contracts/workbench/first-product/v1`;
   const manifest = JSON.parse(
-    await Deno.readTextFile(`${packageRoot}/executable-closure-manifest.json`),
+    await readFile(`${packageRoot}/executable-closure-manifest.json`, "utf8"),
   ) as {
     package_version: string;
     authority_semantics_sha256: string;
@@ -1193,8 +1195,9 @@ export async function buildClosureReport(
   const invariantIds = expectedIds("EC", 61, 3);
   const registry = await loadSchemaRegistry();
   const baseline = JSON.parse(
-    await Deno.readTextFile(
+    await readFile(
       `${packageRoot}/fixtures/positive/first-product-baseline.json`,
+      "utf8",
     ),
   ) as Corpus;
   const baselineResult = validateCorpus(registry, baseline);
@@ -1395,7 +1398,7 @@ export async function buildClosureReport(
     let distinct = requirement.source.id === "first-product-baseline.json";
     if (fixture !== undefined && !distinct) {
       const rawPath = `${packageRoot}/fixtures/${fixture.kind}/${fixture.name}`;
-      const raw = JSON.parse(await Deno.readTextFile(rawPath)) as {
+      const raw = JSON.parse(await readFile(rawPath, "utf8")) as {
         fixture_kind?: string;
         base?: string;
         mutations?: unknown[];
@@ -1724,12 +1727,12 @@ function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
 }
 
 if (import.meta.main) {
-  const root = Deno.cwd();
-  const arguments_ = parseReportArguments(Deno.args);
+  const root = process.cwd();
+  const arguments_ = parseReportArguments(process.argv.slice(2));
   const report = await buildClosureReport(root);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
   if (arguments_.comparePath !== undefined) {
-    const committed = await Deno.readFile(arguments_.comparePath);
+    const committed = await readFile(arguments_.comparePath);
     if (!bytesEqual(new TextEncoder().encode(serialized), committed)) {
       throw new Error(
         "executable closure report mismatch: committed report differs from fresh regeneration",
@@ -1738,7 +1741,7 @@ if (import.meta.main) {
   } else {
     const output = arguments_.outputPath ??
       `${root}/contracts/workbench/first-product/v1/executable-closure-report.json`;
-    await Deno.writeTextFile(output, serialized);
+    await writeFile(output, serialized);
   }
   console.log(
     "executable closure report: pass (61 EC, 31 RP, 24 targets; public-claim trace pass; 7 external ladder steps not evaluated)",

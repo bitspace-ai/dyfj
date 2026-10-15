@@ -278,7 +278,12 @@ internal move.
 | gate runner                                  | Runs every lane and reports all failures, instead of stopping at the first. The overall exit code is unchanged: any failure fails.                                                    |
 
 `contracts/workbench/first-product/v1` lanes are unchanged (frozen until phase
-2).
+2). The package is frozen in meaning: its semantics, schemas, fixtures and
+report content do not change, and ports of its runtime API calls onto `node:`
+builtins under decision D32 are permitted. Such a port changes the closure
+report's `contract_source_manifest` (its `sha256` and `line_count`) only,
+because the report hashes the package's own source, and no contract content
+changes.
 
 ## 7. Migration rule for existing tests
 

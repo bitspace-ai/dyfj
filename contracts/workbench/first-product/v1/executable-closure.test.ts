@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { test } from "node:test";
 import {
   type Corpus,
   formatDiagnostic,
@@ -18,7 +19,7 @@ function exactIds(prefix: string, count: number, width: number): string[] {
   );
 }
 
-Deno.test("the executable-closure manifest fixes the EC denominator", async () => {
+test("the executable-closure manifest fixes the EC denominator", async () => {
   const manifest = JSON.parse(
     await readFile(
       new URL("./executable-closure-manifest.json", import.meta.url),
@@ -60,7 +61,7 @@ Deno.test("the executable-closure manifest fixes the EC denominator", async () =
   );
 });
 
-Deno.test("preserved counterexample probes match their required dispositions", async () => {
+test("preserved counterexample probes match their required dispositions", async () => {
   const baseline = JSON.parse(
     await readFile(
       new URL(

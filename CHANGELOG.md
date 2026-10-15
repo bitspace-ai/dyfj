@@ -221,6 +221,32 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The schema tooling's Dolt helper and the first-product contract package
+  run on either runtime, and the model-catalog and contract tests register
+  with `node:test`.** `schema/dolt-apply.ts` is written to `node:` builtins:
+  it spawns `dolt` through `node:child_process`, makes and removes its
+  disposable repository through `node:fs`, and keeps its error messages and
+  exit codes (a signalled `dolt` still reports 128 plus the signal number).
+  The `dolt` child now gets `PATH`, `HOME`, `TMPDIR`, `TEMP` and `TMP` only,
+  not the caller's whole environment. Every grant list that reaches the
+  helper (the model-catalog, current-schema, historical-replay,
+  `schema.codegen` and `schema.equivalence` gate lanes, and the `test:schema`,
+  `validate-schema`, `schema:codegen` and `schema:equivalence` tasks) now
+  grants those variables, `NODE_V8_COVERAGE`, which Deno's
+  `node:child_process` reads on every spawn, and read on the temp roots, which
+  the recursive remove lists. In `contracts/workbench/first-product/v1`,
+  `validate.ts` and `executable-closure-report.ts` read through
+  `node:fs/promises` and take the working directory and arguments from
+  `node:process`. The package is frozen in meaning, so no contract
+  semantics, schema, fixture or report content changes. The committed
+  closure report changes only in its `contract_source_manifest` (`sha256` and
+  `line_count`), because the report hashes the package's own source and that
+  source changed. The registrations codemod moved
+  `schema/model-catalog.test.ts` and the three contract test files onto
+  `node:test` (24 registrations). Each one passes under `node --test` with the
+  per-file leak check, and still passes under `deno test`. The
+  `runtime.neutral` count falls from 1,203 to 1,153 (decision D32).
+
 - **The ACP fixture agent runs on either runtime, and the ACP tests that
   drive it register with `node:test`.** `scripts/acp-fixture-agent.ts` is
   written to `node:` builtins. The fixture profile now starts it on the

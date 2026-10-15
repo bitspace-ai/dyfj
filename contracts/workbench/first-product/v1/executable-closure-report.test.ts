@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { test } from "node:test";
 import {
   buildClosureReport,
   type ClosureState,
@@ -8,7 +9,7 @@ import {
 } from "./executable-closure-report.ts";
 import { loadSchemaRegistry } from "./validate.ts";
 
-Deno.test("report comparison is independent of output and rejects mixed modes", () => {
+test("report comparison is independent of output and rejects mixed modes", () => {
   assert(
     parseReportArguments(["--compare-path", "report.json"]).comparePath ===
       "report.json",
@@ -40,7 +41,7 @@ Deno.test("report comparison is independent of output and rejects mixed modes", 
   }
 });
 
-Deno.test("event inventory rejects each schema family omission", async () => {
+test("event inventory rejects each schema family omission", async () => {
   const registry = await loadSchemaRegistry();
   const schema = registry.document(
     "urn:dyfj:contracts:workbench:first-product:v1:events",
@@ -77,7 +78,7 @@ function isComplete(
       (entry.residual?.length ?? 0) > 0);
 }
 
-Deno.test("the generated report computes the fixed EC, RP, and target denominators", async () => {
+test("the generated report computes the fixed EC, RP, and target denominators", async () => {
   const report = await buildClosureReport();
 
   assert(
@@ -160,7 +161,7 @@ Deno.test("the generated report computes the fixed EC, RP, and target denominato
   }
 });
 
-Deno.test("the generated report equals the checked-in report byte-for-byte", async () => {
+test("the generated report equals the checked-in report byte-for-byte", async () => {
   const report = await buildClosureReport();
   const generated = `${JSON.stringify(report, null, 2)}\n`;
   const committed = await readFile(
@@ -174,7 +175,7 @@ Deno.test("the generated report equals the checked-in report byte-for-byte", asy
   );
 });
 
-Deno.test("the report self-check fails on mutated evidence and computed results", async () => {
+test("the report self-check fails on mutated evidence and computed results", async () => {
   const report = await buildClosureReport();
 
   const missingId = structuredClone(report);

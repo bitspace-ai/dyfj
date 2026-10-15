@@ -1,30 +1,5 @@
 [
   {
-    "path": "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "contracts/workbench/first-product/v1/executable-closure-report.ts",
-    "count": 11,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "contracts/workbench/first-product/v1/executable-closure.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "contracts/workbench/first-product/v1/validate.test.ts",
-    "count": 15,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "contracts/workbench/first-product/v1/validate.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/examples/context-size-response.ts",
     "count": 7,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
@@ -205,11 +180,6 @@
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "schema/dolt-apply.ts",
-    "count": 13,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "schema/equivalence.test.ts",
     "count": 6,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -218,11 +188,6 @@
     "path": "schema/equivalence.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "schema/model-catalog.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "schema/validate-schema.test.ts",

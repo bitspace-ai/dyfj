@@ -4,9 +4,20 @@
  * query it. Shared by `validate-schema.ts`, `codegen.ts` and
  * `equivalence.ts`. Nothing here connects to or mutates a long-running Dolt
  * SQL server.
+ *
+ * Written to `node:` builtins only (decision D32), so it runs unchanged under
+ * either runtime. Under the existing runtime, a `node:child_process` spawn
+ * reads `NODE_V8_COVERAGE` and the forwarded variables below, so every
+ * permission list that reaches this module grants them.
  */
+import { Buffer } from "node:buffer";
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { constants, tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
 
-export type DirEntryLike = Pick<Deno.DirEntry, "name" | "isFile">;
+export type DirEntryLike = { name: string; isFile: boolean };
 
 export type CommandResult = {
   code: number;
@@ -25,8 +36,19 @@ const schemaDirectories: SchemaDirectory[] = [
   "history",
 ];
 
-const decoder = new TextDecoder();
-const encoder = new TextEncoder();
+// The child's whole environment. With no explicit environment,
+// node:child_process copies every variable, which a grant of named
+// variables forbids.
+const childEnvironmentNames = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
+
+function childEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    childEnvironmentNames.flatMap((name) => {
+      const value = process.env[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+}
 
 export class SchemaRunInterruptedError extends Error {
   constructor() {
@@ -38,36 +60,94 @@ export function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new SchemaRunInterruptedError();
 }
 
-async function stopChild(
-  child: ReturnType<Deno.Command["spawn"]>,
-): Promise<void> {
+/** A spawned child and its exit code, which rejects when it could not start. */
+interface Child {
+  process: ChildProcess;
+  status: Promise<number>;
+}
+
+/**
+ * A signalled exit reports 128 plus the signal number, the shell's
+ * convention, which the existing runtime's process API also follows.
+ */
+function exitCode(code: number | null, signal: string | null): number {
+  if (code !== null) return code;
+  const signals: Record<string, number | undefined> = constants.signals;
+  return 128 + (signal === null ? 0 : signals[signal] ?? 0);
+}
+
+function spawnChild(
+  command: string,
+  args: string[],
+  options: { cwd: string; stdin: "ignore" | "pipe" },
+): Child {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: childEnvironment(),
+    stdio: [options.stdin, "pipe", "pipe"],
+  });
+  const status = new Promise<number>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code, signal) => resolve(exitCode(code, signal)));
+  });
+  // A spawn failure is reported where the status is awaited; until then it
+  // must not surface as an unhandled rejection.
+  status.catch(() => undefined);
+  return { process: child, status };
+}
+
+function hasExited(child: Child): boolean {
+  return child.process.exitCode !== null || child.process.signalCode !== null;
+}
+
+async function stopChild(child: Child): Promise<void> {
+  if (hasExited(child)) return;
   try {
-    child.kill("SIGTERM");
+    child.process.kill("SIGTERM");
   } catch {
     return;
   }
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       child.status,
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("shutdown timeout")), 2_000)
-      ),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("shutdown timeout")), 2_000);
+      }),
     ]);
   } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // The process exited while the timeout elapsed.
-    }
+    // The process may have exited while the timeout elapsed.
+    if (!hasExited(child)) child.process.kill("SIGKILL");
     await child.status.catch(() => undefined);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
+/** Collects a piped child's output once its streams close. */
+function collectOutput(child: Child): Promise<CommandResult> {
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.process.stdout!.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.process.stderr!.on("data", (chunk: Buffer) => stderr.push(chunk));
+  const closed = new Promise<void>((resolve) =>
+    child.process.once("close", () => resolve())
+  );
+  return child.status.then(async (code) => {
+    await closed;
+    return {
+      code,
+      stdout: Buffer.concat(stdout).toString("utf8"),
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    };
+  });
+}
+
 async function outputOrAbort(
-  child: ReturnType<Deno.Command["spawn"]>,
+  child: Child,
   signal: AbortSignal | undefined,
-): Promise<Deno.CommandOutput> {
-  const output = child.output();
+): Promise<CommandResult> {
+  const output = collectOutput(child);
   if (!signal) return await output;
   if (signal.aborted) {
     await stopChild(child);
@@ -133,37 +213,32 @@ export async function runCommand(
   options: { cwd: string; input?: string; signal?: AbortSignal },
 ): Promise<CommandResult> {
   throwIfAborted(options.signal);
-  const child = new Deno.Command(command, {
-    args,
+  const child = spawnChild(command, args, {
     cwd: options.cwd,
-    stdin: options.input === undefined ? "null" : "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+    stdin: options.input === undefined ? "ignore" : "pipe",
+  });
 
   const outputPromise = outputOrAbort(child, options.signal);
   let inputError: unknown;
   if (options.input !== undefined) {
-    const writer = child.stdin.getWriter();
+    const stdin = child.process.stdin!;
+    // A write error after the first one (an early exit closes the pipe) is
+    // the same failure; the listener keeps it from going unhandled.
+    stdin.on("error", (error) => inputError ??= error);
     try {
-      await writer.write(encoder.encode(options.input));
-      await writer.close();
+      await new Promise<void>((resolve, reject) => {
+        stdin.once("error", reject);
+        stdin.end(options.input, () => resolve());
+      });
     } catch (error) {
       inputError = error;
       await stopChild(child);
-    } finally {
-      writer.releaseLock();
     }
   }
 
   const output = await outputPromise;
   if (inputError !== undefined && output.code === 0) throw inputError;
-
-  return {
-    code: output.code,
-    stdout: decoder.decode(output.stdout),
-    stderr: decoder.decode(output.stderr),
-  };
+  return output;
 }
 
 export async function runChecked(
@@ -192,26 +267,25 @@ export async function runChecked(
 
 async function readDirectoryEntries(
   directory: URL,
-): Promise<Deno.DirEntry[]> {
-  const entries: Deno.DirEntry[] = [];
+): Promise<DirEntryLike[]> {
   try {
-    for await (const entry of Deno.readDir(directory)) {
-      entries.push(entry);
-    }
+    const entries = await readdir(directory, { withFileTypes: true });
+    return entries.map((entry) => ({
+      name: entry.name,
+      isFile: entry.isFile(),
+    }));
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
+    if ((error as { code?: unknown }).code === "ENOENT") {
       return [];
     }
     throw error;
   }
-
-  return entries;
 }
 
 export async function readSchemaApplyPlan(
   schemaDir: URL,
 ): Promise<SchemaApplyPlan> {
-  const entriesByDirectory: Partial<Record<SchemaDirectory, Deno.DirEntry[]>> =
+  const entriesByDirectory: Partial<Record<SchemaDirectory, DirEntryLike[]>> =
     {};
 
   for (const directory of schemaDirectories) {
@@ -252,7 +326,7 @@ export async function withSchemaRepository<T>(
   use: (repository: string) => Promise<T>,
 ): Promise<T> {
   throwIfAborted(signal);
-  const repository = await Deno.makeTempDir({ prefix: "dyfj-schema-" });
+  const repository = await mkdtemp(join(tmpdir(), "dyfj-schema-"));
   console.log(`Applying ${label}: ${files.length} files in ${repository}`);
   try {
     await initDoltRepository(repository, signal);
@@ -261,14 +335,14 @@ export async function withSchemaRepository<T>(
       console.log(`Applying schema/${file}`);
       await runChecked("dolt", ["sql"], {
         cwd: repository,
-        input: await Deno.readTextFile(new URL(file, schemaDir)),
+        input: await readFile(new URL(file, schemaDir), "utf8"),
         label: `schema/${file}`,
         signal,
       });
     }
     return await use(repository);
   } finally {
-    await Deno.remove(repository, { recursive: true });
+    await rm(repository, { recursive: true });
   }
 }
 

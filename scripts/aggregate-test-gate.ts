@@ -880,6 +880,13 @@ export function productionLanes(
       ],
       cwd: root,
     },
+    // The catalog lane and the four schema lanes after it reach
+    // `schema/dolt-apply.ts`, which spawns `dolt` through node:child_process
+    // and makes its repository with node:fs (decision D32). Under this
+    // runtime that needs the variables the child is given and the temp
+    // directory's name (PATH, HOME, TMPDIR, TEMP, TMP), NODE_V8_COVERAGE,
+    // which the node:child_process shim reads on every spawn, and read on
+    // the temp roots, which node:fs's recursive remove lists.
     {
       label: "Local model catalog data validation",
       checkId: "test.aggregate",
@@ -887,7 +894,8 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "test",
-        "--allow-read=schema",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-run=dolt",
         "schema/model-catalog.test.ts",
@@ -901,7 +909,8 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-read=schema",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-run=dolt",
         "schema/validate-schema.ts",
@@ -916,7 +925,8 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-read=schema",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-run=dolt",
         "schema/validate-schema.ts",
@@ -936,7 +946,8 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-read=schema,prototype/src/store/generated",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=schema,prototype/src/store/generated,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-run=dolt",
         "schema/codegen.ts",
@@ -951,7 +962,8 @@ export function productionLanes(
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-read=schema",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-run=dolt",
         "schema/equivalence.ts",
