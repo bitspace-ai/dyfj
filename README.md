@@ -2191,3 +2191,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-15 - The secrets resolver's "fail-closed on timeout" guarantee says
   that the runtime closes its ends of a timed-out resolver's output pipes,
   replacing the claim that the pipe is abandoned.
+- 2026-10-15 - The aggregate gate's description of the per-file Node handle
+  check says that it waits for the file's own stdout and stderr to flush
+  before it compares, so the runner's in-flight output is not reported as a
+  leak, and that a failing file exits after a bounded grace period, so the
+  runner's report of its tests is not cut off.
