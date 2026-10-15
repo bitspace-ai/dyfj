@@ -246,7 +246,9 @@ README are tracked separately in its Revision history section.
   starts in-process, now uses `node:` builtins (`node:child_process`,
   `node:net`, `node:fs/promises`) in place of that global. It behaves the same
   on both runtimes: the integration lane's runner still starts it on the
-  existing runtime. Snapshots are unchanged. The `runtime.neutral` count falls
+  existing runtime. `scripts/arch-layers.json` names it as an
+  entrypoint for `node:child_process` and `node:net`, as it already does for
+  the shared Node runner. Snapshots are unchanged. The `runtime.neutral` count falls
   from 1,236 to 1,200 (decision D32).
 
 - **The remaining product tests register with `node:test` and run under
