@@ -284,7 +284,10 @@ and the Node subset ends with a count line beside `deno test`'s own, for example
 `test.unit node --test: ok | 52 passed | 0 failed | ...`, parsed from the TAP summary.
 The handle check is preloaded into each Node file's process: it fails a file that
 leaves a server, socket, timer or child process live after its last test, naming the
-file and the leaked resource types, and exits that process so the run cannot hang. It
+file and the leaked resource types, and exits that process so the run cannot hang.
+Before it compares, it waits for the file's own stdout and stderr to flush, since a
+write still in flight there is the runner's output to its parent, not a leak; and it
+lets the runner finish reporting the file's tests before the exit. It
 is per file, so it is coarser than a per-test sanitizer: it names the file, not the
 test. Under `node --test`, tests run with no permission sandbox.
 

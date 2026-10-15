@@ -1198,7 +1198,10 @@ tests use today, and nothing in a `node:test` file. The Node subset instead
 preloads a per-file handle check (`prototype/testing/node-handle-check.ts`):
 a file that leaves a server, socket, timer or child process live after its
 last test fails, with the file and the leaked resource types named, and its
-process exits so the run cannot hang. The check is per file, coarser than a
+process exits so the run cannot hang. It first waits for the file's own
+stdout and stderr to flush, so the runner's in-flight output to its parent is
+not reported as a leak, and the exit waits briefly so the runner's report of
+the file's tests is not cut off. The check is per file, coarser than a
 per-test sanitizer. Each runner fails unless `node` is Node 26, reports an
 empty subset as `0 files`, and prints a count line for its Node files beside
 `deno test`'s own (`test.unit node --test: ok | 52 passed | 0 failed | ...`),
@@ -2188,3 +2191,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-15 - The secrets resolver's "fail-closed on timeout" guarantee says
   that the runtime closes its ends of a timed-out resolver's output pipes,
   replacing the claim that the pipe is abandoned.
+- 2026-10-15 - The aggregate gate's description of the per-file Node handle
+  check says that it waits for the file's own stdout and stderr to flush
+  before it compares, so the runner's in-flight output is not reported as a
+  leak, and that a failing file exits after a bounded grace period, so the
+  runner's report of its tests is not cut off.

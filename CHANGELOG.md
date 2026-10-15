@@ -19,6 +19,19 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The per-file Node handle check no longer fails a file for its own
+  in-flight test output.** Under `node --test`, a file's stdout is the
+  runner's channel to its parent, and on macOS pipe writes are asynchronous.
+  When that output was still being written as the file's last test ended,
+  the check counted the pending write (`SimpleWriteWrap`) as a leaked
+  resource and failed a clean file, intermittently. The check now waits for
+  the file's stdout and stderr to flush before it compares. A pending write
+  to any other stream is still a leak. A file that does leak now sets a
+  failing exit code and exits after a bounded grace period, with its output
+  flushed, instead of exiting at once: the hard exit had cut off the
+  runner's report of the file's other tests, so a leaking file's passing
+  tests went missing from the lane's count.
+
 - **A timed-out secrets resolver no longer holds pipes open in the runtime.**
   On a resolver timeout the runtime kills the resolver and stops waiting for
   its output, so a stuck resolver can never hold the boot. It did not close its
