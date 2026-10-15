@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   DEFAULT_COMPANION_PROMPT,
   loadCompanionBasePrompt,
@@ -16,14 +17,14 @@ const storeWith = (content: string, active = true) =>
     }],
   }).prompts;
 
-Deno.test("loadCompanionBasePrompt returns the active prompt content from the store", async () => {
+test("loadCompanionBasePrompt returns the active prompt content from the store", async () => {
   assert.deepStrictEqual(
     await loadCompanionBasePrompt(storeWith("Stored companion prompt.")),
     "Stored companion prompt.",
   );
 });
 
-Deno.test("loadCompanionBasePrompt falls back to the default when the store has no active row", async () => {
+test("loadCompanionBasePrompt falls back to the default when the store has no active row", async () => {
   assert.deepStrictEqual(
     await loadCompanionBasePrompt(new MemoryStore().prompts),
     DEFAULT_COMPANION_PROMPT,
@@ -34,14 +35,14 @@ Deno.test("loadCompanionBasePrompt falls back to the default when the store has 
   );
 });
 
-Deno.test("loadCompanionBasePrompt falls back to the default when the row content is blank", async () => {
+test("loadCompanionBasePrompt falls back to the default when the row content is blank", async () => {
   assert.deepStrictEqual(
     await loadCompanionBasePrompt(storeWith("   ")),
     DEFAULT_COMPANION_PROMPT,
   );
 });
 
-Deno.test("loadCompanionBasePrompt falls back to the default when the store throws", async () => {
+test("loadCompanionBasePrompt falls back to the default when the store throws", async () => {
   const unreachable: PromptReader = {
     active: () => Promise.reject(new Error("dolt unreachable")),
   };
@@ -51,7 +52,7 @@ Deno.test("loadCompanionBasePrompt falls back to the default when the store thro
   );
 });
 
-Deno.test("the default is a non-empty, non-scoping capable-companion frame", () => {
+test("the default is a non-empty, non-scoping capable-companion frame", () => {
   assert.ok(DEFAULT_COMPANION_PROMPT.length > 0);
   assert.ok(DEFAULT_COMPANION_PROMPT.includes("capable"));
   // No scope-fence language that would make a model refuse off-repo work.

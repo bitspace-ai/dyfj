@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { ManualClock } from "./manual-clock.ts";
 
-Deno.test("ManualClock starts at zero and moves only when told", () => {
+test("ManualClock starts at zero and moves only when told", () => {
   const clock = new ManualClock();
   assert.deepStrictEqual(clock.now(), 0);
   assert.deepStrictEqual(clock.now(), 0);
@@ -11,11 +12,11 @@ Deno.test("ManualClock starts at zero and moves only when told", () => {
   assert.deepStrictEqual(clock.now(), 1_000);
 });
 
-Deno.test("ManualClock honours a start time", () => {
+test("ManualClock honours a start time", () => {
   assert.deepStrictEqual(new ManualClock({ start: 42 }).now(), 42);
 });
 
-Deno.test("ManualClock replays readings, then holds the last one", () => {
+test("ManualClock replays readings, then holds the last one", () => {
   const readings = [0, 10, 30];
   const clock = new ManualClock({ readings });
   assert.deepStrictEqual(clock.pendingReadings, 3);
@@ -26,14 +27,14 @@ Deno.test("ManualClock replays readings, then holds the last one", () => {
   assert.deepStrictEqual(readings, [0, 10, 30]);
 });
 
-Deno.test("ManualClock advances from the last replayed reading", () => {
+test("ManualClock advances from the last replayed reading", () => {
   const clock = new ManualClock({ readings: [100] });
   assert.deepStrictEqual(clock.now(), 100);
   clock.advance(5);
   assert.deepStrictEqual(clock.now(), 105);
 });
 
-Deno.test("ManualClock.now and date are bound for injection", () => {
+test("ManualClock.now and date are bound for injection", () => {
   const clock = new ManualClock({ start: Date.UTC(2026, 0, 1) });
   const now: () => number = clock.now;
   const date: () => Date = clock.date;
@@ -41,7 +42,7 @@ Deno.test("ManualClock.now and date are bound for injection", () => {
   assert.deepStrictEqual(date().toISOString(), "2026-01-01T00:00:00.000Z");
 });
 
-Deno.test("ManualClock rejects backward or non-finite steps", () => {
+test("ManualClock rejects backward or non-finite steps", () => {
   const clock = new ManualClock();
   assert.throws(() => clock.advance(-1), RangeError);
   assert.throws(() => clock.advance(Number.NaN), RangeError);
@@ -49,7 +50,7 @@ Deno.test("ManualClock rejects backward or non-finite steps", () => {
   assert.deepStrictEqual(clock.now(), 0);
 });
 
-Deno.test("ManualClock rejects non-finite start or readings", () => {
+test("ManualClock rejects non-finite start or readings", () => {
   assert.throws(() => new ManualClock({ start: Number.NaN }), RangeError);
   assert.throws(
     () => new ManualClock({ readings: [0, Number.POSITIVE_INFINITY] }),
@@ -57,13 +58,13 @@ Deno.test("ManualClock rejects non-finite start or readings", () => {
   );
 });
 
-Deno.test("ManualClock.advance cannot overflow to Infinity", () => {
+test("ManualClock.advance cannot overflow to Infinity", () => {
   const clock = new ManualClock({ start: Number.MAX_VALUE });
   assert.throws(() => clock.advance(Number.MAX_VALUE), RangeError);
   assert.deepStrictEqual(clock.now(), Number.MAX_VALUE);
 });
 
-Deno.test("ManualClock.date rejects a reading outside the Date range", () => {
+test("ManualClock.date rejects a reading outside the Date range", () => {
   const clock = new ManualClock({ start: Number.MAX_VALUE });
   assert.deepStrictEqual(clock.now(), Number.MAX_VALUE);
   assert.throws(() => clock.date(), RangeError);

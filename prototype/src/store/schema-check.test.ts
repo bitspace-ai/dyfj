@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import {
   checkColumnsAtBoot,
@@ -11,14 +12,14 @@ const probe = (check: () => Promise<void>) => ({
   assertCanonicalColumns: check,
 });
 
-Deno.test("checkColumnsAtBoot reports a completed check", async () => {
+test("checkColumnsAtBoot reports a completed check", async () => {
   assert.strictEqual(
     await checkColumnsAtBoot(probe(() => Promise.resolve()), 1_000),
     "checked",
   );
 });
 
-Deno.test("checkColumnsAtBoot boots past an unreachable database", async () => {
+test("checkColumnsAtBoot boots past an unreachable database", async () => {
   const refused = Object.assign(new Error("connect ECONNREFUSED"), {
     code: "ECONNREFUSED",
   });
@@ -28,7 +29,7 @@ Deno.test("checkColumnsAtBoot boots past an unreachable database", async () => {
   );
 });
 
-Deno.test("checkColumnsAtBoot bounds a check that never answers", async () => {
+test("checkColumnsAtBoot bounds a check that never answers", async () => {
   // A blackholed host: the check never settles, so the bound decides.
   const started = Date.now();
   assert.strictEqual(
@@ -42,7 +43,7 @@ Deno.test("checkColumnsAtBoot bounds a check that never answers", async () => {
   );
 });
 
-Deno.test("checkColumnsAtBoot rejects on missing columns", async () => {
+test("checkColumnsAtBoot rejects on missing columns", async () => {
   const missing = new MissingSchemaColumnsError([
     { table: "events", column: "trace_flags" },
   ]);
@@ -52,7 +53,7 @@ Deno.test("checkColumnsAtBoot rejects on missing columns", async () => {
   assert.strictEqual(error, missing);
 });
 
-Deno.test("checkColumnsAtBoot rejects on any other failure of the check", async () => {
+test("checkColumnsAtBoot rejects on any other failure of the check", async () => {
   const parse = Object.assign(new Error("syntax"), { code: "ER_PARSE_ERROR" });
   const error = await captureRejection(() =>
     checkColumnsAtBoot(probe(() => Promise.reject(parse)), 1_000)

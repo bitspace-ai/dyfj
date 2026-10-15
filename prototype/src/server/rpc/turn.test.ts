@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { TurnStreamFrame } from "../../contract/mod.ts";
 import {
   SessionOwners,
@@ -79,7 +80,7 @@ const externalReadCommand: CommandDefinition<string> = {
 
 // --- turn ---
 
-Deno.test("turn streams deltas + events and returns the receipt", async () => {
+test("turn streams deltas + events and returns the receipt", async () => {
   const runRuntime: TurnRuntime = (input) => {
     input.frames?.onTextDelta?.("hello ");
     input.frames?.onTextDelta?.("world");
@@ -103,7 +104,7 @@ Deno.test("turn streams deltas + events and returns the receipt", async () => {
   ]);
 });
 
-Deno.test("turn threads the configured agent-step limit and returns the receipt field", async () => {
+test("turn threads the configured agent-step limit and returns the receipt field", async () => {
   let seenMaxToolSteps: number | undefined;
   const rpc = handlers((input) => {
     seenMaxToolSteps = input.maxToolSteps;
@@ -133,7 +134,7 @@ Deno.test("turn threads the configured agent-step limit and returns the receipt 
   assert.deepStrictEqual(seenMaxToolSteps, 7);
 });
 
-Deno.test("turn threads boot-discovered external MCP commands into the runtime", async () => {
+test("turn threads boot-discovered external MCP commands into the runtime", async () => {
   let received: unknown;
   const rpc = handlers((input) => {
     received = input.externalMcpCommands;
@@ -146,7 +147,7 @@ Deno.test("turn threads boot-discovered external MCP commands into the runtime",
   assert.deepStrictEqual(received, [externalReadCommand]);
 });
 
-Deno.test("a turn without a prompt -> invalidParams", async () => {
+test("a turn without a prompt -> invalidParams", async () => {
   const error = await rpcFailure(
     handlers(() => Promise.resolve(result({}))),
     "turn",
@@ -156,7 +157,7 @@ Deno.test("a turn without a prompt -> invalidParams", async () => {
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
-Deno.test("turn keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
+test("turn keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
   // The reset contract only works if the seam preserves emission order: a
   // consumer resets exactly at the signal, keeping everything after it.
   const supersede = {
@@ -180,7 +181,7 @@ Deno.test("turn keeps the superseding-retry signal ordered between stale and rep
   ]);
 });
 
-Deno.test("a rejected supersede notification prevents the replacement provider call", async () => {
+test("a rejected supersede notification prevents the replacement provider call", async () => {
   // The seam must not merely await a handler that discards the notification:
   // if the signal never reaches the client, the replacement text would be
   // glued onto the stale text the client still has rendered. The runtime here
@@ -225,7 +226,7 @@ Deno.test("a rejected supersede notification prevents the replacement provider c
   assert.deepStrictEqual(sent, [{ t: "delta", text: "stale partial" }]);
 });
 
-Deno.test("a rejected unparsed-markup notification fails the turn", async () => {
+test("a rejected unparsed-markup notification fails the turn", async () => {
   const warning = {
     type: "unparsedToolCallMarkupDetected",
     sessionId: "01UDSSESSION0000000000000000",
@@ -253,7 +254,7 @@ Deno.test("a rejected unparsed-markup notification fails the turn", async () => 
   assert.deepStrictEqual(completed, false);
 });
 
-Deno.test("a rejected plain status notification does not abort the turn", async () => {
+test("a rejected plain status notification does not abort the turn", async () => {
   // The asymmetry: safety signals are fail-closed. This plain status event's
   // failed send (client gone) must stay best-effort — swallowed, not
   // surfaced — so the turn runs to completion instead of failing on a dropped
@@ -296,7 +297,7 @@ Deno.test("a rejected plain status notification does not abort the turn", async 
 const paidProbe: TurnRuntime = async (input) =>
   result({ verdict: await input.approver?.confirmPaidEscalation?.("test") });
 
-Deno.test("loopback clearance: paid approved with the per-turn opt-in", async () => {
+test("loopback clearance: paid approved with the per-turn opt-in", async () => {
   assert.deepStrictEqual(
     await callRpc(handlers(paidProbe), "turn", {
       prompt: "hi",
@@ -306,14 +307,14 @@ Deno.test("loopback clearance: paid approved with the per-turn opt-in", async ()
   );
 });
 
-Deno.test("paid denied without the per-turn opt-in", async () => {
+test("paid denied without the per-turn opt-in", async () => {
   const { verdict } = await callRpc(handlers(paidProbe), "turn", {
     prompt: "hi",
   }, client()) as { verdict: { decision: string } };
   assert.deepStrictEqual(verdict.decision, "deny");
 });
 
-Deno.test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
+test("loopback inherits approvePaidDefault when the request omits opt-in", async () => {
   const rpc = handlers(paidProbe, {
     engineConfig: {
       defaultCompanionModel: null,
@@ -336,7 +337,7 @@ Deno.test("loopback inherits approvePaidDefault when the request omits opt-in", 
   );
 });
 
-Deno.test("turn applies a loopback budget override", async () => {
+test("turn applies a loopback budget override", async () => {
   const rpc = handlers((input) =>
     Promise.resolve(result({ sessionLimitUsd: input.sessionLimitUsd ?? null }))
   );
@@ -351,7 +352,7 @@ Deno.test("turn applies a loopback budget override", async () => {
 
 // --- turn/cancel and per-connection turns ---
 
-Deno.test("turn/cancel aborts the matching active turn and is otherwise a no-op", async () => {
+test("turn/cancel aborts the matching active turn and is otherwise a no-op", async () => {
   const turnId = "123e4567-e89b-42d3-a456-426614174000";
   let markStarted!: () => void;
   const started = new Promise<void>((resolve) => {
@@ -386,7 +387,7 @@ Deno.test("turn/cancel aborts the matching active turn and is otherwise a no-op"
   });
 });
 
-Deno.test("turn/cancel requires a UUID turn id", async () => {
+test("turn/cancel requires a UUID turn id", async () => {
   const error = await rpcFailure(
     handlers(() => Promise.resolve(result({}))),
     "turn/cancel",
@@ -399,7 +400,7 @@ Deno.test("turn/cancel requires a UUID turn id", async () => {
   });
 });
 
-Deno.test("an approval arriving after acknowledged cancellation cannot start work", async () => {
+test("an approval arriving after acknowledged cancellation cannot start work", async () => {
   const turnId = "123e4567-e89b-42d3-a456-426614174000";
   let markApprovalRequested!: () => void;
   const approvalRequested = new Promise<void>((resolve) => {
@@ -463,7 +464,7 @@ Deno.test("an approval arriving after acknowledged cancellation cannot start wor
   resolveApproval({ decision: "approve" });
 });
 
-Deno.test("turn/cancel declines after the runtime closes its cancellation window", async () => {
+test("turn/cancel declines after the runtime closes its cancellation window", async () => {
   const turnId = "123e4567-e89b-42d3-a456-426614174000";
   let markFinalizing!: () => void;
   const finalizing = new Promise<void>((resolve) => {
@@ -495,7 +496,7 @@ Deno.test("turn/cancel declines after the runtime closes its cancellation window
   });
 });
 
-Deno.test("different connections may use the same active turn id", async () => {
+test("different connections may use the same active turn id", async () => {
   const turnId = "123e4567-e89b-42d3-a456-426614174000";
   let startedCount = 0;
   let markBothStarted!: () => void;
@@ -531,7 +532,7 @@ Deno.test("different connections may use the same active turn id", async () => {
   });
 });
 
-Deno.test("one connection cannot accumulate concurrent active turns", async () => {
+test("one connection cannot accumulate concurrent active turns", async () => {
   const firstTurnId = "123e4567-e89b-42d3-a456-426614174000";
   const secondTurnId = "123e4567-e89b-42d3-a456-426614174001";
   let markStarted!: () => void;
@@ -630,7 +631,7 @@ const emptyAllowOnlyPermissionProbe: TurnRuntime = async (input) =>
     }, input.abortSignal ?? new AbortController().signal),
   });
 
-Deno.test("preserves the exact selected ACP option id across the duplex seam", async () => {
+test("preserves the exact selected ACP option id across the duplex seam", async () => {
   const ctx = client(() => ({
     decision: "select",
     optionId: "remember-command-id",
@@ -657,7 +658,7 @@ Deno.test("preserves the exact selected ACP option id across the duplex seam", a
   );
 });
 
-Deno.test("a client policy denial selects the request rejection as policy", async () => {
+test("a client policy denial selects the request rejection as policy", async () => {
   const ctx = client(() => ({
     decision: "deny",
     reason: "ACP permission selection unavailable",
@@ -670,7 +671,7 @@ Deno.test("a client policy denial selects the request rejection as policy", asyn
   );
 });
 
-Deno.test("a missing ACP approver selects the request rejection", async () => {
+test("a missing ACP approver selects the request rejection", async () => {
   assert.partialDeepStrictEqual(
     await callRpc(handlers(acpPermissionProbe), "turn", {
       prompt: "run it",
@@ -679,7 +680,7 @@ Deno.test("a missing ACP approver selects the request rejection", async () => {
   );
 });
 
-Deno.test("a missing approver cannot select an empty allow id when rejection is absent", async () => {
+test("a missing approver cannot select an empty allow id when rejection is absent", async () => {
   assert.partialDeepStrictEqual(
     await callRpc(handlers(emptyAllowOnlyPermissionProbe), "turn", {
       prompt: "run it",
@@ -688,7 +689,7 @@ Deno.test("a missing approver cannot select an empty allow id when rejection is 
   );
 });
 
-Deno.test("server asks the client to approve a mutating tool mid-turn; approve flows back", async () => {
+test("server asks the client to approve a mutating tool mid-turn; approve flows back", async () => {
   const ctx = client(() => ({ decision: "approve" }));
   const { verdict } = await callRpc(handlers(toolApprovalProbe), "turn", {
     prompt: "edit notes",
@@ -700,7 +701,7 @@ Deno.test("server asks the client to approve a mutating tool mid-turn; approve f
   });
 });
 
-Deno.test("a client denial flows back as a deny verdict", async () => {
+test("a client denial flows back as a deny verdict", async () => {
   const { verdict } = await callRpc(handlers(toolApprovalProbe), "turn", {
     prompt: "edit notes",
   }, client(() => ({ decision: "deny", reason: "not now" }))) as {
@@ -709,7 +710,7 @@ Deno.test("a client denial flows back as a deny verdict", async () => {
   assert.deepStrictEqual(verdict, { decision: "deny", reason: "not now" });
 });
 
-Deno.test("an interrupted approval aborts the server-side turn signal", async () => {
+test("an interrupted approval aborts the server-side turn signal", async () => {
   const runRuntime: TurnRuntime = async (input) => {
     let matchedSignalReason = false;
     try {
@@ -735,14 +736,14 @@ Deno.test("an interrupted approval aborts the server-side turn signal", async ()
   );
 });
 
-Deno.test("no client approver -> fail-closed deny", async () => {
+test("no client approver -> fail-closed deny", async () => {
   const { verdict } = await callRpc(handlers(toolApprovalProbe), "turn", {
     prompt: "edit notes",
   }, client()) as { verdict: { decision: string } };
   assert.deepStrictEqual(verdict.decision, "deny");
 });
 
-Deno.test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
+test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
   const runRuntime: TurnRuntime = async (input) =>
     result({
       verdict: await input.approver?.confirmRunawayAnomaly?.({

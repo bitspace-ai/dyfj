@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { toApprovalVerdict } from "./approval.ts";
 
-Deno.test("toApprovalVerdict approves only an explicit approve", () => {
+test("toApprovalVerdict approves only an explicit approve", () => {
   assert.deepStrictEqual(toApprovalVerdict({ decision: "approve" }), {
     decision: "approve",
   });

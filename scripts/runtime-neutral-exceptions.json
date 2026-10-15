@@ -60,11 +60,6 @@
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "prototype/mcp/memory-tools.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/scripts/add-import-extensions.ts",
     "count": 7,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
@@ -180,218 +175,18 @@
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "prototype/src/context/compression.test.ts",
-    "count": 31,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/conversation.test.ts",
-    "count": 30,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/length-recovery.test.ts",
-    "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/prompts.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/repo-context.test.ts",
-    "count": 23,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/context/request-fit.test.ts",
-    "count": 23,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/extensions/friction/mod.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/extensions/ideas/mod.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/extensions/linear/mod.test.ts",
-    "count": 9,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/console-canary.integration.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/extensions.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/main.integration.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/approval.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/events.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/models.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/runtime.test.ts",
-    "count": 10,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/sessions.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/surface.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/tools.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/rpc/turn.test.ts",
-    "count": 27,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/server/session-model.integration.test.ts",
-    "count": 7,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
     "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/store/dolt.test.ts",
-    "count": 27,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/events/builders.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/memories.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/schema-check.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/sessions.test.ts",
-    "count": 19,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/jsonrpc-peer.integration.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/jsonrpc-peer.test.ts",
-    "count": 21,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/jsonrpc.test.ts",
-    "count": 17,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/node-socket.integration.test.ts",
-    "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/rpc-params.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-client.integration.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-client.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-listener.integration.test.ts",
-    "count": 10,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/transport/uds-path.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/fake-io.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/manual-clock.test.ts",
-    "count": 9,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/fakes/map-env.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/scripted-dns-resolver.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/sequential-ids.test.ts",
-    "count": 7,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/testing/golden/golden.test.ts",
     "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/golden/normalize.test.ts",
-    "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

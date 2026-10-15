@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type {
   WorkbenchProjectSessions,
   WorkbenchSessionSummary,
@@ -25,14 +26,14 @@ function handlers(overrides: Partial<SessionsHandlerDeps> = {}) {
   });
 }
 
-Deno.test("sessions/list passes the project filter through", async () => {
+test("sessions/list passes the project filter through", async () => {
   assert.deepStrictEqual(
     await callRpc(handlers(), "sessions/list", { project: "dyfj" }),
     { projects: [{ project: "dyfj", sessions: [] }] },
   );
 });
 
-Deno.test("sessions/list rejects a non-positive limit", async () => {
+test("sessions/list rejects a non-positive limit", async () => {
   const error = await rpcFailure(handlers(), "sessions/list", { limit: 0 });
   assert.deepStrictEqual(error, {
     code: RpcErrorCode.invalidParams,
@@ -40,7 +41,7 @@ Deno.test("sessions/list rejects a non-positive limit", async () => {
   });
 });
 
-Deno.test("sessions/inspect returns session summary, workspace, recorded model, and event counts", async () => {
+test("sessions/inspect returns session summary, workspace, recorded model, and event counts", async () => {
   const session: WorkbenchSessionSummary = {
     sessionId: "01TEST_SESSION",
     slug: "workbench-01test_session",
@@ -73,7 +74,7 @@ Deno.test("sessions/inspect returns session summary, workspace, recorded model, 
   });
 });
 
-Deno.test("sessions/inspect rejects C1 control characters in identifiers", async () => {
+test("sessions/inspect rejects C1 control characters in identifiers", async () => {
   const error = await rpcFailure(handlers(), "sessions/inspect", {
     sessionId: "01TEST\u009BSESSION",
   });
@@ -84,7 +85,7 @@ Deno.test("sessions/inspect rejects C1 control characters in identifiers", async
   );
 });
 
-Deno.test("sessions/inspect names the runner when the session last ran on one", async () => {
+test("sessions/inspect names the runner when the session last ran on one", async () => {
   const result = await callRpc(
     handlers({
       fetchSessionLastRun: () =>

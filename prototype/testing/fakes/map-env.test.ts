@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { MapEnv } from "./map-env.ts";
 
-Deno.test("MapEnv reads only its own values", () => {
+test("MapEnv reads only its own values", () => {
   const env = new MapEnv({ DYFJ_EXAMPLE: "value" });
   assert.deepStrictEqual(env.get("DYFJ_EXAMPLE"), "value");
   assert.deepStrictEqual(env.get("PATH"), undefined);
@@ -9,7 +10,7 @@ Deno.test("MapEnv reads only its own values", () => {
   assert.deepStrictEqual(env.has("PATH"), false);
 });
 
-Deno.test("MapEnv set and delete change only the map", () => {
+test("MapEnv set and delete change only the map", () => {
   const initial = { A: "1" };
   const env = new MapEnv(initial);
   env.set("B", "2");
@@ -19,7 +20,7 @@ Deno.test("MapEnv set and delete change only the map", () => {
   assert.deepStrictEqual(initial, { A: "1" });
 });
 
-Deno.test("MapEnv satisfies the Deno.env get subset", () => {
+test("MapEnv satisfies the Deno.env get subset", () => {
   const read = (source: { get(name: string): string | undefined }) =>
     source.get("X");
   assert.deepStrictEqual(read(new MapEnv({ X: "y" })), "y");

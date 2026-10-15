@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { EVENT_TYPE_VALUES, type EventType } from "../generated/rows.ts";
 import {
   EVENT_BUILDERS,
@@ -20,14 +21,14 @@ const base: EventFields = {
   authz_basis: "test",
 };
 
-Deno.test("every event type has exactly one builder", () => {
+test("every event type has exactly one builder", () => {
   assert.deepStrictEqual(
     Object.keys(EVENT_BUILDERS).sort(),
     [...EVENT_TYPE_VALUES].sort(),
   );
 });
 
-Deno.test("each builder sets its own event_type", () => {
+test("each builder sets its own event_type", () => {
   for (const eventType of EVENT_TYPE_VALUES) {
     const build = EVENT_BUILDERS[eventType] as unknown as (
       fields: EventFields,
@@ -48,7 +49,7 @@ Deno.test("each builder sets its own event_type", () => {
   }
 });
 
-Deno.test("a builder writes exactly the fields it was given, nulls included", () => {
+test("a builder writes exactly the fields it was given, nulls included", () => {
   const fields = {
     ...base,
     parent_span_id: null,
@@ -61,7 +62,7 @@ Deno.test("a builder writes exactly the fields it was given, nulls included", ()
   });
 });
 
-Deno.test("a builder's event_type wins over a stray one in the fields", () => {
+test("a builder's event_type wins over a stray one in the fields", () => {
   // Not a fresh literal, so the stray column passes the compile-time check.
   const stray = { ...base, event_type: "error", content: "{}" };
   assert.deepStrictEqual(

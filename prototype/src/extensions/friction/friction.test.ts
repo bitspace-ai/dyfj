@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import { captureRejection } from "../../../testing/assertions/captured.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { ManualClock } from "../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../testing/fakes/scripted-http-transport.ts";
 import {

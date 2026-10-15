@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchMessage } from "../providers/mod.ts";
 import {
   compressibleSlice,
@@ -23,14 +24,14 @@ const estimate = (messages: readonly WorkbenchMessage[]) =>
 
 // --- requestInputBudget ---
 
-Deno.test("requestInputBudget: the window less the transmitted output cap, then the margin", () => {
+test("requestInputBudget: the window less the transmitted output cap, then the margin", () => {
   assert.strictEqual(
     requestInputBudget(32_768, 4_096),
     Math.floor((32_768 - 4_096) * CONTEXT_FIT_MARGIN),
   );
 });
 
-Deno.test("requestInputBudget: a transmitted cap is reserved in full, however large", () => {
+test("requestInputBudget: a transmitted cap is reserved in full, however large", () => {
   // 200K window, 64K cap: 136K of input, not the 142.5K a quarter-window
   // bound would admit — the provider counts input + cap.
   assert.strictEqual(
@@ -41,7 +42,7 @@ Deno.test("requestInputBudget: a transmitted cap is reserved in full, however la
   assert.strictEqual(requestInputBudget(4_096, 8_192), 0);
 });
 
-Deno.test("requestInputBudget: no transmitted cap reserves the default, bounded on a small window", () => {
+test("requestInputBudget: no transmitted cap reserves the default, bounded on a small window", () => {
   assert.strictEqual(
     requestInputBudget(32_768, undefined),
     Math.floor((32_768 - DEFAULT_OUTPUT_RESERVE_TOKENS) * CONTEXT_FIT_MARGIN),
@@ -54,7 +55,7 @@ Deno.test("requestInputBudget: no transmitted cap reserves the default, bounded 
 
 // --- requestEstimateText ---
 
-Deno.test("requestEstimateText: tool definitions count toward the request", () => {
+test("requestEstimateText: tool definitions count toward the request", () => {
   const messages: WorkbenchMessage[] = [{ role: "user", content: "hi" }];
   const without = requestEstimateText("sys", messages, undefined);
   const withTools = requestEstimateText("sys", messages, [{
@@ -68,12 +69,12 @@ Deno.test("requestEstimateText: tool definitions count toward the request", () =
 
 // --- trimToolResult ---
 
-Deno.test("trimToolResult: a result within the allowance is untouched", () => {
+test("trimToolResult: a result within the allowance is untouched", () => {
   assert.strictEqual(trimToolResult("short", 1_000, "bash", 32_768), null);
   assert.strictEqual(trimToolResult("x".repeat(1_000), 1_000, "bash", 1), null);
 });
 
-Deno.test("trimToolResult: a cut that would save no more than the marker costs is not made", () => {
+test("trimToolResult: a cut that would save no more than the marker costs is not made", () => {
   assert.strictEqual(
     trimToolResult(
       "x".repeat(1_000 + TRIM_MARKER_ALLOWANCE_CHARS),
@@ -93,7 +94,7 @@ Deno.test("trimToolResult: a cut that would save no more than the marker costs i
   );
 });
 
-Deno.test("trimToolResult: keeps the prefix and states what was cut, with the tool's recovery hint", () => {
+test("trimToolResult: keeps the prefix and states what was cut, with the tool's recovery hint", () => {
   const trimmed = trimToolResult("a".repeat(5_000), 1_000, "read_file", 32_768);
   assert.ok(trimmed !== null);
   assert.deepStrictEqual(trimmed.keptChars, 1_000);
@@ -137,7 +138,7 @@ Deno.test("trimToolResult: keeps the prefix and states what was cut, with the to
   assert.deepStrictEqual(git.includes("piped"), false);
 });
 
-Deno.test("trimToolResult: never splits a surrogate pair", () => {
+test("trimToolResult: never splits a surrogate pair", () => {
   const content = "ab" + "😀".repeat(1_000);
   // Cutting at 3 would land between the first emoji's two code units.
   const trimmed = trimToolResult(content, 3, "bash", 100);
@@ -146,7 +147,7 @@ Deno.test("trimToolResult: never splits a surrogate pair", () => {
   assert.ok(trimmed.content.startsWith("ab\n\n["));
 });
 
-Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps reporting its original size", () => {
+test("trimToolResult: a result bounded when produced and shrunk later keeps reporting its original size", () => {
   const original = "r".repeat(10_000);
   const bounded = trimToolResult(original, 5_000, "read_file", 32_768)!;
   assert.deepStrictEqual(bounded.totalChars, 10_000);
@@ -171,7 +172,7 @@ Deno.test("trimToolResult: a result bounded when produced and shrunk later keeps
   assert.ok(shrunk.content.startsWith("r".repeat(1_024) + "\n\n[Workbench"));
 });
 
-Deno.test("trimToolResult: a result trimmed before is cut on any payload over the keep, with no allowance", () => {
+test("trimToolResult: a result trimmed before is cut on any payload over the keep, with no allowance", () => {
   // The marker is replaced, not added, so a 1,300-character payload shrinks
   // to the 1,024 fallback; untrimmed content of that size would not.
   const bounded = trimToolResultWithin(
@@ -196,7 +197,7 @@ Deno.test("trimToolResult: a result trimmed before is cut on any payload over th
   );
 });
 
-Deno.test("trimToolResult: a result whose own text ends like the marker is payload without engine provenance", () => {
+test("trimToolResult: a result whose own text ends like the marker is payload without engine provenance", () => {
   // A file or command output that happens to end with marker-shaped text
   // carries no `trimmedFrom`, so nothing is stripped and the reported size
   // is the real one: the suffix is cut like any other content.
@@ -213,7 +214,7 @@ Deno.test("trimToolResult: a result whose own text ends like the marker is paylo
   );
 });
 
-Deno.test("parseTrimmedResult: recognises only the marker at the very end", () => {
+test("parseTrimmedResult: recognises only the marker at the very end", () => {
   const trimmed = trimToolResult("p".repeat(3_000), 1_000, "bash", 32_768)!;
   assert.deepStrictEqual(parseTrimmedResult(trimmed.content), {
     payload: "p".repeat(1_000),
@@ -234,7 +235,7 @@ function turn(word: string, chars: number): WorkbenchMessage[] {
   ];
 }
 
-Deno.test("compressibleSlice: the longest prefix of whole turns within the budget, the rest returned", () => {
+test("compressibleSlice: the longest prefix of whole turns within the budget, the rest returned", () => {
   const elder = [
     ...turn("one", 400),
     ...turn("two", 400),
@@ -259,7 +260,7 @@ Deno.test("compressibleSlice: the longest prefix of whole turns within the budge
   );
 });
 
-Deno.test("compressibleSlice: a first turn over the budget yields nothing to compress", () => {
+test("compressibleSlice: a first turn over the budget yields nothing to compress", () => {
   const elder = [...turn("one", 4_000), ...turn("two", 400)];
   assert.deepStrictEqual(compressibleSlice(elder, 100, estimate, notSummary), {
     slice: [],
@@ -267,7 +268,7 @@ Deno.test("compressibleSlice: a first turn over the budget yields nothing to com
   });
 });
 
-Deno.test("compressibleSlice: a prefix that is only an earlier summary is nothing to compress", () => {
+test("compressibleSlice: a prefix that is only an earlier summary is nothing to compress", () => {
   const summary: WorkbenchMessage = { role: "user", content: "[summary]" };
   const elder = [summary, ...turn("one", 4_000)];
   assert.deepStrictEqual(
@@ -278,7 +279,7 @@ Deno.test("compressibleSlice: a prefix that is only an earlier summary is nothin
 
 // --- trimToolResultWithin ---
 
-Deno.test("trimToolResultWithin: the whole result, marker included, fits the bound", () => {
+test("trimToolResultWithin: the whole result, marker included, fits the bound", () => {
   for (
     const [total, max] of [[65_536, 35_000], [5_000, 1_024], [1_300, 1_024], [
       10_000,
@@ -314,7 +315,7 @@ Deno.test("trimToolResultWithin: the whole result, marker included, fits the bou
   );
 });
 
-Deno.test("trimToolResultWithin: a result already trimmed is cut on its payload and keeps its original size", () => {
+test("trimToolResultWithin: a result already trimmed is cut on its payload and keeps its original size", () => {
   const bounded = trimToolResultWithin(
     "y".repeat(10_000),
     5_000,
@@ -335,19 +336,19 @@ Deno.test("trimToolResultWithin: a result already trimmed is cut on its payload 
 
 // --- toolResultShareChars ---
 
-Deno.test("toolResultShareChars: the remaining window split among the calls left", () => {
+test("toolResultShareChars: the remaining window split among the calls left", () => {
   assert.strictEqual(toolResultShareChars(3_000, 3), 4_000);
   assert.strictEqual(toolResultShareChars(3_000, 1), 12_000);
 });
 
-Deno.test("toolResultShareChars: never below the floor, even with no room left", () => {
+test("toolResultShareChars: never below the floor, even with no room left", () => {
   assert.strictEqual(toolResultShareChars(0, 3), MIN_TOOL_RESULT_CHARS);
   assert.strictEqual(toolResultShareChars(-500, 1), MIN_TOOL_RESULT_CHARS);
 });
 
 // --- currentTurnStart ---
 
-Deno.test("currentTurnStart: the last user message; the head when there is none", () => {
+test("currentTurnStart: the last user message; the head when there is none", () => {
   assert.strictEqual(
     currentTurnStart([
       { role: "user", content: "a" },
@@ -378,7 +379,7 @@ function toolPair(id: string, chars: number): WorkbenchMessage[] {
   ];
 }
 
-Deno.test("shrinkToolResults: oldest first, stopping as soon as the request fits", () => {
+test("shrinkToolResults: oldest first, stopping as soon as the request fits", () => {
   const messages: WorkbenchMessage[] = [
     { role: "user", content: "q" },
     ...toolPair("t1", 8_000),
@@ -415,7 +416,7 @@ Deno.test("shrinkToolResults: oldest first, stopping as soon as the request fits
   assert.strictEqual(messages[2].content.length, 8_000);
 });
 
-Deno.test("shrinkToolResults: only the range it is given, and nothing when the request already fits", () => {
+test("shrinkToolResults: only the range it is given, and nothing when the request already fits", () => {
   const messages: WorkbenchMessage[] = [
     { role: "user", content: "q" },
     ...toolPair("old", 8_000),
@@ -443,7 +444,7 @@ Deno.test("shrinkToolResults: only the range it is given, and nothing when the r
   assert.deepStrictEqual(untouched.messages, messages);
 });
 
-Deno.test("shrinkToolResults: a second pass over shrunk results changes nothing", () => {
+test("shrinkToolResults: a second pass over shrunk results changes nothing", () => {
   const messages: WorkbenchMessage[] = [
     { role: "user", content: "q" },
     ...toolPair("t1", 8_000),

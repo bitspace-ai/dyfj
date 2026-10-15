@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
 import process from "node:process";
+import { test } from "node:test";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -108,7 +109,7 @@ async function warmAcpSessions() {
   return { map, state };
 }
 
-Deno.test("runtime close shuts down warm ACP sessions", async () => {
+test("runtime close shuts down warm ACP sessions", async () => {
   const { map, state } = await warmAcpSessions();
   await using started = await startServer("server-acp-close", {
     acpSessions: map,
@@ -119,7 +120,7 @@ Deno.test("runtime close shuts down warm ACP sessions", async () => {
   assert.deepStrictEqual(map.size, 0);
 });
 
-Deno.test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
+test("foreground SIGINT closes the server and reaps warm ACP sessions", async () => {
   const { map, state } = await warmAcpSessions();
   await using started = await startServer("server-sigint", {
     acpSessions: map,
@@ -138,7 +139,7 @@ Deno.test("foreground SIGINT closes the server and reaps warm ACP sessions", asy
   assert.deepStrictEqual(map.size, 0);
 });
 
-Deno.test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
+test("runtime/stop reaps warm ACP sessions then returns stopping", async () => {
   const { map, state } = await warmAcpSessions();
   let server: WorkbenchUnixServer | undefined;
   await using started = await startServer("server-stop", {
@@ -157,7 +158,7 @@ Deno.test("runtime/stop reaps warm ACP sessions then returns stopping", async ()
   assert.deepStrictEqual(map.size, 0);
 });
 
-Deno.test("an unknown method -> methodNotFound", async () => {
+test("an unknown method -> methodNotFound", async () => {
   await using started = await startServer("server-unknown-method");
   await using client = await dial(started.server);
   const error = await client.peer.request("does/not/exist").then(

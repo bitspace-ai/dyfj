@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type {
   LinearIssueCreationBinding,
   McpHttpServerConfig,
@@ -77,7 +78,7 @@ function callContext(
 }
 
 for (const id of ["mcp.linear.create_comment", "mcp.linear.save_comment"]) {
-  Deno.test(`isLinearCommentCommandId accepts ${id}`, () => {
+  test(`isLinearCommentCommandId accepts ${id}`, () => {
     assert.deepStrictEqual(isLinearCommentCommandId(id), true);
   });
 }
@@ -85,12 +86,12 @@ for (const id of ["mcp.linear.create_comment", "mcp.linear.save_comment"]) {
 for (
   const id of ["mcp.linear.get_issue", "mcp.other.save_comment", "save_comment"]
 ) {
-  Deno.test(`isLinearCommentCommandId rejects ${id}`, () => {
+  test(`isLinearCommentCommandId rejects ${id}`, () => {
     assert.deepStrictEqual(isLinearCommentCommandId(id), false);
   });
 }
 
-Deno.test("createLinearExtension resolves the Linear commands others call", () => {
+test("createLinearExtension resolves the Linear commands others call", () => {
   const getIssue = command("mcp.linear.get_issue", "allow");
   const listComments = command("mcp.linear.list_comments", "allow");
   const saveComment = command("mcp.linear.save_comment", "ask");
@@ -106,7 +107,7 @@ Deno.test("createLinearExtension resolves the Linear commands others call", () =
   assert.deepStrictEqual(linear.createComment, saveComment);
 });
 
-Deno.test("createLinearExtension leaves undiscovered commands absent", () => {
+test("createLinearExtension leaves undiscovered commands absent", () => {
   const { linear } = createLinearExtension([
     command("mcp.linear.get_issue", "allow"),
   ]);
@@ -114,7 +115,7 @@ Deno.test("createLinearExtension leaves undiscovered commands absent", () => {
   assert.deepStrictEqual(linear.createComment, undefined);
 });
 
-Deno.test("invoke runs the command under policy and receipts it", async () => {
+test("invoke runs the command under policy and receipts it", async () => {
   const createComment = command("mcp.linear.create_comment", "ask", {
     id: "comment-1",
   });
@@ -133,7 +134,7 @@ Deno.test("invoke runs the command under policy and receipts it", async () => {
   ]);
 });
 
-Deno.test("invoke rejects with the reason a denied call gives", async () => {
+test("invoke rejects with the reason a denied call gives", async () => {
   const createComment = command("mcp.linear.create_comment", "ask");
   const { linear } = createLinearExtension([createComment]);
   const events: EventInsert[] = [];
@@ -145,7 +146,7 @@ Deno.test("invoke rejects with the reason a denied call gives", async () => {
   assert.deepStrictEqual(events.length, 1);
 });
 
-Deno.test("invoke refuses a command outside the resolved Linear set", async () => {
+test("invoke refuses a command outside the resolved Linear set", async () => {
   const { linear } = createLinearExtension([]);
   await assert.rejects(() =>
     linear.invoke(
@@ -156,7 +157,7 @@ Deno.test("invoke refuses a command outside the resolved Linear set", async () =
   );
 });
 
-Deno.test("buildLinearIssueCreationCommand builds the bounded command", () => {
+test("buildLinearIssueCreationCommand builds the bounded command", () => {
   const built = buildLinearIssueCreationCommand({
     server,
     binding,
@@ -172,7 +173,7 @@ Deno.test("buildLinearIssueCreationCommand builds the bounded command", () => {
   ]);
 });
 
-Deno.test("buildLinearIssueCreationCommand refuses an unsupported schema", () => {
+test("buildLinearIssueCreationCommand refuses an unsupported schema", () => {
   assert.strictEqual(
     buildLinearIssueCreationCommand({
       server,

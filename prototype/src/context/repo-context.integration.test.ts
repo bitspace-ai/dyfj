@@ -8,9 +8,8 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { mock } from "node:test";
+import { describe, it, mock } from "node:test";
 import path from "node:path";
-import { describe, it } from "@std/testing/bdd";
 import { buildAskSystemPrompt, loadAskRepoContext } from "./repo-context.ts";
 
 describe("loadAskRepoContext", () => {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { ScriptedDnsResolver } from "./scripted-dns-resolver.ts";
 
-Deno.test("ScriptedDnsResolver answers from its script and records lookups", async () => {
+test("ScriptedDnsResolver answers from its script and records lookups", async () => {
   const resolver = new ScriptedDnsResolver({
     "a.example": { A: ["192.0.2.1"] },
   });
@@ -24,7 +25,7 @@ Deno.test("ScriptedDnsResolver answers from its script and records lookups", asy
   ]);
 });
 
-Deno.test("ScriptedDnsResolver fails a host scripted to fail", async () => {
+test("ScriptedDnsResolver fails a host scripted to fail", async () => {
   const resolver = new ScriptedDnsResolver({ "down.example": "failed" });
   assert.deepStrictEqual(await resolver.resolve("down.example", "A"), {
     ok: false,
@@ -32,7 +33,7 @@ Deno.test("ScriptedDnsResolver fails a host scripted to fail", async () => {
   });
 });
 
-Deno.test("an unavailable ScriptedDnsResolver answers nothing", async () => {
+test("an unavailable ScriptedDnsResolver answers nothing", async () => {
   const resolver = new ScriptedDnsResolver(
     { "a.example": { A: ["192.0.2.1"] } },
     { unavailable: true },
