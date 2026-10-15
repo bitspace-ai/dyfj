@@ -8,7 +8,7 @@
 // test.
 
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
 export const SOURCE_ROOTS = [
   "src",
@@ -120,10 +120,12 @@ export function discoverGoldenTests(root: string): string[] {
 //
 // - A file whose own source registers with `node:test` (it imports a
 //   registration or hook, or the whole module) runs under `node --test`.
+// - So does a file that imports a conformance kit (`testing/conformance/`):
+//   the kits register their cases with `node:test`, so a kit-only caller
+//   needs no marker of its own. This rule goes with the existing runner.
 // - A file whose own source calls the existing runtime's test function or
 //   imports `@std/testing/bdd` runs where it does today. So does a file with
-//   neither, such as a conformance-kit caller whose registrations live in the
-//   kit.
+//   none of these.
 // - A file with both fails discovery: its tests would be split across two
 //   runtimes, so it is converted whole or not at all.
 //
@@ -171,6 +173,24 @@ export function registersWithNodeTest(source: string): boolean {
   return false;
 }
 
+const staticImportPattern = /\bfrom\s*["']([^"']+)["']/g;
+
+/**
+ * Whether `source`, the text of the file at `path`, imports a conformance kit
+ * (a module under `testing/conformance/`), whose cases register with
+ * `node:test`. Relative specifiers are resolved against `path`, so a caller
+ * is found however it spells the way there.
+ */
+export function importsConformanceKit(path: string, source: string): boolean {
+  for (const match of source.matchAll(staticImportPattern)) {
+    const specifier = match[1];
+    if (!specifier.startsWith(".")) continue;
+    const resolved = posix.join(posix.dirname(path), specifier);
+    if (/(?:^|\/)testing\/conformance\//.test(resolved)) return true;
+  }
+  return false;
+}
+
 /** Whether `source` itself registers through the existing runtime's runner. */
 export function registersWithLegacyRunner(source: string): boolean {
   return legacyRegistrationPattern.test(source);
@@ -178,11 +198,13 @@ export function registersWithLegacyRunner(source: string): boolean {
 
 /** The runtime `path`'s tests run on. Throws when the file registers with both. */
 export function testRuntime(path: string, source: string): TestRuntime {
-  const node = registersWithNodeTest(source);
+  const node = registersWithNodeTest(source) ||
+    importsConformanceKit(path, source);
   if (node && registersWithLegacyRunner(source)) {
     throw new Error(
-      `${path} registers tests with both node:test and the existing runner ` +
-        "(its test function or @std/testing/bdd); a test file runs on one " +
+      `${path} registers tests with both node:test (directly or through a ` +
+        "conformance kit) and the existing runner (its test function or " +
+        "@std/testing/bdd); a test file runs on one " +
         "runtime, so convert all of its registrations together",
     );
   }

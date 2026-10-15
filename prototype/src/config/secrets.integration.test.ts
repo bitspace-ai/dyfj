@@ -3,8 +3,7 @@
 // logic is covered by `secrets.test.ts` with an in-memory env.
 import assert from "node:assert/strict";
 import process from "node:process";
-// On the host's runner until the resolver releases its pipes on timeout (BIT-653).
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { runSecretCommand } from "./secrets.ts";
 
 /** A real PATH so a child with a replaced environment can still find external binaries. */
@@ -105,17 +104,14 @@ describe("runSecretCommand — env passthrough", () => {
   });
 });
 
-// The timeout case runs in a suite of its own. On timeout runSecretCommand
-// kills the resolver and stops awaiting its output by design, so a stuck
-// resolver can never hold the boot. Here the `sleep` grandchild keeps the piped
-// stdout and stderr open for about 5 s, so the abandoned output read is still
-// pending when the case ends. That is the behavior under test, so this suite
-// opts out of both sanitizers; the other suites keep them.
-describe({
-  name: "runSecretCommand (real subprocess), abandoned resolver output",
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, () => {
+// On timeout runSecretCommand kills the resolver and stops awaiting its output
+// by design, so a stuck resolver can never hold the boot. Here the `sleep`
+// grandchild outlives the kill and keeps the write ends of the piped stdout and
+// stderr open for about 5 s. The resolver must still release its own ends of
+// both pipes, or the runtime holds them for as long as any descendant lives;
+// the per-file handle check fails this file if it does not. The orphaned
+// `sleep` is deliberately left running.
+describe("runSecretCommand (real subprocess), abandoned resolver output", () => {
   it("times out without hanging on a slow resolver", async () => {
     const res = await runSecretCommand(
       ["bash", "-c", "sleep 5; printf LEAK"],

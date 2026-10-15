@@ -18,6 +18,7 @@
 // writing a definition.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { EventInsert } from "../../src/store/mod.ts";
 import {
   type CommandCall,
@@ -87,38 +88,38 @@ export interface ToolConformanceOptions {
 /** Register the kit's tests for every command in `catalog`. */
 export function toolConformance(options: ToolConformanceOptions): void {
   const commands = options.catalog.list();
-  Deno.test(`tool conformance: ${options.name}: the catalog is not empty`, () => {
+  test(`tool conformance: ${options.name}: the catalog is not empty`, () => {
     assert.ok(commands.length > 0, "a catalog under test must hold a command");
   });
   for (const command of commands) {
-    Deno.test(
+    test(
       `tool conformance: ${options.name}: ${command.id}`,
       async (t) => {
-        await t.step("its schema is valid", () => {
+        await t.test("its schema is valid", () => {
           assert.deepStrictEqual(schemaProblems(command), []);
         });
-        await t.step(
+        await t.test(
           "invalid arguments are rejected before the executor runs",
           async () => {
             await assertInvalidArgumentsRejected(command);
           },
         );
-        await t.step("its effect classification is declared", () => {
+        await t.test("its effect classification is declared", () => {
           assert.deepStrictEqual(envelopeProblems(command), []);
         });
-        await t.step(
+        await t.test(
           "its policy verdict under strict and operator matches its effects",
           () => {
             assertPolicyMatchesEffects(command);
           },
         );
-        await t.step(
+        await t.test(
           "its redaction is applied to the event payload",
           async () => {
             await assertRedactionApplied(command);
           },
         );
-        await t.step(
+        await t.test(
           "exactly one tool_call event is written per invocation",
           async () => {
             await assertOneEventPerInvocation(command);

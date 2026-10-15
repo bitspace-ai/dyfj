@@ -30,7 +30,7 @@
 // plain-text model's).
 
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { setImmediate } from "node:timers";
 import {
   createProviderRegistry,
@@ -267,7 +267,7 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
     fixture: KitFixture,
     extra: (run: KitRun) => void = () => {},
   ) => {
-    Deno.test(label(name), async () => {
+    test(label(name), async () => {
       const run = await runKitFixture(adapter, fixture);
       assertExpectation(run, fixture);
       for (const request of run.transport.requests) {
@@ -410,12 +410,12 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
     caseTest(name, fixture);
   }
 
-  Deno.test(label("the plain-text model passes validateBaseUrl"), () => {
+  test(label("the plain-text model passes validateBaseUrl"), () => {
     assert.ok(adapter.validateBaseUrl(fixtures.plainText.model).ok);
     assert.ok(adapter.providers.has(fixtures.plainText.model.provider));
   });
 
-  Deno.test(label("an abort before dispatch sends nothing"), async () => {
+  test(label("an abort before dispatch sends nothing"), async () => {
     const transport = new ScriptedHttpTransport();
     const controller = new AbortController();
     controller.abort();
@@ -451,7 +451,7 @@ export function providerAdapterConformance(subject: ProviderKitSubject): void {
       ? PROVIDER_HEADER_TIMEOUT_MS
       : PROVIDER_BUFFERED_HEADER_TIMEOUT_MS;
     const mode = stream ? "streaming" : "buffered";
-    Deno.test(
+    test(
       label(`a ${mode} request fails at its header deadline`),
       async () => {
         // The header deadline is a `setTimeout`; only that is faked.

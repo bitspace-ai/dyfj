@@ -1,7 +1,10 @@
 // The per-file Node handle check (`testing/node-handle-check.ts`) run the way
 // the lanes run it (`node-test-lane.ts`): a file that leaves a `node:net`
 // server, an interval or a child process live fails with its file and the
-// leaked types named, and does not hang the run; a clean file passes.
+// leaked types named, and does not hang the run; a clean file passes. A file
+// whose last test writes a burst to stdout passes: the runner's channel to
+// its parent is the file's own stdout, so a write still in flight on it is
+// not a leak. Every test a failing file ran is still reported.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +33,21 @@ test("closes what it opens", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   await new Promise((resolve) => server.close(resolve));
   clearInterval(setInterval(() => {}, 1000));
+});
+`,
+  "stdout-burst.mjs": `
+import { test } from "node:test";
+for (let i = 0; i < 20; i++) test(\`passes \${i}\`, () => {});
+test("writes a burst to stdout last", () => {
+  process.stdout.write("x".repeat(4 * 1024 * 1024) + "\\n");
+});
+`,
+  "stdout-burst-leaked-interval.mjs": `
+import { test } from "node:test";
+for (let i = 0; i < 20; i++) test(\`passes \${i}\`, () => {});
+test("writes a burst to stdout and leaves an interval running", () => {
+  process.stdout.write("x".repeat(4 * 1024 * 1024) + "\\n");
+  setInterval(() => {}, 1000);
 });
 `,
   "leaked-server.mjs": `
@@ -74,11 +92,41 @@ async function run(file: string): Promise<{ code: number; output: string }> {
   return { code: await result.code, output };
 }
 
+/** `output` without the fixtures' stdout bursts, for assertion messages. */
+function readable(output: string): string {
+  return output.replace(/x{80,}/g, "<burst>");
+}
+
 test("a clean file passes the handle check", { timeout: 30_000 }, async () => {
   const { code, output } = await run("clean.mjs");
   assert.equal(code, 0, output);
   assert.doesNotMatch(output, /dyfj node handle check/);
   assert.match(output, /fixture node --test: ok \| 1 passed \| 0 failed/);
+});
+
+test("a file whose last test writes a burst to stdout passes", {
+  timeout: 30_000,
+}, async () => {
+  const { code, output } = await run("stdout-burst.mjs");
+  assert.equal(code, 0, readable(output));
+  assert.doesNotMatch(output, /dyfj node handle check/);
+  assert.match(output, /fixture node --test: ok \| 21 passed \| 0 failed/);
+});
+
+test("a leaking file still reports every test it ran", {
+  timeout: 30_000,
+}, async () => {
+  const { code, output } = await run("stdout-burst-leaked-interval.mjs");
+  assert.notEqual(code, 0, readable(output));
+  assert.match(
+    output,
+    /dyfj node handle check: \S*stdout-burst-leaked-interval\.mjs left 1 resource\(s\) live after its tests: Timeout\./,
+  );
+  assert.match(
+    output,
+    /fixture node --test: FAILED \| 21 passed \| 1 failed/,
+    readable(output),
+  );
 });
 
 for (

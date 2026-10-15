@@ -529,9 +529,10 @@ gets no key and fails closed, and it sends `SIGKILL` to the _immediate_ resolver
 process. It does **not** reap the resolver's process _tree_ — Deno exposes no
 process-group primitive — so a resolver configured as a **shell wrapper** can
 leave a descendant running past the timeout. That descendant **cannot inject
-into the runtime** (the env var is never set and the output pipe is abandoned),
-but it could keep a vault session unlocked or write bytes to a pipe no one
-reads. **Prefer a direct-binary resolver** — `op read` is a single process with
+into the runtime**: the env var is never set, and at the timeout the runtime
+closes its own ends of the resolver's stdout and stderr pipes, so it holds no
+pipe for the descendant and keeps nothing the descendant writes afterwards. It
+could still keep a vault session unlocked. **Prefer a direct-binary resolver** — `op read` is a single process with
 no descendant tree; a shell-wrapper resolver is responsible for cleaning up its
 own children.
 
@@ -1186,8 +1187,10 @@ toolchain.
 The three test lanes each run on two paths while tests move onto `node:test`
 (decision D32, `specs/03-testing.md` §1). Each discovered file goes by its own
 content (`prototype/scripts/test-files.ts`): a file that registers a test or
-hook with `node:test` runs under `node --test`, one process per file, after the
-lane's `deno test` subset; every other file runs under `deno test` as before; a
+hook with `node:test`, or imports a conformance kit from
+`prototype/testing/conformance/` (the kits register with `node:test`), runs
+under `node --test`, one process per file, after the lane's `deno test`
+subset; every other file runs under `deno test` as before; a
 file that registers with both fails discovery, naming the file. Deno's
 sanitizers do not see `node:` resources (a `node:net` server or socket, a
 `node:child_process` child), so they catch only timers among the resources
@@ -1195,7 +1198,10 @@ tests use today, and nothing in a `node:test` file. The Node subset instead
 preloads a per-file handle check (`prototype/testing/node-handle-check.ts`):
 a file that leaves a server, socket, timer or child process live after its
 last test fails, with the file and the leaked resource types named, and its
-process exits so the run cannot hang. The check is per file, coarser than a
+process exits so the run cannot hang. It first waits for the file's own
+stdout and stderr to flush, so the runner's in-flight output to its parent is
+not reported as a leak, and the exit waits briefly so the runner's report of
+the file's tests is not cut off. The check is per file, coarser than a
 per-test sanitizer. Each runner fails unless `node` is Node 26, reports an
 empty subset as `0 files`, and prints a count line for its Node files beside
 `deno test`'s own (`test.unit node --test: ok | 52 passed | 0 failed | ...`),
@@ -2178,3 +2184,15 @@ Document revisions only. Code and behavior changes are tracked in
   describes the two test frameworks that coexist during the move to
   `node:test`, in place of `Deno.test` as the only one. Node 26 joins the
   integration lane's requirements.
+- 2026-10-15 - The aggregate gate's two-path description adds the routing rule
+  for conformance-kit callers: a file that imports a kit from
+  `prototype/testing/conformance/` runs under `node --test`, because the kits
+  now register with `node:test`.
+- 2026-10-15 - The secrets resolver's "fail-closed on timeout" guarantee says
+  that the runtime closes its ends of a timed-out resolver's output pipes,
+  replacing the claim that the pipe is abandoned.
+- 2026-10-15 - The aggregate gate's description of the per-file Node handle
+  check says that it waits for the file's own stdout and stderr to flush
+  before it compares, so the runner's in-flight output is not reported as a
+  leak, and that a failing file exits after a bounded grace period, so the
+  runner's report of its tests is not cut off.

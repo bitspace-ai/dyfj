@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   BoundedMatcher,
   DEFAULT_REGEX_BUDGET_MS,
@@ -7,8 +8,7 @@ import {
   RegexUnavailable,
 } from "./bounded-regex.ts";
 
-// On the host's runner until the regex worker runs under Node (BIT-651).
-Deno.test("BoundedMatcher returns the indices of matching lines", async () => {
+test("BoundedMatcher returns the indices of matching lines", async () => {
   const matcher = new BoundedMatcher("^b");
   try {
     assert.deepStrictEqual(await matcher.matchLines(["a", "b1", "c", "b2"]), [
@@ -22,13 +22,13 @@ Deno.test("BoundedMatcher returns the indices of matching lines", async () => {
   }
 });
 
-Deno.test("BoundedMatcher answers an empty batch without a worker", async () => {
+test("BoundedMatcher answers an empty batch without a worker", async () => {
   const matcher = new BoundedMatcher("x", { specifier: "data:," });
   assert.deepStrictEqual(await matcher.matchLines([]), []);
   matcher.close();
 });
 
-Deno.test("BoundedMatcher rejects an invalid or overlong pattern synchronously", () => {
+test("BoundedMatcher rejects an invalid or overlong pattern synchronously", () => {
   assert.throws(() => new BoundedMatcher("("), SyntaxError);
   assert.throws(
     () => new BoundedMatcher("a".repeat(MAX_PATTERN_LENGTH + 1)),
@@ -38,7 +38,7 @@ Deno.test("BoundedMatcher rejects an invalid or overlong pattern synchronously",
   );
 });
 
-Deno.test("BoundedMatcher starts with the full default budget", () => {
+test("BoundedMatcher starts with the full default budget", () => {
   const matcher = new BoundedMatcher("a");
   assert.deepStrictEqual(matcher.remainingMs, DEFAULT_REGEX_BUDGET_MS);
   matcher.close();
@@ -47,7 +47,7 @@ Deno.test("BoundedMatcher starts with the full default budget", () => {
 // A pattern that actually runs out its budget mid-match is exercised through
 // grep_files in tools/builtin/file.test.ts ("a catastrophic pattern is cut off instead
 // of hanging"). Here an exhausted budget is reached deterministically.
-Deno.test("BoundedMatcher with no budget left refuses to match and stays spent", async () => {
+test("BoundedMatcher with no budget left refuses to match and stays spent", async () => {
   const matcher = new BoundedMatcher("a", { budgetMs: 0 });
   try {
     assert.deepStrictEqual(matcher.remainingMs, 0);
@@ -58,7 +58,37 @@ Deno.test("BoundedMatcher with no budget left refuses to match and stays spent",
   }
 });
 
-Deno.test("BoundedMatcher fails closed when the worker cannot start", async () => {
+// A worker that answers once and then has no listener left, so its thread
+// ends cleanly while the matcher is idle.
+const ANSWERS_ONCE_THEN_EXITS = "data:text/javascript," + encodeURIComponent(`
+import { parentPort } from "node:worker_threads";
+parentPort.once("message", ({ id }) => {
+  parentPort.postMessage({ id, hits: [0] });
+});
+`);
+
+test("BoundedMatcher fails fast as unavailable once its idle worker has exited", async () => {
+  const budgetMs = 3_000;
+  const matcher = new BoundedMatcher("a", {
+    budgetMs,
+    specifier: ANSWERS_ONCE_THEN_EXITS,
+  });
+  try {
+    assert.deepStrictEqual(await matcher.matchLines(["a"]), [0]);
+    // Long enough for the thread to end; the bound under test is that the
+    // next call does not wait out the budget once it has.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const started = performance.now();
+    await assert.rejects(() => matcher.matchLines(["a"]), RegexUnavailable);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < budgetMs / 3, `expected ${elapsed} < ${budgetMs / 3}`);
+    await assert.rejects(() => matcher.matchLines(["a"]), RegexUnavailable);
+  } finally {
+    matcher.close();
+  }
+});
+
+test("BoundedMatcher fails closed when the worker cannot start", async () => {
   const matcher = new BoundedMatcher("a", { specifier: "not a url" });
   try {
     await assert.rejects(() => matcher.matchLines(["a"]), RegexUnavailable);

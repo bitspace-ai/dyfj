@@ -19,6 +19,31 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The per-file Node handle check no longer fails a file for its own
+  in-flight test output.** Under `node --test`, a file's stdout is the
+  runner's channel to its parent, and on macOS pipe writes are asynchronous.
+  When that output was still being written as the file's last test ended,
+  the check counted the pending write (`SimpleWriteWrap`) as a leaked
+  resource and failed a clean file, intermittently. The check now waits for
+  the file's stdout and stderr to flush before it compares. A pending write
+  to any other stream is still a leak. A file that does leak now sets a
+  failing exit code and exits after a bounded grace period, with its output
+  flushed, instead of exiting at once: the hard exit had cut off the
+  runner's report of the file's other tests, so a leaking file's passing
+  tests went missing from the lane's count.
+
+- **A timed-out secrets resolver no longer holds pipes open in the runtime.**
+  On a resolver timeout the runtime kills the resolver and stops waiting for
+  its output, so a stuck resolver can never hold the boot. It did not close its
+  own ends of the resolver's stdout and stderr pipes, though. A resolver that
+  left a descendant running, such as a shell wrapper, kept both pipe fds open
+  in the runtime, and kept buffering whatever the descendant wrote, for as long
+  as the descendant lived. The runtime now closes both pipes and stops
+  collecting output at the timeout; the timeout reason and the fail-closed
+  result are unchanged. `config/secrets.integration.test.ts` now registers
+  with `node:test` and runs under `node --test`, where the per-file handle
+  check failed it on the two leaked pipes before this fix (decision D32).
+
 - **The launcher's pseudo-terminal tests no longer hang on macOS when
   `python3` is Python 3.9.** The tests ran the launcher under Python's
   `pty.spawn`. On macOS, Python 3.9's copy loop reaches an empty `select`
@@ -199,16 +224,55 @@ README are tracked separately in its Revision history section.
 - **The `cli/`, `config/` and `budget/` tests, with `cli.test.ts`, register
   with `node:test` and run under `node --test`, with the per-file leak
   check.** The registrations codemod moved 38 files onto Node, with 188 runner
-  registrations and 26 bdd imports, and the lane totals are unchanged. Five
-  files stay on the existing runner. `config/env.test.ts` and
-  `config/env.integration.test.ts` call a conformance kit and wait for the
-  kits. `config/secrets.integration.test.ts` waits for the secret resolver to
-  release its output pipes when it times out: under the handle check, its
-  timeout case leaves both pipes held by the resolver's surviving descendant.
-  `cli/launcher/grants.test.ts` and `grants.integration.test.ts` wait for
-  the launcher's grant readers, which still read files and paths through the
-  existing runtime's global, to move onto `node:` builtins. The
-  `runtime.neutral` count falls from 2,177 to 1,989 (decision D32).
+  registrations and 26 bdd imports. Every case still runs; the integration
+  lane's count falls by two because the existing runner's bdd adds a
+  synthetic test for each file with a top-level hook (the `status` and `stop`
+  command integration tests), which `node:test` does not. Two files stay on
+  the existing runner: `cli/launcher/grants.test.ts` and
+  `grants.integration.test.ts` wait for the launcher's grant readers, which
+  still read files and paths through the existing runtime's global, to move
+  onto `node:` builtins. The `runtime.neutral` count falls from 2,140 to
+  1,952 (decision D32).
+
+- **The conformance kits and every test file that calls one run under
+  `node --test`.** The seven kits under `prototype/testing/conformance/`
+  (clock, DNS resolver, env, HTTP transport, provider adapter, store, tool)
+  registered their cases with the existing runtime's test function, so each
+  caller ran them in its own process and could not move without them. The
+  kits and their callers now register with `node:test` together, with the
+  per-file leak check: 16 callers, including four that import a kit by a
+  shorter relative path than `testing/conformance/` (the tool kit's own
+  tests, the scripted HTTP transport fake's tests, the synthetic provider
+  adapter and the text-stats example tool). The tool kit's
+  per-command steps become `node:test` subtests. Lane routing now sends a file
+  that imports a kit to `node --test` even when it registers nothing of its
+  own, resolving relative imports against the caller's path, and a kit caller
+  that also registers on the existing runner fails discovery as mixed
+  (decision D32, `specs/03-testing.md` §1). The real `node:dns` resolver's
+  conformance cases no longer run in the integration lane: under
+  `node --test` nothing sandboxes the resolver, so its old "ungranted" mode
+  cannot be asserted, and real lookups would make the lane depend on the
+  network. They are reported skipped unless `DYFJ_TEST_REAL_DNS=1` is set,
+  which runs them against the system resolver; the denied-lookup mapping stays
+  pinned by injected errors in `dns-system.test.ts`. The `runtime.neutral`
+  count falls from 2,171 to 2,140.
+
+- **The bounded regex matcher runs in a `node:worker_threads` worker, so
+  `grep_files` works under Node as well as the current runtime.** The matcher
+  ran in a web `Worker`, a global Node does not have, so under Node every
+  search failed closed with "regex matcher unavailable". It now starts a
+  `node:worker_threads` worker from the same embedded `data:` URL source,
+  with `parentPort` in place of `self`. The hard time budget, termination of
+  a worker that overruns it, and failing closed when no worker can start are
+  unchanged, and the worker is still not a file a workspace edit can rewrite.
+  A worker that ends on its own, even between searches, now fails the next
+  search at once as unavailable; before, it waited out the budget and was
+  reported as too expensive. The four test files that grep through the matcher
+  (`kernel/bounded-regex.test.ts`, `tools/builtin/file.test.ts`,
+  `file-hardening.test.ts` and `file-search.integration.test.ts`) now
+  register with `node:test` and run under `node --test` with the per-file
+  leak check. The `runtime.neutral` count falls from 2,177 to 2,171
+  (decision D32).
 
 - **The `kernel/` and `tools/` tests register with `node:test` and run under
   `node --test`, with the per-file leak check.** A new codemod,

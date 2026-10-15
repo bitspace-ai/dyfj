@@ -42,12 +42,74 @@ test("a file on the existing runner, or with neither, stays there", () => {
       `import { mock } from "node:test";\n${LEGACY_TEST}("a", () => {});`,
       `import { type Mock, mock } from "node:test";\n${LEGACY_TEST}("a", () => {});`,
       `import type { TestContext } from "node:test";\n${LEGACY_TEST}("a", () => {});`,
-      // A conformance-kit caller: the kit registers the tests.
-      'import { runKit } from "../testing/conformance/kit.ts";\nrunKit();',
       "",
     ]
   ) {
     assert.equal(testRuntime("src/a.test.ts", source), "deno", source);
+  }
+});
+
+// A conformance kit under `testing/conformance/` registers its cases with
+// `node:test`, so a file that imports one runs on node even when it registers
+// nothing of its own.
+const KIT_IMPORT = 'import { runKit } from "../../testing/conformance/kit.ts";';
+
+test("a conformance-kit caller runs on node", () => {
+  for (
+    const source of [
+      `${KIT_IMPORT}\nrunKit();`,
+      `import {\n  runKit,\n} from '../testing/conformance/kit.ts';\nrunKit();`,
+      `${KIT_IMPORT}\nimport { test } from "node:test";\nrunKit();\ntest("a", () => {});`,
+      `${KIT_IMPORT}\nimport { mock } from "node:test";\nrunKit();`,
+    ]
+  ) {
+    assert.equal(testRuntime("src/dir/a.test.ts", source), "node", source);
+  }
+  // Relative specifiers resolve against the caller's own path.
+  for (
+    const [path, specifier] of [
+      ["testing/providers/synthetic/a.test.ts", "../../conformance/kit.ts"],
+      ["testing/conformance/kit.test.ts", "./kit.ts"],
+    ]
+  ) {
+    assert.equal(
+      testRuntime(path, `import { runKit } from "${specifier}";\nrunKit();`),
+      "node",
+      path,
+    );
+  }
+});
+
+test("an import that only looks like a kit does not route a file", () => {
+  for (
+    const [path, specifier] of [
+      ["src/dir/a.test.ts", "../../testing/fakes/kit.ts"],
+      ["src/dir/a.test.ts", "./conformance/kit.ts"],
+      ["src/dir/a.test.ts", "../../../other/testing-conformance/kit.ts"],
+    ]
+  ) {
+    assert.equal(
+      testRuntime(path, `import { x } from "${specifier}";`),
+      "deno",
+      specifier,
+    );
+  }
+});
+
+test("a conformance-kit caller that also registers on the existing runner fails discovery", () => {
+  for (
+    const source of [
+      `${KIT_IMPORT}\nrunKit();\n${LEGACY_TEST}("a", () => {});`,
+      `${KIT_IMPORT}\nimport { describe, it } from "${BDD}";`,
+    ]
+  ) {
+    assert.throws(
+      () => testRuntime("src/dir/mixed.test.ts", source),
+      (error: Error) =>
+        error.message.startsWith(
+          "src/dir/mixed.test.ts registers tests with both",
+        ),
+    );
   }
 });
 
@@ -104,6 +166,11 @@ test("no file in the prototype tree registers with both runtimes", () => {
   const partition = partitionByRuntime(".", discoverTestSources("."));
   assert.ok(partition.node.includes("scripts/test-routing.test.ts"));
   assert.ok(partition.deno.includes("scripts/test-files.test.ts"));
+  // Kit-only callers, with no registrations of their own.
+  assert.ok(partition.node.includes("src/kernel/clock.test.ts"));
+  assert.ok(
+    partition.node.includes("testing/providers/synthetic/conformance.test.ts"),
+  );
 });
 
 test("registersWithNodeTest ignores type-only imports", () => {

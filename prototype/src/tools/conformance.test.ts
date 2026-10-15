@@ -6,6 +6,7 @@
 // and calls are injected.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { toolConformance } from "../../testing/conformance/tool.ts";
 import { parseMcpServersConfig } from "../config/mod.ts";
 import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
@@ -95,8 +96,7 @@ const external = await buildExternalMcpCommands(
   },
 );
 
-// Stays on the host's test function until the tool kit moves with it (BIT-650).
-Deno.test("the kit's external MCP fixture derives every command shape", () => {
+test("the kit's external MCP fixture derives every command shape", () => {
   assert.deepStrictEqual(external.commands.map((command) => command.id), [
     "mcp.linear.get_issue",
     "mcp.linear.create_comment",
@@ -106,7 +106,7 @@ Deno.test("the kit's external MCP fixture derives every command shape", () => {
   ]);
 });
 
-Deno.test("the kit covers every builtin tool", () => {
+test("the kit covers every builtin tool", () => {
   assert.deepStrictEqual(builtins.list().map((command) => command.id), [
     "memory.read",
     "memory.search",

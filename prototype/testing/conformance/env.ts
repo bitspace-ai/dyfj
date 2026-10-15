@@ -6,6 +6,7 @@
 // `""`, and a write is visible to the next read.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { MutableEnv } from "../../src/config/env.ts";
 
 export interface EnvConformanceSubject {
@@ -19,7 +20,7 @@ export interface EnvConformanceSubject {
 
 export function envConformance(subject: EnvConformanceSubject): void {
   const run = (label: string, body: (env: MutableEnv) => void) => {
-    Deno.test(`Env conformance (${subject.name}): ${label}`, () => {
+    test(`Env conformance (${subject.name}): ${label}`, () => {
       const env = subject.make();
       try {
         body(env);

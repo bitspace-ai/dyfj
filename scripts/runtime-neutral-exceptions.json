@@ -385,11 +385,6 @@
     "reason": "One test name: it pins that the fixture profile neither reads nor forwards the Deno cache variable (DENO_DIR), which its Deno CLI argv still depends on; it changes with the fixture agent under S3 of decision D32."
   },
   {
-    "path": "prototype/src/kernel/bounded-regex.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/providers/registry/registry.test.ts",
     "count": 7,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -461,7 +456,7 @@
   },
   {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
-    "count": 3,
+    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -487,16 +482,6 @@
   {
     "path": "prototype/src/store/sessions.test.ts",
     "count": 19,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/conformance.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/web/dns.integration.test.ts",
-    "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -545,46 +530,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/conformance/clock.ts",
-    "count": 1,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/dns-resolver.ts",
-    "count": 1,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/env.ts",
-    "count": 1,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/http-transport.ts",
-    "count": 1,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/provider-adapter.ts",
-    "count": 4,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/store.ts",
-    "count": 3,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/tool.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/conformance/tool.ts",
-    "count": 2,
-    "reason": "Test registrations in a shared conformance suite whose support code is on node: builtins; converted to node:test with the other registrations under decision D32."
-  },
-  {
     "path": "prototype/testing/fakes/fake-io.test.ts",
     "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -602,11 +547,6 @@
   {
     "path": "prototype/testing/fakes/scripted-dns-resolver.test.ts",
     "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/scripted-http-transport.test.ts",
-    "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -628,16 +568,6 @@
     "path": "prototype/testing/golden/run.ts",
     "count": 8,
     "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
-  },
-  {
-    "path": "prototype/testing/providers/synthetic/conformance.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/tools/text-stats/tool.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "schema/codegen.test.ts",

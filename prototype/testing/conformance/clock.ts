@@ -15,6 +15,7 @@
 // the fake does not refuse one (its own tests pin this).
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { Clock } from "../../src/kernel/clock.ts";
 
 export interface ClockConformanceSubject {
@@ -25,7 +26,7 @@ export interface ClockConformanceSubject {
 
 export function clockConformance(subject: ClockConformanceSubject): void {
   const run = (label: string, body: (clock: Clock) => void) => {
-    Deno.test(`Clock conformance (${subject.name}): ${label}`, () => {
+    test(`Clock conformance (${subject.name}): ${label}`, () => {
       body(subject.make());
     });
   };

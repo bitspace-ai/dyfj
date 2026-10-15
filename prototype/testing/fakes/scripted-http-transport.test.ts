@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { httpTransportConformance } from "../conformance/http-transport.ts";
 import {
   type RecordedRequest,
@@ -35,7 +36,7 @@ httpTransportConformance({
   },
 });
 
-Deno.test("ScriptedHttpTransport runs each exchange's request assertions", async () => {
+test("ScriptedHttpTransport runs each exchange's request assertions", async () => {
   const fake = new ScriptedHttpTransport([{
     expect: (request) => assert.deepStrictEqual(request.body, "expected"),
     respond: { body: "ok" },
@@ -48,7 +49,7 @@ Deno.test("ScriptedHttpTransport runs each exchange's request assertions", async
   );
 });
 
-Deno.test("ScriptedHttpTransport rejects a call beyond its script", async () => {
+test("ScriptedHttpTransport rejects a call beyond its script", async () => {
   const fake = new ScriptedHttpTransport();
   await assert.rejects(
     () => fake.fetch("http://fake.invalid/x", { method: "POST" }),
@@ -58,7 +59,7 @@ Deno.test("ScriptedHttpTransport rejects a call beyond its script", async () => 
   );
 });
 
-Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
+test("ScriptedHttpTransport reports unused exchanges", async () => {
   const fake = new ScriptedHttpTransport([
     { respond: { body: "a" } },
     { respond: { body: "b" } },
@@ -73,7 +74,7 @@ Deno.test("ScriptedHttpTransport reports unused exchanges", async () => {
   );
 });
 
-Deno.test("ScriptedHttpTransport passes a function responder's Response through", async () => {
+test("ScriptedHttpTransport passes a function responder's Response through", async () => {
   const fake = new ScriptedHttpTransport([{
     respond: (request) => new Response(`echo ${request.body}`),
   }]);
@@ -82,7 +83,7 @@ Deno.test("ScriptedHttpTransport passes a function responder's Response through"
   fake.assertDone();
 });
 
-Deno.test("ScriptedHttpTransport.fetchLike reads a Request input into the port's shape", async () => {
+test("ScriptedHttpTransport.fetchLike reads a Request input into the port's shape", async () => {
   const fake = new ScriptedHttpTransport([{ respond: { body: "ok" } }]);
   const response = await fake.fetchLike(
     new Request("http://fake.invalid/r", {

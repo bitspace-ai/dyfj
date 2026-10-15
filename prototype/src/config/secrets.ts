@@ -194,8 +194,8 @@ export function buildResolverEnv(
  * close against a timer rather than merely killing the child and waiting: a
  * resolver that spawns a descendant holding the piped stdout/stderr fds could
  * keep the child's streams open past a SIGKILL of the parent, so on timeout we
- * kill, stop waiting, and return — the boot is never held hostage to a stuck
- * resolver. Only a clean exit with non-empty stdout yields a value; everything
+ * kill, release our ends of both pipes, stop waiting, and return — the boot is
+ * never held hostage to a stuck resolver, and the runtime holds no fd for it. Only a clean exit with non-empty stdout yields a value; everything
  * else is a value-free failure reason.
  */
 export const runSecretCommand: RunSecretCommand = (
@@ -233,7 +233,8 @@ export const runSecretCommand: RunSecretCommand = (
     };
 
     const chunks: Uint8Array[] = [];
-    child.stdout?.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+    const collect = (chunk: Uint8Array) => chunks.push(chunk);
+    child.stdout?.on("data", collect);
     // Captured stderr is never used (it could echo the pointer): drain it.
     child.stderr?.resume();
 
@@ -244,7 +245,12 @@ export const runSecretCommand: RunSecretCommand = (
         // Already exited between the timer firing and this running.
       }
       // Do NOT wait for the streams — a pipe-holding descendant could keep
-      // them open.
+      // them open. Release our ends instead: without this the runtime keeps
+      // both pipe fds, and buffers whatever the descendant writes, for as long
+      // as any descendant lives.
+      child.stdout?.off("data", collect);
+      child.stdout?.destroy();
+      child.stderr?.destroy();
       finish({
         ok: false,
         reason: `timed out after ${timeoutMs}ms (locked or unavailable)`,

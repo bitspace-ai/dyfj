@@ -1,14 +1,16 @@
 // Conformance suite for the `DnsResolver` port (`src/tools/web/dns.ts`).
 //
 // The `ScriptedDnsResolver` fake runs it in the unit lane in both modes. The
-// real `systemDnsResolver` runs it in the integration lane in whichever mode
-// the lane's net grant allows. Both must agree on what the web
+// real `systemDnsResolver` runs it in "resolving" mode from
+// `dns.integration.test.ts`, skipped unless that file's opt-in variable is
+// set. Both must agree on what the web
 // tools' address check relies on: a lookup never throws, an answer carries
 // addresses of the requested family, a name that does not exist answers with
 // no records, and a lookup that gets no answer says so instead of answering
 // empty.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { DnsLookup, DnsResolver } from "../../src/tools/web/dns.ts";
 
 /** A name that can never exist (RFC 6761 reserves `.invalid`). */
@@ -23,6 +25,11 @@ export interface DnsResolverConformanceSubject {
    */
   mode: "resolving" | "ungranted";
   resolvableHost: string;
+  /**
+   * When set, every case is registered skipped with this reason, so a subject
+   * that cannot run here is reported rather than left out.
+   */
+  skip?: string;
 }
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/;
@@ -34,8 +41,9 @@ export function dnsResolverConformance(
     label: string,
     body: (resolver: DnsResolver) => Promise<void>,
   ) => {
-    Deno.test(
+    test(
       `DnsResolver conformance (${subject.name}, ${subject.mode}): ${label}`,
+      { skip: subject.skip ?? false },
       () => body(subject.make()),
     );
   };
