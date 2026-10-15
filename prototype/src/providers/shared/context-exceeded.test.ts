@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { classifyContextExceeded } from "./context-exceeded.ts";
 
 const LLAMA_SERVER = JSON.stringify({
@@ -10,14 +11,14 @@ const LLAMA_SERVER = JSON.stringify({
   },
 });
 
-Deno.test("classifyContextExceeded: llama-server's rejection, with its counts", () => {
+test("classifyContextExceeded: llama-server's rejection, with its counts", () => {
   assert.deepStrictEqual(classifyContextExceeded(400, LLAMA_SERVER), {
     requestedTokens: 82366,
     limitTokens: 32768,
   });
 });
 
-Deno.test("classifyContextExceeded: OpenAI's context_length_exceeded, with its counts", () => {
+test("classifyContextExceeded: OpenAI's context_length_exceeded, with its counts", () => {
   const body = JSON.stringify({
     error: {
       message: "This model's maximum context length is 128000 tokens. " +
@@ -33,7 +34,7 @@ Deno.test("classifyContextExceeded: OpenAI's context_length_exceeded, with its c
   });
 });
 
-Deno.test("classifyContextExceeded: Anthropic's prompt-too-long, with its counts", () => {
+test("classifyContextExceeded: Anthropic's prompt-too-long, with its counts", () => {
   const body = JSON.stringify({
     type: "error",
     error: {
@@ -47,7 +48,7 @@ Deno.test("classifyContextExceeded: Anthropic's prompt-too-long, with its counts
   });
 });
 
-Deno.test("classifyContextExceeded: Gemini's input-token-count rejection, with its counts", () => {
+test("classifyContextExceeded: Gemini's input-token-count rejection, with its counts", () => {
   const body = JSON.stringify({
     error: {
       code: 400,
@@ -62,7 +63,7 @@ Deno.test("classifyContextExceeded: Gemini's input-token-count rejection, with i
   });
 });
 
-Deno.test("classifyContextExceeded: a rejection without counts still classifies, with none reported", () => {
+test("classifyContextExceeded: a rejection without counts still classifies, with none reported", () => {
   assert.deepStrictEqual(
     classifyContextExceeded(413, "the prompt exceeds the context length"),
     {},
@@ -73,7 +74,7 @@ Deno.test("classifyContextExceeded: a rejection without counts still classifies,
   );
 });
 
-Deno.test("classifyContextExceeded: an unrelated 400 is not overflow", () => {
+test("classifyContextExceeded: an unrelated 400 is not overflow", () => {
   assert.strictEqual(
     classifyContextExceeded(
       400,
@@ -87,12 +88,12 @@ Deno.test("classifyContextExceeded: an unrelated 400 is not overflow", () => {
   );
 });
 
-Deno.test("classifyContextExceeded: a server error is never overflow, whatever it says", () => {
+test("classifyContextExceeded: a server error is never overflow, whatever it says", () => {
   assert.strictEqual(classifyContextExceeded(500, LLAMA_SERVER), null);
   assert.strictEqual(classifyContextExceeded(503, "context length"), null);
 });
 
-Deno.test("classifyContextExceeded: absurd counts are dropped, the verdict stands", () => {
+test("classifyContextExceeded: absurd counts are dropped, the verdict stands", () => {
   const body = "request (999999999999 tokens) exceeds the available " +
     "context size (32768 tokens)";
   assert.deepStrictEqual(classifyContextExceeded(400, body), {

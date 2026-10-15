@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import {
   chatReply,
   conversation,
@@ -156,7 +157,7 @@ async function rows(fit: FitRun) {
 
 // ─── tool results bounded against the window ─────────────────────────────────
 
-Deno.test("three parallel 64 KiB reads on a 32K window: every result is bounded and no request exceeds the window", async () => {
+test("three parallel 64 KiB reads on a 32K window: every result is bounded and no request exceeds the window", async () => {
   const fit = await fitTurn(
     [
       toolReply([
@@ -249,7 +250,7 @@ function overWindowHistory(resultChars: number): WorkbenchMessage[] {
   return history;
 }
 
-Deno.test("a session whose history is already over the window completes its next turn", async () => {
+test("a session whose history is already over the window completes its next turn", async () => {
   // Three 60,000-character results (the event column's cap) sum to ~45K
   // tokens on a 32K window. Nothing elder exists to compress: the one
   // prior turn is inside the verbatim tail, so only shrinking can save it.
@@ -331,7 +332,7 @@ const TINY_WINDOW: ModelSeed = {
   max_output_tokens: 256,
 };
 
-Deno.test("fit compresses elder prose when there are no tool results to shrink", async () => {
+test("fit compresses elder prose when there are no tool results to shrink", async () => {
   // Four prose turns: load-time compression summarizes the first two, and
   // the two kept verbatim still overfill the window, so the fit step
   // compresses once more before the first call.
@@ -403,7 +404,7 @@ function strictProvider(ratio: number, limit: number): ScriptedExchange {
   };
 }
 
-Deno.test("a llama-server context-size rejection is classified and recovered by refitting", async () => {
+test("a llama-server context-size rejection is classified and recovered by refitting", async () => {
   // The history fits by estimate (~17.5K of a 23K budget), so no fit runs
   // before the first call; the provider counts 2.5 times as many tokens
   // and refuses. Its rejection carries both counts, the refit scales the
@@ -447,7 +448,7 @@ Deno.test("a llama-server context-size rejection is classified and recovered by 
   });
 });
 
-Deno.test("a rejection with nothing left to trim fails as context overflow naming the window", async () => {
+test("a rejection with nothing left to trim fails as context overflow naming the window", async () => {
   const fit = await fitTurn([LLAMA_SERVER_REJECTION], {
     prompt: "a short question",
   });
@@ -477,7 +478,7 @@ Deno.test("a rejection with nothing left to trim fails as context overflow namin
   );
 });
 
-Deno.test("the fit step never sends a request over the window on a tool follow-up", async () => {
+test("the fit step never sends a request over the window on a tool follow-up", async () => {
   // One read that fits on its own, then a bash-sized result: each follow-up
   // call is measured before it goes out, not only the first.
   const fit = await fitTurn(
@@ -508,7 +509,7 @@ Deno.test("the fit step never sends a request over the window on a tool follow-u
 
 // ─── the fit measures what the adapter sends ─────────────────────────────────
 
-Deno.test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
+test("an adapter that sends only the prompt is sized by the prompt: a long history neither compresses nor overflows", async () => {
   // Gemini carries no transcript and no tools on the wire, so the seeded
   // history (which the transcript estimate would put far over a 40,000-token
   // window) costs nothing; the turn goes out and completes.
@@ -530,7 +531,7 @@ Deno.test("an adapter that sends only the prompt is sized by the prompt: a long 
 
 // ─── a fit that cannot reach the budget is a failure, not a fitted event ─────
 
-Deno.test("trimming that still leaves the request over the window fails without a contextFitted event", async () => {
+test("trimming that still leaves the request over the window fails without a contextFitted event", async () => {
   // Three results shrink to their markers, and the fixed prefix plus the
   // markers still exceed a 4,000-token window's budget: the turn fails
   // before any call, and no event claims the request was made to fit.
@@ -561,7 +562,7 @@ Deno.test("trimming that still leaves the request over the window fails without 
 
 // ─── recovery retries are fitted before they go out ──────────────────────────
 
-Deno.test("an overflow-recovery plan is fitted before its retry is sent", async () => {
+test("an overflow-recovery plan is fitted before its retry is sent", async () => {
   // The injected plan keeps a 60,000-character tool result in its verbatim
   // tail; the retry must shrink it rather than send it over the window.
   const plan: WorkbenchMessage[] = [
@@ -606,7 +607,7 @@ Deno.test("an overflow-recovery plan is fitted before its retry is sent", async 
 
 // ─── the compression input is fitted to the compressor's window ──────────────
 
-Deno.test("an elder larger than the compressor's window is compressed in passes, each request within the window", async () => {
+test("an elder larger than the compressor's window is compressed in passes, each request within the window", async () => {
   // Twelve prose turns of ~1,000 tokens on an 8,000-token model that is also
   // its own compressor: no single compression request can carry the elder,
   // so it is compressed from its oldest turns in passes until the request
@@ -691,7 +692,7 @@ Deno.test("an elder larger than the compressor's window is compressed in passes,
   );
 });
 
-Deno.test("an adapter that sends only the prompt is never proactively compressed, even with a local compressor at hand", async () => {
+test("an adapter that sends only the prompt is never proactively compressed, even with a local compressor at hand", async () => {
   // Four prior turns cross the 50% trigger of a 40,000-token window by the
   // transcript estimate, and a local tier-0 row could compress them; but
   // Gemini sends none of that history, so compressing would only persist a
@@ -748,7 +749,7 @@ function rejectThenTruncate(
   ];
 }
 
-Deno.test("a refit retry that hits the output cap delivers the partial with its cut-off tool plan stripped", async () => {
+test("a refit retry that hits the output cap delivers the partial with its cut-off tool plan stripped", async () => {
   const fit = await fitTurn(
     rejectThenTruncate({ prompt_tokens: 3_000, completion_tokens: 4_096 }),
     {
@@ -771,7 +772,7 @@ Deno.test("a refit retry that hits the output cap delivers the partial with its 
   assert.deepStrictEqual(fit.frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("a refit retry that still overflows the window fails structured", async () => {
+test("a refit retry that still overflows the window fails structured", async () => {
   const fit = await fitTurn(
     rejectThenTruncate({ prompt_tokens: 32_000, completion_tokens: 500 }),
     {
@@ -796,7 +797,7 @@ Deno.test("a refit retry that still overflows the window fails structured", asyn
   });
 });
 
-Deno.test("a count-less rejection of the refit retry fails with the learned window and the retry's size", async () => {
+test("a count-less rejection of the refit retry fails with the learned window and the retry's size", async () => {
   // The first rejection states a 20,000-token limit below the catalog's
   // 32,768; the second states nothing. The failure names the learned
   // window and the retry's fitted size, not the catalog window and the
@@ -841,7 +842,7 @@ Deno.test("a count-less rejection of the refit retry fails with the learned wind
   });
 });
 
-Deno.test("a refit retry's length stop is classified against the window the rejection taught", async () => {
+test("a refit retry's length stop is classified against the window the rejection taught", async () => {
   // Catalog window 32,768; the rejection states a 20,000-token limit. The
   // retry stops with 18,000 in + 2,000 out: exhaustion by the catalog
   // window, overflow by the real one. The real one wins, in the event and
@@ -884,7 +885,7 @@ Deno.test("a refit retry's length stop is classified against the window the reje
 
 // ─── a continuation above the raw window check is fitted, not refused ────────
 
-Deno.test("a continuation the fit can make fit is retried even where the raw transcript check read it as doomed", async () => {
+test("a continuation the fit can make fit is retried even where the raw transcript check read it as doomed", async () => {
   // 12,000-token window. The history's 26,000-character result and a
   // 22,000-character partial put the continuation over 98% of the window
   // by the transcript estimate; shrinking that result makes it fit the
@@ -924,7 +925,7 @@ Deno.test("a continuation the fit can make fit is retried even where the raw tra
 
 // ─── results before a forced conclusion are sized for that request ───────────
 
-Deno.test("a result before a forced conclusion is sized against the request without tool definitions", async () => {
+test("a result before a forced conclusion is sized against the request without tool definitions", async () => {
   // A 12,000-token window and a one-step cap: the step's follow-up is the
   // forced conclusion, which carries no tool catalog. A 31,000-character
   // read fits that request but not one with the catalog, so it reaches the
@@ -955,7 +956,7 @@ Deno.test("a result before a forced conclusion is sized against the request with
   assertEveryRequestFits(fit.run, 12_000);
 });
 
-Deno.test("a Gemini context-size rejection fails as context overflow without a retry", async () => {
+test("a Gemini context-size rejection fails as context overflow without a retry", async () => {
   // Gemini sends only the prompt, so a refit has nothing to shrink: the
   // classified rejection ends the turn as a structured overflow after one
   // request, rather than resending the same prompt.

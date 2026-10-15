@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   buildHistoryOmissionNotice,
   DomainError,
@@ -8,7 +9,7 @@ import {
   summarizeError,
 } from "./turn.ts";
 
-Deno.test("persisted history omission notice: [case 25] renders the exact code-owned notice without event values", () => {
+test("persisted history omission notice: [case 25] renders the exact code-owned notice without event values", () => {
   const omission = historyOmissionForDelivery({
     detectedInHistory: 2,
     malformedToolRecords: 1,
@@ -69,14 +70,14 @@ class TestDomainError extends DomainError {
   }
 }
 
-Deno.test("summarizeError — DomainError (safe by construction): passes a short message through unchanged", () => {
+test("summarizeError — DomainError (safe by construction): passes a short message through unchanged", () => {
   assert.strictEqual(
     summarizeError(new TestDomainError("budget exceeded: $1.23 > $1.00")),
     "budget exceeded: $1.23 > $1.00",
   );
 });
 
-Deno.test("summarizeError — DomainError (safe by construction): caps an oversized message with a fixed provenance marker", () => {
+test("summarizeError — DomainError (safe by construction): caps an oversized message with a fixed provenance marker", () => {
   // The marker is the literal "DomainError", not the subclass name: the
   // subclass name would come off the object (`.constructor.name`), which is
   // a writable property and therefore a payload channel.
@@ -94,7 +95,7 @@ Deno.test("summarizeError — DomainError (safe by construction): caps an oversi
   );
 });
 
-Deno.test("summarizeError — foreign errors (unknown provenance): a plain Error renders as class + byte count only, even for a short message", () => {
+test("summarizeError — foreign errors (unknown provenance): a plain Error renders as class + byte count only, even for a short message", () => {
   // "instanceof Error proves nothing" — a plain Error is exactly what a
   // caught driver/dependency error looks like, so it gets no passthrough
   // at any size, not just oversized ones.
@@ -102,7 +103,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a plain Error
   assert.strictEqual(s, "[Error, 4 bytes]");
 });
 
-Deno.test("summarizeError — foreign errors (unknown provenance): no prefix of an oversized foreign message survives, not even a short excerpt", () => {
+test("summarizeError — foreign errors (unknown provenance): no prefix of an oversized foreign message survives, not even a short excerpt", () => {
   // The regression this guards: the old size-based policy would forward a
   // MAX_ERROR_SUMMARY_BYTES-byte PREFIX of any message, foreign or not — so
   // "the full string is absent" is not sufficient evidence of no leak.
@@ -116,7 +117,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): no prefix of 
   );
 });
 
-Deno.test("summarizeError — foreign errors (unknown provenance): a non-Error thrown value renders by typeof, not by message", () => {
+test("summarizeError — foreign errors (unknown provenance): a non-Error thrown value renders by typeof, not by message", () => {
   const stringThrow = "a bare string throw";
   assert.strictEqual(
     summarizeError(stringThrow),
@@ -128,7 +129,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a non-Error t
   );
 });
 
-Deno.test("summarizeError — foreign errors (unknown provenance): a custom Error subclass that does NOT extend DomainError is still foreign — and its subclass name is not echoed", () => {
+test("summarizeError — foreign errors (unknown provenance): a custom Error subclass that does NOT extend DomainError is still foreign — and its subclass name is not echoed", () => {
   // The subclass name would come off the object; the label is the fixed
   // literal "Error" regardless of what the prototype chain calls itself.
   class UnrelatedError extends Error {}
@@ -140,7 +141,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a custom Erro
   );
 });
 
-Deno.test("summarizeError — foreign errors (unknown provenance): a foreign Error that spoofs .name to match a DomainError class is still foreign", () => {
+test("summarizeError — foreign errors (unknown provenance): a foreign Error that spoofs .name to match a DomainError class is still foreign", () => {
   // .name is a plain mutable string property any Error can be given; only
   // instanceof (checked by callers, not by summarizeError itself, but the
   // same principle applies here) reflects the real prototype chain.
@@ -154,7 +155,7 @@ Deno.test("summarizeError — foreign errors (unknown provenance): a foreign Err
   );
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a shadowed constructor cannot smuggle a payload through the label", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): a shadowed constructor cannot smuggle a payload through the label", () => {
   // `instanceof` walks the prototype chain; `.constructor` is an ordinary
   // own-property that can be reassigned independently. The label must be
   // the fixed literal, never `.constructor.name`.
@@ -167,13 +168,13 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
   assert.ok(!s.includes("FOREIGN_PAYLOAD"));
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a null constructor does not break the never-throws contract", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): a null constructor does not break the never-throws contract", () => {
   const err = new Error("boom");
   Object.defineProperty(err, "constructor", { value: null });
   assert.strictEqual(summarizeError(err), "[Error, 4 bytes]");
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a throwing message getter does not break the never-throws contract", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): a throwing message getter does not break the never-throws contract", () => {
   const err = new Error("unused");
   Object.defineProperty(err, "message", {
     get() {
@@ -183,7 +184,7 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
   assert.strictEqual(summarizeError(err), "[Error, 0 bytes]");
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a non-Error object with a throwing toString does not break the never-throws contract", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): a non-Error object with a throwing toString does not break the never-throws contract", () => {
   const hostile = {
     toString() {
       throw new Error("hostile toString");
@@ -192,7 +193,7 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
   assert.strictEqual(summarizeError(hostile), "[object, 0 bytes]");
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): a multibyte DomainError message truncates on a byte-safe boundary within the stated cap", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): a multibyte DomainError message truncates on a byte-safe boundary within the stated cap", () => {
   // Each "é" is 2 UTF-8 bytes; 500 is even, but shift the boundary with a
   // leading ASCII byte so the cut lands mid-character. The excerpt must be
   // genuinely <= MAX_ERROR_SUMMARY_BYTES — a permissive decode would swap
@@ -211,7 +212,7 @@ Deno.test("summarizeError — adversarial candidates (no string is ever read off
   );
 });
 
-Deno.test("summarizeError — adversarial candidates (no string is ever read off the object): an oversized DomainError with a shadowed constructor keeps the fixed marker", () => {
+test("summarizeError — adversarial candidates (no string is ever read off the object): an oversized DomainError with a shadowed constructor keeps the fixed marker", () => {
   const err = new TestDomainError("y".repeat(10_000));
   Object.defineProperty(err, "constructor", {
     value: { name: "FORGED_CLASS_NAME" },

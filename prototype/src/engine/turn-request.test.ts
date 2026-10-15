@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   PAID_ESCALATION_NOT_APPROVED,
   PAID_ESCALATION_REMOTE_DENIED,
@@ -15,7 +16,7 @@ function match(actual: unknown, expected: Record<string, any>): void {
   assert.partialDeepStrictEqual(actual as Record<string, unknown>, expected);
 }
 
-Deno.test("resolveTurnFromBody selects the fixture runner only for a loopback turn", () => {
+test("resolveTurnFromBody selects the fixture runner only for a loopback turn", () => {
   match(resolveTurnFromBody({ prompt: "hi", runner: "fixture" }, true), {
     runtimeInput: { runner: { kind: "acp", profile: "fixture" } },
   });
@@ -24,7 +25,7 @@ Deno.test("resolveTurnFromBody selects the fixture runner only for a loopback tu
   });
 });
 
-Deno.test("resolveTurnFromBody selects the Codex ChatGPT runner only for a trusted loopback workspace", () => {
+test("resolveTurnFromBody selects the Codex ChatGPT runner only for a trusted loopback workspace", () => {
   match(
     resolveTurnFromBody({ prompt: "hi", runner: "codex-chatgpt" }, true, {
       trustWorkspaceInstructions: true,
@@ -50,7 +51,7 @@ Deno.test("resolveTurnFromBody selects the Codex ChatGPT runner only for a trust
   );
 });
 
-Deno.test("resolveTurnFromBody allows the Codex ChatGPT route with session resume", () => {
+test("resolveTurnFromBody allows the Codex ChatGPT route with session resume", () => {
   match(
     resolveTurnFromBody(
       { prompt: "hi", runner: "codex-chatgpt", sessionId: SESSION_ID },
@@ -67,7 +68,7 @@ Deno.test("resolveTurnFromBody allows the Codex ChatGPT route with session resum
   );
 });
 
-Deno.test("resolveTurnFromBody keeps external runner selection distinct from model routing", () => {
+test("resolveTurnFromBody keeps external runner selection distinct from model routing", () => {
   match(
     resolveTurnFromBody({
       prompt: "hi",
@@ -81,27 +82,27 @@ Deno.test("resolveTurnFromBody keeps external runner selection distinct from mod
   );
 });
 
-Deno.test("resolveTurnFromBody carries a valid client turn id into the runtime input", () => {
+test("resolveTurnFromBody carries a valid client turn id into the runtime input", () => {
   match(resolveTurnFromBody({ prompt: "hi", turnId: TURN_ID }, true), {
     runtimeInput: { turnId: TURN_ID },
   });
 });
 
-Deno.test("resolveTurnFromBody rejects a malformed turn id", () => {
+test("resolveTurnFromBody rejects a malformed turn id", () => {
   match(resolveTurnFromBody({ prompt: "hi", turnId: "turn-1" }, true), {
     status: 400,
     error: "turnId must be a UUID",
   });
 });
 
-Deno.test("resolveTurnFromBody: explicit approvePaidInference true opts in", () => {
+test("resolveTurnFromBody: explicit approvePaidInference true opts in", () => {
   match(
     resolveTurnFromBody({ prompt: "hi", approvePaidInference: true }, true),
     { approvePaidInference: true },
   );
 });
 
-Deno.test("resolveTurnFromBody: explicit approvePaidInference false overrides the standing default", () => {
+test("resolveTurnFromBody: explicit approvePaidInference false overrides the standing default", () => {
   match(
     resolveTurnFromBody({ prompt: "hi", approvePaidInference: false }, true, {
       approvePaidDefault: true,
@@ -110,27 +111,27 @@ Deno.test("resolveTurnFromBody: explicit approvePaidInference false overrides th
   );
 });
 
-Deno.test("resolveTurnFromBody: loopback inherits approvePaidDefault when the request omits opt-in", () => {
+test("resolveTurnFromBody: loopback inherits approvePaidDefault when the request omits opt-in", () => {
   match(
     resolveTurnFromBody({ prompt: "hi" }, true, { approvePaidDefault: true }),
     { approvePaidInference: true },
   );
 });
 
-Deno.test("resolveTurnFromBody: non-loopback never inherits the standing default", () => {
+test("resolveTurnFromBody: non-loopback never inherits the standing default", () => {
   match(
     resolveTurnFromBody({ prompt: "hi" }, false, { approvePaidDefault: true }),
     { approvePaidInference: false },
   );
 });
 
-Deno.test("resolveTurnFromBody: loopback without a standing default stays off", () => {
+test("resolveTurnFromBody: loopback without a standing default stays off", () => {
   match(resolveTurnFromBody({ prompt: "hi" }, true), {
     approvePaidInference: false,
   });
 });
 
-Deno.test("resolveTurnFromBody applies a budget override on loopback only", () => {
+test("resolveTurnFromBody applies a budget override on loopback only", () => {
   const budget = { sessionLimitUsd: 2, perCallLimitUsd: 0.5, dailyLimitUsd: 9 };
   match(resolveTurnFromBody({ prompt: "hi", budget }, true), {
     runtimeInput: budget,
@@ -152,7 +153,7 @@ Deno.test("resolveTurnFromBody applies a budget override on loopback only", () =
   );
 });
 
-Deno.test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
+test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
   assert.deepStrictEqual(parseBudgetOverride([]), {
     error: "budget must be an object",
   });
@@ -164,7 +165,7 @@ Deno.test("parseBudgetOverride rejects non-objects and out-of-range values", () 
   });
 });
 
-Deno.test("resolveTurnFromBody validates the session id shape", () => {
+test("resolveTurnFromBody validates the session id shape", () => {
   match(resolveTurnFromBody({ prompt: "hi", sessionId: "../etc" }, true), {
     status: 400,
     error: "invalid session id",
@@ -174,14 +175,14 @@ Deno.test("resolveTurnFromBody validates the session id shape", () => {
   });
 });
 
-Deno.test("paidEscalationVerdict denies remote callers even when they opt in", () => {
+test("paidEscalationVerdict denies remote callers even when they opt in", () => {
   assert.deepStrictEqual(paidEscalationVerdict(false, true), {
     decision: "deny",
     reason: PAID_ESCALATION_REMOTE_DENIED,
   });
 });
 
-Deno.test("paidEscalationVerdict denies a loopback caller that did not opt in", () => {
+test("paidEscalationVerdict denies a loopback caller that did not opt in", () => {
   assert.deepStrictEqual(paidEscalationVerdict(true, false), {
     decision: "deny",
     reason: PAID_ESCALATION_NOT_APPROVED,

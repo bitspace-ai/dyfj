@@ -4,7 +4,7 @@
  * `.name`, so a foreign error cannot claim a class and ride its treatment.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { enginePorts } from "../../testing/builders/engine.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
@@ -52,7 +52,7 @@ async function failWith(err: unknown) {
   };
 }
 
-Deno.test("a foreign Error named after ContextWindowOverflowError does not get its raw message written", async () => {
+test("a foreign Error named after ContextWindowOverflowError does not get its raw message written", async () => {
   const hugePayload = "SELECT ".repeat(20_000);
   const spoofed = new Error(hugePayload);
   spoofed.name = "ContextWindowOverflowError";
@@ -68,7 +68,7 @@ Deno.test("a foreign Error named after ContextWindowOverflowError does not get i
   assert.strictEqual(turnError, spoofed);
 });
 
-Deno.test("a real ContextWindowOverflowError is recorded as a length stop", async () => {
+test("a real ContextWindowOverflowError is recorded as a length stop", async () => {
   const overflow = new ContextWindowOverflowError({
     modelSlug: "local-chat",
     contextWindow: 8192,

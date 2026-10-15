@@ -4,9 +4,10 @@
  * result.
  */
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { toolStepToMessages } from "./agent-loop.ts";
 
-Deno.test("toolStepToMessages emits the assistant tool-call turn followed by linked tool results", () => {
+test("toolStepToMessages emits the assistant tool-call turn followed by linked tool results", () => {
   const toolCalls = [
     {
       id: "call-memory",
@@ -43,7 +44,7 @@ Deno.test("toolStepToMessages emits the assistant tool-call turn followed by lin
   });
 });
 
-Deno.test("toolStepToMessages emits one tool message per result, preserving order and errors", () => {
+test("toolStepToMessages emits one tool message per result, preserving order and errors", () => {
   const messages = toolStepToMessages(
     "",
     [
@@ -81,7 +82,7 @@ Deno.test("toolStepToMessages emits one tool message per result, preserving orde
   });
 });
 
-Deno.test("toolStepToMessages marks failed results isError so wire formats can flag them", () => {
+test("toolStepToMessages marks failed results isError so wire formats can flag them", () => {
   const messages = toolStepToMessages(
     "",
     [{ id: "c1", name: "read_file", arguments: {} }],

@@ -221,6 +221,14 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `providers/`, `engine/` and `contract/` tests register with
+  `node:test` and run under `node --test`, with the per-file leak check.** The
+  registrations codemod moved 54 files onto Node, with 319 runner
+  registrations and 24 bdd imports, and flagged none for hand conversion. Every
+  case still runs and the lane totals are unchanged. No file stays on the
+  existing runner, and no converted file leaves a resource live. The
+  `runtime.neutral` count falls from 1,952 to 1,633 (decision D32).
+
 - **The `cli/`, `config/` and `budget/` tests, with `cli.test.ts`, register
   with `node:test` and run under `node --test`, with the per-file leak
   check.** The registrations codemod moved 38 files onto Node, with 188 runner

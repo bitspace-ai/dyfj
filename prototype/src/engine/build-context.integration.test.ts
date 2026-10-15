@@ -6,6 +6,7 @@
  * `memoryRecallNegotiated` frame on the turn's event channel.
  */
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { startLoopbackHttp } from "../../testing/servers/mcp-server.ts";
@@ -34,7 +35,7 @@ function fixtureServer(): McpServer {
   return server;
 }
 
-Deno.test("recall negotiation reaches the client as a structured frame", async () => {
+test("recall negotiation reaches the client as a structured frame", async () => {
   const mcp = createMcpHandler(fixtureServer, { legacy: "reject" });
   const http = await startLoopbackHttp((request) => mcp.fetch(request));
   try {
@@ -81,7 +82,7 @@ Deno.test("recall negotiation reaches the client as a structured frame", async (
   }
 });
 
-Deno.test("a remote turn is never offered external-memory recall", async () => {
+test("a remote turn is never offered external-memory recall", async () => {
   const fakes = enginePorts({
     env: { DYFJ_MEMORY_MCP_URL: "http://127.0.0.1:9/mcp" },
   });

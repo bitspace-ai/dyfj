@@ -1,7 +1,7 @@
 // Unit tests for mapping registry tool names to provider wire names.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { toolWireNames } from "./tool-names.ts";
 
 describe("tool wire names", () => {

@@ -6,6 +6,7 @@
  */
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { engineServices, LOCAL_MODEL } from "../../testing/builders/engine.ts";
 import {
   type AcpRunnerSelection,
@@ -109,7 +110,7 @@ function dispatch(
 
 const NO_RUNNER = "No external-agent runner is configured";
 
-Deno.test("fails closed when an explicit ACP route has no runner bound", async () => {
+test("fails closed when an explicit ACP route has no runner bound", async () => {
   // A direct caller that omits the runner service gets the fixed error,
   // never a lazily loaded runner.
   const error = await captureRejection(() =>
@@ -122,7 +123,7 @@ Deno.test("fails closed when an explicit ACP route has no runner bound", async (
   assert.deepStrictEqual(error.message, NO_RUNNER);
 });
 
-Deno.test("fails closed when model selection routes to ACP with no runner bound", async () => {
+test("fails closed when model selection routes to ACP with no runner bound", async () => {
   await assert.rejects(
     () =>
       dispatch({
@@ -134,7 +135,7 @@ Deno.test("fails closed when model selection routes to ACP with no runner bound"
   );
 });
 
-Deno.test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
+test("rejects the Codex ChatGPT route without explicit workspace trust", async () => {
   const runner = recordingRunner();
   await assert.rejects(
     () =>
@@ -149,7 +150,7 @@ Deno.test("rejects the Codex ChatGPT route without explicit workspace trust", as
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 
-Deno.test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
+test("rejects the Codex ChatGPT route via model selection without explicit workspace trust", async () => {
   const runner = recordingRunner();
   await assert.rejects(
     () =>
@@ -164,7 +165,7 @@ Deno.test("rejects the Codex ChatGPT route via model selection without explicit 
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 
-Deno.test("rejects an unapproved explicit Codex ChatGPT runner request with PaidEscalationDeclinedError", async () => {
+test("rejects an unapproved explicit Codex ChatGPT runner request with PaidEscalationDeclinedError", async () => {
   const runner = recordingRunner();
   await assert.rejects(
     () =>
@@ -177,7 +178,7 @@ Deno.test("rejects an unapproved explicit Codex ChatGPT runner request with Paid
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 
-Deno.test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
+test("allows an explicit Codex ChatGPT runner request when paid escalation is confirmed", async () => {
   const runner = recordingRunner();
   const result = await dispatch({
     runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -193,7 +194,7 @@ Deno.test("allows an explicit Codex ChatGPT runner request when paid escalation 
   assert.deepStrictEqual(result.text, "stubbed");
 });
 
-Deno.test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedError", async () => {
+test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedError", async () => {
   const runner = recordingRunner();
   await assert.rejects(
     () =>
@@ -207,7 +208,7 @@ Deno.test("rejects an unapproved tier-2 ACP request with PaidEscalationDeclinedE
   assert.deepStrictEqual(runner.calls.length, 0);
 });
 
-Deno.test("allows a tier-2 ACP request when paid escalation is confirmed", async () => {
+test("allows a tier-2 ACP request when paid escalation is confirmed", async () => {
   const runner = recordingRunner();
   const result = await dispatch({
     prompt: "test approved paid",
@@ -225,7 +226,7 @@ Deno.test("allows a tier-2 ACP request when paid escalation is confirmed", async
   assert.deepStrictEqual(result.text, "stubbed");
 });
 
-Deno.test("routes an ACP model selection to the external agent runner", async () => {
+test("routes an ACP model selection to the external agent runner", async () => {
   const runner = recordingRunner();
   const result = await dispatch({
     prompt: "test acp dispatch",
@@ -240,7 +241,7 @@ Deno.test("routes an ACP model selection to the external agent runner", async ()
   assert.deepStrictEqual(result.receipt, "stubbed receipt: fixture");
 });
 
-Deno.test("allows resumed session turns on the external agent runner", async () => {
+test("allows resumed session turns on the external agent runner", async () => {
   // The engine hands the resumed session id to the runner; the ACP runtime's
   // own tests cover how it persists and resumes that session.
   const runner = recordingRunner();

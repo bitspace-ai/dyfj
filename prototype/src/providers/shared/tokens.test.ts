@@ -1,7 +1,7 @@
 // Unit tests for token estimates and time-per-output-token timings.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { estimateTextTokens, withTimePerOutputToken } from "./tokens.ts";
 
 describe("estimateTextTokens", () => {

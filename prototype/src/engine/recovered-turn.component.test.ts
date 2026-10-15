@@ -6,7 +6,7 @@
  * run a transcript retry and reports thinking tokens separately.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   anthropicStop,
   chatReply,
@@ -104,7 +104,7 @@ async function modelResponse(run: EngineRun, frames: WorkbenchRuntimeEvent[]) {
 
 // ─── output-budget exhaustion: one continuation retry ────────────────────────
 
-Deno.test("output-budget truncation runs one continuation retry and merges the text", async () => {
+test("output-budget truncation runs one continuation retry and merges the text", async () => {
   const { run, frames, text } = await lengthTurn([
     lengthReply("first half "),
     chatReply({ content: "second half" }),
@@ -140,7 +140,7 @@ Deno.test("output-budget truncation runs one continuation retry and merges the t
   );
 });
 
-Deno.test("a retry that is still truncated stops after exactly one retry and returns the merged partial", async () => {
+test("a retry that is still truncated stops after exactly one retry and returns the merged partial", async () => {
   const { run, frames, text } = await lengthTurn([
     lengthReply("part "),
     lengthReply("part "),
@@ -166,7 +166,7 @@ const PENNY_OUTPUT = pricedLocalModel({
   costOutput: 10_000,
 });
 
-Deno.test("a retry the budget envelope refuses is skipped and the truncated turn is delivered", async () => {
+test("a retry the budget envelope refuses is skipped and the truncated turn is delivered", async () => {
   const { run, frames, text } = await lengthTurn([
     lengthReply("truncated answer", {
       prompt_tokens: 42,
@@ -190,7 +190,7 @@ Deno.test("a retry the budget envelope refuses is skipped and the truncated turn
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("a runaway-anomaly halt on the retry fails the turn — never downgraded to a partial", async () => {
+test("a runaway-anomaly halt on the retry fails the turn — never downgraded to a partial", async () => {
   // Recorded $0.03 exceeds the turn halt (2 × $0.01 per-call limit); the
   // retry's anomaly gate fails closed and the halt must surface, not be
   // converted into a delivered partial.
@@ -217,7 +217,7 @@ Deno.test("a runaway-anomaly halt on the retry fails the turn — never downgrad
   });
 });
 
-Deno.test("a continuation retry never signals a supersede — its text extends the partial", async () => {
+test("a continuation retry never signals a supersede — its text extends the partial", async () => {
   const { frames, text } = await lengthTurn([
     lengthReply("first half "),
     chatReply({ content: "second half" }),
@@ -228,7 +228,7 @@ Deno.test("a continuation retry never signals a supersede — its text extends t
   assert.deepStrictEqual(frame(frames, "supersedingRetryStarted"), undefined);
 });
 
-Deno.test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
+test("both cap and window bind: the continuation would overflow, so it is skipped and the capped partial delivered", async () => {
   // Output cap hit (200 >= 200) → output-budget exhaustion by cap
   // precedence, though the window is also full. The continuation (the
   // transcript plus a 20,000-character partial) cannot fit the 5,000-token
@@ -268,7 +268,7 @@ Deno.test("both cap and window bind: the continuation would overflow, so it is s
 
 const GEMINI_KEY = { GEMINI_API_KEY: "gem-test-key" };
 
-Deno.test("an adapter without transcript retry delivers the truncated partial instead of replaying the prompt", async () => {
+test("an adapter without transcript retry delivers the truncated partial instead of replaying the prompt", async () => {
   const { run, frames, text } = await lengthTurn(
     [
       geminiReply({
@@ -291,7 +291,7 @@ Deno.test("an adapter without transcript retry delivers the truncated partial in
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("thinking tokens count toward classification: a thinking-model cap hit near the window is exhaustion, not a false overflow", async () => {
+test("thinking tokens count toward classification: a thinking-model cap hit near the window is exhaustion, not a false overflow", async () => {
   // Reported output (9,600) sits below the 15,000 cap and input+output
   // (19,600) reaches the 20,000-token window's 98% line — so WITHOUT
   // counting reasoning this would misclassify as overflow and hard-fail.
@@ -345,7 +345,7 @@ const OVERFLOW = lengthReply("cut off", {
   completion_tokens: 100,
 });
 
-Deno.test("context overflow fails the turn with the structured operator message and a clean event trail", async () => {
+test("context overflow fails the turn with the structured operator message and a clean event trail", async () => {
   const { run, frames, error } = await lengthTurn(
     [
       lengthReply("cut off", { prompt_tokens: 9_000, completion_tokens: 900 }),
@@ -383,7 +383,7 @@ Deno.test("context overflow fails the turn with the structured operator message 
   assert.ok((errorRow?.content ?? "").includes("fresh session"));
 });
 
-Deno.test("an injected overflow recovery plan buys exactly one retry (the compressor seam)", async () => {
+test("an injected overflow recovery plan buys exactly one retry (the compressor seam)", async () => {
   const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
@@ -426,7 +426,7 @@ Deno.test("an injected overflow recovery plan buys exactly one retry (the compre
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("the overflow-recovery retry announces the supersede before any retry output exists", async () => {
+test("the overflow-recovery retry announces the supersede before any retry output exists", async () => {
   // One ordered trail of frames AND provider calls: the supersede signal must
   // land after the overflowed attempt but before the retry call runs, so an
   // in-order stream consumer resets before the replacement text arrives.
@@ -457,7 +457,7 @@ Deno.test("the overflow-recovery retry announces the supersede before any retry 
   );
 });
 
-Deno.test("a failed supersede delivery aborts the retry instead of streaming an unmarked replacement", async () => {
+test("a failed supersede delivery aborts the retry instead of streaming an unmarked replacement", async () => {
   // The consumer's event channel is broken exactly when the supersede signal
   // is delivered. Streaming the replacement anyway would glue it onto the
   // stale text still on the consumer's screen, so the turn must fail.
@@ -481,7 +481,7 @@ Deno.test("a failed supersede delivery aborts the retry instead of streaming an 
   assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
-Deno.test("a recovery hook that throws closes the recovery trail before the turn fails", async () => {
+test("a recovery hook that throws closes the recovery trail before the turn fails", async () => {
   const { frames, error } = await lengthTurn([OVERFLOW], {
     prompt: "one more question",
   }, {
@@ -499,7 +499,7 @@ Deno.test("a recovery hook that throws closes the recovery trail before the turn
   assert.deepStrictEqual(frames.at(-1)?.type, "turnFailed");
 });
 
-Deno.test("a recovery-plan retry that still overflows fails structured — the hook never loops", async () => {
+test("a recovery-plan retry that still overflows fails structured — the hook never loops", async () => {
   const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
@@ -516,7 +516,7 @@ Deno.test("a recovery-plan retry that still overflows fails structured — the h
   });
 });
 
-Deno.test("compression resolves the overflow but the fresh answer hits its output cap: bounded truncation, not a false overflow", async () => {
+test("compression resolves the overflow but the fresh answer hits its output cap: bounded truncation, not a false overflow", async () => {
   const recoverContextOverflow = mock.fn(() =>
     Promise.resolve({ messages: COMPRESSED })
   );
@@ -549,7 +549,7 @@ Deno.test("compression resolves the overflow but the fresh answer hits its outpu
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow is not mistaken for exhaustion", async () => {
+test("cached prompt tokens count toward the window: a cache-heavy overflow is not mistaken for exhaustion", async () => {
   // 2,000 + 7,000 cached + 500 cache-written prompt-side tokens + 400
   // output = 9,900 ≥ 98% of the 10,000-token window. Anthropic reports cache
   // traffic outside input_tokens, so the prompt-side total must add it back.
@@ -576,7 +576,7 @@ Deno.test("cached prompt tokens count toward the window: a cache-heavy overflow 
   });
 });
 
-Deno.test("an overflow on a model with no on-machine compressor fails without a compression call", async () => {
+test("an overflow on a model with no on-machine compressor fails without a compression call", async () => {
   // The default recoverer compresses on-machine only; with no local row it
   // declines without a request, and the overflow fails structured.
   const { run, error } = await lengthTurn(

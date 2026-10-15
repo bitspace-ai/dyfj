@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   anthropicReply,
   chatReply,
@@ -186,7 +186,7 @@ async function quietly<T>(run: () => Promise<T>): Promise<T> {
 
 // ─── proactive trigger ───────────────────────────────────────────────────────
 
-Deno.test("compresses elder turns when the transcript crosses ~50% of the window", async () => {
+test("compresses elder turns when the transcript crosses ~50% of the window", async () => {
   const { run, frames } = await compressionTurn([
     summaryReply(),
     chatReply({ content: "runtime response" }),
@@ -228,7 +228,7 @@ Deno.test("compresses elder turns when the transcript crosses ~50% of the window
   assert.deepStrictEqual(event?.parent_span_id, root.span_id);
 });
 
-Deno.test("includes compression reasoning in the turn receipt", async () => {
+test("includes compression reasoning in the turn receipt", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([
     summaryReply(chatReply({
@@ -257,7 +257,7 @@ Deno.test("includes compression reasoning in the turn receipt", async () => {
   assert.deepStrictEqual(result.tokens.totalCalls, 2);
 });
 
-Deno.test("records a safe failed compression attempt and continues uncompressed", async () => {
+test("records a safe failed compression attempt and continues uncompressed", async () => {
   const providerMessage = "provider-controlled compression body";
   const { run, frames } = await quietly(() =>
     compressionTurn(
@@ -293,7 +293,7 @@ Deno.test("records a safe failed compression attempt and continues uncompressed"
   );
 });
 
-Deno.test("an abort during compression cannot replace elder context", async () => {
+test("an abort during compression cannot replace elder context", async () => {
   const abortController = new AbortController();
   const { run, frames } = await compressionTurn([{
     respond: () => {
@@ -321,7 +321,7 @@ Deno.test("an abort during compression cannot replace elder context", async () =
   assert.deepStrictEqual(frames.at(-1)?.type, "turnAborted");
 });
 
-Deno.test("does not compress below the trigger, and leaves the transcript intact", async () => {
+test("does not compress below the trigger, and leaves the transcript intact", async () => {
   const { run, frames } = await compressionTurn(
     [chatReply({ content: "runtime response" })],
     {},
@@ -334,7 +334,7 @@ Deno.test("does not compress below the trigger, and leaves the transcript intact
   );
 });
 
-Deno.test("the companion turn's system prompt carries the untrusted-summary policy", async () => {
+test("the companion turn's system prompt carries the untrusted-summary policy", async () => {
   const { run } = await compressionTurn(
     [chatReply({ content: "runtime response" })],
     { prompt: "hello", conversationMessages: undefined },
@@ -348,7 +348,7 @@ Deno.test("the companion turn's system prompt carries the untrusted-summary poli
   );
 });
 
-Deno.test("[case 16] proactive compression leaves the native notice outside partitioned messages", async () => {
+test("[case 16] proactive compression leaves the native notice outside partitioned messages", async () => {
   const omission: HistoryOmissionProjection = {
     detectedInHistory: 1,
     malformedToolRecords: 1,
@@ -377,7 +377,7 @@ Deno.test("[case 16] proactive compression leaves the native notice outside part
 
 // ─── durable persistence ─────────────────────────────────────────────────────
 
-Deno.test("declines compression when its event cannot be persisted", async () => {
+test("declines compression when its event cannot be persisted", async () => {
   const { run, frames } = await quietly(() =>
     compressionTurn(
       [
@@ -398,7 +398,7 @@ Deno.test("declines compression when its event cannot be persisted", async () =>
   );
 });
 
-Deno.test("adopts compression when a rejected write turns out to be durable", async () => {
+test("adopts compression when a rejected write turns out to be durable", async () => {
   const { run, frames } = await quietly(() =>
     compressionTurn(
       [
@@ -421,7 +421,7 @@ Deno.test("adopts compression when a rejected write turns out to be durable", as
   );
 });
 
-Deno.test("fails the turn when durability cannot be determined", async () => {
+test("fails the turn when durability cannot be determined", async () => {
   const error = await quietly(() =>
     compressionTurn(
       [summaryReply()],
@@ -433,7 +433,7 @@ Deno.test("fails the turn when durability cannot be determined", async () => {
   assert.ok(error instanceof ContextCompressionPersistenceUncertainError);
 });
 
-Deno.test("reports the write failure's real class, not a spoofed .name", async () => {
+test("reports the write failure's real class, not a spoofed .name", async () => {
   const error = await quietly(() =>
     compressionTurn(
       [summaryReply()],
@@ -450,7 +450,7 @@ Deno.test("reports the write failure's real class, not a spoofed .name", async (
   assert.deepStrictEqual(error.writeErrorKind, "Error");
 });
 
-Deno.test("the payload the proactive path actually emits replays byte-identical", async () => {
+test("the payload the proactive path actually emits replays byte-identical", async () => {
   // THE integrated seam guard: run the proactive path, take the
   // context_compressed row it wrote, replay the resulting event stream
   // through the real buildConversationMessages, and require the result to
@@ -505,7 +505,7 @@ function overflowReply(input: number): ScriptedExchange {
   });
 }
 
-Deno.test("an overflow with no injected recoverer compresses then retries", async () => {
+test("an overflow with no injected recoverer compresses then retries", async () => {
   const { run, frames } = await compressionTurn([
     overflowReply(RECOVERY_WINDOW - 80),
     summaryReply(),
@@ -523,7 +523,7 @@ Deno.test("an overflow with no injected recoverer compresses then retries", asyn
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-Deno.test("[case 22] persisted reactive compression is followed by an event-recomputed notice on resume", async () => {
+test("[case 22] persisted reactive compression is followed by an event-recomputed notice on resume", async () => {
   const omission: HistoryOmissionProjection = {
     detectedInHistory: 2,
     malformedToolRecords: 1,
@@ -629,7 +629,7 @@ const LOCAL_FALLBACK: ModelSeed = {
 };
 const HOSTED_KEY = { ANTHROPIC_API_KEY: "test-key-not-real" };
 
-Deno.test("declines compression on a tier-0 HOSTED model (locality, not tier)", async () => {
+test("declines compression on a tier-0 HOSTED model (locality, not tier)", async () => {
   const { run, frames } = await compressionTurn(
     [anthropicReply("runtime response")],
     { defaultCompanionModel: HOSTED_SMALL.slug },
@@ -648,7 +648,7 @@ Deno.test("declines compression on a tier-0 HOSTED model (locality, not tier)", 
   );
 });
 
-Deno.test("a tier-0 HOSTED session model compresses via a local tier-0 row when one exists", async () => {
+test("a tier-0 HOSTED session model compresses via a local tier-0 row when one exists", async () => {
   const { run, frames } = await compressionTurn(
     [
       {
@@ -676,7 +676,7 @@ Deno.test("a tier-0 HOSTED session model compresses via a local tier-0 row when 
   );
 });
 
-Deno.test("compression routes to a local tier-0 row even when a hosted tier-0 row is preferred", async () => {
+test("compression routes to a local tier-0 row even when a hosted tier-0 row is preferred", async () => {
   const preferredHosted: ModelSeed = {
     ...HOSTED_FREE_MODEL,
     slug: "hosted-preferred",

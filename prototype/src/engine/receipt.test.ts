@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   type BudgetTallyInput,
   buildBudgetTallyLine,
@@ -64,7 +65,7 @@ const BASE_TALLY: BudgetTallyInput = {
   },
 };
 
-Deno.test("buildWorkbenchReceipt: includes session and trace audit pointers", () => {
+test("buildWorkbenchReceipt: includes session and trace audit pointers", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
   assert.ok(
@@ -81,7 +82,7 @@ Deno.test("buildWorkbenchReceipt: includes session and trace audit pointers", ()
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes model, tier, and routing reason", () => {
+test("buildWorkbenchReceipt: includes model, tier, and routing reason", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
   assert.ok(
@@ -96,7 +97,7 @@ Deno.test("buildWorkbenchReceipt: includes model, tier, and routing reason", () 
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes token and cost totals", () => {
+test("buildWorkbenchReceipt: includes token and cost totals", () => {
   const receipt = buildWorkbenchReceipt({
     ...BASE_RECEIPT,
     totalCostUsd: 0.0123456,
@@ -123,7 +124,7 @@ Deno.test("buildWorkbenchReceipt: includes token and cost totals", () => {
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes configured agent-step usage and limit status", () => {
+test("buildWorkbenchReceipt: includes configured agent-step usage and limit status", () => {
   assert.ok(
     buildWorkbenchReceipt(BASE_RECEIPT).includes("Tool steps: 12/32"),
     `expected buildWorkbenchReceipt(BASE_RECEIPT) to include "Tool steps: 12/32"`,
@@ -140,7 +141,7 @@ Deno.test("buildWorkbenchReceipt: includes configured agent-step usage and limit
   );
 });
 
-Deno.test("buildWorkbenchReceipt: reports reasoning tokens only when the provider reported some", () => {
+test("buildWorkbenchReceipt: reports reasoning tokens only when the provider reported some", () => {
   // Absent/zero: no reasoning fragment — most providers never report them.
   assert.deepStrictEqual(
     buildWorkbenchReceipt(BASE_RECEIPT).includes("reasoning"),
@@ -166,7 +167,7 @@ Deno.test("buildWorkbenchReceipt: reports reasoning tokens only when the provide
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes model call timing breakdown when available", () => {
+test("buildWorkbenchReceipt: includes model call timing breakdown when available", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
   assert.ok(
@@ -179,7 +180,7 @@ Deno.test("buildWorkbenchReceipt: includes model call timing breakdown when avai
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes context budget allocation", () => {
+test("buildWorkbenchReceipt: includes context budget allocation", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
   assert.ok(
@@ -196,7 +197,7 @@ Deno.test("buildWorkbenchReceipt: includes context budget allocation", () => {
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes context sources and paid inference posture", () => {
+test("buildWorkbenchReceipt: includes context sources and paid inference posture", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
   assert.ok(
@@ -239,7 +240,7 @@ Deno.test("buildWorkbenchReceipt: includes context sources and paid inference po
   );
 });
 
-Deno.test("buildWorkbenchReceipt: includes next-work experiment routing and validation fields", () => {
+test("buildWorkbenchReceipt: includes next-work experiment routing and validation fields", () => {
   const receipt = buildWorkbenchReceipt({
     ...BASE_RECEIPT,
     routingReason: "default_local_next_work",
@@ -271,7 +272,7 @@ Deno.test("buildWorkbenchReceipt: includes next-work experiment routing and vali
   );
 });
 
-Deno.test("buildBudgetTallyLine: shows turn and session cost and token totals", () => {
+test("buildBudgetTallyLine: shows turn and session cost and token totals", () => {
   const tally = buildBudgetTallyLine(BASE_TALLY);
 
   assert.deepStrictEqual(
@@ -281,28 +282,28 @@ Deno.test("buildBudgetTallyLine: shows turn and session cost and token totals", 
   );
 });
 
-Deno.test("shouldPrintBudgetTally: default paid mode stays quiet before paid usage", () => {
+test("shouldPrintBudgetTally: default paid mode stays quiet before paid usage", () => {
   assert.deepStrictEqual(
     shouldPrintBudgetTally("paid", { ...BASE_TALLY.session, paidCalls: 0 }),
     false,
   );
 });
 
-Deno.test("shouldPrintBudgetTally: default paid mode prints after paid usage", () => {
+test("shouldPrintBudgetTally: default paid mode prints after paid usage", () => {
   assert.deepStrictEqual(
     shouldPrintBudgetTally("paid", BASE_TALLY.session),
     true,
   );
 });
 
-Deno.test("shouldPrintBudgetTally: on mode prints even without paid usage", () => {
+test("shouldPrintBudgetTally: on mode prints even without paid usage", () => {
   assert.deepStrictEqual(
     shouldPrintBudgetTally("on", { ...BASE_TALLY.session, paidCalls: 0 }),
     true,
   );
 });
 
-Deno.test("shouldPrintBudgetTally: off mode always stays quiet", () => {
+test("shouldPrintBudgetTally: off mode always stays quiet", () => {
   assert.deepStrictEqual(
     shouldPrintBudgetTally("off", BASE_TALLY.session),
     false,

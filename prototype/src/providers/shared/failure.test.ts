@@ -4,7 +4,7 @@
 // only what the engine or the operator needs.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import * as F from "../../../testing/providers/failure-fixtures.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { classifyFetchFailure, classifyProviderResponse } from "./failure.ts";

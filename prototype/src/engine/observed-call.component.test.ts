@@ -8,7 +8,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
@@ -161,7 +161,7 @@ function callRequest(
   };
 }
 
-Deno.test("observedProviderCall writes one provider_call row and records a local call's usage", async () => {
+test("observedProviderCall writes one provider_call row and records a local call's usage", async () => {
   const h = harness();
   const { request, transport } = callRequest(h, LOCAL, [
     openAIReply("hi there"),
@@ -224,7 +224,7 @@ Deno.test("observedProviderCall writes one provider_call row and records a local
   assert.deepStrictEqual(h.budget.totalCost, 0);
 });
 
-Deno.test("observedProviderCall records a paid call's cost with the tracker", async () => {
+test("observedProviderCall records a paid call's cost with the tracker", async () => {
   const h = harness();
   const { request, transport } = callRequest(h, HOSTED, [{
     respond: {
@@ -253,7 +253,7 @@ Deno.test("observedProviderCall records a paid call's cost with the tracker", as
   assert.deepStrictEqual(h.budget.getSummary().byTier["1"]?.calls, 1);
 });
 
-Deno.test("observedProviderCall writes the unparsed tool-call markup counts only when asked", async () => {
+test("observedProviderCall writes the unparsed tool-call markup counts only when asked", async () => {
   // Two unmatched wrapper openings: the degraded shape the adapter reports.
   const markup = "<tool_call> first <tool_call> second";
 
@@ -290,7 +290,7 @@ Deno.test("observedProviderCall writes the unparsed tool-call markup counts only
   });
 });
 
-Deno.test("observedProviderCall writes an error row for a failed call and rethrows the mapped error", async () => {
+test("observedProviderCall writes an error row for a failed call and rethrows the mapped error", async () => {
   const h = harness();
   const mapped = new DomainError("provider failed");
   const { request, transport } = callRequest(h, LOCAL, [{
@@ -335,7 +335,7 @@ Deno.test("observedProviderCall writes an error row for a failed call and rethro
   assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
-Deno.test("observedProviderCall classifies an unmapped provider error by its own class", async () => {
+test("observedProviderCall classifies an unmapped provider error by its own class", async () => {
   const h = harness();
   const { request, transport } = callRequest(
     h,
@@ -365,7 +365,7 @@ Deno.test("observedProviderCall classifies an unmapped provider error by its own
   assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
-Deno.test("observedProviderCall does not record a request that was never dispatched", async () => {
+test("observedProviderCall does not record a request that was never dispatched", async () => {
   const h = harness();
   const aborted = new AbortController();
   aborted.abort();
@@ -389,7 +389,7 @@ Deno.test("observedProviderCall does not record a request that was never dispatc
   assert.deepStrictEqual(h.budget.totalCalls, 0);
 });
 
-Deno.test("observedProviderCall counts a failed event write and still records the usage", async () => {
+test("observedProviderCall counts a failed event write and still records the usage", async () => {
   const h = harness({ rejectWrites: true });
   const warn = mock.method(console, "warn", () => {});
   let result;
@@ -410,7 +410,7 @@ Deno.test("observedProviderCall counts a failed event write and still records th
   assert.deepStrictEqual(h.budget.totalCalls, 1);
 });
 
-Deno.test("observedProviderCall defaults the provider session to the turn's session", async () => {
+test("observedProviderCall defaults the provider session to the turn's session", async () => {
   // The xAI adapter forwards the session as its conversation header, which
   // makes the defaulted session observable on the wire.
   const xai: WorkbenchModel = {

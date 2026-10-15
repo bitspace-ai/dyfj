@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   chatReply,
   conversation,
@@ -63,7 +63,7 @@ async function createResumedSession(run: EngineRun): Promise<void> {
 
 // ─── pipeline shape ──────────────────────────────────────────────────────────
 
-Deno.test("a companion turn runs open → context → route → loop → finalize with one provider call", async () => {
+test("a companion turn runs open → context → route → loop → finalize with one provider call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({ content: "runtime response" })]);
   const frames: WorkbenchRuntimeEvent[] = [];
@@ -91,7 +91,7 @@ Deno.test("a companion turn runs open → context → route → loop → finaliz
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-Deno.test("principalId from the input attributes every event of the turn except model_selected", async () => {
+test("principalId from the input attributes every event of the turn except model_selected", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({ content: "ok" })], {
     env: { DYFJ_PRINCIPAL_ID: "env-principal" },
@@ -118,7 +118,7 @@ Deno.test("principalId from the input attributes every event of the turn except 
 
 // ─── workspace binding across stages ─────────────────────────────────────────
 
-Deno.test("an ask turn whose selected workspace is unavailable fails before any provider call", async () => {
+test("an ask turn whose selected workspace is unavailable fails before any provider call", async () => {
   await using runtime = await tempWorkspace({ "README.md": "RUNTIME ROOT" });
   const run = engineServices([]);
   await assert.rejects(
@@ -133,7 +133,7 @@ Deno.test("an ask turn whose selected workspace is unavailable fails before any 
   assert.deepStrictEqual(run.transport.requests.length, 0);
 });
 
-Deno.test("an ask turn whose resumed-workspace lookup fails stops before any provider call", async () => {
+test("an ask turn whose resumed-workspace lookup fails stops before any provider call", async () => {
   await using runtime = await tempWorkspace({ "README.md": "RUNTIME ROOT" });
   const run = engineServices([]);
   run.services.store = patchStore(run.store, {
@@ -151,7 +151,7 @@ Deno.test("an ask turn whose resumed-workspace lookup fails stops before any pro
   assert.deepStrictEqual(run.transport.requests.length, 0);
 });
 
-Deno.test("a remote resumed ask stays pinned when its stored-workspace lookup fails, and completes", async () => {
+test("a remote resumed ask stays pinned when its stored-workspace lookup fails, and completes", async () => {
   await using runtime = await tempWorkspace({ "README.md": "RUNTIME ROOT" });
   const run = engineServices([chatReply({ content: "answer" })]);
   run.services.store = patchStore(run.store, {
@@ -174,7 +174,7 @@ Deno.test("a remote resumed ask stays pinned when its stored-workspace lookup fa
   );
 });
 
-Deno.test("an elevated AGENTS.md reaches the provider request and the session record", async () => {
+test("an elevated AGENTS.md reaches the provider request and the session record", async () => {
   await using root = await tempWorkspace({
     "AGENTS.md": "# Repo Rules\n\nLog friction to the pilot register.",
   });
@@ -222,7 +222,7 @@ const MALFORMED_OMISSION: HistoryOmissionProjection = {
   projectedPairs: 0,
 };
 
-Deno.test("[follow-up case 15] successful native companion composition exposes the omission notice and receipt", async () => {
+test("[follow-up case 15] successful native companion composition exposes the omission notice and receipt", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({ content: "runtime response" })]);
   const result = await runTurn(run, {
@@ -260,7 +260,7 @@ Deno.test("[follow-up case 15] successful native companion composition exposes t
   );
 });
 
-Deno.test("[follow-up A1] resumed native ask excludes omission notice and receipt without replaying transcript messages", async () => {
+test("[follow-up A1] resumed native ask excludes omission notice and receipt without replaying transcript messages", async () => {
   await using root = await tempWorkspace({ "README.md": "ROOT" });
   const run = engineServices([chatReply({ content: "runtime response" })]);
   const result = await runTurn(run, {
@@ -289,7 +289,7 @@ Deno.test("[follow-up A1] resumed native ask excludes omission notice and receip
   );
 });
 
-Deno.test("[follow-up A1] resumed native next-work excludes omission notice and receipt", async () => {
+test("[follow-up A1] resumed native next-work excludes omission notice and receipt", async () => {
   await using root = await tempWorkspace({ "README.md": "ROOT" });
   const run = engineServices([chatReply({
     content: JSON.stringify({
@@ -328,7 +328,7 @@ Deno.test("[follow-up A1] resumed native next-work excludes omission notice and 
   assert.deepStrictEqual(result.validation, { ok: true, errors: [] });
 });
 
-Deno.test("[follow-up N1] native companion failure before notice composition omits the omission receipt", async () => {
+test("[follow-up N1] native companion failure before notice composition omits the omission receipt", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([]);
   await createResumedSession(run);
@@ -371,7 +371,7 @@ Deno.test("[follow-up N1] native companion failure before notice composition omi
 
 const PRICED = pricedLocalModel({ costInput: 15, costOutput: 75 });
 
-Deno.test("declining paid inference aborts before any provider call", async () => {
+test("declining paid inference aborts before any provider call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [PRICED] });
   await assert.rejects(
@@ -406,7 +406,7 @@ Deno.test("declining paid inference aborts before any provider call", async () =
   );
 });
 
-Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
+test("confirms a budget ceiling overrun once per turn (preflight + per-call gate)", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({ content: "done" })], {
     models: [PRICED],
@@ -429,7 +429,7 @@ Deno.test("confirms a budget ceiling overrun once per turn (preflight + per-call
   assert.deepStrictEqual(result.text, "done");
 });
 
-Deno.test("declining a budget ceiling aborts before any provider call", async () => {
+test("declining a budget ceiling aborts before any provider call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [PRICED] });
   await assert.rejects(
@@ -452,7 +452,7 @@ Deno.test("declining a budget ceiling aborts before any provider call", async ()
   assert.deepStrictEqual(run.transport.requests.length, 0);
 });
 
-Deno.test("cancelling a budget approval finalizes an aborted turn", async () => {
+test("cancelling a budget approval finalizes an aborted turn", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [PRICED] });
   const abortController = new AbortController();
@@ -517,7 +517,7 @@ const SPENT_PAST_SCOPE = () =>
     dailyOtherSessionsUsd: 0,
   });
 
-Deno.test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
+test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([], { models: [ANOMALY_MODEL] });
   // Session lifetime spend already past 2× the $1 envelope.
@@ -551,7 +551,7 @@ Deno.test("scope hard-multiple halts even spend a ceiling confirmation already c
   assert.equal(confirmBudgetCeiling.mock.callCount(), 0);
 });
 
-Deno.test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
+test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({
     content: "done",
@@ -582,7 +582,7 @@ Deno.test("an approved entry halt does not re-prompt the identical state at the 
 
 // ─── approvals cannot start turns ────────────────────────────────────────────
 
-Deno.test("an approval verdict cannot start a new turn: a turn requested from inside the approver waits for the approving turn to finalize", async () => {
+test("an approval verdict cannot start a new turn: a turn requested from inside the approver waits for the approving turn to finalize", async () => {
   await using root = await tempWorkspace({ "README.md": "# readme\n" });
   const run = engineServices([
     chatReply({ content: "seeded" }),
@@ -682,7 +682,7 @@ Deno.test("an approval verdict cannot start a new turn: a turn requested from in
 
 // ─── a new session's turn holds its lock from admission ──────────────────────
 
-Deno.test("a turn naming a new session's id, issued while that session's first turn runs, waits for it", async () => {
+test("a turn naming a new session's id, issued while that session's first turn runs, waits for it", async () => {
   await using root = await tempWorkspace({ "README.md": "# readme\n" });
   const run = engineServices([
     chatReply({

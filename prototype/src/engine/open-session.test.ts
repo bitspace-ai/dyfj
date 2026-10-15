@@ -4,6 +4,7 @@
  * `session_start` row.
  */
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   chatReply,
   enginePorts,
@@ -31,7 +32,7 @@ async function sessionRows(store: Store, sessionId: string) {
   return await store.events.bySession({ sessionId, limit: 50, order: "asc" });
 }
 
-Deno.test("openSession writes session_start under the turn root span, with the prompt", async () => {
+test("openSession writes session_start under the turn root span, with the prompt", async () => {
   const fakes = enginePorts();
   const frames: WorkbenchRuntimeEvent[] = [];
   const session = await openSession(
@@ -65,14 +66,14 @@ Deno.test("openSession writes session_start under the turn root span, with the p
   assert.deepStrictEqual(session.startedAt, 1_000_000);
 });
 
-Deno.test("openSession continues a named session instead of creating one", async () => {
+test("openSession continues a named session instead of creating one", async () => {
   const fakes = enginePorts();
   const session = await openSession(input({ sessionId: RESUMED }), fakes.ports);
   assert.deepStrictEqual(session.sessionId, RESUMED);
   assert.deepStrictEqual(session.resumingSession, true);
 });
 
-Deno.test("principalId comes from the input struct and flows to events", async () => {
+test("principalId comes from the input struct and flows to events", async () => {
   const fakes = enginePorts();
   const session = await openSession(
     input({ principalId: "custom-principal" }),
@@ -85,7 +86,7 @@ Deno.test("principalId comes from the input struct and flows to events", async (
   assert.deepStrictEqual(session.principalId, "custom-principal");
 });
 
-Deno.test("the input's principalId attributes every row a whole turn writes", async () => {
+test("the input's principalId attributes every row a whole turn writes", async () => {
   const run = engineServices([chatReply({ content: "done" })]);
   // model_selected names the environment's principal, read through the env
   // port, not the input (a known gap, recorded in specs/bug-log.md), so it
@@ -109,7 +110,7 @@ Deno.test("the input's principalId attributes every row a whole turn writes", as
   );
 });
 
-Deno.test("an integrity session_start write failure fails the turn before anything else", async () => {
+test("an integrity session_start write failure fails the turn before anything else", async () => {
   for (const mode of ["turn", "ask"] as const) {
     const fakes = enginePorts();
     const store: Store = {
@@ -135,7 +136,7 @@ Deno.test("an integrity session_start write failure fails the turn before anythi
   }
 });
 
-Deno.test("openSession resolves the budget posture: turn override, then boundary default, then declared default", async () => {
+test("openSession resolves the budget posture: turn override, then boundary default, then declared default", async () => {
   const fakes = enginePorts();
   const session = await openSession(
     input({
@@ -154,7 +155,7 @@ Deno.test("openSession resolves the budget posture: turn override, then boundary
   assert.deepStrictEqual(session.anomalyConfig.turnMultiple, 7);
 });
 
-Deno.test("openSession clamps the tool-step limit and falls back for non-integers", async () => {
+test("openSession clamps the tool-step limit and falls back for non-integers", async () => {
   const fakes = enginePorts();
   const cases: Array<[number | undefined, number]> = [
     [undefined, AGENT_DEFAULTS.maxToolSteps],
@@ -170,7 +171,7 @@ Deno.test("openSession clamps the tool-step limit and falls back for non-integer
   }
 });
 
-Deno.test("openSession pins a remote caller's requested workspace to the default root", async () => {
+test("openSession pins a remote caller's requested workspace to the default root", async () => {
   const fakes = enginePorts();
   const local = await openSession(
     input({ workspaceRoot: "/requested" }),
@@ -194,7 +195,7 @@ Deno.test("openSession pins a remote caller's requested workspace to the default
   assert.notStrictEqual(remote.sessionId, local.sessionId);
 });
 
-Deno.test("openSession seeds the budget tracker with spend already on the books", async () => {
+test("openSession seeds the budget tracker with spend already on the books", async () => {
   const fakes = enginePorts();
   const session = await openSession(
     input({ sessionId: RESUMED }),
@@ -214,7 +215,7 @@ Deno.test("openSession seeds the budget tracker with spend already on the books"
   assert.deepStrictEqual(precall.sessionCostSoFar, 0.25);
 });
 
-Deno.test("openSession reads spend baselines for the local day of the injected clock", async () => {
+test("openSession reads spend baselines for the local day of the injected clock", async () => {
   const fakes = enginePorts({ start: Date.UTC(2020, 1, 29, 12) });
   const reads: Array<{ sessionId: string; dayStart: string }> = [];
   const store = patchStore(fakes.store, {
