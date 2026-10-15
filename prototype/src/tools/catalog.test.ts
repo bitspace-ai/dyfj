@@ -1,7 +1,7 @@
 // Tests for the tool catalog (`catalog.ts`).
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { CommandCall } from "./definition.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
 import { buildToolCatalog } from "./catalog.ts";

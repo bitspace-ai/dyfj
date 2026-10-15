@@ -196,6 +196,29 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `kernel/` and `tools/` tests register with `node:test` and run under
+  `node --test`, with the per-file leak check.** A new codemod,
+  `scripts/codemod/deno-test-registrations.ts`, rewrites a test file's
+  registrations: the existing runner's test function becomes `test`, an
+  `@std/testing/bdd` import becomes a `node:test` import (merged with any
+  existing one, with `beforeAll` and `afterAll` renamed `before` and `after`),
+  a bdd `{ ignore }` option becomes `{ skip }`, and `t.step` on a test context
+  becomes `t.test`. It converts a file whole or leaves it as it is: an option
+  bag, an object-form registration, a context used for anything but steps or
+  any other runtime reference is flagged for hand conversion, because a file
+  left with both registration styles fails lane discovery. Each rule and flag
+  has a fixture (`scripts/codemod/registration-fixtures/`), run in the gate's
+  orchestration lane. Applied to `prototype/src/kernel/` and
+  `prototype/src/tools/`, it moved 33 files, with 78 runner registrations and
+  21 bdd imports, onto Node; no file leaked under the handle check. Eight
+  files stay where they are: the three that only call a conformance kit and
+  `tools/conformance.test.ts` wait for the kits, which still register with the
+  existing runner, and the four that grep through the bounded regex matcher
+  (`kernel/bounded-regex.test.ts`, `tools/builtin/file.test.ts`,
+  `file-hardening.test.ts` and `file-search.integration.test.ts`) wait for its
+  worker, which uses the web `Worker` global that Node does not have. The
+  `runtime.neutral` count falls from 2,255 to 2,177 (decision D32).
+
 - **Shared test support runs on `node:` builtins.** The loopback model, MCP
   and scripted HTTP servers, the raw socket listeners, the golden harness and
   its JSON-RPC client, the process helpers and the engine builders under

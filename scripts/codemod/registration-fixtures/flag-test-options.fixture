@@ -1,0 +1,21 @@
+# Any host test option, and any bdd option but ignore, is converted by hand.
+rules:
+--- before
+import { describe, it } from "@std/testing/bdd";
+
+Deno.test("granted", { permissions: { read: true } }, () => {});
+
+describe("suite", { ignore: false, sanitizeOps: false }, () => {
+  it("case", () => {});
+});
+--- after
+import { describe, it } from "@std/testing/bdd";
+
+Deno.test("granted", { permissions: { read: true } }, () => {});
+
+describe("suite", { ignore: false, sanitizeOps: false }, () => {
+  it("case", () => {});
+});
+--- findings
+hand-review test-options 3
+hand-review test-options 5

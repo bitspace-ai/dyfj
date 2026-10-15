@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { test } from "node:test";
 import { RootAnchors, WorkspaceRootChangedError } from "./root-anchors.ts";
 
 async function withTempBase(
@@ -15,7 +16,7 @@ async function withTempBase(
   }
 }
 
-Deno.test("a root is anchored on first use and verified after", async () => {
+test("a root is anchored on first use and verified after", async () => {
   await withTempBase(async (base) => {
     const root = `${base}/root`;
     await mkdir(root);
@@ -26,7 +27,7 @@ Deno.test("a root is anchored on first use and verified after", async () => {
   });
 });
 
-Deno.test("a root replaced after its first use fails closed", async () => {
+test("a root replaced after its first use fails closed", async () => {
   await withTempBase(async (base) => {
     const root = `${base}/root`;
     await mkdir(root);
@@ -39,7 +40,7 @@ Deno.test("a root replaced after its first use fails closed", async () => {
   });
 });
 
-Deno.test("each RootAnchors owns its own anchors", async () => {
+test("each RootAnchors owns its own anchors", async () => {
   await withTempBase(async (base) => {
     const root = `${base}/root`;
     await mkdir(root);

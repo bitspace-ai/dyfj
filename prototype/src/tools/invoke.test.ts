@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { after, before, describe, it } from "node:test";
 import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
@@ -612,14 +612,14 @@ describe("buildCommandToolCallEventPayload — event copy size cap", () => {
 describe("read_file → tool_call event containment", () => {
   let root: string;
 
-  beforeAll(async () => {
+  before(async () => {
     root = await mkdtemp(join(tmpdir(), "tmp-"));
     // One character over the model-facing 64KB cap so builtin/file-read.ts's own
     // truncation kicks in — the exact receipted trigger shape.
     await writeFile(`${root}/big.txt`, "a".repeat(64 * 1024 + 500));
   });
 
-  afterAll(async () => {
+  after(async () => {
     if (root) await rm(root, { recursive: true });
   });
 

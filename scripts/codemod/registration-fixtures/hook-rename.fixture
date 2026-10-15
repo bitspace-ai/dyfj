@@ -1,0 +1,43 @@
+# beforeAll and afterAll become before and after, at the import and at
+# every call; the other hooks keep their names. A comment is not code.
+rules: registration.bdd-import, registration.hook-rename
+--- before
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  it,
+} from "@std/testing/bdd";
+
+describe("hooks", () => {
+  let n = 0;
+  beforeAll(async () => {
+    n = 1;
+  });
+  beforeEach(() => n++);
+  afterEach(() => n--);
+  // afterAll runs once.
+  afterAll(() => {
+    n = 0;
+  });
+  it("counts", () => void n);
+});
+--- after
+import { after, afterEach, before, beforeEach, describe, it } from "node:test";
+
+describe("hooks", () => {
+  let n = 0;
+  before(async () => {
+    n = 1;
+  });
+  beforeEach(() => n++);
+  afterEach(() => n--);
+  // afterAll runs once.
+  after(() => {
+    n = 0;
+  });
+  it("counts", () => void n);
+});
+--- findings

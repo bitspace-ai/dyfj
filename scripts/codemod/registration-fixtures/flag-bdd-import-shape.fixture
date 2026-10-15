@@ -1,0 +1,18 @@
+# A namespace bdd import, or one naming something other than describe, it
+# and the hooks, is converted by hand.
+rules:
+--- before
+import * as bdd from "@std/testing/bdd";
+import { describe, type ItDefinition } from "@std/testing/bdd";
+
+bdd.describe("suite", () => {});
+describe("other", () => {});
+--- after
+import * as bdd from "@std/testing/bdd";
+import { describe, type ItDefinition } from "@std/testing/bdd";
+
+bdd.describe("suite", () => {});
+describe("other", () => {});
+--- findings
+hand-review bdd-import-shape 1
+hand-review bdd-import-shape 2

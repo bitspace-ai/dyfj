@@ -8,6 +8,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
+// On the host's runner until the regex worker runs under Node (BIT-651).
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { executeGlobFiles, executeGrepFiles } from "./file-search.ts";
 import { RootAnchors } from "./root-anchors.ts";

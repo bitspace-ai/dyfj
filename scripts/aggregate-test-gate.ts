@@ -786,6 +786,9 @@ export function productionLanes(
         "scripts/change-scope.test.ts",
         // Deleted with the test-dialect codemod once decision D32's S2 is done.
         "scripts/codemod/deno-test-dialect.test.ts",
+        // Deleted with the registrations codemod once S3.2b of decision D32
+        // is done.
+        "scripts/codemod/deno-test-registrations.test.ts",
       ],
       cwd: root,
       // Lane children run with a cleared environment, so the temp root the

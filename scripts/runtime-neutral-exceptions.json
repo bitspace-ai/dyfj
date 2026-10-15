@@ -460,43 +460,8 @@
     "reason": "One test name: it pins that the fixture profile neither reads nor forwards the Deno cache variable (DENO_DIR), which its Deno CLI argv still depends on; it changes with the fixture agent under S3 of decision D32."
   },
   {
-    "path": "prototype/src/kernel/ansi.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/boundary-text.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/kernel/bounded-regex.test.ts",
     "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/canonical-json.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/code-points.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/ids.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/lexical-path.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/kernel/utf8.test.ts",
-    "count": 14,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -600,33 +565,8 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/tools/builtin/root-anchors.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/tools/conformance.test.ts",
     "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/mcp/adapter.integration.test.ts",
-    "count": 7,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/mcp/conformance.integration.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/mcp/memory-search.integration.test.ts",
-    "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/tools/mcp/transport.test.ts",
-    "count": 5,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

@@ -1,0 +1,27 @@
+# When the file already uses the new hook name, the old local name stays as
+# an alias instead of proving scopes; that is reported.
+rules: registration.bdd-import
+--- before
+import { beforeAll, describe, it } from "@std/testing/bdd";
+
+describe("versions", () => {
+  beforeAll(() => {});
+  it("compares", () => {
+    const before = 1;
+    const after = 2;
+    void [before, after];
+  });
+});
+--- after
+import { before as beforeAll, describe, it } from "node:test";
+
+describe("versions", () => {
+  beforeAll(() => {});
+  it("compares", () => {
+    const before = 1;
+    const after = 2;
+    void [before, after];
+  });
+});
+--- findings
+mention 1

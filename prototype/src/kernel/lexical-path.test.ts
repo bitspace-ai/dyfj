@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { hasDotPathComponent } from "./lexical-path.ts";
 
-Deno.test("hasDotPathComponent finds a whole `.` or `..` component", () => {
+test("hasDotPathComponent finds a whole `.` or `..` component", () => {
   assert.deepStrictEqual(hasDotPathComponent("/a/./b"), true);
   assert.deepStrictEqual(hasDotPathComponent("/a/../b"), true);
   assert.deepStrictEqual(hasDotPathComponent("/a/b/.."), true);
@@ -9,7 +10,7 @@ Deno.test("hasDotPathComponent finds a whole `.` or `..` component", () => {
   assert.deepStrictEqual(hasDotPathComponent("/.."), true);
 });
 
-Deno.test("hasDotPathComponent ignores dots inside a component", () => {
+test("hasDotPathComponent ignores dots inside a component", () => {
   assert.deepStrictEqual(hasDotPathComponent("/a/.b/c"), false);
   assert.deepStrictEqual(hasDotPathComponent("/a/b../c"), false);
   assert.deepStrictEqual(hasDotPathComponent("/a/.../c"), false);

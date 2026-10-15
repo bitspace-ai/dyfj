@@ -1,0 +1,12 @@
+# A file with no registrations of its own (a conformance-kit caller) is left
+# as it is, with nothing to report.
+rules:
+--- before
+import { clockConformance } from "../../testing/conformance/clock.ts";
+
+clockConformance({ name: "systemClock", make: () => ({}) });
+--- after
+import { clockConformance } from "../../testing/conformance/clock.ts";
+
+clockConformance({ name: "systemClock", make: () => ({}) });
+--- findings

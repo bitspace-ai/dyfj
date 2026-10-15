@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import process from "node:process";
+// On the host's runner until the regex worker runs under Node (BIT-651).
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import {
   mkdir,

@@ -1,7 +1,7 @@
 // Tests for the call-shape policy (`policy.ts`).
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";
 import { evaluateCommandPolicy } from "./policy.ts";

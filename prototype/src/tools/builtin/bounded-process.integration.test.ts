@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { buildSafeBashEnv } from "./exec.ts";
 import {
   type BoundedOptions,
@@ -78,7 +78,7 @@ async function bash(script: string, options: BoundedOptions = {}) {
   return { result, elapsedMs: performance.now() - start };
 }
 
-describe("runBounded", { ignore: !posix }, () => {
+describe("runBounded", { skip: !posix }, () => {
   it("returns the exit code and both streams of an ordinary exit", async () => {
     const { result } = await bash("echo out; echo err >&2; exit 3");
     assert.deepStrictEqual(result, {

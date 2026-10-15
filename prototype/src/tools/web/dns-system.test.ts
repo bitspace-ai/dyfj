@@ -3,7 +3,7 @@
 // `Resolver`. The adapter's answers against a real resolver are pinned by the
 // conformance suite in `dns.integration.test.ts`.
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { createSystemDnsResolver, type NodeDnsResolver } from "./dns.ts";
 
 function codedError(code: string): Error {
