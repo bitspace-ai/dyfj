@@ -17,7 +17,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
@@ -28,6 +28,7 @@ import {
   runSignalCommand,
   startAcpSession,
 } from "./acp-client.ts";
+import { fixtureAgentCommand } from "./external-agent-runtime.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -37,25 +38,24 @@ function fixtureProfile(
   const home = process.env.HOME ?? "/tmp";
   return {
     slug: "fixture",
-    command: process.execPath,
-    args: [
-      "run",
-      "--cached-only",
-      "--allow-env=ACP_FIXTURE_ALLOWED,ACP_FIXTURE_MODE,ACP_FIXTURE_AUTH_STATUS,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
-      ...(grandchildPidFile === undefined
-        ? ["--allow-run=/bin/kill"]
-        : ["--allow-run=bash,/bin/kill"]),
-      ...(pidFile === undefined ? [] : [`--allow-write=${pidFile}`]),
-      ...(grandchildPidFile === undefined ? [] : [
-        `--allow-read=${grandchildPidFile}`,
-        `--allow-write=${grandchildPidFile}`,
-      ]),
-      join(import.meta.dirname!, "../scripts/acp-fixture-agent.ts"),
-      ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
-      ...(grandchildPidFile === undefined
-        ? []
-        : [`--grandchild-pid-file=${grandchildPidFile}`]),
-    ],
+    ...fixtureAgentCommand({
+      grants: [
+        grandchildPidFile === undefined
+          ? "--allow-run=/bin/kill"
+          : "--allow-run=bash,/bin/kill",
+        ...(pidFile === undefined ? [] : [`--allow-write=${pidFile}`]),
+        ...(grandchildPidFile === undefined ? [] : [
+          `--allow-read=${grandchildPidFile}`,
+          `--allow-write=${grandchildPidFile}`,
+        ]),
+      ],
+      scriptArgs: [
+        ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
+        ...(grandchildPidFile === undefined
+          ? []
+          : [`--grandchild-pid-file=${grandchildPidFile}`]),
+      ],
+    }),
     environment: {
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
       PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -151,6 +151,30 @@ async function forceStopRecordedProcessTree(
       () => undefined,
     );
   }
+}
+
+/** The pid a process records in `path`, once it has written one. */
+async function waitForRecordedPid(
+  path: string,
+  timeoutMs = 10_000,
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const pid = Number((await readFile(path, "utf8").catch(() => "")).trim());
+    if (Number.isSafeInteger(pid) && pid > 0) return pid;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`no pid was recorded in ${path} within ${timeoutMs} ms`);
+}
+
+/** Whether `pid` has exited (or is a zombie) within `timeoutMs`. */
+async function exitsWithin(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await processIsAlive(pid))) return true;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return !(await processIsAlive(pid));
 }
 
 /** Asserts `promise` rejects with an error carrying each expected field. */
@@ -1409,6 +1433,79 @@ describe("runAcpAgent", () => {
     });
     assert.strictEqual(calls, 2);
     assert.strictEqual(result.text, "solution found");
+  });
+});
+
+describe("the fixture agent's parent-death watchdog", () => {
+  it("kills its own process group once its parent dies", async () => {
+    const pidFile = await tempPath();
+    const memberPidFile = await tempPath();
+    let agentPid: number | undefined;
+    let memberPid: number | undefined;
+    let verified = false;
+    try {
+      await Promise.all([unlink(pidFile), unlink(memberPidFile)]);
+      const agent = fixtureAgentCommand({
+        grants: ["--allow-run=/bin/kill", `--allow-write=${pidFile}`],
+        scriptArgs: [`--pid-file=${pidFile}`],
+      });
+      // With job control on, bash gives the background pipeline a process
+      // group of its own, led by its first process: the agent. `sleep` is the
+      // group's second member, and only a signal to the group ends it before
+      // its 300 s are up. SIGKILLing bash orphans both.
+      const home = process.env.HOME ?? "/tmp";
+      const parent = spawn("bash", [
+        "-c",
+        'set -m; "$@" < /dev/null | /bin/sleep 300 & echo "$!" > "$0"; wait',
+        memberPidFile,
+        agent.command,
+        ...agent.args,
+      ], {
+        env: {
+          DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
+          HOME: home,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+        stdio: "ignore",
+      });
+      const parentClosed = new Promise<void>((resolve) => {
+        parent.once("error", () => resolve());
+        parent.once("close", () => resolve());
+      });
+      try {
+        agentPid = await waitForRecordedPid(pidFile);
+        memberPid = await waitForRecordedPid(memberPidFile);
+        assert.strictEqual(await processIsAlive(memberPid), true);
+      } finally {
+        parent.kill("SIGKILL");
+        await parentClosed;
+      }
+      assert.strictEqual(
+        await exitsWithin(agentPid, 5_000),
+        true,
+        "the fixture agent outlived its parent",
+      );
+      assert.strictEqual(
+        await exitsWithin(memberPid, 5_000),
+        true,
+        "the second member of the agent's process group outlived its parent",
+      );
+      verified = true;
+    } finally {
+      if (!verified) {
+        if (agentPid !== undefined) {
+          await runSignalCommand(["-KILL", "--", `-${agentPid}`], 500).catch(
+            () => undefined,
+          );
+        }
+        if (memberPid !== undefined) {
+          await runSignalCommand(["-KILL", "--", String(memberPid)], 500)
+            .catch(() => undefined);
+        }
+      }
+      await removeTempPath(pidFile).catch(() => {});
+      await removeTempPath(memberPidFile).catch(() => {});
+    }
   });
 });
 

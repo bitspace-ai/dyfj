@@ -25,11 +25,11 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import { dirname, join } from "node:path";
 import {
   codexChatGptProfile,
+  fixtureAgentCommand,
   fixtureProfile,
   historyContainsSecretShape,
   MAX_HISTORY_MESSAGE_BYTES,
@@ -381,10 +381,6 @@ function stalledInitializeProfile(
   pidFile: string,
 ): AcpExecutionProfile {
   const base = fixtureProfile(workspace);
-  const script = base.args.at(-1);
-  if (script === undefined) {
-    throw new Error("fixture profile is missing a script");
-  }
   const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
@@ -393,13 +389,10 @@ function stalledInitializeProfile(
     promptTimeoutMs: 2_000,
     cancellationTimeoutMs: 500,
     terminationTimeoutMs: 500,
-    args: [
-      ...base.args.slice(0, -1),
-      "--allow-run=/bin/kill",
-      `--allow-write=${pidFile}`,
-      script,
-      `--pid-file=${pidFile}`,
-    ],
+    ...fixtureAgentCommand({
+      grants: ["--allow-run=/bin/kill", `--allow-write=${pidFile}`],
+      scriptArgs: [`--pid-file=${pidFile}`],
+    }),
     environment: {
       ...base.environment,
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
@@ -415,8 +408,6 @@ function methodLogProfile(
   methodLog: string,
 ): AcpExecutionProfile {
   const base = fixtureProfile(workspace);
-  const script = base.args.at(-1);
-  if (script === undefined) throw new Error("fixture profile has no script");
   const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
@@ -425,12 +416,10 @@ function methodLogProfile(
     promptTimeoutMs: 5_000,
     cancellationTimeoutMs: 500,
     terminationTimeoutMs: 500,
-    args: [
-      ...base.args.slice(0, -1),
-      `--allow-write=${methodLog}`,
-      script,
-      `--method-log=${methodLog}`,
-    ],
+    ...fixtureAgentCommand({
+      grants: [`--allow-write=${methodLog}`],
+      scriptArgs: [`--method-log=${methodLog}`],
+    }),
     environment: {
       ...base.environment,
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
@@ -850,14 +839,13 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     assert.deepStrictEqual(h.events, []);
   });
 
-  it("does not read or forward an ambient Deno cache path", async () => {
+  it("does not read or forward an ambient runtime cache path", async () => {
     await withEnvOverlay({ DENO_DIR: "/tmp/acp-declared-deno-dir" }, () => {
-      assertNoProperty(fixtureProfile(process.cwd()).environment, "DENO_DIR");
-      const args = fixtureProfile(process.cwd()).args;
-      assertContains(args, "--node-modules-dir=manual");
-      assert.ok(
-        args.some((arg) => /^--config=\/.*\/prototype\/deno\.json$/.test(arg)),
-        `no --config=<prototype>/deno.json argument in ${JSON.stringify(args)}`,
+      const profile = fixtureProfile(process.cwd());
+      assertNoProperty(profile.environment, "DENO_DIR");
+      assert.deepStrictEqual(
+        { command: profile.command, args: profile.args },
+        fixtureAgentCommand(),
       );
     });
   });

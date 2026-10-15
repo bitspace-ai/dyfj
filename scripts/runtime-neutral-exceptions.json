@@ -65,11 +65,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/scripts/acp-fixture-agent.ts",
-    "count": 32,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/add-import-extensions.ts",
     "count": 7,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
@@ -228,11 +223,6 @@
     "path": "prototype/src/extensions/linear/mod.test.ts",
     "count": 9,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/external-agent-runtime.integration.test.ts",
-    "count": 1,
-    "reason": "One test name: it pins that the fixture profile neither reads nor forwards the Deno cache variable (DENO_DIR), which its Deno CLI argv still depends on; it changes with the fixture agent under S3 of decision D32."
   },
   {
     "path": "prototype/src/server/console-canary.integration.test.ts",

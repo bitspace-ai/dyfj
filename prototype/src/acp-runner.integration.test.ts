@@ -4,7 +4,7 @@
 // isolated fixture database the integration lane starts.
 import assert from "node:assert/strict";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import { buildConversationMessages } from "./context/mod.ts";
 import { type DoltStore, fetchWorkbenchSessionEvents } from "./store/mod.ts";

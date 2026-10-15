@@ -5,37 +5,56 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
+import { spawn } from "node:child_process";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
+import process from "node:process";
+import { Readable, Writable } from "node:stream";
 
-const pidFile = Deno.args.find((arg) => arg.startsWith("--pid-file="))?.slice(
+// Written to `node:` builtins only, so the same script runs under either
+// runtime: the fixture profile starts it on whichever one runs the product
+// (`fixtureAgentCommand` in `src/external-agent-runtime.ts`).
+
+const args = process.argv.slice(2);
+const pidFile = args.find((arg) => arg.startsWith("--pid-file="))?.slice(
   "--pid-file=".length,
 );
-if (pidFile !== undefined) await Deno.writeTextFile(pidFile, String(Deno.pid));
-const grandchildPidFile = Deno.args.find((arg) =>
+if (pidFile !== undefined) await writeFile(pidFile, String(process.pid));
+const grandchildPidFile = args.find((arg) =>
   arg.startsWith("--grandchild-pid-file=")
 )?.slice("--grandchild-pid-file=".length);
-const methodLogFile = Deno.args.find((arg) => arg.startsWith("--method-log="))
+const methodLogFile = args.find((arg) => arg.startsWith("--method-log="))
   ?.slice("--method-log=".length);
 
 async function logMethod(method: string): Promise<void> {
   if (methodLogFile === undefined) return;
-  await Deno.writeTextFile(methodLogFile, `${method}\n`, { append: true });
+  await appendFile(methodLogFile, `${method}\n`);
 }
 
-const originParent = Deno.ppid;
+// Runs `file` to its exit with no stdio. An explicit empty environment: with
+// none, `node:child_process` copies every variable, which a runtime that
+// grants environment variables by name refuses. Never rejects: a command that
+// cannot start (an `error` event, or a synchronous throw where the runtime
+// refuses the spawn) settles like one that fails.
+function runQuietly(file: string, args: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(file, args, { env: {}, stdio: "ignore" });
+      child.once("error", () => resolve());
+      child.once("close", () => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+const originParent = process.ppid;
 void (async () => {
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    if (Deno.ppid === 1 || Deno.ppid !== originParent) {
-      try {
-        await new Deno.Command("/bin/kill", {
-          args: ["-KILL", "--", `-${Deno.pid}`],
-          stdout: "null",
-          stderr: "null",
-        }).output();
-      } catch {
-        // Best-effort group reap; still exit so the fixture itself does not leak.
-      }
-      Deno.exit(1);
+    if (process.ppid === 1 || process.ppid !== originParent) {
+      // Best-effort group reap; still exit so the fixture itself does not leak.
+      await runQuietly("/bin/kill", ["-KILL", "--", `-${process.pid}`]);
+      process.exit(1);
     }
   }
 })();
@@ -57,6 +76,13 @@ const emptyParams = (params: unknown): Record<string, never> => {
   return {};
 };
 
+/** Writes raw bytes past the protocol stream, as the malformed cases need. */
+function writeStdout(bytes: Uint8Array): Promise<void> {
+  return new Promise((resolve, reject) =>
+    process.stdout.write(bytes, (error) => error ? reject(error) : resolve())
+  );
+}
+
 async function chunk(
   context: AgentContext,
   sessionId: string,
@@ -75,10 +101,10 @@ async function waitForRecordedPid(path: string): Promise<void> {
   const deadline = performance.now() + 1_000;
   while (performance.now() < deadline) {
     try {
-      const pid = Number(await Deno.readTextFile(path));
+      const pid = Number(await readFile(path, "utf8"));
       if (Number.isSafeInteger(pid) && pid > 0) return;
     } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      if ((error as { code?: unknown }).code !== "ENOENT") throw error;
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -88,7 +114,7 @@ async function waitForRecordedPid(path: string): Promise<void> {
 const app = agent({ name: "dyfj-acp-fixture" })
   .onRequest(methods.agent.initialize, async () => {
     await logMethod("initialize");
-    if (Deno.env.get("ACP_FIXTURE_MODE") === "initialize_mute") {
+    if (process.env.ACP_FIXTURE_MODE === "initialize_mute") {
       await new Promise(() => {});
     }
     return {
@@ -103,7 +129,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
   .onRequest("authentication/status", emptyParams, () => {
     void logMethod("authentication/status");
     authenticationStatusRead = true;
-    switch (Deno.env.get("ACP_FIXTURE_AUTH_STATUS")) {
+    switch (process.env.ACP_FIXTURE_AUTH_STATUS) {
       case "mute":
         return new Promise(() => {});
       case "chat-gpt":
@@ -123,15 +149,15 @@ const app = agent({ name: "dyfj-acp-fixture" })
   .onRequest(methods.agent.session.new, async ({ params, client: context }) => {
     await logMethod("session/new");
     if (
-      Deno.env.get("ACP_FIXTURE_AUTH_STATUS") === "chat-gpt" &&
+      process.env.ACP_FIXTURE_AUTH_STATUS === "chat-gpt" &&
       !authenticationStatusRead
     ) {
       throw new Error("session/new preceded authentication/status");
     }
-    if (Deno.env.get("ACP_FIXTURE_MODE") === "session_new_mute") {
+    if (process.env.ACP_FIXTURE_MODE === "session_new_mute") {
       await new Promise(() => {});
     }
-    if (Deno.env.get("ACP_FIXTURE_MODE") === "session_new_early_update") {
+    if (process.env.ACP_FIXTURE_MODE === "session_new_early_update") {
       await context.notify(methods.client.session.update, {
         sessionId: "bogus-session",
         update: {
@@ -150,10 +176,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
   })
   .onRequest(methods.agent.session.close, async ({ params }) => {
     await logMethod("session/close");
-    if (Deno.env.get("ACP_FIXTURE_MODE") === "session_close_mute") {
+    if (process.env.ACP_FIXTURE_MODE === "session_close_mute") {
       await new Promise(() => {});
     }
-    if (Deno.env.get("ACP_FIXTURE_MODE") === "late_permission_during_close") {
+    if (process.env.ACP_FIXTURE_MODE === "late_permission_during_close") {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     sessions.delete(params.sessionId);
@@ -202,19 +228,19 @@ const app = agent({ name: "dyfj-acp-fixture" })
         grandchildPidFile !== undefined
       ) {
         try {
-          const grandchild = new Deno.Command("bash", {
-            args: [
-              "-c",
-              'trap "" TERM; echo "$$" > "$1"; while :; do sleep 1; done',
-              "bash",
-              grandchildPidFile,
-            ],
-            stdin: "null",
-            stdout: "null",
-            stderr: "null",
-          }).spawn();
+          // An empty environment, as for `/bin/kill` above: with no PATH,
+          // the default search path finds `bash` and the `sleep` it runs.
+          const grandchild = spawn("bash", [
+            "-c",
+            'trap "" TERM; echo "$$" > "$1"; while :; do sleep 1; done',
+            "bash",
+            grandchildPidFile,
+          ], { env: {}, stdio: "ignore" });
           grandchild.unref();
-          await waitForRecordedPid(grandchildPidFile);
+          await new Promise<void>((resolve, reject) => {
+            grandchild.once("error", reject);
+            waitForRecordedPid(grandchildPidFile).then(resolve, reject);
+          });
         } catch (error) {
           await chunk(
             context,
@@ -224,7 +250,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
           return { stopReason: "end_turn" };
         }
       }
-      if (prompt.includes("FIXTURE_EARLY_EXIT")) Deno.exit(17);
+      if (prompt.includes("FIXTURE_EARLY_EXIT")) process.exit(17);
       if (prompt.includes("FIXTURE_MUTE")) await new Promise(() => {});
       if (prompt.includes("FIXTURE_ENV")) {
         const blocked = [
@@ -232,13 +258,13 @@ const app = agent({ name: "dyfj-acp-fixture" })
           "DOLT_PASSWORD",
           "DYFJ_MEMORY_MCP_TOKEN",
           "SSH_AUTH_SOCK",
-        ].map((name) => `${name}=${Deno.env.get(name) ?? "missing"}`).join(";");
+        ].map((name) => `${name}=${process.env[name] ?? "missing"}`).join(";");
         await chunk(
           context,
           params.sessionId,
-          `allowed=${Deno.env.get("ACP_FIXTURE_ALLOWED") ?? "missing"};` +
+          `allowed=${process.env.ACP_FIXTURE_ALLOWED ?? "missing"};` +
             `ambient=${
-              Deno.env.get("ACP_FIXTURE_AMBIENT_VALUE") ?? "missing"
+              process.env.ACP_FIXTURE_AMBIENT_VALUE ?? "missing"
             };${blocked}`,
         );
         return { stopReason: "end_turn" };
@@ -262,18 +288,18 @@ const app = agent({ name: "dyfj-acp-fixture" })
         await new Promise(() => {});
       }
       if (prompt.includes("FIXTURE_MALFORMED")) {
-        await Deno.stdout.write(
+        await writeStdout(
           new TextEncoder().encode("{malformed fixture json\n"),
         );
         await new Promise(() => {});
       }
       if (prompt.includes("FIXTURE_INVALID_UTF8")) {
         const encoder = new TextEncoder();
-        await Deno.stdout.write(encoder.encode(
+        await writeStdout(encoder.encode(
           '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fixture-1","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"',
         ));
-        await Deno.stdout.write(Uint8Array.of(0xFF));
-        await Deno.stdout.write(encoder.encode('"}}}}\n'));
+        await writeStdout(Uint8Array.of(0xFF));
+        await writeStdout(encoder.encode('"}}}}\n'));
         await new Promise(() => {});
       }
       if (prompt.includes("FIXTURE_PERMISSION")) {
@@ -674,6 +700,9 @@ const app = agent({ name: "dyfj-acp-fixture" })
   );
 
 const connection = app.connect(
-  ndJsonStream(Deno.stdout.writable, Deno.stdin.readable),
+  ndJsonStream(
+    Writable.toWeb(process.stdout),
+    Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>,
+  ),
 );
 await connection.closed;

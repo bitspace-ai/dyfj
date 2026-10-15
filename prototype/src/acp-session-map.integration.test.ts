@@ -16,7 +16,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { dirname, join } from "node:path";
 import {
   type AcpExecutionProfile,
@@ -24,6 +24,7 @@ import {
   startAcpSession,
 } from "./acp-client.ts";
 import { AcpSessionHandleMap } from "./acp-session-map.ts";
+import { fixtureAgentCommand } from "./external-agent-runtime.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -36,17 +37,16 @@ function fixtureProfile(
   );
   return {
     slug: "fixture",
-    command: process.execPath,
-    args: [
-      "run",
-      "--cached-only",
-      "--allow-env=ACP_FIXTURE_ALLOWED,ACP_FIXTURE_MODE,ACP_FIXTURE_AUTH_STATUS,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
-      "--allow-run=/bin/kill",
-      ...writePaths.map((path) => `--allow-write=${path}`),
-      join(import.meta.dirname!, "../scripts/acp-fixture-agent.ts"),
-      ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
-      ...(methodLog === undefined ? [] : [`--method-log=${methodLog}`]),
-    ],
+    ...fixtureAgentCommand({
+      grants: [
+        "--allow-run=/bin/kill",
+        ...writePaths.map((path) => `--allow-write=${path}`),
+      ],
+      scriptArgs: [
+        ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
+        ...(methodLog === undefined ? [] : [`--method-log=${methodLog}`]),
+      ],
+    }),
     environment: {
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
       PATH: process.env.PATH ?? "/usr/bin:/bin",
