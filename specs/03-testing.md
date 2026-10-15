@@ -81,8 +81,8 @@ in the same change that lands this spec's first work order.
     get the per-file handle check instead (§1).
   - The pinned Deno (2.9.6) runs the op and resource sanitizers only when asked,
     so a lane's `deno test` run must pass `--sanitize-ops --sanitize-resources`.
-    `test.unit` and the integration lane do. The golden lane does not yet; it
-    adopts the flags as its tests are brought under this rule.
+    `test.unit` and the integration lane do. The golden lane does not: its
+    tests run under `node --test` (§4), so its `deno test` subset is empty.
   - A test that leaks an op, resource or child process fails at the test that
     leaked it, when the sanitizers can see it.
   - A test may disable a sanitizer only with a comment naming the leak and why
@@ -214,6 +214,15 @@ internal move.
   - Any other snapshot diff is a failed refactor.
   - Roadmap work that intentionally changes behavior updates snapshots under its
     own recorded decision, naming each changed scenario.
+  - Only an explicit update writes a snapshot. The suite runs under
+    `node --test`, which has no permission sandbox and passes a test file no
+    arguments, so the rule is enforced in code. The runner turns
+    `deno task test:golden --update` into `DYFJ_GOLDEN_UPDATE=1` for the test
+    process. Every write under `testing/golden/snapshots/` goes through one
+    function (`testing/golden/snapshots.ts`), and that function throws unless
+    the variable is `1`. A plain run fails on a missing or changed snapshot
+    and writes nothing. Tests in `snapshots.test.ts` pin both cases and the
+    update path. Decision D32.
 
 ## 5. Conformance kits
 
@@ -266,12 +275,13 @@ internal move.
 | `test.unit` (new)                            | `deno test --parallel` over unit + component files. No Dolt, no network, no child processes: the `deno test` subset's grants enforce this; Node-routed files run unsandboxed, so for them it is a rule the tests keep, not a grant.                                                                                          |
 | Node subset of `test.unit`, `test.integration`, `test.golden` (new) | Files that register with `node:test` (§1) run after the lane's `deno test` subset under `node --test --import <handle check> --test-concurrency=<the lane's jobs> --test-reporter=tap`, with default process isolation and the same environment as the `deno test` subset plus `DENO_BIN`. An empty subset is reported as `0 files`. The runner fails unless `node` is Node 26. The lane prints a count line for its Node files beside `deno test`'s own, parsed from the TAP summary; a run with no summary fails. `node --test` and its per-file processes stay in the lane's process group, so the deadline and group stop reach them. Decision D32. |
 | `test.integration`                           | Runs through the isolated Dolt fixture. Both frameworks during the transition; `Deno.test` only at exit.                                                                              |
-| `test.golden` (new)                          | Golden suite.                                                                                                                                                                         |
+| `test.golden` (new)                          | Golden suite. Its tests register with `node:test` and run in the lane's Node subset; `--update` reaches them as `DYFJ_GOLDEN_UPDATE=1`, and a code guard refuses every snapshot write without it (§4). |
 | `arch.imports` (new)                         | `01-architecture.md` §4.                                                                                                                                                              |
 | `runtime.neutral` (new)                      | Exact ratchet on whole-word `Deno` references in tracked `.ts` files against `scripts/runtime-neutral-exceptions.json`; reported under `test.aggregate`. Decision D32.                    |
 | `erasable.syntax` (new)                      | Rejects constructor parameter properties in tracked `.ts` files, the one non-erasable construct the codebase used; parsed by `deno lint` with a repository plugin; reported under `test.aggregate`. Other non-erasable syntax (`enum`, `namespace`, decorators) goes unchecked until `tsc --erasableSyntaxOnly` takes over. The Node load probe (`scripts/node-load-probe.ts`) is a manual check of non-test modules under `prototype/src`, `prototype/testing` and `contracts/` only; the golden lane's runner (`testing/golden/run.ts`), still a `deno` script, is its one expected failure. Decision D32. |
 | npm install precondition (new)               | First lane of the full gate and `test:fast`: fails with `` run `npm ci` in prototype/ `` when `prototype/node_modules` is missing or does not match `package-lock.json` (npm's `node_modules/.package-lock.json` against the lockfile, by package and version, and each recorded package's `package.json` present on disk; absent optional packages allowed). Read-only: the gate never runs npm. Reported under `test.aggregate`, because it judges the checkout's install, not the committed tree. Decision D32. |
 | `schema.codegen`, `schema.equivalence` (new) | `02-data-layer.md`.                                                                                                                                                                   |
+| Schema unit tests                            | `schema/validate-schema.test.ts`, `codegen.test.ts` and `equivalence.test.ts` register with `node:test` and run under `node --test` with the per-file handle check and a count line, through the shared Node runner (`scripts/run-node-test-files.ts`), one file at a time. `schema/model-catalog.test.ts` and the `contracts/workbench/first-product/v1` tests stay on `deno test` until the modules they import stop calling the existing runtime's global. Decision D32. |
 | `projections.replay` (roadmap)               | `02-data-layer.md` §7. Added by roadmap durable-state work.                                                                                                                           |
 | typecheck lanes                              | One source of truth for the file list: derived by globbing, not hand-listed. This removes the current drift between `prototype/deno.json check` and `aggregate-test-gate.ts:438-456`. |
 | `test:fast`                                  | Adds `test.unit`, so the fast loop exercises product behavior.                                                                                                                        |

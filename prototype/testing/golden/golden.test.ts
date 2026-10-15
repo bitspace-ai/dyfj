@@ -16,9 +16,8 @@
  * allow:  deno task test:golden --update
  */
 
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { AssertionError } from "node:assert";
-import process from "node:process";
+import { lstat } from "node:fs/promises";
+import { test } from "node:test";
 import {
   type ChatMessage,
   type ChatRequest,
@@ -31,8 +30,8 @@ import {
   startHarness,
 } from "./harness.ts";
 import { OPERATOR, STRICT } from "./profiles.ts";
+import { matchSnapshot } from "./snapshots.ts";
 
-const UPDATE = process.argv.slice(2).includes("--update");
 const SNAPSHOT_DIR = `${prototypeRoot}/testing/golden/snapshots`;
 
 // ── Catalog ─────────────────────────────────────────────────────────────────
@@ -584,55 +583,9 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
-// ── Snapshot comparison ─────────────────────────────────────────────────────
-
-function firstDifference(expected: string, actual: string): string {
-  const a = expected.split("\n");
-  const b = actual.split("\n");
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i] !== b[i]) {
-      return `line ${i + 1}\n- ${a[i] ?? "<missing>"}\n+ ${
-        b[i] ?? "<missing>"
-      }`;
-    }
-  }
-  return "(no line difference)";
-}
-
-async function matchSnapshot(id: string, value: unknown): Promise<void> {
-  const path = `${SNAPSHOT_DIR}/${id}.json`;
-  const actual = `${JSON.stringify(value, null, 2)}\n`;
-  if (UPDATE) {
-    await mkdir(SNAPSHOT_DIR, { recursive: true });
-    await writeFile(path, actual);
-    return;
-  }
-  let expected: string;
-  try {
-    expected = await readFile(path, "utf8");
-  } catch (error) {
-    if (
-      (error instanceof Error &&
-        (error as { code?: unknown }).code === "ENOENT")
-    ) {
-      throw new AssertionError({
-        message: `missing golden snapshot ${id}; run with -- --update`,
-      });
-    }
-    throw error;
-  }
-  if (expected !== actual) {
-    throw new AssertionError({
-      message: `golden snapshot ${id} changed at ${
-        firstDifference(expected, actual)
-      }`,
-    });
-  }
-}
-
 // ── Suite ───────────────────────────────────────────────────────────────────
 
-Deno.test("golden characterization suite", async (t) => {
+test("golden characterization suite", async (t) => {
   const harness = await startHarness({
     models: MODELS,
     script: goldenScript,
@@ -641,7 +594,7 @@ Deno.test("golden characterization suite", async (t) => {
   const state: SharedState = {};
   try {
     for (const scenario of SCENARIOS) {
-      await t.step(`${scenario.id}: ${scenario.title}`, async () => {
+      await t.test(`${scenario.id}: ${scenario.title}`, async () => {
         const capture = await scenario.run(harness, state);
         const rows = await harness.newRows();
         const normalized = harness.normalizer().normalize({
@@ -649,7 +602,7 @@ Deno.test("golden characterization suite", async (t) => {
           capture,
           rows,
         });
-        await matchSnapshot(scenario.id, normalized);
+        await matchSnapshot(SNAPSHOT_DIR, scenario.id, normalized);
       });
     }
   } finally {

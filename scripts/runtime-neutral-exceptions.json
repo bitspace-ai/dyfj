@@ -80,11 +80,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/scripts/isolated-dolt-fixture.ts",
-    "count": 13,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/isolated-dolt-integration.ts",
     "count": 25,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
@@ -160,19 +155,9 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/golden/golden.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/golden/run.ts",
-    "count": 8,
-    "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
-  },
-  {
-    "path": "schema/codegen.test.ts",
     "count": 7,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
   },
   {
     "path": "schema/codegen.ts",
@@ -180,19 +165,9 @@
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "schema/equivalence.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "schema/equivalence.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "schema/validate-schema.test.ts",
-    "count": 7,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "schema/validate-schema.ts",
@@ -201,7 +176,7 @@
   },
   {
     "path": "scripts/aggregate-test-gate.test.ts",
-    "count": 186,
+    "count": 185,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {

@@ -867,13 +867,24 @@ export function productionLanes(
       cwd: root,
     },
     {
+      // These files register with node:test, so they run under `node --test`
+      // with the per-file handle check, through the shared Node runner
+      // (decision D32). The runner reads the repository and spawns `node`;
+      // NODE_V8_COVERAGE is read by the runtime's node:child_process shim on
+      // every spawn. The tests themselves run with no permission sandbox.
       label: "Schema unit tests",
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
       args: [
-        "test",
-        "--allow-read=schema",
+        "run",
+        "--no-prompt",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=.",
+        "--allow-run=node",
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "schema.unit",
         "schema/validate-schema.test.ts",
         "schema/codegen.test.ts",
         "schema/equivalence.test.ts",

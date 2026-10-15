@@ -732,11 +732,18 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
     throw new Error("golden lane must not run in the fast subset");
   }
   const runner = await Deno.readTextFile("prototype/testing/golden/run.ts");
-  // The lane can never rewrite its own snapshots: write access to the
-  // snapshot directory is granted only for an explicit update.
+  // The lane can never rewrite its own snapshots: only an explicit update
+  // grants write on the snapshot directory to the first runtime's files, or
+  // turns on update mode, without which the Node files' one snapshot writer
+  // refuses (`testing/golden/snapshots.ts`, pinned by its own tests).
   assertStringIncludes(
     runner,
-    'Deno.args.includes("--update") ? ",testing/golden/snapshots" : ""',
+    'const update = suiteArgs.includes("--update");',
+  );
+  assertStringIncludes(runner, 'update ? ",testing/golden/snapshots" : ""');
+  assertStringIncludes(
+    runner,
+    'env: update ? { ...env, [GOLDEN_UPDATE_ENV]: "1" } : env,',
   );
 });
 

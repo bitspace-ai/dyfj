@@ -1133,7 +1133,11 @@ never hand-listed), the prototype unit lane (`test.unit`: every
 non-integration, non-golden test file; its `deno test` subset runs in parallel
 with the op and resource sanitizers enabled, no run or net grant, and env
 access only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`, grants that
-bind that subset only, while its Node-routed files run unsandboxed), current and
+bind that subset only, while its Node-routed files run unsandboxed), the
+schema unit tests (`schema/validate-schema.test.ts`, `codegen.test.ts` and
+`equivalence.test.ts`, which register with `node:test` and run under
+`node --test` with the per-file handle check through
+`scripts/run-node-test-files.ts`), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
@@ -1147,9 +1151,15 @@ model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
 RPC responses, rendered CLI output, and every `events` and `sessions` row a
 scenario writes) with the snapshots committed under
-`prototype/testing/golden/snapshots/`. Its tests get loopback TCP and the exact
-Unix socket of each engine server they start, and cannot write the snapshot
-directory unless run with `--update`. The harness starts the engine server and
+`prototype/testing/golden/snapshots/`. The golden suite registers with
+`node:test`, so it runs under `node --test` with the per-file handle check and
+no permission sandbox. Only an update may write a snapshot: `--update` reaches
+the test process as `DYFJ_GOLDEN_UPDATE=1`, and every snapshot write goes
+through one function (`prototype/testing/golden/snapshots.ts`) that throws
+unless that variable is set. A plain run fails on a missing or changed snapshot
+and writes nothing. A golden file still on `deno test` gets loopback TCP and
+the exact Unix socket of each engine server it starts, and write on the
+snapshot directory only with `--update`. The harness starts the engine server and
 CLI with the `deno` executable named by `DENO_BIN`, which `deno task
 test:golden` and the gate set; a direct `deno test` of the golden directory
 must set it too, or the harness fails with an error naming it. The task resolves the Deno executable selected for the
@@ -2197,6 +2207,11 @@ Document revisions only. Code and behavior changes are tracked in
   before it compares, so the runner's in-flight output is not reported as a
   leak, and that a failing file exits after a bounded grace period, so the
   runner's report of its tests is not cut off.
+- 2026-10-15 - The aggregate gate's description says that the golden suite
+  and the schema unit tests run under `node --test`, and that a code guard
+  (`prototype/testing/golden/snapshots.ts`, on by `DYFJ_GOLDEN_UPDATE=1`)
+  replaces the write grant as what keeps a plain golden run from writing a
+  snapshot.
 - 2026-10-15 - The list of modules not yet moved into `prototype/src/` unit
   directories adds `acp-fixture-command.ts`, the ACP runner module that
   builds the fixture agent's command for the runtime running the product.
