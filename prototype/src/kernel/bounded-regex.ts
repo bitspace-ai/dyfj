@@ -9,17 +9,21 @@
  * main thread that wedges the runtime's event loop with no approval prompt in
  * front of it.
  *
- * Matching therefore runs in a Worker, whose only job is that it can be
- * terminated. The budget — not the pattern — is what bounds the cost.
+ * Matching therefore runs in a `node:worker_threads` Worker, whose only job is
+ * that it can be terminated, even mid-`test()`. The budget — not the pattern —
+ * is what bounds the cost. Both runtimes the prototype runs under provide
+ * `node:worker_threads`, so the matcher behaves the same on either.
  *
- * This is NOT a permission sandbox. The runtime's per-worker permissions
- * option (`deno.permissions`) still requires --unstable-worker-options, so the
- * worker inherits the host's permissions. What it runs is therefore the thing that matters, and it runs a
- * source string embedded below — not a file on disk that an approved workspace
- * edit could rewrite between searches. `specifier` overrides that for tests
- * only; anything passed there runs with the same inherited permissions, so do
- * not wire it to a value any caller outside this repo can choose.
+ * This is NOT a permission sandbox. A worker thread runs with the host
+ * process's permissions. What it runs is therefore the thing that matters,
+ * and it runs a source string embedded below — not a file on disk that an
+ * approved workspace edit could rewrite between searches. `specifier`
+ * overrides that for tests only; anything passed there runs with the same
+ * inherited permissions, so do not wire it to a value any caller outside this
+ * repo can choose.
  */
+
+import { Worker } from "node:worker_threads";
 
 /**
  * Cumulative wall clock for regex *matching* across every file in one
@@ -74,9 +78,9 @@ export class RegexUnavailable extends Error {
  * Keep it small enough to read in one sitting; it should never grow past matching.
  */
 const WORKER_SOURCE = `
+import { parentPort } from "node:worker_threads";
 let compiled = null;
-self.onmessage = (event) => {
-  const { id, pattern, lines } = event.data;
+parentPort.on("message", ({ id, pattern, lines }) => {
   try {
     if (compiled === null || compiled.pattern !== pattern) {
       compiled = { pattern, re: new RegExp(pattern) };
@@ -86,19 +90,20 @@ self.onmessage = (event) => {
       // The pattern is compiled without /g, so lastIndex never carries over.
       if (compiled.re.test(lines[i])) hits.push(i);
     }
-    self.postMessage({ id, hits });
+    parentPort.postMessage({ id, hits });
   } catch (err) {
-    self.postMessage({ id, error: String(err && err.message) });
+    parentPort.postMessage({ id, error: String(err && err.message) });
   }
-};
+});
 `;
 
 /**
- * A `data:` URL for the embedded source, fixed at module load. It needs no
+ * A `data:` URL for the embedded source, fixed at module load. The worker
+ * loads it as an ES module. It needs no
  * read or net grant, and as a constant it keeps the module free of mutable
  * state.
  */
-const DEFAULT_WORKER_SPECIFIER = "data:application/javascript," +
+const DEFAULT_WORKER_SPECIFIER = "data:text/javascript," +
   encodeURIComponent(WORKER_SOURCE);
 
 export class BoundedMatcher {
@@ -158,38 +163,46 @@ export class BoundedMatcher {
     const id = this.#nextId++;
     const started = performance.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let detach: (() => void) | undefined;
 
     try {
       return await new Promise<number[]>((resolve, reject) => {
+        const onMessage = (
+          data: { id: number; hits?: number[]; error?: string },
+        ) => {
+          if (data.id !== id) return;
+          if (data.error !== undefined) {
+            reject(new Error(data.error));
+            return;
+          }
+          resolve(data.hits ?? []);
+        };
+        // A worker that fails to load reports `error` and then `exit`; one
+        // that dies otherwise reports only `exit`. Either way nothing will
+        // answer, so this matcher is spent and the call fails closed.
+        const onGone = () => {
+          this.close();
+          reject(new RegexUnavailable());
+        };
+        detach = () => {
+          worker.off("message", onMessage);
+          worker.off("exit", onGone);
+          worker.off("error", onGone);
+        };
         timer = setTimeout(() => {
           // The worker is mid-`test()` and will not answer. Kill it; a
           // terminated worker cannot be reused, so mark this matcher spent.
           this.close();
           reject(new RegexBudgetExceeded(this.#budgetMs));
         }, remaining);
-        worker.onmessage = (
-          event: MessageEvent<
-            { id: number; hits?: number[]; error?: string }
-          >,
-        ) => {
-          if (event.data.id !== id) return;
-          if (event.data.error !== undefined) {
-            reject(new Error(event.data.error));
-            return;
-          }
-          resolve(event.data.hits ?? []);
-        };
-        worker.onerror = (event: ErrorEvent) => {
-          // Keep the failure local: without preventDefault a worker error also
-          // surfaces as an unhandled global error and can take down the host.
-          event.preventDefault?.();
-          this.close();
-          reject(new RegexUnavailable());
-        };
+        worker.on("message", onMessage);
+        worker.on("exit", onGone);
+        worker.on("error", onGone);
         worker.postMessage({ id, pattern: this.#pattern, lines });
       });
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      detach?.();
       this.#spentMs += performance.now() - started;
     }
   }
@@ -198,7 +211,9 @@ export class BoundedMatcher {
   close(): void {
     this.#dead = true;
     if (this.#worker !== null) {
-      this.#worker.terminate();
+      // Termination is asynchronous; the worker stops at its next interrupt
+      // check, mid-`test()` included, and nothing here waits on it.
+      void this.#worker.terminate();
       this.#worker = null;
     }
   }
@@ -207,7 +222,11 @@ export class BoundedMatcher {
     if (this.#worker !== null) return this.#worker;
     try {
       const specifier = this.#explicitSpecifier ?? DEFAULT_WORKER_SPECIFIER;
-      this.#worker = new Worker(specifier, { type: "module" });
+      const worker = new Worker(new URL(specifier));
+      // An `error` event with no listener is thrown in the host. A load
+      // failure between calls must only spend this matcher.
+      worker.on("error", () => this.close());
+      this.#worker = worker;
     } catch (err) {
       this.#dead = true;
       throw err instanceof RegexUnavailable ? err : new RegexUnavailable();

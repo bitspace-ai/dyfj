@@ -460,11 +460,6 @@
     "reason": "One test name: it pins that the fixture profile neither reads nor forwards the Deno cache variable (DENO_DIR), which its Deno CLI argv still depends on; it changes with the fixture agent under S3 of decision D32."
   },
   {
-    "path": "prototype/src/kernel/bounded-regex.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/providers/registry/registry.test.ts",
     "count": 7,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
