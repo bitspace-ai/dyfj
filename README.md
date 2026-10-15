@@ -288,8 +288,11 @@ How the work actually happens, separate from what gets built.
   Dolt instance, real processes, real sockets) belong to the integration tier;
   third-party network services are faked at the network boundary with loopback
   servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
-  Shared fakes live in `prototype/testing/fakes/`. Tests use `Deno.test` with
-  `@std/assert` and `@std/testing`, the only test framework.
+  Shared fakes live in `prototype/testing/fakes/`. While tests move onto
+  `node:test` (decision D32), `Deno.test`/`@std/testing/bdd` and `node:test`
+  coexist: each file is routed by its own registrations, to `deno test` or
+  `node --test`, and assertions and mocks come from `node:assert/strict` and
+  `node:test` in both. The end state is `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -1054,7 +1057,7 @@ Useful validation tasks:
 
 ```sh
 deno task test            # repository aggregate gate (full green bar)
-deno task test:fast       # policy checks, source typecheck, Deno.test unit lane
+deno task test:fast       # policy checks, source typecheck, unit lane
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
@@ -1124,18 +1127,19 @@ After the policy checks, the gate runs the retired-surface scan, the
 `erasable.syntax` guard, the source
 and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
-never hand-listed), the prototype `Deno.test` unit lane (`test.unit`: every
-non-integration, non-golden `Deno.test` file, run in parallel with the op and
-resource sanitizers enabled, no run or net grant, and env access only to
-`TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), current and
+never hand-listed), the prototype unit lane (`test.unit`: every
+non-integration, non-golden test file; its `deno test` subset runs in parallel
+with the op and resource sanitizers enabled, no run or net grant, and env
+access only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`, grants that
+bind that subset only, while its Node-routed files run unsandboxed), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
-`*.integration.test.ts`, found by file name, with the op and resource sanitizers
-enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+`*.integration.test.ts`, found by file name, its `deno test` subset with the op
+and resource sanitizers enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
@@ -1176,7 +1180,30 @@ handled failure. SIGINT and SIGTERM request cooperative cancellation; the direct
 lane process receives SIGTERM followed by a bounded wait and possible SIGKILL.
 The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
-operator's Dolt database. It requires Deno, Dolt, and the pinned Rust toolchain.
+operator's Dolt database. It requires Deno, Node 26, Dolt, and the pinned Rust
+toolchain.
+
+The three test lanes each run on two paths while tests move onto `node:test`
+(decision D32, `specs/03-testing.md` §1). Each discovered file goes by its own
+content (`prototype/scripts/test-files.ts`): a file that registers a test or
+hook with `node:test` runs under `node --test`, one process per file, after the
+lane's `deno test` subset; every other file runs under `deno test` as before; a
+file that registers with both fails discovery, naming the file. Deno's
+sanitizers do not see `node:` resources (a `node:net` server or socket, a
+`node:child_process` child), so they catch only timers among the resources
+tests use today, and nothing in a `node:test` file. The Node subset instead
+preloads a per-file handle check (`prototype/testing/node-handle-check.ts`):
+a file that leaves a server, socket, timer or child process live after its
+last test fails, with the file and the leaked resource types named, and its
+process exits so the run cannot hang. The check is per file, coarser than a
+per-test sanitizer. Each runner fails unless `node` is Node 26, reports an
+empty subset as `0 files`, and prints a count line for its Node files beside
+`deno test`'s own (`test.unit node --test: ok | 52 passed | 0 failed | ...`),
+parsed from the run's TAP summary, so moving files between paths cannot drop
+tests from a lane's output unnoticed. `node --test` and its per-file processes
+stay in the lane's process group, so the lane deadline and group stop reach a
+hung Node test file. Under `node --test`, tests run without a permission
+sandbox.
 
 `arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
 builds the module graph of every module under `prototype/src`,
@@ -2142,3 +2169,12 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-14 - The manual Node load probe covers `prototype/testing` too, with
   the golden runner as its one expected failure, and the golden lane's
   description names `DENO_BIN` as the executable the harness spawns.
+- 2026-10-14 - The aggregate gate's description covers the two-path test
+  lanes: files that register with `node:test` run under `node --test` with a
+  per-file handle check, the rest under `deno test`, and each lane prints a
+  Node count line. It corrects the claim that the sanitizers catch every leaked
+  resource: they do not see `node:` resources, and that the unit lane's grants
+  bind only its `deno test` subset. The engineering-posture testing bullet
+  describes the two test frameworks that coexist during the move to
+  `node:test`, in place of `Deno.test` as the only one. Node 26 joins the
+  integration lane's requirements.

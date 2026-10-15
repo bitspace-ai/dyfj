@@ -165,11 +165,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/scripts/test-files.ts",
-    "count": 3,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/typecheck.ts",
     "count": 6,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
@@ -202,11 +197,6 @@
   {
     "path": "prototype/src/budget/tracker.test.ts",
     "count": 47,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli-idea-local.test.ts",
-    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -525,11 +515,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/server/events-asof.integration.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/server/extensions.test.ts",
     "count": 4,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -776,7 +761,7 @@
   },
   {
     "path": "prototype/testing/golden/run.ts",
-    "count": 9,
+    "count": 8,
     "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
   },
   {
