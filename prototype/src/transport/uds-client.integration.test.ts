@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
+import { test } from "node:test";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -42,7 +43,7 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("expected a rejection");
 }
 
-Deno.test("connectUnixClient sends requests and delivers results and RPC errors", async () => {
+test("connectUnixClient sends requests and delivers results and RPC errors", async () => {
   await using server = await serve("client-roundtrip", {
     "models/list": () => ({ models: ["local-x"] }),
     turn: () => {
@@ -69,7 +70,7 @@ Deno.test("connectUnixClient sends requests and delivers results and RPC errors"
   }
 });
 
-Deno.test("connectUnixClient connects when given a live signal", async () => {
+test("connectUnixClient connects when given a live signal", async () => {
   await using server = await serve("client-roundtrip", {
     ping: () => "pong",
   });
@@ -88,7 +89,7 @@ Deno.test("connectUnixClient connects when given a live signal", async () => {
   }
 });
 
-Deno.test("onStream receives the server's stream notifications during a request", async () => {
+test("onStream receives the server's stream notifications during a request", async () => {
   await using server = await serve("client-approval", {
     turn: async (_params, ctx) => {
       await ctx.notify("stream", { type: "delta", text: "a" });
@@ -111,7 +112,7 @@ Deno.test("onStream receives the server's stream notifications during a request"
   }
 });
 
-Deno.test("onApproval answers the server's approval request", async () => {
+test("onApproval answers the server's approval request", async () => {
   const asked: unknown[] = [];
   await using server = await serve("client-approval", {
     turn: async (_params, ctx) => ({
@@ -134,7 +135,7 @@ Deno.test("onApproval answers the server's approval request", async () => {
   }
 });
 
-Deno.test("without onApproval the server's approval request fails closed", async () => {
+test("without onApproval the server's approval request fails closed", async () => {
   await using server = await serve("client-approval", {
     turn: async (_params, ctx) => {
       try {
@@ -156,7 +157,7 @@ Deno.test("without onApproval the server's approval request fails closed", async
   }
 });
 
-Deno.test("a request signal aborts only that request", async () => {
+test("a request signal aborts only that request", async () => {
   await using server = await serve("client-lifecycle", {
     hang: () => new Promise(() => {}),
     ping: () => "pong",
@@ -174,7 +175,7 @@ Deno.test("a request signal aborts only that request", async () => {
   }
 });
 
-Deno.test("close() rejects requests still in flight", async () => {
+test("close() rejects requests still in flight", async () => {
   await using server = await serve("client-lifecycle", {
     hang: () => new Promise(() => {}),
   });
@@ -188,7 +189,7 @@ Deno.test("close() rejects requests still in flight", async () => {
   );
 });
 
-Deno.test("connectUnixClient rejects when nothing is listening at the path", async () => {
+test("connectUnixClient rejects when nothing is listening at the path", async () => {
   const socketPath = udsTestSocket("client-missing");
   await removeIfPresent(socketPath);
   const err = await rejection(connectUnixClient(socketPath));

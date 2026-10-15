@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { callRpc } from "../../testing/builders/rpc.ts";
 import { createLinearExtension } from "../extensions/linear/mod.ts";
 import {
@@ -26,7 +27,7 @@ function extension(id: string, methods: string[]): Extension {
   };
 }
 
-Deno.test("buildExtensionHandlers merges every extension's methods", async () => {
+test("buildExtensionHandlers merges every extension's methods", async () => {
   const handlers = buildExtensionHandlers([
     extension("a", ["a/one", "a/two"]),
     { id: "quiet" },
@@ -38,7 +39,7 @@ Deno.test("buildExtensionHandlers merges every extension's methods", async () =>
   });
 });
 
-Deno.test("buildExtensionHandlers hands each extension the deps", () => {
+test("buildExtensionHandlers hands each extension the deps", () => {
   let received: ExtensionDeps | undefined;
   buildExtensionHandlers([{
     id: "a",
@@ -50,7 +51,7 @@ Deno.test("buildExtensionHandlers hands each extension the deps", () => {
   assert.deepStrictEqual(received, deps);
 });
 
-Deno.test("buildExtensionHandlers rejects a duplicate id or method", () => {
+test("buildExtensionHandlers rejects a duplicate id or method", () => {
   assert.throws(
     () =>
       buildExtensionHandlers([extension("a", []), extension("a", [])], deps),
@@ -70,7 +71,7 @@ Deno.test("buildExtensionHandlers rejects a duplicate id or method", () => {
   );
 });
 
-Deno.test("rpcToolApprover approves only an explicit approval", async () => {
+test("rpcToolApprover approves only an explicit approval", async () => {
   const ask = (answer: Promise<unknown>) =>
     rpcToolApprover({
       notify: () => Promise.resolve(),

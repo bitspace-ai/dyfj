@@ -14,6 +14,7 @@
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
+import { test } from "node:test";
 import {
   chatReply,
   type EngineRun,
@@ -85,7 +86,7 @@ async function withServer(
   }
 }
 
-Deno.test("a resumed session runs on the model it last ran on, not the configured default", async () => {
+test("a resumed session runs on the model it last ran on, not the configured default", async () => {
   const run = engineServices(
     [chatReply({ content: "first" }), chatReply({ content: "second" })],
     { models: [LOCAL_MODEL, OTHER_MODEL] },
@@ -113,7 +114,7 @@ Deno.test("a resumed session runs on the model it last ran on, not the configure
   });
 });
 
-Deno.test("an explicit model on a resumed turn still wins over the recorded one", async () => {
+test("an explicit model on a resumed turn still wins over the recorded one", async () => {
   const run = engineServices(
     [chatReply({ content: "first" }), chatReply({ content: "second" })],
     { models: [LOCAL_MODEL, OTHER_MODEL] },
@@ -169,7 +170,7 @@ for (
     },
   ]
 ) {
-  Deno.test(`a resume skips a selected model ${label}`, async () => {
+  test(`a resume skips a selected model ${label}`, async () => {
     const run = engineServices(
       [
         chatReply({ content: "first" }),
@@ -203,7 +204,7 @@ for (
   });
 }
 
-Deno.test("a turn whose provider_call write was skipped is still the one a resume restores", async () => {
+test("a turn whose provider_call write was skipped is still the one a resume restores", async () => {
   const run = engineServices(
     [
       chatReply({ content: "on local" }),
@@ -250,7 +251,7 @@ Deno.test("a turn whose provider_call write was skipped is still the one a resum
   }, services);
 });
 
-Deno.test("a bare resume after an external-agent turn refuses instead of routing to the older native model", async () => {
+test("a bare resume after an external-agent turn refuses instead of routing to the older native model", async () => {
   const run = engineServices(
     [chatReply({ content: "first" }), chatReply({ content: "explicit" })],
     { models: [LOCAL_MODEL, OTHER_MODEL] },
@@ -312,7 +313,7 @@ Deno.test("a bare resume after an external-agent turn refuses instead of routing
   );
 });
 
-Deno.test("a resumed session whose recorded model is no longer routable refuses before any provider call", async () => {
+test("a resumed session whose recorded model is no longer routable refuses before any provider call", async () => {
   const run = engineServices([], {
     models: [LOCAL_MODEL, RETIRED_MODEL],
   });
@@ -362,7 +363,7 @@ Deno.test("a resumed session whose recorded model is no longer routable refuses 
   );
 });
 
-Deno.test("a resumed session with no recorded model runs on the configured default", async () => {
+test("a resumed session with no recorded model runs on the configured default", async () => {
   const run = engineServices([chatReply({ content: "ok" })], {
     models: [LOCAL_MODEL, OTHER_MODEL],
   });

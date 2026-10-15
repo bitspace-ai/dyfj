@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { type Mock, mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, type Mock, mock } from "node:test";
 import saveIssueSchema from "./linear-save-issue-schema.fixture.ts";
 import type {
   LinearIssueCreationBinding,

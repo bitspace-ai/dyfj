@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchSessionEvent } from "../../contract/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -18,7 +19,7 @@ function handlers(requests: SessionEventsRequest[] = []) {
   });
 }
 
-Deno.test("events/query returns events for a session", async () => {
+test("events/query returns events for a session", async () => {
   const requests: SessionEventsRequest[] = [];
   assert.deepStrictEqual(
     await callRpc(handlers(requests), "events/query", { sessionId: "s1" }),
@@ -31,12 +32,12 @@ Deno.test("events/query returns events for a session", async () => {
   }]);
 });
 
-Deno.test("events/query without a sessionId -> invalidParams", async () => {
+test("events/query without a sessionId -> invalidParams", async () => {
   const error = await rpcFailure(handlers(), "events/query", {});
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
-Deno.test("events/query with a malformed asOf -> invalidParams", async () => {
+test("events/query with a malformed asOf -> invalidParams", async () => {
   const error = await rpcFailure(handlers(), "events/query", {
     sessionId: "s1",
     asOf: "not-a-timestamp",
@@ -44,7 +45,7 @@ Deno.test("events/query with a malformed asOf -> invalidParams", async () => {
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
-Deno.test("events/query rejects asOf longer than 64 characters", async () => {
+test("events/query rejects asOf longer than 64 characters", async () => {
   const error = await rpcFailure(handlers(), "events/query", {
     sessionId: "01TEST_EVENTS_SESSION",
     asOf: "2026-08-15T12:00:00.000Z" + "0".repeat(100),
@@ -52,7 +53,7 @@ Deno.test("events/query rejects asOf longer than 64 characters", async () => {
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
-Deno.test("events/query with an invalid limit -> invalidParams", async () => {
+test("events/query with an invalid limit -> invalidParams", async () => {
   for (const limit of [0, -5, "100", 1001]) {
     const error = await rpcFailure(handlers(), "events/query", {
       sessionId: "s1",

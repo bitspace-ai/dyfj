@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   classify,
   dispatchRequest,
@@ -18,14 +19,14 @@ const dec = new TextDecoder();
 
 // --- framing ---
 
-Deno.test("encodeFrame is newline-terminated JSON", () => {
+test("encodeFrame is newline-terminated JSON", () => {
   assert.deepStrictEqual(
     dec.decode(encodeFrame(success(1, { ok: true }))),
     '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n',
   );
 });
 
-Deno.test("FrameDecoder yields one message per line and buffers partials", () => {
+test("FrameDecoder yields one message per line and buffers partials", () => {
   const d = new FrameDecoder();
   assert.deepStrictEqual(
     d.push('{"jsonrpc":"2.0","id":1,"method":"a"}\n{"jsonrpc":"2.0"'),
@@ -37,14 +38,14 @@ Deno.test("FrameDecoder yields one message per line and buffers partials", () =>
   ]);
 });
 
-Deno.test("FrameDecoder reports a parse error for a malformed line without throwing", () => {
+test("FrameDecoder reports a parse error for a malformed line without throwing", () => {
   const frames = new FrameDecoder().push("not json\n");
   assert.deepStrictEqual(frames.length, 1);
   assert.strictEqual(frames[0].ok, false);
   assert.strictEqual(typeof frames[0].error, "string");
 });
 
-Deno.test("FrameDecoder bounds the partial buffer when maxBytes is set", () => {
+test("FrameDecoder bounds the partial buffer when maxBytes is set", () => {
   const frames = new FrameDecoder(8).push("123456789"); // 9 chars, no newline
   assert.deepStrictEqual(frames.length, 1);
   assert.strictEqual(frames[0].ok, false);
@@ -66,7 +67,7 @@ function literalRequest(
     : { jsonrpc: "2.0", id, method, params };
 }
 
-Deno.test("request() encodes byte-identically to the literal request frame", () => {
+test("request() encodes byte-identically to the literal request frame", () => {
   const cases: Array<[string | number, string, unknown]> = [
     ["p1", "approval", undefined],
     ["p2", "approval", null],
@@ -88,7 +89,7 @@ Deno.test("request() encodes byte-identically to the literal request frame", () 
   }
 });
 
-Deno.test("request() pins the exact wire bytes", () => {
+test("request() pins the exact wire bytes", () => {
   assert.deepStrictEqual(
     dec.decode(encodeFrame(request("p1", "approval"))),
     '{"jsonrpc":"2.0","id":"p1","method":"approval"}\n',
@@ -103,7 +104,7 @@ Deno.test("request() pins the exact wire bytes", () => {
   );
 });
 
-Deno.test("notification() and failure() omit undefined params and data", () => {
+test("notification() and failure() omit undefined params and data", () => {
   assert.deepStrictEqual(
     dec.decode(encodeFrame(notification("stream"))),
     '{"jsonrpc":"2.0","method":"stream"}\n',
@@ -116,7 +117,7 @@ Deno.test("notification() and failure() omit undefined params and data", () => {
 
 // --- classification ---
 
-Deno.test("classify distinguishes request / notification / response / invalid", () => {
+test("classify distinguishes request / notification / response / invalid", () => {
   assert.deepStrictEqual(
     classify({ jsonrpc: "2.0", id: 1, method: "turn" }),
     "request",
@@ -147,28 +148,28 @@ const req = (method: string, params?: unknown): JsonRpcRequest => ({
   params,
 });
 
-Deno.test("dispatchRequest wraps a handler result in a success envelope", async () => {
+test("dispatchRequest wraps a handler result in a success envelope", async () => {
   const res = await dispatchRequest(req("models/list"), {
     "models/list": () => ({ models: [] }),
   });
   assert.deepStrictEqual(res, success(1, { models: [] }));
 });
 
-Deno.test("dispatchRequest awaits async handlers", async () => {
+test("dispatchRequest awaits async handlers", async () => {
   const res = await dispatchRequest(req("sessions/list"), {
     "sessions/list": () => Promise.resolve({ sessions: ["s1"] }),
   });
   assert.deepStrictEqual(res, success(1, { sessions: ["s1"] }));
 });
 
-Deno.test("dispatchRequest: unknown method -> methodNotFound", async () => {
+test("dispatchRequest: unknown method -> methodNotFound", async () => {
   assert.deepStrictEqual(
     await dispatchRequest(req("nope"), {}),
     failure(1, RpcErrorCode.methodNotFound, "method not found: nope"),
   );
 });
 
-Deno.test("dispatchRequest maps a thrown RpcError to its code + data (fail-closed range)", async () => {
+test("dispatchRequest maps a thrown RpcError to its code + data (fail-closed range)", async () => {
   const res = await dispatchRequest(req("turn"), {
     turn: () => {
       throw new RpcError(
@@ -186,7 +187,7 @@ Deno.test("dispatchRequest maps a thrown RpcError to its code + data (fail-close
   );
 });
 
-Deno.test("dispatchRequest maps a generic throw to internalError, rendered as class + byte count — never the raw message", async () => {
+test("dispatchRequest maps a generic throw to internalError, rendered as class + byte count — never the raw message", async () => {
   // This is the original crash's exact path — a rejected
   // event-log INSERT's driver error can embed the whole offending payload
   // in its message. A plain Error is "foreign" (not a DomainError), so its
@@ -202,7 +203,7 @@ Deno.test("dispatchRequest maps a generic throw to internalError, rendered as cl
   );
 });
 
-Deno.test("dispatchRequest: a generic throw with an oversized message leaks no prefix of it", async () => {
+test("dispatchRequest: a generic throw with an oversized message leaks no prefix of it", async () => {
   const payload = "SELECT ".repeat(20_000); // well over 100KB
   const res = await dispatchRequest(req("turn"), {
     turn: () => {
@@ -226,14 +227,14 @@ Deno.test("dispatchRequest: a generic throw with an oversized message leaks no p
 
 // --- error codes ---
 
-Deno.test("the DYFJ fail-closed error range matches the contract", () => {
+test("the DYFJ fail-closed error range matches the contract", () => {
   assert.deepStrictEqual(RpcErrorCode.paidNotApproved, -32010);
   assert.deepStrictEqual(RpcErrorCode.budgetExceeded, -32011);
   assert.deepStrictEqual(RpcErrorCode.modelUnavailable, -32012);
   assert.deepStrictEqual(RpcErrorCode.remoteCannotSpend, -32013);
 });
 
-Deno.test("the JSON-RPC standard error codes are unchanged", () => {
+test("the JSON-RPC standard error codes are unchanged", () => {
   assert.deepStrictEqual(RpcErrorCode.parseError, -32700);
   assert.deepStrictEqual(RpcErrorCode.invalidRequest, -32600);
   assert.deepStrictEqual(RpcErrorCode.methodNotFound, -32601);
@@ -241,7 +242,7 @@ Deno.test("the JSON-RPC standard error codes are unchanged", () => {
   assert.deepStrictEqual(RpcErrorCode.internalError, -32603);
 });
 
-Deno.test("dispatchRequest relays a classified provider failure's Workbench-written message to the client verbatim", async () => {
+test("dispatchRequest relays a classified provider failure's Workbench-written message to the client verbatim", async () => {
   // The Rust REPL prints this message after `turn failed:`; the TypeScript
   // client after `dyfj:`. A provider failure classified at the adapter is a
   // DomainError, so its message, which carries none of the provider's text,

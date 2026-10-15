@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { connectUnixClient } from "./uds-client.ts";
 
 // The unit lane grants no network access, so a connect attempt here would
@@ -14,7 +15,7 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("expected a rejection");
 }
 
-Deno.test("connectUnixClient with an already-aborted signal rejects with its reason without dialing", async () => {
+test("connectUnixClient with an already-aborted signal rejects with its reason without dialing", async () => {
   const controller = new AbortController();
   const reason = new Error("caller gave up");
   controller.abort(reason);
@@ -24,7 +25,7 @@ Deno.test("connectUnixClient with an already-aborted signal rejects with its rea
   assert.strictEqual(err, reason);
 });
 
-Deno.test("connectUnixClient's default abort reason is an AbortError", async () => {
+test("connectUnixClient's default abort reason is an AbortError", async () => {
   const controller = new AbortController();
   controller.abort();
   const err = await rejection(

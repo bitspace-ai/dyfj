@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import { callRpc } from "../../../testing/builders/rpc.ts";
 import { buildModelsHandlers } from "./models.ts";
@@ -13,7 +14,7 @@ async function listModels(rows: unknown[]) {
   return models;
 }
 
-Deno.test("models/list returns the loaded models with a server-computed routable flag", async () => {
+test("models/list returns the loaded models with a server-computed routable flag", async () => {
   const models = await listModels([
     { slug: "local-x", tier: 0, costInput: 0, costOutput: 0 },
     { slug: "hosted-priced", tier: 2, costInput: 15, costOutput: 75 },
@@ -26,7 +27,7 @@ Deno.test("models/list returns the loaded models with a server-computed routable
   ]);
 });
 
-Deno.test("models/list marks locality server-side", async () => {
+test("models/list marks locality server-side", async () => {
   const models = await listModels([
     {
       slug: "local-x",
@@ -51,7 +52,7 @@ Deno.test("models/list marks locality server-side", async () => {
   ]);
 });
 
-Deno.test("models/list marks access modality server-side", async () => {
+test("models/list marks access modality server-side", async () => {
   const models = await listModels([
     {
       slug: "local-x",

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { EventInsert } from "../../store/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { type RpcContext, RpcErrorCode } from "../../transport/mod.ts";
@@ -149,7 +150,7 @@ function instrumentCommand(
   command.executor = executor;
 }
 
-Deno.test("friction/post numbers comments and preserves write approval", async () => {
+test("friction/post numbers comments and preserves write approval", async () => {
   const createdBodies: string[] = [];
   const approvals: unknown[] = [];
   const receiptEvents: EventInsert[] = [];
@@ -210,7 +211,7 @@ Deno.test("friction/post numbers comments and preserves write approval", async (
   );
 });
 
-Deno.test("friction/post validates severity before reading Linear", async () => {
+test("friction/post validates severity before reading Linear", async () => {
   let reads = 0;
   const commands = frictionCommands();
   instrumentCommand(commands, "mcp.linear.get_issue", () => {
@@ -227,7 +228,7 @@ Deno.test("friction/post validates severity before reading Linear", async () => 
 });
 
 for (const frictionIssueId of [undefined, "   "]) {
-  Deno.test(
+  test(
     `friction/post requires the operator's friction-checkpoint issue and emits no receipt (${
       JSON.stringify(frictionIssueId)
     })`,
@@ -268,7 +269,7 @@ for (const frictionIssueId of [undefined, "   "]) {
   );
 }
 
-Deno.test("friction/post names create_comment failure", async () => {
+test("friction/post names create_comment failure", async () => {
   const error = await rpcFailure(
     handlers({
       frictionIssueId: "EX-100",
@@ -298,7 +299,7 @@ for (
     ["mcp.linear.create_comment", "create_comment/save_comment failed"],
   ]
 ) {
-  Deno.test(`friction/post refuses when ${missing} was not discovered`, async () => {
+  test(`friction/post refuses when ${missing} was not discovered`, async () => {
     const createdBodies: string[] = [];
     const error = await rpcFailure(
       handlers({

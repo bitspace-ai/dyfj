@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { CommandDefinition } from "../../tools/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -21,7 +22,7 @@ const externalReadCommand: CommandDefinition<string> = {
   executor: () => "result",
 };
 
-Deno.test("tools/list exposes a catalog without executing tools", async () => {
+test("tools/list exposes a catalog without executing tools", async () => {
   const { tools } = await callRpc(
     buildToolsHandlers({ externalMcpCommands: [externalReadCommand] }),
     "tools/list",
@@ -45,7 +46,7 @@ Deno.test("tools/list exposes a catalog without executing tools", async () => {
   });
 });
 
-Deno.test("tools/inspect returns one tool schema", async () => {
+test("tools/inspect returns one tool schema", async () => {
   const result = await callRpc(buildToolsHandlers({}), "tools/inspect", {
     workspace: "/workspace",
     commandId: "read_file",
@@ -57,7 +58,7 @@ Deno.test("tools/inspect returns one tool schema", async () => {
   });
 });
 
-Deno.test("tools/inspect rejects a missing or unknown command id", async () => {
+test("tools/inspect rejects a missing or unknown command id", async () => {
   const handlers = buildToolsHandlers({});
   assert.deepStrictEqual(await rpcFailure(handlers, "tools/inspect", {}), {
     code: RpcErrorCode.invalidParams,

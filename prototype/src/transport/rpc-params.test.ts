@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { RpcError, RpcErrorCode } from "./jsonrpc.ts";
 import {
   asRecord,
@@ -15,13 +16,13 @@ function invalidParams(run: () => unknown, message: string): void {
   });
 }
 
-Deno.test("asRecord treats non-object params as empty", () => {
+test("asRecord treats non-object params as empty", () => {
   assert.deepStrictEqual(asRecord(undefined), {});
   assert.deepStrictEqual(asRecord("x"), {});
   assert.deepStrictEqual(asRecord({ a: 1 }), { a: 1 });
 });
 
-Deno.test("sanitizeRpcIdentifier enforces presence, type, length and characters", () => {
+test("sanitizeRpcIdentifier enforces presence, type, length and characters", () => {
   assert.deepStrictEqual(sanitizeRpcIdentifier(undefined, "id"), undefined);
   assert.deepStrictEqual(sanitizeRpcIdentifier("abc", "id"), "abc");
   invalidParams(
@@ -43,14 +44,14 @@ Deno.test("sanitizeRpcIdentifier enforces presence, type, length and characters"
   );
 });
 
-Deno.test("sanitizeRpcString strips complete ANSI CSI escape sequences", () => {
+test("sanitizeRpcString strips complete ANSI CSI escape sequences", () => {
   assert.deepStrictEqual(
     sanitizeRpcString("Clean \x1b[31mRed\x1b[0m Text", "label"),
     "Clean Red Text",
   );
 });
 
-Deno.test("sanitizeRpcString folds or keeps newlines by mode and bounds length", () => {
+test("sanitizeRpcString folds or keeps newlines by mode and bounds length", () => {
   assert.deepStrictEqual(sanitizeRpcString(" a\n\tb ", "text"), "a b");
   assert.deepStrictEqual(
     sanitizeRpcString("a\r\nb\tc", "text", { singleLine: false }),

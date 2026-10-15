@@ -1,7 +1,8 @@
 import { deepStrictEqual, strictEqual } from "node:assert/strict";
+import { test } from "node:test";
 import { createNormalizer } from "./normalize.ts";
 
-Deno.test("generated IDs get stable, first-seen placeholders", () => {
+test("generated IDs get stable, first-seen placeholders", () => {
   const n = createNormalizer();
   const out = n.normalize({
     sessionId: "01M3FV3ZJWR0X2C2Q8ZYDAJQ6W",
@@ -21,7 +22,7 @@ Deno.test("generated IDs get stable, first-seen placeholders", () => {
   });
 });
 
-Deno.test("timestamps keep their shape with digits masked", () => {
+test("timestamps keep their shape with digits masked", () => {
   const n = createNormalizer();
   strictEqual(
     n.text("sql 2026-09-26 21:49:39.370545 iso 2026-09-26T21:49:39.370Z"),
@@ -35,7 +36,7 @@ Deno.test("timestamps keep their shape with digits masked", () => {
   strictEqual(n.text("F003 · 2026-09-26 · minor"), "F003 · <DATE> · minor");
 });
 
-Deno.test("durations and PIDs are masked; other numbers are kept", () => {
+test("durations and PIDs are masked; other numbers are kept", () => {
   const n = createNormalizer();
   deepStrictEqual(
     n.normalize({
@@ -60,7 +61,7 @@ Deno.test("durations and PIDs are masked; other numbers are kept", () => {
   );
 });
 
-Deno.test("registered literals are replaced, longest first", () => {
+test("registered literals are replaced, longest first", () => {
   const n = createNormalizer({
     literals: [
       ["/tmp/golden", "<TMP>"],
@@ -74,7 +75,7 @@ Deno.test("registered literals are replaced, longest first", () => {
   );
 });
 
-Deno.test("a receipt-string change is not normalized away", () => {
+test("a receipt-string change is not normalized away", () => {
   const n = createNormalizer();
   const a = n.text("Paid inference used: no\nActual cost:    $0.000000");
   const b = n.text("Paid inference used: No\nActual cost:    $0.000000");
