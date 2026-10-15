@@ -114,6 +114,7 @@ export class BoundedMatcher {
   #spentMs = 0;
   #nextId = 1;
   #dead = false;
+  #unavailable = false;
 
   /**
    * Compiling the pattern here, in-process, is deliberate: compilation cannot
@@ -147,11 +148,13 @@ export class BoundedMatcher {
    *
    * Throws `RegexBudgetExceeded` when the shared budget runs out — the worker
    * is terminated at that point and this matcher is spent. Throws
-   * `RegexUnavailable` if no worker could be started, so a caller that cannot
-   * match fails closed rather than falling back to the main thread.
+   * `RegexUnavailable` if no worker could be started or the worker has ended,
+   * so a caller that cannot match fails closed rather than falling back to the
+   * main thread.
    */
   async matchLines(lines: string[]): Promise<number[]> {
     if (lines.length === 0) return [];
+    if (this.#unavailable) throw new RegexUnavailable();
     if (this.#dead) throw new RegexBudgetExceeded(this.#budgetMs);
     const remaining = this.remainingMs;
     if (remaining <= 0) {
@@ -178,8 +181,9 @@ export class BoundedMatcher {
           resolve(data.hits ?? []);
         };
         // A worker that fails to load reports `error` and then `exit`; one
-        // that dies otherwise reports only `exit`. Either way nothing will
-        // answer, so this matcher is spent and the call fails closed.
+        // that ends otherwise reports only `exit`. Either way nothing will
+        // answer, so the call fails closed; the listeners `#ensureWorker`
+        // attached have already marked the matcher unavailable.
         const onGone = () => {
           reject(new RegexUnavailable());
           this.close();
@@ -214,12 +218,23 @@ export class BoundedMatcher {
   /** Terminate the worker. Safe to call more than once. */
   close(): void {
     this.#dead = true;
-    if (this.#worker !== null) {
-      // Termination is asynchronous; the worker stops at its next interrupt
-      // check, mid-`test()` included, and nothing here waits on it.
-      void this.#worker.terminate();
+    const worker = this.#worker;
+    if (worker !== null) {
+      // Cleared first, so the `exit` this termination causes is not taken
+      // for the worker ending on its own: one runtime reports it from inside
+      // `terminate()`. Termination is asynchronous; the worker stops at its
+      // next interrupt check, mid-`test()` included, and nothing here waits
+      // on it.
       this.#worker = null;
+      void worker.terminate();
     }
+  }
+
+  /** The worker ended or failed without being closed: nothing can match. */
+  #lost(worker: Worker): void {
+    if (this.#worker !== worker) return;
+    this.#worker = null;
+    this.#unavailable = true;
   }
 
   #ensureWorker(): Worker {
@@ -227,12 +242,16 @@ export class BoundedMatcher {
     try {
       const specifier = this.#explicitSpecifier ?? DEFAULT_WORKER_SPECIFIER;
       const worker = new Worker(new URL(specifier));
-      // An `error` event with no listener is thrown in the host. A load
-      // failure between calls must only spend this matcher.
-      worker.on("error", () => this.close());
+      // These outlive any one call. An `error` event with no listener is
+      // thrown in the host, and a worker that ends while idle must mark the
+      // matcher unavailable, or the next call would wait out the budget for
+      // an answer that cannot come and report it as over budget.
+      const lost = () => this.#lost(worker);
+      worker.on("error", lost);
+      worker.on("exit", lost);
       this.#worker = worker;
     } catch (err) {
-      this.#dead = true;
+      this.#unavailable = true;
       throw err instanceof RegexUnavailable ? err : new RegexUnavailable();
     }
     return this.#worker;

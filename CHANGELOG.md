@@ -204,7 +204,9 @@ README are tracked separately in its Revision history section.
   with `parentPort` in place of `self`. The hard time budget, termination of
   a worker that overruns it, and failing closed when no worker can start are
   unchanged, and the worker is still not a file a workspace edit can rewrite.
-  The four test files that grep through the matcher
+  A worker that ends on its own, even between searches, now fails the next
+  search at once as unavailable; before, it waited out the budget and was
+  reported as too expensive. The four test files that grep through the matcher
   (`kernel/bounded-regex.test.ts`, `tools/builtin/file.test.ts`,
   `file-hardening.test.ts` and `file-search.integration.test.ts`) now
   register with `node:test` and run under `node --test` with the per-file

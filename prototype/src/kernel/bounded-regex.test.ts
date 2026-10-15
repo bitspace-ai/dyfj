@@ -58,6 +58,36 @@ test("BoundedMatcher with no budget left refuses to match and stays spent", asyn
   }
 });
 
+// A worker that answers once and then has no listener left, so its thread
+// ends cleanly while the matcher is idle.
+const ANSWERS_ONCE_THEN_EXITS = "data:text/javascript," + encodeURIComponent(`
+import { parentPort } from "node:worker_threads";
+parentPort.once("message", ({ id }) => {
+  parentPort.postMessage({ id, hits: [0] });
+});
+`);
+
+test("BoundedMatcher fails fast as unavailable once its idle worker has exited", async () => {
+  const budgetMs = 3_000;
+  const matcher = new BoundedMatcher("a", {
+    budgetMs,
+    specifier: ANSWERS_ONCE_THEN_EXITS,
+  });
+  try {
+    assert.deepStrictEqual(await matcher.matchLines(["a"]), [0]);
+    // Long enough for the thread to end; the bound under test is that the
+    // next call does not wait out the budget once it has.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const started = performance.now();
+    await assert.rejects(() => matcher.matchLines(["a"]), RegexUnavailable);
+    const elapsed = performance.now() - started;
+    assert.ok(elapsed < budgetMs / 3, `expected ${elapsed} < ${budgetMs / 3}`);
+    await assert.rejects(() => matcher.matchLines(["a"]), RegexUnavailable);
+  } finally {
+    matcher.close();
+  }
+});
+
 test("BoundedMatcher fails closed when the worker cannot start", async () => {
   const matcher = new BoundedMatcher("a", { specifier: "not a url" });
   try {
