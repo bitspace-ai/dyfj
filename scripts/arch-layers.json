@@ -94,6 +94,10 @@
           "justification": "The ACP runner starts and signals its agent child here. The module has not moved into runners/acp yet (the files map above names it by path, which carries no unit exemption), so it is named until the runners move."
         },
         {
+          "path": "prototype/scripts/acp-fixture-agent.ts",
+          "justification": "The deterministic ACP fixture agent, a test agent the fixture profile and the ACP tests start as a child process. On its parent's death it signals its own process group through /bin/kill, and on one test prompt it starts a TERM-ignoring bash descendant. It runs as its own process, outside the runtime graph, which no runtime module may import."
+        },
+        {
           "path": "prototype/scripts/node-test-lane.ts",
           "justification": "The unit, integration and golden lane runners start their node:test files under `node --test` here, and read `node --version` to require Node 26. It is test tooling that runs in the lane runner's own process, outside the runtime graph, which no runtime module may import."
         }
@@ -112,6 +116,7 @@
   },
   "files": {
     "prototype/src/acp-client.ts": "runners/acp",
+    "prototype/src/acp-fixture-command.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
     "prototype/src/cli.ts": "cli"

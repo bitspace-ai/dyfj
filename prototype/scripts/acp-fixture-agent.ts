@@ -12,7 +12,7 @@ import { Readable, Writable } from "node:stream";
 
 // Written to `node:` builtins only, so the same script runs under either
 // runtime: the fixture profile starts it on whichever one runs the product
-// (`fixtureAgentCommand` in `src/external-agent-runtime.ts`).
+// (`fixtureAgentCommand` in `src/acp-fixture-command.ts`).
 
 const args = process.argv.slice(2);
 const pidFile = args.find((arg) => arg.startsWith("--pid-file="))?.slice(

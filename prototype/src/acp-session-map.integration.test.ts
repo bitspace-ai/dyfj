@@ -24,7 +24,7 @@ import {
   startAcpSession,
 } from "./acp-client.ts";
 import { AcpSessionHandleMap } from "./acp-session-map.ts";
-import { fixtureAgentCommand } from "./external-agent-runtime.ts";
+import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},

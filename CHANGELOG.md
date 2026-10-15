@@ -227,8 +227,9 @@ README are tracked separately in its Revision history section.
   runtime running the product: `node <script>` under Node, and the existing
   `run --cached-only` argv under Deno. Before, the profile always used that
   argv with the current executable, so under `node --test` the agent never
-  answered. One helper, `fixtureAgentCommand`, builds the command, and the
-  tests that start the fixture themselves use it too. The Deno argv now also
+  answered. One helper, `fixtureAgentCommand` in the new
+  `src/acp-fixture-command.ts`, builds the command, and the tests that start
+  the fixture themselves use it too. The Deno argv now also
   grants `NODE_V8_COVERAGE`, which Deno's `node:child_process` reads on every
   spawn. The `acp-client`, `acp-runner`, `acp-session-map` and
   `external-agent-runtime` test files (seven files) run under `node --test`

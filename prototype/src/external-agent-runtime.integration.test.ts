@@ -29,7 +29,6 @@ import { describe, it, mock } from "node:test";
 import { dirname, join } from "node:path";
 import {
   codexChatGptProfile,
-  fixtureAgentCommand,
   fixtureProfile,
   historyContainsSecretShape,
   MAX_HISTORY_MESSAGE_BYTES,
@@ -42,6 +41,7 @@ import {
   runExternalAgentWorkbenchRuntime as runWithDependencies,
   verifiedRouteFacts,
 } from "./external-agent-runtime.ts";
+import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import {
   type CommitBatch,
   type CommitOptions,

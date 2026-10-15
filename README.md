@@ -71,7 +71,8 @@ Section 5.
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
-    `external-agent-runtime.ts`), whose move is deferred;
+    `external-agent-runtime.ts`, and `acp-fixture-command.ts`, which builds
+    the fixture agent's command), whose move is deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
     `core/dyfj-repl` replaces.
 
@@ -2196,3 +2197,6 @@ Document revisions only. Code and behavior changes are tracked in
   before it compares, so the runner's in-flight output is not reported as a
   leak, and that a failing file exits after a bounded grace period, so the
   runner's report of its tests is not cut off.
+- 2026-10-15 - The list of modules not yet moved into `prototype/src/` unit
+  directories adds `acp-fixture-command.ts`, the ACP runner module that
+  builds the fixture agent's command for the runtime running the product.
