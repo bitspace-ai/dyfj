@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { type MemorySeed, MemoryStore } from "../src/store/mod.ts";
 import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 
@@ -62,7 +63,7 @@ const seed: MemorySeed[] = [
 
 const memories = () => new MemoryStore({ memories: seed }).memories;
 
-Deno.test("standalone MCP memory projection lists and reads client-safe and public rows", async () => {
+test("standalone MCP memory projection lists and reads client-safe and public rows", async () => {
   const reader = memories();
   const listed = await listMcpMemories(reader);
   assert.ok(
@@ -84,7 +85,7 @@ Deno.test("standalone MCP memory projection lists and reads client-safe and publ
   );
 });
 
-Deno.test("standalone MCP memory projection does not list or read private and shareable rows", async () => {
+test("standalone MCP memory projection does not list or read private and shareable rows", async () => {
   const reader = memories();
   const listed = await listMcpMemories(reader);
   assert.deepStrictEqual(
@@ -109,7 +110,7 @@ Deno.test("standalone MCP memory projection does not list or read private and sh
   });
 });
 
-Deno.test("standalone MCP memory projection makes private and nonexistent slugs indistinguishable", async () => {
+test("standalone MCP memory projection makes private and nonexistent slugs indistinguishable", async () => {
   const reader = memories();
   assert.deepStrictEqual(
     await readMcpMemory(reader, "private_memory"),
@@ -121,7 +122,7 @@ Deno.test("standalone MCP memory projection makes private and nonexistent slugs 
   );
 });
 
-Deno.test("standalone MCP memory projection filters by type within the clearance", async () => {
+test("standalone MCP memory projection filters by type within the clearance", async () => {
   const listed = await listMcpMemories(memories(), "project");
   assert.ok(
     listed.content[0]!.text.includes("client_safe_memory"),
@@ -133,7 +134,7 @@ Deno.test("standalone MCP memory projection filters by type within the clearance
   );
 });
 
-Deno.test("standalone MCP memory projection preserves empty lists and escapes Markdown table cells", async () => {
+test("standalone MCP memory projection preserves empty lists and escapes Markdown table cells", async () => {
   assert.deepStrictEqual(await listMcpMemories(memories(), "user"), {
     content: [{ type: "text", text: "No memories found." }],
   });

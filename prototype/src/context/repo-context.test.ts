@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
   AGENTS_INSTRUCTIONS_MAX_READ_BYTES,
@@ -43,7 +43,7 @@ function defaultBudgetFor(profile: AskContextProfile): ContextBudget {
 // env grants, which this lane does not give; they run from
 // repo-context.integration.test.ts in the integration lane.
 
-Deno.test("extractReadmeSection1: returns only README Section 1", () => {
+test("extractReadmeSection1: returns only README Section 1", () => {
   const section = extractReadmeSection1([
     "# DYFJ",
     "",
@@ -68,7 +68,7 @@ Deno.test("extractReadmeSection1: returns only README Section 1", () => {
   assert.ok(!section.includes("Later section."));
 });
 
-Deno.test("buildContextSourceLines: names repo files and context sources without private context paths", () => {
+test("buildContextSourceLines: names repo files and context sources without private context paths", () => {
   const lines = buildContextSourceLines([
     { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
     {
@@ -90,7 +90,7 @@ Deno.test("buildContextSourceLines: names repo files and context sources without
   ]);
 });
 
-Deno.test("buildAskSystemPrompt: frames the repo-local next-work question with public-safe context", () => {
+test("buildAskSystemPrompt: frames the repo-local next-work question with public-safe context", () => {
   const context: LoadedRepoContext = {
     sources: [
       { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
@@ -145,7 +145,7 @@ Deno.test("buildAskSystemPrompt: frames the repo-local next-work question with p
   );
 });
 
-Deno.test("loadAskRepoContext: loads generic README and manifest context from the selected workspace", async () => {
+test("loadAskRepoContext: loads generic README and manifest context from the selected workspace", async () => {
   const selectedRoot = await mkdtemp(
     path.join(tmpdir(), "ask-context-selected-"),
   );
@@ -190,7 +190,7 @@ Deno.test("loadAskRepoContext: loads generic README and manifest context from th
   }
 });
 
-Deno.test("loadAskRepoContext: reads the profile and token-budget defaults from the injected env", async () => {
+test("loadAskRepoContext: reads the profile and token-budget defaults from the injected env", async () => {
   const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-env-"));
   try {
     await writeFile(
@@ -223,7 +223,7 @@ Deno.test("loadAskRepoContext: reads the profile and token-budget defaults from 
   }
 });
 
-Deno.test("loadAskRepoContext: a repository without DYFJ-shaped files degrades to empty bounded context", async () => {
+test("loadAskRepoContext: a repository without DYFJ-shaped files degrades to empty bounded context", async () => {
   const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-empty-"));
   try {
     const context = await loadAskRepoContext({
@@ -240,7 +240,7 @@ Deno.test("loadAskRepoContext: a repository without DYFJ-shaped files degrades t
   }
 });
 
-Deno.test("loadAskRepoContext: compact generic AGENTS context leaves room for the README section", async () => {
+test("loadAskRepoContext: compact generic AGENTS context leaves room for the README section", async () => {
   const selectedRoot = await mkdtemp(
     path.join(tmpdir(), "ask-context-system-budget-"),
   );
@@ -269,7 +269,7 @@ Deno.test("loadAskRepoContext: compact generic AGENTS context leaves room for th
   }
 });
 
-Deno.test("loadAskRepoContext: loads the richer Workbench context when those files exist in the selected workspace", async () => {
+test("loadAskRepoContext: loads the richer Workbench context when those files exist in the selected workspace", async () => {
   const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-dyfj-"));
   try {
     await writeFile(
@@ -312,7 +312,7 @@ Deno.test("loadAskRepoContext: loads the richer Workbench context when those fil
   }
 });
 
-Deno.test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a manifest", async () => {
+test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a manifest", async () => {
   const selectedRoot = await mkdtemp(
     path.join(tmpdir(), "ask-context-priority-"),
   );
@@ -347,7 +347,7 @@ Deno.test("loadAskRepoContext: compact Workbench context prioritizes notes ahead
   }
 });
 
-Deno.test("packContextSections: compact profile uses a small budget weighted to repo context", () => {
+test("packContextSections: compact profile uses a small budget weighted to repo context", () => {
   assert.strictEqual(COMPACT_CONTEXT_BUDGET.totalTokens, 500);
   assert.ok(
     COMPACT_CONTEXT_BUDGET.totalTokens < DEFAULT_CONTEXT_BUDGET.totalTokens,
@@ -360,7 +360,7 @@ Deno.test("packContextSections: compact profile uses a small budget weighted to 
   );
 });
 
-Deno.test("packContextSections: compact budget can keep AGENTS and README Section 1 sources", () => {
+test("packContextSections: compact budget can keep AGENTS and README Section 1 sources", () => {
   const packed = packContextSections([
     {
       title: "AGENTS.md excerpt",
@@ -399,7 +399,7 @@ Deno.test("packContextSections: compact budget can keep AGENTS and README Sectio
   ]);
 });
 
-Deno.test("packContextSections: enforces tiered budget ceilings and reserves headroom", () => {
+test("packContextSections: enforces tiered budget ceilings and reserves headroom", () => {
   const sections: ContextSection[] = [
     { title: "AGENTS.md", body: "s".repeat(400), bucket: "system" },
     { title: "README.md Section 1", body: "r".repeat(400), bucket: "system" },
@@ -446,7 +446,7 @@ Deno.test("packContextSections: enforces tiered budget ceilings and reserves hea
   );
 });
 
-Deno.test("packContextSections: keeps source metadata only for included sections", () => {
+test("packContextSections: keeps source metadata only for included sections", () => {
   const packed = packContextSections([
     {
       title: "large",
@@ -470,11 +470,11 @@ Deno.test("packContextSections: keeps source metadata only for included sections
   ]);
 });
 
-Deno.test("estimateContextTokens: uses the same four-character approximation as model preflight", () => {
+test("estimateContextTokens: uses the same four-character approximation as model preflight", () => {
   assert.strictEqual(estimateContextTokens("12345678"), 2);
 });
 
-Deno.test("loadAgentsInstructions: loads AGENTS.md at the workspace root; no sibling markers required", async () => {
+test("loadAgentsInstructions: loads AGENTS.md at the workspace root; no sibling markers required", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-flat-"));
   try {
     await writeFile(path.join(dir, "AGENTS.md"), "# Flat Rules\n");
@@ -491,7 +491,7 @@ Deno.test("loadAgentsInstructions: loads AGENTS.md at the workspace root; no sib
   }
 });
 
-Deno.test("loadAgentsInstructions: does NOT discover an ancestor's AGENTS.md — discovery is contained to the workspace root", async () => {
+test("loadAgentsInstructions: does NOT discover an ancestor's AGENTS.md — discovery is contained to the workspace root", async () => {
   // The containment contract: content from outside the operator-selected
   // workspace must never enter the model request. An ancestor carrying the
   // old walk-up markers (AGENTS.md + README.md) is exactly the escape this
@@ -512,7 +512,7 @@ Deno.test("loadAgentsInstructions: does NOT discover an ancestor's AGENTS.md —
   }
 });
 
-Deno.test("loadAgentsInstructions: rejects a non-regular-file AGENTS.md — the lstat guard never follows links", async () => {
+test("loadAgentsInstructions: rejects a non-regular-file AGENTS.md — the lstat guard never follows links", async () => {
   // Sandbox constraint, disclosed: creating a symlink (`node:fs` `symlink`
   // included) requires unscoped read+write under the current runtime,
   // which the path-scoped test profile deliberately refuses,
@@ -536,7 +536,7 @@ Deno.test("loadAgentsInstructions: rejects a non-regular-file AGENTS.md — the 
   }
 });
 
-Deno.test("loadAgentsInstructions: returns null for a workspace with no AGENTS.md", async () => {
+test("loadAgentsInstructions: returns null for a workspace with no AGENTS.md", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-none-"));
   try {
     assert.strictEqual(await loadAgentsInstructions(dir), null);
@@ -545,7 +545,7 @@ Deno.test("loadAgentsInstructions: returns null for a workspace with no AGENTS.m
   }
 });
 
-Deno.test("loadAgentsInstructions: a root whose identity differs from the selection anchor is refused", async () => {
+test("loadAgentsInstructions: a root whose identity differs from the selection anchor is refused", async () => {
   // The adversarial root-replacement shape, pinned via its constructible
   // half: the caller anchors the identity of the directory it verified at
   // selection time; if discovery resolves the same pathname to a DIFFERENT
@@ -575,7 +575,7 @@ Deno.test("loadAgentsInstructions: a root whose identity differs from the select
   }
 });
 
-Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a zero-identity anchor fails closed", async () => {
+test("loadAgentsInstructions: a matching selection anchor loads normally; a zero-identity anchor fails closed", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agents-instructions-anc2-"));
   try {
     await writeFile(path.join(dir, "AGENTS.md"), "# Anchored\n");
@@ -602,7 +602,7 @@ Deno.test("loadAgentsInstructions: a matching selection anchor loads normally; a
   }
 });
 
-Deno.test("loadAgentsInstructions: an unresolvable workspace root warns — it is a discovery failure, not absence", async () => {
+test("loadAgentsInstructions: an unresolvable workspace root warns — it is a discovery failure, not absence", async () => {
   // Only a missing AGENTS.md is silent. A root that cannot be resolved
   // must not masquerade as "this workspace has no instructions": the
   // operator elevated trust expecting instructions from a workspace that
@@ -627,7 +627,7 @@ Deno.test("loadAgentsInstructions: an unresolvable workspace root warns — it i
   }
 });
 
-Deno.test("loadAgentsInstructions: caps an oversized AGENTS.md with a marker and an excerpt-labeled source", async () => {
+test("loadAgentsInstructions: caps an oversized AGENTS.md with a marker and an excerpt-labeled source", async () => {
   // The system prompt is never compressed, so the injected body must be
   // bounded here — and the receipt must say an excerpt entered the prompt,
   // not the whole file.
@@ -661,7 +661,7 @@ Deno.test("loadAgentsInstructions: caps an oversized AGENTS.md with a marker and
   }
 });
 
-Deno.test("loadAgentsInstructions: flags truncation when the byte-bound read clips inside a whitespace run", async () => {
+test("loadAgentsInstructions: flags truncation when the byte-bound read clips inside a whitespace run", async () => {
   // Adversarial shape: short real content, then a whitespace run spanning
   // the 64KB read bound, then more content past it. The token slice lands
   // inside the whitespace, so `trimEnd()` makes the capped and read bodies

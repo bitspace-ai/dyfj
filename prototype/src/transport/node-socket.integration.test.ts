@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
+import { test } from "node:test";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import type { ByteConnection, ConnectionListener } from "./connection.ts";
 import { nodeSocketHost } from "./node-socket.ts";
@@ -56,7 +57,7 @@ async function readAll(conn: ByteConnection, length: number) {
   return out;
 }
 
-Deno.test("bytes written on one end are read on the other, in order", async () => {
+test("bytes written on one end are read on the other, in order", async () => {
   await using pair = await connectPair();
   await pair.client.write(encode("one"));
   await pair.client.write(encode("two"));
@@ -65,7 +66,7 @@ Deno.test("bytes written on one end are read on the other, in order", async () =
   assert.deepStrictEqual(decode(await readAll(pair.client, 4)), "back");
 });
 
-Deno.test("read() resolves null at end of stream, never an empty chunk", async () => {
+test("read() resolves null at end of stream, never an empty chunk", async () => {
   await using pair = await connectPair();
   await pair.client.write(encode("last"));
   pair.client.close();
@@ -74,7 +75,7 @@ Deno.test("read() resolves null at end of stream, never an empty chunk", async (
   assert.deepStrictEqual(await pair.server.read(), null);
 });
 
-Deno.test("write() accepts a large frame whole, however the socket splits it", async () => {
+test("write() accepts a large frame whole, however the socket splits it", async () => {
   await using pair = await connectPair();
   const big = new Uint8Array(6 * 1024 * 1024);
   for (let i = 0; i < big.length; i++) big[i] = i % 251;
@@ -85,7 +86,7 @@ Deno.test("write() accepts a large frame whole, however the socket splits it", a
   assert.ok(received.every((byte, i) => byte === big[i]), "bytes differ");
 });
 
-Deno.test("close() is idempotent, ends the stream and rejects later writes", async () => {
+test("close() is idempotent, ends the stream and rejects later writes", async () => {
   await using pair = await connectPair();
   pair.client.close();
   pair.client.close();
@@ -95,7 +96,7 @@ Deno.test("close() is idempotent, ends the stream and rejects later writes", asy
   assert.deepStrictEqual(await pair.server.read(), null);
 });
 
-Deno.test("close() drops bytes already buffered, so the next read() is null", async () => {
+test("close() drops bytes already buffered, so the next read() is null", async () => {
   await using pair = await connectPair();
   await pair.client.write(encode("buffered"));
   // The socket reads on its own: give the bytes time to reach the queue.
@@ -104,14 +105,14 @@ Deno.test("close() drops bytes already buffered, so the next read() is null", as
   assert.deepStrictEqual(await pair.server.read().catch(() => null), null);
 });
 
-Deno.test("a pending read() resolves null when the connection is closed", async () => {
+test("a pending read() resolves null when the connection is closed", async () => {
   await using pair = await connectPair();
   const pending = pair.server.read();
   pair.server.close();
   assert.deepStrictEqual(await pending.catch(() => null), null);
 });
 
-Deno.test("listener close() closes a connection nobody accepted, and accept() is then null", async () => {
+test("listener close() closes a connection nobody accepted, and accept() is then null", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
@@ -129,7 +130,7 @@ Deno.test("listener close() closes a connection nobody accepted, and accept() is
   }
 });
 
-Deno.test("peer half-close: after the other side's FIN read() is null and a late reply still arrives", async () => {
+test("peer half-close: after the other side's FIN read() is null and a late reply still arrives", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
@@ -159,7 +160,7 @@ Deno.test("peer half-close: after the other side's FIN read() is null and a late
   }
 });
 
-Deno.test("client-side half-close: after the server's FIN read() is null and the client can still write", async () => {
+test("client-side half-close: after the server's FIN read() is null and the client can still write", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   // A plain node:net server that writes and then ends its side, as a server
@@ -189,7 +190,7 @@ Deno.test("client-side half-close: after the server's FIN read() is null and the
   }
 });
 
-Deno.test("accept() resolves null once the listener is closed", async () => {
+test("accept() resolves null once the listener is closed", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener: ConnectionListener = await nodeSocketHost.listen(path);
@@ -201,7 +202,7 @@ Deno.test("accept() resolves null once the listener is closed", async () => {
   await removeIfPresent(path);
 });
 
-Deno.test("connect() to a missing socket rejects with ENOENT", async () => {
+test("connect() to a missing socket rejects with ENOENT", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   await assert.rejects(() => nodeSocketHost.connect(path), (error: unknown) => {
@@ -210,7 +211,7 @@ Deno.test("connect() to a missing socket rejects with ENOENT", async () => {
   });
 });
 
-Deno.test("connect() with an aborted signal rejects with the signal's reason", async () => {
+test("connect() with an aborted signal rejects with the signal's reason", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const reason = new Error("stop");
@@ -225,7 +226,7 @@ Deno.test("connect() with an aborted signal rejects with the signal's reason", a
   );
 });
 
-Deno.test("connect() aborted while dialing closes the connection that settles later", async () => {
+test("connect() aborted while dialing closes the connection that settles later", async () => {
   const path = udsTestSocket("node-socket");
   await removeIfPresent(path);
   const listener = await nodeSocketHost.listen(path);
@@ -248,7 +249,7 @@ Deno.test("connect() aborted while dialing closes the connection that settles la
   }
 });
 
-Deno.test("listen() rejects when the path cannot be bound", async () => {
+test("listen() rejects when the path cannot be bound", async () => {
   const path = udsTestSocket("node-socket");
   await writeFile(path, "not a socket");
   try {

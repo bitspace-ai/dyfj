@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { isDeepStrictEqual } from "node:util";
+import { test } from "node:test";
 import {
   CONVERSATION_SUMMARY_MARKER,
   countTurns,
@@ -103,7 +104,7 @@ function eventsReturning(rows: Record<string, unknown>[]): EventReader {
 
 // Reads rows through the store helper, then projects them: it proves the row
 // normalizer and the projection agree on what a valid tool record is.
-Deno.test("fetchWorkbenchSessionEvents: preserves persisted tool-history validity instead of normalizing corruption", async () => {
+test("fetchWorkbenchSessionEvents: preserves persisted tool-history validity instead of normalizing corruption", async () => {
   const valid = {
     event_id: "tool-event",
     event_type: "tool_call",
@@ -160,7 +161,7 @@ Deno.test("fetchWorkbenchSessionEvents: preserves persisted tool-history validit
   }
 });
 
-Deno.test("buildConversationMessages: maps prompts to user turns and responses to assistant turns", () => {
+test("buildConversationMessages: maps prompts to user turns and responses to assistant turns", () => {
   const messages = buildConversationMessages([
     event("session_start", "What is DYFJ?"),
     event("model_response", "A local-first workbench."),
@@ -172,7 +173,7 @@ Deno.test("buildConversationMessages: maps prompts to user turns and responses t
   ]);
 });
 
-Deno.test("buildConversationMessages: replays an external-agent response as an assistant turn", () => {
+test("buildConversationMessages: replays an external-agent response as an assistant turn", () => {
   const messages = buildConversationMessages([
     event("session_start", "delegate this"),
     event("agent_response", "external result"),
@@ -183,7 +184,7 @@ Deno.test("buildConversationMessages: replays an external-agent response as an a
   ]);
 });
 
-Deno.test("buildConversationMessages: [case 1] retains a valid tool pair whose result is empty", () => {
+test("buildConversationMessages: [case 1] retains a valid tool pair whose result is empty", () => {
   let omission: HistoryOmissionProjection | undefined;
   const messages = buildConversationMessages([
     event("session_start", "inspect"),
@@ -203,7 +204,7 @@ Deno.test("buildConversationMessages: [case 1] retains a valid tool pair whose r
   assert.strictEqual(omission, undefined);
 });
 
-Deno.test("buildConversationMessages: [case 3] counts a gap marker without claiming a positive missing-call count", () => {
+test("buildConversationMessages: [case 3] counts a gap marker without claiming a positive missing-call count", () => {
   let omission: HistoryOmissionProjection | undefined;
   buildConversationMessages([
     event("session_start", "run the check"),
@@ -225,7 +226,7 @@ Deno.test("buildConversationMessages: [case 3] counts a gap marker without claim
   });
 });
 
-Deno.test("buildConversationMessages: [case 4] continues an incident-shaped prompt with a trailing ACP history gap", () => {
+test("buildConversationMessages: [case 4] continues an incident-shaped prompt with a trailing ACP history gap", () => {
   // Not throwing is asserted by the call itself: a throw fails this test.
   const messages = buildConversationMessages([
     event("session_start", "run the check"),
@@ -243,14 +244,14 @@ Deno.test("buildConversationMessages: [case 4] continues an incident-shaped prom
   }]);
 });
 
-Deno.test("buildConversationMessages: [case 23] metadata-only history remains an allowed empty projection", () => {
+test("buildConversationMessages: [case 23] metadata-only history remains an allowed empty projection", () => {
   assert.deepStrictEqual(
     buildConversationMessages([event("session_end", null)]),
     [],
   );
 });
 
-Deno.test("buildConversationMessages: [case 2] withholds a malformed row while retaining prose on both sides", () => {
+test("buildConversationMessages: [case 2] withholds a malformed row while retaining prose on both sides", () => {
   let omission: HistoryOmissionProjection | undefined;
   const messages = buildConversationMessages([
     event("session_start", "before"),
@@ -276,7 +277,7 @@ Deno.test("buildConversationMessages: [case 2] withholds a malformed row while r
   });
 });
 
-Deno.test("buildConversationMessages: [case 5] refuses when withholding leaves no projected transcript", () => {
+test("buildConversationMessages: [case 5] refuses when withholding leaves no projected transcript", () => {
   let omission: HistoryOmissionProjection | undefined;
   assert.throws(
     () =>
@@ -300,7 +301,7 @@ Deno.test("buildConversationMessages: [case 5] refuses when withholding leaves n
   });
 });
 
-Deno.test("buildConversationMessages: [case 6] refuses a synthetic split tool pair through the live representability guard", () => {
+test("buildConversationMessages: [case 6] refuses a synthetic split tool pair through the live representability guard", () => {
   assert.throws(
     () =>
       assertRepresentableToolHistory([{
@@ -330,7 +331,7 @@ Deno.test("buildConversationMessages: [case 6] refuses a synthetic split tool pa
   );
 });
 
-Deno.test("buildConversationMessages: [case 7] reports three projected pairs beside one trailing gap", () => {
+test("buildConversationMessages: [case 7] reports three projected pairs beside one trailing gap", () => {
   let omission: HistoryOmissionProjection | undefined;
   const events = [event("session_start", "inspect")];
   for (let index = 1; index <= 3; index++) {
@@ -362,7 +363,7 @@ Deno.test("buildConversationMessages: [case 7] reports three projected pairs bes
   });
 });
 
-Deno.test("buildConversationMessages: [case 8] counts withheld records independently even when ids repeat", () => {
+test("buildConversationMessages: [case 8] counts withheld records independently even when ids repeat", () => {
   let omission: HistoryOmissionProjection | undefined;
   buildConversationMessages([
     event("session_start", "inspect"),
@@ -388,7 +389,7 @@ Deno.test("buildConversationMessages: [case 8] counts withheld records independe
   });
 });
 
-Deno.test("buildConversationMessages: [case 9] keeps whole-history counts when an old omission falls outside maxTurns", () => {
+test("buildConversationMessages: [case 9] keeps whole-history counts when an old omission falls outside maxTurns", () => {
   let omission: HistoryOmissionProjection | undefined;
   const messages = buildConversationMessages([
     event("session_start", "old prompt"),
@@ -413,7 +414,7 @@ Deno.test("buildConversationMessages: [case 9] keeps whole-history counts when a
   });
 });
 
-Deno.test("buildConversationMessages: [case 10] retains a compressed summary while counting an elder omission outside the selected window", () => {
+test("buildConversationMessages: [case 10] retains a compressed summary while counting an elder omission outside the selected window", () => {
   let omission: HistoryOmissionProjection | undefined;
   const messages = buildConversationMessages([
     event("session_start", "elder prompt"),
@@ -457,7 +458,7 @@ Deno.test("buildConversationMessages: [case 10] retains a compressed summary whi
   });
 });
 
-Deno.test("buildConversationMessages: [case 11] repeated compression recomputes stable whole-history omission counts", () => {
+test("buildConversationMessages: [case 11] repeated compression recomputes stable whole-history omission counts", () => {
   const events = [
     event("session_start", "elder prompt"),
     event("tool_call", null, {
@@ -499,7 +500,7 @@ Deno.test("buildConversationMessages: [case 11] repeated compression recomputes 
   );
 });
 
-Deno.test("buildConversationMessages: [case 12] derives the witness from events beside a legacy summary with no omission field", () => {
+test("buildConversationMessages: [case 12] derives the witness from events beside a legacy summary with no omission field", () => {
   let omission: HistoryOmissionProjection | undefined;
   const messages = buildConversationMessages([
     event("session_start", "old prompt"),
@@ -530,7 +531,7 @@ Deno.test("buildConversationMessages: [case 12] derives the witness from events 
   });
 });
 
-Deno.test("buildConversationMessages: [case 17] retains later dependent prose verbatim after withholding", () => {
+test("buildConversationMessages: [case 17] retains later dependent prose verbatim after withholding", () => {
   const dependent = "I used that unavailable result; do not repair this prose.";
   const messages = buildConversationMessages([
     event("session_start", "inspect"),
@@ -551,7 +552,7 @@ Deno.test("buildConversationMessages: [case 17] retains later dependent prose ve
   );
 });
 
-Deno.test("buildConversationMessages: [case 18] identical immutable events yield identical projections and counts", () => {
+test("buildConversationMessages: [case 18] identical immutable events yield identical projections and counts", () => {
   const events = [
     event("session_start", "inspect"),
     event("tool_call", null, {
@@ -572,7 +573,7 @@ Deno.test("buildConversationMessages: [case 18] identical immutable events yield
   assert.deepStrictEqual(project(), project());
 });
 
-Deno.test("buildConversationMessages: [case 19] native and ACP-labelled rows have identical projection decisions and counts", () => {
+test("buildConversationMessages: [case 19] native and ACP-labelled rows have identical projection decisions and counts", () => {
   const base = [
     event("session_start", "inspect"),
     event("tool_call", null, {
@@ -594,7 +595,7 @@ Deno.test("buildConversationMessages: [case 19] native and ACP-labelled rows hav
   assert.deepStrictEqual(project(null), project("acp"));
 });
 
-Deno.test("buildConversationMessages: a context_compressed event replaces the elder turns with the pinned summary", () => {
+test("buildConversationMessages: a context_compressed event replaces the elder turns with the pinned summary", () => {
   const summary = "## Session intent\ncompressed intent";
   const messages = buildConversationMessages([
     event("session_start", "old question one"),
@@ -637,7 +638,7 @@ Deno.test("buildConversationMessages: a context_compressed event replaces the el
   );
 });
 
-Deno.test("buildConversationMessages: resume keeps the verbatim tail and current prompt, dropping only elder", () => {
+test("buildConversationMessages: resume keeps the verbatim tail and current prompt, dropping only elder", () => {
   // Two elder turns, a K=2 verbatim tail, then the current turn: the live path
   // used [summary, tail, current-prompt]; resume must reconstruct the same,
   // not collapse to [summary, answer].
@@ -701,7 +702,7 @@ Deno.test("buildConversationMessages: resume keeps the verbatim tail and current
   );
 });
 
-Deno.test("buildConversationMessages: the summary marker survives resume past the recent-turns cap", () => {
+test("buildConversationMessages: the summary marker survives resume past the recent-turns cap", () => {
   const events = [
     event(
       "context_compressed",
@@ -731,7 +732,7 @@ Deno.test("buildConversationMessages: the summary marker survives resume past th
   assert.ok(!JSON.stringify(messages).includes("q0"));
 });
 
-Deno.test("buildConversationMessages: keeps prior turns when a context_compressed payload is unparseable", () => {
+test("buildConversationMessages: keeps prior turns when a context_compressed payload is unparseable", () => {
   const messages = buildConversationMessages([
     event("session_start", "keep me"),
     event("context_compressed", "not json"),
@@ -739,7 +740,7 @@ Deno.test("buildConversationMessages: keeps prior turns when a context_compresse
   assert.deepStrictEqual(messages, [{ role: "user", content: "keep me" }]);
 });
 
-Deno.test("buildConversationMessages: resumes uncompressed on a payload with no retained count", () => {
+test("buildConversationMessages: resumes uncompressed on a payload with no retained count", () => {
   // An event written before the retained count existed carries only the
   // compressed (leading) count, which is meaningless here — replay rebuilds
   // the full history while that count was taken against a capped seed.
@@ -767,7 +768,7 @@ Deno.test("buildConversationMessages: resumes uncompressed on a payload with no 
   ]);
 });
 
-Deno.test("buildConversationMessages: resume is byte-identical to the live transcript when history exceeds maxTurns", () => {
+test("buildConversationMessages: resume is byte-identical to the live transcript when history exceeds maxTurns", () => {
   // THE seam regression. The live path seeds from a transcript already capped
   // to the most recent `maxTurns` turns, then compresses within that window;
   // replay rebuilds the FULL history. A leading (compressed) count would mean
@@ -825,7 +826,7 @@ Deno.test("buildConversationMessages: resume is byte-identical to the live trans
   );
 });
 
-Deno.test("buildConversationMessages: a failed turn (error event, no model_response) rebuilds without a half-turn", () => {
+test("buildConversationMessages: a failed turn (error event, no model_response) rebuilds without a half-turn", () => {
   // e.g. a context-window overflow: the turn fails structured, so the event
   // trail carries the prompt and the error but no model_response. Resume
   // must see the prompt as a plain user turn — no fabricated assistant
@@ -845,7 +846,7 @@ Deno.test("buildConversationMessages: a failed turn (error event, no model_respo
   ]);
 });
 
-Deno.test("buildConversationMessages: keeps only the most recent maxTurns exchanges, whole turns intact", () => {
+test("buildConversationMessages: keeps only the most recent maxTurns exchanges, whole turns intact", () => {
   const events = Array.from({ length: 50 }, (_, i) => [
     event("session_start", `prompt ${i}`),
     event("model_response", `response ${i}`),
@@ -861,7 +862,7 @@ Deno.test("buildConversationMessages: keeps only the most recent maxTurns exchan
   assert.strictEqual(messages.some((m) => m.content === "prompt 0"), false);
 });
 
-Deno.test("buildConversationMessages: replays a tool_call event as a paired assistant+tool turn", () => {
+test("buildConversationMessages: replays a tool_call event as a paired assistant+tool turn", () => {
   const messages = buildConversationMessages([
     event("session_start", "list the files"),
     event("tool_call", "list_files allowed", {
@@ -900,7 +901,7 @@ Deno.test("buildConversationMessages: replays a tool_call event as a paired assi
   );
 });
 
-Deno.test("buildConversationMessages: replays a failed tool_call with its error mark intact", () => {
+test("buildConversationMessages: replays a failed tool_call with its error mark intact", () => {
   // A resumed transcript must serialize a failed result as an error
   // (Anthropic is_error) exactly like the live turn did — otherwise resume
   // silently reclassifies corrective feedback as ordinary tool output.
@@ -943,7 +944,7 @@ Deno.test("buildConversationMessages: replays a failed tool_call with its error 
   assert.strictEqual(okTool && "isError" in okTool, false);
 });
 
-Deno.test("buildConversationMessages: truncation never orphans a tool result from its call", () => {
+test("buildConversationMessages: truncation never orphans a tool result from its call", () => {
   // Two turns, each: user -> tool call+result -> assistant. maxTurns=1 must
   // keep the whole most-recent turn (user + assistant-with-toolcall + tool +
   // assistant), never start the window on the dangling tool message.

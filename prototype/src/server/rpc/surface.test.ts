@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import type { WorkbenchProjectSessions } from "../../store/mod.ts";
 import { callRpc } from "../../../testing/builders/rpc.ts";
 import { buildSurfaceHandlers } from "./surface.ts";
 
-Deno.test("surface/snapshot bundles status, models, sessions, and tools", async () => {
+test("surface/snapshot bundles status, models, sessions, and tools", async () => {
   const result = await callRpc(
     buildSurfaceHandlers({
       loadModels: () =>

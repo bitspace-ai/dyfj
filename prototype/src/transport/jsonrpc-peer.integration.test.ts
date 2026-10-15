@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
+import { test } from "node:test";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { JsonRpcPeer } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
@@ -39,7 +40,7 @@ async function connectPair(
   };
 }
 
-Deno.test("a large response is delivered intact over a real socket (partial writes)", async () => {
+test("a large response is delivered intact over a real socket (partial writes)", async () => {
   const big = "x".repeat(300_000); // exceeds a single socket write
   await using pair = await connectPair({ big: () => ({ payload: big }) });
   const result = await pair.client.request("big") as { payload: string };
@@ -47,13 +48,13 @@ Deno.test("a large response is delivered intact over a real socket (partial writ
   assert.strictEqual(result.payload, big);
 });
 
-Deno.test("multibyte payloads round-trip over a real socket", async () => {
+test("multibyte payloads round-trip over a real socket", async () => {
   const text = "77→15 tok   😀 ".repeat(20_000);
   await using pair = await connectPair({ echo: (params) => params });
   assert.deepStrictEqual(await pair.client.request("echo", { text }), { text });
 });
 
-Deno.test("the approval round-trip crosses a real socket in both directions", async () => {
+test("the approval round-trip crosses a real socket in both directions", async () => {
   const streamed: unknown[] = [];
   await using pair = await connectPair(
     {

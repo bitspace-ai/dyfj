@@ -16,6 +16,7 @@
 
 import assert from "node:assert/strict";
 import { unlink } from "node:fs/promises";
+import { test } from "node:test";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { startModelServer } from "../../testing/servers/model-server.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
@@ -32,7 +33,7 @@ const MEMORY_CONTENT = "CANARY-MEMORY-CONTENT-cf9a private and load-bearing";
 const MODEL_SLUG = "canary-stub-model-cf9a";
 const STUB_REPLY = "CANARY-STUB-REPLY-cf9a the turn text itself";
 
-Deno.test("a real turn keeps its canaries out of narration console methods", async () => {
+test("a real turn keeps its canaries out of narration console methods", async () => {
   const stub = await startModelServer(() => ({
     kind: "text",
     text: STUB_REPLY,

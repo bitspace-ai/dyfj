@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchModel } from "../../providers/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -28,7 +29,7 @@ function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
   };
 }
 
-Deno.test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
+test("runtime/status resolves the bare-turn route past a hosted configured default", async () => {
   const { runtime } = await callRpc(
     handlers({
       loadModels: models([
@@ -75,14 +76,14 @@ Deno.test("runtime/status resolves the bare-turn route past a hosted configured 
   assert.deepStrictEqual(runtime.models, { total: 2, local: 1, hosted: 1 });
 });
 
-Deno.test("runtime/status reports a null bare-turn route when nothing is routable", async () => {
+test("runtime/status reports a null bare-turn route when nothing is routable", async () => {
   const { runtime } = await callRpc(handlers(), "runtime/status") as {
     runtime: { defaultTurnModel: unknown };
   };
   assert.deepStrictEqual(runtime.defaultTurnModel, null);
 });
 
-Deno.test("runtime/status returns the local transport posture", async () => {
+test("runtime/status returns the local transport posture", async () => {
   const result = await callRpc(
     handlers({
       engineConfig: engineConfig({
@@ -106,7 +107,7 @@ Deno.test("runtime/status returns the local transport posture", async () => {
   });
 });
 
-Deno.test("runtime/status falls back to the loose posture fields without an engine config", async () => {
+test("runtime/status falls back to the loose posture fields without an engine config", async () => {
   const { runtime } = await callRpc(
     handlers({
       defaultCompanionModel: "local-x",
@@ -127,7 +128,7 @@ Deno.test("runtime/status falls back to the loose posture fields without an engi
 
 // A pointer that failed at start stays failed until restart, so status names
 // it; a clean start leaves the field out rather than reporting an empty list.
-Deno.test("runtime/status names secret pointers that failed at start", async () => {
+test("runtime/status names secret pointers that failed at start", async () => {
   const failed = [{
     envVar: "OPENROUTER_API_KEY",
     reason:
@@ -149,7 +150,7 @@ Deno.test("runtime/status names secret pointers that failed at start", async () 
   assert.ok(!("unavailableSecrets" in clean.runtime));
 });
 
-Deno.test("runtime/liveness returns immediately without loading models", async () => {
+test("runtime/liveness returns immediately without loading models", async () => {
   let loadModelsCalled = false;
   const result = await callRpc(
     handlers({
@@ -168,7 +169,7 @@ Deno.test("runtime/liveness returns immediately without loading models", async (
   assert.deepStrictEqual(loadModelsCalled, false);
 });
 
-Deno.test("runtime/status exposes method catalog metadata", async () => {
+test("runtime/status exposes method catalog metadata", async () => {
   const { runtime } = await callRpc(handlers(), "runtime/status") as {
     runtime: { methods: string[]; methodCatalog: unknown[] };
   };
@@ -216,7 +217,7 @@ Deno.test("runtime/status exposes method catalog metadata", async () => {
   ]);
 });
 
-Deno.test("runtime/stop triggers onShutdown and returns stopping status", async () => {
+test("runtime/stop triggers onShutdown and returns stopping status", async () => {
   let shutdownCalled = false;
   const result = await callRpc(
     handlers({
@@ -230,7 +231,7 @@ Deno.test("runtime/stop triggers onShutdown and returns stopping status", async 
   assert.ok(shutdownCalled);
 });
 
-Deno.test("runtime/stop is an internalError when onShutdown is absent", async () => {
+test("runtime/stop is an internalError when onShutdown is absent", async () => {
   const error = await rpcFailure(handlers(), "runtime/stop");
   assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
   assert.ok(
@@ -239,7 +240,7 @@ Deno.test("runtime/stop is an internalError when onShutdown is absent", async ()
   );
 });
 
-Deno.test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
+test("runtime/stop surfaces an onShutdown failure as internalError", async () => {
   const error = await rpcFailure(
     handlers({
       onShutdown: () => Promise.reject(new Error("ACP close failed")),

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { lstatSync } from "node:fs";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
+import { test } from "node:test";
 import {
   type UdsTestSocket,
   udsTestSocket,
@@ -121,7 +122,7 @@ function exists(path: string): boolean {
   }
 }
 
-Deno.test("serveUnixJsonRpc serves every connection from one handler map and settles each request", async () => {
+test("serveUnixJsonRpc serves every connection from one handler map and settles each request", async () => {
   const settled: Array<[JsonRpcRequest, JsonRpcResponse]> = [];
   let markSettled: () => void = () => {};
   await using served = await serve("listener-serve", {
@@ -155,7 +156,7 @@ Deno.test("serveUnixJsonRpc serves every connection from one handler map and set
   ]);
 });
 
-Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file", async () => {
+test("serveUnixJsonRpc close disconnects peers and removes the socket file", async () => {
   const socketPath = udsTestSocket("listener-serve");
   await removeIfPresent(socketPath);
   const server = await serveUnixJsonRpc(socketPath, {
@@ -185,7 +186,7 @@ Deno.test("serveUnixJsonRpc close disconnects peers and removes the socket file"
   await assert.rejects(() => rawConnect(socketPath));
 });
 
-Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connections serving", async () => {
+test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connections serving", async () => {
   const socketPath = udsTestSocket("listener-keep-peers");
   await removeIfPresent(socketPath);
   const server = await serveUnixJsonRpc(socketPath, {
@@ -199,14 +200,9 @@ Deno.test("serveUnixJsonRpc close({ disconnectPeers: false }) keeps open connect
   assert.deepStrictEqual(await client.peer.request("ping"), "pong");
 });
 
-Deno.test({
-  name:
-    "serveUnixJsonRpc closes its side of a connection when the client disconnects",
-  // The lane runs both sanitizers; this case also names them, so a server-side
-  // connection left open after the client goes fails it wherever it runs.
-  sanitizeOps: true,
-  sanitizeResources: true,
-  async fn() {
+test(
+  "serveUnixJsonRpc closes its side of a connection when the client disconnects",
+  async () => {
     await using served = await serve("listener-client-eof", {
       ping: () => "pong",
     });
@@ -222,14 +218,11 @@ Deno.test({
       await conn.closed;
     }
   },
-});
+);
 
-Deno.test({
-  name:
-    "serveUnixJsonRpc answers a request sent just before the client half-closes",
-  sanitizeOps: true,
-  sanitizeResources: true,
-  async fn() {
+test(
+  "serveUnixJsonRpc answers a request sent just before the client half-closes",
+  async () => {
     await using served = await serve("listener-half-close", {
       late: async () => {
         await new Promise((resolve) => setTimeout(resolve, 100));
@@ -254,9 +247,9 @@ Deno.test({
       await conn.closed;
     }
   },
-});
+);
 
-Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () => {
+test("serveUnixJsonRpc routes malformed frames to onParseError", async () => {
   const errors: string[] = [];
   let markReported: () => void = () => {};
   const reported = new Promise<void>((resolve) => markReported = resolve);
@@ -279,7 +272,7 @@ Deno.test("serveUnixJsonRpc routes malformed frames to onParseError", async () =
 
 // --- bind safety ---
 
-Deno.test("refuses to bind while a live runtime answers on the socket", async () => {
+test("refuses to bind while a live runtime answers on the socket", async () => {
   await using served = await serve("listener-live", { ping: () => "pong" });
   const socketPath = served.server.socketPath;
   await assert.rejects(
@@ -293,7 +286,7 @@ Deno.test("refuses to bind while a live runtime answers on the socket", async ()
   assert.deepStrictEqual(await client.peer.request("ping"), "pong");
 });
 
-Deno.test("clears a genuinely stale socket and binds", async () => {
+test("clears a genuinely stale socket and binds", async () => {
   const socketPath = udsTestSocket("listener-stale");
   // Fabricate the unclean-exit shape: a SIGKILL'd listener leaves its socket
   // file behind with nothing accepting.
@@ -319,7 +312,7 @@ Deno.test("clears a genuinely stale socket and binds", async () => {
   }
 });
 
-Deno.test("refuses to bind over a non-socket path", async () => {
+test("refuses to bind over a non-socket path", async () => {
   const path = udsTestSocket("listener-file");
   await writeFile(path, "not a socket");
   try {
@@ -341,7 +334,7 @@ Deno.test("refuses to bind over a non-socket path", async () => {
   }
 });
 
-Deno.test("assertSocketBindable is a no-op for an absent path", async () => {
+test("assertSocketBindable is a no-op for an absent path", async () => {
   const path = udsTestSocket("listener-file");
   await removeIfPresent(path);
   await assertSocketBindable(path);

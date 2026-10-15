@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 
 describe("runtime SIGINT handling", () => {

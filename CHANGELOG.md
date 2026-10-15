@@ -221,6 +221,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The remaining product tests register with `node:test` and run under
+  `node --test`, with the per-file leak check.** This covers the `context/`,
+  `extensions/`, `server/`, `store/` and `transport/` tests and those under
+  `testing/`, `mcp/` and `diagnostics/`. The registrations codemod moved 50
+  files onto Node, with 387 runner registrations and 10 bdd imports. It flagged
+  two registrations that passed an options object to the existing runner, both
+  in the Unix-socket listener's integration tests, and these were converted by
+  hand. Every case still runs and the lane totals are unchanged. No converted
+  file leaves a resource live. Only the tests that drive the ACP fixture agent,
+  the golden suite, the launcher grant tests, the gate tooling's own tests and
+  the `schema/` and `contracts/` tests stay on the existing runner. The
+  `runtime.neutral` count falls from 1,633 to 1,236 (decision D32).
+
 - **The `providers/`, `engine/` and `contract/` tests register with
   `node:test` and run under `node --test`, with the per-file leak check.** The
   registrations codemod moved 54 files onto Node, with 319 runner

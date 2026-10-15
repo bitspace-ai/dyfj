@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { it } from "@std/testing/bdd";
+import { it, test } from "node:test";
 import {
   buildContextOverflowMessage,
   buildContinuationMessages,
@@ -13,7 +13,7 @@ import type { WorkbenchMessage } from "../providers/mod.ts";
 
 // --- classifyLengthStop ---
 
-Deno.test("classifyLengthStop: output at the catalog output cap is output-budget exhaustion", () => {
+test("classifyLengthStop: output at the catalog output cap is output-budget exhaustion", () => {
   assert.strictEqual(
     classifyLengthStop(
       { contextWindow: 128_000, maxOutputTokens: 16_000 },
@@ -23,7 +23,7 @@ Deno.test("classifyLengthStop: output at the catalog output cap is output-budget
   );
 });
 
-Deno.test("classifyLengthStop: the output cap wins even at the window edge — the generator could not have continued", () => {
+test("classifyLengthStop: the output cap wins even at the window edge — the generator could not have continued", () => {
   assert.strictEqual(
     classifyLengthStop(
       { contextWindow: 8192, maxOutputTokens: 1024 },
@@ -33,7 +33,7 @@ Deno.test("classifyLengthStop: the output cap wins even at the window edge — t
   );
 });
 
-Deno.test("classifyLengthStop: filling the window with output short of the cap is context overflow", () => {
+test("classifyLengthStop: filling the window with output short of the cap is context overflow", () => {
   assert.strictEqual(
     classifyLengthStop(
       { contextWindow: 8192, maxOutputTokens: 1024 },
@@ -43,7 +43,7 @@ Deno.test("classifyLengthStop: filling the window with output short of the cap i
   );
 });
 
-Deno.test("classifyLengthStop: window evidence works without a declared output cap", () => {
+test("classifyLengthStop: window evidence works without a declared output cap", () => {
   assert.strictEqual(
     classifyLengthStop(
       { contextWindow: 100 },
@@ -53,7 +53,7 @@ Deno.test("classifyLengthStop: window evidence works without a declared output c
   );
 });
 
-Deno.test("classifyLengthStop: usage below the overflow fraction of the window is output-budget exhaustion", () => {
+test("classifyLengthStop: usage below the overflow fraction of the window is output-budget exhaustion", () => {
   assert.strictEqual(
     classifyLengthStop(
       { contextWindow: 100 },
@@ -80,7 +80,7 @@ Deno.test("classifyLengthStop: usage below the overflow fraction of the window i
   );
 });
 
-Deno.test("classifyLengthStop: no catalog limits defaults to output-budget exhaustion (overflow needs positive evidence)", () => {
+test("classifyLengthStop: no catalog limits defaults to output-budget exhaustion (overflow needs positive evidence)", () => {
   assert.strictEqual(
     classifyLengthStop({}, { input: 1_000_000, output: 5 }),
     "output_budget_exhausted",
@@ -89,7 +89,7 @@ Deno.test("classifyLengthStop: no catalog limits defaults to output-budget exhau
 
 // --- buildContinuationMessages ---
 
-Deno.test("buildContinuationMessages: appends the partial assistant turn and the continuation nudge without mutating the input", () => {
+test("buildContinuationMessages: appends the partial assistant turn and the continuation nudge without mutating the input", () => {
   const messages: WorkbenchMessage[] = [
     { role: "user", content: "write a long report" },
   ];
@@ -105,7 +105,7 @@ Deno.test("buildContinuationMessages: appends the partial assistant turn and the
 
 // --- context overflow failure ---
 
-Deno.test("context overflow failure: the operator message names the condition and both ways out", () => {
+test("context overflow failure: the operator message names the condition and both ways out", () => {
   const message = buildContextOverflowMessage({
     modelSlug: "laguna-xs.2",
     contextWindow: 8192,
@@ -137,7 +137,7 @@ Deno.test("context overflow failure: the operator message names the condition an
   );
 });
 
-Deno.test("context overflow failure: an unknown window still yields a complete message", () => {
+test("context overflow failure: an unknown window still yields a complete message", () => {
   const message = buildContextOverflowMessage({
     modelSlug: "laguna-xs.2",
     inputTokens: 8000,
@@ -156,7 +156,7 @@ Deno.test("context overflow failure: an unknown window still yields a complete m
   );
 });
 
-Deno.test("context overflow failure: ContextWindowOverflowError carries the structured details and a stable name", () => {
+test("context overflow failure: ContextWindowOverflowError carries the structured details and a stable name", () => {
   const err = new ContextWindowOverflowError({
     modelSlug: "laguna-xs.2",
     contextWindow: 8192,
@@ -174,7 +174,7 @@ Deno.test("context overflow failure: ContextWindowOverflowError carries the stru
 
 // --- isBudgetRefusal ---
 
-Deno.test("isBudgetRefusal: recognizes every envelope-refusal error by name", () => {
+test("isBudgetRefusal: recognizes every envelope-refusal error by name", () => {
   for (
     const name of [
       "BudgetExceededError",
@@ -187,19 +187,19 @@ Deno.test("isBudgetRefusal: recognizes every envelope-refusal error by name", ()
   }
 });
 
-Deno.test("isBudgetRefusal: a runaway-anomaly halt is a hard stop, never a downgradeable refusal", () => {
+test("isBudgetRefusal: a runaway-anomaly halt is a hard stop, never a downgradeable refusal", () => {
   const err = new Error("halted");
   err.name = "RunawayAnomalyHaltError";
   assert.strictEqual(isBudgetRefusal(err), false);
 });
 
-Deno.test("isBudgetRefusal: anything else is not a budget refusal", () => {
+test("isBudgetRefusal: anything else is not a budget refusal", () => {
   assert.strictEqual(isBudgetRefusal(new Error("network down")), false);
   assert.strictEqual(isBudgetRefusal(undefined), false);
   assert.strictEqual(isBudgetRefusal("BudgetExceededError"), false);
 });
 
-Deno.test("buildContextOverflowMessage: a request refused before sending names the input budget, not a total that cannot add up", () => {
+test("buildContextOverflowMessage: a request refused before sending names the input budget, not a total that cannot add up", () => {
   const message = buildContextOverflowMessage({
     modelSlug: "hosted-200k",
     contextWindow: 200_000,

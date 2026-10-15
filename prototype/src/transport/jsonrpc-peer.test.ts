@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { ByteConnection } from "./connection.ts";
 import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import {
@@ -156,7 +157,7 @@ const concat = (chunks: Uint8Array[]) => {
 // built request envelopes as object literals. The Rust REPL client in
 // core/dyfj-repl reads these frames, so the codec builder the peer now uses
 // must leave every byte where it was.
-Deno.test("request frames on the wire are byte-identical to the literal frames", async () => {
+test("request frames on the wire are byte-identical to the literal frames", async () => {
   const [conn] = memoryConnPair();
   const sink = new MemoryConn();
   conn.other = sink;
@@ -190,7 +191,7 @@ Deno.test("request frames on the wire are byte-identical to the literal frames",
   );
 });
 
-Deno.test("notification and response frames on the wire are unchanged", async () => {
+test("notification and response frames on the wire are unchanged", async () => {
   await using pair = connectPair({ ping: () => ({ pong: true }) });
   const serverConn = pair.clientConn.other;
   await pair.client.notify("stream", { delta: "hi" });
@@ -209,14 +210,14 @@ Deno.test("notification and response frames on the wire are unchanged", async ()
 
 // --- request/response ---
 
-Deno.test("client request -> server handler -> result", async () => {
+test("client request -> server handler -> result", async () => {
   await using pair = connectPair({ "models/list": () => ({ models: [] }) });
   assert.deepStrictEqual(await pair.client.request("models/list"), {
     models: [],
   });
 });
 
-Deno.test("all requests on one connection share one handler context", async () => {
+test("all requests on one connection share one handler context", async () => {
   const contexts: unknown[] = [];
   await using pair = connectPair({
     inspect: (_params, ctx) => {
@@ -232,7 +233,7 @@ Deno.test("all requests on one connection share one handler context", async () =
   assert.strictEqual(contexts[0], contexts[1]);
 });
 
-Deno.test("server-initiated request -> client handler (the approval round-trip)", async () => {
+test("server-initiated request -> client handler (the approval round-trip)", async () => {
   await using pair = connectPair({}, {
     approval: (params) => {
       assert.partialDeepStrictEqual(params as Record<string, unknown>, {
@@ -250,7 +251,7 @@ Deno.test("server-initiated request -> client handler (the approval round-trip)"
   );
 });
 
-Deno.test("an aborted request removes its pending correlation and ignores a late response", async () => {
+test("an aborted request removes its pending correlation and ignores a late response", async () => {
   let markApprovalStarted!: () => void;
   const approvalStarted = new Promise<void>((resolve) => {
     markApprovalStarted = resolve;
@@ -290,7 +291,7 @@ Deno.test("an aborted request removes its pending correlation and ignores a late
   );
 });
 
-Deno.test("a request with an already-aborted signal rejects without writing", async () => {
+test("a request with an already-aborted signal rejects without writing", async () => {
   await using pair = connectPair();
   const abortController = new AbortController();
   abortController.abort();
@@ -303,14 +304,14 @@ Deno.test("a request with an already-aborted signal rejects without writing", as
   assert.deepStrictEqual(pair.clientConn.written.length, 0);
 });
 
-Deno.test("unknown method rejects with methodNotFound", async () => {
+test("unknown method rejects with methodNotFound", async () => {
   await using pair = connectPair({});
   const err = await rejection(pair.client.request("nope"));
   assert.ok(err instanceof RpcError);
   assert.deepStrictEqual(err.code, RpcErrorCode.methodNotFound);
 });
 
-Deno.test("a handler RpcError propagates as a rejection with its code", async () => {
+test("a handler RpcError propagates as a rejection with its code", async () => {
   await using pair = connectPair({
     turn: () => {
       throw new RpcError(RpcErrorCode.paidNotApproved, "nope");
@@ -326,7 +327,7 @@ Deno.test("a handler RpcError propagates as a rejection with its code", async ()
 // trust boundary — a hostile or misbehaving peer's message must be capped
 // and control-char-stripped before it rides RpcError's capped-passthrough
 // treatment.
-Deno.test("reconstructing an RpcError from an oversized/control-character wire message sanitizes it", async () => {
+test("reconstructing an RpcError from an oversized/control-character wire message sanitizes it", async () => {
   const esc = String.fromCharCode(27);
   const payload = esc + "[31m" + "SELECT ".repeat(20_000);
   await using pair = connectPair({
@@ -341,7 +342,7 @@ Deno.test("reconstructing an RpcError from an oversized/control-character wire m
   assert.ok(new TextEncoder().encode(caught.message).byteLength < 1000);
 });
 
-Deno.test("a malformed error envelope rejects the pending request instead of orphaning it", async () => {
+test("a malformed error envelope rejects the pending request instead of orphaning it", async () => {
   // A raw (non-JsonRpcPeer) end answers with responses whose error envelope
   // is malformed: a non-string message, then a null error object. The
   // pending promise must settle by rejection in both cases — request() has
@@ -399,7 +400,7 @@ Deno.test("a malformed error envelope rejects the pending request instead of orp
 
 // --- notifications, concurrency, handler context ---
 
-Deno.test("notifications reach a matching handler fire-and-forget", async () => {
+test("notifications reach a matching handler fire-and-forget", async () => {
   let seen: unknown;
   await using pair = connectPair({
     stream: (p) => {
@@ -411,7 +412,7 @@ Deno.test("notifications reach a matching handler fire-and-forget", async () => 
   assert.deepStrictEqual(seen, { delta: "hi" });
 });
 
-Deno.test("a slow request does not block other requests on the same connection", async () => {
+test("a slow request does not block other requests on the same connection", async () => {
   let release: () => void = () => {};
   const gate = new Promise<void>((resolve) => {
     release = resolve;
@@ -430,7 +431,7 @@ Deno.test("a slow request does not block other requests on the same connection",
   assert.deepStrictEqual(await slow, { done: true });
 });
 
-Deno.test("a handler streams notifications and issues an approval mid-execution (ctx)", async () => {
+test("a handler streams notifications and issues an approval mid-execution (ctx)", async () => {
   const streamed: unknown[] = [];
   await using pair = connectPair(
     {
@@ -458,7 +459,7 @@ Deno.test("a handler streams notifications and issues an approval mid-execution 
 
 // --- byte stream handling ---
 
-Deno.test("a large response is delivered intact across short writes", async () => {
+test("a large response is delivered intact across short writes", async () => {
   const big = "x".repeat(300_000);
   await using pair = connectPair({ big: () => ({ payload: big }) }, {}, {
     maxWrite: 4096, // every write() accepts at most 4 KiB
@@ -468,7 +469,7 @@ Deno.test("a large response is delivered intact across short writes", async () =
   assert.strictEqual(result.payload, big);
 });
 
-Deno.test("a multibyte character bisected across two reads round-trips byte-for-byte", async () => {
+test("a multibyte character bisected across two reads round-trips byte-for-byte", async () => {
   const payload = "77→15 tok"; // → is E2 86 92
   const bytes = encodeFrame(notification("stream", { delta: payload }));
   const splitAt = bytes.indexOf(0xe2) + 1; // lead byte ends chunk one
@@ -488,7 +489,7 @@ Deno.test("a multibyte character bisected across two reads round-trips byte-for-
   assert.deepStrictEqual(seen, [{ delta: payload }]);
 });
 
-Deno.test("EOF flush feeds the buffered decoder tail into the frame layer", async () => {
+test("EOF flush feeds the buffered decoder tail into the frame layer", async () => {
   // With { stream: true } a partial multibyte tail stays in the TextDecoder;
   // the final argument-less flush emits U+FFFD for it into FrameDecoder.push.
   // A partial tail carries no frame terminator, so it is never delivered as a
@@ -508,7 +509,7 @@ Deno.test("EOF flush feeds the buffered decoder tail into the frame layer", asyn
   assert.deepStrictEqual(errors, [`frame exceeds ${head.length} bytes`]);
 });
 
-Deno.test("malformed frames and invalid messages reach onParseError without closing the connection", async () => {
+test("malformed frames and invalid messages reach onParseError without closing the connection", async () => {
   const errors: string[] = [];
   const peer = new JsonRpcPeer(
     scriptedConn([
@@ -524,7 +525,7 @@ Deno.test("malformed frames and invalid messages reach onParseError without clos
 
 // --- lifecycle ---
 
-Deno.test("pending requests reject when the connection closes", async () => {
+test("pending requests reject when the connection closes", async () => {
   await using pair = connectPair({
     slow: () => new Promise(() => {}), // never resolves
   });
@@ -537,7 +538,7 @@ Deno.test("pending requests reject when the connection closes", async () => {
   );
 });
 
-Deno.test("onRequestSettled fires after response has been written to the connection", async () => {
+test("onRequestSettled fires after response has been written to the connection", async () => {
   const settled: Array<{ method: string; result: unknown; written: number }> =
     [];
   let markSettled!: () => void;
@@ -571,7 +572,7 @@ Deno.test("onRequestSettled fires after response has been written to the connect
   }]);
 });
 
-Deno.test("onRequestSettled error is caught and routed to onParseError without crashing peer", async () => {
+test("onRequestSettled error is caught and routed to onParseError without crashing peer", async () => {
   const errors: string[] = [];
   let markReported: () => void = () => {};
   const nextReport = () =>

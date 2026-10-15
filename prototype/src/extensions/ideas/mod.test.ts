@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import type { WorkbenchSessionEvent } from "../../contract/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -26,7 +27,7 @@ function handlers(overrides: Partial<IdeaPacketExtensionDeps> = {}) {
   return { ...ideas.rpc(deps), ...packets.rpc(deps) };
 }
 
-Deno.test("the pair is the ideas and packets extensions with their methods", () => {
+test("the pair is the ideas and packets extensions with their methods", () => {
   const [ideas, packets] = createIdeaPacketExtensions();
   const deps: IdeaPacketExtensionDeps = {
     fetchSessionEvents: () => Promise.resolve([]),
@@ -47,7 +48,7 @@ Deno.test("the pair is the ideas and packets extensions with their methods", () 
   ]);
 });
 
-Deno.test("ideas/mark, ideas/list, ideas/get flow", async () => {
+test("ideas/mark, ideas/list, ideas/get flow", async () => {
   const rpc = handlers({
     fetchSessionEvents: () =>
       Promise.resolve([
@@ -82,7 +83,7 @@ Deno.test("ideas/mark, ideas/list, ideas/get flow", async () => {
   assert.deepStrictEqual(got.idea.ideaId, idea.ideaId);
 });
 
-Deno.test("packets/draft, packets/list, packets/get flow", async () => {
+test("packets/draft, packets/list, packets/get flow", async () => {
   const rpc = handlers({
     fetchSessionWorkspaceRecord: () =>
       Promise.resolve({ exists: true, workspace: "/workspaces/project" }),
@@ -134,7 +135,7 @@ Deno.test("packets/draft, packets/list, packets/get flow", async () => {
   );
 });
 
-Deno.test("ideas and packets share the pair's registry; another pair has its own", async () => {
+test("ideas and packets share the pair's registry; another pair has its own", async () => {
   const sessionId = "01OWNED_REGISTRY_SESSION";
   const rpc = handlers();
   const { idea } = await callRpc(rpc, "ideas/mark", {
@@ -153,7 +154,7 @@ Deno.test("ideas and packets share the pair's registry; another pair has its own
   assert.deepStrictEqual(ideas, []);
 });
 
-Deno.test("packets/draft rejects whitespace-only optional issueId", async () => {
+test("packets/draft rejects whitespace-only optional issueId", async () => {
   assert.deepStrictEqual(
     await rpcFailure(handlers(), "packets/draft", {
       sessionId: "01TEST_PACKET_SESSION",
@@ -167,7 +168,7 @@ Deno.test("packets/draft rejects whitespace-only optional issueId", async () => 
   );
 });
 
-Deno.test("ideas/mark strips complete ANSI CSI escape sequences from the label", async () => {
+test("ideas/mark strips complete ANSI CSI escape sequences from the label", async () => {
   const { idea } = await callRpc(handlers(), "ideas/mark", {
     sessionId: "01TEST_ANSI_SESSION",
     label: "Clean \x1b[31mRed\x1b[0m Text",
@@ -176,7 +177,7 @@ Deno.test("ideas/mark strips complete ANSI CSI escape sequences from the label",
   assert.ok(!idea.label.includes("[31m"));
 });
 
-Deno.test("ideas/list and packets/list reject missing sessionId", async () => {
+test("ideas/list and packets/list reject missing sessionId", async () => {
   for (const method of ["ideas/list", "packets/list"]) {
     assert.deepStrictEqual(await rpcFailure(handlers(), method, {}), {
       code: RpcErrorCode.invalidParams,
@@ -185,7 +186,7 @@ Deno.test("ideas/list and packets/list reject missing sessionId", async () => {
   }
 });
 
-Deno.test("packets/draft rejects idea belonging to a different session before fetching context", async () => {
+test("packets/draft rejects idea belonging to a different session before fetching context", async () => {
   let fetches = 0;
   const rpc = handlers({
     fetchSessionEvents: () => {
