@@ -221,6 +221,36 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The golden suite and the schema unit tests register with `node:test` and
+  run under `node --test`, with the per-file leak check, and a code guard now
+  keeps a plain golden run from writing a snapshot.** The registrations
+  codemod moved four files onto Node: `testing/golden/golden.test.ts` (one
+  runner registration and one step) and `schema/validate-schema.test.ts`,
+  `codegen.test.ts` and `equivalence.test.ts` (20 runner registrations), and
+  flagged none for hand conversion. The golden lane's Node subset runs them;
+  the "Schema unit tests" gate lane runs the schema files through the shared
+  Node runner (`scripts/run-node-test-files.ts`) with a count line, in place
+  of `deno test` and its read grant. `node --test` has no permission sandbox
+  and passes a test file no arguments, so `deno task test:golden --update` now
+  reaches the suite as `DYFJ_GOLDEN_UPDATE=1`, and every snapshot write goes
+  through one function (`testing/golden/snapshots.ts`) that throws unless that
+  variable is `1`. Before, the runner's write grant on the snapshot directory
+  enforced the rule. A plain run still fails on a missing or changed snapshot
+  and writes nothing, and new tests pin both cases and the update path. The
+  golden runner no longer refuses `--update` while a golden file runs under
+  `node --test`; it refuses only other suite arguments, which nothing could
+  pass on. `schema/model-catalog.test.ts`, the contract package tests and the
+  root `test:schema` task stay on the existing runner for now: the modules
+  they import still call that runtime's global. The isolated Dolt fixture
+  (`prototype/scripts/isolated-dolt-fixture.ts`), which the golden harness
+  starts in-process, now uses `node:` builtins (`node:child_process`,
+  `node:net`, `node:fs/promises`) in place of that global. It behaves the same
+  on both runtimes: the integration lane's runner still starts it on the
+  existing runtime. `scripts/arch-layers.json` names it as an
+  entrypoint for `node:child_process` and `node:net`, as it already does for
+  the shared Node runner. Snapshots are unchanged. The `runtime.neutral` count falls
+  from 1,203 to 1,167 (decision D32).
+
 - **The ACP fixture agent runs on either runtime, and the ACP tests that
   drive it register with `node:test`.** `scripts/acp-fixture-agent.ts` is
   written to `node:` builtins. The fixture profile now starts it on the

@@ -1,3 +1,4 @@
+import { test } from "node:test";
 import { schemaDifferences } from "./equivalence.ts";
 import type {
   ColumnDescription,
@@ -67,18 +68,18 @@ function schema(...tables: TableDescription[]): SchemaDescription {
   return { tables };
 }
 
-Deno.test("identical structures have no differences", () => {
+test("identical structures have no differences", () => {
   assertEquals(schemaDifferences(schema(table()), schema(table())), []);
 });
 
-Deno.test("a table on one side only is a difference", () => {
+test("a table on one side only is a difference", () => {
   assertEquals(
     schemaDifferences(schema(table()), schema(table(), table({ name: "x" }))),
     ["x: only in history + migrations"],
   );
 });
 
-Deno.test("column type, nullability, default and ON UPDATE are compared", () => {
+test("column type, nullability, default and ON UPDATE are compared", () => {
   const replayed = table({
     columns: [
       column("session_id", {
@@ -98,7 +99,7 @@ Deno.test("column type, nullability, default and ON UPDATE are compared", () => 
   ]);
 });
 
-Deno.test("enum values are compared through the column type", () => {
+test("enum values are compared through the column type", () => {
   const enumColumn = (values: string) =>
     table({
       columns: [
@@ -114,7 +115,7 @@ Deno.test("enum values are compared through the column type", () => {
   );
 });
 
-Deno.test("indexes, constraints and checks are compared by name", () => {
+test("indexes, constraints and checks are compared by name", () => {
   const replayed = table({
     indexes: [
       { name: "PRIMARY", unique: true, type: "BTREE", columns: ["session_id"] },
@@ -130,7 +131,7 @@ Deno.test("indexes, constraints and checks are compared by name", () => {
   ]);
 });
 
-Deno.test("a foreign key's referenced table, columns and rules are compared", () => {
+test("a foreign key's referenced table, columns and rules are compared", () => {
   const withKey = (referencedTable: string, deleteRule: string) =>
     table({
       constraints: [primaryKey(), {
