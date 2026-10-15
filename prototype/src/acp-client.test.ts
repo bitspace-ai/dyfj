@@ -4,7 +4,7 @@
 // acp-client.integration.test.ts.
 import assert from "node:assert/strict";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { Readable } from "node:stream";
 import {
   type AcpExecutionProfile,
