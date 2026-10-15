@@ -7,7 +7,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { CeilingConfirmationStore } from "./confirmations.ts";
 import {
@@ -29,7 +29,7 @@ function approving() {
   );
 }
 
-Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope across turns", async () => {
+test("daily envelope: a confirmed overrun raises the envelope for its scope across turns", async () => {
   const clock = clockOn(2026, 6, 6);
   const store = new CeilingConfirmationStore(clock);
   const confirm = approving();
@@ -68,7 +68,7 @@ Deno.test("daily envelope: a confirmed overrun raises the envelope for its scope
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("daily envelope: session-scope raises persist per session id, not globally", async () => {
+test("daily envelope: session-scope raises persist per session id, not globally", async () => {
   const store = new CeilingConfirmationStore(clockOn(2026, 6, 6));
   const confirm = approving();
   const overSession: PreCallCheck = {
@@ -102,7 +102,7 @@ Deno.test("daily envelope: session-scope raises persist per session id, not glob
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("scope-period ceiling confirmations: one daily confirm covers later larger projections in the same period", async () => {
+test("scope-period ceiling confirmations: one daily confirm covers later larger projections in the same period", async () => {
   // An agent-loop turn's later calls project past the level recorded at
   // confirmation time; the confirmation must hold for the scope period.
   const store = new CeilingConfirmationStore(clockOn(2026, 6, 7));
@@ -137,7 +137,7 @@ Deno.test("scope-period ceiling confirmations: one daily confirm covers later la
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
+test("scope-period ceiling confirmations: per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
   const store = new CeilingConfirmationStore(clockOn(2026, 6, 7));
   const confirm = approving();
   const gate = createTurnBudgetCeilingGate(
@@ -161,7 +161,7 @@ Deno.test("scope-period ceiling confirmations: per-call stays a per-event high-w
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-Deno.test("CeilingConfirmationStore: separate stores share no confirmations", async () => {
+test("CeilingConfirmationStore: separate stores share no confirmations", async () => {
   const clock = clockOn(2026, 6, 6);
   const confirm = approving();
   const overSession: PreCallCheck = {

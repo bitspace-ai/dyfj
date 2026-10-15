@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   nameserverNetGrants,
   readNameserverNetGrants,
   RESOLV_CONF_PATH,
 } from "./nameservers.ts";
 
-Deno.test("nameserverNetGrants grants port 53 on each IPv4 and IPv6 nameserver", () => {
+test("nameserverNetGrants grants port 53 on each IPv4 and IPv6 nameserver", () => {
   const conf = [
     "# generated",
     "search example.internal",
@@ -21,7 +22,7 @@ Deno.test("nameserverNetGrants grants port 53 on each IPv4 and IPv6 nameserver",
   ]);
 });
 
-Deno.test("nameserverNetGrants ignores comments, duplicates and malformed entries", () => {
+test("nameserverNetGrants ignores comments, duplicates and malformed entries", () => {
   const conf = [
     "; nameserver 10.0.0.1",
     "nameserver 1.1.1.1 # primary",
@@ -36,7 +37,7 @@ Deno.test("nameserverNetGrants ignores comments, duplicates and malformed entrie
   assert.deepStrictEqual(nameserverNetGrants(conf), ["1.1.1.1:53"]);
 });
 
-Deno.test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () => {
+test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () => {
   const conf = [
     "nameserver 2001:::1",
     "nameserver 1:2:3:4:5:6:7:8:9",
@@ -46,14 +47,14 @@ Deno.test("nameserverNetGrants gives a malformed IPv6 nameserver no grant", () =
   assert.deepStrictEqual(nameserverNetGrants(conf), ["[2001:db8::53]:53"]);
 });
 
-Deno.test("nameserverNetGrants gives a scoped IPv6 nameserver no grant", () => {
+test("nameserverNetGrants gives a scoped IPv6 nameserver no grant", () => {
   assert.deepStrictEqual(
     nameserverNetGrants("nameserver fe80::1%eth0\nnameserver 9.9.9.9\n"),
     ["9.9.9.9:53"],
   );
 });
 
-Deno.test("readNameserverNetGrants reads the resolver configuration", async () => {
+test("readNameserverNetGrants reads the resolver configuration", async () => {
   const read: string[] = [];
   const grants = await readNameserverNetGrants((path) => {
     read.push(path);
@@ -63,7 +64,7 @@ Deno.test("readNameserverNetGrants reads the resolver configuration", async () =
   assert.deepStrictEqual(grants, ["192.0.2.53:53"]);
 });
 
-Deno.test("readNameserverNetGrants yields no grants when the file cannot be read", async () => {
+test("readNameserverNetGrants yields no grants when the file cannot be read", async () => {
   assert.deepStrictEqual(
     await readNameserverNetGrants(() =>
       Promise.reject(

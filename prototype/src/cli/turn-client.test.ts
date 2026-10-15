@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
-import { mock } from "node:test";
+import { describe, it, mock } from "node:test";
 import type { TurnStreamFrame } from "../contract/mod.ts";
 import {
   fakeTurnConnect,

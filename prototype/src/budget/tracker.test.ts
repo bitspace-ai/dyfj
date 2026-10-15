@@ -9,7 +9,7 @@
 
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import assert from "node:assert/strict";
-import { it } from "@std/testing/bdd";
+import { it, test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { MemoryStore } from "../store/mod.ts";
 import {
@@ -51,27 +51,27 @@ function makeUsage(input: number, output: number, costTotal: number) {
 
 // ── defaultBudgetConfig ───────────────────────────────────────────────────────
 
-Deno.test("defaultBudgetConfig: returns $1.00 session limit by default", () => {
+test("defaultBudgetConfig: returns $1.00 session limit by default", () => {
   assert.strictEqual(defaultBudgetConfig(new MapEnv()).sessionLimitUsd, 1.00);
 });
 
-Deno.test("defaultBudgetConfig: returns $0.10 per-call limit by default", () => {
+test("defaultBudgetConfig: returns $0.10 per-call limit by default", () => {
   assert.strictEqual(defaultBudgetConfig(new MapEnv()).perCallLimitUsd, 0.10);
 });
 
-Deno.test("defaultBudgetConfig: reads DYFJ_BUDGET_SESSION_USD from env", () => {
+test("defaultBudgetConfig: reads DYFJ_BUDGET_SESSION_USD from env", () => {
   const env = new MapEnv({ DYFJ_BUDGET_SESSION_USD: "5.00" });
   assert.strictEqual(defaultBudgetConfig(env).sessionLimitUsd, 5.00);
 });
 
-Deno.test("defaultBudgetConfig: reads DYFJ_BUDGET_PER_CALL_USD from env", () => {
+test("defaultBudgetConfig: reads DYFJ_BUDGET_PER_CALL_USD from env", () => {
   const env = new MapEnv({ DYFJ_BUDGET_PER_CALL_USD: "0.25" });
   assert.strictEqual(defaultBudgetConfig(env).perCallLimitUsd, 0.25);
 });
 
 // ── record() ─────────────────────────────────────────────────────────────────
 
-Deno.test("BudgetTracker.record(): starts with zero totals", () => {
+test("BudgetTracker.record(): starts with zero totals", () => {
   const t = makeTracker();
   assert.strictEqual(t.totalCost, 0);
   assert.strictEqual(t.totalTokensInput, 0);
@@ -79,28 +79,28 @@ Deno.test("BudgetTracker.record(): starts with zero totals", () => {
   assert.strictEqual(t.totalCalls, 0);
 });
 
-Deno.test("BudgetTracker.record(): accumulates total cost", () => {
+test("BudgetTracker.record(): accumulates total cost", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 1);
   t.record(makeUsage(200, 80, 0.002), 1);
   assertAlmostEqual(t.totalCost, 0.003);
 });
 
-Deno.test("BudgetTracker.record(): accumulates total input tokens", () => {
+test("BudgetTracker.record(): accumulates total input tokens", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 1);
   t.record(makeUsage(200, 80, 0.002), 1);
   assert.strictEqual(t.totalTokensInput, 300);
 });
 
-Deno.test("BudgetTracker.record(): accumulates total output tokens", () => {
+test("BudgetTracker.record(): accumulates total output tokens", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 1);
   t.record(makeUsage(200, 80, 0.002), 1);
   assert.strictEqual(t.totalTokensOutput, 130);
 });
 
-Deno.test("BudgetTracker.record(): tracks call count", () => {
+test("BudgetTracker.record(): tracks call count", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 0);
   t.record(makeUsage(100, 50, 0.001), 1);
@@ -108,7 +108,7 @@ Deno.test("BudgetTracker.record(): tracks call count", () => {
   assert.strictEqual(t.totalCalls, 3);
 });
 
-Deno.test("BudgetTracker.record(): tracks per-tier breakdown separately", () => {
+test("BudgetTracker.record(): tracks per-tier breakdown separately", () => {
   const t = makeTracker();
   t.record(makeUsage(1000, 500, 0), 0); // Tier 0 free
   t.record(makeUsage(100, 50, 0.001), 1); // Tier 1
@@ -120,7 +120,7 @@ Deno.test("BudgetTracker.record(): tracks per-tier breakdown separately", () => 
   assertAlmostEqual(summary.byTier["2"].costUsd, 0.010);
 });
 
-Deno.test("BudgetTracker.record(): accumulates multiple calls within the same tier", () => {
+test("BudgetTracker.record(): accumulates multiple calls within the same tier", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 1);
   t.record(makeUsage(200, 60, 0.002), 1);
@@ -132,7 +132,7 @@ Deno.test("BudgetTracker.record(): accumulates multiple calls within the same ti
   assertAlmostEqual(tier1.costUsd, 0.003);
 });
 
-Deno.test("BudgetTracker.record(): Tier 0 calls appear in byTier['0'] with zero cost", () => {
+test("BudgetTracker.record(): Tier 0 calls appear in byTier['0'] with zero cost", () => {
   const t = makeTracker();
   t.record(makeUsage(500, 300, 0), 0);
   t.record(makeUsage(400, 200, 0), 0);
@@ -143,7 +143,7 @@ Deno.test("BudgetTracker.record(): Tier 0 calls appear in byTier['0'] with zero 
   assert.strictEqual(tier0.costUsd, 0);
 });
 
-Deno.test("BudgetTracker.record(): tiers not called are absent from byTier", () => {
+test("BudgetTracker.record(): tiers not called are absent from byTier", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0), 0);
 
@@ -154,7 +154,7 @@ Deno.test("BudgetTracker.record(): tiers not called are absent from byTier", () 
 
 // ── checkPreCall() ────────────────────────────────────────────────────────────
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 0 is always allowed regardless of cost", () => {
+test("BudgetTracker.checkPreCall(): Tier 0 is always allowed regardless of cost", () => {
   // Even with a $0 limit, Tier 0 is free
   const t = makeTracker({ sessionLimitUsd: 0, perCallLimitUsd: 0 });
   const check = t.checkPreCall(0, 999, 1_000_000);
@@ -163,7 +163,7 @@ Deno.test("BudgetTracker.checkPreCall(): Tier 0 is always allowed regardless of 
   assert.strictEqual(check.reason, undefined);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 1 within both limits → allowed", () => {
+test("BudgetTracker.checkPreCall(): Tier 1 within both limits → allowed", () => {
   const t = makeTracker({ sessionLimitUsd: 1.00, perCallLimitUsd: 0.10 });
   // $1/MTok × 1000 tokens = $0.001 — well within both limits
   const check = t.checkPreCall(1, 1.0, 1_000);
@@ -171,7 +171,7 @@ Deno.test("BudgetTracker.checkPreCall(): Tier 1 within both limits → allowed",
   assertAlmostEqual(check.estimatedCost, 0.000001 * 1_000);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 1 exceeds per-call limit → denied, reason: per_call_limit", () => {
+test("BudgetTracker.checkPreCall(): Tier 1 exceeds per-call limit → denied, reason: per_call_limit", () => {
   const t = makeTracker({ perCallLimitUsd: 0.05 });
   // $1/MTok × 100_000 tokens = $0.10 — exceeds $0.05 per-call limit
   const check = t.checkPreCall(1, 1.0, 100_000);
@@ -181,7 +181,7 @@ Deno.test("BudgetTracker.checkPreCall(): Tier 1 exceeds per-call limit → denie
   assert.strictEqual(check.perCallLimitUsd, 0.05);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 1 within per-call but would exceed session limit → denied, reason: session_limit", () => {
+test("BudgetTracker.checkPreCall(): Tier 1 within per-call but would exceed session limit → denied, reason: session_limit", () => {
   const t = makeTracker({ sessionLimitUsd: 0.10, perCallLimitUsd: 0.10 });
   // Simulate $0.09 already spent this session
   t.record(makeUsage(10, 5, 0.09), 1);
@@ -193,14 +193,14 @@ Deno.test("BudgetTracker.checkPreCall(): Tier 1 within per-call but would exceed
   assert.strictEqual(check.sessionLimitUsd, 0.10);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 2 within both limits → allowed", () => {
+test("BudgetTracker.checkPreCall(): Tier 2 within both limits → allowed", () => {
   const t = makeTracker({ sessionLimitUsd: 1.00, perCallLimitUsd: 0.10 });
   // $5/MTok × 1000 tokens = $0.005
   const check = t.checkPreCall(2, 5.0, 1_000);
   assert.strictEqual(check.allowed, true);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): Tier 2 exceeds per-call limit → denied", () => {
+test("BudgetTracker.checkPreCall(): Tier 2 exceeds per-call limit → denied", () => {
   const t = makeTracker({ perCallLimitUsd: 0.01 });
   // $5/MTok × 10_000 tokens = $0.05 > $0.01
   const check = t.checkPreCall(2, 5.0, 10_000);
@@ -208,21 +208,21 @@ Deno.test("BudgetTracker.checkPreCall(): Tier 2 exceeds per-call limit → denie
   assert.strictEqual(check.reason, "per_call_limit");
 });
 
-Deno.test("BudgetTracker.checkPreCall(): per-call check runs before session check (per-call limit is stricter)", () => {
+test("BudgetTracker.checkPreCall(): per-call check runs before session check (per-call limit is stricter)", () => {
   const t = makeTracker({ sessionLimitUsd: 10.00, perCallLimitUsd: 0.01 });
   // Session limit is generous but per-call is tight
   const check = t.checkPreCall(1, 1.0, 100_000); // $0.10 > $0.01 per-call
   assert.strictEqual(check.reason, "per_call_limit");
 });
 
-Deno.test("BudgetTracker.checkPreCall(): sessionCostSoFar reflects previously recorded calls", () => {
+test("BudgetTracker.checkPreCall(): sessionCostSoFar reflects previously recorded calls", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.05), 1);
   const check = t.checkPreCall(1, 1.0, 1_000);
   assertAlmostEqual(check.sessionCostSoFar, 0.05);
 });
 
-Deno.test("BudgetTracker.checkPreCall(): cost estimate uses input tokens × costInputPerMTok / 1_000_000", () => {
+test("BudgetTracker.checkPreCall(): cost estimate uses input tokens × costInputPerMTok / 1_000_000", () => {
   const t = makeTracker();
   // $3/MTok × 50_000 tokens = $0.15 / 1_000_000 × 50_000
   const check = t.checkPreCall(1, 3.0, 50_000);
@@ -231,7 +231,7 @@ Deno.test("BudgetTracker.checkPreCall(): cost estimate uses input tokens × cost
 
 // ── getSummary() ──────────────────────────────────────────────────────────────
 
-Deno.test("BudgetTracker.getSummary(): returns correct shape on empty tracker", () => {
+test("BudgetTracker.getSummary(): returns correct shape on empty tracker", () => {
   const t = makeTracker();
   const s = t.getSummary();
   assert.strictEqual(s.totalCostUsd, 0);
@@ -242,7 +242,7 @@ Deno.test("BudgetTracker.getSummary(): returns correct shape on empty tracker", 
   assert.strictEqual(s.config.sessionLimitUsd, 1.00);
 });
 
-Deno.test("BudgetTracker.getSummary(): totalCalls sums calls across all tiers", () => {
+test("BudgetTracker.getSummary(): totalCalls sums calls across all tiers", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0), 0);
   t.record(makeUsage(100, 50, 0.001), 1);
@@ -250,7 +250,7 @@ Deno.test("BudgetTracker.getSummary(): totalCalls sums calls across all tiers", 
   assert.strictEqual(t.getSummary().totalCalls, 3);
 });
 
-Deno.test("BudgetTracker.getSummary(): returns a snapshot — mutating the tracker after doesn't change the returned summary", () => {
+test("BudgetTracker.getSummary(): returns a snapshot — mutating the tracker after doesn't change the returned summary", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.001), 1);
   const snap = t.getSummary();
@@ -258,7 +258,7 @@ Deno.test("BudgetTracker.getSummary(): returns a snapshot — mutating the track
   assertAlmostEqual(snap.totalCostUsd, 0.001); // snapshot unchanged
 });
 
-Deno.test("BudgetTracker.getSummary(): config reflects the values passed to the constructor", () => {
+test("BudgetTracker.getSummary(): config reflects the values passed to the constructor", () => {
   const t = makeTracker({ sessionLimitUsd: 2.50, perCallLimitUsd: 0.25 });
   const s = t.getSummary();
   assert.strictEqual(s.config.sessionLimitUsd, 2.50);
@@ -267,7 +267,7 @@ Deno.test("BudgetTracker.getSummary(): config reflects the values passed to the 
 
 // ── buildSummaryEventPayload() ────────────────────────────────────────────────
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): writeSummaryEvent commits the payload through the journal", async () => {
+test("BudgetTracker.buildSummaryEventPayload(): writeSummaryEvent commits the payload through the journal", async () => {
   const store = new MemoryStore();
   const tracker = makeTracker();
   await tracker.writeSummaryEvent(store.journal, { skippedEventWrites: 0 }, {
@@ -282,18 +282,18 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): writeSummaryEvent commits t
   assert.strictEqual(row?.event_type, "budget_summary");
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): event_type is 'budget_summary'", () => {
+test("BudgetTracker.buildSummaryEventPayload(): event_type is 'budget_summary'", () => {
   const payload = makeTracker().buildSummaryEventPayload();
   assert.strictEqual(payload.event_type, "budget_summary");
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): carries session_id and trace_id from constructor", () => {
+test("BudgetTracker.buildSummaryEventPayload(): carries session_id and trace_id from constructor", () => {
   const payload = makeTracker().buildSummaryEventPayload();
   assert.strictEqual(payload.session_id, SESSION_ID);
   assert.strictEqual(payload.trace_id, TRACE_ID);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): tokens_input and tokens_output reflect recorded usage", () => {
+test("BudgetTracker.buildSummaryEventPayload(): tokens_input and tokens_output reflect recorded usage", () => {
   const t = makeTracker();
   t.record(makeUsage(300, 150, 0.001), 1);
   const payload = t.buildSummaryEventPayload();
@@ -301,7 +301,7 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): tokens_input and tokens_out
   assert.strictEqual(payload.tokens_output, 150);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): cost_total reflects recorded cost", () => {
+test("BudgetTracker.buildSummaryEventPayload(): cost_total reflects recorded cost", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0.005), 1);
   t.record(makeUsage(200, 80, 0.010), 2);
@@ -309,14 +309,14 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): cost_total reflects recorde
   assertAlmostEqual(payload.cost_total as number, 0.015);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): tokens_input/output/cost_total are null when nothing was recorded", () => {
+test("BudgetTracker.buildSummaryEventPayload(): tokens_input/output/cost_total are null when nothing was recorded", () => {
   const payload = makeTracker().buildSummaryEventPayload();
   assert.strictEqual(payload.tokens_input, null);
   assert.strictEqual(payload.tokens_output, null);
   assert.strictEqual(payload.cost_total, null);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): content is valid JSON containing byTier breakdown", () => {
+test("BudgetTracker.buildSummaryEventPayload(): content is valid JSON containing byTier breakdown", () => {
   const t = makeTracker();
   t.record(makeUsage(100, 50, 0), 0);
   t.record(makeUsage(200, 80, 0.005), 1);
@@ -327,14 +327,14 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): content is valid JSON conta
   assertAlmostEqual(content.byTier["1"].costUsd, 0.005);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): content includes config limits", () => {
+test("BudgetTracker.buildSummaryEventPayload(): content includes config limits", () => {
   const t = makeTracker({ sessionLimitUsd: 2.00, perCallLimitUsd: 0.20 });
   const content = JSON.parse(t.buildSummaryEventPayload().content as string);
   assert.strictEqual(content.config.sessionLimitUsd, 2.00);
   assert.strictEqual(content.config.perCallLimitUsd, 0.20);
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): accepts overrides for event and trace span identifiers", () => {
+test("BudgetTracker.buildSummaryEventPayload(): accepts overrides for event and trace span identifiers", () => {
   const payload = makeTracker().buildSummaryEventPayload({
     eventId: "FIXED_EVENT_ID",
     spanId: "FIXED_SPAN_ID",
@@ -345,7 +345,7 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): accepts overrides for event
   assert.strictEqual(payload.parent_span_id, "TURN_ROOT_SPAN_ID");
 });
 
-Deno.test("BudgetTracker.buildSummaryEventPayload(): action is 'summarise' and resource is 'session_budget'", () => {
+test("BudgetTracker.buildSummaryEventPayload(): action is 'summarise' and resource is 'session_budget'", () => {
   const payload = makeTracker().buildSummaryEventPayload();
   assert.strictEqual(payload.action, "summarise");
   assert.strictEqual(payload.resource, "session_budget");
@@ -353,7 +353,7 @@ Deno.test("BudgetTracker.buildSummaryEventPayload(): action is 'summarise' and r
 
 // ── daily envelope ────────────────────────────────────────────────────────────
 
-Deno.test("daily envelope: checkPreCall crosses the daily limit when today's rollup plus the call exceeds it", () => {
+test("daily envelope: checkPreCall crosses the daily limit when today's rollup plus the call exceeds it", () => {
   const tracker = makeTracker(
     { dailyLimitUsd: 25 },
     {
@@ -370,7 +370,7 @@ Deno.test("daily envelope: checkPreCall crosses the daily limit when today's rol
   assert.strictEqual(check.dailyLimitUsd, 25);
 });
 
-Deno.test("daily envelope: session baseline makes the session envelope survive across turns", () => {
+test("daily envelope: session baseline makes the session envelope survive across turns", () => {
   // A new tracker per turn used to reset session spend to zero; the baseline
   // carries the session's earlier turns.
   const tracker = makeTracker(
@@ -389,7 +389,7 @@ Deno.test("daily envelope: session baseline makes the session envelope survive a
 
 // ── cross-session daily refresh ───────────────────────────────────────────────
 
-Deno.test("cross-session daily refresh: a refreshed daily figure moves the envelope check", () => {
+test("cross-session daily refresh: a refreshed daily figure moves the envelope check", () => {
   const tracker = makeTracker(
     { dailyLimitUsd: 25 },
     { sessionSpentUsd: 0, sessionSpentTodayUsd: 0, dailyOtherSessionsUsd: 0 },
@@ -406,7 +406,7 @@ Deno.test("cross-session daily refresh: a refreshed daily figure moves the envel
 
 // ── resumed sessions spanning days ────────────────────────────────────────────
 
-Deno.test("resumed sessions spanning days: yesterday's same-session spend counts for the session, not for today", () => {
+test("resumed sessions spanning days: yesterday's same-session spend counts for the session, not for today", () => {
   // A session with $10 lifetime spend, only $0.02 of it today: the daily
   // envelope sees today's share; the session envelope sees the lifetime.
   const tracker = makeTracker(
@@ -425,7 +425,7 @@ Deno.test("resumed sessions spanning days: yesterday's same-session spend counts
 
 // ── scope-aware verdicts ──────────────────────────────────────────────────────
 
-Deno.test("scope-aware budget errors: checkPreCall reports the outermost crossed scope", () => {
+test("scope-aware budget errors: checkPreCall reports the outermost crossed scope", () => {
   // Session AND daily both cross: daily (outermost) frames the verdict.
   const tracker = makeTracker(
     { sessionLimitUsd: 1, dailyLimitUsd: 25 },
@@ -444,7 +444,7 @@ const ANOMALY = { turnMultiple: 3, scopeMultiple: 2 };
 // Config: per-call $0.10, session $1.00, daily $25.00 → halts at
 // turn $0.30, session $2.00, daily $50.00.
 
-Deno.test("BudgetTracker.checkAnomaly(): tier 0 never halts, even past every threshold", () => {
+test("BudgetTracker.checkAnomaly(): tier 0 never halts, even past every threshold", () => {
   const t = makeTracker(undefined, {
     sessionSpentUsd: 100,
     sessionSpentTodayUsd: 100,
@@ -456,14 +456,14 @@ Deno.test("BudgetTracker.checkAnomaly(): tier 0 never halts, even past every thr
   assert.strictEqual(check.trigger, undefined);
 });
 
-Deno.test("BudgetTracker.checkAnomaly(): no spend → no halt (first call of a fresh turn)", () => {
+test("BudgetTracker.checkAnomaly(): no spend → no halt (first call of a fresh turn)", () => {
   const check = makeTracker().checkAnomaly(2, ANOMALY);
   assert.strictEqual(check.halted, false);
   assert.strictEqual(check.turnSpentUsd, 0);
   assertAlmostEqual(check.turnHaltUsd, 0.30);
 });
 
-Deno.test("BudgetTracker.checkAnomaly(): uses ACTUAL recorded spend, not estimates: turn accumulation trips the turn trigger", () => {
+test("BudgetTracker.checkAnomaly(): uses ACTUAL recorded spend, not estimates: turn accumulation trips the turn trigger", () => {
   const t = makeTracker();
   // Three real calls, each under the per-call limit, piling past 3×.
   t.record(makeUsage(50_000, 500, 0.09), 2);
@@ -477,7 +477,7 @@ Deno.test("BudgetTracker.checkAnomaly(): uses ACTUAL recorded spend, not estimat
   assertAlmostEqual(check.turnSpentUsd, 0.33);
 });
 
-Deno.test("BudgetTracker.checkAnomaly(): session scope trips at scopeMultiple × session limit, counting baselines", () => {
+test("BudgetTracker.checkAnomaly(): session scope trips at scopeMultiple × session limit, counting baselines", () => {
   const t = makeTracker(undefined, {
     sessionSpentUsd: 1.95,
     sessionSpentTodayUsd: 1.95,
@@ -491,7 +491,7 @@ Deno.test("BudgetTracker.checkAnomaly(): session scope trips at scopeMultiple ×
   assertAlmostEqual(check.sessionHaltUsd, 2.00);
 });
 
-Deno.test("BudgetTracker.checkAnomaly(): daily scope trips at scopeMultiple × daily limit and outranks session", () => {
+test("BudgetTracker.checkAnomaly(): daily scope trips at scopeMultiple × daily limit and outranks session", () => {
   const t = makeTracker(undefined, {
     sessionSpentUsd: 3.0, // session also past its $2 halt
     sessionSpentTodayUsd: 3.0,
@@ -504,7 +504,7 @@ Deno.test("BudgetTracker.checkAnomaly(): daily scope trips at scopeMultiple × d
   assertAlmostEqual(check.dailyHaltUsd, 50.0);
 });
 
-Deno.test("BudgetTracker.checkAnomaly(): a lifetime-spanning session counts only today toward the daily halt", () => {
+test("BudgetTracker.checkAnomaly(): a lifetime-spanning session counts only today toward the daily halt", () => {
   const t = makeTracker(undefined, {
     sessionSpentUsd: 60, // huge lifetime → session_scope trips
     sessionSpentTodayUsd: 0.5,

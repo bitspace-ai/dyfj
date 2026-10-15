@@ -1,5 +1,6 @@
 import { captureThrow } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
 import { CONFIG_SCHEMA } from "./schema.ts";
@@ -20,7 +21,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
       key === "DYFJ_TRUST_WORKSPACE_INSTRUCTIONS" ? v : undefined,
   });
 
-  Deno.test("resolveTrustWorkspaceInstructionsFromEnv: defaults off when unset or empty", () => {
+  test("resolveTrustWorkspaceInstructionsFromEnv: defaults off when unset or empty", () => {
     assert.strictEqual(
       resolveTrustWorkspaceInstructionsFromEnv(envOf(undefined)),
       false,
@@ -31,7 +32,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveTrustWorkspaceInstructionsFromEnv: honors an explicit true — the standalone entrypoint's binding", () => {
+  test("resolveTrustWorkspaceInstructionsFromEnv: honors an explicit true — the standalone entrypoint's binding", () => {
     assert.strictEqual(
       resolveTrustWorkspaceInstructionsFromEnv(envOf("true")),
       true,
@@ -42,7 +43,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveTrustWorkspaceInstructionsFromEnv: rejects a malformed value loudly like every boolean binding", () => {
+  test("resolveTrustWorkspaceInstructionsFromEnv: rejects a malformed value loudly like every boolean binding", () => {
     assert.throws(() =>
       resolveTrustWorkspaceInstructionsFromEnv(envOf("definitely"))
     );
@@ -50,7 +51,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
 }
 
 { // "resolveBudgetDefaultsFromEnv"
-  Deno.test("resolveBudgetDefaultsFromEnv: returns the declared defaults when env is unset", () => {
+  test("resolveBudgetDefaultsFromEnv: returns the declared defaults when env is unset", () => {
     assert.deepStrictEqual(
       resolveBudgetDefaultsFromEnv(env()),
       BUDGET_DEFAULTS,
@@ -62,7 +63,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     });
   });
 
-  Deno.test("resolveBudgetDefaultsFromEnv: reads the declared env vars (env overrides defaults)", () => {
+  test("resolveBudgetDefaultsFromEnv: reads the declared env vars (env overrides defaults)", () => {
     assert.deepStrictEqual(
       resolveBudgetDefaultsFromEnv(
         env({
@@ -75,7 +76,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveBudgetDefaultsFromEnv: rejects a non-numeric value rather than coercing to NaN", () => {
+  test("resolveBudgetDefaultsFromEnv: rejects a non-numeric value rather than coercing to NaN", () => {
     assert.match(
       (captureThrow(() =>
         resolveBudgetDefaultsFromEnv(env({ DYFJ_BUDGET_SESSION_USD: "lots" }))
@@ -84,7 +85,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveBudgetDefaultsFromEnv: rejects a negative limit", () => {
+  test("resolveBudgetDefaultsFromEnv: rejects a negative limit", () => {
     assert.match(
       (captureThrow(() =>
         resolveBudgetDefaultsFromEnv(env({ DYFJ_BUDGET_PER_CALL_USD: "-1" }))
@@ -95,7 +96,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
 }
 
 { // "resolvePrincipalId"
-  Deno.test("resolvePrincipalId: prefers DYFJ_PRINCIPAL_ID, then USER, then 'user'", () => {
+  test("resolvePrincipalId: prefers DYFJ_PRINCIPAL_ID, then USER, then 'user'", () => {
     assert.strictEqual(
       resolvePrincipalId(env({ DYFJ_PRINCIPAL_ID: "p", USER: "u" })),
       "p",
@@ -104,7 +105,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     assert.strictEqual(resolvePrincipalId(env()), "user");
   });
 
-  Deno.test("resolvePrincipalId: is declared as session state, not config", () => {
+  test("resolvePrincipalId: is declared as session state, not config", () => {
     const spec = CONFIG_SCHEMA.find((s) => s.key === "principalId");
     assert.strictEqual(spec?.sessionState, true);
     assert.ok(!Object.hasOwn(spec as object, "default"));
@@ -112,7 +113,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
 }
 
 { // "anomaly env parsing strictness"
-  Deno.test("anomaly env parsing strictness: trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
+  test("anomaly env parsing strictness: trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
     assert.match(
       (captureThrow(() =>
         resolveAnomalyDefaultsFromEnv({
@@ -143,7 +144,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
 }
 
 { // "resolveRuntimeEnvDefaults"
-  Deno.test("resolveRuntimeEnvDefaults: the standalone entrypoint resolves the standing trust posture from its env binding", () => {
+  test("resolveRuntimeEnvDefaults: the standalone entrypoint resolves the standing trust posture from its env binding", () => {
     assert.strictEqual(
       resolveRuntimeEnvDefaults(env()).trustWorkspaceInstructions,
       false,
@@ -156,7 +157,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveRuntimeEnvDefaults: declared defaults when the environment is empty", () => {
+  test("resolveRuntimeEnvDefaults: declared defaults when the environment is empty", () => {
     assert.deepStrictEqual(resolveRuntimeEnvDefaults(env()), {
       principalId: "user",
       trustWorkspaceInstructions: false,
@@ -171,7 +172,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     });
   });
 
-  Deno.test("resolveRuntimeEnvDefaults: reads every runtime key from the injected env", () => {
+  test("resolveRuntimeEnvDefaults: reads every runtime key from the injected env", () => {
     assert.deepStrictEqual(
       resolveRuntimeEnvDefaults(env({
         DYFJ_PRINCIPAL_ID: "p",
@@ -199,7 +200,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
     );
   });
 
-  Deno.test("resolveRuntimeEnvDefaults: an empty DYFJ_ROOT passes through; an unknown tally mode is paid", () => {
+  test("resolveRuntimeEnvDefaults: an empty DYFJ_ROOT passes through; an unknown tally mode is paid", () => {
     const defaults = resolveRuntimeEnvDefaults(
       env({ DYFJ_ROOT: "", DYFJ_BUDGET_TALLY: "sometimes" }),
     );

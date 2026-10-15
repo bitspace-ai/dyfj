@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { supersedeEvent } from "../../../testing/builders/turn-client.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";

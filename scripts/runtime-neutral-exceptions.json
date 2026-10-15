@@ -170,36 +170,6 @@
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
-    "path": "prototype/src/budget/anomaly-gate.test.ts",
-    "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/budget/budget.component.test.ts",
-    "count": 7,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/budget/confirmations.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/budget/envelope-gate.test.ts",
-    "count": 18,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/budget/spend.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/budget/tracker.test.ts",
-    "count": 47,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/src/cli/launcher/grants.test.ts",
     "count": 3,
     "reason": "Launcher assertions: two expected error messages and one test name describe the launcher's own grant rules; they change with the launcher under S4 of decision D32."
@@ -213,51 +183,6 @@
     "path": "prototype/src/cli/launcher/runtime.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/defaults.test.ts",
-    "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/dolt.test.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/env-file.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/mcp-servers.test.ts",
-    "count": 12,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/nameservers.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/schema.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/secrets-config.test.ts",
-    "count": 22,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/toml.test.ts",
-    "count": 3,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/src/config/workbench.test.ts",
-    "count": 22,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/src/context/compression.test.ts",

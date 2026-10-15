@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// On the host's runner until the grant readers use node: builtins (BIT-654).
 import { describe, it } from "@std/testing/bdd";
 import {
   nodeRunGrant,

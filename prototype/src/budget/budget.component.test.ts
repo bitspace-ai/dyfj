@@ -11,7 +11,7 @@
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { type EventInsert, MemoryStore } from "../store/mod.ts";
 import {
@@ -111,7 +111,7 @@ async function nearLimit(sessionId: string) {
   return { clock, store, tracker };
 }
 
-Deno.test("envelope: store-seeded spend crosses session and daily; one confirm covers the turn", async () => {
+test("envelope: store-seeded spend crosses session and daily; one confirm covers the turn", async () => {
   const { clock, tracker } = await nearLimit("COMP-A-APPROVE");
   const confirmations = new CeilingConfirmationStore(clock);
   const preCall = tracker.checkPreCall(2, 3.0, 20_000);
@@ -151,7 +151,7 @@ Deno.test("envelope: store-seeded spend crosses session and daily; one confirm c
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-Deno.test("envelope: without a confirm handler the crossing fails closed", async () => {
+test("envelope: without a confirm handler the crossing fails closed", async () => {
   const { clock, tracker } = await nearLimit("COMP-A-CLOSED");
   const confirmations = new CeilingConfirmationStore(clock);
   const gate = createTurnBudgetCeilingGate(
@@ -167,7 +167,7 @@ Deno.test("envelope: without a confirm handler the crossing fails closed", async
   assertAlmostEqual(error.scopeCostSoFar, 4.95);
 });
 
-Deno.test("envelope: a declined crossing throws and records no confirmation", async () => {
+test("envelope: a declined crossing throws and records no confirmation", async () => {
   const { clock, tracker } = await nearLimit("COMP-A-DECLINE");
   const confirmations = new CeilingConfirmationStore(clock);
   const confirm = ceilingConfirm({ decision: "deny", reason: "over budget" });
@@ -190,7 +190,7 @@ Deno.test("envelope: a declined crossing throws and records no confirmation", as
 
 // ── (b) the daily confirmation follows the clock's local day ──────────────────
 
-Deno.test("envelope: the daily confirmation and spend window roll over with the local day", async () => {
+test("envelope: the daily confirmation and spend window roll over with the local day", async () => {
   const { clock, store } = setup();
   const confirmations = new CeilingConfirmationStore(clock);
   const config = { ...CONFIG, perCallLimitUsd: 0.50 };
@@ -253,7 +253,7 @@ Deno.test("envelope: the daily confirmation and spend window roll over with the 
 
 // ── (c) runaway anomaly hard stop ─────────────────────────────────────────────
 
-Deno.test("anomaly: turn spend past 3× the per-call limit halts; approvals are per level", async () => {
+test("anomaly: turn spend past 3× the per-call limit halts; approvals are per level", async () => {
   const { clock, store } = setup();
   const tracker = await trackerFor(store, clock, "COMP-C-TURN");
   tracker.record(usage(0.09), 2);
@@ -291,7 +291,7 @@ Deno.test("anomaly: turn spend past 3× the per-call limit halts; approvals are 
   assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.38);
 });
 
-Deno.test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {
+test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {
   const { clock, store } = setup();
   await store.journal.commit({
     events: [
@@ -329,7 +329,7 @@ Deno.test("anomaly: store-seeded session spend past 2× the session envelope hal
   );
 });
 
-Deno.test("anomaly: tier 0 never halts, even past every threshold", async () => {
+test("anomaly: tier 0 never halts, even past every threshold", async () => {
   const { clock, store } = setup();
   await store.journal.commit({
     events: [modelResponse("COMP-C-TIER0", 3.00)],

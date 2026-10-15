@@ -3,7 +3,7 @@
 // exact grants (testing/servers/uds-sockets.ts).
 import assert from "node:assert/strict";
 import { stat, unlink } from "node:fs/promises";
-import { afterEach, describe, it } from "@std/testing/bdd";
+import { afterEach, describe, it } from "node:test";
 import { MemoryStore } from "../../store/mod.ts";
 import {
   serveWorkbenchUnix,

@@ -221,6 +221,19 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The `cli/`, `config/` and `budget/` tests, with `cli.test.ts`, register
+  with `node:test` and run under `node --test`, with the per-file leak
+  check.** The registrations codemod moved 38 files onto Node, with 188 runner
+  registrations and 26 bdd imports. Every case still runs; the integration
+  lane's count falls by two because the existing runner's bdd adds a
+  synthetic test for each file with a top-level hook (the `status` and `stop`
+  command integration tests), which `node:test` does not. Two files stay on
+  the existing runner: `cli/launcher/grants.test.ts` and
+  `grants.integration.test.ts` wait for the launcher's grant readers, which
+  still read files and paths through the existing runtime's global, to move
+  onto `node:` builtins. The `runtime.neutral` count falls from 2,140 to
+  1,952 (decision D32).
+
 - **The conformance kits and every test file that calls one run under
   `node --test`.** The seven kits under `prototype/testing/conformance/`
   (clock, DNS resolver, env, HTTP transport, provider adapter, store, tool)
