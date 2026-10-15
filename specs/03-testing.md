@@ -38,10 +38,12 @@ in the same change that lands this spec's first work order.
     they check nothing.
   - The unit, integration and golden lanes route each discovered file by its own
     content (`prototype/scripts/test-files.ts`). A file that registers a test or
-    hook with `node:test` runs under `node --test`, one process per file. A file
-    that calls `Deno.test` or imports `@std/testing/bdd`, or does neither, runs
-    under `deno test` as before. A file that does both fails discovery with its
-    path in the message. No file is listed by hand.
+    hook with `node:test`, or imports a conformance kit from
+    `testing/conformance/` (the kits register with `node:test`), runs under
+    `node --test`, one process per file. A file that calls `Deno.test` or
+    imports `@std/testing/bdd`, or does none of these, runs under `deno test` as
+    before. A file that does both fails discovery with its path in the message.
+    No file is listed by hand.
   - Each `node --test` file process preloads the per-file handle check
     (`prototype/testing/node-handle-check.ts`). It records the live resources at
     load, compares them with what is live after the file's last test, and fails

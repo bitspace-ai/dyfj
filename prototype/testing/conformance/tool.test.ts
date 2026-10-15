@@ -4,6 +4,7 @@
 // definitions that must fail them.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   buildToolCatalog,
   type CommandDefinition,
@@ -101,7 +102,7 @@ toolConformance({
   catalog: buildToolCatalog({}, {}, effectClasses, []),
 });
 
-Deno.test("the kit's effect contract: one verdict pair per effect class", () => {
+test("the kit's effect contract: one verdict pair per effect class", () => {
   assert.deepStrictEqual(
     Object.fromEntries(
       effectClasses.map((command) => [command.id, expectedVerdicts(command)]),
@@ -122,7 +123,7 @@ Deno.test("the kit's effect contract: one verdict pair per effect class", () => 
   );
 });
 
-Deno.test("schemaProblems flags an invalid schema", () => {
+test("schemaProblems flags an invalid schema", () => {
   const command = synthetic("bad", {}, {
     title: " ",
     inputSchema: {
@@ -147,7 +148,7 @@ Deno.test("schemaProblems flags an invalid schema", () => {
   ]);
 });
 
-Deno.test("envelopeProblems flags an undeclared or contradictory envelope", () => {
+test("envelopeProblems flags an undeclared or contradictory envelope", () => {
   assert.deepStrictEqual(
     envelopeProblems(synthetic("gaps", {
       effects: [],
@@ -187,7 +188,7 @@ Deno.test("envelopeProblems flags an undeclared or contradictory envelope", () =
   );
 });
 
-Deno.test("invalidArgumentCases derives every invalid shape a schema declares", () => {
+test("invalidArgumentCases derives every invalid shape a schema declares", () => {
   assert.deepStrictEqual(
     invalidArgumentCases(synthetic("any", {}).inputSchema).map(({ name }) =>
       name

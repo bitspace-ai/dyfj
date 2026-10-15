@@ -270,9 +270,11 @@ name: `*.integration.test.ts` files run in the isolated-Dolt integration lane,
 
 Each lane then routes every file by its own content, while tests move onto
 `node:test` (decision D32, `specs/03-testing.md` §1). A file that registers a test
-or hook with `node:test` runs under `node --test`; a file that calls `Deno.test` or
-imports `@std/testing/bdd`, or does neither, runs under `deno test` as before; a file
-that does both fails discovery with its path in the message. The unit, integration
+or hook with `node:test`, or imports a conformance kit from `testing/conformance/`
+(the kits register their cases with `node:test`; a relative import is resolved
+against the caller's path), runs under `node --test`; a file that calls `Deno.test` or
+imports `@std/testing/bdd`, or does none of these, runs under `deno test` as before; a
+file that does both fails discovery with its path in the message. The unit, integration
 and golden runners run their `deno test` subset first, then their Node subset with
 `node --test --import testing/node-handle-check.ts --test-concurrency=<jobs>
 --test-reporter=tap`, one process per file, with the same environment plus
@@ -285,6 +287,14 @@ leaves a server, socket, timer or child process live after its last test, naming
 file and the leaked resource types, and exits that process so the run cannot hang. It
 is per file, so it is coarser than a per-test sanitizer: it names the file, not the
 test. Under `node --test`, tests run with no permission sandbox.
+
+The integration lane stays hermetic, so the real `node:dns` resolver's
+`DnsResolver` conformance cases (`src/tools/web/dns.integration.test.ts`) are
+reported skipped there. They query the system resolver, and run only when
+`DYFJ_TEST_REAL_DNS=1` is set; the lane does not pass that variable through, so run
+the file directly to exercise them:
+`DYFJ_TEST_REAL_DNS=1 node --test --import=./testing/node-handle-check.ts src/tools/web/dns.integration.test.ts`
+from `prototype/`.
 
 `test:unit` runs its `deno test` subset with `deno test --parallel --sanitize-ops
 --sanitize-resources` (both sanitizers are opt-in in the pinned Deno), with read
