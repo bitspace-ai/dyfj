@@ -853,13 +853,24 @@ export function productionLanes(
       cwd: root,
     },
     {
+      // These files register with node:test, so they run under `node --test`
+      // with the per-file handle check, through the shared Node runner
+      // (decision D32), as the schema unit tests below do. The suite only
+      // reads its schemas and fixtures; the tests run with no permission
+      // sandbox.
       label: "Contract package tests",
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
       args: [
-        "test",
+        "run",
+        "--no-prompt",
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
         "--allow-read=.",
+        "--allow-run=node",
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "contracts",
         "contracts/workbench/first-product/v1/validate.test.ts",
         "contracts/workbench/first-product/v1/executable-closure.test.ts",
         "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
@@ -891,28 +902,35 @@ export function productionLanes(
       ],
       cwd: root,
     },
-    // The catalog lane and the four schema lanes after it reach
-    // `schema/dolt-apply.ts`, which spawns `dolt` through node:child_process
-    // and makes its repository with node:fs (decision D32). Under this
-    // runtime that needs the variables the child is given and the temp
-    // directory's name (PATH, HOME, TMPDIR, TEMP, TMP), NODE_V8_COVERAGE,
-    // which the node:child_process shim reads on every spawn, and read on
-    // the temp roots, which node:fs's recursive remove lists.
     {
+      // Registers with node:test, so it runs under `node --test` through the
+      // shared Node runner, like the schema unit tests. Its tests apply the
+      // schema to disposable Dolt repositories through `schema/dolt-apply.ts`
+      // and run unsandboxed; `dolt` gets the variables the runner forwards.
       label: "Local model catalog data validation",
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
       args: [
-        "test",
+        "run",
+        "--no-prompt",
         "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=dolt",
+        "--allow-read=.",
+        "--allow-run=node",
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "schema.catalog",
         "schema/model-catalog.test.ts",
       ],
       cwd: root,
     },
+    // The four schema lanes below reach `schema/dolt-apply.ts` on this
+    // runtime. It spawns `dolt` through node:child_process and makes its
+    // repository with node:fs (decision D32), which needs the variables the
+    // child is given and the temp directory's name (PATH, HOME, TMPDIR, TEMP,
+    // TMP), NODE_V8_COVERAGE, which the node:child_process shim reads on
+    // every spawn, and read on the temp roots, which node:fs's recursive
+    // remove lists.
     {
       label: "Current-schema apply validation",
       checkId: "test.aggregate",

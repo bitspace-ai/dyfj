@@ -244,7 +244,14 @@ README are tracked separately in its Revision history section.
   source changed. The registrations codemod moved
   `schema/model-catalog.test.ts` and the three contract test files onto
   `node:test` (24 registrations). Each one passes under `node --test` with the
-  per-file leak check, and still passes under `deno test`. The
+  per-file leak check, and still passes under `deno test`. They now run there:
+  the "Local model catalog data validation" and "Contract package tests" gate
+  lanes and the root `deno task test:schema` (all four schema test files) run
+  through the shared Node runner (`scripts/run-node-test-files.ts`), each with
+  a count line, in place of `deno test`. The contract closure-report
+  comparison stays a `deno run` with write denied, because its generator now
+  runs on either runtime. Lane totals are unchanged: 2 catalog tests,
+  22 contract tests and 22 `test:schema` tests. The
   `runtime.neutral` count falls from 1,167 to 1,117 (decision D32).
 
 - **The golden suite and the schema unit tests register with `node:test` and
