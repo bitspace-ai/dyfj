@@ -196,6 +196,29 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The conformance kits and every test file that calls one run under
+  `node --test`.** The seven kits under `prototype/testing/conformance/`
+  (clock, DNS resolver, env, HTTP transport, provider adapter, store, tool)
+  registered their cases with the existing runtime's test function, so each
+  caller ran them in its own process and could not move without them. The
+  kits and their callers now register with `node:test` together, with the
+  per-file leak check: 16 callers, including four that import a kit by a
+  shorter relative path than `testing/conformance/` (the tool kit's own
+  tests, the scripted HTTP transport fake's tests, the synthetic provider
+  adapter and the text-stats example tool). The tool kit's
+  per-command steps become `node:test` subtests. Lane routing now sends a file
+  that imports a kit to `node --test` even when it registers nothing of its
+  own, resolving relative imports against the caller's path, and a kit caller
+  that also registers on the existing runner fails discovery as mixed
+  (decision D32, `specs/03-testing.md` §1). The real `node:dns` resolver's
+  conformance cases no longer run in the integration lane: under
+  `node --test` nothing sandboxes the resolver, so its old "ungranted" mode
+  cannot be asserted, and real lookups would make the lane depend on the
+  network. They are reported skipped unless `DYFJ_TEST_REAL_DNS=1` is set,
+  which runs them against the system resolver; the denied-lookup mapping stays
+  pinned by injected errors in `dns-system.test.ts`. The `runtime.neutral`
+  count falls from 2,171 to 2,140.
+
 - **The bounded regex matcher runs in a `node:worker_threads` worker, so
   `grep_files` works under Node as well as the current runtime.** The matcher
   ran in a web `Worker`, a global Node does not have, so under Node every

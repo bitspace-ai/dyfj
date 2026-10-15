@@ -14,6 +14,7 @@
 
 import { captureRejection } from "../assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   type EventInsert,
   type EventType,
@@ -253,7 +254,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       projectors?: readonly Projector[];
     } = {},
   ) => {
-    Deno.test(`Store conformance (${subject.name}): ${label}`, async () => {
+    test(`Store conformance (${subject.name}): ${label}`, async () => {
       const store = await subject.make(options.seed ?? {}, {
         projectors: options.projectors,
       });
@@ -573,7 +574,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     { projectors: [sessionStartProjector()] },
   );
 
-  Deno.test(
+  test(
     `Store conformance (${subject.name}): projectors are deterministic: the same events give the same rows`,
     async () => {
       const events = [
@@ -676,7 +677,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     session_update: true,
     memory_upsert: true,
   };
-  Deno.test(
+  test(
     `Store conformance (${subject.name}): every declared mutation kind is exercised`,
     () => {
       assert.deepStrictEqual(

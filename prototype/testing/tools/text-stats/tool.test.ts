@@ -3,6 +3,7 @@
 // its executor.
 
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   buildToolCatalog,
   BUILTIN_TOOLS,
@@ -27,12 +28,12 @@ const catalog = buildToolCatalog(
 
 toolConformance({ name: "text.stats example", catalog });
 
-Deno.test("text.stats registers after the builtins and reaches the model", () => {
+test("text.stats registers after the builtins and reaches the model", () => {
   const names = catalog.projectTools().map((tool) => tool.name);
   assert.strictEqual(names.at(-1), "text.stats");
 });
 
-Deno.test("executeTextStats counts characters, words and lines", () => {
+test("executeTextStats counts characters, words and lines", () => {
   assert.deepStrictEqual(
     executeTextStats(""),
     "characters: 0\nwords: 0\nlines: 0",
@@ -48,7 +49,7 @@ Deno.test("executeTextStats counts characters, words and lines", () => {
   );
 });
 
-Deno.test("an invocation returns the stats and logs no text", async () => {
+test("an invocation returns the stats and logs no text", async () => {
   const events: EventInsert[] = [];
   const result = await invokeCommandWithEvent(catalog, {
     commandId: "text.stats",
