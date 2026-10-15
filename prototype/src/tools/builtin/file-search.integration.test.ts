@@ -8,8 +8,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-// On the host's runner until the regex worker runs under Node (BIT-651).
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { after, before, describe, it } from "node:test";
 import { executeGlobFiles, executeGrepFiles } from "./file-search.ts";
 import { RootAnchors } from "./root-anchors.ts";
 
@@ -43,7 +42,7 @@ function mkfifo(
 describe("search walk over a named pipe", () => {
   let root: string;
 
-  beforeAll(async () => {
+  before(async () => {
     root = await mkdtemp(join(tmpdir(), "tmp-"));
     await writeFile(`${root}/plain.txt`, "needle\n");
     const made = await mkfifo(`${root}/pipe`);
@@ -52,7 +51,7 @@ describe("search walk over a named pipe", () => {
     }
   });
 
-  afterAll(async () => {
+  after(async () => {
     if (root) await rm(root, { recursive: true });
   });
 

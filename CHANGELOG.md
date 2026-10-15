@@ -196,6 +196,23 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The bounded regex matcher runs in a `node:worker_threads` worker, so
+  `grep_files` works under Node as well as the current runtime.** The matcher
+  ran in a web `Worker`, a global Node does not have, so under Node every
+  search failed closed with "regex matcher unavailable". It now starts a
+  `node:worker_threads` worker from the same embedded `data:` URL source,
+  with `parentPort` in place of `self`. The hard time budget, termination of
+  a worker that overruns it, and failing closed when no worker can start are
+  unchanged, and the worker is still not a file a workspace edit can rewrite.
+  A worker that ends on its own, even between searches, now fails the next
+  search at once as unavailable; before, it waited out the budget and was
+  reported as too expensive. The four test files that grep through the matcher
+  (`kernel/bounded-regex.test.ts`, `tools/builtin/file.test.ts`,
+  `file-hardening.test.ts` and `file-search.integration.test.ts`) now
+  register with `node:test` and run under `node --test` with the per-file
+  leak check. The `runtime.neutral` count falls from 2,177 to 2,171
+  (decision D32).
+
 - **The `kernel/` and `tools/` tests register with `node:test` and run under
   `node --test`, with the per-file leak check.** A new codemod,
   `scripts/codemod/deno-test-registrations.ts`, rewrites a test file's

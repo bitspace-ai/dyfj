@@ -21,8 +21,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// On the host's runner until the regex worker runs under Node (BIT-651).
-import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
+import { after, before, describe, it } from "node:test";
 import { isWithinRoot, resolveWorkspacePath } from "./file-access.ts";
 import { matchesGlobPath } from "./file-glob.ts";
 import { executeListFiles, executeReadFile } from "./file-read.ts";
@@ -128,13 +127,13 @@ let root: string;
  * sub/nested.txt at `root`, removed when that describe finishes.
  */
 function useIoRoot(): void {
-  beforeAll(async () => {
+  before(async () => {
     root = await mkdtemp(join(tmpdir(), "tmp-"));
     await writeFile(`${root}/hello.txt`, "hello world");
     await mkdir(`${root}/sub`);
     await writeFile(`${root}/sub/nested.txt`, "nested content");
   });
-  afterAll(async () => {
+  after(async () => {
     if (root) {
       await rm(root, { recursive: true });
       anchors = new RootAnchors();
@@ -373,7 +372,7 @@ let sroot: string;
  * describe finishes.
  */
 function useSearchRoot(): void {
-  beforeAll(async () => {
+  before(async () => {
     sroot = await mkdtemp(join(tmpdir(), "tmp-"));
     await writeFile(
       `${sroot}/alpha.ts`,
@@ -396,7 +395,7 @@ function useSearchRoot(): void {
       Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n"),
     );
   });
-  afterAll(async () => {
+  after(async () => {
     if (sroot) {
       await rm(sroot, { recursive: true });
       anchors = new RootAnchors();
@@ -698,7 +697,7 @@ describe("clampLimit", () => {
 describe("grep_files resource bounds", () => {
   let broot: string;
 
-  beforeAll(async () => {
+  before(async () => {
     broot = await mkdtemp(join(tmpdir(), "tmp-"));
     // A line long enough that a catastrophic pattern cannot finish on it.
     await writeFile(`${broot}/longline.txt`, "a".repeat(6000) + "!\n");
@@ -713,7 +712,7 @@ describe("grep_files resource bounds", () => {
     await writeFile(`${broot}/plain.txt`, "needle\n");
   });
 
-  afterAll(async () => {
+  after(async () => {
     if (broot) await rm(broot, { recursive: true });
   });
 
