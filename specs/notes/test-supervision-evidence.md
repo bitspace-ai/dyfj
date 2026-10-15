@@ -250,4 +250,7 @@ What moves rather than goes:
   group stop. A same-group grandchild survives both a normal exit of the runner
   (L4) and a SIGKILL of it (L7). Ctrl-C reaches it, because it signals the whole
   foreground group. Of today's tests, only the secret-resolver timeout case
-  leaves one, and only for about 5 s.
+  leaves one, and only for about 5 s. (Updated 2026-10-15: that case now runs
+  under `node --test`, not `deno test`. A direct `node --test` run of
+  `src/config/secrets.integration.test.ts` can leave its `sleep` grandchild
+  for about 5 s; in a gate run, the lane's group stop reaps it.)
