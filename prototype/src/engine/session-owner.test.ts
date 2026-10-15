@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { CeilingConfirmationStore } from "../budget/mod.ts";
 import { SessionOwners, TurnTicket } from "./session-owner.ts";
@@ -28,7 +29,7 @@ async function drain(): Promise<void> {
   for (let i = 0; i < 5; i++) await Promise.resolve();
 }
 
-Deno.test("same-session turns run one at a time, in arrival order", async () => {
+test("same-session turns run one at a time, in arrival order", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const first = heldTurn(log, "first");
@@ -47,7 +48,7 @@ Deno.test("same-session turns run one at a time, in arrival order", async () => 
   assert.deepStrictEqual(await secondResult, "second");
 });
 
-Deno.test("a rejected turn releases the lock to the next same-session turn", async () => {
+test("a rejected turn releases the lock to the next same-session turn", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const first = heldTurn(log, "first");
@@ -67,7 +68,7 @@ Deno.test("a rejected turn releases the lock to the next same-session turn", asy
   assert.deepStrictEqual(await secondResult, "second");
 });
 
-Deno.test("new-session turns and turns on other sessions are not serialized", async () => {
+test("new-session turns and turns on other sessions are not serialized", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const held = heldTurn(log, "held");
@@ -90,7 +91,7 @@ Deno.test("new-session turns and turns on other sessions are not serialized", as
   await Promise.all([heldResult, freshResult, otherResult]);
 });
 
-Deno.test("a new session's id is allocated at admission, so a later turn naming it queues behind it", async () => {
+test("a new session's id is allocated at admission, so a later turn naming it queues behind it", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const first = heldTurn(log, "first");
@@ -127,7 +128,7 @@ Deno.test("a new session's id is allocated at admission, so a later turn naming 
   assert.deepStrictEqual(owners.activeSessions, 0);
 });
 
-Deno.test("each new-session turn gets its own id", async () => {
+test("each new-session turn gets its own id", async () => {
   const owners = new SessionOwners();
   const ids: string[] = [];
   await Promise.all([
@@ -138,7 +139,7 @@ Deno.test("each new-session turn gets its own id", async () => {
   assert.notStrictEqual(ids[0], ids[1]);
 });
 
-Deno.test("an owner is dropped once its last turn settles, and a later turn starts fresh", async () => {
+test("an owner is dropped once its last turn settles, and a later turn starts fresh", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   const first = heldTurn(log, "first");
@@ -164,7 +165,7 @@ Deno.test("an owner is dropped once its last turn settles, and a later turn star
   await thirdResult;
 });
 
-Deno.test("a ticket's cancel aborts its signal once, then closes the window", () => {
+test("a ticket's cancel aborts its signal once, then closes the window", () => {
   const ticket = new SessionOwners().admit();
   assert.strictEqual(ticket.signal.aborted, false);
   assert.strictEqual(ticket.cancel(), true);
@@ -172,21 +173,21 @@ Deno.test("a ticket's cancel aborts its signal once, then closes the window", ()
   assert.strictEqual(ticket.cancel(), false);
 });
 
-Deno.test("a ticket declines cancel after the runtime closes its window", () => {
+test("a ticket declines cancel after the runtime closes its window", () => {
   const ticket = new TurnTicket();
   ticket.closeCancellation();
   assert.strictEqual(ticket.cancel(), false);
   assert.strictEqual(ticket.signal.aborted, false);
 });
 
-Deno.test("an interrupted approval aborts the turn even after the window closes", () => {
+test("an interrupted approval aborts the turn even after the window closes", () => {
   const ticket = new TurnTicket();
   ticket.closeCancellation();
   ticket.abort();
   assert.strictEqual(ticket.signal.aborted, true);
 });
 
-Deno.test("each admitted turn gets its own cancel signal", () => {
+test("each admitted turn gets its own cancel signal", () => {
   const owners = new SessionOwners();
   const a = owners.admit();
   const b = owners.admit();
@@ -195,7 +196,7 @@ Deno.test("each admitted turn gets its own cancel signal", () => {
   assert.strictEqual(b.signal.aborted, false);
 });
 
-Deno.test("a session's budget scope keeps its marks across turns; the daily mark is shared", () => {
+test("a session's budget scope keeps its marks across turns; the daily mark is shared", () => {
   const confirmations = new CeilingConfirmationStore(new ManualClock());
   const owners = new SessionOwners(confirmations);
   owners.budgetScope(SESSION).session_limit = 5;

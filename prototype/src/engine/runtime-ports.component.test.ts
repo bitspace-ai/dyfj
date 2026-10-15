@@ -6,7 +6,7 @@
  * platform `fetch` would fail here instead of passing silently.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
@@ -98,7 +98,7 @@ function toolNames(request: RecordedRequest): string[] {
   return (body.tools ?? []).map((tool) => tool.name).sort();
 }
 
-Deno.test("the injected transport, env and clock carry a whole native turn", async () => {
+test("the injected transport, env and clock carry a whole native turn", async () => {
   const { result, rows, requests } = await turnWith({
     ANTHROPIC_API_KEY: "key-from-the-injected-env",
   });
@@ -119,7 +119,7 @@ Deno.test("the injected transport, env and clock carry a whole native turn", asy
   );
 });
 
-Deno.test("memory recall is configured from the injected env", async () => {
+test("memory recall is configured from the injected env", async () => {
   const credential = { ANTHROPIC_API_KEY: "key" };
   const without = await turnWith(credential);
   const withRecall = await turnWith({

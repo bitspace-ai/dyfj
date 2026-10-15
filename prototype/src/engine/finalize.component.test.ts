@@ -7,7 +7,7 @@
  * mid-response abort.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   chatReply,
   type EngineRun,
@@ -77,7 +77,7 @@ async function quietly<T>(
 
 // ─── the runtime spine ───────────────────────────────────────────────────────
 
-Deno.test("emits the runtime spine event sequence without leaking full prompt or response text", async () => {
+test("emits the runtime spine event sequence without leaking full prompt or response text", async () => {
   const run = engineServices([chatReply({ content: "runtime response" })]);
   const frames: WorkbenchRuntimeEvent[] = [];
   const result = await runTurn(run, {
@@ -140,7 +140,7 @@ Deno.test("emits the runtime spine event sequence without leaking full prompt or
   assert.deepStrictEqual(wire.includes("runtime response"), false);
 });
 
-Deno.test("treats observer failures as best-effort and preserves the turn result", async () => {
+test("treats observer failures as best-effort and preserves the turn result", async () => {
   const run = engineServices([chatReply({ content: "runtime response" })]);
   const { value: result, warnings } = await quietly(() =>
     runTurn(run, {
@@ -166,7 +166,7 @@ Deno.test("treats observer failures as best-effort and preserves the turn result
 
 const TURN_ID = "123e4567-e89b-42d3-a456-426614174000";
 
-Deno.test("an aborted turn finalizes partial text and usage without dispatching tools", async () => {
+test("an aborted turn finalizes partial text and usage without dispatching tools", async () => {
   const abortController = new AbortController();
   const run = engineServices([
     heldOpenReply("partial answer"),
@@ -223,7 +223,7 @@ Deno.test("an aborted turn finalizes partial text and usage without dispatching 
   });
 });
 
-Deno.test("an aborted next-work turn preserves partial text without validating it", async () => {
+test("an aborted next-work turn preserves partial text without validating it", async () => {
   const abortController = new AbortController();
   const partial = '{"worklet_id":"next-work.v0"';
   // Next-work replies are JSON, never streamed: the reply lands after the
@@ -266,7 +266,7 @@ Deno.test("an aborted next-work turn preserves partial text without validating i
   });
 });
 
-Deno.test("a provider terminal error outranks a concurrent cancellation", async () => {
+test("a provider terminal error outranks a concurrent cancellation", async () => {
   const abortController = new AbortController();
   // A finish_reason "error" reply, delivered after the caller cancelled.
   const run = engineServices([{
@@ -303,7 +303,7 @@ Deno.test("a provider terminal error outranks a concurrent cancellation", async 
   );
 });
 
-Deno.test("closes cancellation acceptance before terminal finalization", async () => {
+test("closes cancellation acceptance before terminal finalization", async () => {
   const run = engineServices([chatReply({ content: "done" })]);
   let cancellationClosed = false;
   let closedAtCompletion: boolean | undefined;
@@ -329,7 +329,7 @@ Deno.test("closes cancellation acceptance before terminal finalization", async (
 
 // ─── failures ────────────────────────────────────────────────────────────────
 
-Deno.test("surfaces the error and emits turnFailed when the provider request fails", async () => {
+test("surfaces the error and emits turnFailed when the provider request fails", async () => {
   const run = engineServices([{
     respond: () => Promise.reject(new Error("local model unavailable")),
   }]);
@@ -379,7 +379,7 @@ Deno.test("surfaces the error and emits turnFailed when the provider request fai
 
 // ─── event-write integrity policy ────────────────────────────────────────────
 
-Deno.test("best-effort event write failure is swallowed (turn still completes)", async () => {
+test("best-effort event write failure is swallowed (turn still completes)", async () => {
   const run = engineServices([chatReply({ content: "runtime response" })]);
   failingWrites(run, "model_selected");
   const { value: result } = await quietly(() =>
@@ -388,7 +388,7 @@ Deno.test("best-effort event write failure is swallowed (turn still completes)",
   assert.deepStrictEqual(result.text, "runtime response");
 });
 
-Deno.test("integrity event inside the runtime try (model_response) also fails the turn — not masked by the final receipt", async () => {
+test("integrity event inside the runtime try (model_response) also fails the turn — not masked by the final receipt", async () => {
   const run = engineServices([chatReply({ content: "runtime response" })]);
   failingWrites(run, "model_response");
   await quietly(() =>
@@ -401,7 +401,7 @@ Deno.test("integrity event inside the runtime try (model_response) also fails th
   );
 });
 
-Deno.test("provider_call write failure preserves aggregate accounting and the replay response", async () => {
+test("provider_call write failure preserves aggregate accounting and the replay response", async () => {
   const run = engineServices([chatReply({ content: "runtime response" })]);
   failingWrites(run, "provider_call");
   const { value: result } = await quietly(() =>
@@ -431,7 +431,7 @@ Deno.test("provider_call write failure preserves aggregate accounting and the re
   );
 });
 
-Deno.test("a clean session's receipt carries no audit-gap warning", async () => {
+test("a clean session's receipt carries no audit-gap warning", async () => {
   const run = engineServices([chatReply({ content: "hi" })]);
   const result = await runTurn(run, {
     prompt: "hello",
@@ -446,7 +446,7 @@ Deno.test("a clean session's receipt carries no audit-gap warning", async () => 
 // must not fan out raw via the turnFailed frame (relayed verbatim to every
 // connected client), the durable `error` event's `content`, or the injected
 // presenter's `log` call.
-Deno.test("a failed model_response integrity write sanitizes its message before it reaches turnFailed, the durable error event, and the presenter", async () => {
+test("a failed model_response integrity write sanitizes its message before it reaches turnFailed, the durable error event, and the presenter", async () => {
   const hugePayload = "SELECT ".repeat(20_000); // well over 100KB
   const run = engineServices([chatReply({ content: "runtime response" })]);
   failingWrites(

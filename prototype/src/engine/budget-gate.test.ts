@@ -4,7 +4,7 @@
  * order, and the `model_selected` record.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   type EngineFakes,
   enginePorts,
@@ -54,7 +54,7 @@ async function selectedRows(fakes: EngineFakes, sessionId: string) {
   return rows.filter((row) => row.event_type === "model_selected");
 }
 
-Deno.test("budgetGate routes a free local turn and records the selection", async () => {
+test("budgetGate routes a free local turn and records the selection", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts();
   const frames: WorkbenchRuntimeEvent[] = [];
@@ -90,7 +90,7 @@ Deno.test("budgetGate routes a free local turn and records the selection", async
   });
 });
 
-Deno.test("budgetGate asks paid consent with the preflight banner, and a decline stops the turn", async () => {
+test("budgetGate asks paid consent with the preflight banner, and a decline stops the turn", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({ models: [PRICED] });
   const banners: string[] = [];
@@ -123,7 +123,7 @@ Deno.test("budgetGate asks paid consent with the preflight banner, and a decline
   );
 });
 
-Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decline stops the turn", async () => {
+test("budgetGate confirms a ceiling overrun before paid consent, and a decline stops the turn", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({ models: [PRICED] });
   const confirmPaidEscalation = mock.fn(() =>
@@ -150,7 +150,7 @@ Deno.test("budgetGate confirms a ceiling overrun before paid consent, and a decl
   assert.equal(confirmPaidEscalation.mock.callCount(), 0);
 });
 
-Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can record a confirmation", async () => {
+test("budgetGate halts an anomalous entry before the ceiling prompt can record a confirmation", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({
     models: [pricedLocalModel({ costInput: 0.000001, costOutput: 10_000 })],
@@ -185,7 +185,7 @@ Deno.test("budgetGate halts an anomalous entry before the ceiling prompt can rec
   assert.equal(confirmBudgetCeiling.mock.callCount(), 0);
 });
 
-Deno.test("an approved ceiling overrun persists for the session through its owner's budget scope", async () => {
+test("an approved ceiling overrun persists for the session through its owner's budget scope", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({ models: [PRICED] });
   const confirmBudgetCeiling = mock.fn(() =>

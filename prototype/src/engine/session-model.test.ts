@@ -1,5 +1,6 @@
 import { captureThrow } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   WorkbenchModelNotFoundError,
   WorkbenchModelNotRoutableError,
@@ -31,7 +32,7 @@ function turn(fields: Partial<WorkbenchRuntimeInput>): WorkbenchRuntimeInput {
   return { mode: "turn", prompt: "hi", routingOptions: {}, ...fields };
 }
 
-Deno.test("a resumed turn with no routing of its own takes the recorded model", async () => {
+test("a resumed turn with no routing of its own takes the recorded model", async () => {
   const input = await withSessionModel(
     turn({ sessionId: "S1", routingOptions: { fast: true } }),
     recorded("hosted/big"),
@@ -47,7 +48,7 @@ Deno.test("a resumed turn with no routing of its own takes the recorded model", 
   );
 });
 
-Deno.test("an explicit model, tier, hint or runner, or a new session, is left alone", async () => {
+test("an explicit model, tier, hint or runner, or a new session, is left alone", async () => {
   const cases: WorkbenchRuntimeInput[] = [
     turn({ sessionId: "S1", routingOptions: { modelId: "m" } }),
     turn({ sessionId: "S1", routingOptions: { tier: 1 } }),
@@ -66,12 +67,12 @@ Deno.test("an explicit model, tier, hint or runner, or a new session, is left al
   }
 });
 
-Deno.test("a session with no recorded model resumes unchanged", async () => {
+test("a session with no recorded model resumes unchanged", async () => {
   const input = turn({ sessionId: "S1" });
   assert.strictEqual(await withSessionModel(input, recorded(null)), input);
 });
 
-Deno.test("a routing failure on the recorded model names it; others pass through", () => {
+test("a routing failure on the recorded model names it; others pass through", () => {
   const restored = turn({
     sessionId: "S1",
     restoredSessionModel: "gone/model",
@@ -111,7 +112,7 @@ Deno.test("a routing failure on the recorded model names it; others pass through
   );
 });
 
-Deno.test("a session that last ran on an external-agent runner refuses a bare resume", async () => {
+test("a session that last ran on an external-agent runner refuses a bare resume", async () => {
   await assert.rejects(
     () =>
       withSessionModel(

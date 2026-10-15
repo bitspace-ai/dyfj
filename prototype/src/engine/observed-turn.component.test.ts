@@ -7,7 +7,7 @@
  */
 import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   chatReply,
   type EngineRun,
@@ -71,7 +71,7 @@ async function gatedTurn(
 
 const APPROVE_PAID = () => Promise.resolve({ decision: "approve" as const });
 
-Deno.test("budgets and records every provider call so the receipt aggregates the whole turn", async () => {
+test("budgets and records every provider call so the receipt aggregates the whole turn", async () => {
   const usage = { prompt_tokens: 10, completion_tokens: 2 };
   const free = pricedLocalModel({ costInput: 1, costOutput: 1 });
   const { run, result } = await gatedTurn(
@@ -95,7 +95,7 @@ Deno.test("budgets and records every provider call so the receipt aggregates the
   });
 });
 
-Deno.test("re-confirms budget ceiling when a later same-size call crosses the session limit", async () => {
+test("re-confirms budget ceiling when a later same-size call crosses the session limit", async () => {
   // $15/Mtok input, so one reported input token records $0.000015.
   const priced = pricedLocalModel({ costInput: 15, costOutput: 75 });
   const usage = { prompt_tokens: 1, completion_tokens: 0 };
@@ -123,7 +123,7 @@ Deno.test("re-confirms budget ceiling when a later same-size call crosses the se
 /** Priced so each completion token records $0.01; input is ~free. */
 const PER_TOKEN = pricedLocalModel({ costInput: 0.000001, costOutput: 10_000 });
 
-Deno.test("rejects an over-budget follow-up call before invoking the provider (tier 1)", async () => {
+test("rejects an over-budget follow-up call before invoking the provider (tier 1)", async () => {
   // Every reply wants another tool step; the loop must stop on budget, not
   // the step cap. Step 0 spends $0.03, over the $0.02 session limit, so the
   // first follow-up is rejected before a second provider call.
@@ -158,7 +158,7 @@ const ANOMALY = {
 };
 const TWELVE_CENTS = { prompt_tokens: 10, completion_tokens: 12 };
 
-Deno.test("halts a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
+test("halts a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
   const { run, error } = await gatedTurn(
     [
       toolReply("c1", TWELVE_CENTS),
@@ -178,7 +178,7 @@ Deno.test("halts a multi-call turn on ACTUAL accumulated spend, failing closed w
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-Deno.test("an approval admits one call only — the next anomalous call prompts again", async () => {
+test("an approval admits one call only — the next anomalous call prompts again", async () => {
   const confirmRunawayAnomaly = mock.fn((_: RunawayAnomalyWarning) =>
     APPROVE_PAID()
   );

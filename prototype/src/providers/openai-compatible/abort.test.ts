@@ -3,8 +3,7 @@
 // markup is handled when the stream is cut short.
 
 import assert from "node:assert/strict";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import { ManualClock } from "../../../testing/fakes/manual-clock.ts";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { estimateTextTokens, runWorkbenchTurn } from "../mod.ts";

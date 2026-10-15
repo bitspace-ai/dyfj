@@ -3,7 +3,7 @@
 
 import { captureThrow } from "../../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   defaultLocalWorkbenchModels,
   modelSupportsFastSpeed,

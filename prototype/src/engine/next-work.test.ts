@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   buildNextWorkBrief,
   printNextWorkResult,
   validateNextWorkJson,
 } from "./next-work.ts";
 
-Deno.test("buildNextWorkBrief: requests strict JSON for the next-work worklet without private context", () => {
+test("buildNextWorkBrief: requests strict JSON for the next-work worklet without private context", () => {
   const brief = buildNextWorkBrief({
     workletId: "next-work.v0",
     contextProfile: "compact",
@@ -34,7 +35,7 @@ Deno.test("buildNextWorkBrief: requests strict JSON for the next-work worklet wi
   );
 });
 
-Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result", () => {
+test("validateNextWorkJson: accepts a complete strict JSON next-work result", () => {
   const result = validateNextWorkJson(JSON.stringify({
     worklet_id: "next-work.v0",
     context_profile: "compact",
@@ -62,7 +63,7 @@ Deno.test("validateNextWorkJson: accepts a complete strict JSON next-work result
   });
 });
 
-Deno.test("validateNextWorkJson: rejects prose or incomplete JSON before trusting the model result", () => {
+test("validateNextWorkJson: rejects prose or incomplete JSON before trusting the model result", () => {
   assert.deepStrictEqual(
     validateNextWorkJson("Work on the routing item next."),
     {
@@ -89,7 +90,7 @@ Deno.test("validateNextWorkJson: rejects prose or incomplete JSON before trustin
   });
 });
 
-Deno.test("printNextWorkResult presents a valid result and the raw output of an invalid one", () => {
+test("printNextWorkResult presents a valid result and the raw output of an invalid one", () => {
   const lines: string[] = [];
   const log = (...parts: unknown[]) => void lines.push(parts.join(" "));
   printNextWorkResult(

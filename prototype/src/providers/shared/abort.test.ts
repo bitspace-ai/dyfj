@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { it } from "@std/testing/bdd";
+import { it } from "node:test";
 import { ProviderRequestAbortedError } from "./abort.ts";
 
 // Own enumerable properties, in order, are what JSON.stringify and error

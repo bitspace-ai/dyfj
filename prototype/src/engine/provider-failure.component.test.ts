@@ -9,7 +9,7 @@
  * kind, and none of the provider's text.
  */
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   type EngineRun,
   engineServices,
@@ -123,7 +123,7 @@ function assertReported(
 
 // ─── the 2026-10-03 case ─────────────────────────────────────────────────────
 
-Deno.test("llama-server's context-size rejection reaches the operator with both sizes, in the line and in the error event", async () => {
+test("llama-server's context-size rejection reaches the operator with both sizes, in the line and in the error event", async () => {
   // BIT-565 already turns this rejection into ContextWindowOverflowError
   // after its one refit (nothing to trim on a first turn), whose message
   // names the counts; this pins that both counts reach every surface and
@@ -139,7 +139,7 @@ Deno.test("llama-server's context-size rejection reaches the operator with both 
 
 // ─── one fixture per class ───────────────────────────────────────────────────
 
-Deno.test("an authentication failure names the provider and says which key to check", async () => {
+test("an authentication failure names the provider and says which key to check", async () => {
   const turn = await replay(F.ANTHROPIC_AUTH);
   assertReported(turn, {
     errorName: "ProviderAuthenticationError",
@@ -152,7 +152,7 @@ Deno.test("an authentication failure names the provider and says which key to ch
   );
 });
 
-Deno.test("a rate limit names the provider and says to wait or switch model", async () => {
+test("a rate limit names the provider and says to wait or switch model", async () => {
   const turn = await replay(F.OPENAI_RATE_LIMIT);
   assertReported(turn, {
     errorName: "ProviderRateLimitedError",
@@ -165,7 +165,7 @@ Deno.test("a rate limit names the provider and says to wait or switch model", as
   );
 });
 
-Deno.test("a model the provider does not serve names the model and the registry row", async () => {
+test("a model the provider does not serve names the model and the registry row", async () => {
   const turn = await replay(F.GEMINI_MODEL_NOT_FOUND);
   assertReported(turn, {
     errorName: "ProviderModelNotFoundError",
@@ -178,7 +178,7 @@ Deno.test("a model the provider does not serve names the model and the registry 
   );
 });
 
-Deno.test("a refused connection names the provider and says to check the server", async () => {
+test("a refused connection names the provider and says to check the server", async () => {
   const turn = await failingTurn(
     { respond: () => Promise.reject(F.CONNECTION_REFUSED()) },
     LOCAL_MODEL,
@@ -194,7 +194,7 @@ Deno.test("a refused connection names the provider and says to check the server"
   );
 });
 
-Deno.test("a request the provider refuses by size names the provider and says to shorten it", async () => {
+test("a request the provider refuses by size names the provider and says to shorten it", async () => {
   const turn = await replay(F.ANTHROPIC_REQUEST_TOO_LARGE);
   assertReported(turn, {
     errorName: "ProviderRequestTooLargeError",
@@ -209,7 +209,7 @@ Deno.test("a request the provider refuses by size names the provider and says to
 
 // ─── unclassified ────────────────────────────────────────────────────────────
 
-Deno.test("an unclassified provider error shows the provider and status, and none of the body", async () => {
+test("an unclassified provider error shows the provider and status, and none of the body", async () => {
   const turn = await replay(F.OPENAI_SERVER_ERROR);
   assertReported(turn, {
     errorName: "ProviderRequestFailedError",
@@ -222,7 +222,7 @@ Deno.test("an unclassified provider error shows the provider and status, and non
   );
 });
 
-Deno.test("a provider failure is a reported condition, not an unexpected error, on the server console", async () => {
+test("a provider failure is a reported condition, not an unexpected error, on the server console", async () => {
   // The unexpected-error branch prints a class-only [turn-error] line to
   // the server console; a classified provider failure is expected and
   // already fully stated on the operator line.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
   createProviderRegistry,
@@ -31,7 +32,7 @@ function model(provider: string, extra: Partial<WorkbenchModel> = {}) {
   } satisfies WorkbenchModel;
 }
 
-Deno.test("each production provider is served by exactly one adapter", () => {
+test("each production provider is served by exactly one adapter", () => {
   const registry = createProviderRegistry(PROVIDER_ADAPTERS);
   const expected: Record<string, ProviderAdapter> = {
     "llama-cpp": openAICompatibleAdapter,
@@ -51,7 +52,7 @@ Deno.test("each production provider is served by exactly one adapter", () => {
   }
 });
 
-Deno.test("dispatch keys on the provider, not the catalog api column", () => {
+test("dispatch keys on the provider, not the catalog api column", () => {
   const registry = createProviderRegistry(PROVIDER_ADAPTERS);
   assert.strictEqual(
     registry.adapterFor(model("anthropic", { api: "openai-completions" })),
@@ -59,7 +60,7 @@ Deno.test("dispatch keys on the provider, not the catalog api column", () => {
   );
 });
 
-Deno.test("two adapters may not serve the same provider", () => {
+test("two adapters may not serve the same provider", () => {
   assert.throws(
     () =>
       createProviderRegistry([
@@ -74,7 +75,7 @@ Deno.test("two adapters may not serve the same provider", () => {
   );
 });
 
-Deno.test("a provider no adapter serves fails closed before any request", async () => {
+test("a provider no adapter serves fails closed before any request", async () => {
   const transport = new ScriptedHttpTransport();
   const unserved = model("vllm", {
     baseUrl: "http://localhost:8000/v1",
@@ -96,7 +97,7 @@ Deno.test("a provider no adapter serves fails closed before any request", async 
   assert.deepStrictEqual(transport.requests.length, 0);
 });
 
-Deno.test("capability queries answer from the serving adapter", () => {
+test("capability queries answer from the serving adapter", () => {
   const table: Array<[string, boolean, boolean]> = [
     // provider, streams tool calls, supports transcript retry
     ["ollama", true, true],
@@ -119,7 +120,7 @@ Deno.test("capability queries answer from the serving adapter", () => {
   }
 });
 
-Deno.test("the requested output cap applies each adapter's default ceiling", () => {
+test("the requested output cap applies each adapter's default ceiling", () => {
   const cases: Array<[WorkbenchModel, number | undefined, number | undefined]> =
     [
       [model("anthropic"), undefined, 16000],
@@ -142,7 +143,7 @@ Deno.test("the requested output cap applies each adapter's default ceiling", () 
   }
 });
 
-Deno.test("modelTransmittedOutputCap is the cap on the wire: none for a local request with none requested", () => {
+test("modelTransmittedOutputCap is the cap on the wire: none for a local request with none requested", () => {
   const cases: Array<[WorkbenchModel, number | undefined, number | undefined]> =
     [
       [model("anthropic"), undefined, 16000],

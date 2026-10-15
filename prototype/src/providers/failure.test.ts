@@ -5,7 +5,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
 import * as F from "../../testing/providers/failure-fixtures.ts";

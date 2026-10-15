@@ -6,7 +6,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { MemoryStore, type ModelSeed } from "../store/mod.ts";
 import { DomainError, type PaidEscalationVerdict } from "../contract/mod.ts";
 import {
@@ -90,7 +90,7 @@ function request(overrides: Partial<RouteRequest> = {}): RouteRequest {
 
 // ── resolveRoute: explicit ACP runner ────────────────────────────────────────
 
-Deno.test("resolveRoute returns an explicit fixture runner without consent or catalog", async () => {
+test("resolveRoute returns an explicit fixture runner without consent or catalog", async () => {
   const confirm = consent({ decision: "deny" });
   const routingOptions: WorkbenchRoutingOptions = { hint: "code" };
   const route = await resolveRoute(
@@ -110,7 +110,7 @@ Deno.test("resolveRoute returns an explicit fixture runner without consent or ca
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("resolveRoute rejects an explicit Codex ChatGPT runner without workspace trust, before consent", async () => {
+test("resolveRoute rejects an explicit Codex ChatGPT runner without workspace trust, before consent", async () => {
   const confirm = consent({ decision: "approve" });
   await assert.rejects(
     () =>
@@ -131,7 +131,7 @@ Deno.test("resolveRoute rejects an explicit Codex ChatGPT runner without workspa
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner against the default limits", async () => {
+test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner against the default limits", async () => {
   const confirm = consent({ decision: "deny", reason: "not today" });
   await assert.rejects(
     () =>
@@ -191,7 +191,7 @@ Deno.test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner a
   );
 });
 
-Deno.test("resolveRoute denies an explicit Codex ChatGPT runner when no consent handler is configured", async () => {
+test("resolveRoute denies an explicit Codex ChatGPT runner when no consent handler is configured", async () => {
   await assert.rejects(
     () =>
       resolveRoute(
@@ -207,7 +207,7 @@ Deno.test("resolveRoute denies an explicit Codex ChatGPT runner when no consent 
   );
 });
 
-Deno.test("resolveRoute returns an approved explicit Codex ChatGPT runner", async () => {
+test("resolveRoute returns an approved explicit Codex ChatGPT runner", async () => {
   const route = await resolveRoute(
     request({
       runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -227,7 +227,7 @@ Deno.test("resolveRoute returns an approved explicit Codex ChatGPT runner", asyn
 
 // ── resolveRoute: catalog selection ──────────────────────────────────────────
 
-Deno.test("resolveRoute keeps a native catalog selection on the native runner", async () => {
+test("resolveRoute keeps a native catalog selection on the native runner", async () => {
   const confirm = consent({ decision: "deny" });
   const route = await resolveRoute(
     request({
@@ -239,7 +239,7 @@ Deno.test("resolveRoute keeps a native catalog selection on the native runner", 
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("resolveRoute routes a selected fixture ACP model to the fixture runner with its slug pinned", async () => {
+test("resolveRoute routes a selected fixture ACP model to the fixture runner with its slug pinned", async () => {
   const route = await resolveRoute(
     request({ routingOptions: { modelId: "fixture", hint: "code" } }),
     catalog(LOCAL, ACP_FIXTURE),
@@ -251,7 +251,7 @@ Deno.test("resolveRoute routes a selected fixture ACP model to the fixture runne
   });
 });
 
-Deno.test("resolveRoute routes a configured default ACP model and pins its slug", async () => {
+test("resolveRoute routes a configured default ACP model and pins its slug", async () => {
   const route = await resolveRoute(
     request({ defaultCompanionModel: "fixture" }),
     catalog(LOCAL, ACP_FIXTURE),
@@ -263,7 +263,7 @@ Deno.test("resolveRoute routes a configured default ACP model and pins its slug"
   });
 });
 
-Deno.test("resolveRoute rejects a selected Codex ChatGPT model without workspace trust, before consent", async () => {
+test("resolveRoute rejects a selected Codex ChatGPT model without workspace trust, before consent", async () => {
   const confirm = consent({ decision: "approve" });
   await assert.rejects(
     () =>
@@ -283,7 +283,7 @@ Deno.test("resolveRoute rejects a selected Codex ChatGPT model without workspace
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("resolveRoute asks paid consent for a selected tier-2 ACP model with its selection reason", async () => {
+test("resolveRoute asks paid consent for a selected tier-2 ACP model with its selection reason", async () => {
   const confirm = consent({ decision: "escalate" });
   await assert.rejects(
     () =>
@@ -319,7 +319,7 @@ Deno.test("resolveRoute asks paid consent for a selected tier-2 ACP model with i
   );
 });
 
-Deno.test("resolveRoute returns an approved selected Codex ChatGPT model", async () => {
+test("resolveRoute returns an approved selected Codex ChatGPT model", async () => {
   const route = await resolveRoute(
     request({
       routingOptions: { modelId: CODEX_TERRA.slug },
@@ -337,7 +337,7 @@ Deno.test("resolveRoute returns an approved selected Codex ChatGPT model", async
   });
 });
 
-Deno.test("resolveRoute rejects an ACP model no runner profile serves", async () => {
+test("resolveRoute rejects an ACP model no runner profile serves", async () => {
   await assert.rejects(
     () =>
       resolveRoute(
@@ -350,7 +350,7 @@ Deno.test("resolveRoute rejects an ACP model no runner profile serves", async ()
   );
 });
 
-Deno.test("resolveRoute propagates a routing error for an unknown model", async () => {
+test("resolveRoute propagates a routing error for an unknown model", async () => {
   await assert.rejects(
     () =>
       resolveRoute(
@@ -361,7 +361,7 @@ Deno.test("resolveRoute propagates a routing error for an unknown model", async 
   );
 });
 
-Deno.test("resolveRoute falls back to the native runner when the catalog cannot be loaded", async () => {
+test("resolveRoute falls back to the native runner when the catalog cannot be loaded", async () => {
   // Characterizes current behavior: a registry load failure is swallowed
   // here, selection runs over the static local defaults, and the native turn
   // reports its own failure (see specs/bug-log.md).
@@ -369,7 +369,7 @@ Deno.test("resolveRoute falls back to the native runner when the catalog cannot 
   assert.deepStrictEqual(route, { runner: "native" });
 });
 
-Deno.test("resolveRoute still propagates a routing error over the fallback catalog", async () => {
+test("resolveRoute still propagates a routing error over the fallback catalog", async () => {
   await assert.rejects(
     () =>
       resolveRoute(
@@ -382,7 +382,7 @@ Deno.test("resolveRoute still propagates a routing error over the fallback catal
 
 // ── selectModelRoute ─────────────────────────────────────────────────────────
 
-Deno.test("selectModelRoute selects over the catalog and reports the selection reason", async () => {
+test("selectModelRoute selects over the catalog and reports the selection reason", async () => {
   const route = await selectModelRoute(catalog(LOCAL), {
     mode: "turn",
     routingOptions: {},
@@ -392,7 +392,7 @@ Deno.test("selectModelRoute selects over the catalog and reports the selection r
   assert.deepStrictEqual(route.models.map((model) => model.slug), [LOCAL.slug]);
 });
 
-Deno.test("selectModelRoute names the local default for a next-work turn", async () => {
+test("selectModelRoute names the local default for a next-work turn", async () => {
   const route = await selectModelRoute(catalog(LOCAL), {
     mode: "next-work",
     routingOptions: {},
@@ -400,7 +400,7 @@ Deno.test("selectModelRoute names the local default for a next-work turn", async
   assert.deepStrictEqual(route.routingReason, "default_local_next_work");
 });
 
-Deno.test("selectModelRoute honors the configured default companion model", async () => {
+test("selectModelRoute honors the configured default companion model", async () => {
   const route = await selectModelRoute(catalog(LOCAL, ACP_FIXTURE), {
     mode: "turn",
     routingOptions: {},
@@ -410,7 +410,7 @@ Deno.test("selectModelRoute honors the configured default companion model", asyn
   assert.deepStrictEqual(route.routingReason, "default_config");
 });
 
-Deno.test("selectModelRoute fails a companion turn when the catalog cannot be loaded", async () => {
+test("selectModelRoute fails a companion turn when the catalog cannot be loaded", async () => {
   await assert.rejects(
     () =>
       selectModelRoute(failingCatalog, { mode: "turn", routingOptions: {} }),
@@ -419,7 +419,7 @@ Deno.test("selectModelRoute fails a companion turn when the catalog cannot be lo
   );
 });
 
-Deno.test("selectModelRoute falls back to the static local default for an ask turn", async () => {
+test("selectModelRoute falls back to the static local default for an ask turn", async () => {
   const warn = mock.method(console, "warn", () => {});
   try {
     const route = await selectModelRoute(failingCatalog, {
@@ -440,7 +440,7 @@ Deno.test("selectModelRoute falls back to the static local default for an ask tu
   );
 });
 
-Deno.test("selectModelRoute does not restore a built-in default the catalog marks inactive", async () => {
+test("selectModelRoute does not restore a built-in default the catalog marks inactive", async () => {
   const route = await selectModelRoute(
     catalog(LOCAL, { ...LOCAL, slug: "qwen3.6:35b-a3b", active: false }),
     { mode: "ask", routingOptions: {} },

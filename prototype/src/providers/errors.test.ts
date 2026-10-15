@@ -2,7 +2,7 @@
 // field interpolated into one is bounded and inert.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   HostedProviderCredentialMissingError,
   ProviderAuthenticationError,

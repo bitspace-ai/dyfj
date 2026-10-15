@@ -3,7 +3,7 @@
 // with the character estimate.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
   defaultLocalWorkbenchModels,

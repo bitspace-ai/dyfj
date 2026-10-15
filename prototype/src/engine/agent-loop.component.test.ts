@@ -9,8 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock, test } from "node:test";
 import {
   chatReply,
   conversation,
@@ -116,7 +115,7 @@ async function quietly<T>(
 
 // ─── iteration and step limits ───────────────────────────────────────────────
 
-Deno.test("agent loop iterates model<->tools until the model stops requesting tools", async () => {
+test("agent loop iterates model<->tools until the model stops requesting tools", async () => {
   const { run, result } = await loopTurn([
     toolReply([LIST("c1")]),
     toolReply([LIST("c2", "src")]),
@@ -127,7 +126,7 @@ Deno.test("agent loop iterates model<->tools until the model stops requesting to
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-Deno.test("agent loop honors a configured small step limit and forces a no-tools conclusion", async () => {
+test("agent loop honors a configured small step limit and forces a no-tools conclusion", async () => {
   // The model never stops requesting tools; the loop must bound it.
   const loop = toolReply([LIST("c")], "forced conclusion");
   const { run, frames, result } = await loopTurn([loop, loop, loop], {
@@ -172,7 +171,7 @@ for (
     [1.5, AGENT_DEFAULTS.maxToolSteps],
   ] as const
 ) {
-  Deno.test(`direct maxToolSteps ${provided} resolves to ${expected}`, async () => {
+  test(`direct maxToolSteps ${provided} resolves to ${expected}`, async () => {
     const { result } = await loopTurn([chatReply({ content: "done" })], {
       prompt: "answer without tools",
       maxToolSteps: provided,
@@ -185,7 +184,7 @@ for (
   });
 }
 
-Deno.test("agent loop forces a conclusion when the model repeats prior tool calls", async () => {
+test("agent loop forces a conclusion when the model repeats prior tool calls", async () => {
   const repeat = toolReply([LIST("c")]);
   const { run, frames, result } = await loopTurn([
     repeat, // step 0
@@ -349,7 +348,7 @@ function toolSteps(
   );
 }
 
-Deno.test("contains a failed capped conclusion without losing prior-call accounting", async () => {
+test("contains a failed capped conclusion without losing prior-call accounting", async () => {
   const sentinel = "PROVIDER_RESPONSE_BODY_MUST_NOT_SURFACE";
   const loop = await quietly(() =>
     loopTurn([
@@ -385,7 +384,7 @@ Deno.test("contains a failed capped conclusion without losing prior-call account
   );
 });
 
-Deno.test("contains a failed overflow-recovery call after the tool-step limit", async () => {
+test("contains a failed overflow-recovery call after the tool-step limit", async () => {
   const sentinel = "RECOVERY_PROVIDER_BODY_MUST_NOT_SURFACE";
   const loop = await quietly(() =>
     loopTurn(
@@ -432,7 +431,7 @@ Deno.test("contains a failed overflow-recovery call after the tool-step limit", 
 
 // ─── the provider-call trace ─────────────────────────────────────────────────
 
-Deno.test("persists an ordered provider-call trace with requested tools beneath their provider span", async () => {
+test("persists an ordered provider-call trace with requested tools beneath their provider span", async () => {
   const loop = await loopTurn([
     chatReply({
       toolCalls: [{
@@ -480,7 +479,7 @@ Deno.test("persists an ordered provider-call trace with requested tools beneath 
   assert.deepStrictEqual(summary?.parent_span_id, root.span_id);
 });
 
-Deno.test("a skipped provider_call span leaves its requested tool attached to the turn root", async () => {
+test("a skipped provider_call span leaves its requested tool attached to the turn root", async () => {
   const { value: loop, warnings } = await quietly(() =>
     loopTurn(
       [
@@ -525,7 +524,7 @@ Deno.test("a skipped provider_call span leaves its requested tool attached to th
 // A tool_call row is best-effort: an INSERT failure (for example an oversized
 // tool result the column rejects) must not fail the turn or surface raw
 // driver text.
-Deno.test("tool_call event write failure does not fail the tool step or turn (best-effort containment)", async () => {
+test("tool_call event write failure does not fail the tool step or turn (best-effort containment)", async () => {
   const { value: loop, warnings } = await quietly(() =>
     loopTurn(
       [
@@ -576,7 +575,7 @@ Deno.test("tool_call event write failure does not fail the tool step or turn (be
 
 // ─── unparsed tool-call markup ───────────────────────────────────────────────
 
-Deno.test("emits and persists content-free unparsed-markup metadata before completion", async () => {
+test("emits and persists content-free unparsed-markup metadata before completion", async () => {
   const modelText = "<tool_call>\nedit_file\n<tool_call>\nread_file\n";
   const loop = await loopTurn([chatReply({ content: modelText })], {
     prompt: "make the change",
@@ -617,7 +616,7 @@ Deno.test("emits and persists content-free unparsed-markup metadata before compl
   );
 });
 
-Deno.test("flags a complete textual tool call the forced conclusion cannot run", async () => {
+test("flags a complete textual tool call the forced conclusion cannot run", async () => {
   // Stored reply from a local-model turn (BIT-564): after a repeated call the
   // loop forced a conclusion, which offers no tools, and the model answered
   // with a complete textual call that nothing ran or flagged.
@@ -650,7 +649,7 @@ Deno.test("flags a complete textual tool call the forced conclusion cannot run",
   assert.partialDeepStrictEqual(forced!, { unparsed_tool_call_count: "1" });
 });
 
-Deno.test("fails instead of completing when the unparsed-markup warning cannot be delivered", async () => {
+test("fails instead of completing when the unparsed-markup warning cannot be delivered", async () => {
   const seen: string[] = [];
   const loop = await quietly(() =>
     loopTurn([chatReply({ content: "<tool_call><tool_call>" })], {
@@ -673,7 +672,7 @@ Deno.test("fails instead of completing when the unparsed-markup warning cannot b
 
 // ─── provider and tool failures ──────────────────────────────────────────────
 
-Deno.test("records a content-free provider-call failure with a safe classification", async () => {
+test("records a content-free provider-call failure with a safe classification", async () => {
   const body = "provider-controlled response body must not persist";
   const loop = await quietly(() =>
     loopTurn([{ respond: { status: 500, body } }], { prompt: "fail safely" })
@@ -691,7 +690,7 @@ Deno.test("records a content-free provider-call failure with a safe classificati
   assert.deepStrictEqual(JSON.stringify(call).includes(body), false);
 });
 
-Deno.test("a denied tool call's reason reaches the model verbatim on the next step, marked as an error", async () => {
+test("a denied tool call's reason reaches the model verbatim on the next step, marked as an error", async () => {
   const loop = await loopTurn([
     toolReply([{ id: "bad-1", name: "read_file", arguments: {} }]),
     chatReply({ content: "recovered" }),
@@ -721,7 +720,7 @@ Deno.test("a denied tool call's reason reaches the model verbatim on the next st
   assert.deepStrictEqual(event?.tool_is_error, "1");
 });
 
-Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", async () => {
+test("a tool call that throws sanitizes toolCallCompleted's errorMessage", async () => {
   const hugePayload = "SELECT ".repeat(20_000);
   const loop = await quietly(() =>
     loopTurn([toolReply([WRITE("c1", "note.txt")])], {
@@ -754,7 +753,7 @@ Deno.test("a tool call that throws sanitizes toolCallCompleted's errorMessage", 
 
 // ─── cancellation inside a tool step ─────────────────────────────────────────
 
-Deno.test("an abort during a running tool lets it settle and starts no queued tool", async () => {
+test("an abort during a running tool lets it settle and starts no queued tool", async () => {
   const abortController = new AbortController();
   let markToolStarted!: () => void;
   const toolStarted = new Promise<void>((resolve) => markToolStarted = resolve);
@@ -796,7 +795,7 @@ Deno.test("an abort during a running tool lets it settle and starts no queued to
   assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
-Deno.test("an approval cancellation does not report a tool failure", async () => {
+test("an approval cancellation does not report a tool failure", async () => {
   const abortController = new AbortController();
   const turnId = "123e4567-e89b-42d3-a456-426614174000";
   const { result, frames } = await loopTurn([
@@ -825,7 +824,7 @@ Deno.test("an approval cancellation does not report a tool failure", async () =>
   );
 });
 
-Deno.test("tool invocation crosses the boundary in the same turn that start-event emission begins", async () => {
+test("tool invocation crosses the boundary in the same turn that start-event emission begins", async () => {
   const abortController = new AbortController();
   let markStartEmission!: () => void;
   const startEmission = new Promise<void>((resolve) =>
@@ -868,7 +867,7 @@ Deno.test("tool invocation crosses the boundary in the same turn that start-even
 
 // ─── transcript shape ────────────────────────────────────────────────────────
 
-Deno.test("each step replays the assistant's tool-call turn and its linked results", async () => {
+test("each step replays the assistant's tool-call turn and its linked results", async () => {
   const loop = await loopTurn([
     toolReply([LIST("c1"), {
       id: "r1",

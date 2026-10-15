@@ -2,7 +2,7 @@
 
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { ScriptedHttpTransport } from "../../testing/fakes/scripted-http-transport.ts";
 import { fetchWithHeaderTimeout, ProviderUnreachableError } from "./mod.ts";
 

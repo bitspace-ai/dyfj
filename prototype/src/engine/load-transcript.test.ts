@@ -4,6 +4,7 @@
  * compression paths are covered by `compression.component.test.ts`.
  */
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   enginePorts,
   LOCAL_MODEL,
@@ -52,7 +53,7 @@ async function routed(
   };
 }
 
-Deno.test("a companion turn carries its history, then the current prompt", async () => {
+test("a companion turn carries its history, then the current prompt", async () => {
   await using root = await tempWorkspace();
   const turn = await routed(
     { conversationMessages: HISTORY },
@@ -65,7 +66,7 @@ Deno.test("a companion turn carries its history, then the current prompt", async
   ]);
 });
 
-Deno.test("ask and next-work turns carry no history", async () => {
+test("ask and next-work turns carry no history", async () => {
   await using root = await tempWorkspace({ "README.md": "ROOT" });
   for (const mode of ["ask", "next-work"] as const) {
     const turn = await routed(
@@ -79,7 +80,7 @@ Deno.test("ask and next-work turns carry no history", async () => {
   }
 });
 
-Deno.test("a model without a known window never triggers proactive compression", async () => {
+test("a model without a known window never triggers proactive compression", async () => {
   await using root = await tempWorkspace();
   const unknownWindow = {
     ...LOCAL_MODEL,

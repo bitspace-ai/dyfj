@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { stat } from "node:fs/promises";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import {
   chatReply,
   engineServices,
@@ -42,7 +42,7 @@ function contextFor(host: string): MemorySeed {
   };
 }
 
-Deno.test("two headless hosts complete native turns with separate context, identity and event stores", async () => {
+test("two headless hosts complete native turns with separate context, identity and event stores", async () => {
   await using rootA = await tempWorkspace();
   await using rootB = await tempWorkspace();
   const hostA = engineServices([chatReply({ content: "A complete" })], {
@@ -154,7 +154,7 @@ Deno.test("two headless hosts complete native turns with separate context, ident
   assert.deepStrictEqual(await eventRows(hostB, a.sessionId), []);
 });
 
-Deno.test("a headless host without an approval handler denies a model-requested mutation", async () => {
+test("a headless host without an approval handler denies a model-requested mutation", async () => {
   await using root = await tempWorkspace();
   const host = engineServices([
     chatReply({

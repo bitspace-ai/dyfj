@@ -4,7 +4,7 @@
 // offered call from both the live deltas and the durable text.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import { runWorkbenchTurn } from "../mod.ts";
 import { providerTestModels } from "../../../testing/builders/models.ts";

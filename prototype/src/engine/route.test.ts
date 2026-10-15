@@ -1,6 +1,6 @@
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import type { PaidEscalationVerdict } from "../contract/mod.ts";
 import { PaidEscalationDeclinedError } from "./errors.ts";
 import {
@@ -30,15 +30,15 @@ function verdict(
   return () => Promise.resolve(value);
 }
 
-Deno.test("formatMoney formats sub-cent model costs with six decimal places", () => {
+test("formatMoney formats sub-cent model costs with six decimal places", () => {
   assert.deepStrictEqual(formatMoney(0.0001234), "$0.000123");
 });
 
-Deno.test("formatMoney formats zero as an explicit dollar amount", () => {
+test("formatMoney formats zero as an explicit dollar amount", () => {
   assert.deepStrictEqual(formatMoney(0), "$0.000000");
 });
 
-Deno.test("buildPaidEscalationPreflightBanner shows paid escalation call shape before inference", () => {
+test("buildPaidEscalationPreflightBanner shows paid escalation call shape before inference", () => {
   const banner = buildPaidEscalationPreflightBanner(BASE_PREFLIGHT);
 
   assert.ok(
@@ -87,7 +87,7 @@ Deno.test("buildPaidEscalationPreflightBanner shows paid escalation call shape b
   );
 });
 
-Deno.test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", () => {
+test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", () => {
   assert.deepStrictEqual(
     maybeBuildPaidEscalationPreflightBanner({
       ...BASE_PREFLIGHT,
@@ -98,12 +98,12 @@ Deno.test("maybeBuildPaidEscalationPreflightBanner keeps tier 0 prompt-free", ()
   );
 });
 
-Deno.test("isNextWorkMode keeps generic ask separate from the measured next-work worklet", () => {
+test("isNextWorkMode keeps generic ask separate from the measured next-work worklet", () => {
   assert.deepStrictEqual(isNextWorkMode("ask"), false);
   assert.deepStrictEqual(isNextWorkMode("next-work"), true);
 });
 
-Deno.test("routeReasonForMode names the local next-work default and passes other reasons through", () => {
+test("routeReasonForMode names the local next-work default and passes other reasons through", () => {
   assert.deepStrictEqual(
     routeReasonForMode("default", 0, true),
     "default_local_next_work",
@@ -116,13 +116,13 @@ Deno.test("routeReasonForMode names the local next-work default and passes other
   );
 });
 
-Deno.test("confirmPaidRoute passes tier 0 without asking", async () => {
+test("confirmPaidRoute passes tier 0 without asking", async () => {
   const confirm = mock.fn(verdict({ decision: "deny" }));
   await confirmPaidRoute({ ...BASE_PREFLIGHT, tier: 0 }, confirm);
   assert.equal(confirm.mock.callCount(), 0);
 });
 
-Deno.test("confirmPaidRoute shows the banner and resolves on approval", async () => {
+test("confirmPaidRoute shows the banner and resolves on approval", async () => {
   const confirm = mock.fn(verdict({ decision: "approve" }));
   await confirmPaidRoute(BASE_PREFLIGHT, confirm);
   assert.equal(confirm.mock.callCount(), 1);
@@ -132,7 +132,7 @@ Deno.test("confirmPaidRoute shows the banner and resolves on approval", async ()
   );
 });
 
-Deno.test("confirmPaidRoute throws the declined verdict", async () => {
+test("confirmPaidRoute throws the declined verdict", async () => {
   const error = await captureRejection(
     () =>
       confirmPaidRoute(
@@ -151,7 +151,7 @@ Deno.test("confirmPaidRoute throws the declined verdict", async () => {
   );
 });
 
-Deno.test("confirmPaidRoute treats an escalate verdict as a refusal", async () => {
+test("confirmPaidRoute treats an escalate verdict as a refusal", async () => {
   const error = await captureRejection(
     () =>
       confirmPaidRoute(
@@ -163,7 +163,7 @@ Deno.test("confirmPaidRoute treats an escalate verdict as a refusal", async () =
   assert.deepStrictEqual(error.message, "Paid inference escalation required");
 });
 
-Deno.test("confirmPaidRoute denies when no consent handler is configured", async () => {
+test("confirmPaidRoute denies when no consent handler is configured", async () => {
   const error = await captureRejection(
     () => confirmPaidRoute(BASE_PREFLIGHT, undefined),
     PaidEscalationDeclinedError,

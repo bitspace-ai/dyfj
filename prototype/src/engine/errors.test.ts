@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, test } from "node:test";
 import { BudgetExceededError } from "../budget/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
@@ -29,7 +29,7 @@ import {
 // message or the stored `.verdict` (read directly by the runtime's catch
 // block, not just via .message).
 
-Deno.test("PaidEscalationDeclinedError passes a short, ordinary reason through unchanged", () => {
+test("PaidEscalationDeclinedError passes a short, ordinary reason through unchanged", () => {
   const err = new PaidEscalationDeclinedError({
     decision: "deny",
     reason: "not now",
@@ -38,7 +38,7 @@ Deno.test("PaidEscalationDeclinedError passes a short, ordinary reason through u
   assert.ok(err.message.includes("not now"));
 });
 
-Deno.test("PaidEscalationDeclinedError caps an oversized reason, on both .message and the stored .verdict", () => {
+test("PaidEscalationDeclinedError caps an oversized reason, on both .message and the stored .verdict", () => {
   const reason = "SELECT ".repeat(2_000);
   const err = new PaidEscalationDeclinedError({
     decision: "escalate",
@@ -51,7 +51,7 @@ Deno.test("PaidEscalationDeclinedError caps an oversized reason, on both .messag
   assert.ok(!err.message.includes(reason));
 });
 
-Deno.test("PaidEscalationDeclinedError strips a terminal escape sequence from the reason", () => {
+test("PaidEscalationDeclinedError strips a terminal escape sequence from the reason", () => {
   const esc = String.fromCharCode(27);
   const err = new PaidEscalationDeclinedError({
     decision: "deny",
@@ -70,7 +70,7 @@ Deno.test("PaidEscalationDeclinedError strips a terminal escape sequence from th
 // property; it classifies purely by instanceof against classes this codebase
 // controls.
 
-Deno.test("classifyErrorKind reports a real DomainError's own class", () => {
+test("classifyErrorKind reports a real DomainError's own class", () => {
   assert.strictEqual(
     classifyErrorKind(new PaidEscalationDeclinedError({ decision: "deny" })),
     "PaidEscalationDeclinedError",
@@ -83,7 +83,7 @@ Deno.test("classifyErrorKind reports a real DomainError's own class", () => {
   );
 });
 
-Deno.test("classifyErrorKind classifies a DomainError subclass with a shadowed .constructor to its real class", () => {
+test("classifyErrorKind classifies a DomainError subclass with a shadowed .constructor to its real class", () => {
   // instanceof DomainError alone does not make .constructor.name safe to
   // read — instanceof walks the prototype chain, but .constructor is an
   // independently-writable own property. A real BudgetExceededError with
@@ -98,7 +98,7 @@ Deno.test("classifyErrorKind classifies a DomainError subclass with a shadowed .
   assert.notStrictEqual(classifyErrorKind(err), "FOREIGN_PAYLOAD");
 });
 
-Deno.test("classifyErrorKind classifies an unlisted DomainError subclass to the generic literal", () => {
+test("classifyErrorKind classifies an unlisted DomainError subclass to the generic literal", () => {
   class UnlistedDomainError extends DomainError {}
   assert.strictEqual(
     classifyErrorKind(new UnlistedDomainError("x")),
@@ -106,16 +106,16 @@ Deno.test("classifyErrorKind classifies an unlisted DomainError subclass to the 
   );
 });
 
-Deno.test('classifyErrorKind reports the fixed literal "Error" for a plain Error', () => {
+test('classifyErrorKind reports the fixed literal "Error" for a plain Error', () => {
   assert.strictEqual(classifyErrorKind(new Error("boom")), "Error");
 });
 
-Deno.test('classifyErrorKind reports "unknown" for a non-Error throw', () => {
+test('classifyErrorKind reports "unknown" for a non-Error throw', () => {
   assert.deepStrictEqual(classifyErrorKind("bare string throw"), "unknown");
   assert.deepStrictEqual(classifyErrorKind(null), "unknown");
 });
 
-Deno.test('classifyErrorKind classifies a foreign Error with a spoofed .constructor.name as plain "Error"', () => {
+test('classifyErrorKind classifies a foreign Error with a spoofed .constructor.name as plain "Error"', () => {
   const spoofed = new Error("driver detail that must not leak");
   Object.defineProperty(spoofed, "constructor", {
     value: { name: "FOREIGN_PAYLOAD" },
@@ -124,7 +124,7 @@ Deno.test('classifyErrorKind classifies a foreign Error with a spoofed .construc
   assert.strictEqual(classifyErrorKind(spoofed), "Error");
 });
 
-Deno.test("classifyErrorKind does not treat an error-shaped plain object as an Error", () => {
+test("classifyErrorKind does not treat an error-shaped plain object as an Error", () => {
   const fake = {
     name: "ContextWindowOverflowError",
     constructor: { name: "ContextWindowOverflowError" },
@@ -134,7 +134,7 @@ Deno.test("classifyErrorKind does not treat an error-shaped plain object as an E
   assert.deepStrictEqual(classifyErrorKind(fake), "unknown");
 });
 
-Deno.test("classifyErrorKind reports each provider failure class by its own fixed literal", () => {
+test("classifyErrorKind reports each provider failure class by its own fixed literal", () => {
   const target = { provider: "anthropic", slug: "claude-x" };
   const cases: ReadonlyArray<[DomainError, string]> = [
     [

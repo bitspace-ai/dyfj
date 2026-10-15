@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
+import { mock, test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { type EventReader, fetchWorkbenchSessionEvents } from "../store/mod.ts";
 import type { WorkbenchSessionEvent } from "../contract/mod.ts";
@@ -73,7 +73,7 @@ async function captureStderr<T>(
   }
 }
 
-Deno.test("[case 5 boundary] empty-after-withholding history fails before runtime model work", async () => {
+test("[case 5 boundary] empty-after-withholding history fails before runtime model work", async () => {
   const events = await fetchWorkbenchSessionEvents({
     sessionId: SESSION_ID,
     events: eventsReturning([{
@@ -111,7 +111,7 @@ Deno.test("[case 5 boundary] empty-after-withholding history fails before runtim
   assert.strictEqual(runtimeCalled, false);
 });
 
-Deno.test("[case 4 boundary] threads incident omission facts into runtime without changing persisted prompt", async () => {
+test("[case 4 boundary] threads incident omission facts into runtime without changing persisted prompt", async () => {
   const events = await fetchWorkbenchSessionEvents({
     sessionId: SESSION_ID,
     events: eventsReturning([
@@ -161,7 +161,7 @@ Deno.test("[case 4 boundary] threads incident omission facts into runtime withou
   });
 });
 
-Deno.test("a resumed turn reads its history only after the prior same-session turn settles", async () => {
+test("a resumed turn reads its history only after the prior same-session turn settles", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   let releaseFirst!: () => void;
@@ -209,7 +209,7 @@ Deno.test("a resumed turn reads its history only after the prior same-session tu
   ]);
 });
 
-Deno.test("a new-session turn hands the runtime the id its owner holds; a resumed turn carries none", async () => {
+test("a new-session turn hands the runtime the id its owner holds; a resumed turn carries none", async () => {
   const owners = new SessionOwners();
   const inputs: WorkbenchRuntimeInput[] = [];
   let activeDuringRun = 0;
@@ -235,7 +235,7 @@ Deno.test("a new-session turn hands the runtime the id its owner holds; a resume
   assert.deepStrictEqual(activeDuringRun, 1);
 });
 
-Deno.test("the ticket's signal reaches the runtime, and only an identified turn reports its window closing", async () => {
+test("the ticket's signal reaches the runtime, and only an identified turn reports its window closing", async () => {
   const owners = new SessionOwners();
   const inputs: WorkbenchRuntimeInput[] = [];
   const runRuntime = (input: WorkbenchRuntimeInput) => {
@@ -271,7 +271,7 @@ Deno.test("the ticket's signal reaches the runtime, and only an identified turn 
   assert.strictEqual(inputs[2].cancellationWindow, undefined);
 });
 
-Deno.test("a turn cancelled while queued behind its session's lock starts already aborted", async () => {
+test("a turn cancelled while queued behind its session's lock starts already aborted", async () => {
   const owners = new SessionOwners();
   const log: string[] = [];
   let releaseFirst!: () => void;
@@ -318,7 +318,7 @@ Deno.test("a turn cancelled while queued behind its session's lock starts alread
   assert.strictEqual(queuedInput?.abortSignal?.aborted, true);
 });
 
-Deno.test("executeTurn binds boundary config and the transport's paid verdict", async () => {
+test("executeTurn binds boundary config and the transport's paid verdict", async () => {
   let captured: WorkbenchRuntimeInput | undefined;
   const runRuntime = (input: WorkbenchRuntimeInput) => {
     captured = input;
@@ -353,7 +353,7 @@ Deno.test("executeTurn binds boundary config and the transport's paid verdict", 
   assert.deepStrictEqual(lines, [formatTurnSummaryLine(RESULT)]);
 });
 
-Deno.test("formatTurnSummaryLine reports external runner evidence without inventing model or USD facts", () => {
+test("formatTurnSummaryLine reports external runner evidence without inventing model or USD facts", () => {
   const line = formatTurnSummaryLine({
     sessionId: "01ACP",
     runner: { profile: "fixture", protocol: "acp", costBasis: "local_free" },
@@ -366,7 +366,7 @@ Deno.test("formatTurnSummaryLine reports external runner evidence without invent
   assert.deepStrictEqual(line.includes("cost=$"), false);
 });
 
-Deno.test("formatTurnSummaryLine carries routing and cost facts, never content", () => {
+test("formatTurnSummaryLine carries routing and cost facts, never content", () => {
   const line = formatTurnSummaryLine({
     sessionId: "01ABC",
     model: { slug: "claude-opus-4-8" },
@@ -381,7 +381,7 @@ Deno.test("formatTurnSummaryLine carries routing and cost facts, never content",
   assert.deepStrictEqual(line.includes("SECRET"), false);
 });
 
-Deno.test("formatTurnSummaryLine degrades gracefully on partial results", () => {
+test("formatTurnSummaryLine degrades gracefully on partial results", () => {
   const line = formatTurnSummaryLine(
     { sessionId: "01X" } as unknown as WorkbenchRuntimeResult,
   );
