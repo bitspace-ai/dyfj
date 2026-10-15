@@ -4,13 +4,18 @@
  * Creates the harness temp root first, so every engine socket path is known
  * before the tests start, then runs the golden tests with least-privilege
  * grants: loopback TCP, the exact Unix socket of each server profile, and
- * process spawn for the selected Deno and Dolt only. Arguments after `--`
- * reach the suite (for example `-- --update`).
+ * process spawn for the selected Deno and Dolt only. `--update` (for example
+ * `deno task test:golden --update`) is the one suite argument the golden
+ * files use: it lets them rewrite their snapshots.
  *
  * A golden file that registers with `node:test` runs after the rest, under
  * `node --test` with the per-file handle check (`scripts/node-test-lane.ts`)
- * and the same environment. Suite arguments cannot reach such a file, so a
- * run that passes them while one exists fails before it starts.
+ * and the same environment. `node --test` passes such a file no arguments,
+ * so `--update` reaches it as `DYFJ_GOLDEN_UPDATE=1`, and `snapshots.ts`
+ * refuses every snapshot write without it: with no permission sandbox on
+ * that runtime, the guard is in code. Any other suite argument cannot reach
+ * such a file, so a run that passes one while one exists fails before it
+ * starts.
  *
  * Under the aggregate gate it is also supervised as a test lane
  * (`scripts/lane-supervision.ts`): a backstop deadline, a lane token carrier,
@@ -25,6 +30,7 @@ import {
 import { requireNode, startNodeTests } from "../../scripts/node-test-lane.ts";
 import { fileURLToPath } from "node:url";
 import { SERVER_PROFILES, socketPathFor } from "./profiles.ts";
+import { GOLDEN_UPDATE_ENV } from "./snapshots.ts";
 import {
   killChild,
   laneSupervision,
@@ -43,14 +49,16 @@ const goldenFiles = partitionByRuntime(
   discoverGoldenTests(prototypeRoot),
 );
 requireNode();
-if (goldenFiles.node.length > 0 && suiteArgs.length > 0) {
-  // `node --test` runs each file in its own process and passes it no
-  // arguments, so `--update` cannot reach a Node golden file this way.
+// `node --test` runs each file in its own process and passes it no
+// arguments, so `--update` reaches a Node golden file as an environment
+// variable instead (`snapshots.ts`). Nothing else can reach one.
+const update = suiteArgs.includes("--update");
+const unreachable = suiteArgs.filter((arg) => arg !== "--update");
+if (goldenFiles.node.length > 0 && unreachable.length > 0) {
   throw new Error(
-    "dyfj: suite arguments (such as --update) reach only the golden files " +
-      `on the first runtime; these run under node --test: ${
-        goldenFiles.node.join(", ")
-      }`,
+    `dyfj: suite arguments other than --update (${unreachable.join(" ")}) ` +
+      "reach only the golden files on the first runtime; these run under " +
+      `node --test: ${goldenFiles.node.join(", ")}`,
   );
 }
 
@@ -87,7 +95,7 @@ try {
         `--allow-read=..,${tempWrite}`,
         // Only an explicit update may write snapshots; the lane cannot.
         `--allow-write=${tempWrite}${
-          Deno.args.includes("--update") ? ",testing/golden/snapshots" : ""
+          update ? ",testing/golden/snapshots" : ""
         }`,
         `--allow-run=${deno},dolt`,
         `--allow-net=${
@@ -115,7 +123,7 @@ try {
       lane: "test.golden",
       files: goldenFiles.node,
       cwd: prototypeRoot,
-      env,
+      env: update ? { ...env, [GOLDEN_UPDATE_ENV]: "1" } : env,
       // The files run one at a time, as the first subset's do.
       jobs: 1,
     });

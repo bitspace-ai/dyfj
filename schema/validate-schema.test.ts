@@ -1,3 +1,4 @@
+import { test } from "node:test";
 import {
   assertSchemaApplyPlan,
   buildSchemaApplyPlan,
@@ -29,7 +30,7 @@ function assertThrows(fn: () => unknown, expectedMessage: string): void {
   throw new Error(`Expected function to throw ${expectedMessage}`);
 }
 
-Deno.test("migrationFileNames returns sql files in lexical order", () => {
+test("migrationFileNames returns sql files in lexical order", () => {
   const entries = [
     { name: "010_events_capability.sql", isFile: true },
     { name: "README.md", isFile: true },
@@ -43,7 +44,7 @@ Deno.test("migrationFileNames returns sql files in lexical order", () => {
   ]);
 });
 
-Deno.test("buildSchemaApplyPlan groups schema files by purpose", () => {
+test("buildSchemaApplyPlan groups schema files by purpose", () => {
   const plan = buildSchemaApplyPlan({
     current: [
       { name: "README.md", isFile: true },
@@ -70,7 +71,7 @@ Deno.test("buildSchemaApplyPlan groups schema files by purpose", () => {
   });
 });
 
-Deno.test("assertSchemaApplyPlan requires a current baseline", () => {
+test("assertSchemaApplyPlan requires a current baseline", () => {
   assertThrows(
     () =>
       assertSchemaApplyPlan({
@@ -83,7 +84,7 @@ Deno.test("assertSchemaApplyPlan requires a current baseline", () => {
   );
 });
 
-Deno.test("assertSchemaApplyPlan requires preserved history", () => {
+test("assertSchemaApplyPlan requires preserved history", () => {
   assertThrows(
     () =>
       assertSchemaApplyPlan({
@@ -96,20 +97,20 @@ Deno.test("assertSchemaApplyPlan requires preserved history", () => {
   );
 });
 
-Deno.test("assertEventsTablePresent rejects missing events table output", () => {
+test("assertEventsTablePresent rejects missing events table output", () => {
   assertThrows(
     () => assertEventsTablePresent("+-------+\n| Tables |\n+-------+\n"),
     "events table was not found",
   );
 });
 
-Deno.test("assertEventsTablePresent accepts events table output", () => {
+test("assertEventsTablePresent accepts events table output", () => {
   assertEventsTablePresent(
     "+--------+\n| Tables |\n+--------+\n| events |\n+--------+\n",
   );
 });
 
-Deno.test("parseSchemaValidationScope accepts only one known selector", () => {
+test("parseSchemaValidationScope accepts only one known selector", () => {
   assertEquals(parseSchemaValidationScope([]), "all");
   assertEquals(parseSchemaValidationScope(["--current-only"]), "current");
   assertEquals(parseSchemaValidationScope(["--history-only"]), "history");
