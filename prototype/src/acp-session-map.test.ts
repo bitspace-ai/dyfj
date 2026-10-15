@@ -5,7 +5,7 @@
 import { captureRejection } from "../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { join } from "node:path";
 import process from "node:process";
 import {
@@ -134,19 +134,13 @@ function captureUnhandledRejections(): {
   stop: () => void;
 } {
   const failures: unknown[] = [];
-  const onEvent = (event: PromiseRejectionEvent) => {
-    failures.push(event.reason);
-    event.preventDefault();
-  };
   const onProcess = (reason: unknown) => {
     failures.push(reason);
   };
-  globalThis.addEventListener("unhandledrejection", onEvent);
   process.on("unhandledRejection", onProcess);
   return {
     failures,
     stop: () => {
-      globalThis.removeEventListener("unhandledrejection", onEvent);
       process.off("unhandledRejection", onProcess);
     },
   };

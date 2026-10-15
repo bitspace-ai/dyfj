@@ -221,6 +221,23 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The ACP fixture agent runs on either runtime, and the ACP tests that
+  drive it register with `node:test`.** `scripts/acp-fixture-agent.ts` is
+  written to `node:` builtins. The fixture profile now starts it on the
+  runtime running the product: `node <script>` under Node, and the existing
+  `run --cached-only` argv under Deno. Before, the profile always used that
+  argv with the current executable, so under `node --test` the agent never
+  answered. One helper, `fixtureAgentCommand` in the new
+  `src/acp-fixture-command.ts`, builds the command, and the tests that start
+  the fixture themselves use it too. The Deno argv now also
+  grants `NODE_V8_COVERAGE`, which Deno's `node:child_process` reads on every
+  spawn. The `acp-client`, `acp-runner`, `acp-session-map` and
+  `external-agent-runtime` test files (seven files) run under `node --test`
+  with the per-file leak check. A new integration test pins the agent's
+  parent-death watchdog: when its parent dies, the agent kills its own
+  process group, and a second member of that group must be gone too. The
+  `runtime.neutral` count falls from 1,236 to 1,203 (decision D32).
+
 - **The remaining product tests register with `node:test` and run under
   `node --test`, with the per-file leak check.** This covers the `context/`,
   `extensions/`, `server/`, `store/` and `transport/` tests and those under

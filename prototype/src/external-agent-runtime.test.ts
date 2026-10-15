@@ -3,7 +3,7 @@
 // run the external-agent runtime, the fixture agent or the Codex profile
 // builder live in external-agent-runtime.integration.test.ts.
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   MAX_HISTORY_MESSAGE_BYTES,
   MAX_HISTORY_TOOL_RESULT_BYTES,

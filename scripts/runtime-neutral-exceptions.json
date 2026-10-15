@@ -60,11 +60,6 @@
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "prototype/scripts/acp-fixture-agent.ts",
-    "count": 32,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/add-import-extensions.ts",
     "count": 7,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
@@ -178,11 +173,6 @@
     "path": "prototype/src/cli/launcher/runtime.ts",
     "count": 1,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/src/external-agent-runtime.integration.test.ts",
-    "count": 1,
-    "reason": "One test name: it pins that the fixture profile neither reads nor forwards the Deno cache variable (DENO_DIR), which its Deno CLI argv still depends on; it changes with the fixture agent under S3 of decision D32."
   },
   {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
