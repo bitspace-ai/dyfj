@@ -190,11 +190,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/src/store/sessions.test.ts",
-    "count": 19,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/testing/fakes/map-env.test.ts",
     "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   buildWorkbenchSessionContent,
   buildWorkbenchSessionSlug,
@@ -19,14 +20,14 @@ import {
   type TextRow,
 } from "./mod.ts";
 
-Deno.test("buildWorkbenchSessionSlug: derives a stable workbench slug from the session id", () => {
+test("buildWorkbenchSessionSlug: derives a stable workbench slug from the session id", () => {
   assert.strictEqual(
     buildWorkbenchSessionSlug("01ABCDEF0123456789ABCDEF01"),
     "workbench-01abcdef0123456789abcdef01",
   );
 });
 
-Deno.test("buildWorkbenchSessionContent: captures prompt, mode, trace, context sources, and receipt", () => {
+test("buildWorkbenchSessionContent: captures prompt, mode, trace, context sources, and receipt", () => {
   const content = buildWorkbenchSessionContent({
     mode: "turn",
     prompt: "What next?",
@@ -118,7 +119,7 @@ function sessionsReturning(
   };
 }
 
-Deno.test("createWorkbenchSession: commits an interactive session working view as a session_insert", async () => {
+test("createWorkbenchSession: commits an interactive session working view as a session_insert", async () => {
   const journal = recordingJournal();
 
   await createWorkbenchSession({
@@ -147,7 +148,7 @@ Deno.test("createWorkbenchSession: commits an interactive session working view a
   }]);
 });
 
-Deno.test("createWorkbenchSession: persists the workspace when bound and caps the task description", async () => {
+test("createWorkbenchSession: persists the workspace when bound and caps the task description", async () => {
   const store = new MemoryStore();
   await createWorkbenchSession({
     sessionId: "01TESTSESSION00000000000000",
@@ -168,7 +169,7 @@ Deno.test("createWorkbenchSession: persists the workspace when bound and caps th
   assert.strictEqual(summary?.task_description?.length, 256);
 });
 
-Deno.test("fetchWorkbenchSessionWorkspace: returns the persisted workspace for a session", async () => {
+test("fetchWorkbenchSessionWorkspace: returns the persisted workspace for a session", async () => {
   const ws = await fetchWorkbenchSessionWorkspace({
     sessionId: "01TESTSESSION00000000000000",
     sessions: sessionsReturning({
@@ -178,7 +179,7 @@ Deno.test("fetchWorkbenchSessionWorkspace: returns the persisted workspace for a
   assert.strictEqual(ws, "/workspace/example-project");
 });
 
-Deno.test("fetchWorkbenchSessionWorkspace: returns null when the session has no workspace or does not exist", async () => {
+test("fetchWorkbenchSessionWorkspace: returns null when the session has no workspace or does not exist", async () => {
   assert.strictEqual(
     await fetchWorkbenchSessionWorkspace({
       sessionId: "x",
@@ -195,7 +196,7 @@ Deno.test("fetchWorkbenchSessionWorkspace: returns null when the session has no 
   );
 });
 
-Deno.test("fetchWorkbenchSessionWorkspaceRecord: distinguishes an existing session without a workspace from a missing session", async () => {
+test("fetchWorkbenchSessionWorkspaceRecord: distinguishes an existing session without a workspace from a missing session", async () => {
   assert.deepStrictEqual(
     await fetchWorkbenchSessionWorkspaceRecord({
       sessionId: "existing",
@@ -212,7 +213,7 @@ Deno.test("fetchWorkbenchSessionWorkspaceRecord: distinguishes an existing sessi
   );
 });
 
-Deno.test("updateWorkbenchSession: marks the session complete with updated content", async () => {
+test("updateWorkbenchSession: marks the session complete with updated content", async () => {
   const journal = recordingJournal();
 
   await updateWorkbenchSession({
@@ -246,7 +247,7 @@ const listRow = (over: Record<string, string>) => ({
   ...over,
 });
 
-Deno.test("listWorkbenchSessions: groups sessions by project with unfiled last", async () => {
+test("listWorkbenchSessions: groups sessions by project with unfiled last", async () => {
   const groups = await listWorkbenchSessions({
     sessions: sessionsReturning({
       list: [
@@ -276,7 +277,7 @@ Deno.test("listWorkbenchSessions: groups sessions by project with unfiled last",
   assert.strictEqual(groups[2].sessions[0].project, null);
 });
 
-Deno.test("listWorkbenchSessions: passes the project filter and a clamped limit to the reader", async () => {
+test("listWorkbenchSessions: passes the project filter and a clamped limit to the reader", async () => {
   const calls: unknown[] = [];
   await listWorkbenchSessions({
     project: "dyfj",
@@ -297,7 +298,7 @@ Deno.test("listWorkbenchSessions: passes the project filter and a clamped limit 
   ]);
 });
 
-Deno.test("fetchWorkbenchSessionEvents: reads a session's newest events and returns them oldest first", async () => {
+test("fetchWorkbenchSessionEvents: reads a session's newest events and returns them oldest first", async () => {
   const calls: SessionEventsQuery[] = [];
   const events = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
@@ -314,7 +315,7 @@ Deno.test("fetchWorkbenchSessionEvents: reads a session's newest events and retu
   assert.deepStrictEqual(events.map((e) => e.eventId), ["evt-1", "evt-2"]);
 });
 
-Deno.test("fetchWorkbenchSessionEvents: passes asOf and an event id through, capping an event lookup at 10", async () => {
+test("fetchWorkbenchSessionEvents: passes asOf and an event id through, capping an event lookup at 10", async () => {
   const calls: SessionEventsQuery[] = [];
   await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
@@ -331,7 +332,7 @@ Deno.test("fetchWorkbenchSessionEvents: passes asOf and an event id through, cap
   }]);
 });
 
-Deno.test("fetchWorkbenchSessionEvents: maps row fields and nulls empty strings", async () => {
+test("fetchWorkbenchSessionEvents: maps row fields and nulls empty strings", async () => {
   const events = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
     events: eventsReturning([{
@@ -358,7 +359,7 @@ Deno.test("fetchWorkbenchSessionEvents: maps row fields and nulls empty strings"
   });
 });
 
-Deno.test("fetchWorkbenchSessionEvents: round-trips typed external-runner metadata", async () => {
+test("fetchWorkbenchSessionEvents: round-trips typed external-runner metadata", async () => {
   const [event] = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
     events: eventsReturning([{
@@ -408,7 +409,7 @@ Deno.test("fetchWorkbenchSessionEvents: round-trips typed external-runner metada
   });
 });
 
-Deno.test("fetchWorkbenchSessionEvents: returns trace parentage and tool arguments as structured JSON", async () => {
+test("fetchWorkbenchSessionEvents: returns trace parentage and tool arguments as structured JSON", async () => {
   const [event] = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
     events: eventsReturning([{
@@ -451,7 +452,7 @@ Deno.test("fetchWorkbenchSessionEvents: returns trace parentage and tool argumen
   });
 });
 
-Deno.test("fetchWorkbenchSessionEvents: leaves array-valued tool arguments absent", async () => {
+test("fetchWorkbenchSessionEvents: leaves array-valued tool arguments absent", async () => {
   const [event] = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",
     events: eventsReturning([{
@@ -466,7 +467,7 @@ Deno.test("fetchWorkbenchSessionEvents: leaves array-valued tool arguments absen
   assert.strictEqual(event.toolArguments, null);
 });
 
-Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across driver round-trips", async () => {
+test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across driver round-trips", async () => {
   // tinyint(1) reaches this mapper as a number (1/0) or a numeric string
   // ("1"/"0") depending on the driver path; a failed tool_call must normalize
   // to boolean true so resume replays it as an error, and absent stays null.
@@ -497,7 +498,7 @@ Deno.test("fetchWorkbenchSessionEvents: maps tool_is_error to a boolean across d
   ]);
 });
 
-Deno.test("fetchWorkbenchSessionEvents: rejects invalid limits", async () => {
+test("fetchWorkbenchSessionEvents: rejects invalid limits", async () => {
   await assert.rejects(
     () =>
       fetchWorkbenchSessionEvents({
@@ -523,7 +524,7 @@ Deno.test("fetchWorkbenchSessionEvents: rejects invalid limits", async () => {
   );
 });
 
-Deno.test("fetchWorkbenchSessionEvents: preserves explicit descending order", async () => {
+test("fetchWorkbenchSessionEvents: preserves explicit descending order", async () => {
   const calls: SessionEventsQuery[] = [];
   const events = await fetchWorkbenchSessionEvents({
     sessionId: "s1",
