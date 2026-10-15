@@ -50,6 +50,13 @@ in the same change that lands this spec's first work order.
     the file and exits its process when anything beyond that baseline remains,
     so a leaked server, socket, timer or child process can neither pass nor hang
     the run.
+  - Before each comparison the check waits for everything already written to
+    the file's own stdout and stderr to flush. Stdout is the runner's channel
+    to its parent `node --test`, and where pipe writes are asynchronous
+    (macOS) a write still in flight on it is the runner's output, not a leak.
+    A pending write to any other stream is still reported. A failing file sets
+    its exit code and exits after a bounded grace period, once its output is
+    flushed, so the runner's report of its tests is not cut off.
   - The check is per file, so it is coarser than a per-test sanitizer: it names
     the file that leaked, not the test, and does not see a resource one test
     leaves open and a later test in the same file closes.
