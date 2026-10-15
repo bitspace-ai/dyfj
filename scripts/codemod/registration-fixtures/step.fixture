@@ -1,0 +1,29 @@
+# t.step becomes t.test on a test function's context, through nested steps
+# whose context shadows it; an unrelated .step is left alone.
+rules: registration.test, registration.step
+--- before
+import { stepper } from "./stepper.ts";
+
+Deno.test("steps", async (t) => {
+  await t.step("outer", async (t) => {
+    await t.step("inner", () => {});
+  });
+  await t.step("second", async (inner) => {
+    await inner.step("third", () => {});
+  });
+  stepper.step();
+});
+--- after
+import { test } from "node:test";
+import { stepper } from "./stepper.ts";
+
+test("steps", async (t) => {
+  await t.test("outer", async (t) => {
+    await t.test("inner", () => {});
+  });
+  await t.test("second", async (inner) => {
+    await inner.test("third", () => {});
+  });
+  stepper.step();
+});
+--- findings

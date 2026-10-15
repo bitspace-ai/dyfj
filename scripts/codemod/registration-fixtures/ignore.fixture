@@ -1,0 +1,31 @@
+# A bdd ignore option becomes node:test's skip, in either layout.
+rules: registration.bdd-import, registration.ignore
+--- before
+import { describe, it } from "@std/testing/bdd";
+
+const posix = process.platform !== "win32";
+
+describe("posix only", { ignore: !posix }, () => {
+  it("runs", () => {});
+});
+
+describe("also posix only", {
+  ignore: !posix,
+}, () => {
+  it("skipped case", { ignore: true }, () => {});
+});
+--- after
+import { describe, it } from "node:test";
+
+const posix = process.platform !== "win32";
+
+describe("posix only", { skip: !posix }, () => {
+  it("runs", () => {});
+});
+
+describe("also posix only", {
+  skip: !posix,
+}, () => {
+  it("skipped case", { skip: true }, () => {});
+});
+--- findings

@@ -1,0 +1,20 @@
+# The object form is converted by hand, and so is the rest of its file.
+rules:
+--- before
+Deno.test("plain", () => {});
+
+Deno.test({
+  name: "leaky",
+  sanitizeResources: false,
+  fn: () => {},
+});
+--- after
+Deno.test("plain", () => {});
+
+Deno.test({
+  name: "leaky",
+  sanitizeResources: false,
+  fn: () => {},
+});
+--- findings
+hand-review object-form 3

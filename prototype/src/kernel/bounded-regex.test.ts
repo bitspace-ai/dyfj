@@ -7,6 +7,7 @@ import {
   RegexUnavailable,
 } from "./bounded-regex.ts";
 
+// On the host's runner until the regex worker runs under Node (BIT-651).
 Deno.test("BoundedMatcher returns the indices of matching lines", async () => {
   const matcher = new BoundedMatcher("^b");
   try {

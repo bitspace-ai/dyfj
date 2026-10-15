@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { takeCodePointPrefix } from "./code-points.ts";
 
-Deno.test("takeCodePointPrefix stops the iterator at the configured code-point budget", () => {
+test("takeCodePointPrefix stops the iterator at the configured code-point budget", () => {
   let yielded = 0;
   function* gated(): Generator<string> {
     while (true) {
@@ -16,15 +17,15 @@ Deno.test("takeCodePointPrefix stops the iterator at the configured code-point b
   assert.deepStrictEqual(yielded, 256);
 });
 
-Deno.test("takeCodePointPrefix counts code points, not UTF-16 code units", () => {
+test("takeCodePointPrefix counts code points, not UTF-16 code units", () => {
   assert.deepStrictEqual(takeCodePointPrefix("😀😀😀", 2), ["😀", "😀"]);
 });
 
-Deno.test("takeCodePointPrefix returns everything when the source is shorter", () => {
+test("takeCodePointPrefix returns everything when the source is shorter", () => {
   assert.deepStrictEqual(takeCodePointPrefix("ab", 5), ["a", "b"]);
 });
 
-Deno.test("takeCodePointPrefix returns nothing for a non-positive limit", () => {
+test("takeCodePointPrefix returns nothing for a non-positive limit", () => {
   let pulled = false;
   function* source(): Generator<string> {
     pulled = true;

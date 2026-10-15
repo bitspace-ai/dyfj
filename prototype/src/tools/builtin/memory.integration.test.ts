@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import { type DoltStore, MEMORY_VISIBILITY_ALL } from "../../store/mod.ts";
 import { openFixtureStore } from "../../../testing/dolt/fixture-sql.ts";
 import { executeReadMemory } from "./memory.ts";

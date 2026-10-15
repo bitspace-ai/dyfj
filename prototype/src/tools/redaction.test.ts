@@ -2,7 +2,7 @@
 // event applies it.
 
 import assert from "node:assert/strict";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { EventInsert } from "../store/mod.ts";
 import type { CommandCall, CommandDefinition } from "./definition.ts";
 import { createCommandRegistry } from "./registry.ts";

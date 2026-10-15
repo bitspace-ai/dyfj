@@ -1,0 +1,33 @@
+# A context used other than for step is converted by hand, as is a function
+# that reads bdd's shared this.
+rules:
+--- before
+import { describe, it } from "@std/testing/bdd";
+
+Deno.test("named", (t) => {
+  console.log(t.name);
+});
+
+describe("suite", () => {
+  it("this", function (t) {
+    void this;
+    void t;
+  });
+});
+--- after
+import { describe, it } from "@std/testing/bdd";
+
+Deno.test("named", (t) => {
+  console.log(t.name);
+});
+
+describe("suite", () => {
+  it("this", function (t) {
+    void this;
+    void t;
+  });
+});
+--- findings
+hand-review context-use 4
+hand-review context-use 8
+hand-review context-use 10

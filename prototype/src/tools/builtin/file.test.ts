@@ -21,6 +21,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// On the host's runner until the regex worker runs under Node (BIT-651).
 import { afterAll, beforeAll, describe, it } from "@std/testing/bdd";
 import { isWithinRoot, resolveWorkspacePath } from "./file-access.ts";
 import { matchesGlobPath } from "./file-glob.ts";

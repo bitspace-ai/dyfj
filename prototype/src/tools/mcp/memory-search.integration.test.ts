@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   createMcpHandler,
   legacyStatelessFallback,
@@ -110,7 +111,7 @@ function fixtureServer(
   return server;
 }
 
-Deno.test(
+test(
   "modern recall negotiates 2026-07-28 and emits actual routing headers",
   async () => {
     const query = "modern-needle";
@@ -180,7 +181,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "tool responses may exceed the probe bound while remaining call-bounded",
   async () => {
     const mcp = createMcpHandler(
@@ -205,7 +206,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "a stalled diagnostic observer cannot delay the recall call",
   async () => {
     const mcp = createMcpHandler(
@@ -230,7 +231,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "auto negotiation deliberately falls back through legacy initialize",
   async () => {
     const calls: string[] = [];
@@ -278,7 +279,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "a stalled modern probe fails without legacy reinterpretation",
   async () => {
     const methods: string[] = [];
@@ -319,7 +320,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "a stalled legacy initialize is bounded before any tool call",
   async () => {
     const methods: string[] = [];
@@ -364,7 +365,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "strict modern fixture rejects a corrupted SDK routing header without replay",
   async () => {
     let toolCalls = 0;
@@ -420,7 +421,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "redirect refusal contains both fixed token header modes on the SDK probe",
   async () => {
     let targetRequests = 0;
@@ -475,7 +476,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "a broken modern response stream fails once without partial success or replay",
   async () => {
     const requestIds: unknown[] = [];
@@ -533,7 +534,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "diagnostics bound and sanitize server-controlled structured fields",
   async () => {
     const query = "private-query-fragment";
@@ -605,7 +606,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "diagnostics bound normalization and retained extension processing",
   async () => {
     const sensitiveValue = "abcdefghijklmnopqrstuvwxyz".repeat(5).slice(0, 120);
@@ -674,7 +675,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "diagnostics are omitted when a sensitive input exceeds the scan bound",
   async () => {
     const longQuery = `${"q".repeat(256)}distinct-sensitive-suffix`;
@@ -710,7 +711,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "diagnostics omit identifiers that collide with the redaction marker",
   async () => {
     const diagnostics: MemorySearchDiagnostic[] = [];
@@ -746,7 +747,7 @@ Deno.test(
   },
 );
 
-Deno.test(
+test(
   "recallRequestInit: a redirecting endpoint rejects instead of being followed (live fetch)",
   async () => {
     // Regression for the https→http 307 downgrade: a loopback server answers

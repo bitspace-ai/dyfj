@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import process from "node:process";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import type { CommandCall } from "../definition.ts";
 import { defineBash, executeBash } from "./exec.ts";
 
@@ -74,7 +74,7 @@ async function runTimed(command: string) {
   return { out, elapsedMs: performance.now() - start };
 }
 
-describe("bash timeout against a real process tree", { ignore: !posix }, () => {
+describe("bash timeout against a real process tree", { skip: !posix }, () => {
   it("stops a backgrounded child the shell waits on", async () => {
     let pid: number | undefined;
     try {
@@ -129,7 +129,7 @@ describe("bash timeout against a real process tree", { ignore: !posix }, () => {
 // invokes it: the executor resolves `timeoutSec` and the real runner honours
 // it, for a command that finishes and for a tree that does not.
 describe("bash with a requested timeoutSec against real processes", {
-  ignore: !posix,
+  skip: !posix,
 }, () => {
   const bash = defineBash(process.cwd());
   const context = { authzBasis: "policy:allow:operator-approved" };

@@ -95,6 +95,7 @@ const external = await buildExternalMcpCommands(
   },
 );
 
+// Stays on the host's test function until the tool kit moves with it (BIT-650).
 Deno.test("the kit's external MCP fixture derives every command shape", () => {
   assert.deepStrictEqual(external.commands.map((command) => command.id), [
     "mcp.linear.get_issue",

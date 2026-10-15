@@ -1,0 +1,19 @@
+# A bdd it's function receives the context too.
+rules: registration.bdd-import, registration.step
+--- before
+import { describe, it } from "@std/testing/bdd";
+
+describe("suite", () => {
+  it("steps", async (t) => {
+    await t.step("one", () => {});
+  });
+});
+--- after
+import { describe, it } from "node:test";
+
+describe("suite", () => {
+  it("steps", async (t) => {
+    await t.test("one", () => {});
+  });
+});
+--- findings

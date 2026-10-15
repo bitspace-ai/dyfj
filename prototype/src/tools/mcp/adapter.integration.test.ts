@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { readFile } from "node:fs/promises";
+import { test } from "node:test";
 import { parse as parseToml } from "smol-toml";
 import { z } from "zod";
 import {
@@ -73,7 +74,7 @@ function fixtureServer(onCall: (id: string) => void): McpServer {
   return server;
 }
 
-Deno.test("documented external MCP TOML parses as one server with two tools", async () => {
+test("documented external MCP TOML parses as one server with two tools", async () => {
   const table = parseToml(
     await fixtureToml("mcp-adapter-documented.toml"),
   ) as Record<string, unknown>;
@@ -97,7 +98,7 @@ Deno.test("documented external MCP TOML parses as one server with two tools", as
   }]);
 });
 
-Deno.test("documented bounded Linear issue binding parses with stable IDs", async () => {
+test("documented bounded Linear issue binding parses with stable IDs", async () => {
   const table = parseToml(
     await fixtureToml("mcp-adapter-linear-binding.toml"),
   ) as Record<string, unknown>;
@@ -111,7 +112,7 @@ Deno.test("documented bounded Linear issue binding parses with stable IDs", asyn
   });
 });
 
-Deno.test("external MCP discovery and call stay strict, allowlisted, and framed", async () => {
+test("external MCP discovery and call stay strict, allowlisted, and framed", async () => {
   const calls: string[] = [];
   const requests: Array<{
     method: string;
@@ -207,7 +208,7 @@ Deno.test("external MCP discovery and call stay strict, allowlisted, and framed"
   );
 });
 
-Deno.test("external MCP redirect refusal never reaches the redirect target", async () => {
+test("external MCP redirect refusal never reaches the redirect target", async () => {
   let targetRequests = 0;
   const target = await startLoopbackHttp(() => {
     targetRequests++;
@@ -236,7 +237,7 @@ Deno.test("external MCP redirect refusal never reaches the redirect target", asy
   }
 });
 
-Deno.test("a broken external MCP tool response fails once without replay", async () => {
+test("a broken external MCP tool response fails once without replay", async () => {
   let toolCalls = 0;
   const requestIds: unknown[] = [];
   const http = await startLoopbackMcpServer(
@@ -288,7 +289,7 @@ Deno.test("a broken external MCP tool response fails once without replay", async
   assertEquals(requestIds.length, 1);
 });
 
-Deno.test("an oversized external MCP tool response fails at the transport bound", async () => {
+test("an oversized external MCP tool response fails at the transport bound", async () => {
   let toolCalls = 0;
   const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({
@@ -351,7 +352,7 @@ Deno.test("an oversized external MCP tool response fails at the transport bound"
   assertEquals(toolCalls, 2);
 });
 
-Deno.test("external search server capability registers web_search and web_fetch commands", async () => {
+test("external search server capability registers web_search and web_fetch commands", async () => {
   let searchCalls = 0;
   const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({

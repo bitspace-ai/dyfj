@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mock } from "node:test";
-import { describe, it } from "@std/testing/bdd";
+import { describe, it, mock } from "node:test";
 import saveIssueSchema from "../../extensions/linear/linear-save-issue-schema.fixture.ts";
 import { buildLinearIssueCreationCommand } from "../../extensions/linear/mod.ts";
 import {

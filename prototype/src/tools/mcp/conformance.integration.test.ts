@@ -1,3 +1,4 @@
+import { test } from "node:test";
 import {
   Client,
   type FetchLike,
@@ -53,14 +54,16 @@ async function connectedFixture(
   };
 }
 
-function modernClient(options: ConstructorParameters<typeof Client>[1] = {}): Client {
+function modernClient(
+  options: ConstructorParameters<typeof Client>[1] = {},
+): Client {
   return new Client({ name: "dyfj-conformance-client", version: "1.0.0" }, {
     ...options,
     versionNegotiation: { mode: { pin: "2026-07-28" } },
   });
 }
 
-Deno.test("MCP recall injects and the server extracts canonical W3C context", async () => {
+test("MCP recall injects and the server extracts canonical W3C context", async () => {
   let receivedMeta: Record<string, unknown> | undefined;
   const http = await startLoopbackMcpServer(() => {
     const server = new McpServer({
@@ -91,16 +94,25 @@ Deno.test("MCP recall injects and the server extracts canonical W3C context", as
     assert(result === "traced", "unexpected trace fixture result");
     const extracted = extractMcpTraceContext(receivedMeta);
     assert(extracted !== undefined, "server did not extract trace context");
-    assert(extracted.traceId === "4bf92f3577b34da6a3ce929d0e0e4736", "trace id changed");
-    assert(extracted.parentSpanId === "00f067aa0ba902b7", "parent span changed");
+    assert(
+      extracted.traceId === "4bf92f3577b34da6a3ce929d0e0e4736",
+      "trace id changed",
+    );
+    assert(
+      extracted.parentSpanId === "00f067aa0ba902b7",
+      "parent span changed",
+    );
     assert(extracted.parentIsRemote, "remote-parent evidence was absent");
-    assert(receivedMeta?.baggage === undefined, "raw baggage crossed the boundary");
+    assert(
+      receivedMeta?.baggage === undefined,
+      "raw baggage crossed the boundary",
+    );
   } finally {
     await http.close();
   }
 });
 
-Deno.test("MCP fixture completes a bounded multi-round-trip request", async () => {
+test("MCP fixture completes a bounded multi-round-trip request", async () => {
   const requestStates: string[] = [];
   const requestIds: unknown[] = [];
   const factory = () => {
@@ -149,7 +161,10 @@ Deno.test("MCP fixture completes a bounded multi-round-trip request", async () =
   }));
   const recordingFetch: FetchLike = async (input, init) => {
     if (typeof init?.body === "string") {
-      const request = JSON.parse(init.body) as { id?: unknown; method?: string };
+      const request = JSON.parse(init.body) as {
+        id?: unknown;
+        method?: string;
+      };
       if (request.method === "tools/call") requestIds.push(request.id);
     }
     return await fetch(input, init);
@@ -161,7 +176,10 @@ Deno.test("MCP fixture completes a bounded multi-round-trip request", async () =
       arguments: { query: "fixture" },
     });
     assert(result.content[0]?.type === "text", "fixture result was not text");
-    assert(result.content[0].text === "confirmed:fixture", "unexpected fixture result");
+    assert(
+      result.content[0].text === "confirmed:fixture",
+      "unexpected fixture result",
+    );
     assert(
       requestStates.length === 1 && requestStates[0] === "fixture-state-v1",
       "requestState was not echoed byte-exactly",
@@ -175,7 +193,7 @@ Deno.test("MCP fixture completes a bounded multi-round-trip request", async () =
   }
 });
 
-Deno.test("MCP fixture returns deterministic completion candidates", async () => {
+test("MCP fixture returns deterministic completion candidates", async () => {
   const factory = () => {
     const server = new McpServer({
       name: "dyfj-conformance-server",
@@ -185,8 +203,12 @@ Deno.test("MCP fixture returns deterministic completion candidates", async () =>
       "fixture-prompt",
       {
         argsSchema: z.object({
-          language: completable(z.string(), (value) =>
-            ["rust", "typescript", "zig"].filter((entry) => entry.startsWith(value))
+          language: completable(
+            z.string(),
+            (value) =>
+              ["rust", "typescript", "zig"].filter((entry) =>
+                entry.startsWith(value)
+              ),
           ),
         }),
       },
@@ -203,13 +225,16 @@ Deno.test("MCP fixture returns deterministic completion candidates", async () =>
       ref: { type: "ref/prompt", name: "fixture-prompt" },
       argument: { name: "language", value: "t" },
     });
-    assert(result.completion.values.join(",") === "typescript", "unexpected completions");
+    assert(
+      result.completion.values.join(",") === "typescript",
+      "unexpected completions",
+    );
   } finally {
     await close();
   }
 });
 
-Deno.test("MCP fixture propagates cancellation through the request stream", async () => {
+test("MCP fixture propagates cancellation through the request stream", async () => {
   const handlerEntered = Promise.withResolvers<void>();
   const serverCancelled = Promise.withResolvers<void>();
   const factory = () => {
@@ -220,17 +245,18 @@ Deno.test("MCP fixture propagates cancellation through the request stream", asyn
     server.registerTool(
       "wait",
       { inputSchema: z.object({}) },
-      (_args, ctx) => new Promise((resolve) => {
-        handlerEntered.resolve();
-        ctx.mcpReq.signal.addEventListener("abort", () => {
-          serverCancelled.resolve();
-          resolve({
-            resultType: "complete",
-            isError: true,
-            content: [{ type: "text", text: "cancelled" }],
-          });
-        }, { once: true });
-      }),
+      (_args, ctx) =>
+        new Promise((resolve) => {
+          handlerEntered.resolve();
+          ctx.mcpReq.signal.addEventListener("abort", () => {
+            serverCancelled.resolve();
+            resolve({
+              resultType: "complete",
+              isError: true,
+              content: [{ type: "text", text: "cancelled" }],
+            });
+          }, { once: true });
+        }),
     );
     return server;
   };
