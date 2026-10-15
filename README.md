@@ -529,9 +529,10 @@ gets no key and fails closed, and it sends `SIGKILL` to the _immediate_ resolver
 process. It does **not** reap the resolver's process _tree_ — Deno exposes no
 process-group primitive — so a resolver configured as a **shell wrapper** can
 leave a descendant running past the timeout. That descendant **cannot inject
-into the runtime** (the env var is never set and the output pipe is abandoned),
-but it could keep a vault session unlocked or write bytes to a pipe no one
-reads. **Prefer a direct-binary resolver** — `op read` is a single process with
+into the runtime**: the env var is never set, and at the timeout the runtime
+closes its own ends of the resolver's stdout and stderr pipes, so it holds no
+pipe for the descendant and keeps nothing the descendant writes afterwards. It
+could still keep a vault session unlocked. **Prefer a direct-binary resolver** — `op read` is a single process with
 no descendant tree; a shell-wrapper resolver is responsible for cleaning up its
 own children.
 
@@ -2184,3 +2185,6 @@ Document revisions only. Code and behavior changes are tracked in
   for conformance-kit callers: a file that imports a kit from
   `prototype/testing/conformance/` runs under `node --test`, because the kits
   now register with `node:test`.
+- 2026-10-15 - The secrets resolver's "fail-closed on timeout" guarantee says
+  that the runtime closes its ends of a timed-out resolver's output pipes,
+  replacing the claim that the pipe is abandoned.

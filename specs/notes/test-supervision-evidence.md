@@ -128,11 +128,17 @@ and the secrets-resolver case was missed.)
   stdout and stderr open. Test-side.
 - `scripts/isolated-dolt-fixture.integration.test.ts`: two timers are left
   pending by the fixture helper's shutdown timeout. Test tooling.
-- `src/config/secrets.integration.test.ts`: the resolver-timeout case leaves an output
-  read pending. This is by design: on timeout the resolver stops awaiting a
-  stuck child's output so it can never hold the boot, and the case's `sleep`
-  grandchild keeps the pipes open for about 5 s. With the lane's sanitizers on,
-  that case runs with both off and a comment saying why.
+- `src/config/secrets.integration.test.ts` (historical): the resolver-timeout
+  case left an output read pending, and with the lane's sanitizers on it ran
+  with both off and a comment calling the leak by design. On timeout the
+  resolver stops awaiting a stuck child's output, so it can never hold the
+  boot, and the case's `sleep` grandchild keeps the pipes open for about 5 s.
+  (Updated 2026-10-15: the leak was a product defect, not by design. After a
+  timeout the resolver kept its own ends of the stdout and stderr pipes for as
+  long as any descendant held them. BIT-653 fixes it: on timeout the resolver
+  now closes both. The file now registers with `node:test` and runs under
+  `node --test` with the per-file handle check, which it passes with the
+  grandchild still alive.)
 
 The ACP client, session-map, external-agent-runtime, launcher, launch-grant,
 repo-context and `deno.json` task integration files already pass under both
@@ -244,4 +250,7 @@ What moves rather than goes:
   group stop. A same-group grandchild survives both a normal exit of the runner
   (L4) and a SIGKILL of it (L7). Ctrl-C reaches it, because it signals the whole
   foreground group. Of today's tests, only the secret-resolver timeout case
-  leaves one, and only for about 5 s.
+  leaves one, and only for about 5 s. (Updated 2026-10-15: that case now runs
+  under `node --test`, not `deno test`. A direct `node --test` run of
+  `src/config/secrets.integration.test.ts` can leave its `sleep` grandchild
+  for about 5 s; in a gate run, the lane's group stop reaps it.)
