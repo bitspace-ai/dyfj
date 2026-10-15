@@ -71,7 +71,8 @@ Section 5.
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
-    `external-agent-runtime.ts`), whose move is deferred;
+    `external-agent-runtime.ts`, and `acp-fixture-command.ts`, which builds
+    the fixture agent's command), whose move is deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
     `core/dyfj-repl` replaces.
 
@@ -2211,3 +2212,6 @@ Document revisions only. Code and behavior changes are tracked in
   (`prototype/testing/golden/snapshots.ts`, on by `DYFJ_GOLDEN_UPDATE=1`)
   replaces the write grant as what keeps a plain golden run from writing a
   snapshot.
+- 2026-10-15 - The list of modules not yet moved into `prototype/src/` unit
+  directories adds `acp-fixture-command.ts`, the ACP runner module that
+  builds the fixture agent's command for the runtime running the product.

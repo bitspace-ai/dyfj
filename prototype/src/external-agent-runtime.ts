@@ -32,6 +32,7 @@ import {
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
+import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
@@ -110,20 +111,7 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
   }
   return {
     slug: "fixture",
-    // The argv below is the current runtime CLI's (`run --cached-only …`):
-    // the fixture agent is a script for that runtime. It changes when the
-    // fixture agent itself moves onto Node.
-    command: process.execPath,
-    args: [
-      "run",
-      "--cached-only",
-      "--node-modules-dir=manual",
-      `--config=${fileURLToPath(new URL("../deno.json", import.meta.url))}`,
-      "--allow-env=ACP_FIXTURE_MODE,ACP_FIXTURE_ALLOWED,ACP_FIXTURE_AUTH_STATUS,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DOLT_PASSWORD,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK",
-      fileURLToPath(
-        new URL("../scripts/acp-fixture-agent.ts", import.meta.url),
-      ),
-    ],
+    ...fixtureAgentCommand(),
     environment,
     workspace,
     transport: "local_stdio",
