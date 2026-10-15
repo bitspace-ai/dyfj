@@ -221,6 +221,22 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The launcher's grant readers use `node:` builtins, and their tests run
+  under `node --test`, with the per-file leak check.** `cli/launcher/grants.ts`
+  read `deno.json`, resolved paths and checked file modes through the existing
+  runtime's global, so its two test files could not leave that runtime's
+  runner. It now reads through `node:fs/promises` (`readFile`, `realpath`,
+  `stat`, `lstat`) and checks the platform through `node:process`. Behavior is
+  unchanged: the same symlink refusal, execute-bit check, delimiter checks and
+  error messages, and the launcher still runs under the existing runtime,
+  whose `node:fs` is subject to the same permission grants. The registrations
+  codemod moved `grants.test.ts` and `grants.integration.test.ts` onto Node.
+  New tests pin refusals that had none: a missing, directory or
+  non-executable `DYFJ_NODE_PATH`; a `serve-unix` profile without a string
+  grant list; and a Codex toolchain or Rustup directory whose canonical path
+  carries a delimiter. The `runtime.neutral` count falls from 1,236 to 1,223
+  (decision D32).
+
 - **The remaining product tests register with `node:test` and run under
   `node --test`, with the per-file leak check.** This covers the `context/`,
   `extensions/`, `server/`, `store/` and `transport/` tests and those under

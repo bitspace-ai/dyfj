@@ -171,8 +171,8 @@
   },
   {
     "path": "prototype/src/cli/launcher/grants.ts",
-    "count": 15,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
+    "count": 2,
+    "reason": "Launcher error messages: two refusals name Deno's run and network grants, which the launcher still builds for the runtime child; they change with the launcher under S4 of decision D32."
   },
   {
     "path": "prototype/src/cli/launcher/runtime.ts",

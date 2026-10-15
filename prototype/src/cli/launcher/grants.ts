@@ -6,6 +6,8 @@
  * names), so the client resolves them here and passes them explicitly.
  */
 
+import { lstat, realpath, stat } from "node:fs/promises";
+import process from "node:process";
 import { hasDotPathComponent } from "../../kernel/mod.ts";
 import {
   assertSecureMemoryUrl,
@@ -15,6 +17,7 @@ import {
   type McpHttpServerConfig,
   processEnv,
   readLauncherEnvVar,
+  readTextFile as defaultReadTextFile,
   type SecretsConfig,
 } from "../../config/mod.ts";
 
@@ -91,7 +94,7 @@ export function buildServeUnixArgs(
 
 /** Read the serve-unix profile's declared env grants from deno.json. */
 export async function readServeUnixEnvGrants(cwd: string): Promise<string[]> {
-  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
   const parsed = JSON.parse(raw) as {
     permissions?: { "serve-unix"?: { env?: unknown } };
   };
@@ -106,7 +109,7 @@ export async function readServeUnixEnvGrants(cwd: string): Promise<string[]> {
 
 /** Read the serve-unix profile's declared run grants from deno.json. */
 export async function readServeUnixRunGrants(cwd: string): Promise<string[]> {
-  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
   const parsed = JSON.parse(raw) as {
     permissions?: { "serve-unix"?: { run?: unknown } };
   };
@@ -133,11 +136,11 @@ export async function nodeRunGrant(
   }
   let resolved: string;
   try {
-    resolved = await Deno.realPath(configured);
-    const info = await Deno.stat(resolved);
+    resolved = await realpath(configured);
+    const info = await stat(resolved);
     if (
-      !info.isFile ||
-      (Deno.build.os !== "windows" && ((info.mode ?? 0) & 0o111) === 0)
+      !info.isFile() ||
+      (process.platform !== "win32" && (info.mode & 0o111) === 0)
     ) throw new Error("not executable");
   } catch {
     throw new Error("DYFJ_NODE_PATH executable is unavailable");
@@ -172,11 +175,11 @@ export async function toolchainReadGrant(
     const noFollowPath = configured === "/"
       ? configured
       : configured.replace(/\/+$/, "");
-    const info = await Deno.lstat(noFollowPath);
-    if (!info.isDirectory || info.isSymlink) {
+    const info = await lstat(noFollowPath);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error("unavailable directory");
     }
-    const resolved = await Deno.realPath(noFollowPath);
+    const resolved = await realpath(noFollowPath);
     if (resolved.includes(",") || resolved.includes(":")) {
       throw new Error("unsafe canonical path");
     }
@@ -208,11 +211,11 @@ export async function rustupHomeReadGrant(
     const noFollowPath = configured === "/"
       ? configured
       : configured.replace(/\/+$/, "");
-    const info = await Deno.lstat(noFollowPath);
-    if (!info.isDirectory || info.isSymlink) {
+    const info = await lstat(noFollowPath);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
       throw new Error("unavailable directory");
     }
-    const resolved = await Deno.realPath(noFollowPath);
+    const resolved = await realpath(noFollowPath);
     if (resolved.includes(",") || resolved.includes(":")) {
       throw new Error("unsafe canonical path");
     }
@@ -256,7 +259,7 @@ export function memoryMcpNetGrant(url: string | undefined): string | null {
  */
 export async function readMemoryMcpNetGrant(
   cwd: string,
-  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
   env: Env = processEnv,
 ): Promise<string | null> {
   // Any DEFINED ambient value is authoritative — including empty: --env-file
@@ -282,7 +285,7 @@ export async function readMemoryMcpNetGrant(
  */
 export async function readLauncherSecretsConfig(
   cwd: string,
-  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
   env: Env = processEnv,
   parseToml?: (raw: string) =>
     | Record<string, unknown>
@@ -302,7 +305,7 @@ export async function readLauncherSecretsConfig(
 export async function readLauncherMcpServersConfig(
   cwd: string,
   secrets: SecretsConfig | null,
-  readTextFile: (path: string) => Promise<string> = Deno.readTextFile,
+  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
   env: Env = processEnv,
   parseToml?: (raw: string) =>
     | Record<string, unknown>
@@ -322,7 +325,7 @@ export async function readLauncherMcpServersConfig(
 
 /** Read the serve-unix profile's declared net grants from deno.json. */
 export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
-  const raw = await Deno.readTextFile(`${cwd}/deno.json`);
+  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
   const parsed = JSON.parse(raw) as {
     permissions?: { "serve-unix"?: { net?: unknown } };
   };
