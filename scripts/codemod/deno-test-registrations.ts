@@ -119,7 +119,6 @@ export interface ConversionResult {
 // ---------------------------------------------------------------- scanner --
 
 const IDENT = /[\w$]/;
-const IDENT_START = /[A-Za-z_$]/;
 const SPACE = /\s/;
 const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
 
@@ -571,7 +570,7 @@ export function convertSource(text: string): ConversionResult {
   const pending = [...contexts];
   const seen = new Set<number>();
   while (pending.length > 0) {
-    const { fn, pos } = pending.shift()!;
+    const { fn } = pending.shift()!;
     if (seen.has(fn.paramsStart)) continue;
     seen.add(fn.paramsStart);
     declared.add(fn.paramsStart);
