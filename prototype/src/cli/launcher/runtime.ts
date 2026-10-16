@@ -10,10 +10,12 @@ import {
   type Env,
   guardedSpawn,
   processEnv,
-  readLauncherEnvVar,
+  readLauncherEnv,
   readNameserverNetGrants,
   readTextFile,
+  resolveDoltConnection,
   runtimeChildEnv,
+  type RuntimePolicy,
 } from "../../config/mod.ts";
 import type { CliConfig } from "../args.ts";
 import { processSigintSource } from "../io.ts";
@@ -81,36 +83,45 @@ export function installRootFromModuleUrl(moduleUrl: string): string | null {
   return match[1];
 }
 
+/** What the launcher starts the runtime with. */
+export interface RuntimeLaunch {
+  /** The composed policy; the runtime's grants and its guards both read it. */
+  policy: RuntimePolicy;
+  /** The runtime's `deno run` args. No `--env-file`: `env` already holds it. */
+  args: string[];
+  /** The runtime's complete environment. */
+  env: Record<string, string>;
+}
+
 /**
- * Start the runtime and wait for it to exit. The runtime's policy is composed
- * here from the same sources the engine composes it from at boot
- * (`composeRuntimePolicy`): its Deno grants are built from it, and its
- * environment is exactly the policy's names plus the runtime-platform
- * variables (`runtimeChildEnv`), with nothing inherited. The runtime binary
- * itself must pass the CLI's own run policy (`cliRuntimePolicy`).
+ * Compose the runtime's policy from the same sources the engine composes it
+ * from at boot (`composeRuntimePolicy`), and derive its args and environment.
+ * Every value is read from the environment the runtime would see: the
+ * ambient environment with `<cwd>/.env` filling what it leaves unset
+ * (`readLauncherEnv`). That environment is then filtered to the policy's
+ * names plus the runtime-platform variables (`runtimeChildEnv`), so a `.env`
+ * name outside the policy never reaches the runtime.
  */
-export async function startLocalRuntime(
-  config: CliConfig,
-  options: StartRuntimeOptions = {},
-): Promise<number> {
-  const command = options.command ?? "deno";
-  const cwd = options.cwd ?? defaultPrototypeRoot();
-  const autostarted = options.autostarted === true;
-  const env = options.env ?? processEnv;
-  const memoryMcpUrl = await readLauncherEnvVar(
-    cwd,
-    "DYFJ_MEMORY_MCP_URL",
-    readTextFile,
-    env,
-  );
-  const secretsCfg = await readLauncherSecretsConfig(cwd, readTextFile, env);
+export async function resolveRuntimeLaunch(
+  cwd: string,
+  socketPath: string,
+  autostarted: boolean,
+  options: {
+    env?: Env;
+    readTextFile?: (path: string) => Promise<string>;
+  } = {},
+): Promise<RuntimeLaunch> {
+  const read = options.readTextFile ?? readTextFile;
+  const env = await readLauncherEnv(cwd, read, options.env ?? processEnv);
+  const memoryMcpUrl = env.get("DYFJ_MEMORY_MCP_URL");
+  const resolverConfig = await readLauncherSecretsConfig(cwd, read, env);
   const mcpServers = await readLauncherMcpServersConfig(
     cwd,
-    secretsCfg,
-    readTextFile,
+    resolverConfig,
+    read,
     env,
   );
-  const networkAllow = await readLauncherNetworkAllow(cwd, readTextFile, env);
+  const networkAllow = await readLauncherNetworkAllow(cwd, read, env);
   const nameserverGrants = await readNameserverNetGrants();
   const nodeGrant = await nodeRunGrant(env);
   await toolchainReadGrant(env);
@@ -122,21 +133,43 @@ export async function startLocalRuntime(
     memoryMcpUrl,
     networkAllow,
     nameserverGrants,
-    secrets: secretsCfg,
+    secrets: resolverConfig,
     nodePath: nodeGrant,
+    dolt: resolveDoltConnection(env),
     runtimeExecutable: null,
   });
-  const childEnv = runtimeChildEnv(policy, env);
+  return {
+    policy,
+    args: buildRuntimeArgs(policy, socketPath, autostarted),
+    env: runtimeChildEnv(policy, env),
+  };
+}
+
+/**
+ * Start the runtime and wait for it to exit, with the args and environment
+ * `resolveRuntimeLaunch` derives. The runtime binary itself must pass the
+ * CLI's own run policy (`cliRuntimePolicy`).
+ */
+export async function startLocalRuntime(
+  config: CliConfig,
+  options: StartRuntimeOptions = {},
+): Promise<number> {
+  const command = options.command ?? "deno";
+  const cwd = options.cwd ?? defaultPrototypeRoot();
+  const autostarted = options.autostarted === true;
+  const launch = await resolveRuntimeLaunch(cwd, config.socket, autostarted, {
+    env: options.env ?? processEnv,
+  });
   // Autostarted supervisor and server share the client's terminal process
   // group. Both must survive the SIGINT that the client converts into cancel.
   const ignoreSigint = () => {};
   if (autostarted) processSigintSource.add(ignoreSigint);
   try {
-    const child = guardedSpawn(cliRuntimePolicy())(
-      command,
-      buildRuntimeArgs(policy, config.socket, autostarted),
-      { cwd, stdio: "inherit", env: childEnv },
-    );
+    const child = guardedSpawn(cliRuntimePolicy())(command, launch.args, {
+      cwd,
+      stdio: "inherit",
+      env: launch.env,
+    });
     return await new Promise<number>((resolve, reject) => {
       child.once("error", reject);
       child.once("exit", (code, signal) => {

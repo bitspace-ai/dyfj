@@ -43,7 +43,6 @@ describe("runtime lifecycle commands", () => {
       "--no-prompt",
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
-      "--env-file=.env",
       "src/server/main.ts",
     ]);
   });

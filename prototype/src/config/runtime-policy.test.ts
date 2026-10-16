@@ -83,6 +83,7 @@ describe("composeRuntimePolicy", () => {
       "127.0.0.1:7777",
       "mcp.example.test:443",
       "192.0.2.53:53",
+      "127.0.0.1:3307",
     ]);
     assert.deepStrictEqual(policy.run, [
       ...SERVE_UNIX_RUN_GRANTS,
@@ -95,6 +96,29 @@ describe("composeRuntimePolicy", () => {
       "OP_SERVICE_ACCOUNT_TOKEN",
     ]);
     assert.strictEqual(policy.dolt, "127.0.0.1:3307");
+  });
+
+  it("adds a non-default Dolt endpoint to the net list as well as dolt", () => {
+    const policy = composeRuntimePolicy({
+      dolt: { host: "db.example.test", port: 3307 },
+    });
+    assert.strictEqual(policy.dolt, "db.example.test:3307");
+    assert.deepStrictEqual(policy.net, [
+      ...SERVE_UNIX_NET_GRANTS,
+      "db.example.test:3307",
+    ]);
+    // The default endpoint is already a static entry, so it is not repeated.
+    assert.deepStrictEqual(
+      composeRuntimePolicy({ dolt: { host: "127.0.0.1", port: 3306 } }).net,
+      [...SERVE_UNIX_NET_GRANTS],
+    );
+  });
+
+  it("refuses an invalid Dolt port rather than composing it", () => {
+    assert.throws(
+      () => composeRuntimePolicy({ dolt: { host: "127.0.0.1", port: NaN } }),
+      /invalid DOLT_PORT/,
+    );
   });
 
   it("adds the operator's [network] allow entries to the net list", () => {

@@ -90,7 +90,8 @@ export function buildServeUnixArgs(
     // (null) when inherit_env is empty. The forwarded VALUES never enter the
     // committed profile — only launch-resolved from the operator's config.
     ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
-    "--env-file=.env",
+    // No --env-file: the launcher reads .env itself and hands the runtime an
+    // explicit environment holding only the policy's names.
     "src/server/main.ts",
     ...(autostarted ? ["--autostarted"] : []),
   ];
@@ -203,13 +204,13 @@ export async function rustupHomeReadGrant(
  * Load the `[secrets]` config the SAME way the spawned child will locate it, so
  * the launcher's `--allow-run` grant matches the resolver the runtime actually
  * invokes. The config file lives at `$DYFJ_ROOT/config.toml` (else
- * `$HOME/.dyfj/config.toml`). The child reads `--env-file=.env`, which only
- * supplies a var that is NOT already in the ambient environment — so `DYFJ_ROOT`
+ * `$HOME/.dyfj/config.toml`). The child's environment fills a var from `.env`
+ * only when it is NOT already in the ambient environment — so `DYFJ_ROOT`
  * is taken from `.env` ONLY when it is ambiently UNSET. An ambient empty string
  * (`DYFJ_ROOT=""`) is left as-is and treated as absent by `configFilePath`,
- * exactly as the child sees it (its `--env-file` cannot override the empty
- * value). Reading `.env` on `""` too would make the launcher and child pick
- * different configs and mis-grant `--allow-run`.
+ * exactly as the child sees it (`.env` cannot override the empty value).
+ * Reading `.env` on `""` too would make the launcher and child pick different
+ * configs and mis-grant `--allow-run`.
  */
 export async function readLauncherSecretsConfig(
   cwd: string,

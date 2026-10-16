@@ -26,7 +26,7 @@
 
 import process from "node:process";
 import type { Env } from "./env.ts";
-import { mcpServerNetGrants } from "./mcp-net-grants.ts";
+import { mcpServerNetGrants, validateDoltPort } from "./mcp-net-grants.ts";
 import type { McpHttpServerConfig } from "./mcp-servers.ts";
 import { memoryMcpNetGrant } from "./memory-url.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
@@ -201,9 +201,12 @@ export function composeRuntimePolicy(
   const env = [...SERVE_UNIX_ENV_GRANTS];
   appendNew(env, inputs.secrets?.inheritEnv ?? []);
 
+  // The Dolt endpoint is both the pool's one allowed endpoint and a net entry,
+  // so the runtime's permission flag admits the connection the guard admits.
   const dolt = inputs.dolt == null
     ? null
-    : `${inputs.dolt.host}:${inputs.dolt.port}`;
+    : `${inputs.dolt.host}:${validateDoltPort(inputs.dolt.port)}`;
+  appendNew(net, [dolt]);
   return Object.freeze({
     net: Object.freeze(net),
     run: Object.freeze(run),

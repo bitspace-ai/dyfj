@@ -30,7 +30,11 @@ async function standInRoot(): Promise<{ root: string; home: string }> {
       },
     }),
   );
-  await writeFile(join(root, ".env"), "");
+  // One policy name and one name outside the policy, present only here.
+  await writeFile(
+    join(root, ".env"),
+    "DYFJ_WORKBENCH_TIER=1\nDYFJ_TEST_ENV_FILE_ONLY=from-dotenv\n",
+  );
   await writeFile(join(root, "src", "server", "main.ts"), ENGINE);
   return { root, home };
 }
@@ -63,6 +67,9 @@ test("the runtime receives only policy names and the platform variables", async 
       assert.strictEqual(seen[name], ambient.get(name), name);
     }
     assert.strictEqual(seen.DYFJ_TEST_OUTSIDE_POLICY, undefined);
+    // .env fills a policy name and nothing else.
+    assert.strictEqual(seen.DYFJ_WORKBENCH_TIER, "1");
+    assert.strictEqual(seen.DYFJ_TEST_ENV_FILE_ONLY, undefined);
     assert.strictEqual(seen.DYFJ_TEST_SECOND_OUTSIDER, undefined);
     // Nothing else reaches it. macOS sets __CF_USER_TEXT_ENCODING in every
     // new process itself; no parent passes it.
@@ -70,6 +77,7 @@ test("the runtime receives only policy names and the platform variables", async 
       Object.keys(seen).filter((name) =>
         ![
           "__CF_USER_TEXT_ENCODING",
+          "DYFJ_WORKBENCH_TIER",
           "PATH",
           "HOME",
           "ANTHROPIC_API_KEY",

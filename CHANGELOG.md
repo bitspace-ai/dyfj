@@ -19,6 +19,13 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`dyfj start` works with a non-default Dolt endpoint.** The runtime's
+  network grant held only the default `127.0.0.1:3306`, so a configured
+  `DOLT_HOST` or `DOLT_PORT` elsewhere was refused at the first query. The
+  launcher now reads the configured endpoint (ambient, then `prototype/.env`)
+  and grants it. An invalid `DOLT_PORT` now fails at start instead of at the
+  first query.
+
 - **The per-file Node handle check no longer fails a file for its own
   in-flight test output.** Under `node --test`, a file's stdout is the
   runner's channel to its parent, and on macOS pipe writes are asynchronous.
@@ -637,7 +644,8 @@ README are tracked separately in its Revision history section.
     `[network] allow` key, never the URL's path, query or credentials. A
     refused provider call fails as the new `egress_refused` provider failure;
   - the Dolt pool refuses any endpoint but the configured `DOLT_HOST` and
-    `DOLT_PORT`;
+    `DOLT_PORT`, and that endpoint is a network policy entry, so the
+    runtime's permission flags grant it too;
   - every child process (the `bash` and `git` tools and their stopper, the
     secrets resolver, the ACP agent, signaler and probe, the CLI's start of
     the runtime) goes through one guarded spawn that refuses a binary outside
@@ -645,7 +653,9 @@ README are tracked separately in its Revision history section.
     its other reasons, does not name the resolver's path;
   - `dyfj start` gives the runtime an explicit environment, exactly the
     policy's names plus `TMPDIR`, `TMP`, `TEMP` and `DENO_DIR`, and nothing
-    inherited.
+    inherited. The launcher reads `prototype/.env` itself (ambient values
+    win) and no longer passes `--env-file` to the runtime, so a `.env` name
+    outside the policy does not reach it either.
 
   A test fails when the policy module and the `deno.json` profiles disagree.
   Accepted risks: a compromised dependency can still open its own connection

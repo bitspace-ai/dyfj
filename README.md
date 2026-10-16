@@ -588,8 +588,9 @@ composes the same policy at boot and checks it in code:
   runtime's network policy. To allow it, add it to [network] allow in
   ~/.dyfj/config.toml …`.
 - **Dolt.** The database pool refuses any host or port other than the
-  configured `DOLT_HOST` and `DOLT_PORT`. The control socket is the
-  configured path.
+  configured `DOLT_HOST` and `DOLT_PORT`, and that endpoint is also a network
+  policy entry, so a non-default endpoint is granted to the runtime as well.
+  The control socket is the configured path.
 - **Processes.** Every child process goes through one guarded spawn: the
   `bash` and `git` tools and their `/bin/kill` stopper, the secrets resolver,
   the ACP agent with its signaler and process-group probe, and the CLI's start
@@ -600,8 +601,11 @@ composes the same policy at boot and checks it in code:
 - **Environment.** `dyfj start` starts the runtime with an explicit
   environment: exactly the policy's names (the profile's list plus
   `[secrets].inherit_env`) and the runtime-platform variables `TMPDIR`, `TMP`,
-  `TEMP` and `DENO_DIR`. Nothing else is inherited. To build it, the CLI may
-  read every variable in its own environment.
+  `TEMP` and `DENO_DIR`. Nothing else is inherited. The launcher reads
+  `prototype/.env` itself, filling only names the ambient environment leaves
+  unset, and starts the runtime without `--env-file`, so a `.env` name outside
+  the policy never reaches it. To build that environment, the CLI may read
+  every variable in its own environment.
 
 **Accepted risks.** The seams govern the product's own calls. A compromised
 dependency could open its own connection or start its own process, and the
@@ -2282,3 +2286,7 @@ Document revisions only. Code and behavior changes are tracked in
   (a compromised dependency's own connections, the unguarded DNS preflight)
   with the OS-sandbox follow-up, and documents the new `[network] allow` key.
   The module list adds `acp-child-io.ts`.
+- 2026-10-16 - The "Egress, spawn and environment limits" section says that
+  the configured Dolt endpoint is a network policy entry, and that the
+  launcher reads `prototype/.env` itself and starts the runtime without
+  `--env-file`, so no `.env` name outside the policy reaches the runtime.

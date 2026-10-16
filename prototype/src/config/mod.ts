@@ -16,7 +16,11 @@
 
 export { type Env, type MutableEnv, processEnv } from "./env.ts";
 export { readTextFile } from "./read-text-file.ts";
-export { envFileVar, readLauncherEnvVar } from "./env-file.ts";
+export {
+  envFileVar,
+  readLauncherEnv,
+  readLauncherEnvVar,
+} from "./env-file.ts";
 export { type DoltConnectionConfig, resolveDoltConnection } from "./dolt.ts";
 export {
   nameserverNetGrants,

@@ -1,6 +1,7 @@
 import process from "node:process";
 import type { WorkbenchRoutingOptions } from "../src/providers/mod.ts";
 import {
+  composeRuntimePolicy,
   processEnv,
   resolveDoltConnection,
   resolveRuntimeEnvDefaults,
@@ -17,7 +18,10 @@ import {
 const prompt = "Say ok.";
 // This entrypoint composes the engine itself, so it builds the store the
 // same way the engine server does.
-const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+const dolt = resolveDoltConnection(processEnv);
+const store = new DoltStore(
+  createDoltPool(dolt, composeRuntimePolicy({ dolt })),
+);
 const captured: string[] = [];
 const originalLog = console.log;
 const originalError = console.error;

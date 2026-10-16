@@ -382,7 +382,14 @@ export async function runBounded(
 ): Promise<BoundedResult> {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const drainMs = options.drainMs ?? DEFAULT_DRAIN_MS;
-  const stopGroup = options.stopGroup ?? stopProcessGroup;
+  // The default stopper's /bin/kill runs under the same policy as the
+  // command, so a policy that refuses /bin/kill refuses the timeout kill too.
+  const stopGroup = options.stopGroup ??
+    (options.policy === undefined
+      ? stopProcessGroup
+      : createGroupStopper((args, signal) =>
+        runKill(args, signal, options.policy)
+      ));
   // Windows has no POSIX process groups; there only the direct child is
   // killed and the result says so.
   const useGroup = process.platform !== "win32";

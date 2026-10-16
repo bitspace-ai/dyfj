@@ -68,3 +68,34 @@ describe("bounded process spawn policy", () => {
     );
   });
 });
+
+describe("bounded process timeout stop policy", () => {
+  it("a policy that refuses /bin/kill refuses the timeout kill too", { skip: !posix }, async () => {
+    // The command is allowed; its stopper is not. The default group stopper
+    // must run under the caller's policy, so the group cannot be signalled
+    // and only the direct child is killed.
+    const policy: RuntimePolicy = {
+      ...composeRuntimePolicy(),
+      run: ["/bin/sleep"],
+    };
+    const result = await runBounded(
+      { ...request("/bin/sleep"), args: ["5"], timeoutMs: 200 },
+      { policy, graceMs: 50, drainMs: 50 },
+    );
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.termination?.group, "unavailable");
+  });
+
+  it("the timeout kill runs under a policy that holds /bin/kill", { skip: !posix }, async () => {
+    const policy: RuntimePolicy = {
+      ...composeRuntimePolicy(),
+      run: ["/bin/sleep", "/bin/kill"],
+    };
+    const result = await runBounded(
+      { ...request("/bin/sleep"), args: ["5"], timeoutMs: 200 },
+      { policy, graceMs: 50, drainMs: 50 },
+    );
+    assert.strictEqual(result.timedOut, true);
+    assert.strictEqual(result.termination?.group, "stopped");
+  });
+});
