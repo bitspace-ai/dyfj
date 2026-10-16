@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, rmdir } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// On the host's runner until the grant readers use node: builtins (BIT-654).
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   buildServeUnixArgs,
   memoryMcpNetGrant,
@@ -395,6 +402,27 @@ describe("nodeRunGrant", () => {
   it("allows a runtime without the optional Codex route", async () => {
     assert.strictEqual(await nodeRunGrant({ get: () => undefined }), null);
   });
+
+  it("rejects a missing path, a directory, and a file with no execute bit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tmp-"));
+    const plain = `${root}/plain`;
+    try {
+      await writeFile(plain, "#!/bin/sh\nexit 0\n");
+      await chmod(plain, 0o644);
+      for (const value of [`${root}/missing`, root, plain]) {
+        await assert.rejects(
+          () => nodeRunGrant({ get: () => value }),
+          (error: unknown) =>
+            error instanceof Error &&
+            error.message === "DYFJ_NODE_PATH executable is unavailable",
+        );
+      }
+      await chmod(plain, 0o100);
+      assert.strictEqual(await nodeRunGrant({ get: () => plain }), plain);
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
 });
 
 describe("buildServeUnixArgs with launch-resolved run grants", () => {
@@ -627,6 +655,46 @@ describe("readServeUnixEnvGrants", () => {
       ["HOME"].filter((item) => !grants.includes(item)),
       [],
     );
+  });
+});
+
+describe("serve-unix profile readers", () => {
+  it("reject a profile without a string grant list", async () => {
+    const readers = [
+      ["net", readServeUnixNetGrants],
+      ["run", readServeUnixRunGrants],
+      ["env", readServeUnixEnvGrants],
+    ] as const;
+    const root = await mkdtemp(join(tmpdir(), "tmp-"));
+    try {
+      for (const [kind, read] of readers) {
+        for (
+          const profile of [
+            {},
+            { permissions: {} },
+            { permissions: { "serve-unix": {} } },
+            { permissions: { "serve-unix": { [kind]: "x" } } },
+            { permissions: { "serve-unix": { [kind]: ["x", 1] } } },
+          ]
+        ) {
+          await writeFile(`${root}/deno.json`, JSON.stringify(profile));
+          await assert.rejects(
+            () => read(root),
+            (error: unknown) =>
+              error instanceof Error &&
+              error.message ===
+                `serve-unix permission profile in ${root}/deno.json has no ${kind} grant list`,
+          );
+        }
+        await writeFile(
+          `${root}/deno.json`,
+          JSON.stringify({ permissions: { "serve-unix": { [kind]: ["x"] } } }),
+        );
+        assert.deepStrictEqual(await read(root), ["x"]);
+      }
+    } finally {
+      await rm(root, { recursive: true });
+    }
   });
 });
 
