@@ -55,14 +55,21 @@ const name = process.argv.includes("--autostarted")
   ? "autostarted.json"
   : "foreground.json";
 writeFileSync(name, JSON.stringify({
+  pid: process.pid,
+  // The client's \`start\`, which started this engine.
+  parentPid: process.ppid,
   execArgv: process.execArgv,
   nodeOptions: process.env.NODE_OPTIONS ?? null,
   permission: process.permission === undefined ? "off" : "on",
   bashChild: JSON.parse(child.stdout),
 }));
+// Evidence written: the engine is done, whatever handles remain.
+process.exit(0);
 `;
 
 interface Recorded {
+  pid: number;
+  parentPid: number;
   execArgv: string[];
   nodeOptions: string | null;
   permission: "on" | "off";
@@ -101,6 +108,35 @@ async function waitForFile(path: string, timeoutMs: number): Promise<string> {
     if (Date.now() > deadline) throw new Error(`${path} was never written`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as { code?: unknown }).code === "EPERM";
+  }
+}
+
+/**
+ * Waits for each of `pids` to exit, SIGKILLs any still alive after
+ * `timeoutMs`, and returns the ones that had to be killed.
+ */
+async function reap(pids: readonly number[], timeoutMs: number): Promise<number[]> {
+  const deadline = Date.now() + timeoutMs;
+  while (pids.some(isAlive) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const survivors = pids.filter(isAlive);
+  for (const pid of survivors) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // Gone in the meantime.
+    }
+  }
+  return survivors;
 }
 
 function exited(child: ChildProcess): Promise<void> {
@@ -156,9 +192,12 @@ describe("the launcher starts the runtime as plain node", () => {
     child.stderr!.on("data", (chunk) => (stderr += chunk));
     await exited(child);
     assert.strictEqual(child.exitCode, 0, stderr);
-    assertPlainNode(
-      JSON.parse(await readFile(join(root, "foreground.json"), "utf8")),
+    const recorded: Recorded = JSON.parse(
+      await readFile(join(root, "foreground.json"), "utf8"),
     );
+    assertPlainNode(recorded);
+    // `dyfj start` returned because the runtime it started exited.
+    assert.deepStrictEqual(await reap([recorded.pid], 5_000), []);
   });
 
   it("through autostart's background start", async () => {
@@ -169,13 +208,22 @@ describe("the launcher starts the runtime as plain node", () => {
       [join(root, "scripts", "dyfj-launcher.sh"), "exec", "hello"],
       { cwd: root, env, stdio: ["ignore", "ignore", "ignore"] },
     );
+    let background: number[] = [];
     try {
-      assertPlainNode(
-        JSON.parse(await waitForFile(join(root, "autostarted.json"), 60_000)),
+      const recorded: Recorded = JSON.parse(
+        await waitForFile(join(root, "autostarted.json"), 60_000),
       );
+      // The detached background start (the client's `start`, exec'd by the
+      // launcher under nohup) and the runtime it started.
+      background = [recorded.parentPid, recorded.pid];
+      assertPlainNode(recorded);
     } finally {
       child.kill("SIGKILL");
       await exited(child);
+      // Detached from this test, so the handle check cannot see them: both
+      // must be gone once the engine has recorded, and are killed if not.
+      const survivors = await reap(background, 5_000);
+      assert.deepStrictEqual(survivors, [], "the background runtime outlived the test");
     }
   });
 });

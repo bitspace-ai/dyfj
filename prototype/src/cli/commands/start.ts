@@ -13,6 +13,11 @@ export type StartRuntimeFn = (
   options?: StartRuntimeOptions,
 ) => Promise<number>;
 
+/** `value` as one POSIX shell word: single-quoted, each `'` closed and escaped. */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 export async function runStart(
   config: CliConfig,
   io: Io,
@@ -30,7 +35,9 @@ export async function runStart(
   } catch (error) {
     io.err(`dyfj: could not start local runtime: ${summarizeError(error)}`);
     io.err(
-      `dyfj: fallback command: cd prototype && node --env-file-if-exists=.env src/server/main.ts`,
+      `dyfj: fallback command: cd prototype && DYFJ_SOCKET=${
+        shellQuote(config.socket)
+      } node --env-file-if-exists=.env src/server/main.ts`,
     );
     return 1;
   }

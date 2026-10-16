@@ -22,7 +22,9 @@ README are tracked separately in its Revision history section.
 - **`dyfj --socket <path> start` listens on that path.** The runtime took its
   socket from the environment, so a socket given only by `--socket` was not
   the one it bound. The launcher now passes the resolved socket to the
-  runtime as `DYFJ_SOCKET`.
+  runtime as `DYFJ_SOCKET`, and the fallback command `dyfj start` prints when
+  it cannot start the runtime sets `DYFJ_SOCKET` to that socket, quoted for
+  the shell.
 
 - **The ACP fixture agent's parent-death watchdog reaps its process group
   without starting a process.** It signals its group with
