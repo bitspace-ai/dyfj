@@ -20,6 +20,7 @@ import { test } from "node:test";
 import { udsTestSocket } from "../../testing/servers/uds-sockets.ts";
 import { startModelServer } from "../../testing/servers/model-server.ts";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
+import { composeRuntimePolicy } from "../config/mod.ts";
 import { serveWorkbenchUnix } from "./main.ts";
 import { connectUnixClient } from "../transport/mod.ts";
 import {
@@ -61,6 +62,10 @@ test("a real turn keeps its canaries out of narration console methods", async ()
     const server = await serveWorkbenchUnix(socketPath, {
       store,
       env: new MapEnv(),
+      // The operator's [network] allow names the stub model's port.
+      policy: composeRuntimePolicy({
+        networkAllow: [new URL(stub.baseUrl).host],
+      }),
     });
     try {
       const captured: string[] = [];

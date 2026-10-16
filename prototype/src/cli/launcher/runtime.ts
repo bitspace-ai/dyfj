@@ -3,23 +3,26 @@
  * `grants.ts`, from a trusted prototype root.
  */
 
+import { constants as osConstants } from "node:os";
 import {
-  mcpServerNetGrants,
+  cliRuntimePolicy,
+  composeRuntimePolicy,
+  type Env,
+  guardedSpawn,
   processEnv,
+  readLauncherEnvVar,
   readNameserverNetGrants,
-  secretsRunGrant,
+  readTextFile,
+  runtimeChildEnv,
 } from "../../config/mod.ts";
 import type { CliConfig } from "../args.ts";
 import { processSigintSource } from "../io.ts";
 import {
-  buildServeUnixArgs,
+  buildRuntimeArgs,
   nodeRunGrant,
   readLauncherMcpServersConfig,
+  readLauncherNetworkAllow,
   readLauncherSecretsConfig,
-  readMemoryMcpNetGrant,
-  readServeUnixEnvGrants,
-  readServeUnixNetGrants,
-  readServeUnixRunGrants,
   rustupHomeReadGrant,
   toolchainReadGrant,
 } from "./grants.ts";
@@ -28,6 +31,11 @@ export interface StartRuntimeOptions {
   command?: string;
   cwd?: string;
   autostarted?: boolean;
+  /**
+   * Where the launcher reads its configuration and the values it forwards to
+   * the runtime; the process environment when absent.
+   */
+  env?: Env;
 }
 
 /**
@@ -73,6 +81,14 @@ export function installRootFromModuleUrl(moduleUrl: string): string | null {
   return match[1];
 }
 
+/**
+ * Start the runtime and wait for it to exit. The runtime's policy is composed
+ * here from the same sources the engine composes it from at boot
+ * (`composeRuntimePolicy`): its Deno grants are built from it, and its
+ * environment is exactly the policy's names plus the runtime-platform
+ * variables (`runtimeChildEnv`), with nothing inherited. The runtime binary
+ * itself must pass the CLI's own run policy (`cliRuntimePolicy`).
+ */
 export async function startLocalRuntime(
   config: CliConfig,
   options: StartRuntimeOptions = {},
@@ -80,61 +96,56 @@ export async function startLocalRuntime(
   const command = options.command ?? "deno";
   const cwd = options.cwd ?? defaultPrototypeRoot();
   const autostarted = options.autostarted === true;
-  const netGrants = await readServeUnixNetGrants(cwd);
-  const memoryMcpGrant = await readMemoryMcpNetGrant(cwd);
-  // Node and any operator-private resolver binary are launch-resolved. The
-  // fixed /bin/kill grant supports the ACP process-group contract.
-  const secretsCfg = await readLauncherSecretsConfig(cwd);
-  const externalMcpGrants = mcpServerNetGrants(
-    await readLauncherMcpServersConfig(cwd, secretsCfg),
+  const env = options.env ?? processEnv;
+  const memoryMcpUrl = await readLauncherEnvVar(
+    cwd,
+    "DYFJ_MEMORY_MCP_URL",
+    readTextFile,
+    env,
   );
+  const secretsCfg = await readLauncherSecretsConfig(cwd, readTextFile, env);
+  const mcpServers = await readLauncherMcpServersConfig(
+    cwd,
+    secretsCfg,
+    readTextFile,
+    env,
+  );
+  const networkAllow = await readLauncherNetworkAllow(cwd, readTextFile, env);
   const nameserverGrants = await readNameserverNetGrants();
-  const resolverBin = secretsRunGrant(secretsCfg);
-  const profileRun = await readServeUnixRunGrants(cwd);
-  const nodeGrant = await nodeRunGrant();
-  await toolchainReadGrant();
-  await rustupHomeReadGrant();
-  const dynamicRunGrants = [nodeGrant, "/bin/kill", resolverBin]
-    .filter((grant): grant is string => grant !== null);
-  const runGrants = [...profileRun];
-  for (const grant of dynamicRunGrants) {
-    if (!runGrants.includes(grant)) runGrants.push(grant);
-  }
-  // The resolver spawns with a cleared env and forwards only a minimal base plus
-  // [secrets].inherit_env. The runtime must be able to READ those inherit_env
-  // vars to forward them, so grant --allow-env for names not already in the
-  // profile (launch-resolved: an operator-private var like a service-account
-  // token never enters the committed profile). No inherit_env → null → -P's env.
-  let envGrants: string[] | null = null;
-  const inheritEnv = secretsCfg?.inheritEnv ?? [];
-  if (inheritEnv.length > 0) {
-    const profileEnv = await readServeUnixEnvGrants(cwd);
-    const extra = inheritEnv.filter((name) => !profileEnv.includes(name));
-    envGrants = extra.length > 0 ? [...profileEnv, ...extra] : null;
-  }
+  const nodeGrant = await nodeRunGrant(env);
+  await toolchainReadGrant(env);
+  await rustupHomeReadGrant(env);
+  // The runtime is started by name (`deno`), which the static run list
+  // already holds, so the launcher's own executable is not added.
+  const policy = composeRuntimePolicy({
+    mcpServers,
+    memoryMcpUrl,
+    networkAllow,
+    nameserverGrants,
+    secrets: secretsCfg,
+    nodePath: nodeGrant,
+    runtimeExecutable: null,
+  });
+  const childEnv = runtimeChildEnv(policy, env);
   // Autostarted supervisor and server share the client's terminal process
   // group. Both must survive the SIGINT that the client converts into cancel.
   const ignoreSigint = () => {};
   if (autostarted) processSigintSource.add(ignoreSigint);
   try {
-    const child = new Deno.Command(command, {
-      args: buildServeUnixArgs(
-        netGrants,
-        config.socket,
-        memoryMcpGrant,
-        runGrants,
-        envGrants,
-        autostarted,
-        externalMcpGrants,
-        nameserverGrants,
-      ),
-      cwd,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    }).spawn();
-    const status = await child.status;
-    return status.code;
+    const child = guardedSpawn(cliRuntimePolicy())(
+      command,
+      buildRuntimeArgs(policy, config.socket, autostarted),
+      { cwd, stdio: "inherit", env: childEnv },
+    );
+    return await new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        const number = signal === null
+          ? undefined
+          : (osConstants.signals as Record<string, number>)[signal];
+        resolve(code ?? (number === undefined ? 1 : 128 + number));
+      });
+    });
   } finally {
     if (autostarted) processSigintSource.remove(ignoreSigint);
   }

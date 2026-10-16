@@ -29,7 +29,12 @@ import type {
   ConfirmToolApproval,
   RootAnchors,
 } from "../tools/mod.ts";
-import type { BudgetTallyMode, Env, PermissionLevel } from "../config/mod.ts";
+import type {
+  BudgetTallyMode,
+  Env,
+  PermissionLevel,
+  RuntimePolicy,
+} from "../config/mod.ts";
 import type {
   AskContextProfile,
   ContextOverflowRecoverer,
@@ -284,8 +289,17 @@ export interface WorkbenchRuntimeServices {
   clock?: Clock;
   /** Environment reads (memory recall config, provider credentials). */
   env?: Env;
-  /** Provider HTTP transport; the platform `fetch` when absent. */
+  /**
+   * Provider HTTP transport; the platform `fetch` guarded by `policy` when
+   * absent.
+   */
   http?: HttpTransport;
+  /**
+   * The runtime's egress, spawn and env policy, composed once at the
+   * composition root. Provider calls and memory recall are checked against
+   * it; the base policy (`baseRuntimePolicy`) when absent.
+   */
+  policy?: RuntimePolicy;
   /**
    * Test seam for the events-table spend rollup that seeds the session/daily
    * envelopes; the default reads the store's spend rollup (fetchSpendBaselines).

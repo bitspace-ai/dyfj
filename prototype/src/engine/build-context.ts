@@ -348,7 +348,7 @@ function memoryRecall(
         `Memory recall MCP: era=${diagnostic.era} revision=${diagnostic.revision}${server}${extensions}\n`,
       );
     }
-  });
+  }, ports.policy);
 }
 
 /**

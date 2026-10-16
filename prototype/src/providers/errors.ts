@@ -132,6 +132,7 @@ export type ProviderFailureKind =
   | "model_not_found"
   | "unreachable"
   | "redirected"
+  | "egress_refused"
   | "request_too_large"
   | "unclassified";
 
@@ -356,6 +357,24 @@ export class ProviderRedirectedError extends ProviderFailureError {
         `registry's base URL.`,
     );
     this.name = "ProviderRedirectedError";
+  }
+}
+
+/**
+ * The runtime's network policy refused the request before it was sent: the
+ * provider's `host:port` is not a policy entry. The message is the policy
+ * guard's own, which names only the `host:port` and where the policy is
+ * configured.
+ */
+export class ProviderEgressRefusedError extends ProviderFailureError {
+  constructor(target: ProviderTarget, refusal: string) {
+    super(
+      "egress_refused",
+      target,
+      undefined,
+      `Provider request refused for ${targetField(target)}: ${refusal}`,
+    );
+    this.name = "ProviderEgressRefusedError";
   }
 }
 

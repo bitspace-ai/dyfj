@@ -79,7 +79,9 @@ import {
     assert.ok(testKeys.some((key) => key === "DYFJ_MCP_TEST_TEMP_DIR"));
     assert.ok(testKeys.some((key) => key === "DYFJ_LANE_TOKEN"));
     for (const [name, profile] of Object.entries(denoJson.permissions)) {
-      if (name === "test") continue;
+      // The test profile and the CLI read every variable: the CLI forwards
+      // the runtime's explicit environment, so it is not a runtime profile.
+      if (name === "test" || name === "cli") continue;
       const granted = new Set(profile.env ?? []);
       assert.deepStrictEqual(
         testKeys.filter((key) => granted.has(key)),

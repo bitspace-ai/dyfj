@@ -71,8 +71,9 @@ Section 5.
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
-    `external-agent-runtime.ts`, and `acp-fixture-command.ts`, which builds
-    the fixture agent's command), whose move is deferred;
+    `external-agent-runtime.ts`, `acp-fixture-command.ts`, which builds
+    the fixture agent's command, and `acp-child-io.ts`, its bounded child
+    stderr capture and settle wait), whose move is deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
     `core/dyfj-repl` replaces.
 
@@ -475,8 +476,9 @@ XAI_API_KEY        = "op://<vault>/<item>/credential"
 ```
 
 **`config.toml` is a trust boundary.** `[secrets].command` is trusted executable
-configuration, not inert data: the launcher grants that binary `--allow-run` and
-the engine runs it automatically at boot. A shell or interpreter there
+configuration, not inert data: the launcher grants that binary `--allow-run`,
+the runtime's run policy admits it, and the engine runs it automatically at
+boot. A shell or interpreter there
 (`["bash", "-c", …]`) runs arbitrary code. So protect `~/.dyfj/config.toml` with
 the same care as executable policy — restrictive file permissions, no untrusted
 writers. Pointer strings are passed to the command as process arguments, so
@@ -565,6 +567,64 @@ service account is what actually avoids the prompt.)
 ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
   op run -- dyfj start
 ```
+
+### Egress, spawn and environment limits
+
+The runtime's network, process and environment limits are enforced by the
+product at its own seams, not only by the runtime's permission flags. One
+policy (`prototype/src/config/runtime-policy.ts`) holds the static lists and
+composes the operator's entries from `config.toml` and the environment: the
+`[[mcp.servers]]` hosts, `DYFJ_MEMORY_MCP_URL`, `[network] allow`, the system
+nameservers, the Dolt endpoint, `DYFJ_NODE_PATH` and `[secrets].command`.
+`dyfj start` builds the runtime's Deno grants from that policy, and the engine
+composes the same policy at boot and checks it in code:
+
+- **HTTP.** Every request goes through one guarded fetch: provider calls,
+  external MCP discovery and calls (through the MCP SDK's `fetch` option),
+  memory recall and the web tools' direct document fetch. A request whose
+  `host:port` is not in the policy is refused before it is sent, and each
+  redirect hop is checked again. The refusal names only the `host:port`:
+  `network egress to "127.0.0.1:1234" refused: the host is not in the
+  runtime's network policy. To allow it, add it to [network] allow in
+  ~/.dyfj/config.toml …`.
+- **Dolt.** The database pool refuses any host or port other than the
+  configured `DOLT_HOST` and `DOLT_PORT`. The control socket is the
+  configured path.
+- **Processes.** Every child process goes through one guarded spawn: the
+  `bash` and `git` tools and their `/bin/kill` stopper, the secrets resolver,
+  the ACP agent with its signaler and process-group probe, and the CLI's start
+  of the runtime. A binary outside the run list is refused before anything
+  starts. A command matches an entry exactly, or is the same file once both
+  are resolved (an absolute path through `realpath`, a bare name through PATH);
+  a relative path such as `./tool` is always refused.
+- **Environment.** `dyfj start` starts the runtime with an explicit
+  environment: exactly the policy's names (the profile's list plus
+  `[secrets].inherit_env`) and the runtime-platform variables `TMPDIR`, `TMP`,
+  `TEMP` and `DENO_DIR`. Nothing else is inherited. To build it, the CLI may
+  read every variable in its own environment.
+
+**Accepted risks.** The seams govern the product's own calls. A compromised
+dependency could open its own connection or start its own process, and the
+web tools' DNS preflight queries the nameservers in `/etc/resolv.conf`
+directly, without a guard (those nameservers are policy entries). An OS-level
+sandbox is the planned follow-up for both.
+
+**Adding a host: `[network] allow`.** A local model server on a port the
+static list does not name (the list covers Ollama on 11434, llama.cpp on 8080
+and MLX-LM on 18080) needs an entry:
+
+```toml
+[network]
+allow = ["127.0.0.1:1234"]
+```
+
+Each entry is exactly `host:port`: the port is required, an IPv6 literal is
+bracketed (`[::1]:8080`), and a scheme, path, credentials, wildcard, comma or
+whitespace is rejected. Hosts are lowercased and lose a trailing dot. An
+invalid entry fails the config load rather than being dropped. Restart the
+runtime (`dyfj stop`, then start it again) after changing the list. Only
+`config.toml` adds hosts: runtime data such as a model catalog row's
+`base_url` never does.
 
 ### Configured external MCP tools
 
@@ -2215,3 +2275,10 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-15 - The list of modules not yet moved into `prototype/src/` unit
   directories adds `acp-fixture-command.ts`, the ACP runner module that
   builds the fixture agent's command for the runtime running the product.
+- 2026-10-16 - A new "Egress, spawn and environment limits" section states
+  that the runtime's network, process and environment limits are enforced by
+  the product at its seams from one policy, documents the explicit runtime
+  environment and the CLI's whole-environment read, records the accepted risks
+  (a compromised dependency's own connections, the unguarded DNS preflight)
+  with the OS-sandbox follow-up, and documents the new `[network] allow` key.
+  The module list adds `acp-child-io.ts`.

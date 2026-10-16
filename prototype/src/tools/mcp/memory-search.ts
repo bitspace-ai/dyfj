@@ -25,7 +25,15 @@
  * flows should use separate capability contracts.
  */
 
-import { assertSecureMemoryUrl, type Env, processEnv } from "../../config/mod.ts";
+import {
+  assertSecureMemoryUrl,
+  baseRuntimePolicy,
+  type Env,
+  findEgressRefusal,
+  guardedFetch,
+  processEnv,
+  type RuntimePolicy,
+} from "../../config/mod.ts";
 import {
   injectMcpTraceContext,
   type McpTraceContext,
@@ -245,11 +253,14 @@ export function recallRequestInit(config: MemorySearchConfig): RequestInit {
  * Build a recall function bound to the given config. Connects per call (stateless
  * and robust — no long-lived session to reconcile across turns) to the external
  * memory MCP server and invokes its configured search tool with `{ query }`,
- * returning the tool's text content.
+ * returning the tool's text content. Every request is checked against
+ * `policy`; the base policy names no memory endpoint, so the composition root
+ * passes the composed one.
  */
 export function buildMemorySearch(
   config: MemorySearchConfig,
   onDiagnostic: MemorySearchDiagnosticObserver = () => {},
+  policy: RuntimePolicy = baseRuntimePolicy(),
 ): MemorySearch {
   return async (
     query: string,
@@ -259,6 +270,7 @@ export function buildMemorySearch(
       url: config.url,
       clientName: "dyfj-workbench-recall",
       requestInit: recallRequestInit(config),
+      fetch: guardedFetch(policy),
       probeTimeoutMs: RECALL_PROBE_TIMEOUT_MS,
     });
     try {
@@ -311,8 +323,15 @@ export function buildMemorySearch(
         throw new Error("recall tool returned an error");
       }
       return text.length > 0 ? text : "No matching memories found.";
-    } catch {
-      throw new Error("External memory recall failed");
+    } catch (error) {
+      // A policy refusal names only the endpoint's host:port, so it is safe
+      // to report; every other failure stays opaque.
+      const refusal = findEgressRefusal(error);
+      throw new Error(
+        refusal === undefined
+          ? "External memory recall failed"
+          : `External memory recall failed: ${refusal.message}`,
+      );
     } finally {
       await client.close().catch(() => {});
     }

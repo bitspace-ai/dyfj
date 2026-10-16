@@ -6,7 +6,11 @@
  */
 
 import mysql from "mysql2/promise";
-import type { DoltConnectionConfig } from "../config/mod.ts";
+import {
+  assertConnectAllowed,
+  type DoltConnectionConfig,
+  type RuntimePolicy,
+} from "../config/mod.ts";
 
 /** What the readers need: one statement, auto-committed. */
 export interface DoltQueryable {
@@ -65,9 +69,16 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
 
 /**
  * Build the pool. Connections open lazily, on the first query, so building it
- * at boot needs no running server.
+ * at boot needs no running server. The endpoint must be the policy's one Dolt
+ * endpoint (`assertConnectAllowed`); a pool for any other host or port is
+ * refused here, before a connection can open. There is no default policy:
+ * a caller that cannot name the configured endpoint gets no pool.
  */
-export function createDoltPool(config: DoltConnectionConfig): DoltPool {
+export function createDoltPool(
+  config: DoltConnectionConfig,
+  policy: RuntimePolicy,
+): DoltPool {
+  assertConnectAllowed(policy, config.host, config.port);
   // The runtime's npm declaration bridge drops mysql2's mixed-in promise methods.
   return mysql.createPool({
     host: config.host,

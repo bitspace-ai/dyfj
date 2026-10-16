@@ -506,6 +506,7 @@ compiled_is_fresh() {
   return 0
 }
 
+# The env the parse check and status probe may read; neither starts a runtime.
 # DYFJ_MEMORY_MCP_URL is engine config, but `dyfj start` must read it to build
 # the child's --allow-net grant (ambient env overrides --env-file in the child).
 # DYFJ_ROOT is likewise engine config the launcher reads only to locate
@@ -723,12 +724,14 @@ rust_repl_route() {
   printf '%s' "$bin"
 }
 
+# The CLI starts the runtime with an explicit environment it reads here, so
+# this route may read every variable, as the compiled binary may.
 run_deno_cli() {
   local sock proto
   sock="$(resolve_socket_path)"
   proto="$(prototype_root)"
   DYFJ_PROTOTYPE_ROOT="$proto" exec deno run \
-    --allow-env="$(cli_env_allowlist)" \
+    --allow-env \
     --allow-read \
     --allow-write \
     --allow-run=deno \

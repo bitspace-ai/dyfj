@@ -42,3 +42,27 @@ export function assertSecureMemoryUrl(url: string): void {
     "DYFJ_MEMORY_MCP_URL must be https (plain http is allowed only for loopback hosts)",
   );
 }
+
+/**
+ * Derive the --allow-net grant for the external memory MCP endpoint from its
+ * configured URL. The endpoint host is operator-private, so it must never be
+ * committed to deno.json's net lists; it is resolved at launch and appended to
+ * the explicit --allow-net, and the runtime policy composes it the same way. Returns null
+ * when no endpoint is configured (recall disabled — no grant to add); throws on
+ * a malformed value so misconfiguration surfaces at `dyfj start`, not as a
+ * NotCapable deep inside a recall turn.
+ */
+export function memoryMcpNetGrant(url: string | undefined): string | null {
+  if (url === undefined || url === "") return null;
+  // Same rule the runtime enforces at config resolution: https everywhere,
+  // plain http only to loopback — never grant a destination that would carry
+  // the token in cleartext.
+  assertSecureMemoryUrl(url);
+  const parsed = new URL(url);
+  const port = parsed.port !== ""
+    ? parsed.port
+    : parsed.protocol === "http:"
+    ? "80"
+    : "443";
+  return `${parsed.hostname}:${port}`;
+}

@@ -49,14 +49,18 @@ import {
 } from "../transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
 import {
+  composeRuntimePolicy,
   type Env,
   loadConfig,
   loadMcpServersConfig,
+  loadNetworkAllow,
   loadSecretsConfig,
   type PermissionLevel,
   processEnv,
+  readNameserverNetGrants,
   resolveDoltConnection,
   resolveSecrets,
+  type RuntimePolicy,
   unavailableSecretPointers,
   type WorkbenchConfig,
 } from "../config/mod.ts";
@@ -173,6 +177,12 @@ export interface WorkbenchUnixServerOptions {
   >;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */
   acpSessions?: AcpSessionHandleMap;
+  /**
+   * The runtime's egress, spawn and env policy, composed at boot. Provider
+   * calls, memory recall and the ACP runner's spawns are checked against it;
+   * the base policy when omitted.
+   */
+  policy?: RuntimePolicy;
   /**
    * Where turns read their env-derived defaults and the native runtime its
    * environment; the process env when omitted, as the boot leaves it.
@@ -301,12 +311,14 @@ function composeTurnRuntime(
   owners: SessionOwners,
   acpSessions?: AcpSessionHandleMap,
   env?: Env,
+  policy?: RuntimePolicy,
 ): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
       runExternalAgentWorkbenchRuntime(input, {
         store: store(),
         sessionMap: acpSessions,
+        ...(policy === undefined ? {} : { runPolicy: policy }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the
@@ -321,6 +333,7 @@ function composeTurnRuntime(
       rootAnchors,
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
+      ...(policy === undefined ? {} : { policy }),
     });
 }
 
@@ -333,7 +346,10 @@ export async function serveWorkbenchUnix(
   socketPath: string,
   options: WorkbenchUnixServerOptions & { store: Store },
 ): Promise<WorkbenchUnixServer> {
-  const acpSessions = options.acpSessions ?? new AcpSessionHandleMap();
+  const acpSessions = options.acpSessions ??
+    new AcpSessionHandleMap(
+      options.policy === undefined ? {} : { runPolicy: options.policy },
+    );
   // One set of session owners per engine, shared by the turn handlers and
   // the runtime they run.
   const owners = options.owners ?? new SessionOwners();
@@ -343,6 +359,7 @@ export async function serveWorkbenchUnix(
       owners,
       acpSessions,
       options.env,
+      options.policy,
     );
   const handlers = buildHandlers(options, owners, runRuntime);
   const transport = await serveUnixJsonRpc(socketPath, {
@@ -394,12 +411,27 @@ async function main(): Promise<void> {
   // a plain local-only boot is unchanged.
   const secretsConfig = await loadSecretsConfig();
   const mcpServers = await loadMcpServersConfig({}, secretsConfig);
-  const resolvedSecrets = await resolveSecrets(secretsConfig);
+  // The runtime policy, composed from the same sources the launcher composes
+  // its grants from, and enforced at every seam below: the secrets resolver,
+  // MCP discovery and calls, the Dolt pool, provider calls, memory recall and
+  // the ACP runner. An insecure memory endpoint fails the boot here.
+  const doltConnection = resolveDoltConnection(processEnv);
+  const nodePath = processEnv.get("DYFJ_NODE_PATH");
+  const policy = composeRuntimePolicy({
+    mcpServers,
+    memoryMcpUrl: processEnv.get("DYFJ_MEMORY_MCP_URL"),
+    networkAllow: await loadNetworkAllow(),
+    nameserverGrants: await readNameserverNetGrants(),
+    secrets: secretsConfig,
+    nodePath: nodePath?.startsWith("/") === true ? nodePath : null,
+    dolt: doltConnection,
+  });
+  const resolvedSecrets = await resolveSecrets(secretsConfig, { policy });
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
     // The Linear extension builds the bounded issue-creation command.
-    { buildIssueCreationCommand: buildLinearIssueCreationCommand },
+    { buildIssueCreationCommand: buildLinearIssueCreationCommand, policy },
   );
   for (const diagnostic of externalMcp.diagnostics) {
     console.error(
@@ -413,9 +445,7 @@ async function main(): Promise<void> {
 
   // The runtime's one store over one Dolt pool. Connections open on first use,
   // so the boot does not wait for (or require) a running sql-server.
-  const store = new DoltStore(
-    createDoltPool(resolveDoltConnection(processEnv)),
-  );
+  const store = new DoltStore(createDoltPool(doltConnection, policy));
 
   // Boot-time column check: a reachable database that predates a migration in
   // schema/migrations/ fails the boot loudly, naming the missing columns. A
@@ -483,6 +513,7 @@ async function main(): Promise<void> {
       onParseError: (detail) => console.error(`[uds] ${detail}`),
       store,
       engineConfig: config,
+      policy,
       externalMcpCommands: externalMcp.commands,
       frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
         undefined,

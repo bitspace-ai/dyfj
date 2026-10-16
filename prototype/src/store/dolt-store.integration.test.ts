@@ -13,7 +13,7 @@ import {
   storeConformance,
   type StoreConformanceSubject,
 } from "../../testing/conformance/store.ts";
-import { resolveDoltConnection } from "../config/mod.ts";
+import { composeRuntimePolicy, resolveDoltConnection } from "../config/mod.ts";
 import { processEnv } from "../config/mod.ts";
 import {
   createDoltPool,
@@ -131,7 +131,10 @@ const subject: StoreConformanceSubject = {
       await seeder.end();
     }
     const store = new DoltStore(
-      createDoltPool({ ...connection, database }),
+      createDoltPool(
+        { ...connection, database },
+        composeRuntimePolicy({ dolt: connection }),
+      ),
       options,
     );
     databases.set(store, database);

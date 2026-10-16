@@ -10,10 +10,12 @@
  * context-size verdict and its counts stay in `context-exceeded.ts`; this
  * module composes it with the other classes.
  */
+import { EgressRefusedError } from "../../config/mod.ts";
 import { DomainError } from "../../contract/mod.ts";
 import {
   ProviderAuthenticationError,
   ProviderContextExceededError,
+  ProviderEgressRefusedError,
   type ProviderFailureError,
   ProviderModelNotFoundError,
   ProviderRateLimitedError,
@@ -211,7 +213,8 @@ export function classifyFetchFailure(
 /**
  * Rethrow a `fetch` rejection as what it is: the caller's own abort stays
  * the abort (so the turn settles as cancelled, not failed), a bounded
- * DomainError passes through, a refused redirect becomes
+ * DomainError passes through, a network-policy refusal becomes
+ * `ProviderEgressRefusedError`, a refused redirect becomes
  * `ProviderRedirectedError`, a recognised transport failure becomes
  * `ProviderUnreachableError`, and anything else becomes the unclassified
  * failure that names the provider and keeps the foreign message out.
@@ -230,6 +233,9 @@ export function providerFetchFailure(
     );
   }
   if (error instanceof DomainError) throw error;
+  if (error instanceof EgressRefusedError) {
+    throw new ProviderEgressRefusedError(target, error.message);
+  }
   const reason = classifyFetchFailure(error);
   if (reason === "redirect") throw new ProviderRedirectedError(target);
   if (reason !== null) throw new ProviderUnreachableError(target, reason);

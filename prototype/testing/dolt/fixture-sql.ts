@@ -5,7 +5,11 @@
 // through the store port. Each test file opens its own handle and closes it.
 
 import mysql from "mysql2/promise";
-import { processEnv, resolveDoltConnection } from "../../src/config/mod.ts";
+import {
+  composeRuntimePolicy,
+  processEnv,
+  resolveDoltConnection,
+} from "../../src/config/mod.ts";
 import { createDoltPool, DoltStore } from "../../src/store/mod.ts";
 
 export interface FixtureSql {
@@ -44,5 +48,8 @@ export function openFixtureSql(): FixtureSql {
 
 /** A `DoltStore` over the fixture database, as the composition root builds it. */
 export function openFixtureStore(): DoltStore {
-  return new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+  const connection = resolveDoltConnection(processEnv);
+  return new DoltStore(
+    createDoltPool(connection, composeRuntimePolicy({ dolt: connection })),
+  );
 }

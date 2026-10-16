@@ -4,8 +4,10 @@
  * Responsibility: the env-key schema (every `DYFJ_*` key declared), the `Env`
  * port and its process adapter, the shared `.env` parser, TOML loading, and
  * secrets/MCP/budget/agent/anomaly config parsing, secret-pointer resolution
- * into the environment (`secrets.ts`), and the launch-resolved
- * nameserver net grants. Nothing else in the runtime
+ * into the environment (`secrets.ts`), the launch-resolved
+ * nameserver net grants, and the runtime's egress, spawn and env policy with
+ * the guards that enforce it at the product's seams (`runtime-policy.ts`,
+ * `egress.ts`, `spawn-guard.ts`). Nothing else in the runtime
  * reads the process environment directly.
  *
  * Allowed dependencies: none outside this directory (and `smol-toml`, loaded
@@ -80,7 +82,35 @@ export {
   mcpServerNetGrants,
   validateDoltPort,
 } from "./mcp-net-grants.ts";
-export { assertSecureMemoryUrl } from "./memory-url.ts";
+export { assertSecureMemoryUrl, memoryMcpNetGrant } from "./memory-url.ts";
+export { loadNetworkAllow, parseNetworkAllow } from "./network-config.ts";
+export {
+  baseRuntimePolicy,
+  CLI_RUN_GRANTS,
+  cliRuntimePolicy,
+  composeRuntimePolicy,
+  RUNTIME_PLATFORM_ENV,
+  runtimeChildEnv,
+  type RuntimePolicy,
+  type RuntimePolicyInputs,
+  SERVE_UNIX_ENV_GRANTS,
+  SERVE_UNIX_NET_GRANTS,
+  SERVE_UNIX_RUN_GRANTS,
+} from "./runtime-policy.ts";
+export {
+  assertConnectAllowed,
+  assertEgressAllowed,
+  EgressRefusedError,
+  egressTarget,
+  type FetchTransport,
+  findEgressRefusal,
+  guardedFetch,
+} from "./egress.ts";
+export {
+  assertSpawnAllowed,
+  guardedSpawn,
+  SpawnRefusedError,
+} from "./spawn-guard.ts";
 export {
   resolveSecrets,
   secretsRunGrant,

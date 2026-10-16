@@ -9,10 +9,23 @@ import {
   parseSecretsConfig,
 } from "../../config/mod.ts";
 import { buildExternalMcpCommands } from "./adapter.ts";
+import { composeRuntimePolicy } from "../../config/mod.ts";
+
 import {
   startLoopbackHttp,
   startLoopbackMcpServer,
 } from "../../../testing/servers/mcp-server.ts";
+
+/** Build under the policy composed from the servers, as the engine composes it. */
+const buildCommandsFor = (
+  servers: Parameters<typeof buildExternalMcpCommands>[0],
+  credentials: Parameters<typeof buildExternalMcpCommands>[1],
+  deps: Parameters<typeof buildExternalMcpCommands>[2] = {},
+) =>
+  buildExternalMcpCommands(servers, credentials, {
+    ...deps,
+    policy: composeRuntimePolicy({ mcpServers: servers }),
+  });
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -141,7 +154,7 @@ test("external MCP discovery and call stay strict, allowlisted, and framed", asy
   );
 
   try {
-    const built = await buildExternalMcpCommands(
+    const built = await buildCommandsFor(
       [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
@@ -221,7 +234,7 @@ test("external MCP redirect refusal never reaches the redirect target", async ()
     })
   );
   try {
-    const built = await buildExternalMcpCommands(
+    const built = await buildCommandsFor(
       [fixtureConfig(redirect.url)],
       { fixture_mcp: "fixture-secret" },
     );
@@ -261,7 +274,7 @@ test("a broken external MCP tool response fails once without replay", async () =
     },
   );
   try {
-    const built = await buildExternalMcpCommands(
+    const built = await buildCommandsFor(
       [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
@@ -312,7 +325,7 @@ test("an oversized external MCP tool response fails at the transport bound", asy
     return server;
   });
   try {
-    const built = await buildExternalMcpCommands(
+    const built = await buildCommandsFor(
       [fixtureConfig(http.url)],
       { fixture_mcp: "fixture-secret" },
     );
@@ -431,7 +444,7 @@ test("external search server capability registers web_search and web_fetch comma
       },
     };
 
-    const built = await buildExternalMcpCommands(
+    const built = await buildCommandsFor(
       [serverConfig],
       { search_mcp: "secret-token" },
     );

@@ -13,8 +13,21 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { buildMemorySearch } from "./memory-search.ts";
+import { composeRuntimePolicy } from "../../config/mod.ts";
+
 import { extractMcpTraceContext } from "./conformance.ts";
 import { startLoopbackMcpServer } from "../../../testing/servers/mcp-server.ts";
+
+/** Recall under the policy composed from its own endpoint, as the engine composes it. */
+const recallFor = (
+  config: Parameters<typeof buildMemorySearch>[0],
+  onDiagnostic?: Parameters<typeof buildMemorySearch>[1],
+) =>
+  buildMemorySearch(
+    config,
+    onDiagnostic,
+    composeRuntimePolicy({ memoryMcpUrl: config.url }),
+  );
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -81,7 +94,7 @@ test("MCP recall injects and the server extracts canonical W3C context", async (
     return server;
   });
   try {
-    const recall = buildMemorySearch({
+    const recall = recallFor({
       url: http.url,
       tool: "trace-read",
     });

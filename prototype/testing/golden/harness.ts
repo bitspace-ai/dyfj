@@ -110,7 +110,8 @@ type Query = (
 ) => Promise<Record<string, unknown>[]>;
 
 interface PermissionProfile {
-  env: string[];
+  /** `true` grants every variable, as the CLI profile does. */
+  env: string[] | true;
   run: string[];
   sys?: string[];
 }
@@ -122,6 +123,8 @@ interface LaunchContext {
   baseEnv: Record<string, string>;
   dbEnv: Record<string, string>;
   linearUrl: string;
+  /** The loopback model server's `host:port`, for `[network] allow`. */
+  modelHost: string;
   server: PermissionProfile;
   cli: PermissionProfile;
 }
@@ -263,6 +266,15 @@ async function drain(
   }
 }
 
+/**
+ * The `[network]` table every profile's config.toml carries: the engine's
+ * network policy admits the loopback model server's random port only through
+ * it, as an operator admits a local server on a non-default port.
+ */
+export function networkConfig(modelHost: string): string {
+  return ["[network]", `allow = ["${modelHost}"]`, ""].join("\n");
+}
+
 export function frictionConfig(linearUrl: string): string {
   // The secret resolver prints its pointer; the pointer is the token.
   return [
@@ -318,9 +330,11 @@ async function startEngineServer(
   const socket = socketPathFor(launch.root, profile);
   const dir = socket.slice(0, socket.lastIndexOf("/"));
   await mkdir(dir);
-  if (profile.friction) {
-    await writeFile(`${dir}/config.toml`, frictionConfig(launch.linearUrl));
-  }
+  await writeFile(
+    `${dir}/config.toml`,
+    networkConfig(launch.modelHost) +
+      (profile.friction ? `\n${frictionConfig(launch.linearUrl)}` : ""),
+  );
   const deno = denoBin();
   const child = started(spawn(
     deno,
@@ -328,7 +342,9 @@ async function startEngineServer(
       "run",
       "--no-prompt",
       `--config=${prototypeRoot}/deno.json`,
-      `--allow-env=${launch.server.env.join(",")}`,
+      launch.server.env === true
+        ? "--allow-env"
+        : `--allow-env=${launch.server.env.join(",")}`,
       "--allow-read",
       "--allow-write",
       // `dyfj start` likewise appends the configured secret resolver.
@@ -390,7 +406,9 @@ function spawnCli(
       "run",
       "--no-prompt",
       `--config=${prototypeRoot}/deno.json`,
-      `--allow-env=${launch.cli.env.join(",")}`,
+      launch.cli.env === true
+        ? "--allow-env"
+        : `--allow-env=${launch.cli.env.join(",")}`,
       "--allow-read",
       "--allow-write",
       `--allow-run=${[...launch.cli.run, deno].join(",")}`,
@@ -555,6 +573,7 @@ export async function startHarness(options: {
       },
       dbEnv: fixture.env,
       linearUrl: linear.url,
+      modelHost: new URL(modelServer.baseUrl).host,
       ...await permissionProfiles(),
     };
     const sockets = new Map<string, Promise<string>>();
