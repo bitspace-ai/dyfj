@@ -122,7 +122,7 @@
   {
     "path": "prototype/scripts/test-files.test.ts",
     "count": 14,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Gate-tooling test on Deno.test and host APIs; converted to node:test with the gate-tooling port under decision D32."
   },
   {
     "path": "prototype/scripts/typecheck.ts",
@@ -152,7 +152,7 @@
   {
     "path": "prototype/testing/golden/run.ts",
     "count": 5,
-    "reason": "The golden lane runner, which spawns the deno test runner with per-path grants; it moves when the lanes run node --test under decision D32."
+    "reason": "The golden lane runner, a Deno orchestration script that spawns the node --test lane; ported to node: builtins with the gate-tooling port under decision D32."
   },
   {
     "path": "schema/codegen.ts",
@@ -172,7 +172,7 @@
   {
     "path": "scripts/aggregate-test-gate.test.ts",
     "count": 181,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "reason": "Gate-tooling test on Deno.test and host APIs; converted to node:test with the gate-tooling port under decision D32."
   },
   {
     "path": "scripts/aggregate-test-gate.ts",

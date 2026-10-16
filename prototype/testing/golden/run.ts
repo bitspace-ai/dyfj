@@ -46,7 +46,9 @@ const unsupported = suiteArgs.filter((arg) => arg !== "--update");
 if (unsupported.length > 0) {
   throw new Error(
     `dyfj: the golden suite takes no arguments other than --update ` +
-      `(got ${unsupported.join(" ")}): node --test passes a test file none`,
+      `(got ${unsupported.join(" ")}): node --test does not forward suite ` +
+      `arguments to test files, so the only supported one is --update, ` +
+      `which reaches the tests as ${GOLDEN_UPDATE_ENV}=1`,
   );
 }
 
