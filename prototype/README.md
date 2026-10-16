@@ -277,8 +277,10 @@ and a file outside `scripts/` that calls `Deno.test` or imports `@std/testing/bd
 fails discovery with its path in the message. The unit and integration runners run
 their gate-tooling `deno test` subset first; all three runners run their Node files
 with `node --test --import testing/node-handle-check.ts --test-concurrency=<jobs>
---test-reporter=tap`, one process per file, with the lane's environment plus
-`DENO_BIN` (`scripts/node-test-lane.ts`). Each runner needs Node 26 on `PATH` and
+--test-reporter=tap`, one process per file, with the lane's environment
+(`scripts/node-test-lane.ts`); the unit and integration runners add `DENO_BIN`
+to it, and the golden runner does not, since its harness starts the product on
+Node. Each runner needs Node 26 on `PATH` and
 fails with a message saying so otherwise. An empty Node subset is reported as
 `0 files`, and the Node subset ends with a count line, for example
 `test.unit node --test: ok | 52 passed | 0 failed | ...`, parsed from the TAP summary.
