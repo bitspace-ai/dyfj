@@ -8,7 +8,7 @@
 // test.
 
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
-import { join, posix } from "node:path";
+import { join } from "node:path";
 
 export const SOURCE_ROOTS = [
   "src",
@@ -114,38 +114,22 @@ export function discoverGoldenTests(root: string): string[] {
   return discoverTestSources(root).filter(isGoldenPath);
 }
 
-// Routing between the two runtimes a test lane runs on while the track moves
-// test registrations onto `node:test` (decision D32). The file's content
-// decides; no file is listed by hand.
+// Routing between the two runtimes a test lane runs on (decision D32).
+// Product tests run on `node:test` only; the lane and gate tooling tests
+// under `scripts/` (this directory) keep the existing runtime until the
+// gate-tooling port. No file is listed by hand:
 //
-// - A file whose own source registers with `node:test` (it imports a
-//   registration or hook, or the whole module) runs under `node --test`.
-// - So does a file that imports a conformance kit (`testing/conformance/`):
-//   the kits register their cases with `node:test`, so a kit-only caller
-//   needs no marker of its own. This rule goes with the existing runner.
-// - A file whose own source calls the existing runtime's test function or
-//   imports `@std/testing/bdd` runs where it does today. So does a file with
-//   none of these.
-// - A file with both fails discovery: its tests would be split across two
-//   runtimes, so it is converted whole or not at all.
-//
-// Importing only `mock` (or another non-registering export) from `node:test`
-// is not a registration: files on the existing runtime do that today.
+// - A file under `scripts/` whose own source calls the existing runtime's
+//   test function or imports `@std/testing/bdd` runs where it does today,
+//   until the gate-tooling port.
+// - Every other file runs under `node --test`, including a `scripts/` file
+//   that registers with `node:test` only.
+// - A file outside `scripts/` that calls the existing runtime's test
+//   function or imports `@std/testing/bdd` fails discovery, with its path.
 
 export type TestRuntime = "deno" | "node";
 
-const NODE_TEST_REGISTRATIONS = new Set([
-  "test",
-  "it",
-  "describe",
-  "suite",
-  "before",
-  "after",
-  "beforeEach",
-  "afterEach",
-]);
-const nodeTestImportPattern =
-  /\bimport\s+(type\s+)?([^;]*?)\s*from\s*["']node:test["']/g;
+const gateToolingDirectory = "scripts/";
 // Assembled so this file adds no whole-word reference to the runtime.neutral
 // ratchet's count.
 const legacyRegistrationPattern = new RegExp(
@@ -153,68 +137,34 @@ const legacyRegistrationPattern = new RegExp(
     `from\\s*["']@std/testing/bdd["']`,
 );
 
-/** Whether `source` itself registers a test or hook with `node:test`. */
-export function registersWithNodeTest(source: string): boolean {
-  for (const match of source.matchAll(nodeTestImportPattern)) {
-    if (match[1] !== undefined) continue;
-    const clause = match[2];
-    const named = /\{([^}]*)\}/.exec(clause);
-    // A default or namespace import reaches every registration.
-    if (clause.replace(/\{[^}]*\}/, "").replace(/,/g, "").trim() !== "") {
-      return true;
-    }
-    for (const specifier of named?.[1].split(",") ?? []) {
-      const trimmed = specifier.trim();
-      if (trimmed.startsWith("type ")) continue;
-      const imported = trimmed.split(/\s+as\s+/)[0];
-      if (NODE_TEST_REGISTRATIONS.has(imported)) return true;
-    }
-  }
-  return false;
-}
-
-const staticImportPattern = /\bfrom\s*["']([^"']+)["']/g;
-
-/**
- * Whether `source`, the text of the file at `path`, imports a conformance kit
- * (a module under `testing/conformance/`), whose cases register with
- * `node:test`. Relative specifiers are resolved against `path`, so a caller
- * is found however it spells the way there.
- */
-export function importsConformanceKit(path: string, source: string): boolean {
-  for (const match of source.matchAll(staticImportPattern)) {
-    const specifier = match[1];
-    if (!specifier.startsWith(".")) continue;
-    const resolved = posix.join(posix.dirname(path), specifier);
-    if (/(?:^|\/)testing\/conformance\//.test(resolved)) return true;
-  }
-  return false;
-}
-
 /** Whether `source` itself registers through the existing runtime's runner. */
 export function registersWithLegacyRunner(source: string): boolean {
   return legacyRegistrationPattern.test(source);
 }
 
-/** The runtime `path`'s tests run on. Throws when the file registers with both. */
+/** Whether `path` (relative to the prototype root) is a gate-tooling test. */
+export function isGateToolingTest(path: string): boolean {
+  return path.startsWith(gateToolingDirectory);
+}
+
+/**
+ * The runtime `path`'s tests run on. Throws when a file outside `scripts/`
+ * registers with the existing runtime's runner.
+ */
 export function testRuntime(path: string, source: string): TestRuntime {
-  const node = registersWithNodeTest(source) ||
-    importsConformanceKit(path, source);
-  if (node && registersWithLegacyRunner(source)) {
-    throw new Error(
-      `${path} registers tests with both node:test (directly or through a ` +
-        "conformance kit) and the existing runner (its test function or " +
-        "@std/testing/bdd); a test file runs on one " +
-        "runtime, so convert all of its registrations together",
-    );
-  }
-  return node ? "node" : "deno";
+  if (!registersWithLegacyRunner(source)) return "node";
+  if (isGateToolingTest(path)) return "deno";
+  throw new Error(
+    `${path} registers tests with the existing runner (its test function or ` +
+      "@std/testing/bdd); product tests run on node:test only, so convert " +
+      "its registrations to node:test",
+  );
 }
 
 /**
  * `files` (paths relative to `root`) split by the runtime their tests run on,
- * each list in the given order. Fails closed on a file that registers with
- * both.
+ * each list in the given order. Fails closed on a product test file that
+ * registers with the existing runner.
  */
 export function partitionByRuntime(
   root: string,

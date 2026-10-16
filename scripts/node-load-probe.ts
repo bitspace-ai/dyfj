@@ -16,7 +16,7 @@
 // `node`. The gate tooling's port to Node makes it one. It covers non-test
 // modules under the three roots only. One module fails by design:
 // `prototype/testing/golden/run.ts` is the golden lane's runner, a script that
-// still runs under `deno` and spawns `deno test`; importing it runs it.
+// still runs under `deno`; importing it runs it.
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";

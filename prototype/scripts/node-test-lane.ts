@@ -1,9 +1,10 @@
 // The Node half of the unit, integration and golden lanes (decision D32,
 // `specs/03-testing.md` §6). Each lane runner partitions its discovered files
-// with `partitionByRuntime` (`test-files.ts`): the files that register with
-// `node:test` run here, under `node --test` with one process per file and the
-// per-file handle check preloaded (`testing/node-handle-check.ts`); the rest
-// keep the lane's existing runner.
+// with `partitionByRuntime` (`test-files.ts`): every product test runs here,
+// under `node --test` with one process per file and the per-file handle check
+// preloaded (`testing/node-handle-check.ts`); the gate-tooling tests under
+// `scripts/` that register with the existing runner keep it until the
+// gate-tooling port.
 //
 // The run's TAP stream is passed through to the lane's output and its closing
 // summary is parsed, so the lane prints a count line for its Node files next

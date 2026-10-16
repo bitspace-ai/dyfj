@@ -128,10 +128,10 @@ Deno.test("typecheck lanes derive their file lists instead of hand-listing", () 
   }
 });
 
-Deno.test("aggregate lanes include the test.unit Deno.test suite", () => {
+Deno.test("aggregate lanes include the test.unit suite", () => {
   const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
     candidate,
-  ) => candidate.label === "Prototype unit Deno.test suite (test.unit)");
+  ) => candidate.label === "Prototype unit test suite (test.unit)");
   if (!lane) throw new Error("test.unit lane is missing");
   assertEquals(lane.checkId, "test.aggregate");
   // The runner itself leads the lane group, not `deno task`.
@@ -148,7 +148,7 @@ Deno.test("the three test lanes carry deadlines and grant the lane names", () =>
   const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
   for (
     const [label, deadline] of [
-      ["Prototype unit Deno.test suite (test.unit)", LANE_DEADLINES_MS.unit],
+      ["Prototype unit test suite (test.unit)", LANE_DEADLINES_MS.unit],
       ["Isolated Dolt integration lane", LANE_DEADLINES_MS.integration],
       ["Golden characterization suite (test.golden)", LANE_DEADLINES_MS.golden],
     ] as const
@@ -548,7 +548,7 @@ Deno.test("a Markdown-only pull request runs only the policy lanes", async () =>
   );
   for (
     const skipped of [
-      "Prototype unit Deno.test suite (test.unit)",
+      "Prototype unit test suite (test.unit)",
       "Isolated Dolt integration lane",
       "Golden characterization suite (test.golden)",
       "Schema codegen freshness (schema.codegen)",
@@ -726,9 +726,8 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
     DENO_BIN: "/fixtures/runtime/deno",
   });
   assertEquals(lane.args.at(-1), "testing/golden/run.ts");
-  // The runner spawns only the selected Deno and `node` (for golden files
-  // that register with node:test) and needs no network: the tests' loopback
-  // and exact socket grants are the runner's to issue.
+  // The runner spawns only the selected Deno (its lane supervision) and
+  // `node` (the golden files register with node:test) and needs no network.
   assertEquals(
     lane.args.find((argument) => argument.startsWith("--allow-run=")),
     "--allow-run=/fixtures/runtime/deno,node",
@@ -741,14 +740,14 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
   }
   const runner = await Deno.readTextFile("prototype/testing/golden/run.ts");
   // The lane can never rewrite its own snapshots: only an explicit update
-  // grants write on the snapshot directory to the first runtime's files, or
-  // turns on update mode, without which the Node files' one snapshot writer
-  // refuses (`testing/golden/snapshots.ts`, pinned by its own tests).
+  // turns on update mode, without which the one snapshot writer refuses
+  // (`testing/golden/snapshots.ts`, pinned by its own tests). The runner
+  // spawns no `deno test`, so no snapshot write grant exists to issue.
   assertStringIncludes(
     runner,
     'const update = suiteArgs.includes("--update");',
   );
-  assertStringIncludes(runner, 'update ? ",testing/golden/snapshots" : ""');
+  assertEquals(runner.includes("testing/golden/snapshots"), false);
   assertStringIncludes(
     runner,
     'env: update ? { ...env, [GOLDEN_UPDATE_ENV]: "1" } : env,',

@@ -291,11 +291,12 @@ How the work actually happens, separate from what gets built.
   Dolt instance, real processes, real sockets) belong to the integration tier;
   third-party network services are faked at the network boundary with loopback
   servers. The full doctrine is [`specs/03-testing.md`](specs/03-testing.md) §1.
-  Shared fakes live in `prototype/testing/fakes/`. While tests move onto
-  `node:test` (decision D32), `Deno.test`/`@std/testing/bdd` and `node:test`
-  coexist: each file is routed by its own registrations, to `deno test` or
-  `node --test`, and assertions and mocks come from `node:assert/strict` and
-  `node:test` in both. The end state is `node:test` only.
+  Shared fakes live in `prototype/testing/fakes/`. Product tests run on
+  `node:test` only (decision D32), under `node --test` with the per-file handle
+  check, with assertions and mocks from `node:assert/strict` and `node:test`.
+  The gate and lane tooling tests under `scripts/` and `prototype/scripts/`
+  may still use `Deno.test` until the gate-tooling port. The end state is
+  `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -1216,10 +1217,10 @@ After the policy checks, the gate runs the retired-surface scan, the
 and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed), the prototype unit lane (`test.unit`: every
-non-integration, non-golden test file; its `deno test` subset runs in parallel
-with the op and resource sanitizers enabled, no run or net grant, and env
-access only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`, grants that
-bind that subset only, while its Node-routed files run unsandboxed), the
+non-integration, non-golden test file; product files run unsandboxed under
+`node --test`, and its gate-tooling `deno test` subset runs in parallel with
+the op and resource sanitizers enabled, no run or net grant, and env access
+only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), the
 schema unit tests (`schema/validate-schema.test.ts`, `codegen.test.ts` and
 `equivalence.test.ts`, which register with `node:test` and run under
 `node --test` with the per-file handle check through
@@ -1231,8 +1232,9 @@ committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
-`*.integration.test.ts`, found by file name, its `deno test` subset with the op
-and resource sanitizers enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+`*.integration.test.ts`, found by file name, product files under `node --test`
+and its gate-tooling `deno test` subset with the op and resource sanitizers
+enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
@@ -1244,12 +1246,10 @@ no permission sandbox. Only an update may write a snapshot: `--update` reaches
 the test process as `DYFJ_GOLDEN_UPDATE=1`, and every snapshot write goes
 through one function (`prototype/testing/golden/snapshots.ts`) that throws
 unless that variable is set. A plain run fails on a missing or changed snapshot
-and writes nothing. A golden file still on `deno test` gets loopback TCP and
-the exact Unix socket of each engine server it starts, and write on the
-snapshot directory only with `--update`. The harness starts the engine server and
-CLI on the `node` running the suite, as the launcher does: the engine as plain
-`node`, the CLI under the client's permission flags, both read from
-`prototype/src/config/runtime-policy.ts`. The task resolves the Deno executable selected for the
+and writes nothing. The golden runner spawns no `deno test`. The harness starts
+the engine server and CLI on the `node` running the suite, as the launcher
+does: the engine as plain `node`, the CLI under the client's permission flags,
+both read from `prototype/src/config/runtime-policy.ts`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. Outside Windows, each lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
@@ -1282,18 +1282,17 @@ explicit `DATABASE_URL` takes precedence, so the lane does not use the
 operator's Dolt database. It requires Deno, Node 26, Dolt, and the pinned Rust
 toolchain.
 
-The three test lanes each run on two paths while tests move onto `node:test`
-(decision D32, `specs/03-testing.md` §1). Each discovered file goes by its own
-content (`prototype/scripts/test-files.ts`): a file that registers a test or
-hook with `node:test`, or imports a conformance kit from
-`prototype/testing/conformance/` (the kits register with `node:test`), runs
-under `node --test`, one process per file, after the lane's `deno test`
-subset; every other file runs under `deno test` as before; a
-file that registers with both fails discovery, naming the file. Deno's
-sanitizers do not see `node:` resources (a `node:net` server or socket, a
-`node:child_process` child), so they catch only timers among the resources
-tests use today, and nothing in a `node:test` file. The Node subset instead
-preloads a per-file handle check (`prototype/testing/node-handle-check.ts`):
+Product tests run on `node:test` only (decision D32, `specs/03-testing.md`
+§1). Each discovered file goes by its path and content
+(`prototype/scripts/test-files.ts`): a test file under `prototype/scripts/`
+that calls `Deno.test` or imports `@std/testing/bdd` is a gate-tooling test
+and runs under `deno test`, before the lane's Node files, until the
+gate-tooling port; every other file runs under `node --test`, one process per
+file; a file outside `prototype/scripts/` that calls `Deno.test` or imports
+`@std/testing/bdd` fails discovery, naming the file. The golden lane runs no
+`deno test`. Deno's sanitizers on the gate-tooling subset do not see `node:`
+resources (a `node:net` server or socket, a `node:child_process` child). The
+Node files instead preload a per-file handle check (`prototype/testing/node-handle-check.ts`):
 a file that leaves a server, socket, timer or child process live after its
 last test fails, with the file and the leaked resource types named, and its
 process exits so the run cannot hang. It first waits for the file's own
@@ -1301,10 +1300,9 @@ stdout and stderr to flush, so the runner's in-flight output to its parent is
 not reported as a leak, and the exit waits briefly so the runner's report of
 the file's tests is not cut off. The check is per file, coarser than a
 per-test sanitizer. Each runner fails unless `node` is Node 26, reports an
-empty subset as `0 files`, and prints a count line for its Node files beside
-`deno test`'s own (`test.unit node --test: ok | 52 passed | 0 failed | ...`),
-parsed from the run's TAP summary, so moving files between paths cannot drop
-tests from a lane's output unnoticed. `node --test` and its per-file processes
+empty Node subset as `0 files`, and prints a count line for its Node files
+(`test.unit node --test: ok | 52 passed | 0 failed | ...`), parsed from the
+run's TAP summary, so tests cannot drop from a lane's output unnoticed. `node --test` and its per-file processes
 stay in the lane's process group, so the lane deadline and group stop reach a
 hung Node test file. Under `node --test`, tests run without a permission
 sandbox.
@@ -1402,8 +1400,8 @@ each one. Test files are those test discovery recognises (`isTestSource` in
 `prototype/scripts/test-files.ts`). It resolves npm packages from
 `prototype/node_modules`, which `npm ci` installs. One module fails by design:
 `prototype/testing/golden/run.ts`, the golden lane's runner, is a script that
-still runs under `deno` and spawns `deno test`, so the probe reports it as a
-failure until the test lanes run under Node.
+still runs under `deno`, so the probe reports it as a failure until the gate
+tooling runs under Node.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -2319,6 +2317,11 @@ Document revisions only. Code and behavior changes are tracked in
   the configured Dolt endpoint is a network policy entry, and that the
   launcher reads `prototype/.env` itself and starts the runtime without
   `--env-file`, so no `.env` name outside the policy reaches the runtime.
+- 2026-10-16 - Section 4 and the gate section say that product tests run on
+  `node:test` only, under `node --test` with the per-file handle check, and
+  that the gate-tooling tests under `prototype/scripts/` still run on
+  `deno test` until their port; a `Deno.test` or bdd registration in any other
+  test file fails discovery. The golden lane runs no `deno test`.
 - 2026-10-16 - The runtime and the `dyfj` CLI run on Node 26. The
   prerequisites put Node 26 first, with Deno kept for the gate and test
   tooling; "Run Workbench" starts the launcher script after `npm ci`, in place

@@ -13,10 +13,7 @@ import {
   stopOwnGroup,
 } from "./lane-supervision.ts";
 import { fileURLToPath } from "node:url";
-import {
-  UDS_TEST_SOCKET_DIR_ENV,
-  udsTestSocketGrants,
-} from "../testing/servers/uds-sockets.ts";
+import { UDS_TEST_SOCKET_DIR_ENV } from "../testing/servers/uds-sockets.ts";
 
 class IntegrationInterruptedError extends Error {
   constructor() {
@@ -137,8 +134,10 @@ let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
 let denoTestTempDir: string | undefined;
 try {
-  // Each integration file runs on the runtime its own registrations name
-  // (`test-files.ts`); a file that names both fails here, before the fixture.
+  // Product integration files run under `node --test`; the gate-tooling
+  // files under `scripts/` that register with the existing runner run under
+  // `deno test` until the gate-tooling port (`test-files.ts`). A product file
+  // that registers with the existing runner fails here, before the fixture.
   const integrationFiles = partitionByRuntime(
     prototypeRoot,
     discoverIntegrationTests(prototypeRoot),
@@ -156,15 +155,12 @@ try {
     DENO_BIN: denoExecutable,
   };
   mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
-  // Deno grants Unix sockets per exact path, so the Deno.test files that bind
-  // real sockets get this directory and a grant for each socket they name.
+  // The files that bind real Unix sockets name them inside this directory.
   udsTestSocketDir = await Deno.makeTempDir({ prefix: "dyfj-uds-" });
-  // The Deno.test files' own temp files (the ACP fixture's pid files and
-  // method logs, scratch operator homes, an outside workspace) go through
-  // Deno.makeTempDir/makeTempFile, which honor TMPDIR: pointing it at this
-  // directory keeps their read and write grants to it alone. Its real path is
-  // what is granted and exported: the code under test resolves real paths, and
-  // on macOS the temp root /tmp is a symlink to /private/tmp.
+  // The tests' own temp files go under TMPDIR, pointed at this directory, so
+  // the gate-tooling subset's read and write grants cover it alone. Its real
+  // path is what is granted and exported: the code under test resolves real
+  // paths, and on macOS the temp root /tmp is a symlink to /private/tmp.
   denoTestTempDir = await Deno.realPath(
     await Deno.makeTempDir({ prefix: "dyfj-deno-test-" }),
   );
@@ -176,54 +172,43 @@ try {
     [UDS_TEST_SOCKET_DIR_ENV]: udsTestSocketDir,
     TMPDIR: denoTestTempDir,
   };
-  // The Node subset runs after a failing first subset too, so one run reports
-  // both; the first failure is the lane's.
+  // The product tests run after a failing gate-tooling subset too, so one run
+  // reports both; the first failure is the lane's.
   let subsetFailure: unknown;
-  if (integrationFiles.deno.length === 0) {
-    console.log("integration deno test: 0 files");
-  } else {
+  // The gate-tooling subset, until the gate-tooling port.
+  if (integrationFiles.deno.length > 0) {
     await runChecked(denoExecutable, [
       "test",
       // Ungranted access throws instead of prompting, as it does in CI, so a
       // local run from a terminal never parks on a permission prompt.
       "--no-prompt",
-      // The pinned Deno runs the op and resource sanitizers only when asked. They
-      // fail the test that leaks a timer or an op or resource the runtime
+      // The pinned Deno runs the op and resource sanitizers only when asked.
+      // They fail the test that leaks a timer or an op or resource the runtime
       // tracks, but they do not see `node:` servers, sockets or child
-      // processes; the Node subset's per-file handle check does
-      // (`specs/03-testing.md` §1).
+      // processes (`specs/03-testing.md` §2).
       "--sanitize-ops",
       "--sanitize-resources",
+      // The grants of the gate-tooling subset, until the gate-tooling port.
       // The isolated Dolt fixture's own tests start throwaway fixtures: they
       // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
-      // their temp roots under TMPDIR (the per-run directory below), and run
-      // `dolt`. The secrets resolver tests run `bash` and set one ambient
-      // variable (LEAKY_AMBIENT) to prove the resolver child does not inherit
-      // it. The ACP files read DENO_DIR for the fixture agent's cache, set and
-      // restore the representative ambient secrets they prove are not
-      // forwarded, and read the Codex profile inputs (DYFJ_NODE_PATH and the
-      // toolchain directories), which stay unset here. The launcher test pins
-      // its children's Deno cache through DENO_DIR too.
-      // DYFJ_WORKBENCH_CONTEXT_TOKENS: the repo-context budget fallback case.
-      `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,DYFJ_MCP_TEST_TEMP_DIR,${UDS_TEST_SOCKET_DIR_ENV},ENV_CONFORMANCE_PROBE,TMPDIR,TEMP,TMP,LEAKY_AMBIENT,ACP_FIXTURE_AMBIENT_VALUE,ANTHROPIC_API_KEY,DYFJ_MEMORY_MCP_TOKEN,SSH_AUTH_SOCK,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,DYFJ_WORKBENCH_CONTEXT_TOKENS`,
-      `--allow-read=.,../schema,${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-      `--allow-write=${mcpTestTempDir},${udsTestSocketDir},${denoTestTempDir}`,
-      // bash, /bin/bash: the ACP files' process probes, symlink setup and a
-      // stdout-holding wrapper around the fixture agent, the launcher script
-      // and the secrets resolver. /bin/sh: the `deno.json` task strings under
-      // test. ln: symlink fixtures (`Deno.symlink` needs unscoped read and
-      // write). /bin/ps: reaping a launcher-started runtime by socket. dolt:
-      // the fixture tests. python3: a pseudo-terminal (its `pty` module) for the
-      // launcher cases that need an interactive session. /bin/sleep: the ACP
-      // runner's process-group probe child.
-      `--allow-run=${denoExecutable},scripts/mcp-child-wrapper.sh,/bin/kill,/bin/sleep,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln,python3`,
-      // The Codex profile builder checks directory ownership with Deno.uid().
-      "--allow-sys=uid",
-      `--allow-net=${
-        ["127.0.0.1", ...udsTestSocketGrants(udsTestSocketDir)].join(",")
-      }`,
-      // Every `*.integration.test.ts`, found by name: the tier is the file
-      // name. The ones that register with `node:test` run in the Node subset.
+      // their temp roots under TMPDIR (the per-run directory above), run
+      // `dolt` and connect to 127.0.0.1. The launcher test pins its
+      // children's Deno cache through DENO_DIR and reads the Codex profile
+      // inputs (DYFJ_NODE_PATH and the toolchain directories), which stay
+      // unset here; so does the `deno.json` task-string test.
+      `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,TMPDIR,TEMP,TMP,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
+      `--allow-read=.,../schema,${denoTestTempDir}`,
+      `--allow-write=${denoTestTempDir}`,
+      // bash, /bin/bash: the launcher script and its symlink setup. /bin/sh:
+      // the `deno.json` task strings under test. ln: symlink fixtures
+      // (`Deno.symlink` needs unscoped read and write). /bin/ps, /bin/kill:
+      // reaping a launcher-started runtime (`testing/processes.ts`). dolt:
+      // the fixture tests. python3: a pseudo-terminal (its `pty` module) for
+      // the launcher cases that need an interactive session.
+      `--allow-run=${denoExecutable},/bin/kill,/bin/ps,/bin/sh,dolt,bash,/bin/bash,ln,python3`,
+      "--allow-net=127.0.0.1",
+      // The gate-tooling `*.integration.test.ts` files on the existing
+      // runner; every other integration file runs in the Node subset.
       ...integrationFiles.deno,
     ], {
       cwd: prototypeRoot,

@@ -30,20 +30,18 @@ in the same change that lands this spec's first work order.
 - **Local-model generation checks** and **evals for model-touching code**:
   carried over from README §4 unchanged.
 - **Behavior is pinned by golden tests** (§4) for the whole of phase 1.
-- **Leak checks while tests move onto `node:test`** (decision D32).
-  - Deno's op and resource sanitizers do not see `node:` resources: a server,
-    socket or child process from `node:net`, `node:http` or
-    `node:child_process`. In a `Deno.test` file, of the resources tests use
-    today, they catch only timers. In a file that registers with `node:test`
-    they check nothing.
-  - The unit, integration and golden lanes route each discovered file by its own
-    content (`prototype/scripts/test-files.ts`). A file that registers a test or
-    hook with `node:test`, or imports a conformance kit from
-    `testing/conformance/` (the kits register with `node:test`), runs under
-    `node --test`, one process per file. A file that calls `Deno.test` or
-    imports `@std/testing/bdd`, or does none of these, runs under `deno test` as
-    before. A file that does both fails discovery with its path in the message.
-    No file is listed by hand.
+- **Leak checks: the per-file handle check** (decision D32).
+  - Product tests run on `node:test` only, under `node --test`, one process per
+    file. The unit, integration and golden lanes route each discovered file by
+    its path and content (`prototype/scripts/test-files.ts`); no file is listed
+    by hand:
+    - a test file under `prototype/scripts/` that calls `Deno.test` or imports
+      `@std/testing/bdd` is a gate-tooling test and runs under `deno test`,
+      until the gate-tooling port;
+    - every other test file runs under `node --test`, including a
+      `prototype/scripts/` file that registers with `node:test` only;
+    - a test file outside `prototype/scripts/` that calls `Deno.test` or
+      imports `@std/testing/bdd` fails discovery, with its path in the message.
   - Each `node --test` file process preloads the per-file handle check
     (`prototype/testing/node-handle-check.ts`). It records the live resources at
     load, compares them with what is live after the file's last test, and fails
@@ -63,28 +61,26 @@ in the same change that lands this spec's first work order.
 
 ## 2. Framework
 
-- **Framework: two registration styles during the move to `node:test`**
-  (decision D32).
-  - `Deno.test` and `@std/testing/bdd` coexist with `node:test` (`test`,
-    `describe`/`it`, `before`/`after` and the other hooks). Each file uses one
-    style and is routed by its own registrations (§1): `node:test` files run
-    under `node --test`, the rest under `deno test`.
-  - In both styles, assertions come from `node:assert/strict` and mocks from
-    `node:test` (`mock`). `@std/assert` remains only in the gate and lane
-    tooling tests under `scripts/` and `prototype/scripts/`, which move with
-    that tooling.
+- **Framework: `node:test`** (decision D32).
+  - Product tests register with `node:test` (`test`, `describe`/`it`,
+    `before`/`after` and the other hooks), take assertions from
+    `node:assert/strict` and mocks from `node:test` (`mock`), and run under
+    `node --test` with the per-file handle check (§1).
+  - The gate and lane tooling tests under `scripts/` and `prototype/scripts/`
+    may still use `Deno.test`, `@std/testing/bdd` and `@std/assert` until the
+    gate-tooling port, which moves them with that tooling.
   - The end state under decision D32 is `node:test` as the only test
     framework, with `Deno.test`, `@std/testing` and `@std/assert` gone.
-- **Sanitizers stay on for the `deno test` subset.**
-  - They apply to the files each lane runs under `deno test` only. They do not
-    see `node:` resources, and they do not run under `node --test`; those files
-    get the per-file handle check instead (§1).
+- **Sanitizers stay on for the gate-tooling `deno test` subset**, until the
+  gate-tooling port.
+  - They apply only to the `prototype/scripts/` files that `test.unit` and the
+    integration lane run under `deno test` (§1). They do not see `node:`
+    resources (a server, socket or child process from `node:net`, `node:http`
+    or `node:child_process`); of the resources tests use, they catch only
+    timers.
   - The pinned Deno (2.9.6) runs the op and resource sanitizers only when asked,
-    so a lane's `deno test` run must pass `--sanitize-ops --sanitize-resources`.
-    `test.unit` and the integration lane do. The golden lane does not: its
-    tests run under `node --test` (§4), so its `deno test` subset is empty.
-  - A test that leaks an op, resource or child process fails at the test that
-    leaked it, when the sanitizers can see it.
+    so those lanes' `deno test` runs pass `--sanitize-ops --sanitize-resources`.
+    The golden lane runs no `deno test`.
   - A test may disable a sanitizer only with a comment naming the leak and why
     it is unavoidable.
 - **Supervision.**
@@ -97,8 +93,8 @@ in the same change that lands this spec's first work order.
     test-lane runners (`prototype/scripts/lane-supervision.ts`: a backstop and
     a stop of the runner's own process group). `node --test` and its per-file
     processes stay in the lane's process group, so both cover them.
-  - Descendant (grandchild) processes are not covered by Deno's sanitizers.
-    Whatever guards against them must remain.
+  - Descendant (grandchild) processes are not covered by the per-file handle
+    check or by Deno's sanitizers. Whatever guards against them must remain.
 
 ## 3. Tiers and layout
 
@@ -272,10 +268,10 @@ internal move.
 
 | Lane                                         | Change                                                                                                                                                                                |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test.unit` (new)                            | `deno test --parallel` over unit + component files. No Dolt, no network, no child processes: the `deno test` subset's grants enforce this; Node-routed files run unsandboxed, so for them it is a rule the tests keep, not a grant.                                                                                          |
-| Node subset of `test.unit`, `test.integration`, `test.golden` (new) | Files that register with `node:test` (§1) run after the lane's `deno test` subset under `node --test --import <handle check> --test-concurrency=<the lane's jobs> --test-reporter=tap`, with default process isolation and the same environment as the `deno test` subset plus `DENO_BIN`. An empty subset is reported as `0 files`. The runner fails unless `node` is Node 26. The lane prints a count line for its Node files beside `deno test`'s own, parsed from the TAP summary; a run with no summary fails. `node --test` and its per-file processes stay in the lane's process group, so the deadline and group stop reach them. Decision D32. |
-| `test.integration`                           | Runs through the isolated Dolt fixture. Both frameworks during the transition; `Deno.test` only at exit.                                                                              |
-| `test.golden` (new)                          | Golden suite. Its tests register with `node:test` and run in the lane's Node subset; `--update` reaches them as `DYFJ_GOLDEN_UPDATE=1`, and a code guard refuses every snapshot write without it (§4). |
+| `test.unit` (new)                            | Unit + component files. Product tests run under `node --test` (below); no Dolt, no network, no child processes is a rule the tests keep, not a grant. Until the gate-tooling port, its `prototype/scripts/` files on `Deno.test` run first with `deno test --parallel`, whose grants enforce that rule for them. |
+| Node subset of `test.unit`, `test.integration`, `test.golden` (new) | Every product test file, and every `prototype/scripts/` test file that registers with `node:test` only (§1), runs under `node --test --import <handle check> --test-concurrency=<the lane's jobs> --test-reporter=tap`, with default process isolation and the lane's environment plus `DENO_BIN`. In `test.unit` and `test.integration` it runs after the gate-tooling `deno test` subset; an empty subset is reported as `0 files`. The runner fails unless `node` is Node 26. The lane prints a count line for its Node files, parsed from the TAP summary; a run with no summary fails. `node --test` and its per-file processes stay in the lane's process group, so the deadline and group stop reach them. Decision D32. |
+| `test.integration`                           | Runs through the isolated Dolt fixture. Product files on `node:test` only; the `prototype/scripts/` files on `Deno.test` stay under `deno test` until the gate-tooling port. |
+| `test.golden` (new)                          | Golden suite. Its tests register with `node:test` and run under `node --test` only; the runner spawns no `deno test`. `--update` reaches them as `DYFJ_GOLDEN_UPDATE=1`, and a code guard refuses every snapshot write without it (§4). |
 | `arch.imports` (new)                         | `01-architecture.md` §4.                                                                                                                                                              |
 | `runtime.neutral` (new)                      | Exact ratchet on whole-word `Deno` references in tracked `.ts` files against `scripts/runtime-neutral-exceptions.json`; reported under `test.aggregate`. Decision D32.                    |
 | `erasable.syntax` (new)                      | Rejects constructor parameter properties in tracked `.ts` files, the one non-erasable construct the codebase used; parsed by `deno lint` with a repository plugin; reported under `test.aggregate`. Other non-erasable syntax (`enum`, `namespace`, decorators) goes unchecked until `tsc --erasableSyntaxOnly` takes over. The Node load probe (`scripts/node-load-probe.ts`) is a manual check of non-test modules under `prototype/src`, `prototype/testing` and `contracts/` only; the golden lane's runner (`testing/golden/run.ts`), still a `deno` script, is its one expected failure. Decision D32. |
@@ -299,7 +295,7 @@ changes.
 
 - **What moves with a module.** When a work order moves or splits a module, the
   tests covering it move in the same PR:
-  - rewritten to `Deno.test`;
+  - registered with `node:test`;
   - using port fakes instead of module mocks;
   - split to match the new modules.
 - **Coverage must not drop silently.** A test deleted in the move must be
