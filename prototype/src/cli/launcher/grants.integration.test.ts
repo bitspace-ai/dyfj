@@ -3,11 +3,10 @@
 // in-process needs unscoped read and write. They run in the integration lane.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-// On the host's runner until the grant readers use node: builtins (BIT-654).
-import { describe, it } from "@std/testing/bdd";
+import { describe, it } from "node:test";
 import {
   nodeRunGrant,
   rustupHomeReadGrant,
@@ -155,6 +154,42 @@ describe("rustupHomeReadGrant", () => {
       }
     } finally {
       await rm(root, { recursive: true });
+    }
+  });
+});
+
+describe("toolchainReadGrant and rustupHomeReadGrant", () => {
+  it("reject a directory whose canonical path contains a delimiter", async () => {
+    const readers = [
+      [toolchainReadGrant, "Codex toolchain directory is unavailable"],
+      [rustupHomeReadGrant, "Codex Rustup home directory is unavailable"],
+    ] as const;
+    for (const delimiter of [",", ":"]) {
+      const root = await mkdtemp(join(tmpdir(), "dyfj-grants-"));
+      const target = `${root}/tool${delimiter}chain`;
+      const link = `${root}/link`;
+      try {
+        await mkdir(`${target}/child`, { recursive: true });
+        // An explicit environment, so the spawn reads none from the process.
+        const linked = spawnSync("ln", ["-s", target, link], {
+          env: {},
+          stdio: "ignore",
+        });
+        assert.ifError(linked.error);
+        assert.strictEqual(linked.status, 0);
+        for (const [read, message] of readers) {
+          // The selected path is delimiter-free and its last component is a
+          // real directory; only an ancestor's symlink target carries the
+          // delimiter, so the canonical check is what refuses it.
+          await assert.rejects(
+            () => read({ get: () => `${link}/child` }),
+            (error: unknown) =>
+              error instanceof Error && error.message === message,
+          );
+        }
+      } finally {
+        await rm(root, { recursive: true });
+      }
     }
   });
 });
