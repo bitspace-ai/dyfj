@@ -1,3 +1,9 @@
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import process from "node:process";
 import {
   coverageHits,
   declaredSurfacePaths,
@@ -19,10 +25,6 @@ import {
 import { repoRootFromMeta, trackedFiles } from "./scan-lib.ts";
 import { formatHits } from "./public-safety-scan.ts";
 import { headCommit } from "./subject-check.ts";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test } from "node:test";
 
 function assertEquals<T>(actual: T, expected: T): void {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
@@ -33,9 +35,9 @@ function assertEquals<T>(actual: T, expected: T): void {
 }
 
 async function gitIn(dir: string, args: string[]): Promise<void> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", dir, ...args],
+  const result = spawnSync("git", ["-C", dir, ...args], {
     env: {
+      PATH: process.env.PATH ?? "",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "dyfj-test",
@@ -43,18 +45,17 @@ async function gitIn(dir: string, args: string[]): Promise<void> {
       GIT_COMMITTER_NAME: "dyfj-test",
       GIT_COMMITTER_EMAIL: "gate@example.invalid",
     },
-    stdout: "null",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
-    throw new Error(`git ${args[0]} failed in fixture (exit ${result.code})`);
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args[0]} failed in fixture (exit ${result.status})`);
   }
 }
 
 const WF = ".github/workflows/example.yml";
 const DIGEST = "1".repeat(40);
 
-Deno.test("digest-pinned action references pass", () => {
+test("digest-pinned action references pass", () => {
   const content = [
     "steps:",
     `  - uses: actions/checkout@${DIGEST} # v4.2.2`,
@@ -63,7 +64,7 @@ Deno.test("digest-pinned action references pass", () => {
   assertEquals(scanWorkflowText(WF, content), []);
 });
 
-Deno.test("tag, branch, and short-digest action references fail", () => {
+test("tag, branch, and short-digest action references fail", () => {
   const references = [
     "uses: actions/checkout@v4",
     "uses: actions/checkout@main",
@@ -78,7 +79,7 @@ Deno.test("tag, branch, and short-digest action references fail", () => {
   }
 });
 
-Deno.test("mutable installer URLs fail", () => {
+test("mutable installer URLs fail", () => {
   const lines = [
     "      run: curl -fsSL -o /tmp/x https://example.invalid/releases/latest/download/install.sh",
     "      run: wget https://raw.githubusercontent.com/owner/repo/main/setup.sh",
@@ -91,7 +92,7 @@ Deno.test("mutable installer URLs fail", () => {
   }
 });
 
-Deno.test("piping a download into a shell fails", () => {
+test("piping a download into a shell fails", () => {
   const lines = [
     "      run: curl -fsSL https://example.invalid/install.sh | sh",
     "      run: curl -fsSL https://example.invalid/install.sh | sudo bash",
@@ -158,7 +159,7 @@ const MULTILINE_PIPELINES: [string, string[], number][] = [
   ], 5],
 ];
 
-Deno.test("a multiline curl or wget pipeline into a shell fails", () => {
+test("a multiline curl or wget pipeline into a shell fails", () => {
   for (const [form, lines, line] of MULTILINE_PIPELINES) {
     const hits = scanWorkflowText(WF, `${lines.join("\n")}\n`);
     if (
@@ -172,7 +173,7 @@ Deno.test("a multiline curl or wget pipeline into a shell fails", () => {
   }
 });
 
-Deno.test("a pipeline reaching a shell through a filter fails", () => {
+test("a pipeline reaching a shell through a filter fails", () => {
   const content = [
     "      - run: |",
     "          curl -fsSL https://example.invalid/i.sh \\",
@@ -185,7 +186,7 @@ Deno.test("a pipeline reaching a shell through a filter fails", () => {
   ]);
 });
 
-Deno.test("quoting or escaping the shell name does not evade the policy", () => {
+test("quoting or escaping the shell name does not evade the policy", () => {
   for (const stage of ['"/bin/sh"', "'sh'", "s\\h", "env bash"]) {
     const content =
       `      - run: curl -fsSL https://example.invalid/i.sh | ${stage}`;
@@ -196,7 +197,7 @@ Deno.test("quoting or escaping the shell name does not evade the policy", () => 
   }
 });
 
-Deno.test("a comment character cannot hide the rest of a pipeline", () => {
+test("a comment character cannot hide the rest of a pipeline", () => {
   // `#` inside a quoted word is data, not a comment: stripping from the first
   // `#` would drop the pipe and pass this workflow.
   const hidden = '      - run: curl -fsSL "https://example.invalid/a#b" | sh';
@@ -210,7 +211,7 @@ Deno.test("a comment character cannot hide the rest of a pipeline", () => {
   assertEquals(scanWorkflowText(WF, `${commented}\n`), []);
 });
 
-Deno.test("a run block whose structure is not understood fails closed", () => {
+test("a run block whose structure is not understood fails closed", () => {
   const blocks: [string, string[]][] = [
     ["unterminated quote", [
       "      - run: |",
@@ -245,7 +246,7 @@ Deno.test("a run block whose structure is not understood fails closed", () => {
   }
 });
 
-Deno.test("a verified-download block is not a network-to-shell hit", () => {
+test("a verified-download block is not a network-to-shell hit", () => {
   // The shape the gate actually runs: download to a file, check a committed
   // digest, unpack. Separate commands, and the only pipes feed a checksum
   // verifier and a version filter.
@@ -262,7 +263,7 @@ Deno.test("a verified-download block is not a network-to-shell hit", () => {
   assertEquals(scanWorkflowText(WF, `${content}\n`), []);
 });
 
-Deno.test("piping to a non-shell filter is not a policy hit", () => {
+test("piping to a non-shell filter is not a policy hit", () => {
   const content = [
     '      run: curl -fsSL -o /tmp/deno.zip "https://example.invalid/v1.0.0/deno.zip"',
     '      run: deno --version | grep -F "deno 2.9.6"',
@@ -270,7 +271,7 @@ Deno.test("piping to a non-shell filter is not a policy hit", () => {
   assertEquals(scanWorkflowText(WF, content), []);
 });
 
-Deno.test("the toolchain pin must be an exact version", () => {
+test("the toolchain pin must be an exact version", () => {
   assertEquals(
     scanToolchainText("core/rust-toolchain.toml", 'channel = "1.98.0"\n'),
     [],
@@ -289,7 +290,7 @@ Deno.test("the toolchain pin must be an exact version", () => {
   }
 });
 
-Deno.test("dependency surfaces are classified deterministically", () => {
+test("dependency surfaces are classified deterministically", () => {
   const surfaces = [
     ".github/workflows/gate.yml",
     ".github/dependabot.yml",
@@ -715,7 +716,7 @@ test("a dependabot config whose structure is not understood fails closed", () =>
   }
 });
 
-Deno.test("hostile workflow content stays out of diagnostics", () => {
+test("hostile workflow content stays out of diagnostics", () => {
   const hostile = `uses: evil\x1b[2J@latest ${"x".repeat(1_000)}`;
   const hits = scanWorkflowText(WF, `  - ${hostile}\n`);
   assertEquals(hits.map((hit) => hit.rule), [
@@ -727,7 +728,7 @@ Deno.test("hostile workflow content stays out of diagnostics", () => {
   }
 });
 
-Deno.test("tracked workflow and toolchain files satisfy the policy", async () => {
+test("tracked workflow and toolchain files satisfy the policy", async () => {
   const hits = await dependencyPolicyHits(repoRootFromMeta());
   if (hits.length > 0) {
     throw new Error(
@@ -842,11 +843,11 @@ function assertViolation(
   }
 }
 
-Deno.test("a valid dependency manifest has no violations", () => {
+test("a valid dependency manifest has no violations", () => {
   assertEquals(manifestViolations(validManifest()), []);
 });
 
-Deno.test("manifest schema and shape discipline fails closed", () => {
+test("manifest schema and shape discipline fails closed", () => {
   assertEquals(manifestViolations("nope"), [
     "dependency.manifest/not-an-object",
   ]);
@@ -876,7 +877,7 @@ Deno.test("manifest schema and shape discipline fails closed", () => {
   }, "dependency.manifest/unknown-source-class");
 });
 
-Deno.test("manifest path declarations must be explicit", () => {
+test("manifest path declarations must be explicit", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).manifest_paths = [];
   }, "dependency.manifest/invalid:manifest_paths");
@@ -889,7 +890,7 @@ Deno.test("manifest path declarations must be explicit", () => {
   }, "dependency.manifest/invalid:lock_paths");
 });
 
-Deno.test("manifest age policy enforces the registry floor", () => {
+test("manifest age policy enforces the registry floor", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).age_policy = {
       class: "registry-minimum-hours",
@@ -904,7 +905,7 @@ Deno.test("manifest age policy enforces the registry floor", () => {
   }, "dependency.manifest/invalid:age_policy");
 });
 
-Deno.test("age policy is bound to the source class", () => {
+test("age policy is bound to the source class", () => {
   // Registry evasion: a shape-valid not-applicable reason cannot lift a
   // registry surface out of the age floor.
   assertViolation((m) => {
@@ -935,7 +936,7 @@ Deno.test("age policy is bound to the source class", () => {
   }, "dependency.manifest/age-policy-source-mismatch");
 });
 
-Deno.test("every source class validates with its full contract", () => {
+test("every source class validates with its full contract", () => {
   for (const sourceClass of SOURCE_CLASSES) {
     assertEquals(
       manifestViolations(manifestWith(validSurfaceFor(sourceClass))),
@@ -944,7 +945,7 @@ Deno.test("every source class validates with its full contract", () => {
   }
 });
 
-Deno.test("dropping one contract-required evidence class fails", () => {
+test("dropping one contract-required evidence class fails", () => {
   for (const sourceClass of SOURCE_CLASSES) {
     for (const dropped of REQUIRED_EVIDENCE_BY_SOURCE[sourceClass]) {
       const surface = validSurfaceFor(sourceClass);
@@ -969,7 +970,7 @@ Deno.test("dropping one contract-required evidence class fails", () => {
   }
 });
 
-Deno.test("manifest paths must be normalized repository-relative", () => {
+test("manifest paths must be normalized repository-relative", () => {
   const rejected = [
     "/etc/hosts",
     "a/../b.json",
@@ -994,7 +995,7 @@ Deno.test("manifest paths must be normalized repository-relative", () => {
   assertEquals(manifestViolations(manifest), []);
 });
 
-Deno.test("manifest evidence declarations fail closed", () => {
+test("manifest evidence declarations fail closed", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).mutable_references_allowed = true;
   }, "dependency.manifest/mutable-references-allowed");
@@ -1018,7 +1019,7 @@ Deno.test("manifest evidence declarations fail closed", () => {
   }, "dependency.manifest/unknown-evidence-class");
 });
 
-Deno.test("a release asset cannot claim unverified archive integrity", () => {
+test("a release asset cannot claim unverified archive integrity", () => {
   // Dropping the known-missing declaration silently upgrades the claim.
   assertViolation((m) => {
     surfaceOf(m, 1).known_missing_evidence_classes = [];
@@ -1032,7 +1033,7 @@ Deno.test("a release asset cannot claim unverified archive integrity", () => {
   }, "dependency.manifest/contradictory-evidence");
 });
 
-Deno.test("every source class must require inspect-before-apply", () => {
+test("every source class must require inspect-before-apply", () => {
   for (const sourceClass of SOURCE_CLASSES) {
     const contract = REQUIRED_EVIDENCE_BY_SOURCE[sourceClass];
     if (!contract.includes("operator-inspect-before-apply")) {
@@ -1053,7 +1054,7 @@ Deno.test("every source class must require inspect-before-apply", () => {
   }
 });
 
-Deno.test("inspect evidence cannot stand in for artifact evidence", () => {
+test("inspect evidence cannot stand in for artifact evidence", () => {
   // Inspection records that a human looked; it is not a claim about the
   // bytes, so it can never be declared as integrity or provenance proof.
   for (const inspect of ["operator-inspect-before-apply", "inspect-result"]) {
@@ -1066,7 +1067,7 @@ Deno.test("inspect evidence cannot stand in for artifact evidence", () => {
   }
 });
 
-Deno.test("the committed manifest requires inspect-before-apply everywhere", async () => {
+test("the committed manifest requires inspect-before-apply everywhere", async () => {
   const load = await loadManifest(repoRootFromMeta());
   assertEquals(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
@@ -1079,7 +1080,7 @@ Deno.test("the committed manifest requires inspect-before-apply everywhere", asy
   }
 });
 
-Deno.test("the manifest digest is canonical and tamper-evident", async () => {
+test("the manifest digest is canonical and tamper-evident", async () => {
   const digest = await manifestDigest(validManifest());
   if (!/^[0-9a-f]{64}$/.test(digest)) {
     throw new Error("manifest digest is not lowercase sha-256 hex");
@@ -1098,29 +1099,29 @@ Deno.test("the manifest digest is canonical and tamper-evident", async () => {
   }
 });
 
-Deno.test("a missing or malformed manifest file fails closed", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-manifest-" });
+test("a missing or malformed manifest file fails closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-manifest-"));
   try {
     assertEquals((await loadManifest(dir)).violations, [
       "dependency.manifest/unreadable",
     ]);
-    await Deno.mkdir(`${dir}/scripts`);
+    await mkdir(`${dir}/scripts`);
     const path = `${dir}/scripts/dependency-policy-manifest.json`;
-    await Deno.writeTextFile(path, "{ not json");
+    await writeFile(path, "{ not json");
     assertEquals((await loadManifest(dir)).violations, [
       "dependency.manifest/invalid-json",
     ]);
-    await Deno.writeTextFile(path, '{"schema":"other.schema"}');
+    await writeFile(path, '{"schema":"other.schema"}');
     const rejected = await loadManifest(dir);
     if (rejected.manifest !== undefined || rejected.violations.length === 0) {
       throw new Error("an invalid manifest was accepted");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("an undeclared tracked dependency surface fails", () => {
+test("an undeclared tracked dependency surface fails", () => {
   const declared = new Set(["core/Cargo.toml"]);
   const hits = coverageHits(
     ["core/Cargo.toml", "prototype/package.json", "README.md"],
@@ -1134,7 +1135,7 @@ Deno.test("an undeclared tracked dependency surface fails", () => {
   }]);
 });
 
-Deno.test("a changed dependency path outside every declaration fails", () => {
+test("a changed dependency path outside every declaration fails", () => {
   const hits = coverageHits(
     [],
     ["tools/package.json", "docs/notes.md"],
@@ -1147,15 +1148,15 @@ Deno.test("a changed dependency path outside every declaration fails", () => {
   }]);
 });
 
-Deno.test("a deleted tracked dependency file is reported as mutated", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-deleted-" });
+test("a deleted tracked dependency file is reported as mutated", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-deleted-"));
   try {
     await gitIn(dir, ["init", "-q"]);
-    await Deno.writeTextFile(`${dir}/deno.json`, "{}\n");
+    await writeFile(`${dir}/deno.json`, "{}\n");
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
     const base = await headCommit(dir);
-    await Deno.remove(`${dir}/deno.json`);
+    await rm(`${dir}/deno.json`);
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "delete dependency surface"]);
     const mutated = await mutatedSurfaces(dir, {
@@ -1165,11 +1166,11 @@ Deno.test("a deleted tracked dependency file is reported as mutated", async () =
     });
     assertEquals(mutated, ["deno.json"]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("the committed manifest validates and covers tracked surfaces", async () => {
+test("the committed manifest validates and covers tracked surfaces", async () => {
   const root = repoRootFromMeta();
   const load = await loadManifest(root);
   assertEquals(load.violations, []);
@@ -1186,7 +1187,7 @@ Deno.test("the committed manifest validates and covers tracked surfaces", async 
   }
 });
 
-Deno.test("the committed manifest claims the verified archive checksum", async () => {
+test("the committed manifest claims the verified archive checksum", async () => {
   const load = await loadManifest(repoRootFromMeta());
   assertEquals(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
@@ -1208,7 +1209,7 @@ Deno.test("the committed manifest claims the verified archive checksum", async (
   }
 });
 
-Deno.test("the committed manifest keeps the signature gap a known unknown", async () => {
+test("the committed manifest keeps the signature gap a known unknown", async () => {
   const load = await loadManifest(repoRootFromMeta());
   assertEquals(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];

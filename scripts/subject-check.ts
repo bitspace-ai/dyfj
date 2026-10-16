@@ -19,6 +19,7 @@
  * only dynamic content; git stderr is never relayed (see `scan-lib.ts`).
  */
 
+import process from "node:process";
 import { gitStdout, repoRootFromMeta, sanitizeForLog } from "./scan-lib.ts";
 
 const LABEL = "subject check";
@@ -170,23 +171,24 @@ export async function runSubjectCheck(
 }
 
 if (import.meta.main) {
-  const [flag, check] = Deno.args;
+  const args = process.argv.slice(2);
+  const [flag, check] = args;
   if (
-    Deno.args.length !== 2 || flag !== "--check" ||
+    args.length !== 2 || flag !== "--check" ||
     !(SUBJECT_CHECKS as readonly string[]).includes(check ?? "")
   ) {
     console.error(`${LABEL}: usage: --check <subject.resolve|subject.digest>`);
-    Deno.exit(64);
+    process.exit(64);
   }
   let code: number;
   try {
     code = await runSubjectCheck(check as SubjectCheck, {
       root: repoRootFromMeta(),
-      env: (name) => Deno.env.get(name),
+      env: (name) => process.env[name],
     });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     code = 1;
   }
-  Deno.exit(code);
+  process.exitCode = code;
 }

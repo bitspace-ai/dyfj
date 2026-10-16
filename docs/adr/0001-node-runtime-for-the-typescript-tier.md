@@ -61,9 +61,13 @@ The TypeScript tier moves to Node.js on the active LTS line.
   interactive surface is the Rust REPL (D23); the TypeScript CLI runs from
   source.
 - A `runtime.neutral` gate lane counts remaining runtime-specific references
-  against a committed allow-list that may only shrink, on the pattern of
-  `scripts/arch-size-exceptions.json`. It reports first, fails on growth, and
-  fails on any entry once the count reaches zero.
+  against a committed allow-list, on the pattern of
+  `scripts/arch-size-exceptions.json`. It reports first, fails when a file's
+  count differs from its entry, and fails on any entry once the count reaches
+  zero. The `ratchet.base` lane compares the list with itself at the merge
+  base: an entry may rise, or a new one appear, only when it carries a
+  `growth_reason` added in the same change, which the lane prints. So the list
+  only shrinks unless a change states why, in its own diff.
 
 ## Alternatives considered
 

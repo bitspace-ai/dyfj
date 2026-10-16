@@ -1,3 +1,9 @@
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
+import { test } from "node:test";
 import {
   markdownLinkHits,
   markdownLinkTargets,
@@ -46,9 +52,9 @@ function awsKeyFixture(): string {
 }
 
 async function gitIn(dir: string, args: string[]): Promise<void> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", dir, ...args],
+  const result = spawnSync("git", ["-C", dir, ...args], {
     env: {
+      PATH: process.env.PATH ?? "",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "dyfj-test",
@@ -56,11 +62,10 @@ async function gitIn(dir: string, args: string[]): Promise<void> {
       GIT_COMMITTER_NAME: "dyfj-test",
       GIT_COMMITTER_EMAIL: "gate@example.invalid",
     },
-    stdout: "null",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
-    throw new Error(`git ${args[0]} failed in fixture (exit ${result.code})`);
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args[0]} failed in fixture (exit ${result.status})`);
   }
 }
 
@@ -69,7 +74,7 @@ async function writeFiles(
   files: Record<string, string>,
 ): Promise<void> {
   for (const [path, content] of Object.entries(files)) {
-    await Deno.writeTextFile(`${dir}/${path}`, content);
+    await writeFile(`${dir}/${path}`, content);
   }
 }
 
@@ -83,7 +88,7 @@ async function commitAll(dir: string, message: string): Promise<void> {
 async function makeBaseFixture(
   files: Record<string, string>,
 ): Promise<{ dir: string; base: string }> {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-range-check-" });
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-range-check-"));
   await gitIn(dir, ["init", "-q"]);
   await writeFiles(dir, files);
   await commitAll(dir, "base");
@@ -121,7 +126,7 @@ function sortHits(hits: PublicSafetyHit[]): PublicSafetyHit[] {
   );
 }
 
-Deno.test("range base binding fails closed in CI without an immutable id", () => {
+test("range base binding fails closed in CI without an immutable id", () => {
   assertEquals(resolveRangeBase(envOf({})), { authoritative: false });
   const rejected: Record<string, string>[] = [
     { GITHUB_ACTIONS: "true" },
@@ -149,7 +154,7 @@ Deno.test("range base binding fails closed in CI without an immutable id", () =>
   );
 });
 
-Deno.test("a bound range resolves exactly and rejects unknown bases", async () => {
+test("a bound range resolves exactly and rejects unknown bases", async () => {
   const { dir, range } = await makeRangeFixture({ "a.txt": "one\n" }, {});
   try {
     const base = range.diffArgs[0] ?? "";
@@ -175,11 +180,11 @@ Deno.test("a bound range resolves exactly and rejects unknown bases", async () =
     }
     if (!threw) throw new Error("an absent base commit resolved");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("parseAddedLines numbers added lines from hunk headers", () => {
+test("parseAddedLines numbers added lines from hunk headers", () => {
   const diff = [
     "diff --git a/f b/f",
     "--- a/f",
@@ -198,7 +203,7 @@ Deno.test("parseAddedLines numbers added lines from hunk headers", () => {
   ]);
 });
 
-Deno.test("parseAddedLines keeps added lines that look like file headers", () => {
+test("parseAddedLines keeps added lines that look like file headers", () => {
   // The first added line's own content starts with `++`, so its raw diff line
   // starts with `+++` — identical in shape to the file header four lines
   // above it. Only hunk state tells them apart, and a scan that dropped it
@@ -224,7 +229,7 @@ Deno.test("parseAddedLines keeps added lines that look like file headers", () =>
   ]);
 });
 
-Deno.test("parseAddedLines reads combined merge hunks", () => {
+test("parseAddedLines reads combined merge hunks", () => {
   // `git diff-tree -c` marks each line once per parent. Only a line added
   // against every parent is content the merge itself introduced; the line
   // inherited from one parent belongs to that parent's own commit.
@@ -242,7 +247,7 @@ Deno.test("parseAddedLines reads combined merge hunks", () => {
   ]);
 });
 
-Deno.test("the range history walk is bounded and fails closed", async () => {
+test("the range history walk is bounded and fails closed", async () => {
   const { dir, range } = await makeRangeFixture({ "a.txt": "one\n" }, {});
   try {
     const commits = await rangeCommits(dir, range);
@@ -262,11 +267,11 @@ Deno.test("the range history walk is bounded and fails closed", async () => {
     }
     if (!threw) throw new Error("a range past the commit bound was walked");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("secret.diff flags added secrets, not preexisting ones", async () => {
+test("secret.diff flags added secrets, not preexisting ones", async () => {
   const { dir, range } = await makeRangeFixture(
     {
       "base-secret.txt": `key ${awsKeyFixture()}\n`,
@@ -284,11 +289,11 @@ Deno.test("secret.diff flags added secrets, not preexisting ones", async () => {
       throw new Error("secret-shaped content reached formatted output");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("secret.diff fails on a secret a later commit removed", async () => {
+test("secret.diff fails on a secret a later commit removed", async () => {
   const { dir, base } = await makeBaseFixture({ "a.txt": "clean\n" });
   try {
     // The value is published in the range's ancestry even though the range's
@@ -330,11 +335,11 @@ Deno.test("secret.diff fails on a secret a later commit removed", async () => {
       throw new Error("secret-shaped content reached range-check output");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("secret.diff covers merged branches and the merge itself", async () => {
+test("secret.diff covers merged branches and the merge itself", async () => {
   const { dir, base } = await makeBaseFixture({ "a.txt": "clean\n" });
   try {
     // A merged branch introduces a secret and takes it back out again.
@@ -368,11 +373,11 @@ Deno.test("secret.diff covers merged branches and the merge itself", async () =>
       { path: "side.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
     ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("secret.diff sanitizes hostile filenames", async () => {
+test("secret.diff sanitizes hostile filenames", async () => {
   const hostile = "evil\x1b[2J\rname.txt";
   const { dir, range } = await makeRangeFixture(
     {},
@@ -389,15 +394,15 @@ Deno.test("secret.diff sanitizes hostile filenames", async () => {
       }
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("secret.diff does not skip the scanner's own source path", async () => {
+test("secret.diff does not skip the scanner's own source path", async () => {
   const { dir, range } = await makeRangeFixture({}, {});
   try {
-    await Deno.mkdir(`${dir}/scripts`);
-    await Deno.writeTextFile(
+    await mkdir(`${dir}/scripts`);
+    await writeFile(
       `${dir}/scripts/public-safety-scan.ts`,
       `token ${awsKeyFixture()}\n`,
     );
@@ -410,7 +415,7 @@ Deno.test("secret.diff does not skip the scanner's own source path", async () =>
       rule: "secret.diff/aws-access-key-id",
     }]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
@@ -425,16 +430,16 @@ function captureOut(): {
   return { out: { log: record, error: record }, text: () => lines.join("\n") };
 }
 
-Deno.test("secret.diff sees untracked non-ignored files only in a local range", async () => {
+test("secret.diff sees untracked non-ignored files only in a local range", async () => {
   const { dir, range } = await makeRangeFixture({ "a.txt": "clean\n" }, {});
   try {
-    await Deno.writeTextFile(`${dir}/.gitignore`, "ignored-local/\n");
-    await Deno.mkdir(`${dir}/ignored-local`);
-    await Deno.writeTextFile(
+    await writeFile(`${dir}/.gitignore`, "ignored-local/\n");
+    await mkdir(`${dir}/ignored-local`);
+    await writeFile(
       `${dir}/ignored-local/key.txt`,
       `token ${awsKeyFixture()}\n`,
     );
-    await Deno.writeTextFile(
+    await writeFile(
       `${dir}/untracked.txt`,
       `token ${awsKeyFixture()}\n`,
     );
@@ -482,15 +487,15 @@ Deno.test("secret.diff sees untracked non-ignored files only in a local range", 
     assertStringIncludes(ci.text(), "secret.diff: clean");
     assertEquals(await isWorktreeClean(dir), false);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("untracked secret feedback sanitizes hostile filenames", async () => {
+test("untracked secret feedback sanitizes hostile filenames", async () => {
   const { dir } = await makeRangeFixture({}, {});
   const value = awsKeyFixture();
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       `${dir}/evil\x1b[2J\rname.txt`,
       `token ${value}\n`,
     );
@@ -508,46 +513,50 @@ Deno.test("untracked secret feedback sanitizes hostile filenames", async () => {
     }
     assertEquals(formatted, "evil[2Jname.txt:1: secret.diff/aws-access-key-id");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test({
-  name: "an untracked symlink is never followed by secret feedback",
-  ignore: Deno.build.os === "windows",
-  async fn() {
-    const outside = await Deno.makeTempDir({ prefix: "dyfj-untracked-out-" });
+test(
+  "an untracked symlink is never followed by secret feedback",
+  { skip: process.platform === "win32" },
+  async () => {
+    const outside = await mkdtemp(join(tmpdir(), "dyfj-untracked-out-"));
     const { dir } = await makeRangeFixture({}, {});
     try {
       // Following the link would surface the target's secret shape; the link
       // text itself carries none, so an empty result proves containment.
-      await Deno.writeTextFile(
+      await writeFile(
         `${outside}/target.txt`,
         `token ${awsKeyFixture()}\n`,
       );
-      // Deno 2.9.6 rejects path-scoped grants for Deno.symlink, so the link
-      // is created via the already-allowed `ln`; output is never relayed.
-      const ln = await new Deno.Command("ln", {
-        args: ["-s", `${outside}/target.txt`, `${dir}/link.txt`],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (!ln.success) throw new Error(`ln -s failed (exit ${ln.code})`);
+      // The link is made with `ln`, which the test lane may run: its host
+      // rejects a symlink call under path-scoped file grants. Output is never
+      // relayed; only the exit status is inspected.
+      const ln = spawnSync("ln", [
+        "-s",
+        `${outside}/target.txt`,
+        `${dir}/link.txt`,
+      ], {
+        env: { PATH: process.env.PATH ?? "" },
+        stdio: "ignore",
+      });
+      if (ln.status !== 0) throw new Error(`ln -s failed (exit ${ln.status})`);
       assertEquals((await untrackedSecretHits(dir)).hits, []);
     } finally {
-      await Deno.remove(dir, { recursive: true });
-      await Deno.remove(outside, { recursive: true });
+      await rm(dir, { recursive: true });
+      await rm(outside, { recursive: true });
     }
   },
-});
+);
 
-Deno.test("an oversized untracked file fails the local secret.diff check", async () => {
+test("an oversized untracked file fails the local secret.diff check", async () => {
   const { dir, range } = await makeRangeFixture({ "a.txt": "clean\n" }, {});
   try {
     // The secret shape sits past the per-file prefix bound, so the untracked
     // sweep cannot see it. Reporting `clean` here would assert coverage the
     // check never had.
-    await Deno.writeTextFile(
+    await writeFile(
       `${dir}/artifact.bin`,
       `${"x".repeat(MAX_UNTRACKED_FILE_BYTES)}\ntoken ${awsKeyFixture()}\n`,
     );
@@ -589,15 +598,15 @@ Deno.test("an oversized untracked file fails the local secret.diff check", async
     );
     assertStringIncludes(ci.text(), "secret.diff: clean");
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("an overflowing untracked count fails the local secret.diff check", async () => {
+test("an overflowing untracked count fails the local secret.diff check", async () => {
   const { dir } = await makeRangeFixture({ "a.txt": "clean\n" }, {});
   try {
     for (let index = 0; index <= MAX_UNTRACKED_FILES; index++) {
-      await Deno.writeTextFile(
+      await writeFile(
         `${dir}/file-${String(index).padStart(6, "0")}.txt`,
         "clean\n",
       );
@@ -622,11 +631,11 @@ Deno.test("an overflowing untracked count fails the local secret.diff check", as
       throw new Error("capped inventory reported as a clean check");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("diff.whitespace reports class and line, never content", async () => {
+test("diff.whitespace reports class and line, never content", async () => {
   const secretish = `password-shaped ${awsKeyFixture()}`;
   const { dir, range } = await makeRangeFixture(
     { "a.txt": "clean\n" },
@@ -641,11 +650,11 @@ Deno.test("diff.whitespace reports class and line, never content", async () => {
       throw new Error("line content reached formatted output");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("markdown.links validates changed repository-relative links", async () => {
+test("markdown.links validates changed repository-relative links", async () => {
   const doc = [
     "[ok](target.md)",
     "[broken](missing.md)",
@@ -667,11 +676,11 @@ Deno.test("markdown.links validates changed repository-relative links", async ()
       { path: "doc.md", line: 5, rule: "markdown.links/escapes-repository" },
     ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("markdown.links flags an unclosed fence", async () => {
+test("markdown.links flags an unclosed fence", async () => {
   const { dir, range } = await makeRangeFixture(
     {},
     { "doc.md": "start\n```sh\nnever closed\n" },
@@ -681,11 +690,11 @@ Deno.test("markdown.links flags an unclosed fence", async () => {
       { path: "doc.md", line: 2, rule: "markdown.links/unclosed-fence" },
     ]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("markdown link extraction resolves targets structurally", () => {
+test("markdown link extraction resolves targets structurally", () => {
   const { links } = markdownLinkTargets(
     "see [a](x/y.md) and `[b](in-code.md)` and [c](z.md#frag)\n",
   );
@@ -702,7 +711,7 @@ Deno.test("markdown link extraction resolves targets structurally", () => {
   assertEquals(resolveLinkTarget("docs/a.md", "b.md#x"), "docs/b.md");
 });
 
-Deno.test("shell.parse fails changed shell files that do not parse", async () => {
+test("shell.parse fails changed shell files that do not parse", async () => {
   const { dir, range } = await makeRangeFixture(
     {},
     {
@@ -722,32 +731,35 @@ Deno.test("shell.parse fails changed shell files that do not parse", async () =>
       ],
     );
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test({
-  name:
-    "shell.parse fails closed on a changed shell-named symlink without following it",
-  ignore: Deno.build.os === "windows",
-  async fn() {
-    const outside = await Deno.makeTempDir({ prefix: "dyfj-shell-outside-" });
+test(
+  "shell.parse fails closed on a changed shell-named symlink without following it",
+  { skip: process.platform === "win32" },
+  async () => {
+    const outside = await mkdtemp(join(tmpdir(), "dyfj-shell-outside-"));
     const { dir, range } = await makeRangeFixture({}, {});
     try {
       // The external target parses cleanly: if the check followed the link
       // and handed the target to a real parser, no hit would appear.
-      await Deno.writeTextFile(
+      await writeFile(
         `${outside}/target.sh`,
         "#!/bin/bash\necho ok\n",
       );
-      // Deno 2.9.6 rejects path-scoped grants for Deno.symlink, so the link
-      // is created via the already-allowed `ln`; output is never relayed.
-      const ln = await new Deno.Command("ln", {
-        args: ["-s", `${outside}/target.sh`, `${dir}/link.sh`],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
-      if (!ln.success) throw new Error(`ln -s failed (exit ${ln.code})`);
+      // The link is made with `ln`, which the test lane may run: its host
+      // rejects a symlink call under path-scoped file grants. Output is never
+      // relayed; only the exit status is inspected.
+      const ln = spawnSync("ln", [
+        "-s",
+        `${outside}/target.sh`,
+        `${dir}/link.sh`,
+      ], {
+        env: { PATH: process.env.PATH ?? "" },
+        stdio: "ignore",
+      });
+      if (ln.status !== 0) throw new Error(`ln -s failed (exit ${ln.status})`);
       await gitIn(dir, ["add", "."]);
       await gitIn(dir, ["commit", "-q", "-m", "symlink change"]);
       // A nonexistent parser command proves containment: any attempt to
@@ -763,13 +775,13 @@ Deno.test({
         { path: "link.sh", line: 0, rule: "shell.parse/symlink-not-parsed" },
       ]);
     } finally {
-      await Deno.remove(dir, { recursive: true });
-      await Deno.remove(outside, { recursive: true });
+      await rm(dir, { recursive: true });
+      await rm(outside, { recursive: true });
     }
   },
-});
+);
 
-Deno.test("an unavailable shell parser fails closed", async () => {
+test("an unavailable shell parser fails closed", async () => {
   const { dir, range } = await makeRangeFixture(
     {},
     { "any.sh": "echo ok\n" },
@@ -787,6 +799,6 @@ Deno.test("an unavailable shell parser fails closed", async () => {
       "range check: cannot run the shell parser; failing closed",
     );
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });

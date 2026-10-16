@@ -77,6 +77,7 @@
  * `scan-lib.ts`).
  */
 
+import process from "node:process";
 import {
   MAX_COLLECTED_HITS,
   posixPath,
@@ -1692,11 +1693,11 @@ if (import.meta.main) {
   try {
     code = await runDependencyPolicy(
       repoRootFromMeta(),
-      (name) => Deno.env.get(name),
+      (name) => process.env[name],
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     code = 1;
   }
-  Deno.exit(code);
+  process.exitCode = code;
 }

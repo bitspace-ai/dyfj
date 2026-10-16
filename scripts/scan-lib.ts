@@ -11,6 +11,11 @@
  * stderr.
  */
 
+import { Buffer } from "node:buffer";
+import { spawn } from "node:child_process";
+import { lstat, open, readFile, readlink } from "node:fs/promises";
+import { constants } from "node:os";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 export function posixPath(path: string): string {
@@ -44,6 +49,66 @@ export function sanitizeForLog(raw: string, maxChars: number): string {
   return out;
 }
 
+/** The collected result of a finished child process. */
+export interface CommandOutput {
+  success: boolean;
+  // The exit code, or 128 plus the signal number when a signal ended it.
+  code: number;
+  stdout: Uint8Array;
+  stderr: Uint8Array;
+}
+
+// The child's environment names only what git and the shell parser need to
+// start: PATH to find the executable and HOME for git's per-user files. It is
+// built explicitly rather than inherited, so the spawn enumerates no other
+// variable and needs no grant beyond these two where the host has env grants.
+const COMMAND_ENVIRONMENT_NAMES = ["PATH", "HOME"] as const;
+
+function commandEnvironment(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of COMMAND_ENVIRONMENT_NAMES) {
+    const value = process.env[name];
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
+
+// Runs a command to completion with stdin closed and both output streams
+// collected, never shown. It rejects only when the command cannot be started;
+// callers turn that into a code-authored message and never relay it.
+export function commandOutput(
+  command: string,
+  args: readonly string[],
+): Promise<CommandOutput> {
+  return new Promise((resolve, reject) => {
+    const stdout: Uint8Array[] = [];
+    const stderr: Uint8Array[] = [];
+    let child;
+    try {
+      child = spawn(command, args, {
+        env: commandEnvironment(),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    child.stdout.on("data", (chunk: Uint8Array) => stdout.push(chunk));
+    child.stderr.on("data", (chunk: Uint8Array) => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      const exit = code ??
+        128 + (signal === null ? 0 : constants.signals[signal] ?? 0);
+      resolve({
+        success: exit === 0,
+        code: exit,
+        stdout: new Uint8Array(Buffer.concat(stdout)),
+        stderr: new Uint8Array(Buffer.concat(stderr)),
+      });
+    });
+  });
+}
+
 // Runs git with piped output and code-authored failure handling. A spawn
 // failure (git missing, not executable, not permitted) never relays the raw
 // platform exception. Callers that tolerate nonzero exits (for example
@@ -56,13 +121,9 @@ export async function gitOutput(
   args: readonly string[],
   scanLabel: string,
   gitCommand = "git",
-): Promise<Deno.CommandOutput> {
+): Promise<CommandOutput> {
   try {
-    return await new Deno.Command(gitCommand, {
-      args: ["-C", root, ...args],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    return await commandOutput(gitCommand, ["-C", root, ...args]);
   } catch {
     throw new Error(
       `${scanLabel}: cannot run git (is it installed and executable?)`,
@@ -252,34 +313,40 @@ export async function readUntrackedFile(
 ): Promise<UntrackedRead> {
   const absolute = `${root}/${path}`;
   try {
-    const info = await Deno.lstat(absolute);
-    if (info.isSymlink) {
+    const info = await lstat(absolute);
+    if (info.isSymbolicLink()) {
       return {
-        bytes: new TextEncoder().encode(await Deno.readLink(absolute)),
+        bytes: new TextEncoder().encode(await readlink(absolute)),
         truncated: false,
       };
     }
-    if (!info.isFile) return { bytes: new Uint8Array(), truncated: false };
+    if (!info.isFile()) return { bytes: new Uint8Array(), truncated: false };
     const cap = Math.min(info.size, MAX_UNTRACKED_FILE_BYTES);
     const buffer = new Uint8Array(cap);
-    const file = await Deno.open(absolute, { read: true });
+    const file = await open(absolute, "r");
     try {
       let offset = 0;
       while (offset < buffer.length) {
-        const read = await file.read(buffer.subarray(offset));
-        if (read === null) break;
-        offset += read;
+        const { bytesRead } = await file.read(
+          buffer,
+          offset,
+          buffer.length - offset,
+          null,
+        );
+        if (bytesRead === 0) break;
+        offset += bytesRead;
       }
       // Whether content remains past the prefix is decided by the file, not by
       // the size the earlier lstat happened to observe: a file that grew in
       // between must still be reported as partially read.
       let truncated = false;
       if (offset === MAX_UNTRACKED_FILE_BYTES) {
-        truncated = (await file.read(new Uint8Array(1)) ?? 0) > 0;
+        const probe = await file.read(new Uint8Array(1), 0, 1, null);
+        truncated = probe.bytesRead > 0;
       }
       return { bytes: buffer.subarray(0, offset), truncated };
     } finally {
-      file.close();
+      await file.close();
     }
   } catch {
     throw new Error(
@@ -311,11 +378,11 @@ export async function readTrackedFile(
 ): Promise<Uint8Array> {
   const absolute = `${root}/${path}`;
   try {
-    const info = await Deno.lstat(absolute);
-    if (info.isSymlink) {
-      return new TextEncoder().encode(await Deno.readLink(absolute));
+    const info = await lstat(absolute);
+    if (info.isSymbolicLink()) {
+      return new TextEncoder().encode(await readlink(absolute));
     }
-    return await Deno.readFile(absolute);
+    return new Uint8Array(await readFile(absolute));
   } catch {
     throw new Error(
       `${scanLabel}: cannot read tracked file ${

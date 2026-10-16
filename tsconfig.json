@@ -61,11 +61,7 @@
     "scripts/arch-imports.test.ts",
     "scripts/arch-imports.ts",
     "scripts/assurance-receipt.test.ts",
-    "scripts/change-scope.test.ts",
-    "scripts/change-scope.ts",
     "scripts/ci-workflow.test.ts",
-    "scripts/dependency-policy.test.ts",
-    "scripts/dependency-policy.ts",
     "scripts/gate-driver.fixture.ts",
     "scripts/git-hooks.test.ts",
     "scripts/lane-runner.fixture.ts",
@@ -74,15 +70,6 @@
     "scripts/node-lane-supervision.test.ts",
     "scripts/node-modules-check.test.ts",
     "scripts/node-modules-check.ts",
-    "scripts/public-safety-scan.test.ts",
-    "scripts/public-safety-scan.ts",
-    "scripts/range-checks.test.ts",
-    "scripts/range-checks.ts",
-    "scripts/release-range.ts",
-    "scripts/retired-surface-scan.ts",
-    "scripts/runtime-neutral.test.ts",
-    "scripts/scan-lib.ts",
-    "scripts/subject-check.test.ts",
-    "scripts/subject-check.ts"
+    "scripts/runtime-neutral.test.ts"
   ]
 }

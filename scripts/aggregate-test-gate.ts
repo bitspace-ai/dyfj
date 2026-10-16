@@ -582,48 +582,23 @@ export function productionLanes(
       ? "Subject resolution"
       : "Subject digest recomputation",
     checkId: check,
-    command: denoExecutable,
-    commandLabel: "deno",
-    args: [
-      "run",
-      "--allow-env=DYFJ_GATE_SUBJECT,GITHUB_ACTIONS",
-      "--allow-run=git",
-      "scripts/subject-check.ts",
-      "--check",
-      check,
-    ],
+    command: "node",
+    args: ["scripts/subject-check.ts", "--check", check],
     cwd: root,
     env: binding,
   });
   const treeScanLane = (family: string): GateLane => ({
     label: `Public-safety tree scan (${family})`,
     checkId: family,
-    command: denoExecutable,
-    commandLabel: "deno",
-    args: [
-      "run",
-      `--allow-read=${root}`,
-      "--allow-run=git",
-      "scripts/public-safety-scan.ts",
-      "--family",
-      family,
-    ],
+    command: "node",
+    args: ["scripts/public-safety-scan.ts", "--family", family],
     cwd: root,
   });
   const rangeLane = (label: string, check: string): GateLane => ({
     label,
     checkId: check,
-    command: denoExecutable,
-    commandLabel: "deno",
-    args: [
-      "run",
-      "--allow-env=DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
-      `--allow-read=${root}`,
-      check === "shell.parse" ? "--allow-run=git,/bin/bash" : "--allow-run=git",
-      "scripts/range-checks.ts",
-      "--check",
-      check,
-    ],
+    command: "node",
+    args: ["scripts/range-checks.ts", "--check", check],
     cwd: root,
     env: binding,
   });
@@ -653,14 +628,8 @@ export function productionLanes(
     {
       label: "Retired-surface scan",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "test",
-        `--allow-read=${root}`,
-        "--allow-run=git",
-        "scripts/retired-surface-scan.ts",
-      ],
+      command: "node",
+      args: ["scripts/retired-surface-scan.ts"],
       cwd: root,
     },
     treeScanLane("secret.tree"),
@@ -672,15 +641,8 @@ export function productionLanes(
     {
       label: "Dependency policy check",
       checkId: "dependency.policy",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--allow-env=DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
-        `--allow-read=${root}`,
-        "--allow-run=git",
-        "scripts/dependency-policy.ts",
-      ],
+      command: "node",
+      args: ["scripts/dependency-policy.ts"],
       cwd: root,
       env: binding,
     },
@@ -725,6 +687,20 @@ export function productionLanes(
       cwd: root,
     },
     {
+      // Ratchet lists against the merge base: an entry of the runtime.neutral
+      // or size-exception list may grow, or appear, only with a growth_reason
+      // added in the same change, and the arch.imports baseline may not gain
+      // an entry at all. The base comes from DYFJ_GATE_RANGE_BASE, else the
+      // merge base with origin/main locally. Under the aggregate check id; it
+      // reads git and the three lists and writes nothing.
+      label: "Ratchet lists against the merge base (ratchet.base)",
+      checkId: "test.aggregate",
+      command: "node",
+      args: ["scripts/ratchet-base.ts"],
+      cwd: root,
+      env: binding,
+    },
+    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -762,6 +738,8 @@ export function productionLanes(
         "scripts/lane-supervision.test.ts",
         "scripts/node-lane-supervision.test.ts",
         "scripts/change-scope.test.ts",
+        "scripts/retired-surface-scan.test.ts",
+        "scripts/ratchet-base.test.ts",
         // Deleted with the test-dialect codemod once decision D32's S2 is done.
         "scripts/codemod/deno-test-dialect.test.ts",
         // Deleted with the registrations codemod once S3.2b of decision D32
@@ -1061,6 +1039,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Dependency policy check",
   "Architecture import rules (arch.imports)",
   "Runtime-neutral ratchet (runtime.neutral)",
+  "Ratchet lists against the merge base (ratchet.base)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",
@@ -1134,23 +1113,13 @@ export function docsOnlyEligible(
     env("GITHUB_EVENT_NAME") === "pull_request";
 }
 
-// Classification runs in a short-lived child of the selected Deno, which
-// holds the git grant the gate itself does not. Its only output is one
-// code-authored word; anything else, a failure included, reads as `other`
-// and keeps the full gate.
-export async function releaseChangeScope(
-  root: string,
-  denoExecutable: string,
-): Promise<ChangeScope> {
+// Classification runs in a short-lived `node` child, which runs git; the gate
+// itself holds no git grant. Its only output is one code-authored word;
+// anything else, a failure included, reads as `other` and keeps the full gate.
+export async function releaseChangeScope(root: string): Promise<ChangeScope> {
   try {
-    const output = await new Deno.Command(denoExecutable, {
-      args: [
-        "run",
-        "--allow-env=DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
-        `--allow-read=${root}`,
-        "--allow-run=git",
-        "scripts/change-scope.ts",
-      ],
+    const output = await new Deno.Command("node", {
+      args: ["scripts/change-scope.ts"],
       cwd: root,
       env: { ...safeEnvironment(), ...bindingEnvironment() },
       clearEnv: true,
@@ -1200,7 +1169,7 @@ export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
   const production = productionLanes(root, denoExecutable);
   if (docsOnlyEligible(options.env)) {
     const scope = await (options.changeScope ??
-      (() => releaseChangeScope(root, denoExecutable)))();
+      (() => releaseChangeScope(root)))();
     if (scope === "markdown-only") {
       const lanes = docsOnlyLanes(root, denoExecutable);
       return {

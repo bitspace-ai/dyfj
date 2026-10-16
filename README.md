@@ -297,7 +297,8 @@ How the work actually happens, separate from what gets built.
   `node:test` only (decision D32), under `node --test` with the per-file handle
   check, with assertions and mocks from `node:assert/strict` and `node:test`.
   The gate and lane tooling tests under `scripts/` and `prototype/scripts/`
-  may still use `Deno.test` until the gate-tooling port. The end state is
+  may still use `Deno.test` until the gate-tooling port; the ported static
+  checks' tests already register with `node:test`. The end state is
   `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
@@ -1203,7 +1204,9 @@ builds for other platforms. When node_modules is missing or out of date, the
 lane fails with `` run `npm ci` at the repository root ``. The lane only
 reads: the gate never runs npm. It reports under `test.aggregate` and
 also runs in `test:fast`. Then the gate runs a set of deterministic policy
-checks, each reported under a stable check id, ahead of the test suites. `subject.resolve` and
+checks, each reported under a stable check id, ahead of the test suites. The
+policy checks, the retired-surface scan and the docs-only classification are
+written to `node:` builtins and run as `node scripts/<check>.ts`. `subject.resolve` and
 `subject.digest` bind the run to one immutable commit: in CI the workflow
 supplies the exact commit and release-range base through `DYFJ_GATE_SUBJECT` and
 `DYFJ_GATE_RANGE_BASE`, HEAD must match, the commit digest is recomputed from
@@ -1256,6 +1259,7 @@ remain outside this repository.
 
 After the policy checks, the gate runs the retired-surface scan, the
 `arch.imports` module-boundary check, the `runtime.neutral` ratchet, the
+`ratchet.base` comparison of the ratchet lists with the merge base, the
 `typecheck.tsc` lane, the source
 and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
@@ -1381,8 +1385,9 @@ exemption is named, with its justification, in `scripts/arch-layers.json`. A
 module that fails to load or a local import that does not resolve fails the
 lane. It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
-that baseline and on any baseline entry that no longer occurs, so the baseline
-can only shrink. An intentional cycle is allowed only by a named entry in
+that baseline and on any baseline entry that no longer occurs, and the
+`ratchet.base` lane (below) fails on any baseline entry that is not at the merge
+base, with no override, so the baseline can only shrink. An intentional cycle is allowed only by a named entry in
 `scripts/arch-cycles.json` (empty today) that lists its exact edges, each of
 which must lie inside an import cycle, a justification, and an existing test
 file; an entry exempts its edges from the cycle and dynamic-import rules only,
@@ -1392,9 +1397,10 @@ without failing. The size limits of `specs/prd/PRD-11-runtime-decomposition.md`
 R2 fail the lane: a runtime module (any unit not marked `outside`, so not
 `prototype/scripts/` or the diagnostics) over 1,000 lines, or a function in one
 over 200 lines, unless `scripts/arch-size-exceptions.json` names it with its
-reason and the size it may not exceed. An excepted module or function may
-shrink but not grow, and an entry for one back under its limit fails the lane
-until it is removed (`scripts/arch-imports-size.ts`; its function spans come
+reason and the size it may not exceed. An excepted module or function that
+grows past its recorded size fails the lane, a recorded size may rise only with
+a `growth_reason` the `ratchet.base` lane accepts (below), and an entry for one
+back under its limit fails the lane until it is removed (`scripts/arch-imports-size.ts`; its function spans come
 from a small best-effort tokenizer, and a function is matched by its file and
 reported name). After an intended reduction, regenerate the
 baseline with
@@ -1416,6 +1422,25 @@ reference remains the list is `[]`, and any new reference fails for want of an
 entry. The lane and its test are written to `node:` builtins only. It needs
 read access to the repository, `git`, and the one environment variable the Deno
 `node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
+
+`ratchet.base` (`scripts/ratchet-base.ts`, run as `node scripts/ratchet-base.ts`
+and reported under `test.aggregate`, in the full gate and `test:fast`) checks
+the ratchet lists against the merge base, which the lanes above cannot do:
+they compare each list with the tree in the same checkout, so on their own a
+change could raise an entry together with the code that needs it. It compares
+`scripts/runtime-neutral-exceptions.json`, `scripts/arch-size-exceptions.json`
+and `scripts/arch-imports-baseline.json` with the same files at the merge base
+of HEAD and `DYFJ_GATE_RANGE_BASE`, which CI always binds. Without that binding
+it uses the merge base of HEAD and `origin/main`, and says it is the local
+fallback; every run prints the base commit and how it was found. An entry of
+the first two lists whose `count` or `lines` rose, or that is not at the base,
+fails unless it carries a `growth_reason` that is a non-empty string and is new
+in this change (it differs from the entry's `growth_reason` at the base); each
+accepted growth is printed with its reason, so it is visible to review. Any
+arch-imports baseline entry that is not at the base fails, with no override:
+the baseline is empty and stays so. When no base can be found (no
+`origin/main`, or a shallow clone without the shared history) the lane fails
+closed in CI and reports a skip locally.
 
 `typecheck.tsc` (reported under `test.aggregate`) runs `tsc --noEmit` from the
 root npm workspace's `typescript` devDependency (7.0.2) with Node's types
@@ -2418,3 +2443,11 @@ Document revisions only. Code and behavior changes are tracked in
   set-up section names `prototype/examples/uds-jsonrpc-spike.ts` as a
   standalone historical example with no npm script that does not run under
   Node.
+- 2026-10-16 - The gate section says the policy checks, the retired-surface
+  scan and the docs-only classification run on Node as
+  `node scripts/<check>.ts`, and documents the `ratchet.base` lane: the
+  `runtime.neutral` list and the size-exception list may grow only with a
+  `growth_reason` added in the same change, the arch-imports baseline may not
+  gain an entry, and each is checked against the merge base rather than only
+  against the same checkout. The `arch.imports` paragraph and the testing
+  doctrine are brought in line with that.

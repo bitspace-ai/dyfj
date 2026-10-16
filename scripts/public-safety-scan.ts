@@ -50,6 +50,7 @@
  * failure messages).
  */
 
+import process from "node:process";
 import {
   type CoverageGaps,
   coverageIsComplete,
@@ -351,35 +352,36 @@ export function parseScanArguments(
   );
 }
 
-// The tree-scan lane runs without an environment grant, so the CI marker is
-// read only when that permission is already granted; querying never prompts.
-// Without it the run is treated as local feedback, which is the safe
-// direction: in CI the subject tree is clean — `subject.resolve` fails closed
-// otherwise — so the untracked inventory is empty and the two modes coincide.
+// The reader answers only the one variable it names, and every other name
+// reads as absent. The gate starts the tree-scan lane with a cleared
+// environment that does not forward the CI marker, so the run is treated as
+// local feedback, which is the safe direction: in CI the subject tree is
+// clean — `subject.resolve` fails closed otherwise — so the untracked
+// inventory is empty and the two modes coincide. A host that refuses the
+// read also yields absent.
 export function permittedEnvReader(variable: string): EnvReader {
-  let granted: boolean;
-  try {
-    granted =
-      Deno.permissions.querySync({ name: "env", variable }).state === "granted";
-  } catch {
-    granted = false;
-  }
-  return (name) =>
-    granted && name === variable ? Deno.env.get(name) : undefined;
+  return (name) => {
+    if (name !== variable) return undefined;
+    try {
+      return process.env[name];
+    } catch {
+      return undefined;
+    }
+  };
 }
 
 if (import.meta.main) {
   let rules: readonly ScanRule[] = RULES;
   let label = SCAN_LABEL;
   try {
-    const { family } = parseScanArguments(Deno.args);
+    const { family } = parseScanArguments(process.argv.slice(2));
     if (family !== undefined) {
       rules = rulesForFamily(family);
       label = `${SCAN_LABEL} (${family})`;
     }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    Deno.exit(64);
+    process.exit(64);
   }
   const code = await runTreeScan(
     repoRootFromMeta(),
@@ -388,5 +390,5 @@ if (import.meta.main) {
     console,
     label,
   );
-  Deno.exit(code);
+  process.exitCode = code;
 }

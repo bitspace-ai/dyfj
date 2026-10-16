@@ -9,6 +9,22 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Added
+
+- **`ratchet.base`: the ratchet lists are checked against the merge base.**
+  A new gate lane, `node scripts/ratchet-base.ts`, under `test.aggregate` in
+  the full gate and `test:fast`, compares
+  `scripts/runtime-neutral-exceptions.json`,
+  `scripts/arch-size-exceptions.json` and `scripts/arch-imports-baseline.json`
+  with the same files at the merge base of HEAD and `DYFJ_GATE_RANGE_BASE`
+  (locally, of HEAD and `origin/main`, which it reports as the fallback). An
+  entry that rose, or is new, fails unless it carries a `growth_reason` added
+  in the same change, and the lane prints each accepted reason; a new
+  arch-imports baseline entry always fails. Until now "may only shrink" held
+  only through review, because each list was checked only against the tree in
+  the same checkout. With no base to compare against the lane fails closed in
+  CI and reports a skip locally.
+
 ### Removed
 
 - **The Deno launch entry points for the runtime and the CLI.**
@@ -31,6 +47,19 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The static checks run on Node.** `subject-check.ts`,
+  `public-safety-scan.ts`, `range-checks.ts`, `retired-surface-scan.ts`,
+  `dependency-policy.ts`, `change-scope.ts` and their shared `scan-lib.ts` are
+  written to `node:` builtins, and the gate runs their lanes, and the
+  docs-only classification, as `node scripts/<check>.ts` (decision D32). Their
+  checks, messages and value-free diagnostics are unchanged; git and the shell
+  parser now start with only `PATH` and `HOME` in their environment. The
+  retired-surface scan's lane runs the scan alone; its rule tests moved to
+  `scripts/retired-surface-scan.test.ts`, which the scan allowlists as it does
+  its own source. The tests moved to `node:test` and `node:assert/strict`, the
+  ported files left the `tsconfig.json` exclusion list, and the
+  `runtime.neutral` count fell from 1007 references in 44 files to 735 in 33.
 
 - **Eight diagnostic, example and helper tasks run on Node, as npm
   scripts.** `context-size-response`, `model-response-modes`,
