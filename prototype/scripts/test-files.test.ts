@@ -115,7 +115,7 @@ Deno.test("parseTypecheckScope accepts exactly one known scope", () => {
   assertThrows(() => parseTypecheckScope(["sources", "tests"]));
 });
 
-Deno.test("the unit lane runs in parallel, sanitized, with no run or net grant and env only for the temp directory", () => {
+Deno.test("the unit lane's gate-tooling subset runs in parallel, sanitized, with no run or net grant and env only for the temp directory", () => {
   const args = unitTestArgs(["testing/fakes/map-env.test.ts"]);
   assertEquals(args.slice(0, 2), ["test", "--parallel"]);
   assertEquals(args.at(-1), "testing/fakes/map-env.test.ts");
