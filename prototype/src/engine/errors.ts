@@ -23,6 +23,7 @@ import {
   ProviderContextExceededError,
   ProviderModelNotFoundError,
   ProviderRateLimitedError,
+  ProviderEgressRefusedError,
   ProviderRedirectedError,
   ProviderRequestFailedError,
   ProviderRequestTooLargeError,
@@ -201,6 +202,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   [ProviderModelNotFoundError, "ProviderModelNotFoundError"],
   [ProviderUnreachableError, "ProviderUnreachableError"],
   [ProviderRedirectedError, "ProviderRedirectedError"],
+  [ProviderEgressRefusedError, "ProviderEgressRefusedError"],
   [ProviderRequestTooLargeError, "ProviderRequestTooLargeError"],
   [ProviderRequestFailedError, "ProviderRequestFailedError"],
 ];
