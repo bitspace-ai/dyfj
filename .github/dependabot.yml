@@ -15,6 +15,9 @@ updates:
   # declared in prototype/package.json (a workspace member) and the tooling
   # devDependencies in the root package.json, all pinned exactly and locked
   # by the root package-lock.json. The root lane updates the members too.
+  # typescript (7.x, the native compiler) ships its binary through
+  # per-platform optional packages (@typescript/typescript-<os>-<arch>) that
+  # the lock pins with integrity hashes; a bump moves them together.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:

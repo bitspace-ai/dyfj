@@ -1397,7 +1397,7 @@ read access to the repository, `git`, and the one environment variable the Deno
 `node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
 
 `typecheck.tsc` (reported under `test.aggregate`) runs `tsc --noEmit` from the
-root npm workspace's `typescript` devDependency (6.0.3) with Node's types
+root npm workspace's `typescript` devDependency (7.0.2) with Node's types
 (`@types/node` 26.6.5), over the root `tsconfig.json`: `prototype/src`,
 `prototype/testing`, `prototype/examples`, `prototype/mcp`,
 `prototype/diagnostics`, `prototype/scripts`, `schema/`, `contracts/` and
@@ -1406,9 +1406,13 @@ root npm workspace's `typescript` devDependency (6.0.3) with Node's types
 `erasableSyntaxOnly`. The command is
 `node node_modules/typescript/bin/tsc --project tsconfig.json` from the
 repository root, and it runs in the full gate and in `test:fast`, alongside the
-`deno check` lanes until the gate-tooling port removes them. TypeScript 6.0.3
-is pinned rather than 7.x because 7.x exposes its compiler API only as
-unstable, and the gate-tooling port builds on that API.
+`deno check` lanes until the gate-tooling port removes them. TypeScript 7 is
+the native compiler: the `typescript` package ships its `tsc` binary through
+per-platform optional packages (`@typescript/typescript-<os>-<arch>@7.0.2`),
+each locked with an integrity hash in the root `package-lock.json`. npm
+installs only the one for the running platform (`darwin-arm64` on the macOS
+CI runner, `linux-x64` on the Linux one), and with install scripts off it runs
+nothing at install time; none of them declares an install script.
 
 Node runs TypeScript by stripping types without transforming code (decision
 D32), so `erasableSyntaxOnly` rejects syntax stripping cannot erase: a
@@ -1496,7 +1500,9 @@ public deterministic checks it runs.
 Dependabot proposes weekly update PRs for four surfaces, configured in
 `.github/dependabot.yml`: the npm workspace at the repository root (the root
 `package.json` and its member `prototype/package.json`, locked by the root
-`package-lock.json`), the Deno workspace at the repository root (the
+`package-lock.json`; `typescript` among them ships native binaries through
+per-platform optional packages, which the same lock and lane cover), the Deno
+workspace at the repository root (the
 `prototype/deno.json` imports and the root `deno.lock`, which now hold only the
 JSR test dependencies), the
 Rust crate set under `core/` (`Cargo.toml` and
@@ -2377,6 +2383,6 @@ Document revisions only. Code and behavior changes are tracked in
   the root, the root `.npmrc`, `package-lock.json` and frozen `deno.lock`, the
   root `npm test` and `npm run test:fast` entries, and the npm install
   precondition's root check. The gate section documents the `typecheck.tsc`
-  lane, its tsconfig coverage and exclusion list, and the TypeScript 6.0.3 pin,
+  lane, its tsconfig coverage and exclusion list, and the TypeScript 7.0.2 pin,
   in place of the `erasable.syntax` lane, and says the source typecheck now
   covers `prototype/examples/`.

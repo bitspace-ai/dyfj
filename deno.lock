@@ -39,7 +39,7 @@
     "packageJson": {
       "dependencies": [
         "npm:@types/node@26.6.5",
-        "npm:typescript@6.0.3"
+        "npm:typescript@7.0.2"
       ]
     },
     "members": {

@@ -243,7 +243,7 @@ README are tracked separately in its Revision history section.
 
 - **The npm dependencies install from one npm workspace at the repository
   root.** A root `package.json` names `prototype` as its workspace member and
-  holds the tooling devDependencies, exact-pinned: `typescript` 6.0.3 and
+  holds the tooling devDependencies, exact-pinned: `typescript` 7.0.2 and
   `@types/node` 26.6.5. `npm ci` now runs at the repository root, locally and
   in both CI jobs, from one root `package-lock.json` into the root
   `node_modules`; `prototype/package-lock.json` is gone. Every runtime
@@ -252,9 +252,11 @@ README are tracked separately in its Revision history section.
   `min-release-age=3`) move to a root `.npmrc`, because npm ignores an
   `.npmrc` inside a workspace member. The npm install precondition lane
   checks the root install and its remedy reads `` run `npm ci` at the
-  repository root ``. Dependabot's npm lane watches `/`. TypeScript 6.0.3 is
-  pinned rather than 7.x because 7.x exposes its compiler API only as
-  unstable; a later change moves to 7 once that API is stable.
+  repository root ``. Dependabot's npm lane watches `/`. TypeScript 7 is the
+  native compiler: `typescript` 7.0.2 ships its `tsc` binary through 20
+  per-platform optional packages (`@typescript/typescript-<os>-<arch>`), each
+  locked with an integrity hash, of which npm installs only the one for the
+  running platform. Install scripts stay off; none of them declares one.
 - **Deno's lockfile is the root `deno.lock`, and Deno runs with it frozen.**
   The npm workspace makes the repository root Deno's workspace root, so
   `prototype/deno.lock` moves to the root (every JSR version and integrity

@@ -1299,7 +1299,7 @@ test("tracked npm packages are checked for lockfile and npmrc", async () => {
 const ROOT_WORKSPACE = JSON.stringify({
   private: true,
   workspaces: ["prototype"],
-  devDependencies: { typescript: "6.0.3" },
+  devDependencies: { typescript: "7.0.2" },
 }) + "\n";
 
 test("a workspace member is owned by the root that lists it", () => {
