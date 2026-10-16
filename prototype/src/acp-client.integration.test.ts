@@ -1460,76 +1460,108 @@ describe("runAcpAgent", () => {
   });
 });
 
+/**
+ * Starts the fixture agent through `agentCommand(pidFile)` under a bash parent
+ * with job control, beside a second member of its process group, then
+ * SIGKILLs the parent. Both must be gone within the watchdog's interval.
+ */
+async function assertGroupReapedOnParentDeath(
+  agentCommand: (pidFile: string) => { command: string; args: string[] },
+): Promise<void> {
+  const pidFile = await tempPath();
+  const memberPidFile = await tempPath();
+  let agentPid: number | undefined;
+  let memberPid: number | undefined;
+  let verified = false;
+  try {
+    await Promise.all([unlink(pidFile), unlink(memberPidFile)]);
+    const agent = agentCommand(pidFile);
+    // With job control on, bash gives the background pipeline a process
+    // group of its own, led by its first process: the agent. `sleep` is the
+    // group's second member, and only a signal to the group ends it before
+    // its 300 s are up. SIGKILLing bash orphans both.
+    const home = process.env.HOME ?? "/tmp";
+    const parent = spawn("bash", [
+      "-c",
+      'set -m; "$@" < /dev/null | /bin/sleep 300 & echo "$!" > "$0"; wait',
+      memberPidFile,
+      agent.command,
+      ...agent.args,
+    ], {
+      env: {
+        HOME: home,
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+      },
+      stdio: "ignore",
+    });
+    const parentClosed = new Promise<void>((resolve) => {
+      parent.once("error", () => resolve());
+      parent.once("close", () => resolve());
+    });
+    try {
+      agentPid = await waitForRecordedPid(pidFile);
+      memberPid = await waitForRecordedPid(memberPidFile);
+      assert.strictEqual(await processIsAlive(memberPid), true);
+    } finally {
+      parent.kill("SIGKILL");
+      await parentClosed;
+    }
+    assert.strictEqual(
+      await exitsWithin(agentPid, 5_000),
+      true,
+      "the fixture agent outlived its parent",
+    );
+    assert.strictEqual(
+      await exitsWithin(memberPid, 5_000),
+      true,
+      "the second member of the agent's process group outlived its parent",
+    );
+    verified = true;
+  } finally {
+    if (!verified) {
+      if (agentPid !== undefined) {
+        await runSignalCommand(["-KILL", "--", `-${agentPid}`], 500).catch(
+          () => undefined,
+        );
+      }
+      if (memberPid !== undefined) {
+        await runSignalCommand(["-KILL", "--", String(memberPid)], 500)
+          .catch(() => undefined);
+      }
+    }
+    await removeTempPath(pidFile).catch(() => {});
+    await removeTempPath(memberPidFile).catch(() => {});
+  }
+}
+
 describe("the fixture agent's parent-death watchdog", () => {
   it("kills its own process group once its parent dies", async () => {
-    const pidFile = await tempPath();
-    const memberPidFile = await tempPath();
-    let agentPid: number | undefined;
-    let memberPid: number | undefined;
-    let verified = false;
-    try {
-      await Promise.all([unlink(pidFile), unlink(memberPidFile)]);
-      const agent = fixtureAgentCommand({
+    await assertGroupReapedOnParentDeath((pidFile) =>
+      fixtureAgentCommand({
         grants: ["--allow-run=/bin/kill", `--allow-write=${pidFile}`],
         scriptArgs: [`--pid-file=${pidFile}`],
+      })
+    );
+  });
+
+  it("reaps its group without starting a process", async () => {
+    // Node's permission model with no child-process grant: a reap that
+    // spawned `/bin/kill` would be refused, and the group would survive.
+    await assertGroupReapedOnParentDeath((pidFile) => {
+      const agent = fixtureAgentCommand({
+        runtime: "node",
+        scriptArgs: [`--pid-file=${pidFile}`],
       });
-      // With job control on, bash gives the background pipeline a process
-      // group of its own, led by its first process: the agent. `sleep` is the
-      // group's second member, and only a signal to the group ends it before
-      // its 300 s are up. SIGKILLing bash orphans both.
-      const home = process.env.HOME ?? "/tmp";
-      const parent = spawn("bash", [
-        "-c",
-        'set -m; "$@" < /dev/null | /bin/sleep 300 & echo "$!" > "$0"; wait',
-        memberPidFile,
-        agent.command,
-        ...agent.args,
-      ], {
-        env: {
-          DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
-          HOME: home,
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
-        stdio: "ignore",
-      });
-      const parentClosed = new Promise<void>((resolve) => {
-        parent.once("error", () => resolve());
-        parent.once("close", () => resolve());
-      });
-      try {
-        agentPid = await waitForRecordedPid(pidFile);
-        memberPid = await waitForRecordedPid(memberPidFile);
-        assert.strictEqual(await processIsAlive(memberPid), true);
-      } finally {
-        parent.kill("SIGKILL");
-        await parentClosed;
-      }
-      assert.strictEqual(
-        await exitsWithin(agentPid, 5_000),
-        true,
-        "the fixture agent outlived its parent",
-      );
-      assert.strictEqual(
-        await exitsWithin(memberPid, 5_000),
-        true,
-        "the second member of the agent's process group outlived its parent",
-      );
-      verified = true;
-    } finally {
-      if (!verified) {
-        if (agentPid !== undefined) {
-          await runSignalCommand(["-KILL", "--", `-${agentPid}`], 500).catch(
-            () => undefined,
-          );
-        }
-        if (memberPid !== undefined) {
-          await runSignalCommand(["-KILL", "--", String(memberPid)], 500)
-            .catch(() => undefined);
-        }
-      }
-      await removeTempPath(pidFile).catch(() => {});
-      await removeTempPath(memberPidFile).catch(() => {});
-    }
+      return {
+        command: agent.command,
+        args: [
+          "--permission",
+          "--allow-fs-read=*",
+          `--allow-fs-write=${pidFile}`,
+          ...agent.args,
+        ],
+      };
+    });
   });
 });
 

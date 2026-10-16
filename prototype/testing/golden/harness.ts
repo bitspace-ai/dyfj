@@ -10,12 +10,14 @@
  *   is non-interactive (`exec`, `exec --json`, scripted REPL);
  * - a raw JSON-RPC client over the socket (rpc-client.ts).
  *
- * The harness imports nothing from `src/`: everything it observes crosses a
- * process, socket or database boundary, so internal moves cannot break it.
+ * The harness imports nothing from `src/` but the launch contract (the env
+ * reader and the Node permission flags the launcher uses): everything it
+ * observes crosses a process, socket or database boundary, so internal moves
+ * cannot break it.
  */
 
 import mysql from "mysql2/promise";
-import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
@@ -26,11 +28,16 @@ import {
 } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { startIsolatedDoltFixture } from "../../scripts/isolated-dolt-fixture.ts";
 import { processEnv } from "../../src/config/env.ts";
-import { denoBin, inheritedEnv } from "../deno-bin.ts";
+import {
+  CLI_NODE_PERMISSION_FLAGS,
+  nodePermissionArgs,
+  RUNTIME_NODE_PERMISSION_FLAGS,
+} from "../../src/config/runtime-policy.ts";
 import {
   type ModelScript,
   type ModelServer,
@@ -109,13 +116,6 @@ type Query = (
   params?: unknown[],
 ) => Promise<Record<string, unknown>[]>;
 
-interface PermissionProfile {
-  /** `true` grants every variable, as the CLI profile does. */
-  env: string[] | true;
-  run: string[];
-  sys?: string[];
-}
-
 /** Everything a child launch needs, fixed once the harness is up. */
 interface LaunchContext {
   root: string;
@@ -125,46 +125,9 @@ interface LaunchContext {
   linearUrl: string;
   /** The loopback model server's `host:port`, for `[network] allow`. */
   modelHost: string;
-  server: PermissionProfile;
-  cli: PermissionProfile;
 }
 
 // ── Setup ───────────────────────────────────────────────────────────────────
-
-async function denoDir(): Promise<string> {
-  const stdout = await new Promise<string>((resolve) => {
-    execFile(
-      denoBin(),
-      ["info", "--json"],
-      { encoding: "utf8", env: inheritedEnv(), maxBuffer: 64 * 1024 * 1024 },
-      (_error, out) => resolve(out),
-    );
-  });
-  const info = JSON.parse(stdout) as {
-    denoDir?: string;
-  };
-  if (typeof info.denoDir !== "string") {
-    throw new Error("deno info did not report a cache directory");
-  }
-  return info.denoDir;
-}
-
-// The committed permission profiles are the engine's and the CLI's
-// permission contracts. The harness reuses their env, run and sys grants
-// verbatim; it replaces only the net grant (the server's fixed ports become
-// the loopback host and its socket), and adds the executable it launched
-// them with. Read and write are unscoped in both profiles.
-async function permissionProfiles(): Promise<
-  { server: PermissionProfile; cli: PermissionProfile }
-> {
-  const config = JSON.parse(
-    await readFile(`${prototypeRoot}/deno.json`, "utf8"),
-  ) as { permissions: Record<string, PermissionProfile> };
-  return {
-    server: config.permissions["serve-unix"],
-    cli: config.permissions["cli"],
-  };
-}
 
 async function seedModels(
   query: Query,
@@ -335,28 +298,12 @@ async function startEngineServer(
     networkConfig(launch.modelHost) +
       (profile.friction ? `\n${frictionConfig(launch.linearUrl)}` : ""),
   );
-  const deno = denoBin();
+  // The runtime's launch, as `dyfj start` makes it: this Node under the
+  // runtime's permission flags, with an explicit environment.
   const child = started(spawn(
-    deno,
+    process.execPath,
     [
-      "run",
-      "--no-prompt",
-      `--config=${prototypeRoot}/deno.json`,
-      launch.server.env === true
-        ? "--allow-env"
-        : `--allow-env=${launch.server.env.join(",")}`,
-      "--allow-read",
-      "--allow-write",
-      // `dyfj start` likewise appends the configured secret resolver.
-      `--allow-run=${
-        [
-          ...launch.server.run,
-          deno,
-          ...(profile.friction ? ["/bin/echo"] : []),
-        ].join(",")
-      }`,
-      `--allow-sys=${(launch.server.sys ?? []).join(",")}`,
-      `--allow-net=127.0.0.1,unix:${socket}`,
+      ...nodePermissionArgs(RUNTIME_NODE_PERMISSION_FLAGS),
       `${prototypeRoot}/src/server/main.ts`,
     ],
     {
@@ -399,20 +346,11 @@ function spawnCli(
   socket: string,
   args: string[],
 ): Child {
-  const deno = denoBin();
+  // The client's launch, as the dyfj launcher makes it.
   return started(spawn(
-    deno,
+    process.execPath,
     [
-      "run",
-      "--no-prompt",
-      `--config=${prototypeRoot}/deno.json`,
-      launch.cli.env === true
-        ? "--allow-env"
-        : `--allow-env=${launch.cli.env.join(",")}`,
-      "--allow-read",
-      "--allow-write",
-      `--allow-run=${[...launch.cli.run, deno].join(",")}`,
-      `--allow-net=unix:${socket}`,
+      ...nodePermissionArgs(CLI_NODE_PERMISSION_FLAGS),
       `${prototypeRoot}/src/cli/main.ts`,
       ...args,
       "--socket",
@@ -513,7 +451,7 @@ export async function startHarness(options: {
   workspaceFiles: Record<string, string>;
 }): Promise<Harness> {
   // The lane runner creates the root up front so it can grant the exact
-  // socket paths; a direct `deno test` run gets a root of its own.
+  // socket paths; a direct `node --test` run gets a root of its own.
   const givenRoot = processEnv.get("DYFJ_GOLDEN_ROOT");
   const root = givenRoot ?? await mkdtemp(join(tmpdir(), "dyfj_golden_"));
   const cleanups: Array<() => Promise<void>> = givenRoot === undefined
@@ -568,13 +506,11 @@ export async function startHarness(options: {
         HOME: home,
         USER: "golden",
         TZ: "UTC",
-        DENO_DIR: await denoDir(),
         NO_COLOR: "1",
       },
       dbEnv: fixture.env,
       linearUrl: linear.url,
       modelHost: new URL(modelServer.baseUrl).host,
-      ...await permissionProfiles(),
     };
     const sockets = new Map<string, Promise<string>>();
     const server = (profile: ServerProfile): Promise<string> => {

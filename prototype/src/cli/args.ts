@@ -317,7 +317,8 @@ Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
   answers, starts one detached (output to ~/.dyfj/log/) and waits for it.
   'start', 'status', 'stop', and help (when invoked without a prompt) never
   trigger autostart. Opt out per call with --no-autostart, or standing with
-  DYFJ_AUTOSTART=0.
+  DYFJ_AUTOSTART=0. The client and the runtime run on Node 26 (the node on
+  PATH); the launcher refuses to start on any other version.
 
 REPL commands:
   /model [<slug>]           show or switch the active model (validated slugs);

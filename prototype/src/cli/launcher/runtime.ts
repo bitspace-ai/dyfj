@@ -1,9 +1,10 @@
 /**
- * Start the local runtime as a child process with the grants computed in
- * `grants.ts`, from a trusted prototype root.
+ * Start the local runtime as a child process on Node, with the arguments
+ * computed in `grants.ts`, from a trusted prototype root.
  */
 
 import { constants as osConstants } from "node:os";
+import process from "node:process";
 import {
   cliRuntimePolicy,
   composeRuntimePolicy,
@@ -41,11 +42,11 @@ export interface StartRuntimeOptions {
 }
 
 /**
- * The prototype root whose `deno.json` (net/run grants) and `.env` the spawned
- * runtime trusts — derived from a TRUSTED source, never the arbitrary cwd. A
- * hostile cwd could seed a `deno.json` that grants broad net/run to the child;
- * so `dyfj start` refuses to trust it. Precedence:
- *   1. DYFJ_PROTOTYPE_ROOT — the launcher always sets it (compiled + deno routes).
+ * The prototype root whose server entry and `.env` the spawned runtime trusts —
+ * derived from a TRUSTED source, never the arbitrary cwd. A hostile cwd could
+ * seed a `src/server/main.ts` or a `.env` the child would run with; so
+ * `dyfj start` refuses to trust it. Precedence:
+ *   1. DYFJ_PROTOTYPE_ROOT — the launcher always sets it.
  *   2. The install root derived from this module's own file: URL (running
  *      the client directly from a checkout without the launcher).
  *   3. Otherwise throw — better to fail closed than trust the current directory.
@@ -58,7 +59,7 @@ function defaultPrototypeRoot(): string {
   throw new Error(
     "cannot determine the prototype root: set DYFJ_PROTOTYPE_ROOT or launch via " +
       "the dyfj launcher. Refusing to trust the current working directory for " +
-      "the runtime's permission grants.",
+      "the runtime's entry and environment.",
   );
 }
 
@@ -85,9 +86,9 @@ export function installRootFromModuleUrl(moduleUrl: string): string | null {
 
 /** What the launcher starts the runtime with. */
 export interface RuntimeLaunch {
-  /** The composed policy; the runtime's grants and its guards both read it. */
+  /** The composed policy; the runtime's env and its guards both read it. */
   policy: RuntimePolicy;
-  /** The runtime's `deno run` args. No `--env-file`: `env` already holds it. */
+  /** The runtime's Node args. No `--env-file`: `env` already holds it. */
   args: string[];
   /** The runtime's complete environment. */
   env: Record<string, string>;
@@ -100,7 +101,9 @@ export interface RuntimeLaunch {
  * ambient environment with `<cwd>/.env` filling what it leaves unset
  * (`readLauncherEnv`). That environment is then filtered to the policy's
  * names plus the runtime-platform variables (`runtimeChildEnv`), so a `.env`
- * name outside the policy never reaches the runtime.
+ * name outside the policy never reaches the runtime. `DYFJ_SOCKET` is set to
+ * `socketPath`, so the runtime listens where the client resolved, `--socket`
+ * included.
  */
 export async function resolveRuntimeLaunch(
   cwd: string,
@@ -126,8 +129,8 @@ export async function resolveRuntimeLaunch(
   const nodeGrant = await nodeRunGrant(env);
   await toolchainReadGrant(env);
   await rustupHomeReadGrant(env);
-  // The runtime is started by name (`deno`), which the static run list
-  // already holds, so the launcher's own executable is not added.
+  // The runtime runs on the launcher's own Node executable
+  // (`process.execPath`), the default `runtimeExecutable`.
   const policy = composeRuntimePolicy({
     mcpServers,
     memoryMcpUrl,
@@ -136,25 +139,25 @@ export async function resolveRuntimeLaunch(
     secrets: resolverConfig,
     nodePath: nodeGrant,
     dolt: resolveDoltConnection(env),
-    runtimeExecutable: null,
   });
   return {
     policy,
-    args: buildRuntimeArgs(policy, socketPath, autostarted),
-    env: runtimeChildEnv(policy, env),
+    args: buildRuntimeArgs(autostarted),
+    env: { ...runtimeChildEnv(policy, env), DYFJ_SOCKET: socketPath },
   };
 }
 
 /**
  * Start the runtime and wait for it to exit, with the args and environment
- * `resolveRuntimeLaunch` derives. The runtime binary itself must pass the
- * CLI's own run policy (`cliRuntimePolicy`).
+ * `resolveRuntimeLaunch` derives. The runtime binary is the Node executable
+ * running this client unless `options.command` names another, and it must
+ * pass the CLI's own run policy (`cliRuntimePolicy`).
  */
 export async function startLocalRuntime(
   config: CliConfig,
   options: StartRuntimeOptions = {},
 ): Promise<number> {
-  const command = options.command ?? "deno";
+  const command = options.command ?? process.execPath;
   const cwd = options.cwd ?? defaultPrototypeRoot();
   const autostarted = options.autostarted === true;
   const launch = await resolveRuntimeLaunch(cwd, config.socket, autostarted, {

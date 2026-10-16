@@ -1,32 +1,70 @@
 #!/usr/bin/env bash
-# dyfj CLI launcher: fast compiled binary on the default UDS path; deno run with a
-# dynamically resolved unix: net grant when DYFJ_SOCKET or XDG_RUNTIME_DIR shifts
-# the socket away from ~/.dyfj/run/workbench.sock (Deno 2.9 exact-match grants).
+# dyfj CLI launcher: runs the TypeScript client (src/cli/main.ts) on Node 26
+# under Node's permission model, or the Rust REPL for an interactive session,
+# and autostarts the local runtime when the invocation needs one.
 set -euo pipefail
 
+# The client's Node permission flags (CLI_NODE_PERMISSION_FLAGS and
+# nodePermissionArgs in src/config/runtime-policy.ts; a unit test keeps the two
+# equal): it reads its sources, .env and config.toml, and connects to the
+# control socket. It writes nothing and starts nothing. `start` (the
+# foreground start and autostart's background one) runs as plain node: a
+# client under --permission would hand its flags to the runtime it starts,
+# through NODE_OPTIONS, and the runtime runs without Node's permission model.
+CLI_NODE_FLAGS=(--permission '--allow-fs-read=*' --allow-net --disable-warning=ExperimentalWarning)
+
+# The Node line the client and the runtime are built and tested on.
+REQUIRED_NODE_MAJOR=26
+
 # Highest precedence: an explicit --socket argument, captured once by
-# socket_override_args. Routing, Deno net grants, log naming, the probe, the
-# spawned start, and the final client must all see the SAME socket — a flag
-# that reached the client but not the probe's net grant would leave the
-# launcher starting a runtime it can never see answer.
+# socket_override_args. Routing, log naming, the probe, the spawned start, and
+# the final client must all see the SAME socket — a flag that reached the
+# client but not the probe would leave the launcher starting a runtime it can
+# never see answer.
 SOCKET_FLAG_VALUE=""
 
-# Deno's --allow-net list is comma-delimited, and the resolved socket path is
-# interpolated into that list as `unix:<path>`. A comma inside the path would
-# smuggle extra grant entries past the UDS-only boundary, so every source
-# (--socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME) is rejected here before any
-# grant is built — the same rule src/cli/launcher/grants.ts applies to the
-# runtime child's grant.
+# A socket path holding a comma is refused from every source (--socket,
+# DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME). The rule dates from comma-delimited
+# permission grants, which no longer carry the path; it is kept so the set of
+# accepted socket paths does not change with the runtime.
 reject_grant_delimiters() {
   case "$1" in
     *,*)
       # Content-free: the rejected value is operator input but may carry
       # control bytes or private path content; the operator knows what they
       # passed, so name the sources instead of echoing the value.
-      echo "dyfj: socket path must not contain a comma (it would corrupt the Deno net grant); check --socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME" >&2
+      echo "dyfj: socket path must not contain a comma; check --socket, DYFJ_SOCKET, XDG_RUNTIME_DIR, HOME" >&2
       return 1
       ;;
   esac
+}
+
+# Fails with a clear message unless `node` on PATH is the required major
+# version. The client and the runtime both run on it.
+require_node() {
+  local version
+  if ! command -v node >/dev/null 2>&1; then
+    echo "dyfj: node is not on PATH; dyfj needs Node ${REQUIRED_NODE_MAJOR} (install it, then retry)" >&2
+    return 1
+  fi
+  version="$(node --version 2>/dev/null || true)"
+  case "$version" in
+    "v${REQUIRED_NODE_MAJOR}."*) return 0 ;;
+  esac
+  # Only a well-formed version string is echoed back.
+  if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    version="an unrecognized version"
+  fi
+  echo "dyfj: dyfj needs Node ${REQUIRED_NODE_MAJOR}, but node on PATH is ${version}" >&2
+  return 1
+}
+
+# Runs the client on Node with the client's flags, for the parse check and the
+# status probe; neither starts a process.
+run_node_client() {
+  local proto
+  proto="$(prototype_root)"
+  DYFJ_PROTOTYPE_ROOT="$proto" node "${CLI_NODE_FLAGS[@]}" "${proto}/src/cli/main.ts" "$@"
 }
 
 resolve_socket_path() {
@@ -225,20 +263,7 @@ socket_forward_args() {
 # not spawn a runtime or create a log on the way to its usage error. The
 # launcher never mirrors the contract; it asks.
 client_parse_check() {
-  local route
-  route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
-  if [[ "$route" == "compiled" ]]; then
-    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)" \
-      --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
-  else
-    local proto
-    proto="$(prototype_root)"
-    DYFJ_PROTOTYPE_ROOT="$proto" deno run \
-      --allow-env="$(cli_env_allowlist)" \
-      --allow-read \
-      "${proto}/src/cli/main.ts" \
-      --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
-  fi
+  run_node_client --parse-check ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} >/dev/null 2>&1
 }
 
 # Log name = basename + short hash of the FULL socket path: two different
@@ -282,27 +307,10 @@ runtime_start_lock_path() {
   printf '%s/.dyfj/run/start-%s-%s.lock' "$HOME" "$base" "$hash"
 }
 
-# Run the client without exec, on the same route main would use. The probe is
-# always the UDS `status` command — JSON-RPC over the socket is the only seam.
+# Run the client without exec. The probe is always the UDS `status` command —
+# JSON-RPC over the socket is the only seam.
 probe_runtime() {
-  local route
-  route="$(route_cli "$@")"
-  if [[ "$route" == "compiled" ]]; then
-    DYFJ_PROTOTYPE_ROOT="$(prototype_root)" "$(compiled_bin)" \
-      ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
-  else
-    local sock proto
-    sock="$(resolve_socket_path)"
-    proto="$(prototype_root)"
-    DYFJ_PROTOTYPE_ROOT="$proto" deno run \
-      --allow-env="$(cli_env_allowlist)" \
-      --allow-read \
-      --allow-write \
-      --allow-run=deno \
-      --allow-net="unix:${sock}" \
-      "${proto}/src/cli/main.ts" \
-      ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
-  fi
+  run_node_client ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
 }
 
 get_file_mtime() {
@@ -475,46 +483,6 @@ prototype_root() {
   printf '%s' "$(cd "$(launcher_dir)/.." && pwd)"
 }
 
-compiled_bin() {
-  local dir
-  dir="$(launcher_dir)"
-  if [[ "$(basename "$dir")" == "dist" ]]; then
-    printf '%s/dyfj-bin' "$dir"
-  else
-    printf '%s/dist/dyfj-bin' "$(prototype_root)"
-  fi
-}
-
-# The binary is stale when any client source is newer than it: the REPL
-# module (src/cli.ts) or a module under src/cli/, the entrypoint included.
-# Test files are not compiled in, so they never mark it stale.
-compiled_is_fresh() {
-  local compiled proto source launcher
-  compiled="$(compiled_bin)"
-  proto="$(prototype_root)"
-  launcher="$proto/scripts/dyfj-launcher.sh"
-  [[ -x "$compiled" ]] || return 1
-  for source in "$proto/src/cli.ts" "$proto"/src/cli/*.ts "$proto"/src/cli/*/*.ts; do
-    [[ "$source" == *.test.ts ]] && continue
-    if [[ -e "$source" && ! "$compiled" -nt "$source" ]]; then
-      return 1
-    fi
-  done
-  if [[ -e "$launcher" && ! "$compiled" -nt "$launcher" ]]; then
-    return 1
-  fi
-  return 0
-}
-
-# The env the parse check and status probe may read; neither starts a runtime.
-# DYFJ_MEMORY_MCP_URL is engine config, but `dyfj start` must read it to build
-# the child's --allow-net grant (ambient env overrides --env-file in the child).
-# DYFJ_ROOT is likewise engine config the launcher reads only to locate
-# ~/.dyfj/config.toml and derive the child's --allow-run resolver-binary grant.
-cli_env_allowlist() {
-  printf '%s' 'DYFJ_SOCKET,DYFJ_WORKSPACE,DYFJ_PROTOTYPE_ROOT,DYFJ_ROOT,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME,HOME,XDG_RUNTIME_DIR,DYFJ_WORKBENCH_MODEL,DYFJ_WORKBENCH_HINT,DYFJ_WORKBENCH_TIER,DYFJ_MEMORY_MCP_URL,NO_COLOR'
-}
-
 prepare_node_path() {
   local candidate
   candidate="${DYFJ_NODE_PATH:-}"
@@ -602,22 +570,6 @@ canonical_toolchain_directory() {
   if [[ "$CANONICAL_DIRECTORY_RESULT" == *[,:]* ]]; then
     return 1
   fi
-}
-
-route_cli() {
-  local resolved default
-  resolved="$(resolve_socket_path)"
-  default="$(default_socket_path)"
-
-  if [[ "$resolved" != "$default" ]]; then
-    printf 'deno'
-    return
-  fi
-  if compiled_is_fresh; then
-    printf 'compiled'
-    return
-  fi
-  printf 'deno'
 }
 
 # ── Interactive REPL front-end ───────────────────────────────────────────────
@@ -724,22 +676,6 @@ rust_repl_route() {
   printf '%s' "$bin"
 }
 
-# The CLI starts the runtime with an explicit environment it reads here, so
-# this route may read every variable, as the compiled binary may.
-run_deno_cli() {
-  local sock proto
-  sock="$(resolve_socket_path)"
-  proto="$(prototype_root)"
-  DYFJ_PROTOTYPE_ROOT="$proto" exec deno run \
-    --allow-env \
-    --allow-read \
-    --allow-write \
-    --allow-run=deno \
-    --allow-net="unix:${sock}" \
-    "${proto}/src/cli/main.ts" \
-    "$@"
-}
-
 main() {
   parse_launcher_args "$@"
   socket_forward_args
@@ -747,8 +683,8 @@ main() {
   # condition contexts where a rejection could be misread as ordinary
   # fallback behavior.
   resolve_socket_path >/dev/null
-  local route autostart
-  route="$(route_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})"
+  require_node || exit 1
+  local route="node" autostart
   local repl_bin repl_status=0
   # Tested here: inside the command substitution below, stdout is a pipe.
   LAUNCHER_ON_TERMINAL=0
@@ -815,11 +751,13 @@ main() {
       fi
       exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
       ;;
-    compiled)
-      DYFJ_PROTOTYPE_ROOT="$(prototype_root)" exec "$(compiled_bin)" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
-      ;;
-    deno)
-      run_deno_cli ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
+    node)
+      local proto
+      proto="$(prototype_root)"
+      if [[ "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
+        DYFJ_PROTOTYPE_ROOT="$proto" exec node "${proto}/src/cli/main.ts" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
+      fi
+      DYFJ_PROTOTYPE_ROOT="$proto" exec node "${CLI_NODE_FLAGS[@]}" "${proto}/src/cli/main.ts" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       ;;
     *)
       echo "dyfj launcher: unknown route '$route'" >&2

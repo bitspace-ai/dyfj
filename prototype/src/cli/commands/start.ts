@@ -29,7 +29,9 @@ export async function runStart(
     return await startRuntime(config, { autostarted });
   } catch (error) {
     io.err(`dyfj: could not start local runtime: ${summarizeError(error)}`);
-    io.err(`dyfj: fallback command: cd prototype && deno task serve-unix`);
+    io.err(
+      `dyfj: fallback command: cd prototype && node --env-file-if-exists=.env src/server/main.ts`,
+    );
     return 1;
   }
 }

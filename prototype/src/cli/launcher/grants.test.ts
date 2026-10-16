@@ -11,9 +11,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { memoryMcpNetGrant, SERVE_UNIX_ENV_GRANTS } from "../../config/mod.ts";
 import {
-  buildServeUnixArgs,
+  CLI_NODE_PERMISSION_FLAGS,
+  memoryMcpNetGrant,
+  nodePermissionArgs,
+  SERVE_UNIX_ENV_GRANTS,
+} from "../../config/mod.ts";
+import {
   nodeRunGrant,
   readLauncherMcpServersConfig,
   readLauncherSecretsConfig,
@@ -33,126 +37,6 @@ function notFound(): Error {
 }
 
 describe("runtime lifecycle commands", () => {
-  it("buildServeUnixArgs grants the resolved socket alongside the profile net list", () => {
-    const args = buildServeUnixArgs(
-      ["127.0.0.1:3306", "localhost:18080"],
-      "/run/wb.sock",
-    );
-    assert.deepStrictEqual(args, [
-      "run",
-      "--no-prompt",
-      "-P=serve-unix",
-      "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
-      "src/server/main.ts",
-    ]);
-  });
-
-  it("buildServeUnixArgs does not duplicate an already-granted socket", () => {
-    const args = buildServeUnixArgs(
-      ["unix:/run/wb.sock"],
-      "/run/wb.sock",
-    );
-    assert.strictEqual(args[3], "--allow-net=unix:/run/wb.sock");
-  });
-
-  it("buildServeUnixArgs marks only an autostarted runtime", () => {
-    const foreground = buildServeUnixArgs(
-      ["127.0.0.1:3306"],
-      "/run/wb.sock",
-    );
-    const autostarted = buildServeUnixArgs(
-      ["127.0.0.1:3306"],
-      "/run/wb.sock",
-      null,
-      null,
-      null,
-      true,
-    );
-
-    assert.ok(!foreground.includes("--autostarted"));
-    assert.strictEqual(autostarted.at(-1), "--autostarted");
-  });
-
-  it("buildServeUnixArgs appends the launch-resolved memory endpoint grant", () => {
-    const args = buildServeUnixArgs(
-      ["127.0.0.1:3306"],
-      "/run/wb.sock",
-      "memory.example:443",
-    );
-    assert.strictEqual(
-      args[3],
-      "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,memory.example:443",
-    );
-  });
-
-  it("buildServeUnixArgs appends unique config-declared MCP endpoint grants", () => {
-    const args = buildServeUnixArgs(
-      ["127.0.0.1:3306", "mcp.linear.app:443"],
-      "/run/wb.sock",
-      null,
-      null,
-      null,
-      false,
-      ["mcp.linear.app:443", "127.0.0.1:43137"],
-    );
-    assert.strictEqual(
-      args[3],
-      "--allow-net=127.0.0.1:3306,mcp.linear.app:443,unix:/run/wb.sock,127.0.0.1:43137",
-    );
-  });
-
-  it("buildServeUnixArgs appends unique launch-resolved nameserver grants", () => {
-    const args = buildServeUnixArgs(
-      ["127.0.0.1:3306"],
-      "/run/wb.sock",
-      null,
-      null,
-      null,
-      false,
-      ["mcp.linear.app:443"],
-      ["127.0.0.53:53", "[2001:db8::53]:53", "127.0.0.53:53"],
-    );
-    assert.strictEqual(
-      args[3],
-      "--allow-net=127.0.0.1:3306,unix:/run/wb.sock,mcp.linear.app:443,127.0.0.53:53,[2001:db8::53]:53",
-    );
-  });
-
-  it("buildServeUnixArgs rejects comma-bearing network grants", () => {
-    assert.throws(
-      () =>
-        buildServeUnixArgs(
-          ["127.0.0.1:3306"],
-          "/run/wb.sock",
-          null,
-          null,
-          null,
-          false,
-          ["foo,bar.example:443"],
-        ),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes("Deno network grants cannot contain commas"),
-    );
-  });
-
-  it("buildServeUnixArgs adds no memory grant when recall is unconfigured", () => {
-    const args = buildServeUnixArgs(["127.0.0.1:3306"], "/run/wb.sock", null);
-    assert.strictEqual(args[3], "--allow-net=127.0.0.1:3306,unix:/run/wb.sock");
-  });
-
-  it("buildServeUnixArgs does not duplicate an already-granted memory host", () => {
-    const args = buildServeUnixArgs(
-      ["memory.example:443"],
-      "/run/wb.sock",
-      "memory.example:443",
-    );
-    assert.strictEqual(
-      args[3],
-      "--allow-net=memory.example:443,unix:/run/wb.sock",
-    );
-  });
-
   it("memoryMcpNetGrant derives host:port, defaulting the scheme port", () => {
     assert.strictEqual(memoryMcpNetGrant(undefined), null);
     assert.strictEqual(memoryMcpNetGrant(""), null);
@@ -220,49 +104,28 @@ describe("runtime lifecycle commands", () => {
     );
   });
 
-  it("the CLI may read every name it forwards to the runtime", async () => {
-    // The launcher starts the runtime with an explicit env holding the
-    // policy's names and the operator's [secrets].inherit_env names, so every
-    // CLI surface that can start a runtime reads the whole environment.
-    const raw = await readFile("deno.json", "utf8");
-    const parsed = JSON.parse(raw) as {
-      tasks: Record<string, string>;
-      permissions: Record<string, { env?: string[] | boolean }>;
-    };
-    assert.strictEqual(parsed.permissions["cli"].env, true);
-    assert.match(parsed.tasks["compile-cli"], / --allow-env /);
+  it("the launcher runs the client under the client's Node permission flags", async () => {
+    // The shell cannot import the policy module, so it restates the flags.
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
-    const runDenoCli = launcher.slice(launcher.indexOf("run_deno_cli() {"));
-    assert.match(
-      runDenoCli.slice(0, runDenoCli.indexOf("\n}")),
-      /--allow-env \\/,
-    );
-  });
-
-  it("the launcher's probes still read the names they route on", async () => {
-    // The parse check and status probe never start a runtime, so they keep
-    // the narrow list, which must name what routing and config lookup read.
-    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
-    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
-      ?.split(",") ?? [];
+    const declared = launcher.match(/^CLI_NODE_FLAGS=\(([^)]*)\)$/m)?.[1];
     assert.deepStrictEqual(
-      [
-        "DYFJ_MEMORY_MCP_URL",
-        "DYFJ_NODE_PATH",
-        "DYFJ_CODEX_TOOLCHAIN_PATH",
-        "DYFJ_CODEX_RUSTUP_HOME",
-        "DYFJ_ROOT",
-      ].filter((item) => !launcherEnv.includes(item)),
-      [],
+      declared?.trim().split(/\s+/).map((flag) => flag.replace(/^'|'$/g, "")),
+      nodePermissionArgs(CLI_NODE_PERMISSION_FLAGS),
+    );
+    // `start` runs as plain node, so the runtime it starts inherits nothing.
+    const startRoute = launcher.slice(
+      launcher.indexOf('if [[ "$LAUNCHER_SUBCOMMAND" == "start" ]]; then\n        DYFJ_PROTOTYPE_ROOT'),
+    );
+    assert.match(
+      startRoute.slice(0, startRoute.indexOf("\n      fi")),
+      /exec node "\$\{proto\}\/src\/cli\/main\.ts"/,
     );
   });
 
   it("the internal autostart marker is not ambient process state", async () => {
     assert.ok(!SERVE_UNIX_ENV_GRANTS.includes("DYFJ_AUTOSTARTED"));
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
-    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
-      ?.split(",") ?? [];
-    assert.ok(!launcherEnv.includes("DYFJ_AUTOSTARTED"));
+    assert.ok(!launcher.includes("DYFJ_AUTOSTARTED"));
   });
 });
 
@@ -290,77 +153,6 @@ describe("nodeRunGrant", () => {
     } finally {
       await rm(root, { recursive: true });
     }
-  });
-});
-
-describe("buildServeUnixArgs with launch-resolved run grants", () => {
-  const NET = ["127.0.0.1:3306"];
-  const SOCK = "/run/dyfj/workbench.sock";
-
-  it("omits --allow-run when no resolver is configured (null)", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, null);
-    assert.strictEqual(args.some((a) => a.startsWith("--allow-run")), false);
-    // -P still supplies the profile's run grants unchanged.
-    assert.deepStrictEqual(
-      ["-P=serve-unix"].filter((item) => !args.includes(item)),
-      [],
-    );
-  });
-
-  it("appends --allow-run with the profile grants plus the resolver binary", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, [
-      "bash",
-      "/opt/node/bin/node",
-      "/bin/kill",
-      "op",
-    ]);
-    assert.deepStrictEqual(
-      [
-        "--allow-run=bash,/opt/node/bin/node,/bin/kill,op",
-      ].filter((item) => !args.includes(item)),
-      [],
-    );
-  });
-
-  it("rejects delimiter-unsafe run grants", () => {
-    assert.throws(
-      () =>
-        buildServeUnixArgs(NET, SOCK, null, [
-          "bash",
-          "/opt/Node,Inc/bin/node",
-        ]),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes("Deno run grants cannot contain commas"),
-    );
-  });
-
-  it("the socket grant is still present alongside the run grant", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, ["bash", "op"]);
-    const net = args.find((a) => a.startsWith("--allow-net="));
-    assert.ok(
-      (net ?? "").includes(`unix:${SOCK}`),
-      `expected net ?? "" to include \`unix:\${SOCK}\``,
-    );
-  });
-
-  it("omits --allow-env when no inherit_env grant is needed (null)", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, null, null);
-    assert.strictEqual(args.some((a) => a.startsWith("--allow-env")), false);
-  });
-
-  it("appends --allow-env with the profile env plus the inherit_env names", () => {
-    const args = buildServeUnixArgs(NET, SOCK, null, null, [
-      "PATH",
-      "HOME",
-      "OP_SERVICE_ACCOUNT_TOKEN",
-    ]);
-    assert.deepStrictEqual(
-      [
-        "--allow-env=PATH,HOME,OP_SERVICE_ACCOUNT_TOKEN",
-      ].filter((item) => !args.includes(item)),
-      [],
-    );
   });
 });
 

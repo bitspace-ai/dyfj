@@ -24,7 +24,6 @@ import { describe, it } from "@std/testing/bdd";
 import { reapPidsAndCommandsContaining } from "../testing/processes.ts";
 
 const LAUNCHER = new URL("./dyfj-launcher.sh", import.meta.url).pathname;
-const COMPILED_BIN = new URL("../dist/dyfj-bin", import.meta.url).pathname;
 const BASH = Deno.build.os === "darwin" ? "/bin/bash" : "bash";
 // Assembled at runtime so the public-boundary scan never matches this
 // fixture as a home-directory path in tracked source.
@@ -39,63 +38,6 @@ async function symlink(target: string, path: string): Promise<boolean> {
   return success;
 }
 
-// The Deno cache the children should reuse: DENO_DIR when the caller sets it,
-// else Deno's own default for this platform (~/Library/Caches/deno on macOS,
-// ~/.cache/deno elsewhere), resolved from the real HOME before the tests swap
-// in a fake one.
-function realDenoDir(): string {
-  const explicit = Deno.env.get("DENO_DIR");
-  if (explicit !== undefined && explicit !== "") return explicit;
-  const realHome = Deno.env.get("HOME") ?? "";
-  return Deno.build.os === "darwin"
-    ? `${realHome}/Library/Caches/deno`
-    : `${realHome}/.cache/deno`;
-}
-
-async function hasCompiledBin(): Promise<boolean> {
-  return await Deno.stat(COMPILED_BIN).then(() => true).catch(() => false);
-}
-
-// The client sources the launcher's freshness check compares: src/cli.ts and
-// the non-test modules under src/cli/.
-async function clientSources(): Promise<string[]> {
-  const sources = [new URL("../src/cli.ts", import.meta.url).pathname];
-  const walk = async (dir: URL, depth: number): Promise<void> => {
-    for await (const entry of Deno.readDir(dir)) {
-      const url = new URL(entry.name + (entry.isDirectory ? "/" : ""), dir);
-      if (entry.isDirectory && depth === 0) await walk(url, 1);
-      else if (
-        entry.isFile && entry.name.endsWith(".ts") &&
-        !entry.name.endsWith(".test.ts")
-      ) sources.push(url.pathname);
-    }
-  };
-  await walk(new URL("../src/cli/", import.meta.url), 0);
-  return sources;
-}
-
-async function hasFreshCompiledBin(): Promise<boolean> {
-  const [compiledStat, sourceStats, launcherStat] = await Promise.all([
-    Deno.stat(COMPILED_BIN).catch(() => null),
-    clientSources().then((sources) =>
-      Promise.all(sources.map((source) => Deno.stat(source).catch(() => null)))
-    ),
-    Deno.stat(LAUNCHER).catch(() => null),
-  ]);
-  if (!compiledStat) return false;
-  const compiledMtime = compiledStat.mtime?.getTime();
-  if (compiledMtime === undefined) return false;
-  for (const sourceStat of sourceStats) {
-    const sourceMtime = sourceStat?.mtime?.getTime();
-    if (sourceMtime !== undefined && compiledMtime <= sourceMtime) return false;
-  }
-  const launcherMtime = launcherStat?.mtime?.getTime();
-  if (launcherMtime !== undefined && compiledMtime <= launcherMtime) {
-    return false;
-  }
-  return true;
-}
-
 async function dryRun(
   env: Record<string, string>,
   args: string[] = [],
@@ -106,15 +48,10 @@ async function dryRun(
   nodePath: string;
   toolchainDirectories: string;
 }> {
-  // parse-check spawns a deno child that derives its cache dir from HOME;
-  // with the fake HOME these tests set, pin DENO_DIR to the real cache so
-  // validity — not cache writability — is what the child reports.
-  const denoDir = realDenoDir();
   const proc = new Deno.Command(BASH, {
     args: [LAUNCHER, ...args],
     env: {
       DYFJ_LAUNCHER_DRY_RUN: "1",
-      DENO_DIR: denoDir,
       DYFJ_CODEX_TOOLCHAIN_PATH: "",
       DYFJ_CODEX_RUSTUP_HOME: "",
       ...env,
@@ -180,12 +117,19 @@ describe("dyfj launcher routing", () => {
   });
 
   it("accepts an executable selected from the operator's PATH", async () => {
+    const real = await new Deno.Command("bash", {
+      args: ["-c", "node -p process.execPath"],
+      stdout: "piped",
+    }).output();
+    const realNode = new TextDecoder().decode(real.stdout).trim();
     const root = await Deno.realPath(
       await Deno.makeTempDir({ prefix: "dyfj-launcher-" }),
     );
     try {
+      // The first node on PATH, standing in for the real one, which the
+      // launcher also runs the client on.
       const node = `${root}/node`;
-      await Deno.writeTextFile(node, "#!/bin/sh\nexit 1\n");
+      await Deno.writeTextFile(node, `#!/bin/sh\nexec "${realNode}" "$@"\n`);
       await Deno.chmod(node, 0o700);
       assertObjectMatch(
         await dryRun({
@@ -603,45 +547,28 @@ describe("dyfj launcher routing", () => {
     assertFalse(spawn.includes("BASH_SOURCE"));
   });
 
-  it("default path prefers compiled when the binary exists", async () => {
+  it("runs the client on node for the default socket", async () => {
     const { route, sock } = await dryRun({ HOME: FAKE_HOME });
     assertStrictEquals(sock, `${FAKE_HOME}/.dyfj/run/workbench.sock`);
-    if (await hasFreshCompiledBin()) {
-      assertStrictEquals(route, "compiled");
-    } else {
-      assertStrictEquals(route, "deno");
-    }
+    assertStrictEquals(route, "node");
   });
 
-  it("DYFJ_SOCKET selects deno when the path is non-default", async () => {
+  it("DYFJ_SOCKET moves the socket and keeps the node route", async () => {
     const { route, sock } = await dryRun({
       HOME: FAKE_HOME,
       DYFJ_SOCKET: "/run/custom.sock",
     });
     assertStrictEquals(sock, "/run/custom.sock");
-    assertStrictEquals(route, "deno");
+    assertStrictEquals(route, "node");
   });
 
-  it("XDG_RUNTIME_DIR selects deno when the path is non-default", async () => {
+  it("XDG_RUNTIME_DIR moves the socket and keeps the node route", async () => {
     const { route, sock } = await dryRun({
       HOME: FAKE_HOME,
       XDG_RUNTIME_DIR: "/run/u",
     });
     assertStrictEquals(sock, "/run/u/dyfj/workbench.sock");
-    assertStrictEquals(route, "deno");
-  });
-
-  it("explicit DYFJ_SOCKET matching the default still uses compiled when present", async () => {
-    const { route, sock } = await dryRun({
-      HOME: FAKE_HOME,
-      DYFJ_SOCKET: `${FAKE_HOME}/.dyfj/run/workbench.sock`,
-    });
-    assertStrictEquals(sock, `${FAKE_HOME}/.dyfj/run/workbench.sock`);
-    if (await hasFreshCompiledBin()) {
-      assertStrictEquals(route, "compiled");
-    } else {
-      assertStrictEquals(route, "deno");
-    }
+    assertStrictEquals(route, "node");
   });
 
   it("committed launcher carries no literal host path", async () => {
@@ -688,10 +615,14 @@ describe("dyfj launcher routing", () => {
     );
     try {
       const bin = `${root}/bin`;
-      const deno = `${bin}/deno`;
+      const node = `${bin}/node`;
       await Deno.mkdir(bin);
-      await Deno.writeTextFile(deno, "#!/bin/sh\nexit 0\n");
-      await Deno.chmod(deno, 0o700);
+      // A node that reports the required version and answers every probe.
+      await Deno.writeTextFile(
+        node,
+        '#!/bin/sh\n[ "$1" = --version ] && echo v26.0.0\nexit 0\n',
+      );
+      await Deno.chmod(node, 0o700);
       const proc = new Deno.Command(BASH, {
         args: [
           LAUNCHER,
@@ -785,7 +716,7 @@ describe("dyfj launcher autostart classification", () => {
       DYFJ_SOCKET: "/run/custom.sock",
     });
     assertStrictEquals(autostart, "yes");
-    assertStrictEquals(route, "deno");
+    assertStrictEquals(route, "node");
   });
 });
 
@@ -796,7 +727,7 @@ describe("autostart classification is position-aware and socket-coherent", () =>
       "/run/explicit.sock",
     ]);
     assertStrictEquals(sock, "/run/explicit.sock");
-    assertStrictEquals(route, "deno");
+    assertStrictEquals(route, "node");
     assertStrictEquals(autostart, "yes");
   });
   it("--socket beats DYFJ_SOCKET", async () => {
@@ -875,8 +806,7 @@ describe("autostart requires an absolute private log home", () => {
     const proc = new Deno.Command(BASH, {
       args: [LAUNCHER, "sessions"],
       cwd,
-      // The real Deno cache, so the fake HOME never means a cold one.
-      env: { DENO_DIR: realDenoDir(), ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
+      env: { ...env, DYFJ_LAUNCHER_DRY_RUN: "" },
       stdout: "null",
       stderr: "piped",
     });
@@ -996,7 +926,7 @@ describe("a -p prompt makes the invocation a turn the runtime is needed for", ()
 });
 
 describe("the probe invokes the client on the UDS seam", () => {
-  it("both client routes invoke status without a retired transport flag", async () => {
+  it("the client route invokes status without a retired transport flag", async () => {
     const lines = (await Deno.readTextFile(LAUNCHER)).split("\n");
     const open = lines.findIndex((l) => l.trim() === "probe_runtime() {");
     assertGreaterOrEqual(open, 0);
@@ -1006,8 +936,8 @@ describe("the probe invokes the client on the UDS seam", () => {
     const invocations = body.filter((l) =>
       l.trimEnd().endsWith("status >/dev/null 2>&1")
     );
-    // One per route — compiled and deno. A third would be an unreviewed call.
-    assertEquals(invocations.length, 2);
+    // One route: the node client. A second would be an unreviewed call.
+    assertEquals(invocations.length, 1);
     for (const line of invocations) {
       assertStringIncludes(line, " status ");
       assertFalse(line.includes("--unix"));
@@ -1077,7 +1007,6 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
           // The probe runs the client, whose Deno cache would otherwise
           // follow the fake HOME and start empty: a slow dependency fetch
           // could then outlast the lock's TTL before the lock is read.
-          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
@@ -1147,7 +1076,6 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
           // The probe runs the client, whose Deno cache would otherwise
           // follow the fake HOME and start empty: a slow dependency fetch
           // could then outlast the lock's TTL before the lock is read.
-          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
@@ -1236,7 +1164,6 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
           // The probe runs the client, whose Deno cache would otherwise
           // follow the fake HOME and start empty: a slow dependency fetch
           // could then outlast the lock's TTL before the lock is read.
-          DENO_DIR: realDenoDir(),
           DYFJ_SOCKET: sock,
           DYFJ_START_LOCK_TTL_SEC: "30",
           DYFJ_LAUNCHER_DRY_RUN: "",
@@ -1314,7 +1241,6 @@ describe("interactive REPL front-end selection", () => {
       stdin: "null",
       env: {
         DYFJ_LAUNCHER_DRY_RUN: "1",
-        DENO_DIR: realDenoDir(),
         DYFJ_CODEX_TOOLCHAIN_PATH: "",
         DYFJ_CODEX_RUSTUP_HOME: "",
         HOME: FAKE_HOME,
@@ -1548,42 +1474,66 @@ describe("socket-path grant delimiter safety", () => {
   });
 });
 
-describe("compile-cli grant construction", () => {
-  async function compileWithHome(
-    home: string,
+describe("the launcher requires Node 26", () => {
+  async function runWithPath(
+    path: string,
   ): Promise<{ code: number; err: string }> {
-    const cwd = new URL("..", import.meta.url).pathname;
-    const denoBin = Deno.env.get("DENO_BIN");
-    const denoDir = realDenoDir();
-    if (!denoBin) {
-      throw new Error("DENO_BIN must name the selected Deno executable");
-    }
-    const { code, stderr } = await new Deno.Command(denoBin, {
-      args: ["task", "compile-cli"],
-      cwd,
-      env: { HOME: home, DENO_DIR: denoDir },
-      stdout: "piped",
+    const { code, stderr } = await new Deno.Command(BASH, {
+      args: [LAUNCHER, "--no-autostart", "status"],
+      env: { PATH: path, HOME: FAKE_HOME, DYFJ_LAUNCHER_DRY_RUN: "1" },
+      stdout: "null",
       stderr: "piped",
     }).output();
     return { code, err: new TextDecoder().decode(stderr) };
   }
 
-  it("whitespace in HOME fails closed before any compile", async () => {
-    const { code, err } = await compileWithHome("/tmp/has space");
-    assertNotStrictEquals(code, 0);
-    assertStringIncludes(err, "free of commas and whitespace");
+  async function withFakeNode(
+    script: string,
+    run: (bin: string) => Promise<void>,
+  ): Promise<void> {
+    const root = await Deno.makeTempDir({ prefix: "dyfj-launcher-node-" });
+    try {
+      await Deno.writeTextFile(`${root}/node`, script);
+      await Deno.chmod(`${root}/node`, 0o700);
+      await run(root);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  }
+
+  it("fails clearly when node is not on PATH", async () => {
+    await withFakeNode("", async (empty) => {
+      await Deno.remove(`${empty}/node`);
+      const { code, err } = await runWithPath(`${empty}:/usr/bin:/bin`);
+      assertNotStrictEquals(code, 0);
+      assertStringIncludes(err, "node is not on PATH; dyfj needs Node 26");
+    });
   });
 
-  it("a comma in HOME fails closed before any compile", async () => {
-    const { code, err } = await compileWithHome("/tmp/has,comma");
-    assertNotStrictEquals(code, 0);
-    assertStringIncludes(err, "free of commas and whitespace");
+  it("fails clearly on another Node major version", async () => {
+    await withFakeNode("#!/bin/sh\necho v22.11.0\n", async (bin) => {
+      const { code, err } = await runWithPath(`${bin}:/usr/bin:/bin`);
+      assertNotStrictEquals(code, 0);
+      assertStringIncludes(
+        err,
+        "dyfj needs Node 26, but node on PATH is v22.11.0",
+      );
+    });
   });
 
-  it("a relative HOME fails closed before any compile", async () => {
-    const { code, err } = await compileWithHome("relative/home");
-    assertNotStrictEquals(code, 0);
-    assertStringIncludes(err, "absolute home path");
+  it("does not echo a malformed version string", async () => {
+    await withFakeNode("#!/bin/sh\necho 'v26\x1b[2Jx'\n", async (bin) => {
+      const { code, err } = await runWithPath(`${bin}:/usr/bin:/bin`);
+      assertNotStrictEquals(code, 0);
+      assertStringIncludes(err, "node on PATH is an unrecognized version");
+    });
+  });
+
+  it("accepts Node 26", async () => {
+    await withFakeNode("#!/bin/sh\necho v26.11.1\n", async (bin) => {
+      const { code } = await runWithPath(`${bin}:/usr/bin:/bin`);
+      assertStrictEquals(code, 0);
+    });
   });
 });
 
@@ -1593,7 +1543,6 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
       args: [LAUNCHER],
       env: {
         DYFJ_LAUNCHER_DRY_RUN: "1",
-        DENO_DIR: realDenoDir(),
         DYFJ_CODEX_TOOLCHAIN_PATH: "",
         DYFJ_CODEX_RUSTUP_HOME: "",
         HOME: "/",

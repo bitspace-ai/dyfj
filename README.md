@@ -46,7 +46,8 @@ Section 5.
   an event through Dolt. Also holds `dyfj-repl`, an interactive REPL front-end
   that owns the terminal and is a second client of the prototype's UDS protocol;
   the agent loop stays in `prototype/`. Where stabilized components live.
-- `prototype/` - TypeScript on Deno. Real working code and the active
+- `prototype/` - TypeScript; the runtime and the `dyfj` CLI run on Node 26,
+  and the gate and test tooling still run on Deno. Real working code and the active
   prototyping surface. Components either move down into `core/` as they
   stabilize or stay here as fast-moving prototype code. `prototype/src/` is
   organized by layer (`specs/01-architecture.md` §3); a module imports only
@@ -322,9 +323,11 @@ How the work actually happens, separate from what gets built.
 
 ### Prerequisites
 
-- [Deno](https://deno.com) 2.9+
-- [Node.js](https://nodejs.org) 26 with its bundled npm, to install the npm
-  dependencies (CI uses Node 26.11.1)
+- [Node.js](https://nodejs.org) 26 with its bundled npm. The runtime and the
+  `dyfj` CLI run on it, `npm ci` installs the dependencies, and the launcher
+  refuses any other major version (CI uses Node 26.11.1)
+- [Deno](https://deno.com) 2.9+, for the gate, the test lanes and the
+  remaining `deno task` tooling, until their own move to Node
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
   local default model; [Ollama](https://ollama.com) and
@@ -529,8 +532,8 @@ controls: no unbounded hang, and per-provider fail-closed degradation.
 **What "fail-closed on timeout" guarantees — precisely.** It is _result-level_:
 on a timeout the engine guarantees the env var is **never set**, so the provider
 gets no key and fails closed, and it sends `SIGKILL` to the _immediate_ resolver
-process. It does **not** reap the resolver's process _tree_ — Deno exposes no
-process-group primitive — so a resolver configured as a **shell wrapper** can
+process. It does **not** reap the resolver's process _tree_ — the resolver is
+not started in a process group of its own — so a resolver configured as a **shell wrapper** can
 leave a descendant running past the timeout. That descendant **cannot inject
 into the runtime**: the env var is never set, and at the timeout the runtime
 closes its own ends of the resolver's stdout and stderr pipes, so it holds no
@@ -571,12 +574,12 @@ ANTHROPIC_API_KEY="op://<vault>/<item>/credential" \
 ### Egress, spawn and environment limits
 
 The runtime's network, process and environment limits are enforced by the
-product at its own seams, not only by the runtime's permission flags. One
+product at its own seams. One
 policy (`prototype/src/config/runtime-policy.ts`) holds the static lists and
 composes the operator's entries from `config.toml` and the environment: the
 `[[mcp.servers]]` hosts, `DYFJ_MEMORY_MCP_URL`, `[network] allow`, the system
 nameservers, the Dolt endpoint, `DYFJ_NODE_PATH` and `[secrets].command`.
-`dyfj start` builds the runtime's Deno grants from that policy, and the engine
+`dyfj start` builds the runtime's environment from that policy, and the engine
 composes the same policy at boot and checks it in code:
 
 - **HTTP.** Every request goes through one guarded fetch: provider calls,
@@ -600,18 +603,36 @@ composes the same policy at boot and checks it in code:
   a relative path such as `./tool` is always refused.
 - **Environment.** `dyfj start` starts the runtime with an explicit
   environment: exactly the policy's names (the profile's list plus
-  `[secrets].inherit_env`) and the runtime-platform variables `TMPDIR`, `TMP`,
-  `TEMP` and `DENO_DIR`. Nothing else is inherited. The launcher reads
+  `[secrets].inherit_env`), the runtime-platform variables `TMPDIR`, `TMP`
+  and `TEMP`, and `DYFJ_SOCKET` set to the socket the client resolved.
+  Nothing else is inherited. The launcher reads
   `prototype/.env` itself, filling only names the ambient environment leaves
   unset, and starts the runtime without `--env-file`, so a `.env` name outside
   the policy never reaches it. To build that environment, the CLI may read
   every variable in its own environment.
 
+**The runtime runs as plain `node`, without Node's permission model.** These
+seams are the limits that matter, and Node's `--permission` cannot take their
+place: it grants network, child-process and worker access only whole, with no
+host, binary or variable list, and the runtime needs all three. And Node
+writes a process's permission flags into the `NODE_OPTIONS` of every process
+it starts, through `bash` too, with no way for the caller to opt out, so a
+sandboxed runtime would sandbox every Node descendant: the ACP fixture and
+Codex agents, and any `node` or `npm` a tool runs in the operator's workspace,
+which could then load no native addon. For the same reason `dyfj start` and
+autostart's background start run the client as plain `node`. The client's
+other routes (the REPL, `exec`, `status`, the launcher's parse check and
+probe) start no process and run under
+`node --permission --allow-fs-read=* --allow-net`: they read their sources,
+`.env` and config.toml, connect to the control socket, and write nothing.
+
 **Accepted risks.** The seams govern the product's own calls. A compromised
-dependency could open its own connection or start its own process, and the
-web tools' DNS preflight queries the nameservers in `/etc/resolv.conf`
-directly, without a guard (those nameservers are policy entries). An OS-level
-sandbox is the planned follow-up for both.
+dependency could open its own connection, start its own process, or read and
+write files, and the web tools' DNS preflight queries the nameservers in
+`/etc/resolv.conf` directly, without a guard (those nameservers are policy
+entries). The planned follow-up for all of these is an OS-level sandbox that
+scopes the runtime's own process (its network, processes and files) without
+reaching into the Node processes it starts.
 
 **Adding a host: `[network] allow`.** A local model server on a port the
 static list does not name (the list covers Ollama on 11434, llama.cpp on 8080
@@ -723,8 +744,8 @@ validated identifier. Durable events keep generic MCP arguments/results redacted
 and add only that identifier to the bounded success metadata. This does not add
 the tool to bare ACP-backed sessions or add a REPL command or `/idea` workflow.
 
-Start this surface through `dyfj start`; the launcher derives the narrow Deno
-network grants from the configured hosts. At boot, Workbench discovers the
+Start this surface through `dyfj start`; the runtime's network policy admits
+the configured hosts. At boot, Workbench discovers the
 server tools once and registers only the intersection with the configured
 allowlist. A missing credential or failed discovery disables every server that
 depends on it without disabling unrelated runtime capabilities. The shared
@@ -776,10 +797,11 @@ target it cannot verify as public, and passes the canonical URL to the upstream
 fetch tool. A hostname passes only when its A and AAAA lookups both answer
 (either may have no records), together they return at least one address, and
 none of those is private, loopback or internal; a public IP literal needs no
-lookup. Both `dyfj start` and `deno task serve-unix` grant the engine DNS
-access to the nameservers in `/etc/resolv.conf` for these lookups, and the
-`serve-unix` profile grants the `networkInterfaces` system information the
-resolver reads to find them. Per turn, at
+lookup. The runtime's network policy holds the nameservers in
+`/etc/resolv.conf` for these lookups, under `dyfj start` and
+`deno task serve-unix` alike, and the `serve-unix` profile grants the
+`networkInterfaces` system information the resolver reads to find them under
+Deno. Per turn, at
 most 3 searches and 5 fetches run, returned text is capped at 40,000 characters
 per fetch and 100,000 per turn, and results are framed as untrusted external
 data.
@@ -819,7 +841,7 @@ The `data/` directory is gitignored. One rule decides what to apply (see
 
 The gate's `schema.equivalence` lane proves both paths end at the same
 structure. The engine checks its database at boot: when Dolt is reachable and a
-canonical table lacks a column, `serve-unix` refuses to start, names the missing
+canonical table lacks a column, the runtime refuses to start, names the missing
 columns and points at `schema/migrations/`. It has no fallback for an
 un-migrated database, including for `events/query` reads `AS OF` a snapshot that
 predates a migration.
@@ -827,40 +849,46 @@ predates a migration.
 ### Run Workbench
 
 ```sh
-deno task --cwd prototype compile-cli
-./prototype/dist/dyfj
+(cd prototype && npm ci)
+./prototype/scripts/dyfj-launcher.sh
 ```
 
-The bare launcher is the daily-driver path: it connects to the local UDS runtime
+The launcher is the daily-driver path: it connects to the local UDS runtime
 and opens the streaming REPL, starting a background runtime first when none
-answers. Put `prototype/dist/` on your `PATH` to use `dyfj` without the path
-prefix. Common commands are:
+answers. It runs the client (`prototype/src/cli/main.ts`) and the runtime
+(`prototype/src/server/main.ts`) on the `node` on your `PATH`, which must be
+Node 26; with no `node`, or another major version, it stops with a message
+saying so. Link it onto your `PATH` as `dyfj` (for example
+`ln -s "$PWD/prototype/scripts/dyfj-launcher.sh" ~/.local/bin/dyfj`; the
+launcher resolves its own symlink) to use `dyfj` without the path prefix.
+Common commands are:
 
 ```sh
-./prototype/dist/dyfj exec "Summarize this repository"
-./prototype/dist/dyfj --runner fixture exec "Exercise the local ACP fixture"
-./prototype/dist/dyfj --runner codex-chatgpt exec "Inspect this repository"
-./prototype/dist/dyfj status
-./prototype/dist/dyfj models
-./prototype/dist/dyfj sessions
-./prototype/dist/dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
-./prototype/dist/dyfj stop    # stop the running runtime at the socket
+dyfj exec "Summarize this repository"
+dyfj --runner fixture exec "Exercise the local ACP fixture"
+dyfj --runner codex-chatgpt exec "Inspect this repository"
+dyfj status
+dyfj models
+dyfj sessions
+dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
+dyfj stop    # stop the running runtime at the socket
 ```
 
-The HTTP peer server is retired. UDS JSON-RPC is the only seam
-(`deno task serve-unix` / `dyfj`); a remote or browser surface returns later as
-a thin gateway client of that seam.
+The HTTP peer server is retired. UDS JSON-RPC is the only seam (`dyfj`); a
+remote or browser surface returns later as a thin gateway client of that seam.
 
 #### JSON-RPC seam over a Unix domain socket
 
 The workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket —
 the canonical `loopback` transport (no TCP port; gated by filesystem
 permissions; full local clearance). It is the seam the terminal clients use. The
-bare `dyfj` launcher starts this runtime automatically when needed; the direct
-engine task remains available for development:
+bare `dyfj` launcher starts this runtime automatically when needed, and
+`dyfj start` runs it in the foreground. The Deno task that serves the same
+engine under Deno's permission profile remains, for development, until the
+profiles are removed:
 
 ```sh
-deno task serve-unix      # serve the JSON-RPC seam on the Unix socket
+deno task serve-unix      # serve the JSON-RPC seam on the Unix socket, under Deno
 ```
 
 The socket path resolves from `DYFJ_SOCKET`, else
@@ -869,15 +897,9 @@ parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the
 read methods over the socket:
 
 ```sh
-./prototype/dist/dyfj models
-./prototype/dist/dyfj sessions
+dyfj models
+dyfj sessions
 ```
-
-For a compiled daily-driver binary under Deno 2.9+, run `deno task compile-cli`
-in `prototype/` and put `dist/` on your `PATH`. The shipped `dist/dyfj` launcher
-execs the compiled binary on the default socket path and falls back to
-`deno run` with a runtime-resolved `unix:` grant when `DYFJ_SOCKET` or
-`XDG_RUNTIME_DIR` shifts the path.
 
 The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
@@ -1011,7 +1033,7 @@ stdio child using the community-maintained `@agentclientprotocol/codex-acp`
 adapter; subscription inference may use remote services. Sequential Workbench
 turns reuse the same live adapter process and ACP session under the same
 session/workspace/profile rule as the fixture. Commas cannot be represented
-safely in this integration's comma-separated Deno grants, and colons would split
+safely in the login task's comma-separated Deno grants, and colons would split
 the child's `PATH`, so the login task and runtime reject either delimiter. The
 route is separate from native model routing and does not accept `--model`,
 `--tier`, `--hint`, or remote callers. It also requires the standing
@@ -1110,8 +1132,8 @@ route but no currency cost, so the terminal receipt says
 `subscription quota (USD not reported)`. Workbench starts the adapter as a
 dedicated process group after verifying the exact negative-PGID signal syntax
 against an inert process group: a `/bin/sleep 30` child that the runtime starts
-in its own group and kills once the check has run, so the `serve-unix` spawn
-grant names `/bin/sleep` beside `/bin/kill`. If the adapter leader is still active,
+in its own group and kills once the check has run, so the runtime's run policy
+names `/bin/sleep` beside `/bin/kill`. If the adapter leader is still active,
 completion, error, timeout, and cancellation cleanup attempt to signal that
 group. Signal subprocesses, process-group polling, child-status waits, and
 stream-drain waits each have deadlines. A process-group termination failure is
@@ -1225,9 +1247,9 @@ unless that variable is set. A plain run fails on a missing or changed snapshot
 and writes nothing. A golden file still on `deno test` gets loopback TCP and
 the exact Unix socket of each engine server it starts, and write on the
 snapshot directory only with `--update`. The harness starts the engine server and
-CLI with the `deno` executable named by `DENO_BIN`, which `deno task
-test:golden` and the gate set; a direct `deno test` of the golden directory
-must set it too, or the harness fails with an error naming it. The task resolves the Deno executable selected for the
+CLI on the `node` running the suite, as the launcher does: the engine as plain
+`node`, the CLI under the client's permission flags, both read from
+`prototype/src/config/runtime-policy.ts`. The task resolves the Deno executable selected for the
 invocation and uses that same absolute command identity for each nested Deno
 lane and permission grant. Outside Windows, each lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
@@ -2297,3 +2319,13 @@ Document revisions only. Code and behavior changes are tracked in
   the configured Dolt endpoint is a network policy entry, and that the
   launcher reads `prototype/.env` itself and starts the runtime without
   `--env-file`, so no `.env` name outside the policy reaches the runtime.
+- 2026-10-16 - The runtime and the `dyfj` CLI run on Node 26. The
+  prerequisites put Node 26 first, with Deno kept for the gate and test
+  tooling; "Run Workbench" starts the launcher script after `npm ci`, in place
+  of the removed compiled CLI; the "Egress, spawn and environment limits"
+  section records that the runtime runs as plain `node`, why Node's
+  `--permission` is not used for it (it cannot express the seams' lists, and
+  it propagates to every Node process the runtime starts), the client routes'
+  `--permission` flags, and the OS-sandbox follow-up that would scope the
+  runtime's own process; the golden harness description says it starts the
+  engine and CLI on `node`.

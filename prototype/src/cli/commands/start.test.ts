@@ -67,8 +67,14 @@ describe("runtime lifecycle commands", () => {
       `expected stderr.join("\\n") to include "could not start"`,
     );
     assert.ok(
-      stderr.join("\n").includes("deno task serve-unix"),
-      `expected stderr.join("\\n") to include "deno task serve-unix"`,
+      stderr.join("\n").includes(
+        "cd prototype && node --env-file-if-exists=.env src/server/main.ts",
+      ),
+      "expected the Node fallback command",
+    );
+    assert.ok(
+      !stderr.join("\n").includes("deno"),
+      "expected the fallback to name no deno command",
     );
   });
 

@@ -8,8 +8,8 @@
  *   tests that drive a protocol over a real kernel socket.
  * - `fabricateStaleUdsSocket` leaves a socket file with nothing accepting, the
  *   shape an unclean exit leaves behind. A cleanly closed listener removes its
- *   file, so this needs a hard-killed process: it spawns the `deno` the lane
- *   grants (`DENO_BIN`) and SIGKILLs it once it is listening.
+ *   file, so this needs a hard-killed process: it spawns this process's own
+ *   Node (`process.execPath`) and SIGKILLs it once it is listening.
  */
 
 import { spawn } from "node:child_process";
@@ -21,7 +21,24 @@ import {
   type Server,
   type Socket,
 } from "node:net";
-import { denoBin, inheritedEnv } from "../deno-bin.ts";
+import process from "node:process";
+import { processEnv } from "../../src/config/env.ts";
+
+/**
+ * The variables of `names` that are set here, for a child's whole
+ * environment: `node:child_process` copies every variable when given no
+ * `env`, and a child gets exactly these instead.
+ */
+function inheritedEnv(
+  names: readonly string[] = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"],
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of names) {
+    const value = processEnv.get(name);
+    if (value !== undefined) env[name] = value;
+  }
+  return env;
+}
 
 export type MuteListenerAddr =
   | { transport: "tcp"; hostname: string; port: number }
@@ -177,9 +194,10 @@ export async function connectUdsPair(path: string): Promise<UdsPair> {
 export async function fabricateStaleUdsSocket(path: string): Promise<void> {
   await removeIfPresent(path);
   const child = spawn(
-    denoBin(),
+    process.execPath,
     [
-      "eval",
+      "--input-type=module",
+      "--eval",
       `import { createServer } from "node:net"; createServer().listen(${
         JSON.stringify(path)
       }, () => console.log("listening")); setInterval(() => {}, 1000);`,

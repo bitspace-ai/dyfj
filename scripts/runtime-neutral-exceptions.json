@@ -66,7 +66,7 @@
   },
   {
     "path": "prototype/scripts/dyfj-launcher.integration.test.ts",
-    "count": 125,
+    "count": 118,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
@@ -131,13 +131,8 @@
   },
   {
     "path": "prototype/src/cli/launcher/grants.test.ts",
-    "count": 3,
+    "count": 1,
     "reason": "Launcher assertions: two expected error messages and one test name describe the launcher's own grant rules; they change with the launcher under S4 of decision D32."
-  },
-  {
-    "path": "prototype/src/cli/launcher/grants.ts",
-    "count": 2,
-    "reason": "Launcher error messages: two refusals name Deno's run and network grants, which the launcher still builds for the runtime child; they change with the launcher under S4 of decision D32."
   },
   {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
