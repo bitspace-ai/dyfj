@@ -55,7 +55,10 @@ README are tracked separately in its Revision history section.
   with `node:test` and run in a new "Architecture import rules tests" lane
   through `scripts/run-node-test-files.ts`, not in the orchestration
   `deno test` lane. They gain cases for stripping parity, the warning hook,
-  type-position findings and an import of a module that does not parse. The
+  type-position findings, inline `type` modifiers against `import type` and
+  `export type` statements, malformed modules (a syntax error, an
+  unterminated specifier, a non-literal static specifier, a malformed type),
+  and an import of a module that does not parse. The
   experimental-feature warning from type stripping is dropped for that call
   only. `runtime.neutral` falls from 1007 to 932 references; what remains in
   the checker names the runtime's env object, which the env rule forbids

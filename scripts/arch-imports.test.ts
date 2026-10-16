@@ -262,6 +262,54 @@ test("a module that does not parse fails the lane", () => {
   assertEquals(result.errors, [`module failed to load: ${E}/broken.ts`]);
 });
 
+test("inline type modifiers are value edges; type-only statements are not", () => {
+  const result = run({
+    ...targets([
+      "mixed",
+      "typed",
+      "reexport-inline",
+      "reexport-type",
+      "default-inline",
+    ]),
+    [`${E}/inline.ts`]: [
+      'import { type A, x as B } from "./mixed.ts";',
+      'import type { A as A2 } from "./typed.ts";',
+      'export { type A as A3 } from "./reexport-inline.ts";',
+      'export type { A as A4 } from "./reexport-type.ts";',
+      'import { type default as A5 } from "./default-inline.ts";',
+    ].join("\n"),
+  });
+  assertEquals(result.errors, []);
+  // Under verbatimModuleSyntax a statement with only inline `type`
+  // modifiers still loads its module, so only `import type` and
+  // `export type` statements are type-only.
+  assertEquals(edgesFrom(result, `${E}/inline.ts`), [
+    ["default-inline.ts", "static", false],
+    ["mixed.ts", "static", false],
+    ["reexport-inline.ts", "static", false],
+    ["reexport-type.ts", "static", true],
+    ["typed.ts", "static", true],
+  ]);
+});
+
+test("a malformed module fails the lane by name and is not skipped", () => {
+  const result = run({
+    ...targets(["a"]),
+    [`${E}/syntax.ts`]: "export const = ;",
+    [`${E}/unterminated.ts`]: 'import { x } from "./a.ts;\nexport { x };',
+    [`${E}/non-literal.ts`]: "const name = './a.ts'; import { x } from name;",
+    [`${E}/bad-type.ts`]: "export const y: = 1;",
+    [`${E}/user.ts`]: 'import { x } from "./unterminated.ts";',
+  });
+  assertEquals(result.errors, [
+    `module failed to load: ${E}/bad-type.ts`,
+    `module failed to load: ${E}/non-literal.ts`,
+    `module failed to load: ${E}/syntax.ts`,
+    `module failed to load: ${E}/unterminated.ts`,
+    `unresolved local import "./unterminated.ts" at ${E}/user.ts:1`,
+  ]);
+});
+
 test("an extensionless local import does not resolve", () => {
   const result = run({
     [`${S}/kernel/a.ts`]: "export const a = 1;",
