@@ -687,19 +687,33 @@ export function productionLanes(
     {
       // Module-boundary ratchet (specs/01-architecture.md section 4): runs
       // under the aggregate check id rather than a new required id, so the
-      // receipt check-id vocabulary is unchanged. It builds the module graph
-      // with `deno info`, run through the same selected Deno binary.
+      // receipt check-id vocabulary is unchanged. It runs on Node (decision
+      // D32), parsing with Node's type stripping and acorn; it only reads.
       label: "Architecture import rules (arch.imports)",
+      checkId: "test.aggregate",
+      command: "node",
+      args: ["scripts/arch-imports.ts"],
+      cwd: root,
+    },
+    {
+      // The arch.imports checker's own tests register with node:test, so
+      // they run under `node --test` through the shared Node runner (decision
+      // D32). They build their graphs in memory and only read the committed
+      // rules.
+      label: "Architecture import rules tests",
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
       args: [
         "run",
         "--no-prompt",
-        `--allow-read=${root}`,
-        `--allow-run=${denoExecutable}`,
-        "scripts/arch-imports.ts",
-        `--deno=${denoExecutable}`,
+        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+        "--allow-read=.",
+        "--allow-run=node",
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "arch.imports",
+        "scripts/arch-imports.test.ts",
       ],
       cwd: root,
     },
@@ -753,7 +767,6 @@ export function productionLanes(
         "scripts/range-checks.test.ts",
         "scripts/dependency-policy.test.ts",
         "scripts/node-modules-check.test.ts",
-        "scripts/arch-imports.test.ts",
         "scripts/runtime-neutral.test.ts",
         // node: it runs tsc over a fixture with a parameter property.
         "scripts/typecheck-tsc.test.ts",

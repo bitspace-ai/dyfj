@@ -101,33 +101,33 @@
   },
   {
     "path": "scripts/aggregate-test-gate.test.ts",
-    "count": 181,
+    "count": 180,
     "reason": "Gate-tooling test on Deno.test and host APIs; converted to node:test with the gate-tooling port under decision D32."
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 47,
+    "count": 46,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
     "path": "scripts/arch-imports-graph.ts",
-    "count": 5,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
+    "count": 1,
+    "reason": "These references name the runtime's env object, which the arch.imports env rule forbids reading; they go when that rule stops naming it under decision D32."
   },
   {
-    "path": "scripts/arch-imports-lint-plugin.ts",
-    "count": 12,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
+    "path": "scripts/arch-imports-parse.ts",
+    "count": 10,
+    "reason": "These references name the runtime's env object, which the arch.imports env rule forbids reading; they go when that rule stops naming it under decision D32."
   },
   {
     "path": "scripts/arch-imports.test.ts",
-    "count": 76,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "count": 22,
+    "reason": "These references name the runtime's env object, which the arch.imports env rule forbids reading; they go when that rule stops naming it under decision D32."
   },
   {
     "path": "scripts/arch-imports.ts",
-    "count": 15,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
+    "count": 2,
+    "reason": "These references name the runtime's env object, which the arch.imports env rule forbids reading; they go when that rule stops naming it under decision D32."
   },
   {
     "path": "scripts/assurance-receipt.test.ts",
