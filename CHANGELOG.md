@@ -276,7 +276,9 @@ README are tracked separately in its Revision history section.
   install.** It looks for `@agentclientprotocol/codex-acp` in
   `prototype/node_modules` first, where npm nests a member-only copy, then in
   the workspace root's `node_modules`, where npm hoists it, and never further
-  up. The version check and the bounded metadata read are unchanged.
+  up. The version check and the bounded metadata read are unchanged. The
+  `codex-chatgpt-login` task's read grant adds the root `node_modules` for
+  the same reason.
 - **The `deno check` source typecheck covers `prototype/examples/`.** An API
   change that broke an example used to pass the gate.
 - **Root `npm test` and `npm run test:fast` run the gate**, as

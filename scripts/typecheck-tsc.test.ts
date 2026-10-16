@@ -7,6 +7,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +37,9 @@ async function typecheck(
       execFile(
         "node",
         [tsc, "--project", join(dir, "tsconfig.json")],
+        // An explicit environment: the gate lane that runs this file grants
+        // only named variables, and `node` needs PATH to be found.
+        { env: { PATH: process.env.PATH ?? "" } },
         (error, stdout, stderr) => {
           const code = error === null
             ? 0

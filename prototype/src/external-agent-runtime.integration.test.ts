@@ -27,8 +27,8 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import { describe, it, mock } from "node:test";
 import { dirname, join } from "node:path";
+import { codexAcpPackageRoot } from "./acp-adapter-package.ts";
 import {
-  codexAcpPackageRoot,
   codexChatGptProfile,
   fixtureProfile,
   historyContainsSecretShape,
