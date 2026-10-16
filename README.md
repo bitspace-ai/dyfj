@@ -1201,7 +1201,8 @@ bind that subset only, while its Node-routed files run unsandboxed), the
 schema unit tests (`schema/validate-schema.test.ts`, `codegen.test.ts` and
 `equivalence.test.ts`, which register with `node:test` and run under
 `node --test` with the per-file handle check through
-`scripts/run-node-test-files.ts`), current and
+`scripts/run-node-test-files.ts`), the local model catalog check
+(`schema/model-catalog.test.ts`, run the same way), current and
 historical schema checks, `schema.codegen` (the row types in
 `prototype/src/store/generated/rows.ts` regenerated from the DDL must match the
 committed file) and `schema.equivalence` (`current/` + `catalog/` and
@@ -1396,7 +1397,9 @@ name does not count), the gate runs only the policy lanes — `subject.resolve`,
 `subject.digest`, the retired-surface scan, both public-safety tree scans,
 `secret.diff`, `diff.whitespace`, `markdown.links`, `shell.parse`,
 `dependency.policy` and `receipt.schema` — and the two contract lanes, whose
-closure report reads the `closure-claim` markers in the Markdown. It names
+closure report reads the `closure-claim` markers in the Markdown. The contract
+package tests run under `node --test` through the shared Node runner; the
+closure-report comparison stays a `deno run` with write denied. It names
 every lane it skips before it starts, and its `gate-status` line reads
 `"mode":"docs-only"`. The
 classification (`scripts/change-scope.ts`, keyed on `GITHUB_EVENT_NAME`) runs
@@ -2276,6 +2279,10 @@ Document revisions only. Code and behavior changes are tracked in
   (`prototype/testing/golden/snapshots.ts`, on by `DYFJ_GOLDEN_UPDATE=1`)
   replaces the write grant as what keeps a plain golden run from writing a
   snapshot.
+- 2026-10-15 - The aggregate gate's description says that the local model
+  catalog check and the contract package tests run under `node --test`
+  through the shared Node runner, and that the closure-report comparison
+  stays a `deno run` with write denied.
 - 2026-10-15 - The list of modules not yet moved into `prototype/src/` unit
   directories adds `acp-fixture-command.ts`, the ACP runner module that
   builds the fixture agent's command for the runtime running the product.

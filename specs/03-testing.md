@@ -281,14 +281,19 @@ internal move.
 | `erasable.syntax` (new)                      | Rejects constructor parameter properties in tracked `.ts` files, the one non-erasable construct the codebase used; parsed by `deno lint` with a repository plugin; reported under `test.aggregate`. Other non-erasable syntax (`enum`, `namespace`, decorators) goes unchecked until `tsc --erasableSyntaxOnly` takes over. The Node load probe (`scripts/node-load-probe.ts`) is a manual check of non-test modules under `prototype/src`, `prototype/testing` and `contracts/` only; the golden lane's runner (`testing/golden/run.ts`), still a `deno` script, is its one expected failure. Decision D32. |
 | npm install precondition (new)               | First lane of the full gate and `test:fast`: fails with `` run `npm ci` in prototype/ `` when `prototype/node_modules` is missing or does not match `package-lock.json` (npm's `node_modules/.package-lock.json` against the lockfile, by package and version, and each recorded package's `package.json` present on disk; absent optional packages allowed). Read-only: the gate never runs npm. Reported under `test.aggregate`, because it judges the checkout's install, not the committed tree. Decision D32. |
 | `schema.codegen`, `schema.equivalence` (new) | `02-data-layer.md`.                                                                                                                                                                   |
-| Schema unit tests                            | `schema/validate-schema.test.ts`, `codegen.test.ts` and `equivalence.test.ts` register with `node:test` and run under `node --test` with the per-file handle check and a count line, through the shared Node runner (`scripts/run-node-test-files.ts`), one file at a time. `schema/model-catalog.test.ts` and the `contracts/workbench/first-product/v1` tests stay on `deno test` until the modules they import stop calling the existing runtime's global. Decision D32. |
+| Schema unit tests                            | `schema/validate-schema.test.ts`, `codegen.test.ts` and `equivalence.test.ts` register with `node:test` and run under `node --test` with the per-file handle check and a count line, through the shared Node runner (`scripts/run-node-test-files.ts`), one file at a time. The "Local model catalog data validation" lane (`schema/model-catalog.test.ts`), the contract package tests lane (the three `contracts/workbench/first-product/v1` tests) and the root `deno task test:schema` (all four schema test files) run the same way. The contract closure-report comparison stays a `deno run` with write denied: the generator is written to `node:` builtins and runs on either runtime, and the sandbox keeps its comparison from writing. Decision D32. |
 | `projections.replay` (roadmap)               | `02-data-layer.md` §7. Added by roadmap durable-state work.                                                                                                                           |
 | typecheck lanes                              | One source of truth for the file list: derived by globbing, not hand-listed. This removes the current drift between `prototype/deno.json check` and `aggregate-test-gate.ts:438-456`. |
 | `test:fast`                                  | Adds `test.unit`, so the fast loop exercises product behavior.                                                                                                                        |
 | gate runner                                  | Runs every lane and reports all failures, instead of stopping at the first. The overall exit code is unchanged: any failure fails.                                                    |
 
 `contracts/workbench/first-product/v1` lanes are unchanged (frozen until phase
-2).
+2), apart from the runner its tests run on (above). The package is frozen in meaning: its semantics, schemas, fixtures and
+report content do not change, and ports of its runtime API calls onto `node:`
+builtins under decision D32 are permitted. Such a port changes the closure
+report's `contract_source_manifest` (its `sha256` and `line_count`) only,
+because the report hashes the package's own source, and no contract content
+changes.
 
 ## 7. Migration rule for existing tests
 

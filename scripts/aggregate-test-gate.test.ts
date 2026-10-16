@@ -253,11 +253,19 @@ Deno.test("aggregate lanes include the contract package tests", () => {
     lane.args.join(" "),
     "contracts/workbench/first-product/v1/executable-closure-report.test.ts",
   );
-  // The suite reads its schemas and fixtures and needs nothing else.
-  assertStringIncludes(lane.args.join(" "), "--allow-read=.");
-  if (lane.args.some((argument) => argument.startsWith("--allow-run"))) {
-    throw new Error("contract package tests retain unused run permission");
-  }
+  // The files register with node:test, so the lane runs them under
+  // `node --test` through the shared Node runner, which spawns only `node`.
+  assertEquals(lane.args.slice(0, 9), [
+    "run",
+    "--no-prompt",
+    "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+    "--allow-read=.",
+    "--allow-run=node",
+    "scripts/run-node-test-files.ts",
+    "--lane",
+    "contracts",
+    "contracts/workbench/first-product/v1/validate.test.ts",
+  ]);
   if (!FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("contract package tests must also run in the fast subset");
   }
@@ -753,7 +761,21 @@ Deno.test("aggregate lanes include schema catalog, codegen, and equivalence chec
     candidate.label === "Local model catalog data validation"
   );
   if (!catalog) throw new Error("local model catalog lane is missing");
-  assertEquals(catalog.args.at(-1), "schema/model-catalog.test.ts");
+  // The catalog tests register with node:test and run through the shared
+  // Node runner; its node --test child spawns dolt unsandboxed.
+  assertEquals(catalog.args, [
+    "run",
+    "--no-prompt",
+    "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+    "--allow-read=.",
+    "--allow-run=node",
+    "scripts/run-node-test-files.ts",
+    "--lane",
+    "schema.catalog",
+    "schema/model-catalog.test.ts",
+  ]);
+  assertEquals(catalog.checkId, "test.aggregate");
+  assertEquals(catalog.cwd, "/repo");
   const codegen = lanes.find((candidate) =>
     candidate.label === "Schema codegen freshness (schema.codegen)"
   );
@@ -773,12 +795,27 @@ Deno.test("aggregate lanes include schema catalog, codegen, and equivalence chec
   );
   if (!equivalence) throw new Error("schema.equivalence lane is missing");
   assertEquals(equivalence.args.at(-1), "schema/equivalence.ts");
-  for (const lane of [catalog, codegen, equivalence]) {
+  const applyLanes = lanes.filter((candidate) =>
+    candidate.label === "Current-schema apply validation" ||
+    candidate.label === "Historical replay plus forward-migration validation"
+  );
+  assertEquals(applyLanes.length, 2);
+  for (const lane of [codegen, equivalence, ...applyLanes]) {
     assertEquals(lane.checkId, "test.aggregate");
     assertEquals(lane.cwd, "/repo");
     assertEquals(
       lane.args.find((argument) => argument.startsWith("--allow-run=")),
       "--allow-run=dolt",
+    );
+    // schema/dolt-apply.ts spawns dolt through node:child_process.
+    assertEquals(
+      lane.args.find((argument) => argument.startsWith("--allow-env=")),
+      "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
+    );
+    assertStringIncludes(
+      lane.args.find((argument) => argument.startsWith("--allow-read=")) ??
+        "",
+      "/private/var/folders",
     );
   }
 });

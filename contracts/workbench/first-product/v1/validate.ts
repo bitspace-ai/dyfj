@@ -23,6 +23,7 @@
  * conclusion from a malformed document.
  */
 
+import { readdir, readFile } from "node:fs/promises";
 import {
   type SchemaDocument,
   SchemaRegistry,
@@ -85,7 +86,7 @@ function packageUrl(relative: string): URL {
 }
 
 async function readJson(url: URL): Promise<unknown> {
-  return JSON.parse(await Deno.readTextFile(url));
+  return JSON.parse(await readFile(url, "utf8"));
 }
 
 /** Loads the package schema documents into an exact-id resolver. */
@@ -268,8 +269,8 @@ export async function loadFixtures(
 ): Promise<Fixture[]> {
   const directory = packageUrl(`./fixtures/${kind}/`);
   const names: string[] = [];
-  for await (const entry of Deno.readDir(directory)) {
-    if (entry.isFile && entry.name.endsWith(".json")) names.push(entry.name);
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".json")) names.push(entry.name);
   }
   names.sort();
   const fixtures: Fixture[] = [];

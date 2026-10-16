@@ -237,6 +237,39 @@ README are tracked separately in its Revision history section.
   environment; tools never run in it. The launcher's parse check and status
   probe keep the narrow list.
 
+- **The schema tooling's Dolt helper and the first-product contract package
+  run on either runtime, and the model-catalog and contract tests register
+  with `node:test`.** `schema/dolt-apply.ts` is written to `node:` builtins:
+  it spawns `dolt` through `node:child_process`, makes and removes its
+  disposable repository through `node:fs`, and keeps its error messages and
+  exit codes (a signalled `dolt` still reports 128 plus the signal number).
+  The `dolt` child now gets `PATH`, `HOME`, `TMPDIR`, `TEMP` and `TMP` only,
+  not the caller's whole environment. Every grant list that reaches the
+  helper (the model-catalog, current-schema, historical-replay,
+  `schema.codegen` and `schema.equivalence` gate lanes, and the `test:schema`,
+  `validate-schema`, `schema:codegen` and `schema:equivalence` tasks) now
+  grants those variables, `NODE_V8_COVERAGE`, which Deno's
+  `node:child_process` reads on every spawn, and read on the temp roots, which
+  the recursive remove lists. In `contracts/workbench/first-product/v1`,
+  `validate.ts` and `executable-closure-report.ts` read through
+  `node:fs/promises` and take the working directory and arguments from
+  `node:process`. The package is frozen in meaning, so no contract
+  semantics, schema, fixture or report content changes. The committed
+  closure report changes only in its `contract_source_manifest` (`sha256` and
+  `line_count`), because the report hashes the package's own source and that
+  source changed. The registrations codemod moved
+  `schema/model-catalog.test.ts` and the three contract test files onto
+  `node:test` (24 registrations). Each one passes under `node --test` with the
+  per-file leak check, and still passes under `deno test`. They now run there:
+  the "Local model catalog data validation" and "Contract package tests" gate
+  lanes and the root `deno task test:schema` (all four schema test files) run
+  through the shared Node runner (`scripts/run-node-test-files.ts`), each with
+  a count line, in place of `deno test`. The contract closure-report
+  comparison stays a `deno run` with write denied, because its generator now
+  runs on either runtime. Lane totals are unchanged: 2 catalog tests,
+  22 contract tests and 22 `test:schema` tests. The
+  `runtime.neutral` count falls from 1,154 to 1,104 (decision D32).
+
 - **The launcher's grant readers use `node:` builtins, and their tests run
   under `node --test`, with the per-file leak check.** `cli/launcher/grants.ts`
   read `deno.json`, resolved paths and checked file modes through the existing
