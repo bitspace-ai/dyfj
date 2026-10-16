@@ -13,7 +13,8 @@ README are tracked separately in its Revision history section.
 
 - **`ratchet.base`: the ratchet lists are checked against the merge base.**
   A new gate lane, `node scripts/ratchet-base.ts`, under `test.aggregate` in
-  the full gate and `test:fast`, compares
+  the full gate and `test:fast` (a docs-only pull-request run skips it, since
+  a Markdown-only change cannot change a list), compares
   `scripts/runtime-neutral-exceptions.json`,
   `scripts/arch-size-exceptions.json` and `scripts/arch-imports-baseline.json`
   with the same files at the merge base of HEAD and `DYFJ_GATE_RANGE_BASE`

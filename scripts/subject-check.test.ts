@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,22 +11,6 @@ import {
   resolveSubjectBinding,
   runSubjectCheck,
 } from "./subject-check.ts";
-
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
-function assertStringIncludes(actual: string, expected: string): void {
-  if (!actual.includes(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(actual)} to include ${expected}`,
-    );
-  }
-}
 
 function envOf(
   vars: Record<string, string>,
@@ -65,7 +50,9 @@ async function makeRepo(): Promise<{ dir: string; sha: string }> {
 }
 
 test("subject binding fails closed in CI without an immutable id", () => {
-  assertEquals(resolveSubjectBinding(envOf({})), { authoritative: false });
+  assert.deepStrictEqual(resolveSubjectBinding(envOf({})), {
+    authoritative: false,
+  });
   const cases: Record<string, string>[] = [
     { GITHUB_ACTIONS: "true" },
     { GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: "" },
@@ -79,20 +66,20 @@ test("subject binding fails closed in CI without an immutable id", () => {
       resolveSubjectBinding(envOf(vars));
     } catch (error) {
       threw = true;
-      assertStringIncludes(String(error), "failing closed");
+      assert.match(String(error), /failing closed/);
     }
     if (!threw) {
       throw new Error(`binding accepted ${JSON.stringify(vars)}`);
     }
   }
   const sha = "a".repeat(40);
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSubjectBinding(
       envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
     ),
     { expected: sha, authoritative: true },
   );
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSubjectBinding(envOf({ DYFJ_GATE_SUBJECT: sha })),
     { expected: sha, authoritative: false },
   );
@@ -101,7 +88,7 @@ test("subject binding fails closed in CI without an immutable id", () => {
 test("the commit digest is recomputed from object bytes", async () => {
   const { dir, sha } = await makeRepo();
   try {
-    assertEquals(await recomputeCommitDigest(dir, sha), sha);
+    assert.deepStrictEqual(await recomputeCommitDigest(dir, sha), sha);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -116,8 +103,8 @@ test("subject.resolve passes locally and labels itself", async () => {
       env: envOf({}),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 0);
-    assertStringIncludes(logs.join("\n"), "non-authoritative");
+    assert.deepStrictEqual(code, 0);
+    assert.match(logs.join("\n"), /non-authoritative/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -135,8 +122,8 @@ test("a bound subject mismatch fails closed", async () => {
       }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 1);
-    assertStringIncludes(logs.join("\n"), "does not match the bound subject");
+    assert.deepStrictEqual(code, 1);
+    assert.match(logs.join("\n"), /does not match the bound subject/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -152,8 +139,8 @@ test("an authoritative run rejects a modified subject tree", async () => {
       env: envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 1);
-    assertStringIncludes(logs.join("\n"), "local modifications");
+    assert.deepStrictEqual(code, 1);
+    assert.match(logs.join("\n"), /local modifications/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -168,9 +155,9 @@ test("subject.digest passes and reports the recomputation", async () => {
       env: envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 0);
-    assertStringIncludes(logs.join("\n"), `sha1 ${sha} recomputed`);
-    assertStringIncludes(logs.join("\n"), "git version");
+    assert.deepStrictEqual(code, 0);
+    assert.match(logs.join("\n"), new RegExp(`sha1 ${sha} recomputed`));
+    assert.match(logs.join("\n"), /git version/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -186,7 +173,7 @@ test("an unavailable git tool fails closed and value-free", async () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    assertEquals(
+    assert.deepStrictEqual(
       message,
       "subject check: cannot run git (is it installed and executable?)",
     );

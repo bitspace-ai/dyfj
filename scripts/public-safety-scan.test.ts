@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,22 +26,6 @@ import {
 } from "./scan-lib.ts";
 import { isWorktreeClean } from "./subject-check.ts";
 
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
-function assertStringIncludes(actual: string, expected: string): void {
-  if (!actual.includes(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(actual)} to include ${expected}`,
-    );
-  }
-}
-
 function captureOut(): {
   out: Pick<Console, "log" | "error">;
   text: () => string;
@@ -50,18 +35,6 @@ function captureOut(): {
     lines.push(parts.map((part) => String(part)).join(" "));
   };
   return { out: { log: record, error: record }, text: () => lines.join("\n") };
-}
-
-function assertThrows(fn: () => unknown, expected: string): void {
-  try {
-    fn();
-  } catch (error) {
-    if (!String(error).includes(expected)) {
-      throw new Error(`Expected ${String(error)} to include ${expected}`);
-    }
-    return;
-  }
-  throw new Error(`Expected function to throw ${expected}`);
 }
 
 // Fixtures are assembled at runtime so no rule-matching literal sits in
@@ -78,7 +51,7 @@ function homePathFixture(): string {
 test("private-key headers fail", () => {
   const header = ["-----BEGIN", "OPENSSH PRIVATE", "KEY-----"].join(" ");
   const hits = scanText("docs/example.md", `${header}\n`);
-  assertEquals(hits, [
+  assert.deepStrictEqual(hits, [
     { path: "docs/example.md", line: 1, rule: "secret.tree/private-key" },
   ]);
 });
@@ -100,7 +73,7 @@ test("well-known credential prefixes fail", () => {
   ];
   for (const [value, rule] of fixtures) {
     const hits = scanText("docs/example.md", `token: ${value}\n`);
-    assertEquals(hits.map((hit) => hit.rule), [rule]);
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [rule]);
   }
 });
 
@@ -111,7 +84,7 @@ test("empty and placeholder credential shapes pass", () => {
     "DATABASE_URL=mysql://root:<your-local-dolt-password>@127.0.0.1:3306/dolt",
     "# XAI_API_KEY=",
   ].join("\n");
-  assertEquals(scanText("prototype/.env.example", content), []);
+  assert.deepStrictEqual(scanText("prototype/.env.example", content), []);
 });
 
 test("documentation-reserved email domains pass", () => {
@@ -121,13 +94,13 @@ test("documentation-reserved email domains pass", () => {
     "recall fixture-pass@memory.example",
     "probe root@db.test",
   ].join("\n");
-  assertEquals(scanText("docs/example.md", content), []);
+  assert.deepStrictEqual(scanText("docs/example.md", content), []);
 });
 
 test("a non-example email address fails as a boundary hit", () => {
   const address = ["operator", "@", "gmail", ".com"].join("");
   const hits = scanText("docs/example.md", `Written by ${address}.\n`);
-  assertEquals(hits, [{
+  assert.deepStrictEqual(hits, [{
     path: "docs/example.md",
     line: 1,
     rule: "public.boundary/personal-email",
@@ -137,7 +110,7 @@ test("a non-example email address fails as a boundary hit", () => {
 test("an address at end of sentence still fails", () => {
   const address = ["operator", "@", "gmail", ".com"].join("");
   const hits = scanText("docs/example.md", `Mail ${address}. Thanks.\n`);
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "public.boundary/personal-email",
   ]);
 });
@@ -148,27 +121,30 @@ test("package and version specifiers are not emails", () => {
     "esbuild@0.20.1 pinned",
     "mysql://root@127.0.0.1:3306/dolt",
   ].join("\n");
-  assertEquals(scanText("prototype/deno.json", content), []);
+  assert.deepStrictEqual(scanText("prototype/deno.json", content), []);
 });
 
 test("allowed-domain classification covers only RFC-reserved shapes", () => {
-  assertEquals(isAllowedEmailDomain("internal.example.com"), true);
-  assertEquals(isAllowedEmailDomain("example.net"), true);
-  assertEquals(isAllowedEmailDomain("sub.example.org"), true);
-  assertEquals(isAllowedEmailDomain("db.test"), true);
-  assertEquals(isAllowedEmailDomain("memory.example"), true);
-  assertEquals(isAllowedEmailDomain("gmail.com"), false);
-  assertEquals(isAllowedEmailDomain("examples.com"), false);
+  assert.deepStrictEqual(isAllowedEmailDomain("internal.example.com"), true);
+  assert.deepStrictEqual(isAllowedEmailDomain("example.net"), true);
+  assert.deepStrictEqual(isAllowedEmailDomain("sub.example.org"), true);
+  assert.deepStrictEqual(isAllowedEmailDomain("db.test"), true);
+  assert.deepStrictEqual(isAllowedEmailDomain("memory.example"), true);
+  assert.deepStrictEqual(isAllowedEmailDomain("gmail.com"), false);
+  assert.deepStrictEqual(isAllowedEmailDomain("examples.com"), false);
   // An interior `example` label never reserves a real deliverable domain.
-  assertEquals(isAllowedEmailDomain("example.evil.com"), false);
-  assertEquals(isAllowedEmailDomain("mail.example.attacker.net"), false);
-  assertEquals(isAllowedEmailDomain("example.co.uk"), false);
+  assert.deepStrictEqual(isAllowedEmailDomain("example.evil.com"), false);
+  assert.deepStrictEqual(
+    isAllowedEmailDomain("mail.example.attacker.net"),
+    false,
+  );
+  assert.deepStrictEqual(isAllowedEmailDomain("example.co.uk"), false);
 });
 
 test("an interior example label does not exempt a real address", () => {
   const address = ["operator", "@", "example.evil", ".com"].join("");
   const hits = scanText("docs/example.md", `Mail ${address}. Thanks.\n`);
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "public.boundary/personal-email",
   ]);
 });
@@ -182,7 +158,7 @@ test("home-directory paths fail everywhere, test files included", () => {
       "prototype/src/a.spec.tsx",
     ]
   ) {
-    assertEquals(scanText(path, line).map((hit) => hit.rule), [
+    assert.deepStrictEqual(scanText(path, line).map((hit) => hit.rule), [
       "public.boundary/home-directory-path",
     ]);
   }
@@ -193,7 +169,7 @@ test("a secret shape in a test fixture still fails", () => {
     "prototype/src/cli.test.ts",
     `key ${awsKeyFixture()}\n`,
   );
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "secret.tree/aws-access-key-id",
   ]);
 });
@@ -201,13 +177,13 @@ test("a secret shape in a test fixture still fails", () => {
 test("rule families partition the rule set", () => {
   const families = ["secret.tree", "public.boundary"];
   const selected = families.flatMap((family) => [...rulesForFamily(family)]);
-  assertEquals(selected.length, RULES.length);
+  assert.deepStrictEqual(selected.length, RULES.length);
   for (const rule of rulesForFamily("secret.tree")) {
     if (!rule.id.startsWith("secret.tree/")) {
       throw new Error(`family selection leaked ${rule.id}`);
     }
   }
-  assertThrows(() => rulesForFamily("nonsense"), "unknown rule family");
+  assert.throws(() => rulesForFamily("nonsense"), /unknown rule family/);
 });
 
 test("a family-filtered scan reports only that family", () => {
@@ -219,7 +195,7 @@ test("a family-filtered scan reports only that family", () => {
     Number.POSITIVE_INFINITY,
     rulesForFamily("secret.tree"),
   );
-  assertEquals(secret.map((hit) => hit.rule), [
+  assert.deepStrictEqual(secret.map((hit) => hit.rule), [
     "secret.tree/aws-access-key-id",
   ]);
   const boundary = scanText(
@@ -228,21 +204,21 @@ test("a family-filtered scan reports only that family", () => {
     Number.POSITIVE_INFINITY,
     rulesForFamily("public.boundary"),
   );
-  assertEquals(boundary.map((hit) => hit.rule), [
+  assert.deepStrictEqual(boundary.map((hit) => hit.rule), [
     "public.boundary/personal-email",
   ]);
 });
 
 test("scan arguments select a family and fail closed otherwise", () => {
-  assertEquals(parseScanArguments([]), {});
-  assertEquals(parseScanArguments(["--family", "secret.tree"]), {
+  assert.deepStrictEqual(parseScanArguments([]), {});
+  assert.deepStrictEqual(parseScanArguments(["--family", "secret.tree"]), {
     family: "secret.tree",
   });
-  assertThrows(
+  assert.throws(
     () => parseScanArguments(["--family", "made.up"]),
-    "unknown rule family",
+    /unknown rule family/,
   );
-  assertThrows(() => parseScanArguments(["--all"]), "unknown arguments");
+  assert.throws(() => parseScanArguments(["--all"]), /unknown arguments/);
 });
 
 test("a secret shape in the scanner's own source still fails", () => {
@@ -250,7 +226,7 @@ test("a secret shape in the scanner's own source still fails", () => {
     "scripts/public-safety-scan.ts",
     `key: ${awsKeyFixture()}\n`,
   );
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "secret.tree/aws-access-key-id",
   ]);
 });
@@ -258,7 +234,7 @@ test("a secret shape in the scanner's own source still fails", () => {
 test("secret shapes inside binary-looking content are detected", () => {
   const value = awsKeyFixture();
   const hits = scanText("assets/blob.bin", `\0\x01${value}\0`);
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "secret.tree/aws-access-key-id",
   ]);
   // Detection is proven without echoing the payload: the formatted report
@@ -267,18 +243,24 @@ test("secret shapes inside binary-looking content are detected", () => {
   if (formatted.includes(value)) {
     throw new Error("binary-payload content reached formatted output");
   }
-  assertEquals(formatted, "assets/blob.bin:1: secret.tree/aws-access-key-id");
+  assert.deepStrictEqual(
+    formatted,
+    "assets/blob.bin:1: secret.tree/aws-access-key-id",
+  );
 });
 
 test("formatted output is value-free: matched content never appears", () => {
   const value = awsKeyFixture();
   const hits = scanText("docs/example.md", `key ${value}\n`);
-  assertEquals(hits.length, 1);
+  assert.deepStrictEqual(hits.length, 1);
   const formatted = formatHits(hits);
   if (formatted.includes(value)) {
     throw new Error("secret-shaped content reached formatted output");
   }
-  assertEquals(formatted, "docs/example.md:1: secret.tree/aws-access-key-id");
+  assert.deepStrictEqual(
+    formatted,
+    "docs/example.md:1: secret.tree/aws-access-key-id",
+  );
 });
 
 test("oversized matched lines never inflate formatted output", () => {
@@ -286,7 +268,7 @@ test("oversized matched lines never inflate formatted output", () => {
     "docs/example.md",
     `${"x".repeat(100_000)} ${awsKeyFixture()} ${"y".repeat(100_000)}\n`,
   );
-  assertEquals(hits.length, 1);
+  assert.deepStrictEqual(hits.length, 1);
   const formatted = formatHits(hits);
   if (formatted.length > 500) {
     throw new Error(`formatted output too large: ${formatted.length} chars`);
@@ -301,7 +283,7 @@ test("hostile long lines scan in linear time", () => {
   const start = performance.now();
   const hits = scanText("docs/example.md", line);
   const elapsedMs = performance.now() - start;
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "secret.tree/aws-access-key-id",
   ]);
   if (elapsedMs > 2_000) {
@@ -311,7 +293,10 @@ test("hostile long lines scan in linear time", () => {
 
 test("bounded windows still detect oversized address shapes", () => {
   const longLocal = `${"x".repeat(200)}@gmail.com`;
-  assertEquals(scanText("docs/example.md", `${longLocal}\n`).length, 1);
+  assert.deepStrictEqual(
+    scanText("docs/example.md", `${longLocal}\n`).length,
+    1,
+  );
 });
 
 test("control bytes in paths are stripped from formatted output", () => {
@@ -326,7 +311,7 @@ test("control bytes in paths are stripped from formatted output", () => {
       throw new Error("control byte reached formatted output");
     }
   }
-  assertEquals(
+  assert.deepStrictEqual(
     formatted,
     "docs/[2Jevilname.md:1: secret.tree/aws-access-key-id",
   );
@@ -338,10 +323,10 @@ test("hit reporting is capped", () => {
     () => `key ${awsKeyFixture()}`,
   ).join("\n");
   const hits = scanText("docs/example.md", lines);
-  assertEquals(hits.length, MAX_REPORTED_HITS + 10);
+  assert.deepStrictEqual(hits.length, MAX_REPORTED_HITS + 10);
   const formatted = formatHits(hits).split("\n");
-  assertEquals(formatted.length, MAX_REPORTED_HITS + 1);
-  assertEquals(formatted.at(-1), "… and 10 more hits not shown");
+  assert.deepStrictEqual(formatted.length, MAX_REPORTED_HITS + 1);
+  assert.deepStrictEqual(formatted.at(-1), "… and 10 more hits not shown");
 });
 
 test("scanText stops collecting at the given limit", () => {
@@ -349,8 +334,8 @@ test("scanText stops collecting at the given limit", () => {
     { length: 40 },
     () => `key ${awsKeyFixture()}`,
   ).join("\n");
-  assertEquals(scanText("docs/example.md", lines, 7).length, 7);
-  assertEquals(scanText("docs/example.md", lines, 0), []);
+  assert.deepStrictEqual(scanText("docs/example.md", lines, 7).length, 7);
+  assert.deepStrictEqual(scanText("docs/example.md", lines, 0), []);
 });
 
 test("a failed tracked-file read is value-free and fail-closed", async () => {
@@ -365,7 +350,7 @@ test("a failed tracked-file read is value-free and fail-closed", async () => {
   } catch (err) {
     message = err instanceof Error ? err.message : String(err);
   }
-  assertEquals(
+  assert.deepStrictEqual(
     message,
     "public-safety scan: cannot read tracked file docs/[2Jevil.md",
   );
@@ -392,8 +377,8 @@ test(
       if (ln.status !== 0) throw new Error(`ln -s failed (exit ${ln.status})`);
       const bytes = await readTrackedFile(root, "link", "public-safety scan");
       const content = new TextDecoder().decode(bytes);
-      assertEquals(content, target);
-      assertEquals(scanText("link", content).map((hit) => hit.rule), [
+      assert.deepStrictEqual(content, target);
+      assert.deepStrictEqual(scanText("link", content).map((hit) => hit.rule), [
         "public.boundary/home-directory-path",
       ]);
     } finally {
@@ -445,13 +430,13 @@ test("an untracked non-ignored file is scanned locally, never in CI", async () =
     // `git ls-files` cannot see this file at all, so before the untracked
     // inventory existed the value was invisible to every local lane.
     const local = await scanTree(dir, RULES, envOf({}));
-    assertEquals(local.untrackedScanned, true);
-    assertEquals(local.coverage, {
+    assert.deepStrictEqual(local.untrackedScanned, true);
+    assert.deepStrictEqual(local.coverage, {
       inventoryBound: false,
       truncatedPaths: [],
       unlistedTruncated: 0,
     });
-    assertEquals(local.hits, [{
+    assert.deepStrictEqual(local.hits, [{
       path: "new-notes.txt",
       line: 1,
       rule: "secret.tree/aws-access-key-id",
@@ -460,9 +445,9 @@ test("an untracked non-ignored file is scanned locally, never in CI", async () =
     // a different route: `subject.resolve` fails closed on a subject tree
     // that carries untracked files, so nothing is silently admitted.
     const ci = await scanTree(dir, RULES, envOf({ GITHUB_ACTIONS: "true" }));
-    assertEquals(ci.untrackedScanned, false);
-    assertEquals(ci.hits, []);
-    assertEquals(await isWorktreeClean(dir), false);
+    assert.deepStrictEqual(ci.untrackedScanned, false);
+    assert.deepStrictEqual(ci.hits, []);
+    assert.deepStrictEqual(await isWorktreeClean(dir), false);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -480,10 +465,10 @@ test("an ignored file stays excluded from the untracked inventory", async () => 
     // An ignored path is deliberately outside the publication surface: it
     // must not enter the inventory, and must not produce a hit.
     const inventory = await untrackedFiles(dir, "public-safety scan");
-    assertEquals(inventory.paths, [".gitignore"]);
-    assertEquals(inventory.truncated, false);
+    assert.deepStrictEqual(inventory.paths, [".gitignore"]);
+    assert.deepStrictEqual(inventory.truncated, false);
     const local = await scanTree(dir, RULES, envOf({}));
-    assertEquals(local.hits, []);
+    assert.deepStrictEqual(local.hits, []);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -498,7 +483,7 @@ test("hostile untracked filenames and content stay out of diagnostics", async ()
       `token ${value}\n`,
     );
     const { hits } = await scanTree(dir, RULES, envOf({}));
-    assertEquals(hits.length, 1);
+    assert.deepStrictEqual(hits.length, 1);
     const formatted = formatHits(hits);
     if (formatted.includes(value)) {
       throw new Error("untracked content reached formatted output");
@@ -509,7 +494,7 @@ test("hostile untracked filenames and content stay out of diagnostics", async ()
         throw new Error("control byte reached formatted output");
       }
     }
-    assertEquals(
+    assert.deepStrictEqual(
       formatted,
       "evil[2Jname.txt:1: secret.tree/aws-access-key-id",
     );
@@ -545,7 +530,7 @@ test(
       });
       if (ln.status !== 0) throw new Error(`ln -s failed (exit ${ln.status})`);
       const { hits } = await scanTree(dir, RULES, envOf({}));
-      assertEquals(
+      assert.deepStrictEqual(
         hits.filter((hit) => hit.rule.startsWith("secret.tree/")),
         [],
       );
@@ -554,10 +539,12 @@ test(
         "link.txt",
         "public-safety scan",
       );
-      assertEquals(read.truncated, false);
-      assertEquals(
-        new TextDecoder().decode(read.bytes),
-        `${outside}/target.txt`,
+      assert.deepStrictEqual(read.truncated, false);
+      // Value-free on failure: a followed link would read the secret-shaped
+      // target, so the content is compared, never shown.
+      assert.ok(
+        new TextDecoder().decode(read.bytes) === `${outside}/target.txt`,
+        "an untracked symlink read returned something other than its link text",
       );
     } finally {
       await rm(dir, { recursive: true });
@@ -582,23 +569,23 @@ test("an oversized untracked file cannot produce a clean pass", async () => {
       "artifact.bin",
       "public-safety scan",
     );
-    assertEquals(read.bytes.length, MAX_UNTRACKED_FILE_BYTES);
-    assertEquals(read.truncated, true);
+    assert.deepStrictEqual(read.bytes.length, MAX_UNTRACKED_FILE_BYTES);
+    assert.deepStrictEqual(read.truncated, true);
 
     const result = await scanTree(dir, RULES, envOf({}));
     // The bytes past the bound really are unscanned — hence no hit — which is
     // exactly why the gap has to be recorded.
-    assertEquals(result.hits, []);
-    assertEquals(result.coverage.truncatedPaths, ["artifact.bin"]);
-    assertEquals(result.coverage.unlistedTruncated, 0);
+    assert.deepStrictEqual(result.hits, []);
+    assert.deepStrictEqual(result.coverage.truncatedPaths, ["artifact.bin"]);
+    assert.deepStrictEqual(result.coverage.unlistedTruncated, 0);
 
     const capture = captureOut();
-    assertEquals(await runTreeScan(dir, RULES, envOf({}), capture.out), 1);
-    assertStringIncludes(capture.text(), "incomplete coverage");
-    assertStringIncludes(
-      capture.text(),
-      "artifact.bin: read only its leading bytes",
+    assert.deepStrictEqual(
+      await runTreeScan(dir, RULES, envOf({}), capture.out),
+      1,
     );
+    assert.match(capture.text(), /incomplete coverage/);
+    assert.match(capture.text(), /artifact\.bin: read only its leading bytes/);
     if (capture.text().includes("clean")) {
       throw new Error("partial coverage reported as a clean pass");
     }
@@ -624,11 +611,14 @@ test("a file exactly at the byte bound is fully read, not a gap", async () => {
       "exact.bin",
       "public-safety scan",
     );
-    assertEquals(read.bytes.length, MAX_UNTRACKED_FILE_BYTES);
-    assertEquals(read.truncated, false);
+    assert.deepStrictEqual(read.bytes.length, MAX_UNTRACKED_FILE_BYTES);
+    assert.deepStrictEqual(read.truncated, false);
     const capture = captureOut();
-    assertEquals(await runTreeScan(dir, RULES, envOf({}), capture.out), 0);
-    assertStringIncludes(capture.text(), "clean");
+    assert.deepStrictEqual(
+      await runTreeScan(dir, RULES, envOf({}), capture.out),
+      0,
+    );
+    assert.match(capture.text(), /clean/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -638,9 +628,9 @@ test("the CI marker reader answers only its own permitted variable", () => {
   // Never reads a variable outside the grant, and never prompts: an ungranted
   // name simply reads as absent, which selects local feedback.
   const reader = permittedEnvReader("GITHUB_ACTIONS");
-  assertEquals(reader("DYFJ_GATE_SUBJECT"), undefined);
+  assert.deepStrictEqual(reader("DYFJ_GATE_SUBJECT"), undefined);
   const ungranted = "DYFJ_NOT_GRANTED_FOR_TEST";
-  assertEquals(permittedEnvReader(ungranted)(ungranted), undefined);
+  assert.deepStrictEqual(permittedEnvReader(ungranted)(ungranted), undefined);
 });
 
 test("an overflowing untracked count cannot produce a clean pass", async () => {
@@ -653,21 +643,24 @@ test("an overflowing untracked count cannot produce a clean pass", async () => {
       );
     }
     const inventory = await untrackedFiles(dir, "public-safety scan");
-    assertEquals(inventory.paths.length, MAX_UNTRACKED_FILES);
+    assert.deepStrictEqual(inventory.paths.length, MAX_UNTRACKED_FILES);
     // A capped inventory must never be reported as full coverage.
-    assertEquals(inventory.truncated, true);
+    assert.deepStrictEqual(inventory.truncated, true);
     const local = await scanTree(dir, RULES, envOf({}));
-    assertEquals(local.coverage.inventoryBound, true);
+    assert.deepStrictEqual(local.coverage.inventoryBound, true);
     // Every file the bound admitted is clean, so hit-based failure alone would
     // exit 0 here while an unknown number of files went unopened.
-    assertEquals(local.hits, []);
+    assert.deepStrictEqual(local.hits, []);
 
     const capture = captureOut();
-    assertEquals(await runTreeScan(dir, RULES, envOf({}), capture.out), 1);
-    assertStringIncludes(capture.text(), "incomplete coverage");
-    assertStringIncludes(
+    assert.deepStrictEqual(
+      await runTreeScan(dir, RULES, envOf({}), capture.out),
+      1,
+    );
+    assert.match(capture.text(), /incomplete coverage/);
+    assert.match(
       capture.text(),
-      "untracked inventory reached its file-count bound",
+      /untracked inventory reached its file-count bound/,
     );
     if (capture.text().includes("clean (")) {
       throw new Error("capped inventory reported as a clean pass");
@@ -688,14 +681,14 @@ test("CI keeps authoritative tracked-tree coverage despite local bounds", async 
       `${"x".repeat(MAX_UNTRACKED_FILE_BYTES)}\ntoken ${awsKeyFixture()}\n`,
     );
     const ci = await scanTree(dir, RULES, envOf({ GITHUB_ACTIONS: "true" }));
-    assertEquals(ci.untrackedScanned, false);
-    assertEquals(ci.coverage, {
+    assert.deepStrictEqual(ci.untrackedScanned, false);
+    assert.deepStrictEqual(ci.coverage, {
       inventoryBound: false,
       truncatedPaths: [],
       unlistedTruncated: 0,
     });
     const capture = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runTreeScan(
         dir,
         RULES,
@@ -704,8 +697,8 @@ test("CI keeps authoritative tracked-tree coverage despite local bounds", async 
       ),
       0,
     );
-    assertStringIncludes(capture.text(), "clean (tracked files)");
-    assertEquals(await isWorktreeClean(dir), false);
+    assert.match(capture.text(), /clean \(tracked files\)/);
+    assert.deepStrictEqual(await isWorktreeClean(dir), false);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -723,7 +716,7 @@ test("a failed untracked-file read is value-free and fail-closed", async () => {
   } catch (err) {
     message = err instanceof Error ? err.message : String(err);
   }
-  assertEquals(
+  assert.deepStrictEqual(
     message,
     "public-safety scan: cannot read untracked file notes/[2Jevil.txt",
   );
@@ -738,7 +731,10 @@ test("an ordinary tracked file still reads its own bytes", async () => {
       "plain.txt",
       "public-safety scan",
     );
-    assertEquals(new TextDecoder().decode(bytes), "plain fixture content\n");
+    assert.deepStrictEqual(
+      new TextDecoder().decode(bytes),
+      "plain fixture content\n",
+    );
   } finally {
     await rm(root, { recursive: true });
   }

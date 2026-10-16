@@ -1424,7 +1424,9 @@ read access to the repository, `git`, and the one environment variable the Deno
 `node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
 
 `ratchet.base` (`scripts/ratchet-base.ts`, run as `node scripts/ratchet-base.ts`
-and reported under `test.aggregate`, in the full gate and `test:fast`) checks
+and reported under `test.aggregate`, in the full gate and `test:fast`; a
+docs-only pull-request run skips it, because a Markdown-only change cannot
+change any of the lists it reads) checks
 the ratchet lists against the merge base, which the lanes above cannot do:
 they compare each list with the tree in the same checkout, so on their own a
 change could raise an entry together with the code that needs it. It compares

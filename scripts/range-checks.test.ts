@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,22 +25,6 @@ import {
 import { formatHits, type PublicSafetyHit } from "./public-safety-scan.ts";
 import { MAX_UNTRACKED_FILE_BYTES, MAX_UNTRACKED_FILES } from "./scan-lib.ts";
 import { headCommit, isWorktreeClean } from "./subject-check.ts";
-
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
-function assertStringIncludes(actual: string, expected: string): void {
-  if (!actual.includes(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(actual)} to include ${expected}`,
-    );
-  }
-}
 
 function envOf(
   vars: Record<string, string>,
@@ -127,7 +112,7 @@ function sortHits(hits: PublicSafetyHit[]): PublicSafetyHit[] {
 }
 
 test("range base binding fails closed in CI without an immutable id", () => {
-  assertEquals(resolveRangeBase(envOf({})), { authoritative: false });
+  assert.deepStrictEqual(resolveRangeBase(envOf({})), { authoritative: false });
   const rejected: Record<string, string>[] = [
     { GITHUB_ACTIONS: "true" },
     { GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: "" },
@@ -141,12 +126,12 @@ test("range base binding fails closed in CI without an immutable id", () => {
       resolveRangeBase(envOf(vars));
     } catch (error) {
       threw = true;
-      assertStringIncludes(String(error), "failing closed");
+      assert.match(String(error), /failing closed/);
     }
     if (!threw) throw new Error(`accepted ${JSON.stringify(vars)}`);
   }
   const sha = "a".repeat(40);
-  assertEquals(
+  assert.deepStrictEqual(
     resolveRangeBase(
       envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: sha }),
     ),
@@ -162,9 +147,9 @@ test("a bound range resolves exactly and rejects unknown bases", async () => {
       dir,
       envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: base }),
     );
-    assertEquals(resolved.diffArgs, [`${base}...HEAD`]);
-    assertEquals(resolved.historyArgs, [`${base}..HEAD`]);
-    assertEquals(resolved.authoritative, true);
+    assert.deepStrictEqual(resolved.diffArgs, [`${base}...HEAD`]);
+    assert.deepStrictEqual(resolved.historyArgs, [`${base}..HEAD`]);
+    assert.deepStrictEqual(resolved.authoritative, true);
     let threw = false;
     try {
       await resolveReleaseRange(
@@ -176,7 +161,7 @@ test("a bound range resolves exactly and rejects unknown bases", async () => {
       );
     } catch (error) {
       threw = true;
-      assertStringIncludes(String(error), "git rev-parse failed");
+      assert.match(String(error), /git rev-parse failed/);
     }
     if (!threw) throw new Error("an absent base commit resolved");
   } finally {
@@ -196,7 +181,7 @@ test("parseAddedLines numbers added lines from hunk headers", () => {
     "-removed",
     "+added eleven",
   ].join("\n");
-  assertEquals(parseAddedLines(diff), [
+  assert.deepStrictEqual(parseAddedLines(diff), [
     { line: 2, text: "added two" },
     { line: 3, text: "added three" },
     { line: 11, text: "added eleven" },
@@ -222,7 +207,7 @@ test("parseAddedLines keeps added lines that look like file headers", () => {
     "@@ -0,0 +1 @@",
     "+in the second file",
   ].join("\n");
-  assertEquals(parseAddedLines(diff), [
+  assert.deepStrictEqual(parseAddedLines(diff), [
     { line: 1, text: `++token ${awsKeyFixture()}` },
     { line: 2, text: "plain" },
     { line: 1, text: "in the second file" },
@@ -242,7 +227,7 @@ test("parseAddedLines reads combined merge hunks", () => {
     " +inherited from the first parent",
     `++token ${awsKeyFixture()}`,
   ].join("\n");
-  assertEquals(parseAddedLines(diff), [
+  assert.deepStrictEqual(parseAddedLines(diff), [
     { line: 4, text: `token ${awsKeyFixture()}` },
   ]);
 });
@@ -251,10 +236,10 @@ test("the range history walk is bounded and fails closed", async () => {
   const { dir, range } = await makeRangeFixture({ "a.txt": "one\n" }, {});
   try {
     const commits = await rangeCommits(dir, range);
-    assertEquals(commits.length, 1);
-    assertEquals(commits[0]?.isMerge, false);
+    assert.deepStrictEqual(commits.length, 1);
+    assert.deepStrictEqual(commits[0]?.isMerge, false);
     // A range with no history view has no commits to walk.
-    assertEquals(
+    assert.deepStrictEqual(
       await rangeCommits(dir, { ...range, historyArgs: undefined }),
       [],
     );
@@ -263,7 +248,7 @@ test("the range history walk is bounded and fails closed", async () => {
       await rangeCommits(dir, range, "git", 0);
     } catch (error) {
       threw = true;
-      assertStringIncludes(String(error), "failing closed");
+      assert.match(String(error), /failing closed/);
     }
     if (!threw) throw new Error("a range past the commit bound was walked");
   } finally {
@@ -281,7 +266,7 @@ test("secret.diff flags added secrets, not preexisting ones", async () => {
   );
   try {
     const hits = await secretDiffHits(dir, range);
-    assertEquals(hits, [
+    assert.deepStrictEqual(hits, [
       { path: "a.txt", line: 2, rule: "secret.diff/aws-access-key-id" },
     ]);
     const formatted = formatHits(hits);
@@ -309,18 +294,18 @@ test("secret.diff fails on a secret a later commit removed", async () => {
     const range = fixtureRange(base);
 
     // Net endpoints only: the gap this check must not have.
-    assertEquals(
+    assert.deepStrictEqual(
       await secretDiffHits(dir, { ...range, historyArgs: undefined }),
       [],
     );
-    assertEquals(sortHits(await secretDiffHits(dir, range)), [
+    assert.deepStrictEqual(sortHits(await secretDiffHits(dir, range)), [
       { path: "a.txt", line: 2, rule: "secret.diff/aws-access-key-id" },
       { path: "b.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
     ]);
 
     // The authoritative CI lane fails on it, value-free.
     const ci = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck(
         "secret.diff",
         dir,
@@ -329,8 +314,8 @@ test("secret.diff fails on a secret a later commit removed", async () => {
       ),
       1,
     );
-    assertStringIncludes(ci.text(), "a.txt:2: secret.diff/aws-access-key-id");
-    assertStringIncludes(ci.text(), "b.txt:1: secret.diff/aws-access-key-id");
+    assert.match(ci.text(), /a\.txt:2: secret\.diff\/aws-access-key-id/);
+    assert.match(ci.text(), /b\.txt:1: secret\.diff\/aws-access-key-id/);
     if (ci.text().includes(awsKeyFixture())) {
       throw new Error("secret-shaped content reached range-check output");
     }
@@ -362,13 +347,16 @@ test("secret.diff covers merged branches and the merge itself", async () => {
     await commitAll(dir, "drop the merge edit");
     const range = fixtureRange(base);
 
-    assertEquals(
+    assert.deepStrictEqual(
       await secretDiffHits(dir, { ...range, historyArgs: undefined }),
       [],
     );
     const commits = await rangeCommits(dir, range);
-    assertEquals(commits.filter((commit) => commit.isMerge).length, 1);
-    assertEquals(sortHits(await secretDiffHits(dir, range)), [
+    assert.deepStrictEqual(
+      commits.filter((commit) => commit.isMerge).length,
+      1,
+    );
+    assert.deepStrictEqual(sortHits(await secretDiffHits(dir, range)), [
       { path: "a.txt", line: 3, rule: "secret.diff/aws-access-key-id" },
       { path: "side.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
     ]);
@@ -385,7 +373,7 @@ test("secret.diff sanitizes hostile filenames", async () => {
   );
   try {
     const hits = await secretDiffHits(dir, range);
-    assertEquals(hits.length, 1);
+    assert.deepStrictEqual(hits.length, 1);
     const formatted = formatHits(hits);
     for (const ch of formatted) {
       const code = ch.codePointAt(0) ?? 0;
@@ -409,7 +397,7 @@ test("secret.diff does not skip the scanner's own source path", async () => {
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "scanner change"]);
     const hits = await secretDiffHits(dir, range);
-    assertEquals(hits, [{
+    assert.deepStrictEqual(hits, [{
       path: "scripts/public-safety-scan.ts",
       line: 1,
       rule: "secret.diff/aws-access-key-id",
@@ -445,26 +433,26 @@ test("secret.diff sees untracked non-ignored files only in a local range", async
     );
     // The gap: a path git does not track appears in no diff, so the range
     // scan alone reports nothing at all.
-    assertEquals(await secretDiffHits(dir, range), []);
+    assert.deepStrictEqual(await secretDiffHits(dir, range), []);
     const untracked = await untrackedSecretHits(dir);
-    assertEquals(untracked.coverage, {
+    assert.deepStrictEqual(untracked.coverage, {
       inventoryBound: false,
       truncatedPaths: [],
       unlistedTruncated: 0,
     });
     // The ignored file is absent: ignored paths stay excluded.
-    assertEquals(untracked.hits, [
+    assert.deepStrictEqual(untracked.hits, [
       { path: "untracked.txt", line: 1, rule: "secret.diff/aws-access-key-id" },
     ]);
 
     const local = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck("secret.diff", dir, envOf({}), local.out),
       1,
     );
-    assertStringIncludes(
+    assert.match(
       local.text(),
-      "untracked.txt:1: secret.diff/aws-access-key-id",
+      /untracked\.txt:1: secret\.diff\/aws-access-key-id/,
     );
     if (local.text().includes(awsKeyFixture())) {
       throw new Error("secret-shaped content reached range-check output");
@@ -475,7 +463,7 @@ test("secret.diff sees untracked non-ignored files only in a local range", async
     // dirty subject tree instead — `subject.resolve` fails closed here.
     const base = range.diffArgs[0] ?? "";
     const ci = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck(
         "secret.diff",
         dir,
@@ -484,8 +472,8 @@ test("secret.diff sees untracked non-ignored files only in a local range", async
       ),
       0,
     );
-    assertStringIncludes(ci.text(), "secret.diff: clean");
-    assertEquals(await isWorktreeClean(dir), false);
+    assert.match(ci.text(), /secret\.diff: clean/);
+    assert.deepStrictEqual(await isWorktreeClean(dir), false);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -500,7 +488,7 @@ test("untracked secret feedback sanitizes hostile filenames", async () => {
       `token ${value}\n`,
     );
     const { hits } = await untrackedSecretHits(dir);
-    assertEquals(hits.length, 1);
+    assert.deepStrictEqual(hits.length, 1);
     const formatted = formatHits(hits);
     if (formatted.includes(value)) {
       throw new Error("untracked content reached formatted output");
@@ -511,7 +499,10 @@ test("untracked secret feedback sanitizes hostile filenames", async () => {
         throw new Error("control byte reached formatted output");
       }
     }
-    assertEquals(formatted, "evil[2Jname.txt:1: secret.diff/aws-access-key-id");
+    assert.deepStrictEqual(
+      formatted,
+      "evil[2Jname.txt:1: secret.diff/aws-access-key-id",
+    );
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -542,7 +533,7 @@ test(
         stdio: "ignore",
       });
       if (ln.status !== 0) throw new Error(`ln -s failed (exit ${ln.status})`);
-      assertEquals((await untrackedSecretHits(dir)).hits, []);
+      assert.deepStrictEqual((await untrackedSecretHits(dir)).hits, []);
     } finally {
       await rm(dir, { recursive: true });
       await rm(outside, { recursive: true });
@@ -561,19 +552,16 @@ test("an oversized untracked file fails the local secret.diff check", async () =
       `${"x".repeat(MAX_UNTRACKED_FILE_BYTES)}\ntoken ${awsKeyFixture()}\n`,
     );
     const untracked = await untrackedSecretHits(dir);
-    assertEquals(untracked.hits, []);
-    assertEquals(untracked.coverage.truncatedPaths, ["artifact.bin"]);
+    assert.deepStrictEqual(untracked.hits, []);
+    assert.deepStrictEqual(untracked.coverage.truncatedPaths, ["artifact.bin"]);
 
     const local = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck("secret.diff", dir, envOf({}), local.out),
       1,
     );
-    assertStringIncludes(local.text(), "secret.diff: incomplete coverage");
-    assertStringIncludes(
-      local.text(),
-      "artifact.bin: read only its leading bytes",
-    );
+    assert.match(local.text(), /secret\.diff: incomplete coverage/);
+    assert.match(local.text(), /artifact\.bin: read only its leading bytes/);
     if (local.text().includes("secret.diff: clean")) {
       throw new Error("partial coverage reported as a clean check");
     }
@@ -584,7 +572,7 @@ test("an oversized untracked file fails the local secret.diff check", async () =
     // CI is unaffected: the authoritative range is the bound diff, read whole,
     // and a dirty subject tree is rejected by `subject.resolve` instead.
     const ci = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck(
         "secret.diff",
         dir,
@@ -596,7 +584,7 @@ test("an oversized untracked file fails the local secret.diff check", async () =
       ),
       0,
     );
-    assertStringIncludes(ci.text(), "secret.diff: clean");
+    assert.match(ci.text(), /secret\.diff: clean/);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -614,18 +602,18 @@ test("an overflowing untracked count fails the local secret.diff check", async (
     const untracked = await untrackedSecretHits(dir);
     // Every admitted file is clean, so a hits-only verdict would pass while an
     // unknown number of untracked files were never opened.
-    assertEquals(untracked.hits, []);
-    assertEquals(untracked.coverage.inventoryBound, true);
+    assert.deepStrictEqual(untracked.hits, []);
+    assert.deepStrictEqual(untracked.coverage.inventoryBound, true);
 
     const local = captureOut();
-    assertEquals(
+    assert.deepStrictEqual(
       await runRangeCheck("secret.diff", dir, envOf({}), local.out),
       1,
     );
-    assertStringIncludes(local.text(), "secret.diff: incomplete coverage");
-    assertStringIncludes(
+    assert.match(local.text(), /secret\.diff: incomplete coverage/);
+    assert.match(
       local.text(),
-      "untracked inventory reached its file-count bound",
+      /untracked inventory reached its file-count bound/,
     );
     if (local.text().includes("secret.diff: clean")) {
       throw new Error("capped inventory reported as a clean check");
@@ -643,7 +631,7 @@ test("diff.whitespace reports class and line, never content", async () => {
   );
   try {
     const hits = await whitespaceHits(dir, range);
-    assertEquals(hits, [
+    assert.deepStrictEqual(hits, [
       { path: "a.txt", line: 2, rule: "diff.whitespace/trailing-whitespace" },
     ]);
     if (formatHits(hits).includes(secretish)) {
@@ -671,7 +659,7 @@ test("markdown.links validates changed repository-relative links", async () => {
   );
   try {
     const hits = await markdownLinkHits(dir, range);
-    assertEquals(hits, [
+    assert.deepStrictEqual(hits, [
       { path: "doc.md", line: 2, rule: "markdown.links/broken-relative-link" },
       { path: "doc.md", line: 5, rule: "markdown.links/escapes-repository" },
     ]);
@@ -686,7 +674,7 @@ test("markdown.links flags an unclosed fence", async () => {
     { "doc.md": "start\n```sh\nnever closed\n" },
   );
   try {
-    assertEquals(await markdownLinkHits(dir, range), [
+    assert.deepStrictEqual(await markdownLinkHits(dir, range), [
       { path: "doc.md", line: 2, rule: "markdown.links/unclosed-fence" },
     ]);
   } finally {
@@ -698,17 +686,23 @@ test("markdown link extraction resolves targets structurally", () => {
   const { links } = markdownLinkTargets(
     "see [a](x/y.md) and `[b](in-code.md)` and [c](z.md#frag)\n",
   );
-  assertEquals(links.map((link) => link.target), ["x/y.md", "z.md#frag"]);
-  assertEquals(
+  assert.deepStrictEqual(links.map((link) => link.target), [
+    "x/y.md",
+    "z.md#frag",
+  ]);
+  assert.deepStrictEqual(
     resolveLinkTarget("docs/guide.md", "../README.md"),
     "README.md",
   );
-  assertEquals(
+  assert.deepStrictEqual(
     resolveLinkTarget("README.md", "/core/README.md"),
     "core/README.md",
   );
-  assertEquals(resolveLinkTarget("README.md", "../escape.md"), undefined);
-  assertEquals(resolveLinkTarget("docs/a.md", "b.md#x"), "docs/b.md");
+  assert.deepStrictEqual(
+    resolveLinkTarget("README.md", "../escape.md"),
+    undefined,
+  );
+  assert.deepStrictEqual(resolveLinkTarget("docs/a.md", "b.md#x"), "docs/b.md");
 });
 
 test("shell.parse fails changed shell files that do not parse", async () => {
@@ -723,7 +717,7 @@ test("shell.parse fails changed shell files that do not parse", async () => {
   );
   try {
     const hits = await shellParseHits(dir, range);
-    assertEquals(
+    assert.deepStrictEqual(
       hits.map((hit) => [hit.path, hit.rule]),
       [
         ["bad.sh", "shell.parse/parse-error"],
@@ -771,7 +765,7 @@ test(
         "git",
         "./missing-shell-for-test",
       );
-      assertEquals(hits, [
+      assert.deepStrictEqual(hits, [
         { path: "link.sh", line: 0, rule: "shell.parse/symlink-not-parsed" },
       ]);
     } finally {
@@ -794,7 +788,7 @@ test("an unavailable shell parser fails closed", async () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    assertEquals(
+    assert.deepStrictEqual(
       message,
       "range check: cannot run the shell parser; failing closed",
     );

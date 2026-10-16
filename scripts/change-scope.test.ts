@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,29 +11,24 @@ import {
   isMarkdownPath,
 } from "./change-scope.ts";
 
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
 test("only paths ending in .md classify as Markdown", () => {
-  assertEquals(isMarkdownPath("README.md"), true);
-  assertEquals(isMarkdownPath("specs/notes/NOTE.MD"), true);
-  assertEquals(isMarkdownPath("scripts/gate.ts"), false);
-  assertEquals(isMarkdownPath("docs/page.mdx"), false);
-  assertEquals(isMarkdownPath("md"), false);
+  assert.deepStrictEqual(isMarkdownPath("README.md"), true);
+  assert.deepStrictEqual(isMarkdownPath("specs/notes/NOTE.MD"), true);
+  assert.deepStrictEqual(isMarkdownPath("scripts/gate.ts"), false);
+  assert.deepStrictEqual(isMarkdownPath("docs/page.mdx"), false);
+  assert.deepStrictEqual(isMarkdownPath("md"), false);
 });
 
 test("a range is markdown-only when every path, and at least one, is Markdown", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     classifyChangedPaths(["README.md", "specs/a.md"]),
     "markdown-only",
   );
-  assertEquals(classifyChangedPaths(["README.md", "deno.json"]), "other");
-  assertEquals(classifyChangedPaths([]), "other");
+  assert.deepStrictEqual(
+    classifyChangedPaths(["README.md", "deno.json"]),
+    "other",
+  );
+  assert.deepStrictEqual(classifyChangedPaths([]), "other");
 });
 
 async function git(dir: string, ...args: string[]): Promise<string> {
@@ -95,7 +91,10 @@ test("a bound range that changes only Markdown is markdown-only", async () => {
       await writeFile(`${dir}/NEW.md`, "new\n");
     },
     async (dir, base) => {
-      assertEquals(await changeScope(dir, ciEnv(base)), "markdown-only");
+      assert.deepStrictEqual(
+        await changeScope(dir, ciEnv(base)),
+        "markdown-only",
+      );
     },
   );
 });
@@ -107,7 +106,7 @@ test("any non-Markdown path in the bound range keeps the full gate", async () =>
       await writeFile(`${dir}/tool.ts`, "export const x = 2;\n");
     },
     async (dir, base) => {
-      assertEquals(await changeScope(dir, ciEnv(base)), "other");
+      assert.deepStrictEqual(await changeScope(dir, ciEnv(base)), "other");
     },
   );
 });
@@ -118,7 +117,7 @@ test("deleting a non-Markdown file keeps the full gate", async () => {
       await rm(`${dir}/tool.ts`);
     },
     async (dir, base) => {
-      assertEquals(await changeScope(dir, ciEnv(base)), "other");
+      assert.deepStrictEqual(await changeScope(dir, ciEnv(base)), "other");
     },
   );
 });
@@ -129,7 +128,7 @@ test("renaming a non-Markdown file to a .md name keeps the full gate", async () 
       await git(dir, "mv", "tool.ts", "tool.md");
     },
     async (dir, base) => {
-      assertEquals(await changeScope(dir, ciEnv(base)), "other");
+      assert.deepStrictEqual(await changeScope(dir, ciEnv(base)), "other");
     },
   );
 });
@@ -138,7 +137,7 @@ test("an empty range keeps the full gate", async () => {
   await withRange(
     async () => {},
     async (dir, base) => {
-      assertEquals(await changeScope(dir, ciEnv(base)), "other");
+      assert.deepStrictEqual(await changeScope(dir, ciEnv(base)), "other");
     },
   );
 });
@@ -150,7 +149,7 @@ test("a local, unbound range keeps the full gate", async () => {
     },
     async (dir, base) => {
       const local = envReader({ DYFJ_GATE_RANGE_BASE: base });
-      assertEquals(await changeScope(dir, local), "other");
+      assert.deepStrictEqual(await changeScope(dir, local), "other");
     },
   );
 });
