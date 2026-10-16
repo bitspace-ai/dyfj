@@ -155,7 +155,7 @@ async function operatorAuthorizedExecutable(pathValue: string | undefined) {
   try {
     // DYFJ_NODE_PATH is operator-granted executable authority, not an
     // attestation of the selected binary's identity. Server profiles retain
-    // read access; the standalone login task grants this selected path.
+    // read access; the standalone login script runs this selected path.
     const info = await stat(pathValue);
     if (
       info.isFile() &&

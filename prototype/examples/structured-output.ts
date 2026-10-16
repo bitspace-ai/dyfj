@@ -1,16 +1,25 @@
+import process from "node:process";
 import {
   compareStructuredOutputModes,
   type StructuredOutputReport,
 } from "../diagnostics/structured-output.ts";
 import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 
-const prompt = firstPrompt(Deno.args) ??
+const args = process.argv.slice(2);
+if (args.includes("--help")) {
+  console.log(
+    "usage: npm run structured-output -- [prompt] [--model <slug>] [--base-url <url>]\n\nCompares structured-output modes against a local OpenAI-compatible Ollama\nendpoint. --model and --base-url default to DYFJ_WORKBENCH_MODEL and\nDYFJ_WORKBENCH_BASE_URL, then gemma4:e2b at http://localhost:11434/v1.",
+  );
+  process.exit(0);
+}
+
+const prompt = firstPrompt(args) ??
   'Return {"answer":"ok","confidence":"high"} and no other text.';
-const modelSlug = getArg(Deno.args, "--model") ??
-  Deno.env.get("DYFJ_WORKBENCH_MODEL") ??
+const modelSlug = getArg(args, "--model") ??
+  process.env.DYFJ_WORKBENCH_MODEL ??
   "gemma4:e2b";
-const baseUrl = getArg(Deno.args, "--base-url") ??
-  Deno.env.get("DYFJ_WORKBENCH_BASE_URL") ??
+const baseUrl = getArg(args, "--base-url") ??
+  process.env.DYFJ_WORKBENCH_BASE_URL ??
   "http://localhost:11434/v1";
 const model = {
   // An Ollama diagnostic: start from the built-in Ollama row for this slug, or
@@ -65,7 +74,7 @@ try {
     "Requires a local OpenAI-compatible Ollama endpoint, for example: ollama serve and ollama pull gemma4:e2b.",
   );
   console.error((err as Error)?.message ?? String(err));
-  Deno.exit(1);
+  process.exit(1);
 }
 
 function formatReport(report: StructuredOutputReport): string {

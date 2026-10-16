@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import process from "node:process";
 import { describe, it } from "node:test";
 import {
@@ -8,33 +7,19 @@ import {
   cliRuntimePolicy,
   composeRuntimePolicy,
   nodePermissionArgs,
+  RUNTIME_ENV_GRANTS,
+  RUNTIME_NET_GRANTS,
   RUNTIME_NODE_PERMISSION_FLAGS,
   RUNTIME_PLATFORM_ENV,
+  RUNTIME_RUN_GRANTS,
   runtimeChildEnv,
-  SERVE_UNIX_ENV_GRANTS,
-  SERVE_UNIX_NET_GRANTS,
-  SERVE_UNIX_RUN_GRANTS,
 } from "./runtime-policy.ts";
 import type { McpHttpServerConfig } from "./mcp-servers.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
-const DENO_JSON = new URL("../../deno.json", import.meta.url);
-
 // Assembled at runtime so the public-boundary scan never matches this
 // fixture as a home-directory path in tracked source.
 const FAKE_HOME = ["", "home", "op"].join("/");
-
-async function denoProfiles(): Promise<
-  Record<string, { env?: unknown; net?: unknown; run?: unknown }>
-> {
-  const parsed = JSON.parse(await readFile(DENO_JSON, "utf8")) as {
-    permissions: Record<
-      string,
-      { env?: unknown; net?: unknown; run?: unknown }
-    >;
-  };
-  return parsed.permissions;
-}
 
 function server(url: string): McpHttpServerConfig {
   return { url } as McpHttpServerConfig;
@@ -46,15 +31,6 @@ function secrets(
 ): SecretsConfig {
   return { command, inheritEnv } as unknown as SecretsConfig;
 }
-
-describe("runtime policy parity with the deno.json permission profiles", () => {
-  it("the serve-unix net, run and env lists match the policy module", async () => {
-    const profile = (await denoProfiles())["serve-unix"];
-    assert.deepStrictEqual(profile.net, [...SERVE_UNIX_NET_GRANTS]);
-    assert.deepStrictEqual(profile.run, [...SERVE_UNIX_RUN_GRANTS]);
-    assert.deepStrictEqual(profile.env, [...SERVE_UNIX_ENV_GRANTS]);
-  });
-});
 
 describe("the Node permission flags", () => {
   it("the runtime runs as plain node, with no permission flag", () => {
@@ -96,12 +72,12 @@ describe("cliRuntimePolicy", () => {
 describe("composeRuntimePolicy", () => {
   it("the base policy is the static lists plus the runtime's own executable", () => {
     const policy = baseRuntimePolicy();
-    assert.deepStrictEqual(policy.net, [...SERVE_UNIX_NET_GRANTS]);
+    assert.deepStrictEqual(policy.net, [...RUNTIME_NET_GRANTS]);
     assert.deepStrictEqual(policy.run, [
-      ...SERVE_UNIX_RUN_GRANTS,
+      ...RUNTIME_RUN_GRANTS,
       process.execPath,
     ]);
-    assert.deepStrictEqual(policy.env, [...SERVE_UNIX_ENV_GRANTS]);
+    assert.deepStrictEqual(policy.env, [...RUNTIME_ENV_GRANTS]);
     assert.strictEqual(policy.dolt, null);
   });
 
@@ -115,20 +91,20 @@ describe("composeRuntimePolicy", () => {
       dolt: { host: "127.0.0.1", port: 3307 },
     });
     assert.deepStrictEqual(policy.net, [
-      ...SERVE_UNIX_NET_GRANTS,
+      ...RUNTIME_NET_GRANTS,
       "127.0.0.1:7777",
       "mcp.example.test:443",
       "192.0.2.53:53",
       "127.0.0.1:3307",
     ]);
     assert.deepStrictEqual(policy.run, [
-      ...SERVE_UNIX_RUN_GRANTS,
+      ...RUNTIME_RUN_GRANTS,
       process.execPath,
       "/opt/node/bin/node",
       "/opt/bin/op",
     ]);
     assert.deepStrictEqual(policy.env, [
-      ...SERVE_UNIX_ENV_GRANTS,
+      ...RUNTIME_ENV_GRANTS,
       "OP_SERVICE_ACCOUNT_TOKEN",
     ]);
     assert.strictEqual(policy.dolt, "127.0.0.1:3307");
@@ -140,13 +116,13 @@ describe("composeRuntimePolicy", () => {
     });
     assert.strictEqual(policy.dolt, "db.example.test:3307");
     assert.deepStrictEqual(policy.net, [
-      ...SERVE_UNIX_NET_GRANTS,
+      ...RUNTIME_NET_GRANTS,
       "db.example.test:3307",
     ]);
     // The default endpoint is already a static entry, so it is not repeated.
     assert.deepStrictEqual(
       composeRuntimePolicy({ dolt: { host: "127.0.0.1", port: 3306 } }).net,
-      [...SERVE_UNIX_NET_GRANTS],
+      [...RUNTIME_NET_GRANTS],
     );
   });
 
@@ -162,7 +138,7 @@ describe("composeRuntimePolicy", () => {
       networkAllow: ["127.0.0.1:1234", "api.openai.com:443"],
     });
     assert.deepStrictEqual(policy.net, [
-      ...SERVE_UNIX_NET_GRANTS,
+      ...RUNTIME_NET_GRANTS,
       "127.0.0.1:1234",
     ]);
   });

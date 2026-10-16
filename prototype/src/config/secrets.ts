@@ -525,11 +525,10 @@ export async function resolveSecretsIntoEnv(
 }
 
 /**
- * The `--allow-run` binary the resolver needs, or null when no command is
- * configured. `dyfj start` appends this to the child runtime's explicit
- * `--allow-run` (the operator-private resolver binary never belongs in the
- * committed `serve-unix` permission profile — same launch-resolved posture as
- * the `unix:<socket>` and memory-host net grants).
+ * The binary the resolver needs to run, or null when no command is
+ * configured. The runtime policy adds it to the run list at launch (the
+ * operator-private resolver binary never belongs in the policy's static
+ * lists — same launch-resolved posture as the memory-host net entry).
  */
 export function secretsRunGrant(secrets: SecretsConfig | null): string | null {
   if (secrets === null || secrets.command.length === 0) return null;

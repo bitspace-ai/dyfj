@@ -94,14 +94,14 @@ export {
   cliRuntimePolicy,
   composeRuntimePolicy,
   nodePermissionArgs,
+  RUNTIME_ENV_GRANTS,
+  RUNTIME_NET_GRANTS,
   RUNTIME_NODE_PERMISSION_FLAGS,
   RUNTIME_PLATFORM_ENV,
+  RUNTIME_RUN_GRANTS,
   runtimeChildEnv,
   type RuntimePolicy,
   type RuntimePolicyInputs,
-  SERVE_UNIX_ENV_GRANTS,
-  SERVE_UNIX_NET_GRANTS,
-  SERVE_UNIX_RUN_GRANTS,
 } from "./runtime-policy.ts";
 export {
   assertConnectAllowed,

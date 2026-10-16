@@ -3,8 +3,8 @@
  * (`Request` in, `Response` out), on `node:http`. It is the one listener under
  * the test servers in this directory.
  *
- * - It binds 127.0.0.1 on an ephemeral port and resolves once it is listening,
- *   because the port is known only then.
+ * - It binds 127.0.0.1, on an ephemeral port unless the caller names one, and
+ *   resolves once it is listening, because the port is known only then.
  * - Each request's `signal` aborts when the client goes away before the
  *   response has been sent in full, so a handler can hold a reply until then.
  * - A response body that errors mid-stream cuts the connection, so the client
@@ -27,6 +27,8 @@ export type FetchHandler = (request: Request) => Response | Promise<Response>;
 export interface FetchServerOptions {
   /** Answers a request whose handler threw; by default logs it, then 500. */
   onError?: (error: unknown) => Response;
+  /** The port to bind; 0, the default, picks an ephemeral one. */
+  port?: number;
 }
 
 export interface FetchServer {
@@ -151,7 +153,7 @@ export async function serveFetch(
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(options.port ?? 0, "127.0.0.1", () => {
       server.off("error", reject);
       resolve();
     });

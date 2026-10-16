@@ -3,11 +3,10 @@
  * hosts the runtime may reach, the binaries it may start and the environment
  * names it may see.
  *
- * The static lists are the `serve-unix` permission profile in `deno.json`,
- * restated here; `runtime-policy.test.ts` fails when the two disagree, until
- * the profile is removed. `composeRuntimePolicy` adds the operator's
- * launch-resolved entries, plus `[network] allow` from config.toml
- * (`network-config.ts`), the operator's one way to add a host. The launcher
+ * The static lists below are the only source of the runtime's fixed entries.
+ * `composeRuntimePolicy` adds the operator's launch-resolved entries, plus
+ * `[network] allow` from config.toml (`network-config.ts`), the operator's one
+ * way to add a host. The launcher
  * builds the runtime's explicit env from the composed policy, and the engine
  * composes the same policy at boot and enforces it in code at its own seams:
  * the guarded fetch and Dolt connect check (`egress.ts`) and the guarded spawn
@@ -31,7 +30,7 @@ import { memoryMcpNetGrant } from "./memory-url.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
 /** Hosts every runtime may reach: Dolt, local model servers, hosted providers. */
-export const SERVE_UNIX_NET_GRANTS: readonly string[] = Object.freeze([
+export const RUNTIME_NET_GRANTS: readonly string[] = Object.freeze([
   "127.0.0.1:3306",
   "127.0.0.1:8080",
   "localhost:8080",
@@ -51,7 +50,7 @@ export const SERVE_UNIX_NET_GRANTS: readonly string[] = Object.freeze([
  * runtime itself by name, and the ACP runner's `/bin/kill` signaler and
  * `/bin/sleep` process-group probe.
  */
-export const SERVE_UNIX_RUN_GRANTS: readonly string[] = Object.freeze([
+export const RUNTIME_RUN_GRANTS: readonly string[] = Object.freeze([
   "bash",
   "deno",
   "git",
@@ -60,7 +59,7 @@ export const SERVE_UNIX_RUN_GRANTS: readonly string[] = Object.freeze([
 ]);
 
 /** Environment names the runtime reads. */
-export const SERVE_UNIX_ENV_GRANTS: readonly string[] = Object.freeze([
+export const RUNTIME_ENV_GRANTS: readonly string[] = Object.freeze([
   "PATH",
   "DYFJ_NODE_PATH",
   "DYFJ_CODEX_TOOLCHAIN_PATH",
@@ -213,13 +212,13 @@ function appendNew(list: string[], entries: readonly (string | null)[]) {
 export function composeRuntimePolicy(
   inputs: RuntimePolicyInputs = {},
 ): RuntimePolicy {
-  const net = [...SERVE_UNIX_NET_GRANTS];
+  const net = [...RUNTIME_NET_GRANTS];
   appendNew(net, [memoryMcpNetGrant(inputs.memoryMcpUrl)]);
   appendNew(net, mcpServerNetGrants(inputs.mcpServers ?? []));
   appendNew(net, inputs.networkAllow ?? []);
   appendNew(net, inputs.nameserverGrants ?? []);
 
-  const run = [...SERVE_UNIX_RUN_GRANTS];
+  const run = [...RUNTIME_RUN_GRANTS];
   const resolver = inputs.secrets?.command[0] ?? null;
   appendNew(run, [
     inputs.runtimeExecutable === undefined
@@ -230,7 +229,7 @@ export function composeRuntimePolicy(
     resolver === undefined || resolver === "" ? null : resolver,
   ]);
 
-  const env = [...SERVE_UNIX_ENV_GRANTS];
+  const env = [...RUNTIME_ENV_GRANTS];
   appendNew(env, inputs.secrets?.inheritEnv ?? []);
 
   // The Dolt endpoint is both the pool's one allowed endpoint and a net entry,

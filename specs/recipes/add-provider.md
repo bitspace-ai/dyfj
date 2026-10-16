@@ -21,11 +21,12 @@ A new provider that speaks an API family DYFJ already has needs **no code in
   that holds its key and the one https host that key may be sent to. That map is
   what admits a provider to the hosted wire path, so a catalog row alone cannot
   send a credential anywhere new. Declare that variable in `CONFIG_SCHEMA`
-  (`src/config/schema.ts`) with `kind: "secret-pointer"`, and in `deno.json`
-  add it to the `serve-unix` profile's `env` list and the pinned host as
-  `<host>:443` to its `net` list. `[secrets.pointers]` accepts only declared
-  secret pointers, `src/config/schema.test.ts` holds the profile's `env` to the
-  schema, and the engine can reach only the hosts that `net` list names. If the provider's modality should read as
+  (`src/config/schema.ts`) with `kind: "secret-pointer"`, and in the runtime
+  policy (`src/config/runtime-policy.ts`) add it to `RUNTIME_ENV_GRANTS` and
+  the pinned host as `<host>:443` to `RUNTIME_NET_GRANTS`.
+  `[secrets.pointers]` accepts only declared secret pointers,
+  `src/config/schema.test.ts` holds `RUNTIME_ENV_GRANTS` to the schema, and the
+  engine can reach only the hosts its net policy names. If the provider's modality should read as
   frontier or aggregator rather than custom, add its canonical host to
   `getModelAccessModality` (`src/providers/registry/catalog.ts`).
 - **Anthropic and Gemini families.** These adapters pin their key to one

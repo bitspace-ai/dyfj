@@ -5,6 +5,16 @@
   "engines": {
     "node": ">=26"
   },
+  "scripts": {
+    "context-size-response": "node --env-file-if-exists=.env examples/context-size-response.ts",
+    "model-response-modes": "node --env-file-if-exists=.env examples/model-response-modes.ts",
+    "structured-output": "node --env-file-if-exists=.env examples/structured-output.ts",
+    "structured-output-streaming": "node --env-file-if-exists=.env examples/structured-output-streaming.ts",
+    "verify-workbench-events": "node --env-file-if-exists=.env examples/verify-workbench-events.ts",
+    "smoke": "node examples/smoke-test.ts",
+    "codex-chatgpt-login": "node scripts/codex-chatgpt-login.ts",
+    "memory-recall-uat-fixture": "node scripts/memory-recall-uat-fixture.ts"
+  },
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.11.0",
     "@agentclientprotocol/sdk": "1.7.0",

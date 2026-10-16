@@ -1,47 +1,12 @@
 [
   {
-    "path": "prototype/examples/context-size-response.ts",
-    "count": 7,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/examples/deno-smoke-test.ts",
-    "count": 3,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/examples/model-response-modes.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/examples/structured-output-streaming.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/examples/structured-output.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/examples/uds-jsonrpc-spike.ts",
     "count": 6,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
   },
   {
-    "path": "prototype/examples/verify-workbench-events.ts",
-    "count": 2,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/scripts/add-import-extensions.ts",
     "count": 7,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/codex-chatgpt-login.ts",
-    "count": 3,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -53,16 +18,6 @@
     "path": "prototype/scripts/deno-executable.ts",
     "count": 6,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/deno-tasks.integration.test.ts",
-    "count": 20,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/deno-tasks.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/scripts/dyfj-launcher.integration.test.ts",
@@ -95,28 +50,8 @@
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
-    "path": "prototype/scripts/memory-recall-uat-fixture.integration.test.ts",
-    "count": 4,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/memory-recall-uat-fixture.ts",
-    "count": 6,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/run-unit-tests.ts",
     "count": 9,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/serve-unix-net-flag.test.ts",
-    "count": 6,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/serve-unix-net-flag.ts",
-    "count": 1,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {

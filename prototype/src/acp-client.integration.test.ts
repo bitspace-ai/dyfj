@@ -46,16 +46,6 @@ function fixtureProfile(
   return {
     slug: "fixture",
     ...fixtureAgentCommand({
-      grants: [
-        grandchildPidFile === undefined
-          ? "--allow-run=/bin/kill"
-          : "--allow-run=bash,/bin/kill",
-        ...(pidFile === undefined ? [] : [`--allow-write=${pidFile}`]),
-        ...(grandchildPidFile === undefined ? [] : [
-          `--allow-read=${grandchildPidFile}`,
-          `--allow-write=${grandchildPidFile}`,
-        ]),
-      ],
       scriptArgs: [
         ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
         ...(grandchildPidFile === undefined
@@ -1537,10 +1527,7 @@ async function assertGroupReapedOnParentDeath(
 describe("the fixture agent's parent-death watchdog", () => {
   it("kills its own process group once its parent dies", async () => {
     await assertGroupReapedOnParentDeath((pidFile) =>
-      fixtureAgentCommand({
-        grants: ["--allow-run=/bin/kill", `--allow-write=${pidFile}`],
-        scriptArgs: [`--pid-file=${pidFile}`],
-      })
+      fixtureAgentCommand({ scriptArgs: [`--pid-file=${pidFile}`] })
     );
   });
 
@@ -1549,7 +1536,6 @@ describe("the fixture agent's parent-death watchdog", () => {
     // spawned `/bin/kill` would be refused, and the group would survive.
     await assertGroupReapedOnParentDeath((pidFile) => {
       const agent = fixtureAgentCommand({
-        runtime: "node",
         scriptArgs: [`--pid-file=${pidFile}`],
       });
       return {

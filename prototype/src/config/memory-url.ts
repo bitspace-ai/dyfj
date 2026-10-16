@@ -44,13 +44,12 @@ export function assertSecureMemoryUrl(url: string): void {
 }
 
 /**
- * Derive the --allow-net grant for the external memory MCP endpoint from its
+ * Derive the net policy entry for the external memory MCP endpoint from its
  * configured URL. The endpoint host is operator-private, so it must never be
- * committed to deno.json's net lists; it is resolved at launch and appended to
- * the explicit --allow-net, and the runtime policy composes it the same way. Returns null
- * when no endpoint is configured (recall disabled — no grant to add); throws on
- * a malformed value so misconfiguration surfaces at `dyfj start`, not as a
- * NotCapable deep inside a recall turn.
+ * committed to the policy's static net list; the runtime policy composes it at
+ * launch. Returns null when no endpoint is configured (recall disabled — no
+ * entry to add); throws on a malformed value so misconfiguration surfaces at
+ * `dyfj start`, not deep inside a recall turn.
  */
 export function memoryMcpNetGrant(url: string | undefined): string | null {
   if (url === undefined || url === "") return null;

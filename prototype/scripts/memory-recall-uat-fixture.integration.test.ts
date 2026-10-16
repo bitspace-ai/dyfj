@@ -1,63 +1,57 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import process from "node:process";
+import type { Readable } from "node:stream";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { composeRuntimePolicy } from "../src/config/mod.ts";
 import { buildMemorySearch } from "../src/tools/mod.ts";
 import { settleFixtureShutdown } from "./memory-recall-uat-fixture.ts";
 
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) throw new Error(message);
-}
-
-async function firstLine(
-  stream: ReadableStream<Uint8Array>,
-  timeoutMs = 5_000,
-): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
+async function firstLine(stream: Readable, timeoutMs = 5_000): Promise<string> {
   let buffered = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onData = (_chunk: Buffer) => {};
+  let onEnd = () => {};
   try {
-    return await Promise.race([
-      (async () => {
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) throw new Error("fixture exited before announcing its URL");
-          buffered += decoder.decode(value, { stream: true });
-          const newline = buffered.indexOf("\n");
-          if (newline >= 0) return buffered.slice(0, newline);
-        }
-      })(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("fixture startup exceeded its finite bound")),
-          timeoutMs,
-        );
-      }),
-    ]);
+    return await new Promise<string>((resolve, reject) => {
+      onData = (chunk) => {
+        buffered += chunk.toString("utf8");
+        const newline = buffered.indexOf("\n");
+        if (newline >= 0) resolve(buffered.slice(0, newline));
+      };
+      onEnd = () =>
+        reject(new Error("fixture exited before announcing its URL"));
+      stream.on("data", onData);
+      stream.once("end", onEnd);
+      timer = setTimeout(
+        () => reject(new Error("fixture startup exceeded its finite bound")),
+        timeoutMs,
+      );
+    });
   } finally {
     if (timer !== undefined) clearTimeout(timer);
-    reader.releaseLock();
+    stream.off("data", onData);
+    stream.off("end", onEnd);
   }
 }
 
-Deno.test("the executable UAT fixture serves strict modern recall", async () => {
-  const script = new URL("./memory-recall-uat-fixture.ts", import.meta.url);
-  const child = new Deno.Command(Deno.execPath(), {
-    args: [
-      "run",
-      "--no-prompt",
-      "--allow-net=127.0.0.1",
-      script.pathname,
-      "--port",
-      "0",
-    ],
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
+test("the executable UAT fixture serves strict modern recall", async () => {
+  const script = fileURLToPath(
+    new URL("./memory-recall-uat-fixture.ts", import.meta.url),
+  );
+  const child = spawn(process.execPath, [script, "--port", "0"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit") as Promise<
+    [number | null, NodeJS.Signals | null]
+  >;
 
   try {
     const announced = await firstLine(child.stdout);
     const url = announced.match(/http:\/\/127\.0\.0\.1:\d+\/mcp/)?.[0];
-    assert(url !== undefined, "fixture did not announce a loopback MCP URL");
+    assert.ok(url !== undefined, "fixture did not announce a loopback MCP URL");
 
     const diagnostics: unknown[] = [];
     const recall = buildMemorySearch(
@@ -66,34 +60,24 @@ Deno.test("the executable UAT fixture serves strict modern recall", async () => 
       // The engine admits the configured endpoint the same way.
       composeRuntimePolicy({ memoryMcpUrl: url }),
     );
-    assert(
-      await recall("synthetic UAT query") === "fixture-result",
-      "fixture returned an unexpected result",
-    );
-    assert(
-      JSON.stringify(diagnostics) === JSON.stringify([{
-        era: "modern",
-        revision: "2026-07-28",
-        server: { name: "dyfj-memory-recall-uat", version: "1.0.0" },
-        extensions: ["dyfj.uat"],
-      }]),
-      "fixture emitted unexpected negotiation evidence",
-    );
+    assert.strictEqual(await recall("synthetic UAT query"), "fixture-result");
+    assert.deepStrictEqual(diagnostics, [{
+      era: "modern",
+      revision: "2026-07-28",
+      server: { name: "dyfj-memory-recall-uat", version: "1.0.0" },
+      extensions: ["dyfj.uat"],
+    }]);
   } finally {
-    try {
-      child.kill("SIGTERM");
-    } catch {
-      // The status assertion below reports an early fixture exit.
-    }
-    const status = await child.status;
+    child.kill("SIGTERM");
+    const [code] = await exited;
     // Release both pipes: stdout past the announced URL and the unread stderr.
-    await child.stdout.cancel().catch(() => {});
-    await child.stderr.cancel().catch(() => {});
-    assert(status.success, "fixture did not shut down cleanly");
+    child.stdout.destroy();
+    child.stderr.destroy();
+    assert.strictEqual(code, 0, "fixture did not shut down cleanly");
   }
 });
 
-Deno.test("fixture shutdown settles both resources when one rejects", async () => {
+test("fixture shutdown settles both resources when one rejects", async () => {
   let httpSettled = false;
   let mcpSettled = false;
   const clean = await settleFixtureShutdown(
@@ -106,7 +90,7 @@ Deno.test("fixture shutdown settles both resources when one rejects", async () =
       return Promise.resolve();
     },
   );
-  assert(httpSettled, "HTTP shutdown was not attempted");
-  assert(mcpSettled, "MCP shutdown was not attempted");
-  assert(!clean, "a rejected shutdown was reported as clean");
+  assert.ok(httpSettled, "HTTP shutdown was not attempted");
+  assert.ok(mcpSettled, "MCP shutdown was not attempted");
+  assert.ok(!clean, "a rejected shutdown was reported as clean");
 });

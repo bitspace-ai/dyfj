@@ -15,7 +15,7 @@ import {
   CLI_NODE_PERMISSION_FLAGS,
   memoryMcpNetGrant,
   nodePermissionArgs,
-  SERVE_UNIX_ENV_GRANTS,
+  RUNTIME_ENV_GRANTS,
 } from "../../config/mod.ts";
 import {
   nodeRunGrant,
@@ -123,7 +123,7 @@ describe("runtime lifecycle commands", () => {
   });
 
   it("the internal autostart marker is not ambient process state", async () => {
-    assert.ok(!SERVE_UNIX_ENV_GRANTS.includes("DYFJ_AUTOSTARTED"));
+    assert.ok(!RUNTIME_ENV_GRANTS.includes("DYFJ_AUTOSTARTED"));
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     assert.ok(!launcher.includes("DYFJ_AUTOSTARTED"));
   });
@@ -294,7 +294,7 @@ describe("Codex toolchain runtime grant", () => {
   it("the runtime policy may read the operator selection", () => {
     assert.deepStrictEqual(
       ["DYFJ_CODEX_TOOLCHAIN_PATH", "DYFJ_CODEX_RUSTUP_HOME"].filter((item) =>
-        !SERVE_UNIX_ENV_GRANTS.includes(item)
+        !RUNTIME_ENV_GRANTS.includes(item)
       ),
       [],
     );
