@@ -22,7 +22,7 @@
   {
     "kind": "module",
     "path": "prototype/src/external-agent-runtime.ts",
-    "lines": 1753,
+    "lines": 1747,
     "reason": "Deferred with the ACP runner's restructuring (decision D20; WO-18 moves it to runners/acp/)."
   },
   {

@@ -33,7 +33,7 @@ export interface RecordedRequest {
   headers: Record<string, string>;
   /** The request body as text; "" when there was none. */
   body: string;
-  redirect?: RequestRedirect;
+  redirect?: RequestInit["redirect"];
   signal?: AbortSignal;
 }
 

@@ -124,6 +124,7 @@
     ]
   },
   "files": {
+    "prototype/src/acp-adapter-package.ts": "runners/acp",
     "prototype/src/acp-client.ts": "runners/acp",
     "prototype/src/acp-child-io.ts": "runners/acp",
     "prototype/src/acp-fixture-command.ts": "runners/acp",

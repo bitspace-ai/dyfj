@@ -319,8 +319,9 @@ Deno.test("gate workflow run blocks fail closed on pipeline errors", async () =>
 
 // npm alone resolves npm packages, and the gate checks node_modules against
 // the lockfile without installing anything, so each job installs the exact
-// Node release and runs `npm ci` in prototype/ before the gate. The job is
-// split at each top-level job key so both jobs are checked on their own.
+// Node release and runs `npm ci` at the repository root, where the one npm
+// workspace and its lockfile live, before the gate. The job is split at each
+// top-level job key so both jobs are checked on their own.
 test("each gate job installs Node 26.11.1 and runs npm ci before the gate", async () => {
   const text = await workflowText();
   const jobs = text.split(/^  (?=[a-z-]+:\n)/m).slice(1)
@@ -334,11 +335,13 @@ test("each gate job installs Node 26.11.1 and runs npm ci before the gate", asyn
       /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+node-version: "26\.11\.1"\n/,
     );
     const install = job.search(
-      /- name: Install npm dependencies \(npm ci from the committed lockfile\)\n\s+working-directory: prototype\n\s+run: npm ci\n/,
+      /- name: Install npm dependencies \(npm ci from the committed lockfile\)\n\s+run: npm ci\n/,
     );
     const gate = job.search(/run: deno task test\n/);
     if (setup < 0) throw new Error("a gate job does not set up Node 26.11.1");
-    if (install < 0) throw new Error("a gate job does not run npm ci");
+    if (install < 0) {
+      throw new Error("a gate job does not run npm ci at the repository root");
+    }
     if (!(setup < install && install < gate)) {
       throw new Error("Node setup and npm ci must precede the gate");
     }

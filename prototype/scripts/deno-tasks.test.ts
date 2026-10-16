@@ -26,7 +26,7 @@ describe("runtime lifecycle commands", () => {
     const tasks = parsed.tasks;
     assertStringIncludes(
       tasks["codex-chatgpt-login"],
-      '--allow-read=".,$node_path,$HOME,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
+      '--allow-read=".,../node_modules,$node_path,$HOME,$HOME/.dyfj,$HOME/.dyfj/runner-homes,$HOME/.dyfj/runner-homes/codex-chatgpt"',
     );
     assertStringIncludes(
       tasks["codex-chatgpt-login"],

@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import process from "node:process";
 import { test } from "node:test";
 import {
   NODE_MODULES_REMEDY,
@@ -35,6 +37,8 @@ function hidden(packages: Record<string, Record<string, unknown>>): string {
 
 // Every installed package's directory holds its package.json.
 const present = (_path: string) => true;
+// No fixture here installs a workspace link.
+const noLinks = (_path: string, _target: string) => false;
 
 const LOCKED = {
   "node_modules/zod": { version: "4.6.5" },
@@ -53,15 +57,21 @@ test("node_modules matching the lockfile is current", () => {
   };
   // An optional package for another platform is not installed, and that is
   // not staleness.
-  assertEquals(nodeModulesState(lockfile(LOCKED), hidden(installed), present), {
-    state: "current",
-  });
+  assertEquals(
+    nodeModulesState(lockfile(LOCKED), hidden(installed), present, noLinks),
+    {
+      state: "current",
+    },
+  );
 });
 
 test("missing node_modules is reported as missing", () => {
-  assertEquals(nodeModulesState(lockfile(LOCKED), undefined, present), {
-    state: "missing",
-  });
+  assertEquals(
+    nodeModulesState(lockfile(LOCKED), undefined, present, noLinks),
+    {
+      state: "missing",
+    },
+  );
 });
 
 test("node_modules out of date with the lockfile is stale", () => {
@@ -85,6 +95,7 @@ test("node_modules out of date with the lockfile is stale", () => {
       lockfile(LOCKED),
       hidden(installed),
       present,
+      noLinks,
     );
     assertEquals(result.state, "stale");
   }
@@ -92,6 +103,7 @@ test("node_modules out of date with the lockfile is stale", () => {
     lockfile(LOCKED),
     hidden({ "node_modules/zod": { version: "4.6.4" } }),
     present,
+    noLinks,
   );
   assertEquals(result, {
     state: "stale",
@@ -100,10 +112,16 @@ test("node_modules out of date with the lockfile is stale", () => {
 });
 
 test("an unreadable lockfile or hidden lockfile fails closed", () => {
-  assertEquals(nodeModulesState("{", hidden({}), present).state, "invalid");
-  assertEquals(nodeModulesState("[]", hidden({}), present).state, "invalid");
   assertEquals(
-    nodeModulesState(lockfile(LOCKED), "{", present).state,
+    nodeModulesState("{", hidden({}), present, noLinks).state,
+    "invalid",
+  );
+  assertEquals(
+    nodeModulesState("[]", hidden({}), present, noLinks).state,
+    "invalid",
+  );
+  assertEquals(
+    nodeModulesState(lockfile(LOCKED), "{", present, noLinks).state,
     "stale",
   );
 });
@@ -118,6 +136,7 @@ test("a package npm recorded but whose directory is gone is stale", () => {
       lockfile(LOCKED),
       hidden(installed),
       (path) => path !== "node_modules/zod",
+      noLinks,
     ),
     { state: "stale", differing: ["node_modules/zod"] },
   );
@@ -204,6 +223,149 @@ test("the check passes when node_modules matches the lockfile", async () => {
     assertEquals(await runNodeModulesCheck(dir, out), 0);
     assertEquals(lines, ["node_modules: matches package-lock.json"]);
   });
+});
+
+// The root lockfile of an npm workspace names the member directory and the
+// link npm installs for it; neither has a version.
+const WORKSPACE_LOCKED = {
+  ...LOCKED,
+  "node_modules/member": { resolved: "member", link: true },
+  member: { name: "member" },
+};
+const WORKSPACE_INSTALLED = {
+  ...INSTALLED,
+  "node_modules/member": { resolved: "member", link: true },
+  member: { name: "member" },
+};
+
+// Creates a symlink at `path` pointing to `target`. It runs `ln`: the
+// orchestration lane runs this file under a path-scoped grant, which the
+// runtime's own symlink call refuses.
+function symlink(target: string, path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "ln",
+      ["-s", target, path],
+      { env: { PATH: process.env.PATH ?? "" } },
+      (error) => error === null ? resolve() : reject(error),
+    );
+  });
+}
+
+// Runs the check on a workspace whose `node_modules/member` link is created
+// by `link`, given the package directory and a directory outside it.
+async function workspaceCheck(
+  link: (dir: string, outside: string) => Promise<void>,
+  installed: Record<string, Record<string, unknown>> = WORKSPACE_INSTALLED,
+): Promise<{ code: number; text: string }> {
+  const outside = await mkdtemp(join(tmpdir(), "dyfj-node-modules-outside-"));
+  try {
+    await writeFile(join(outside, "package.json"), "{}");
+    let result = { code: -1, text: "" };
+    await withPackageDir({
+      "package-lock.json": lockfile(WORKSPACE_LOCKED),
+      "node_modules/.package-lock.json": hidden(installed),
+      "member/package.json": "{}",
+      "other/package.json": "{}",
+      ...INSTALLED_FILES,
+    }, async (dir) => {
+      await link(dir, outside);
+      const { lines, out } = capture();
+      result = {
+        code: await runNodeModulesCheck(dir, out),
+        text: lines.join("\n"),
+      };
+    });
+    return result;
+  } finally {
+    await rm(outside, { recursive: true });
+  }
+}
+
+function assertStaleLink(result: { code: number; text: string }): void {
+  if (
+    result.code !== 1 || !result.text.includes("out of date") ||
+    !result.text.includes("node_modules/member")
+  ) {
+    throw new Error(`a bad workspace link was not reported: ${result.text}`);
+  }
+}
+
+test("a workspace link to its declared member is current", async () => {
+  const result = await workspaceCheck((dir) =>
+    symlink("../member", join(dir, "node_modules", "member"))
+  );
+  assertEquals(result, {
+    code: 0,
+    text: "node_modules: matches package-lock.json",
+  });
+});
+
+test("a workspace link to a directory outside the repository is stale", async () => {
+  assertStaleLink(
+    await workspaceCheck((dir, outside) =>
+      symlink(outside, join(dir, "node_modules", "member"))
+    ),
+  );
+});
+
+test("a workspace link to another directory in the repository is stale", async () => {
+  assertStaleLink(
+    await workspaceCheck((dir) =>
+      symlink("../other", join(dir, "node_modules", "member"))
+    ),
+  );
+});
+
+test("a workspace link installed as a plain directory is stale", async () => {
+  assertStaleLink(
+    await workspaceCheck(async (dir) => {
+      await mkdir(join(dir, "node_modules", "member"));
+      await writeFile(
+        join(dir, "node_modules", "member", "package.json"),
+        "{}",
+      );
+    }),
+  );
+});
+
+test("a workspace link npm recorded with another target is stale", async () => {
+  assertStaleLink(
+    await workspaceCheck(
+      (dir) => symlink("../member", join(dir, "node_modules", "member")),
+      {
+        ...WORKSPACE_INSTALLED,
+        "node_modules/member": { resolved: "other", link: true },
+      },
+    ),
+  );
+});
+
+test("a locked workspace link must resolve inside the repository", () => {
+  for (const resolved of ["../outside", "/abs", "member/../..", "a\\b", ""]) {
+    const lock = lockfile({
+      "node_modules/member": { resolved, link: true },
+    });
+    const installed = hidden({
+      "node_modules/member": { resolved, link: true },
+    });
+    assertEquals(
+      nodeModulesState(lock, installed, present, () => true),
+      { state: "stale", differing: ["node_modules/member"] },
+    );
+  }
+});
+
+test("a workspace member directory without its package.json is stale", () => {
+  assertEquals(
+    nodeModulesState(
+      lockfile(WORKSPACE_LOCKED),
+      hidden(WORKSPACE_INSTALLED),
+      (path) => path !== "member",
+      () => true,
+    ),
+    { state: "stale", differing: ["member"] },
+  );
 });
 
 test("the check fails when a recorded package directory was deleted", async () => {

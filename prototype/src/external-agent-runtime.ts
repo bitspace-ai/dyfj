@@ -32,6 +32,7 @@ import {
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
+import { codexAcpPackageRoot } from "./acp-adapter-package.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import type {
   AcpPermissionPrompt,
@@ -415,12 +416,7 @@ export async function codexChatGptProfile(
 
   const prototypeRoot = options.prototypeRoot ??
     fileURLToPath(new URL("..", import.meta.url));
-  const packageRoot = join(
-    prototypeRoot,
-    "node_modules",
-    "@agentclientprotocol",
-    "codex-acp",
-  );
+  const packageRoot = await codexAcpPackageRoot(prototypeRoot);
   let packageVersion: unknown;
   try {
     packageVersion = JSON.parse(

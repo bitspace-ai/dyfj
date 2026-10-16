@@ -2,7 +2,7 @@
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
 # The npm and deno lanes declare a cooldown of 3 days, the 72-hour registry
-# release-age floor that prototype/.npmrc (`min-release-age`) and the
+# release-age floor that the root .npmrc (`min-release-age`) and the
 # dependency policy hold, so a bot pull request never proposes a release
 # younger than an install would accept. Dependabot's own default is also 3
 # days; declaring it keeps the floor from resting on an upstream default.
@@ -11,10 +11,15 @@
 
 version: 2
 updates:
-  # The runtime npm packages are declared in prototype/package.json, pinned
-  # exactly, and locked by prototype/package-lock.json.
+  # One npm workspace at the repository root: the runtime packages are
+  # declared in prototype/package.json (a workspace member) and the tooling
+  # devDependencies in the root package.json, all pinned exactly and locked
+  # by the root package-lock.json. The root lane updates the members too.
+  # typescript (7.x, the native compiler) ships its binary through
+  # per-platform optional packages (@typescript/typescript-<os>-<arch>) that
+  # the lock pins with integrity hashes; a bump moves them together.
   - package-ecosystem: "npm"
-    directory: "/prototype"
+    directory: "/"
     schedule:
       interval: "weekly"
     # `increase` rewrites an exact pin to the new exact version, so a bot
@@ -29,10 +34,12 @@ updates:
     # upgraded deliberately, with the pin and fixtures, when that resumes.
     ignore:
       - dependency-name: "@agentclientprotocol/codex-acp"
-  # prototype/deno.json and deno.lock now hold only the JSR test
-  # dependencies. This lane stays while those JSR imports remain.
+  # prototype/deno.json imports and the root deno.lock now hold only the JSR
+  # test dependencies. The npm workspace makes the repository root Deno's
+  # workspace root, so the lock lives there. This lane stays while those JSR
+  # imports remain.
   - package-ecosystem: "deno"
-    directory: "/prototype"
+    directory: "/"
     schedule:
       interval: "weekly"
     cooldown:

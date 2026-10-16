@@ -31,7 +31,7 @@ describe("isProbedModule", () => {
   it("skips files outside the probe roots and non-TypeScript files", () => {
     for (
       const path of [
-        "scripts/erasable-syntax.ts",
+        "scripts/dependency-policy.ts",
         "prototype/scripts/test-files.ts",
         "prototype/src/README.md",
         "prototype/src/store/generated/rows.json",

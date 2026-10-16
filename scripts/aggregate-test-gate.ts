@@ -642,9 +642,9 @@ export function productionLanes(
       args: [
         "run",
         "--no-prompt",
-        `--allow-read=${prototype}`,
+        `--allow-read=${root}`,
         "scripts/node-modules-check.ts",
-        prototype,
+        root,
       ],
       cwd: root,
     },
@@ -725,29 +725,6 @@ export function productionLanes(
       cwd: root,
     },
     {
-      // Erasable-syntax guard (decision D32): Node strips types without
-      // transforming them, so no tracked TypeScript may hold a constructor
-      // parameter property. Under the aggregate check id; `tsc
-      // --erasableSyntaxOnly` takes it over once the typecheck lane moves to
-      // Node. It parses with `deno lint` and a repository plugin, so it runs
-      // `git` and the selected binary, and names `NODE_V8_COVERAGE` for the
-      // runtime's node:child_process shim, as runtime.neutral does.
-      label: "Erasable-syntax guard (erasable.syntax)",
-      checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=NODE_V8_COVERAGE",
-        `--allow-read=${root}`,
-        `--allow-run=git,${denoExecutable}`,
-        "scripts/erasable-syntax.ts",
-        `--deno=${denoExecutable}`,
-      ],
-      cwd: root,
-    },
-    {
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -778,7 +755,8 @@ export function productionLanes(
         "scripts/node-modules-check.test.ts",
         "scripts/arch-imports.test.ts",
         "scripts/runtime-neutral.test.ts",
-        "scripts/erasable-syntax.test.ts",
+        // node: it runs tsc over a fixture with a parameter property.
+        "scripts/typecheck-tsc.test.ts",
         "scripts/node-load-probe.test.ts",
         "scripts/git-hooks.test.ts",
         "scripts/lane-supervision.test.ts",
@@ -795,6 +773,19 @@ export function productionLanes(
       // write grant covers must be forwarded explicitly or makeTempDir in
       // the orchestration tests resolves outside the sandbox and is denied.
       env: { TMPDIR: "/tmp" },
+    },
+    {
+      // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
+      // workspace's devDependencies, over the root tsconfig.json. It runs
+      // alongside the `deno check` lanes below until the gate-tooling port
+      // removes them. `erasableSyntaxOnly` rejects syntax Node cannot strip,
+      // such as a constructor parameter property. Under the aggregate check
+      // id; it only reads.
+      label: "TypeScript typecheck (typecheck.tsc)",
+      checkId: "test.aggregate",
+      command: "node",
+      args: ["node_modules/typescript/bin/tsc", "--project", "tsconfig.json"],
+      cwd: root,
     },
     {
       label: "Prototype source typecheck",
@@ -1070,10 +1061,10 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Dependency policy check",
   "Architecture import rules (arch.imports)",
   "Runtime-neutral ratchet (runtime.neutral)",
-  "Erasable-syntax guard (erasable.syntax)",
   "Receipt schema validation",
   "Contract closure report generation",
   "Contract package tests",
+  "TypeScript typecheck (typecheck.tsc)",
   "Prototype source typecheck",
   "Prototype unit test suite (test.unit)",
 ];
