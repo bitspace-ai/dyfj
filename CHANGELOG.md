@@ -19,6 +19,13 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`dyfj start` works with a non-default Dolt endpoint.** The runtime's
+  network grant held only the default `127.0.0.1:3306`, so a configured
+  `DOLT_HOST` or `DOLT_PORT` elsewhere was refused at the first query. The
+  launcher now reads the configured endpoint (ambient, then `prototype/.env`)
+  and grants it. An invalid `DOLT_PORT` now fails at start instead of at the
+  first query.
+
 - **The per-file Node handle check no longer fails a file for its own
   in-flight test output.** Under `node --test`, a file's stdout is the
   runner's channel to its parent, and on macOS pipe writes are asynchronous.
@@ -220,6 +227,15 @@ README are tracked separately in its Revision history section.
   server had let pass.
 
 ### Changed
+
+- **The CLI may read every environment variable.** The `cli` permission
+  profile, `compile-cli` and the launcher's source route now grant the CLI the
+  whole environment, where it named 14 variables before. To start the runtime
+  with an explicit environment the CLI must read each value it forwards,
+  including the operator's `[secrets].inherit_env` names, which no static
+  list can name. The CLI is the operator's own process and already holds that
+  environment; tools never run in it. The launcher's parse check and status
+  probe keep the narrow list.
 
 - **The schema tooling's Dolt helper and the first-product contract package
   run on either runtime, and the model-catalog and contract tests register
@@ -644,6 +660,49 @@ README are tracked separately in its Revision history section.
   fakes account for the rest.
 
 ### Added
+
+- **The runtime enforces its egress, spawn and environment limits at its own
+  seams.** Before, the only limits on which hosts the runtime reached, which
+  binaries it started and which environment variables it saw were the Deno
+  permission flags, which Node's permission model cannot express (it has
+  all-or-nothing network and child-process switches and no env control). One
+  product-owned policy (`prototype/src/config/runtime-policy.ts`) now holds
+  the static lists and composes the operator's entries. The launcher builds
+  the runtime's Deno grants from it, and the engine composes the same policy
+  at boot and checks it in code:
+  - every HTTP request (provider calls, external MCP discovery and calls,
+    memory recall, the web tools' direct fetch) goes through one guarded
+    fetch that refuses a `host:port` outside the policy and rechecks each
+    redirect hop. The refusal names only the `host:port` and the
+    `[network] allow` key, never the URL's path, query or credentials. A
+    refused provider call fails as the new `egress_refused` provider failure;
+  - the Dolt pool refuses any endpoint but the configured `DOLT_HOST` and
+    `DOLT_PORT`, and that endpoint is a network policy entry, so the
+    runtime's permission flags grant it too;
+  - every child process (the `bash` and `git` tools and their stopper, the
+    secrets resolver, the ACP agent, signaler and probe, the CLI's start of
+    the runtime) goes through one guarded spawn that refuses a binary outside
+    the run list before anything starts. The secrets resolver's refusal, like
+    its other reasons, does not name the resolver's path;
+  - `dyfj start` gives the runtime an explicit environment, exactly the
+    policy's names plus `TMPDIR`, `TMP`, `TEMP` and `DENO_DIR`, and nothing
+    inherited. The launcher reads `prototype/.env` itself (ambient values
+    win) and no longer passes `--env-file` to the runtime, so a `.env` name
+    outside the policy does not reach it either.
+
+  A test fails when the policy module and the `deno.json` profiles disagree.
+  Accepted risks: a compromised dependency can still open its own connection
+  or process, and the web tools' DNS preflight queries the system nameservers
+  without a guard; an OS-level sandbox is the planned follow-up for both.
+
+- **`[network] allow` in `~/.dyfj/config.toml` adds hosts to the runtime's
+  network policy**, for example a local model server on a port the static
+  list does not name: `allow = ["127.0.0.1:1234"]`. Each entry is exactly
+  `host:port` (port required, IPv6 bracketed; no scheme, path, wildcard,
+  comma or whitespace); an invalid entry fails the config load. Both the
+  launcher's Deno grant and the engine's guard read the list. Restart the
+  runtime after changing it. Runtime data such as a model catalog row's
+  `base_url` never adds a host.
 
 - **Test files that register with `node:test` now run under `node --test`,
   with a per-file leak check.** Deno's sanitizers do not see `node:`

@@ -50,3 +50,27 @@ export async function readLauncherEnvVar(
     return undefined;
   }
 }
+
+/**
+ * The environment the launcher hands the runtime, before policy filtering:
+ * the ambient environment, with `<cwd>/.env` filling only the variables the
+ * ambient environment leaves unset, the precedence `--env-file` gives. The
+ * launcher reads `.env` itself, so the runtime is started without
+ * `--env-file` and sees no `.env` name the policy does not hold. A missing or
+ * unreadable `.env` contributes nothing.
+ */
+export async function readLauncherEnv(
+  cwd: string,
+  readTextFile: (path: string) => Promise<string>,
+  env: Env,
+): Promise<Env> {
+  let text = "";
+  try {
+    text = await readTextFile(`${cwd}/.env`);
+  } catch {
+    // No .env: the ambient environment alone.
+  }
+  return {
+    get: (name) => env.get(name) ?? envFileVar(text, name),
+  };
+}

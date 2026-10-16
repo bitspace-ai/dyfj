@@ -3,6 +3,7 @@
  * URL, reduced to readable text.
  */
 
+import { baseRuntimePolicy, guardedFetch } from "../../config/mod.ts";
 import { CommandExecutionError } from "../definition.ts";
 import { boundedMcpFetch } from "../mcp/transport.ts";
 import { type DnsResolver, systemDnsResolver } from "./dns.ts";
@@ -144,11 +145,13 @@ export function extractReadableContentFromHtml(html: string): string {
 
 /**
  * Execute a bounded HTTP GET with redirect rejection, size cap, and an abortable timeout
- * covering DNS preflight, header arrival, and response body consumption.
+ * covering DNS preflight, header arrival, and response body consumption. The
+ * default transport is the platform fetch guarded by the base runtime policy,
+ * so a target outside the policy is refused before any request.
  */
 export async function safeFetchDocument(
   targetUrl: string,
-  fetchImpl: typeof fetch = fetch,
+  fetchImpl: typeof fetch = guardedFetch(baseRuntimePolicy()),
   allowLoopbackHttpForTesting = false,
   resolver: DnsResolver = systemDnsResolver,
 ): Promise<{ text: string; url: string; contentType: string; bytes: number }> {

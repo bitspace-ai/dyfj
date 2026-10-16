@@ -6,7 +6,7 @@ import {
   sanitizeBoundaryText,
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
-import { processEnv } from "./config/mod.ts";
+import { processEnv, type RuntimePolicy } from "./config/mod.ts";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -1095,18 +1095,26 @@ async function emitRuntimeEvent(
   }
 }
 
+/** What `runExternalAgentWorkbenchRuntime` runs against. */
+export interface ExternalAgentRuntimeDependencies {
+  /** The store every event, session row and workspace read goes through. */
+  store: Store;
+  resolveProfile?: (
+    profile: "fixture" | "codex-chatgpt",
+    workspace: string,
+  ) => AcpExecutionProfile | Promise<AcpExecutionProfile>;
+  runAgent?: typeof runAcpAgent;
+  sessionMap?: AcpSessionHandleMap;
+  /**
+   * The run policy a one-shot agent run is spawned under; a warm session
+   * uses its map's. The base policy when absent.
+   */
+  runPolicy?: RuntimePolicy;
+}
+
 export async function runExternalAgentWorkbenchRuntime(
   input: ExternalAgentRuntimeInput,
-  dependencies: {
-    /** The store every event, session row and workspace read goes through. */
-    store: Store;
-    resolveProfile?: (
-      profile: "fixture" | "codex-chatgpt",
-      workspace: string,
-    ) => AcpExecutionProfile | Promise<AcpExecutionProfile>;
-    runAgent?: typeof runAcpAgent;
-    sessionMap?: AcpSessionHandleMap;
-  },
+  dependencies: ExternalAgentRuntimeDependencies,
 ): Promise<ExternalAgentWorkbenchRuntimeResult> {
   const { store } = dependencies;
   const writeEvent = async (
@@ -1396,6 +1404,9 @@ export async function runExternalAgentWorkbenchRuntime(
         confirmPermission: input.approver?.confirmExternalAgentPermission,
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
+        ...(dependencies.runPolicy === undefined
+          ? {}
+          : { runPolicy: dependencies.runPolicy }),
       });
     closeCancellation();
     const toolEvidence = prepareAcpToolEvidence(result.toolEvidence);

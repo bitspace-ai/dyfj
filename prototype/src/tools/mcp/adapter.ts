@@ -1,4 +1,10 @@
-import type { McpHttpServerConfig } from "../../config/mod.ts";
+import {
+  baseRuntimePolicy,
+  findEgressRefusal,
+  guardedFetch,
+  type McpHttpServerConfig,
+  type RuntimePolicy,
+} from "../../config/mod.ts";
 import type {
   CommandDefinition,
   CommandTraceContext,
@@ -45,7 +51,11 @@ export type ExternalMcpDiagnostic =
   | {
     serverId: string;
     status: "unavailable";
-    reason: "credential unavailable" | "discovery failed";
+    /** A network-policy refusal is the guard's own host-only message. */
+    reason:
+      | "credential unavailable"
+      | "discovery failed"
+      | `network egress ${string}`;
   };
 
 export interface ExternalMcpCommands {
@@ -93,12 +103,13 @@ async function withClient<T>(
     ) => Promise<McpCallResult>;
     getNegotiatedProtocolVersion: () => string | undefined;
   }, revision: string) => Promise<T>,
+  policy: RuntimePolicy,
 ): Promise<T> {
   const { client, transport } = await createMcpClient({
     url: server.url,
     clientName: "dyfj-workbench-tools",
     requestInit: requestInit(token),
-    fetch: boundedMcpFetch(responseMaxBytes),
+    fetch: boundedMcpFetch(responseMaxBytes, guardedFetch(policy)),
     probeTimeoutMs: DISCOVERY_TIMEOUT_MS,
   });
   try {
@@ -110,10 +121,13 @@ async function withClient<T>(
   }
 }
 
-export async function discoverMcpTools(input: {
-  server: McpHttpServerConfig;
-  token: string;
-}): Promise<McpDiscoveryResult> {
+export async function discoverMcpTools(
+  input: {
+    server: McpHttpServerConfig;
+    token: string;
+  },
+  policy: RuntimePolicy = baseRuntimePolicy(),
+): Promise<McpDiscoveryResult> {
   return await withClient(
     input.server,
     input.token,
@@ -127,17 +141,21 @@ export async function discoverMcpTools(input: {
         tools: retainConfiguredMcpTools(input.server.tools, result.tools ?? []),
       };
     },
+    policy,
   );
 }
 
-export async function callMcpTool(input: {
-  server: McpHttpServerConfig;
-  token: string;
-  tool: string;
-  arguments: Record<string, unknown>;
-  inputSchema: JsonSchemaObject;
-  traceContext?: CommandTraceContext;
-}): Promise<McpCallResult> {
+export async function callMcpTool(
+  input: {
+    server: McpHttpServerConfig;
+    token: string;
+    tool: string;
+    arguments: Record<string, unknown>;
+    inputSchema: JsonSchemaObject;
+    traceContext?: CommandTraceContext;
+  },
+  policy: RuntimePolicy = baseRuntimePolicy(),
+): Promise<McpCallResult> {
   return await withClient(
     input.server,
     input.token,
@@ -159,6 +177,7 @@ export async function callMcpTool(input: {
           },
         },
       ),
+    policy,
   );
 }
 
@@ -346,12 +365,17 @@ async function discoverServer(
   let discovery: McpDiscoveryResult;
   try {
     discovery = await discover({ server, token });
-  } catch {
+  } catch (error) {
+    // A policy refusal names only the server's host:port, so the boot log
+    // can say why; every other discovery failure stays opaque.
+    const refusal = findEgressRefusal(error);
     return {
       unavailable: {
         serverId: server.id,
         status: "unavailable",
-        reason: "discovery failed",
+        reason: refusal === undefined
+          ? "discovery failed"
+          : refusal.message as `network egress ${string}`,
       },
     };
   }
@@ -553,8 +577,9 @@ function webCapabilityCommands(
   );
 
   const resolvedDeps: ExternalMcpDeps = {
-    discover: deps.discover ?? discoverMcpTools,
-    call: deps.call ?? callMcpTool,
+    discover: deps.discover ??
+      ((input) => discoverMcpTools(input, deps.policy)),
+    call: deps.call ?? ((input) => callMcpTool(input, deps.policy)),
   };
   const isRegistered = (id: string) =>
     registered.some((c) => c.id === id) || added.some((c) => c.id === id);
@@ -598,8 +623,9 @@ export async function buildExternalMcpCommands(
   credentials: Readonly<Record<string, string>>,
   deps: ExternalMcpDeps = {},
 ): Promise<ExternalMcpCommands> {
-  const discover = deps.discover ?? discoverMcpTools;
-  const call = deps.call ?? callMcpTool;
+  const discover = deps.discover ??
+    ((input) => discoverMcpTools(input, deps.policy));
+  const call = deps.call ?? ((input) => callMcpTool(input, deps.policy));
   const commands: CommandDefinition<string>[] = [];
   const diagnostics: ExternalMcpDiagnostic[] = [];
   const sharedWebState = createWebToolsSessionState();

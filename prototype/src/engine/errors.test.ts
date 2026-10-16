@@ -4,6 +4,7 @@ import { BudgetExceededError } from "../budget/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
 import {
   ProviderAuthenticationError,
+  ProviderEgressRefusedError,
   ProviderModelNotFoundError,
   ProviderRateLimitedError,
   ProviderRedirectedError,
@@ -151,6 +152,10 @@ test("classifyErrorKind reports each provider failure class by its own fixed lit
       "ProviderUnreachableError",
     ],
     [new ProviderRedirectedError(target), "ProviderRedirectedError"],
+    [
+      new ProviderEgressRefusedError(target, "network egress refused"),
+      "ProviderEgressRefusedError",
+    ],
     [
       new ProviderRequestTooLargeError(target, 413),
       "ProviderRequestTooLargeError",

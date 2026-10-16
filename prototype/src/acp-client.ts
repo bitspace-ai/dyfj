@@ -19,13 +19,19 @@ import {
   type ExternalAgentCostBasis,
 } from "./contract/mod.ts";
 import { isAbsolute, win32 } from "node:path";
-import {
-  type ChildProcessByStdio,
-  type ChildProcessWithoutNullStreams,
-  spawn,
+import type {
+  ChildProcessByStdio,
+  ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import {
+  baseRuntimePolicy,
+  guardedSpawn,
+  type RuntimePolicy,
+  SpawnRefusedError,
+} from "./config/mod.ts";
 import process from "node:process";
 import { Readable, Writable } from "node:stream";
+import { collectBoundedStderr, settlesWithin } from "./acp-child-io.ts";
 
 export type AcpAuthenticationType =
   | "chat-gpt"
@@ -146,6 +152,8 @@ export interface AcpRunInput {
     evidence: AcpRouteEvidence,
     signal: AbortSignal,
   ) => void | Promise<void>;
+  /** The policy the agent, signaler and probe spawn under; the base if absent. */
+  runPolicy?: RuntimePolicy;
 }
 
 export interface AcpRunResult {
@@ -178,6 +186,7 @@ export interface AcpSessionStartInput {
   abortSignal?: AbortSignal;
   onRouteVerified?: AcpRunInput["onRouteVerified"];
   onBroken?: () => void;
+  runPolicy?: RuntimePolicy;
 }
 
 export interface AcpSessionHandle {
@@ -347,35 +356,29 @@ interface ManagedAcpChild {
   ) => Promise<boolean>;
 }
 
-async function settlesWithin(promise: Promise<unknown>, timeoutMs: number) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then(() => true, () => true),
-      new Promise<false>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
+/** A spawn refusal as the runner's error, keeping its binary-naming message. */
+function refusedSpawn(error: unknown, phase: AcpRunnerError["phase"]) {
+  return error instanceof SpawnRefusedError
+    ? new AcpRunnerError(`ACP ${error.message}`, phase)
+    : undefined;
 }
 
 export async function runSignalCommand(
   args: string[],
   timeoutMs: number,
   command = "/bin/kill",
+  policy: RuntimePolicy = baseRuntimePolicy(),
 ): Promise<boolean> {
   const unavailable = () =>
     new AcpRunnerError("ACP process-group signaling failed", "terminate");
   let signaler: ChildProcessByStdio<null, null, Readable>;
   try {
-    signaler = spawn(command, args, {
+    signaler = guardedSpawn(policy)(command, args, {
       stdio: ["ignore", "ignore", "pipe"],
       env: { LC_ALL: "C" },
     });
-  } catch {
-    throw unavailable();
+  } catch (error) {
+    throw refusedSpawn(error, "terminate") ?? unavailable();
   }
   const diagnostic = collectBoundedStderr(signaler.stderr, 256);
   // A command that cannot start arrives as an `error` event, not a throw.
@@ -407,33 +410,9 @@ export async function runSignalCommand(
   }
 }
 
-function collectBoundedStderr(
-  stream: Readable,
-  maxBytes: number,
-): { text: () => string; cancel: () => void } {
-  const decoder = new TextDecoder();
-  let detail = "";
-  let bytes = 0;
-  const cancel = () => {
-    stream.on("error", () => {});
-    stream.destroy();
-  };
-  stream.on("data", (chunk: Uint8Array) => {
-    const remaining = maxBytes - bytes;
-    if (remaining <= 0) return;
-    const kept = chunk.subarray(0, remaining);
-    detail += decoder.decode(kept, { stream: true });
-    bytes += kept.byteLength;
-    if (chunk.byteLength >= remaining) cancel();
-  });
-  return {
-    text: () => detail + decoder.decode(),
-    cancel,
-  };
-}
-
 async function spawnAcpChild(
   profile: AcpExecutionProfile,
+  policy: RuntimePolicy,
 ): Promise<ManagedAcpChild> {
   const useProcessGroup = process.platform !== "win32";
   if (!useProcessGroup && profile.slug === "codex-chatgpt") {
@@ -443,18 +422,19 @@ async function spawnAcpChild(
     );
   }
   if (useProcessGroup) {
-    await assertProcessGroupSignaler("/bin/kill");
+    await assertProcessGroupSignaler("/bin/kill", undefined, undefined, policy);
   }
   let child: ChildProcessWithoutNullStreams;
   try {
-    child = spawn(profile.command, [...profile.args], {
+    child = guardedSpawn(policy)(profile.command, [...profile.args], {
       cwd: profile.workspace,
       detached: useProcessGroup,
       env: { ...profile.environment },
       stdio: ["pipe", "pipe", "pipe"],
     });
-  } catch {
-    throw new AcpRunnerError("ACP child could not be started", "spawn");
+  } catch (error) {
+    throw refusedSpawn(error, "spawn") ??
+      new AcpRunnerError("ACP child could not be started", "spawn");
   }
   let exited = false;
   const status = new Promise<void>((resolve, reject) => {
@@ -504,6 +484,8 @@ async function spawnAcpChild(
         success = await runSignalCommand(
           [`-${signalName}`, "--", `-${pid}`],
           timeoutMs,
+          "/bin/kill",
+          policy,
         );
       } catch (error) {
         // macOS can briefly report EPERM after the group leader exits but
@@ -511,7 +493,7 @@ async function spawnAcpChild(
         // child settles; a live or inaccessible descendant still surfaces.
         if (
           !(await settlesWithin(status, Math.min(timeoutMs, 100))) ||
-          await runSignalCommand(["-0", "--", `-${pid}`], timeoutMs)
+          await runSignalCommand(["-0", "--", `-${pid}`], timeoutMs, undefined, policy)
         ) {
           throw error;
         }
@@ -557,6 +539,7 @@ export async function assertProcessGroupSignaler(
   command = "/bin/kill",
   timeoutMs = DEFAULT_TERMINATION_TIMEOUT_MS,
   probeArgv = processGroupProbeArgv(),
+  policy: RuntimePolicy = baseRuntimePolicy(),
 ): Promise<void> {
   const unavailable = () =>
     new AcpRunnerError(
@@ -564,16 +547,16 @@ export async function assertProcessGroupSignaler(
       "spawn",
     );
   const [probeCommand, ...probeArgs] = probeArgv;
-  let probe: ReturnType<typeof spawn>;
+  let probe: ReturnType<ReturnType<typeof guardedSpawn>>;
   try {
     // A child that cannot start may throw here or arrive as an `error` event.
-    probe = spawn(probeCommand, probeArgs, {
+    probe = guardedSpawn(policy)(probeCommand, probeArgs, {
       detached: true,
       env: {},
       stdio: ["ignore", "ignore", "ignore"],
     });
-  } catch {
-    throw unavailable();
+  } catch (error) {
+    throw refusedSpawn(error, "spawn") ?? unavailable();
   }
   const probeStatus = new Promise<void>((resolve) => {
     probe.once("exit", () => resolve());
@@ -586,11 +569,15 @@ export async function assertProcessGroupSignaler(
         ["-0", "--", `-${probe.pid}`],
         timeoutMs,
         command,
+        policy,
       ))
     ) {
       throw new Error("signal probe failed");
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof AcpRunnerError && /refused/.test(error.message)) {
+      throw new AcpRunnerError(error.message, "spawn");
+    }
     throw unavailable();
   } finally {
     try {
@@ -1373,6 +1360,7 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
 
 class LiveAcpSession implements AcpSessionHandle {
   readonly #profile: AcpExecutionProfile;
+  readonly #runPolicy: RuntimePolicy;
   readonly #startAbort?: AbortSignal;
   readonly #onRouteVerified?: AcpRunInput["onRouteVerified"];
   readonly #onBroken?: () => void;
@@ -1425,6 +1413,7 @@ class LiveAcpSession implements AcpSessionHandle {
 
   constructor(input: AcpSessionStartInput) {
     this.#profile = input.profile;
+    this.#runPolicy = input.runPolicy ?? baseRuntimePolicy();
     this.#startAbort = input.abortSignal;
     this.#onRouteVerified = input.onRouteVerified;
     this.#onBroken = input.onBroken;
@@ -1696,7 +1685,7 @@ class LiveAcpSession implements AcpSessionHandle {
   async #start(): Promise<void> {
     if (this.#startAbort?.aborted) throw new AcpAbortRequested();
     const profile = this.#profile;
-    const child = await spawnAcpChild(profile);
+    const child = await spawnAcpChild(profile, this.#runPolicy);
     this.#child = child;
     this.#stderr = drainStream(child.stderr, MAX_CHILD_STDERR_BYTES);
     void child.status.then(() => {

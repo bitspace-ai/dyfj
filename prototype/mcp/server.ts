@@ -33,7 +33,11 @@ import {
 import { z } from "zod";
 import { listMcpMemories, readMcpMemory } from "./memory-tools.ts";
 import { generateULID } from "../src/kernel/mod.ts";
-import { processEnv, resolveDoltConnection } from "../src/config/mod.ts";
+import {
+  composeRuntimePolicy,
+  processEnv,
+  resolveDoltConnection,
+} from "../src/config/mod.ts";
 import {
   createDoltPool,
   DoltStore,
@@ -389,7 +393,14 @@ function registerSessionReadTools(server: McpServer, store: Store): void {
 // The server's one store over one Dolt pool, shared by every connection. This
 // composition root owns it and closes it, once, when the stdio transport
 // closes or the server fails to start.
-const store = new DoltStore(createDoltPool(resolveDoltConnection(processEnv)));
+// The memory server's one network peer is the configured Dolt endpoint.
+const doltConnection = resolveDoltConnection(processEnv);
+const store = new DoltStore(
+  createDoltPool(
+    doltConnection,
+    composeRuntimePolicy({ dolt: doltConnection }),
+  ),
+);
 let storeClosed: Promise<void> | undefined;
 const closeStore = () => (storeClosed ??= store.close().catch(() => {}));
 

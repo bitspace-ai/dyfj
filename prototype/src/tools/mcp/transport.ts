@@ -14,9 +14,12 @@ import type {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import type {
-  LinearIssueCreationBinding,
-  McpHttpServerConfig,
+import {
+  baseRuntimePolicy,
+  guardedFetch,
+  type LinearIssueCreationBinding,
+  type McpHttpServerConfig,
+  type RuntimePolicy,
 } from "../../config/mod.ts";
 import type {
   CommandDefinition,
@@ -45,6 +48,11 @@ export interface McpCallResult {
 }
 
 export interface ExternalMcpDeps {
+  /**
+   * The runtime policy the default `discover` and `call` check every request
+   * against; the base policy, which names no MCP server, when absent.
+   */
+  policy?: RuntimePolicy;
   discover?: (input: {
     server: McpHttpServerConfig;
     token: string;
@@ -83,9 +91,14 @@ export type McpFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+/**
+ * Cap the cumulative response bytes of `delegate`. The default delegate is the
+ * platform fetch guarded by the base runtime policy, so an MCP request whose
+ * caller passes no policy-guarded delegate is refused the operator's hosts.
+ */
 export function boundedMcpFetch(
   maxBytes: number,
-  delegate: McpFetch = fetch,
+  delegate: McpFetch = guardedFetch(baseRuntimePolicy()),
 ): McpFetch {
   let received = 0;
   return async (input, init) => {
@@ -164,7 +177,11 @@ export interface McpClientOptions {
   clientName: string;
   /** The fetch init every request on this connection uses. */
   requestInit: RequestInit;
-  /** Optional fetch override, for example a `boundedMcpFetch`. */
+  /**
+   * The fetch the SDK transport uses, for example a `boundedMcpFetch`. When
+   * absent, the platform fetch guarded by the base runtime policy: the SDK is
+   * never handed the unguarded platform fetch.
+   */
   fetch?: McpFetch;
   /** Timeout for the version-negotiation probe. */
   probeTimeoutMs: number;
@@ -185,7 +202,7 @@ export async function createMcpClient(
   );
   const transport = new StreamableHTTPClientTransport(new URL(options.url), {
     requestInit: options.requestInit,
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    fetch: options.fetch ?? guardedFetch(baseRuntimePolicy()),
   });
   const client = new Client(
     { name: options.clientName, version: "1.0.0" },

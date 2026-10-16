@@ -11,6 +11,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { startLoopbackHttp } from "../../testing/servers/mcp-server.ts";
 import { enginePorts } from "../../testing/builders/engine.ts";
+import { composeRuntimePolicy } from "../config/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import { createCommandRegistry } from "../tools/mod.ts";
 import { buildContext } from "./build-context.ts";
@@ -54,9 +55,14 @@ test("recall negotiation reaches the client as a structured frame", async () => 
         onRuntimeEvent: (event) => void frames.push(event),
       },
     };
-    const session = await openSession(input, fakes.ports);
+    // The composed policy admits the configured memory endpoint.
+    const ports = {
+      ...fakes.ports,
+      policy: composeRuntimePolicy({ memoryMcpUrl: http.url }),
+    };
+    const session = await openSession(input, ports);
     const state = newTurnState(session, createCommandRegistry());
-    await buildContext(state, input, fakes.ports);
+    await buildContext(state, input, ports);
 
     const recall = state.commandRegistry.lookup("memory.search");
     assert.ok(recall !== undefined);

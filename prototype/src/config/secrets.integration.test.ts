@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import process from "node:process";
 import { describe, it } from "node:test";
+import { composeRuntimePolicy } from "./runtime-policy.ts";
 import { runSecretCommand } from "./secrets.ts";
 
 /** A real PATH so a child with a replaced environment can still find external binaries. */
@@ -16,7 +17,16 @@ describe("runSecretCommand (real subprocess)", () => {
     const privatePath = ["", "Users", "private-user", "secret-vault-tool", "op"]
       .join("/");
     const pointer = "op://PrivateVault/SecretItem/credential";
-    const res = await runSecretCommand([privatePath, "read"], pointer, 2000);
+    // The policy holds the path, so the spawn itself is what fails.
+    const res = await runSecretCommand(
+      [privatePath, "read"],
+      pointer,
+      2000,
+      undefined,
+      composeRuntimePolicy({
+        secrets: { command: [privatePath], inheritEnv: [] } as never,
+      }),
+    );
     assert.strictEqual(res.ok, false);
     assert.strictEqual(
       res.reason,

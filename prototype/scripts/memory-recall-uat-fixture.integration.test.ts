@@ -1,3 +1,4 @@
+import { composeRuntimePolicy } from "../src/config/mod.ts";
 import { buildMemorySearch } from "../src/tools/mod.ts";
 import { settleFixtureShutdown } from "./memory-recall-uat-fixture.ts";
 
@@ -62,6 +63,8 @@ Deno.test("the executable UAT fixture serves strict modern recall", async () => 
     const recall = buildMemorySearch(
       { url, tool: "fixture-search" },
       (diagnostic) => diagnostics.push(diagnostic),
+      // The engine admits the configured endpoint the same way.
+      composeRuntimePolicy({ memoryMcpUrl: url }),
     );
     assert(
       await recall("synthetic UAT query") === "fixture-result",

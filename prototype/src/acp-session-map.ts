@@ -10,6 +10,7 @@ import {
   startAcpSession,
   withTimeout,
 } from "./acp-client.ts";
+import type { RuntimePolicy } from "./config/mod.ts";
 import {
   DomainError,
   type ExternalAgentContinuityState,
@@ -93,6 +94,8 @@ export interface AcpSessionHandleKey {
 }
 
 export interface AcpSessionHandleMapOptions {
+  /** The run policy every session this map starts is spawned under. */
+  runPolicy?: RuntimePolicy;
   capacity?: number;
   idleTtlMs?: number;
   shutdownTimeoutMs?: number;
@@ -152,6 +155,7 @@ export function encodeAcpSessionHandleKey(input: AcpSessionHandleKey): string {
 }
 
 export class AcpSessionHandleMap {
+  readonly #runPolicy: RuntimePolicy | undefined;
   readonly #capacity: number;
   readonly #idleTtlMs: number;
   readonly #shutdownTimeoutMs: number;
@@ -162,6 +166,7 @@ export class AcpSessionHandleMap {
   #shuttingDown = false;
 
   constructor(options: AcpSessionHandleMapOptions = {}) {
+    this.#runPolicy = options.runPolicy;
     this.#capacity = options.capacity ?? DEFAULT_ACP_SESSION_CAPACITY;
     this.#idleTtlMs = options.idleTtlMs ?? DEFAULT_ACP_IDLE_TTL_MS;
     this.#shutdownTimeoutMs = options.shutdownTimeoutMs ??
@@ -216,6 +221,7 @@ export class AcpSessionHandleMap {
         profile: input.profile,
         abortSignal: input.abortSignal,
         onRouteVerified: input.onRouteVerified,
+        runPolicy: this.#runPolicy,
         onBroken: () => {
           if (this.#entries.get(key) !== entry) return;
           if (entry.state === "creating" || entry.state === "closing") return;

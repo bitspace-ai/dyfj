@@ -24,8 +24,10 @@
  *     must never carry the value into a log).
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { type MutableEnv, processEnv } from "./env.ts";
+import { baseRuntimePolicy, type RuntimePolicy } from "./runtime-policy.ts";
+import { guardedSpawn, SpawnRefusedError } from "./spawn-guard.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
 export type SecretStatus = "resolved" | "already-set" | "unavailable";
@@ -94,6 +96,17 @@ const unrunnable = () => ({
   reason: "cannot run the resolver command (not found or not permitted)",
 });
 
+/**
+ * The fixed reason for a resolver command outside the run policy. Value-free
+ * and path-free, like `unrunnable`.
+ */
+const refused = () => ({
+  ok: false,
+  reason: "resolver command refused: it is not in the runtime's run policy " +
+    "(the launcher grants the binary named by [secrets].command in " +
+    "~/.dyfj/config.toml)",
+});
+
 const MAX_RESOLVER_FOLLOWERS = 8;
 
 async function mapWithConcurrency<T, R>(
@@ -131,11 +144,19 @@ export type RunSecretCommand = (
   timeoutMs: number,
   /** The COMPLETE environment for the child (it replaces the inherited one). */
   env?: Readonly<Record<string, string>>,
+  /** The run policy the command is checked against; the base when absent. */
+  policy?: RuntimePolicy,
 ) => Promise<SecretCommandResult>;
 
 export interface ResolveSecretsDeps {
   env?: MutableEnv;
   run?: RunSecretCommand;
+  /**
+   * The run policy the resolver command is checked against. The base policy,
+   * which does not hold any resolver, when absent: the composition root
+   * passes the policy composed from `[secrets]`.
+   */
+  policy?: RuntimePolicy;
   log?: (message: string) => void;
 }
 
@@ -203,6 +224,7 @@ export const runSecretCommand: RunSecretCommand = (
   pointer,
   timeoutMs,
   env,
+  policy = baseRuntimePolicy(),
 ) =>
   new Promise<SecretCommandResult>((resolve) => {
     const [bin, ...rest] = command;
@@ -215,12 +237,14 @@ export const runSecretCommand: RunSecretCommand = (
       // the runtime's other secrets. Replacing the environment outright is what
       // enforces the least-privilege boundary; the caller builds the env via
       // buildResolverEnv.
-      child = spawn(bin, args, {
+      child = guardedSpawn(policy)(bin, args, {
         env: { ...(env ?? {}) },
         stdio: ["ignore", "pipe", "pipe"],
       });
-    } catch {
-      resolve(unrunnable());
+    } catch (error) {
+      // A refusal says where to configure the resolver but, like every other
+      // reason here, not its path: reasons reach the boot log and status.
+      resolve(error instanceof SpawnRefusedError ? refused() : unrunnable());
       return;
     }
 
@@ -381,7 +405,13 @@ export async function resolveSecrets(
     // alone to warm a caching resolver's auth session (or hit the wall), so a
     // bad-ref probe failure is reproducible rather than intermittent.
     const probe = pending[0];
-    const probeOutcome = await run(command, probe.pointer, timeoutMs, cmdEnv);
+    const probeOutcome = await run(
+      command,
+      probe.pointer,
+      timeoutMs,
+      cmdEnv,
+      deps.policy,
+    );
     const followers = pending.slice(1);
 
     if (probeOutcome.ok && probeOutcome.value !== undefined) {
@@ -395,7 +425,13 @@ export async function resolveSecrets(
         followers,
         MAX_RESOLVER_FOLLOWERS,
         async (f): Promise<[string, Staged]> => {
-          const outcome = await run(command, f.pointer, timeoutMs, cmdEnv);
+          const outcome = await run(
+            command,
+            f.pointer,
+            timeoutMs,
+            cmdEnv,
+            deps.policy,
+          );
           return [
             f.key,
             outcome.ok && outcome.value !== undefined

@@ -4,7 +4,7 @@ import {
   DomainError,
   type ExternalAgentWorkbenchRuntimeResult,
 } from "../contract/mod.ts";
-import { processEnv } from "../config/mod.ts";
+import { baseRuntimePolicy, guardedFetch, processEnv } from "../config/mod.ts";
 import { createCommandRegistry } from "../tools/mod.ts";
 import type { ObservedCallContext } from "./observed-call.ts";
 import { resolveRoute } from "./route.ts";
@@ -72,14 +72,16 @@ export async function runWorkbenchRuntime(
     });
   }
 
+  const policy = services.policy ?? baseRuntimePolicy();
   return await runNativeWorkbenchRuntime(runtimeInput, {
     store: services.store,
     budgetScopes: services.budgetScopes,
     rootAnchors: services.rootAnchors,
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
+    policy,
     providerIo: {
-      ...(services.http === undefined ? {} : { fetchFn: services.http }),
+      fetchFn: services.http ?? guardedFetch(policy),
       ...(services.env === undefined
         ? {}
         : { getEnv: (name: string) => services.env?.get(name) }),

@@ -8,7 +8,11 @@
  * the catalog `provider` column: each declares the providers it serves, and a
  * provider no adapter serves fails closed before any request.
  */
-import { processEnv } from "../../config/mod.ts";
+import {
+  baseRuntimePolicy,
+  guardedFetch,
+  processEnv,
+} from "../../config/mod.ts";
 import type { ProviderAdapter, ProviderIO } from "../adapter.ts";
 import { HostedInferenceRequiresProviderError } from "../errors.ts";
 import type {
@@ -95,7 +99,10 @@ export function createProviderRegistry(
       const onTextDelta = params.onTextDelta;
       const getEnv = params.getEnv;
       const io: ProviderIO = {
-        fetch: params.fetchFn ?? fetch,
+        // No injected transport: the guarded platform fetch under the base
+        // policy, so a caller that forgets the composed policy is refused the
+        // operator's hosts rather than reaching anything.
+        fetch: params.fetchFn ?? guardedFetch(baseRuntimePolicy()),
         clock: { now: params.now ?? performance.now.bind(performance) },
         env: getEnv === undefined ? processEnv : { get: getEnv },
         onFrame: onTextDelta === undefined

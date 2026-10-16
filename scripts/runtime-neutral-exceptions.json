@@ -140,11 +140,6 @@
     "reason": "Launcher error messages: two refusals name Deno's run and network grants, which the launcher still builds for the runtime child; they change with the launcher under S4 of decision D32."
   },
   {
-    "path": "prototype/src/cli/launcher/runtime.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "prototype/src/store/dolt-store.integration.test.ts",
     "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."

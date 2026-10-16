@@ -30,7 +30,7 @@ import type {
 } from "../providers/mod.ts";
 import type { EventInsert, Store } from "../store/mod.ts";
 import type { Clock } from "../kernel/mod.ts";
-import type { Env } from "../config/mod.ts";
+import type { Env, RuntimePolicy } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
 import type { BudgetScopes } from "./session-owner.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
@@ -43,8 +43,9 @@ export interface NativeTurnPorts {
   env: Env;
   /**
    * The provider transport and credential reader, spread into every provider
-   * call. Empty unless the caller injected them, so adapters otherwise use
-   * the platform `fetch` and the process environment.
+   * call. The transport is the injected one, else the platform `fetch`
+   * guarded by the runtime policy; the reader is empty unless injected, so
+   * adapters otherwise use the process environment.
    */
   providerIo: Pick<WorkbenchTurnParams, "fetchFn" | "getEnv">;
   /** The session and daily spend rollup; the store's when absent. */
@@ -53,6 +54,8 @@ export interface NativeTurnPorts {
   recoverContextOverflow?: ContextOverflowRecoverer;
   /** The engine's workspace-root anchors, which the file tools verify against. */
   rootAnchors: RootAnchors;
+  /** The runtime policy memory recall is checked against; the base when absent. */
+  policy?: RuntimePolicy;
 }
 
 /** Write one event row through the store's journal. */

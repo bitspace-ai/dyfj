@@ -3,21 +3,25 @@
  * `serve-unix` profile in `deno.json` cannot carry machine-specific or
  * operator-private grants (the socket path, the memory MCP host, external MCP
  * hosts, nameservers, the Node executable, the secrets resolver, inherited env
- * names), so the client resolves them here and passes them explicitly.
+ * names), so the client resolves them here and passes them explicitly. The
+ * static lists those grants extend come from the runtime policy module
+ * (`config/runtime-policy.ts`), not from the profile file.
  */
 
 import { lstat, realpath, stat } from "node:fs/promises";
 import process from "node:process";
 import { hasDotPathComponent } from "../../kernel/mod.ts";
 import {
-  assertSecureMemoryUrl,
   type Env,
   loadMcpServersConfig,
+  loadNetworkAllow,
   loadSecretsConfig,
   type McpHttpServerConfig,
   processEnv,
   readLauncherEnvVar,
   readTextFile as defaultReadTextFile,
+  type RuntimePolicy,
+  SERVE_UNIX_ENV_GRANTS,
   type SecretsConfig,
 } from "../../config/mod.ts";
 
@@ -86,40 +90,11 @@ export function buildServeUnixArgs(
     // (null) when inherit_env is empty. The forwarded VALUES never enter the
     // committed profile — only launch-resolved from the operator's config.
     ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
-    "--env-file=.env",
+    // No --env-file: the launcher reads .env itself and hands the runtime an
+    // explicit environment holding only the policy's names.
     "src/server/main.ts",
     ...(autostarted ? ["--autostarted"] : []),
   ];
-}
-
-/** Read the serve-unix profile's declared env grants from deno.json. */
-export async function readServeUnixEnvGrants(cwd: string): Promise<string[]> {
-  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
-  const parsed = JSON.parse(raw) as {
-    permissions?: { "serve-unix"?: { env?: unknown } };
-  };
-  const env = parsed.permissions?.["serve-unix"]?.env;
-  if (!Array.isArray(env) || !env.every((e) => typeof e === "string")) {
-    throw new Error(
-      `serve-unix permission profile in ${cwd}/deno.json has no env grant list`,
-    );
-  }
-  return env;
-}
-
-/** Read the serve-unix profile's declared run grants from deno.json. */
-export async function readServeUnixRunGrants(cwd: string): Promise<string[]> {
-  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
-  const parsed = JSON.parse(raw) as {
-    permissions?: { "serve-unix"?: { run?: unknown } };
-  };
-  const run = parsed.permissions?.["serve-unix"]?.run;
-  if (!Array.isArray(run) || !run.every((r) => typeof r === "string")) {
-    throw new Error(
-      `serve-unix permission profile in ${cwd}/deno.json has no run grant list`,
-    );
-  }
-  return run;
 }
 
 /** Validate the selected executable and carry that same path into exact grants. */
@@ -226,62 +201,16 @@ export async function rustupHomeReadGrant(
 }
 
 /**
- * Derive the --allow-net grant for the external memory MCP endpoint from its
- * configured URL. The endpoint host is operator-private, so it must never be
- * committed to deno.json's net lists; like the `unix:<socket>` grant above, it
- * is resolved at launch and appended to the explicit --allow-net. Returns null
- * when no endpoint is configured (recall disabled — no grant to add); throws on
- * a malformed value so misconfiguration surfaces at `dyfj start`, not as a
- * NotCapable deep inside a recall turn.
- */
-export function memoryMcpNetGrant(url: string | undefined): string | null {
-  if (url === undefined || url === "") return null;
-  // Same rule the runtime enforces at config resolution: https everywhere,
-  // plain http only to loopback — never grant a destination that would carry
-  // the token in cleartext.
-  assertSecureMemoryUrl(url);
-  const parsed = new URL(url);
-  const port = parsed.port !== ""
-    ? parsed.port
-    : parsed.protocol === "http:"
-    ? "80"
-    : "443";
-  return `${parsed.hostname}:${port}`;
-}
-
-/**
- * Resolve the memory MCP net grant the way the spawned runtime will resolve
- * the URL itself: ambient environment first (--env-file does NOT override
- * already-set process env, and the child inherits ours), then `<cwd>/.env`.
- * Anything else lets the two diverge — recall configured without its grant, or
- * a grant for the wrong host. No value anywhere means no grant (recall stays
- * disabled).
- */
-export async function readMemoryMcpNetGrant(
-  cwd: string,
-  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
-  env: Env = processEnv,
-): Promise<string | null> {
-  // Any DEFINED ambient value is authoritative — including empty: --env-file
-  // does not fill an explicitly empty inherited var, so the child sees "" and
-  // disables recall; granting the .env host anyway would be an unnecessary
-  // grant with no consumer.
-  return memoryMcpNetGrant(
-    await readLauncherEnvVar(cwd, "DYFJ_MEMORY_MCP_URL", readTextFile, env),
-  );
-}
-
-/**
  * Load the `[secrets]` config the SAME way the spawned child will locate it, so
  * the launcher's `--allow-run` grant matches the resolver the runtime actually
  * invokes. The config file lives at `$DYFJ_ROOT/config.toml` (else
- * `$HOME/.dyfj/config.toml`). The child reads `--env-file=.env`, which only
- * supplies a var that is NOT already in the ambient environment — so `DYFJ_ROOT`
+ * `$HOME/.dyfj/config.toml`). The child's environment fills a var from `.env`
+ * only when it is NOT already in the ambient environment — so `DYFJ_ROOT`
  * is taken from `.env` ONLY when it is ambiently UNSET. An ambient empty string
  * (`DYFJ_ROOT=""`) is left as-is and treated as absent by `configFilePath`,
- * exactly as the child sees it (its `--env-file` cannot override the empty
- * value). Reading `.env` on `""` too would make the launcher and child pick
- * different configs and mis-grant `--allow-run`.
+ * exactly as the child sees it (`.env` cannot override the empty value).
+ * Reading `.env` on `""` too would make the launcher and child pick different
+ * configs and mis-grant `--allow-run`.
  */
 export async function readLauncherSecretsConfig(
   cwd: string,
@@ -323,17 +252,42 @@ export async function readLauncherMcpServersConfig(
   );
 }
 
-/** Read the serve-unix profile's declared net grants from deno.json. */
-export async function readServeUnixNetGrants(cwd: string): Promise<string[]> {
-  const raw = await defaultReadTextFile(`${cwd}/deno.json`);
-  const parsed = JSON.parse(raw) as {
-    permissions?: { "serve-unix"?: { net?: unknown } };
+/** `[network] allow` from the same child-visible config.toml. */
+export async function readLauncherNetworkAllow(
+  cwd: string,
+  readTextFile: (path: string) => Promise<string> = defaultReadTextFile,
+  env: Env = processEnv,
+  parseToml?: (raw: string) =>
+    | Record<string, unknown>
+    | Promise<Record<string, unknown>>,
+): Promise<string[]> {
+  const root = await readLauncherEnvVar(cwd, "DYFJ_ROOT", readTextFile, env);
+  const home = env.get("HOME");
+  const configEnv = {
+    get: (name: string): string | undefined =>
+      name === "DYFJ_ROOT" ? root : name === "HOME" ? home : undefined,
   };
-  const net = parsed.permissions?.["serve-unix"]?.net;
-  if (!Array.isArray(net) || !net.every((n) => typeof n === "string")) {
-    throw new Error(
-      `serve-unix permission profile in ${cwd}/deno.json has no net grant list`,
-    );
-  }
-  return net;
+  return loadNetworkAllow({ env: configEnv, readTextFile, parseToml });
+}
+
+/**
+ * The runtime's `deno run` args, built from its composed policy: the net list
+ * is the policy's plus the socket, the run list is the policy's, and the env
+ * list is the policy's when it adds `[secrets].inherit_env` names to the
+ * profile's (else the profile's own, through -P). The in-code guards read the
+ * same policy, so the permission flags and the guards cannot drift.
+ */
+export function buildRuntimeArgs(
+  policy: RuntimePolicy,
+  socketPath: string,
+  autostarted = false,
+): string[] {
+  return buildServeUnixArgs(
+    [...policy.net],
+    socketPath,
+    null,
+    [...policy.run],
+    policy.env.length > SERVE_UNIX_ENV_GRANTS.length ? [...policy.env] : null,
+    autostarted,
+  );
 }

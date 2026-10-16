@@ -11,10 +11,23 @@ import {
   type MemorySearchDiagnostic,
   recallRequestInit,
 } from "./memory-search.ts";
+import { composeRuntimePolicy } from "../../config/mod.ts";
+
 import {
   type LoopbackHttp,
   startLoopbackHttp,
 } from "../../../testing/servers/mcp-server.ts";
+
+/** Recall under the policy composed from its own endpoint, as the engine composes it. */
+const recallFor = (
+  config: Parameters<typeof buildMemorySearch>[0],
+  onDiagnostic?: Parameters<typeof buildMemorySearch>[1],
+) =>
+  buildMemorySearch(
+    config,
+    onDiagnostic,
+    composeRuntimePolicy({ memoryMcpUrl: config.url }),
+  );
 
 const FIXTURE_TOOL = "fixture-search";
 
@@ -153,7 +166,7 @@ test(
     });
 
     try {
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
       );
@@ -194,7 +207,7 @@ test(
     const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
-      const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
+      const recall = recallFor({ url: http.url, tool: FIXTURE_TOOL });
       assertEquals(
         await assertResolvesWithin(recall("slow-tool-needle"), 8_000),
         "match:slow-tool-needle",
@@ -216,7 +229,7 @@ test(
     const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL },
         () => new Promise<never>(() => {}),
       );
@@ -251,7 +264,7 @@ test(
     });
 
     try {
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
       );
@@ -298,7 +311,7 @@ test(
     });
 
     try {
-      const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
+      const recall = recallFor({ url: http.url, tool: FIXTURE_TOOL });
       await assertRejectsWithin(recall("stalled-probe-needle"), 7_000);
     } finally {
       releaseProbe();
@@ -341,7 +354,7 @@ test(
     let recallPromise: Promise<string> | undefined;
 
     try {
-      const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
+      const recall = recallFor({ url: http.url, tool: FIXTURE_TOOL });
       recallPromise = recall("stalled-initialize-needle");
       await assertRejectsWithin(recallPromise, 7_000);
     } finally {
@@ -390,7 +403,7 @@ test(
     });
 
     try {
-      const controlRecall = buildMemorySearch({
+      const controlRecall = recallFor({
         url: http.url,
         tool: FIXTURE_TOOL,
       });
@@ -399,7 +412,7 @@ test(
         "match:control-needle",
       );
       corruptHeader = true;
-      const mismatchRecall = buildMemorySearch({
+      const mismatchRecall = recallFor({
         url: http.url,
         tool: FIXTURE_TOOL,
       });
@@ -456,7 +469,7 @@ test(
           });
         });
         try {
-          const recall = buildMemorySearch({
+          const recall = recallFor({
             url: source.url,
             tool: FIXTURE_TOOL,
             token: tokenConfig.token,
@@ -514,7 +527,7 @@ test(
     });
 
     try {
-      const recall = buildMemorySearch({ url: http.url, tool: FIXTURE_TOOL });
+      const recall = recallFor({ url: http.url, tool: FIXTURE_TOOL });
       await assertRejectsWithin(recall("broken-stream-needle"), 32_000);
     } finally {
       await mcp.close();
@@ -560,7 +573,7 @@ test(
     const http = await startLoopbackHttp((request) => mcp.fetch(request));
 
     try {
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL, token },
         (diagnostic) => diagnostics.push(diagnostic),
       );
@@ -641,7 +654,7 @@ test(
         }
         return originalNormalize.call(value, form);
       };
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL, token: sensitiveValue },
         (diagnostic) => diagnostics.push(diagnostic),
       );
@@ -691,7 +704,7 @@ test(
 
     try {
       http = await startLoopbackHttp((request) => mcp.fetch(request));
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
       );
@@ -726,7 +739,7 @@ test(
 
     try {
       http = await startLoopbackHttp((request) => mcp.fetch(request));
-      const recall = buildMemorySearch(
+      const recall = recallFor(
         { url: http.url, tool: FIXTURE_TOOL },
         (diagnostic) => diagnostics.push(diagnostic),
       );

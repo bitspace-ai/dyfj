@@ -29,6 +29,13 @@ import {
   startAcpSession,
 } from "./acp-client.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
+import { composeRuntimePolicy, type RuntimePolicy } from "./config/mod.ts";
+
+/** The base run policy plus `commands`, for tests that start other binaries. */
+function allowing(...commands: string[]): RuntimePolicy {
+  const base = composeRuntimePolicy();
+  return { ...base, run: [...base.run, ...commands] };
+}
 
 function fixtureProfile(
   overrides: Partial<AcpExecutionProfile> = {},
@@ -228,6 +235,7 @@ async function expectContainedFailure(input: {
           ? () => controller.abort()
           : undefined,
         confirmPermission: input.confirmPermission,
+        runPolicy: allowing("/bin/bash"),
       }),
       {
         name: "AcpRunnerError",
@@ -252,6 +260,7 @@ describe("runAcpAgent", () => {
             command: "/private/tmp/dyfj-acp-command-does-not-exist",
           }),
           prompt: "unused",
+          runPolicy: allowing("/private/tmp/dyfj-acp-command-does-not-exist"),
         }),
       (error: unknown) =>
         error instanceof Error &&
@@ -265,6 +274,9 @@ describe("runAcpAgent", () => {
       () =>
         assertProcessGroupSignaler(
           "/private/tmp/dyfj-process-group-signaler-does-not-exist",
+          undefined,
+          undefined,
+          allowing("/private/tmp/dyfj-process-group-signaler-does-not-exist"),
         ),
       (error: unknown) =>
         error instanceof Error &&
@@ -275,7 +287,12 @@ describe("runAcpAgent", () => {
   it("maps a probe child that cannot start to the fixed diagnostic", async () => {
     // A NUL in the command makes the spawn throw synchronously.
     const error = await assertRejectsWithFields(
-      assertProcessGroupSignaler("/bin/kill", 500, ["/bin/sle\0ep", "30"]),
+      assertProcessGroupSignaler(
+        "/bin/kill",
+        500,
+        ["/bin/sle\0ep", "30"],
+        allowing("/bin/sle\0ep"),
+      ),
       { phase: "spawn" },
     );
     assert.strictEqual(
@@ -293,7 +310,13 @@ describe("runAcpAgent", () => {
       );
       await chmod(signaler, 0o700);
       await assert.rejects(
-        () => assertProcessGroupSignaler(signaler),
+        () =>
+          assertProcessGroupSignaler(
+            signaler,
+            undefined,
+            undefined,
+            allowing(signaler),
+          ),
         (error: unknown) =>
           error instanceof Error &&
           error.message.includes("ACP process-group signaling is unavailable"),
@@ -309,6 +332,7 @@ describe("runAcpAgent", () => {
         ["-0", "--", "-1"],
         500,
         "/private/tmp/dyfj-process-group-signaler-does-not-exist",
+        allowing("/private/tmp/dyfj-process-group-signaler-does-not-exist"),
       ),
       { phase: "terminate" },
     );

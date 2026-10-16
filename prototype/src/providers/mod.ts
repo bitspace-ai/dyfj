@@ -35,6 +35,7 @@ export {
   HostedProviderCredentialMissingError,
   ProviderAuthenticationError,
   ProviderContextExceededError,
+  ProviderEgressRefusedError,
   ProviderFailureError,
   type ProviderFailureKind,
   ProviderModelNotFoundError,

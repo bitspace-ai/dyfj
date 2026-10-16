@@ -39,10 +39,15 @@
  * that memory is separate work.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { constants as osConstants } from "node:os";
 import process from "node:process";
 import type { Readable } from "node:stream";
+import {
+  baseRuntimePolicy,
+  guardedSpawn,
+  type RuntimePolicy,
+} from "../../config/mod.ts";
 
 /** How a timed-out command's process group ended up after the stop. */
 export type GroupStop =
@@ -96,6 +101,12 @@ export interface BoundedOptions {
   /** How long the pipes may stay open after the stop before reads are cut. */
   drainMs?: number;
   stopGroup?: GroupStopper;
+  /**
+   * The run policy the command is checked against before it starts; the base
+   * policy (which holds `bash` and `git`) when absent. A refused command
+   * throws `SpawnRefusedError`, as a command that cannot start throws.
+   */
+  policy?: RuntimePolicy;
 }
 
 // With the defaults a timed-out call returns about 2.5 s after its deadline
@@ -145,14 +156,20 @@ export type SignalOutcome = "delivered" | "gone" | "failed" | "unavailable";
 export type SignalRunner = (
   args: string[],
   signal?: AbortSignal,
+  policy?: RuntimePolicy,
 ) => Promise<SignalOutcome>;
 
 /**
- * Default signal runner: `/bin/kill`, spawned through `node:child_process`. An
- * abort kills a run still in flight and reports it failed; an already-aborted
- * signal starts nothing.
+ * Default signal runner: `/bin/kill`, spawned through the guarded spawn under
+ * `policy` (the base policy, which holds `/bin/kill`, when absent). A refused
+ * or failed start reports unavailable. An abort kills a run still in flight
+ * and reports it failed; an already-aborted signal starts nothing.
  */
-export const runKill: SignalRunner = (args, signal) =>
+export const runKill: SignalRunner = (
+  args,
+  signal,
+  policy = baseRuntimePolicy(),
+) =>
   new Promise<SignalOutcome>((resolve) => {
     if (signal?.aborted) {
       resolve("failed");
@@ -160,7 +177,7 @@ export const runKill: SignalRunner = (args, signal) =>
     }
     let child: ChildProcess;
     try {
-      child = spawn(KILL_COMMAND, args, {
+      child = guardedSpawn(policy)(KILL_COMMAND, args, {
         stdio: ["ignore", "ignore", "pipe"],
         env: { LC_ALL: "C" },
       });
@@ -365,17 +382,28 @@ export async function runBounded(
 ): Promise<BoundedResult> {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const drainMs = options.drainMs ?? DEFAULT_DRAIN_MS;
-  const stopGroup = options.stopGroup ?? stopProcessGroup;
+  // The default stopper's /bin/kill runs under the same policy as the
+  // command, so a policy that refuses /bin/kill refuses the timeout kill too.
+  const stopGroup = options.stopGroup ??
+    (options.policy === undefined
+      ? stopProcessGroup
+      : createGroupStopper((args, signal) =>
+        runKill(args, signal, options.policy)
+      ));
   // Windows has no POSIX process groups; there only the direct child is
   // killed and the result says so.
   const useGroup = process.platform !== "win32";
-  const child = spawn(request.command, [...request.args], {
-    cwd: request.cwd,
-    env: request.env,
-    stdio: ["ignore", "pipe", "pipe"],
-    // Own process group: the leader's pid is the group id the stop signals.
-    detached: useGroup,
-  });
+  const child = guardedSpawn(options.policy ?? baseRuntimePolicy())(
+    request.command,
+    [...request.args],
+    {
+      cwd: request.cwd,
+      env: request.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      // Own process group: the leader's pid is the group id the stop signals.
+      detached: useGroup,
+    },
+  );
   await started(child);
   // Later errors (a failed kill) have no caller to tell.
   child.on("error", () => {});

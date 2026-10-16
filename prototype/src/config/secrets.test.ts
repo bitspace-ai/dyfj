@@ -11,6 +11,7 @@ import {
   unavailableSecretPointers,
 } from "./secrets.ts";
 import type { MutableEnv, SecretsConfig } from "./mod.ts";
+import { composeRuntimePolicy } from "./runtime-policy.ts";
 
 /** A mutable in-memory env matching the resolver's read/write surface. */
 function fakeEnv(initial: Record<string, string> = {}): MutableEnv & {
@@ -541,15 +542,29 @@ describe("unavailableSecretPointers", () => {
   });
 });
 
+/** The base run policy plus `binary`. */
+function holding(binary: string) {
+  return composeRuntimePolicy({
+    secrets: { command: [binary], inheritEnv: [] } as never,
+  });
+}
+
 describe("runSecretCommand when the command cannot start", () => {
-  // The unit lane holds no run grant, so every spawn is refused by the
-  // runtime; a missing binary fails the same way. Either way the answer must
-  // be the value-free reason at once, not a wait for the timeout, and the
-  // refusal's own text (which names the path) must not reach it.
+  // The run policy holds the missing binary, so the guard admits it and the
+  // spawn itself fails, as it does for a binary the runtime does not grant.
+  // Either way the answer must be the value-free reason at once, not a wait
+  // for the timeout, and the failure's own text (which names the path) must
+  // not reach it.
   it("reports the value-free reason at once, not a timeout, and leaks no path", async () => {
     const privatePath = ["", "no", "such", "resolver-xyz", "op"].join("/");
     const started = performance.now();
-    const res = await runSecretCommand([privatePath, "read"], "pointer", 5_000);
+    const res = await runSecretCommand(
+      [privatePath, "read"],
+      "pointer",
+      5_000,
+      undefined,
+      holding(privatePath),
+    );
     const elapsed = performance.now() - started;
     assert.strictEqual(res.ok, false);
     assert.strictEqual(
@@ -567,9 +582,22 @@ describe("runSecretCommand when the command cannot start", () => {
 
   it("returns a fresh failure each time, so one caller cannot alter the next", async () => {
     const command = [["", "no", "such", "resolver-xyz", "op"].join("/")];
-    const first = await runSecretCommand(command, "pointer", 5_000);
+    const policy = holding(command[0]);
+    const first = await runSecretCommand(
+      command,
+      "pointer",
+      5_000,
+      undefined,
+      policy,
+    );
     (first as { reason?: string }).reason = "mutated";
-    const second = await runSecretCommand(command, "pointer", 5_000);
+    const second = await runSecretCommand(
+      command,
+      "pointer",
+      5_000,
+      undefined,
+      policy,
+    );
     assert.strictEqual(
       second.reason,
       "cannot run the resolver command (not found or not permitted)",

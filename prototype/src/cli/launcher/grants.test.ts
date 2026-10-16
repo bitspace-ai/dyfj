@@ -11,16 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { memoryMcpNetGrant, SERVE_UNIX_ENV_GRANTS } from "../../config/mod.ts";
 import {
   buildServeUnixArgs,
-  memoryMcpNetGrant,
   nodeRunGrant,
   readLauncherMcpServersConfig,
   readLauncherSecretsConfig,
-  readMemoryMcpNetGrant,
-  readServeUnixEnvGrants,
-  readServeUnixNetGrants,
-  readServeUnixRunGrants,
   rustupHomeReadGrant,
   toolchainReadGrant,
 } from "./grants.ts";
@@ -47,7 +43,6 @@ describe("runtime lifecycle commands", () => {
       "--no-prompt",
       "-P=serve-unix",
       "--allow-net=127.0.0.1:3306,localhost:18080,unix:/run/wb.sock",
-      "--env-file=.env",
       "src/server/main.ts",
     ]);
   });
@@ -225,176 +220,49 @@ describe("runtime lifecycle commands", () => {
     );
   });
 
-  const noAmbient = { get: () => undefined };
-
-  it("readMemoryMcpNetGrant resolves the grant from the runtime env file", async () => {
-    const grant = await readMemoryMcpNetGrant(
-      "/proto",
-      (path) => {
-        assert.strictEqual(path, "/proto/.env");
-        return Promise.resolve(
-          "DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n",
-        );
-      },
-      noAmbient,
-    );
-    assert.strictEqual(grant, "memory.example:443");
-  });
-
-  it("readMemoryMcpNetGrant is null without an env file or endpoint", async () => {
-    assert.strictEqual(
-      await readMemoryMcpNetGrant(
-        "/proto",
-        () => Promise.reject(new Error("ENOENT")),
-        noAmbient,
-      ),
-      null,
-    );
-    assert.strictEqual(
-      await readMemoryMcpNetGrant(
-        "/proto",
-        () => Promise.resolve("OTHER=1\n"),
-        noAmbient,
-      ),
-      null,
-    );
-  });
-
-  it("readMemoryMcpNetGrant prefers ambient env, as --env-file does in the child", async () => {
-    // The spawned runtime inherits ambient env and --env-file does not override
-    // it; the launcher must grant the host the child will actually dial.
-    const grant = await readMemoryMcpNetGrant(
-      "/proto",
-      () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://stale.example/mcp\n"),
-      {
-        get: (
-          name,
-        ) => (name === "DYFJ_MEMORY_MCP_URL"
-          ? "https://ambient.example/mcp"
-          : undefined),
-      },
-    );
-    assert.strictEqual(grant, "ambient.example:443");
-  });
-
-  it("readMemoryMcpNetGrant treats an empty ambient value as authoritative", async () => {
-    // --env-file does not fill an explicitly empty inherited var: the child
-    // sees "" and disables recall, so no grant may be derived from the file.
-    const grant = await readMemoryMcpNetGrant(
-      "/proto",
-      () => Promise.resolve("DYFJ_MEMORY_MCP_URL=https://memory.example/mcp\n"),
-      { get: (name) => (name === "DYFJ_MEMORY_MCP_URL" ? "" : undefined) },
-    );
-    assert.strictEqual(grant, null);
-  });
-
-  it("every dyfj CLI surface may read the memory endpoint URL", async () => {
-    // The launcher derives the child's net grant from DYFJ_MEMORY_MCP_URL, so
-    // all three CLI permission surfaces (profile, compiled binary, launcher
-    // script) must stay in lockstep on the env grant.
+  it("the CLI may read every name it forwards to the runtime", async () => {
+    // The launcher starts the runtime with an explicit env holding the
+    // policy's names and the operator's [secrets].inherit_env names, so every
+    // CLI surface that can start a runtime reads the whole environment.
     const raw = await readFile("deno.json", "utf8");
     const parsed = JSON.parse(raw) as {
       tasks: Record<string, string>;
       permissions: Record<string, { env?: string[] | boolean }>;
     };
-    const cliEnv = parsed.permissions["cli"].env;
-    assert.ok(Array.isArray(cliEnv));
-    assert.deepStrictEqual(
-      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !cliEnv.includes(item)),
-      [],
+    assert.strictEqual(parsed.permissions["cli"].env, true);
+    assert.match(parsed.tasks["compile-cli"], / --allow-env /);
+    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
+    const runDenoCli = launcher.slice(launcher.indexOf("run_deno_cli() {"));
+    assert.match(
+      runDenoCli.slice(0, runDenoCli.indexOf("\n}")),
+      /--allow-env \\/,
     );
-    assert.deepStrictEqual(
-      ["DYFJ_NODE_PATH"].filter((item) => !cliEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !cliEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !cliEnv.includes(item)),
-      [],
-    );
-    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
-      ?.[1]?.split(",") ?? [];
-    assert.deepStrictEqual(
-      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !compileEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_NODE_PATH"].filter((item) => !compileEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) =>
-        !compileEnv.includes(item)
-      ),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !compileEnv.includes(item)),
-      [],
-    );
+  });
+
+  it("the launcher's probes still read the names they route on", async () => {
+    // The parse check and status probe never start a runtime, so they keep
+    // the narrow list, which must name what routing and config lookup read.
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
     assert.deepStrictEqual(
-      ["DYFJ_MEMORY_MCP_URL"].filter((item) => !launcherEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_NODE_PATH"].filter((item) => !launcherEnv.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) =>
-        !launcherEnv.includes(item)
-      ),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !launcherEnv.includes(item)),
+      [
+        "DYFJ_MEMORY_MCP_URL",
+        "DYFJ_NODE_PATH",
+        "DYFJ_CODEX_TOOLCHAIN_PATH",
+        "DYFJ_CODEX_RUSTUP_HOME",
+        "DYFJ_ROOT",
+      ].filter((item) => !launcherEnv.includes(item)),
       [],
     );
   });
 
   it("the internal autostart marker is not ambient process state", async () => {
-    const raw = await readFile("deno.json", "utf8");
-    const parsed = JSON.parse(raw) as {
-      tasks: Record<string, string>;
-      permissions: Record<string, { env?: string[] | boolean }>;
-    };
-    const cliEnv = parsed.permissions["cli"].env;
-    assert.ok(Array.isArray(cliEnv));
-    assert.ok(!cliEnv.includes("DYFJ_AUTOSTARTED"));
-    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
-      ?.[1]?.split(",") ?? [];
-    assert.ok(!compileEnv.includes("DYFJ_AUTOSTARTED"));
+    assert.ok(!SERVE_UNIX_ENV_GRANTS.includes("DYFJ_AUTOSTARTED"));
     const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
     const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
       ?.split(",") ?? [];
     assert.ok(!launcherEnv.includes("DYFJ_AUTOSTARTED"));
-  });
-
-  it("readServeUnixNetGrants reads the real profile", async () => {
-    // Guards the runtime read path: the serve-unix profile must keep a
-    // declared net grant list for dyfj start to reproduce.
-    const grants = await readServeUnixNetGrants(".");
-    assert.ok(grants.length > 0);
-    assert.deepStrictEqual(
-      ["127.0.0.1:3306"].filter((item) => !grants.includes(item)),
-      [],
-    );
-  });
-});
-
-describe("readServeUnixRunGrants", () => {
-  it("reads the serve-unix run grant list from the real profile", async () => {
-    const grants = await readServeUnixRunGrants(".");
-    assert.deepStrictEqual(
-      ["bash"].filter((item) => !grants.includes(item)),
-      [],
-    );
   });
 });
 
@@ -631,100 +499,11 @@ describe("rustupHomeReadGrant", () => {
 });
 
 describe("Codex toolchain runtime grant", () => {
-  it("the serve-unix profile may read the operator selection", async () => {
-    const envGrants = await readServeUnixEnvGrants(".");
+  it("the runtime policy may read the operator selection", () => {
     assert.deepStrictEqual(
-      ["DYFJ_CODEX_TOOLCHAIN_PATH"].filter((item) => !envGrants.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["DYFJ_CODEX_RUSTUP_HOME"].filter((item) => !envGrants.includes(item)),
-      [],
-    );
-  });
-});
-
-describe("readServeUnixEnvGrants", () => {
-  it("reads the serve-unix env grant list from the real profile", async () => {
-    const grants = await readServeUnixEnvGrants(".");
-    assert.deepStrictEqual(
-      ["PATH"].filter((item) => !grants.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["HOME"].filter((item) => !grants.includes(item)),
-      [],
-    );
-  });
-});
-
-describe("serve-unix profile readers", () => {
-  it("reject a profile without a string grant list", async () => {
-    const readers = [
-      ["net", readServeUnixNetGrants],
-      ["run", readServeUnixRunGrants],
-      ["env", readServeUnixEnvGrants],
-    ] as const;
-    const root = await mkdtemp(join(tmpdir(), "tmp-"));
-    try {
-      for (const [kind, read] of readers) {
-        for (
-          const profile of [
-            {},
-            { permissions: {} },
-            { permissions: { "serve-unix": {} } },
-            { permissions: { "serve-unix": { [kind]: "x" } } },
-            { permissions: { "serve-unix": { [kind]: ["x", 1] } } },
-          ]
-        ) {
-          await writeFile(`${root}/deno.json`, JSON.stringify(profile));
-          await assert.rejects(
-            () => read(root),
-            (error: unknown) =>
-              error instanceof Error &&
-              error.message ===
-                `serve-unix permission profile in ${root}/deno.json has no ${kind} grant list`,
-          );
-        }
-        await writeFile(
-          `${root}/deno.json`,
-          JSON.stringify({ permissions: { "serve-unix": { [kind]: ["x"] } } }),
-        );
-        assert.deepStrictEqual(await read(root), ["x"]);
-      }
-    } finally {
-      await rm(root, { recursive: true });
-    }
-  });
-});
-
-describe("every dyfj CLI surface may read DYFJ_ROOT", () => {
-  it("profile, compiled binary, and launcher stay in lockstep on DYFJ_ROOT", async () => {
-    // dyfj start reads ~/.dyfj/config.toml (located via DYFJ_ROOT) to derive the
-    // child's --allow-run resolver-binary grant, so all three CLI permission
-    // surfaces must grant DYFJ_ROOT.
-    const raw = await readFile("deno.json", "utf8");
-    const parsed = JSON.parse(raw) as {
-      tasks: Record<string, string>;
-      permissions: Record<string, { env?: string[] | boolean }>;
-    };
-    const cliEnv = parsed.permissions["cli"].env;
-    assert.ok(Array.isArray(cliEnv));
-    assert.deepStrictEqual(
-      ["DYFJ_ROOT"].filter((item) => !cliEnv.includes(item)),
-      [],
-    );
-    const compileEnv = parsed.tasks["compile-cli"].match(/--allow-env=(\S+)/)
-      ?.[1]?.split(",") ?? [];
-    assert.deepStrictEqual(
-      ["DYFJ_ROOT"].filter((item) => !compileEnv.includes(item)),
-      [],
-    );
-    const launcher = await readFile("scripts/dyfj-launcher.sh", "utf8");
-    const launcherEnv = launcher.match(/printf '%s' '([^']+)'/)?.[1]
-      ?.split(",") ?? [];
-    assert.deepStrictEqual(
-      ["DYFJ_ROOT"].filter((item) => !launcherEnv.includes(item)),
+      ["DYFJ_CODEX_TOOLCHAIN_PATH", "DYFJ_CODEX_RUSTUP_HOME"].filter((item) =>
+        !SERVE_UNIX_ENV_GRANTS.includes(item)
+      ),
       [],
     );
   });
