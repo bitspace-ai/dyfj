@@ -39,6 +39,7 @@
     "packageJson": {
       "dependencies": [
         "npm:@types/node@26.6.5",
+        "npm:acorn@8.19.0",
         "npm:typescript@7.0.2"
       ]
     },

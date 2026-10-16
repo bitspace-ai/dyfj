@@ -4,10 +4,10 @@
  * Implements `specs/01-architecture.md` sections 3-4 in ratchet mode:
  *
  * - Builds the module graph of every module under the roots listed in
- *   `arch-layers.json` with `deno info` (`arch-imports-graph.ts`): static
- *   imports, re-exports, and dynamic `import()`, with type-only edges marked.
- *   Every dynamic `import()`, literal or not, comes from `deno lint` with the
- *   plugin in `arch-imports-lint-plugin.ts`.
+ *   `arch-layers.json` (`arch-imports-graph.ts`, parsing with Node's type
+ *   stripping and `acorn` in `arch-imports-parse.ts`): static imports,
+ *   re-exports, and dynamic `import()`, with type-only edges marked, and
+ *   every dynamic `import()`, literal or not.
  *   Test files and test fixtures are not part of the graph and are skipped.
  * - Maps every module to a unit (target directory) and layer. Modules that have
  *   not moved yet are mapped by name in `arch-layers.json`; a module the rules
@@ -32,20 +32,19 @@
  * - Report only, never failing: deep imports that bypass a directory's
  *   `mod.ts`, and the size report (`arch-imports-size.ts`).
  *
- * Usage (from the repository root; `--deno=<path>` selects the Deno binary
- * that runs `deno info`, default `deno` on PATH):
- *   deno run --allow-read=. --allow-run=deno scripts/arch-imports.ts
- *   deno run --allow-read=. --allow-run=deno \
- *     --allow-write=scripts/arch-imports-baseline.json \
- *     scripts/arch-imports.ts --write-baseline
+ * Usage (from the repository root, on Node):
+ *   node scripts/arch-imports.ts
+ *   node scripts/arch-imports.ts --write-baseline
  */
 
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   type Edge,
   loadModuleGraph,
   type ModuleGraph,
 } from "./arch-imports-graph.ts";
-import { repoRootFromMeta } from "./scan-lib.ts";
 import {
   formatSizeReport,
   hardLimitViolations,
@@ -674,46 +673,46 @@ const LABEL = "arch.imports";
 const RULES_PATH = "scripts/arch-layers.json";
 const CYCLES_PATH = "scripts/arch-cycles.json";
 const BASELINE_PATH = "scripts/arch-imports-baseline.json";
-const LINT_CONFIG_PATH = "scripts/arch-imports-lint.json";
 const SIZE_EXCEPTIONS_PATH = "scripts/arch-size-exceptions.json";
 
-async function collectSources(
-  root: string,
-  rules: LayerRules,
-): Promise<Map<string, string>> {
+function collectSources(root: string, rules: LayerRules): Map<string, string> {
   const sources = new Map<string, string>();
-  const walk = async (relative: string) => {
-    let entries: Deno.DirEntry[];
+  const walk = (relative: string) => {
+    let entries;
     try {
-      entries = [...Deno.readDirSync(`${root}/${relative}`)];
+      entries = readdirSync(`${root}/${relative}`, { withFileTypes: true });
     } catch (error) {
-      if (error instanceof Deno.errors.NotFound) return;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
       throw error;
     }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const path = `${relative}/${entry.name}`;
-      if (entry.isDirectory) {
-        if (entry.name !== "node_modules") await walk(path);
+      if (entry.isDirectory()) {
+        if (entry.name !== "node_modules") walk(path);
       } else if (
-        entry.isFile && path.endsWith(".ts") &&
+        entry.isFile() && path.endsWith(".ts") &&
         !rules.exclude.some((suffix) => path.endsWith(suffix))
       ) {
-        sources.set(path, await Deno.readTextFile(`${root}/${path}`));
+        sources.set(path, readFileSync(`${root}/${path}`, "utf8"));
       }
     }
   };
-  for (const scanRoot of rules.roots) await walk(scanRoot);
+  for (const scanRoot of rules.roots) walk(scanRoot);
   return sources;
 }
 
 function existsIn(root: string): (path: string) => boolean {
   return (path) => {
     try {
-      return Deno.statSync(`${root}/${path}`).isFile;
+      return statSync(`${root}/${path}`).isFile();
     } catch {
       return false;
     }
   };
+}
+
+function readJson(root: string, path: string): unknown {
+  return JSON.parse(readFileSync(`${root}/${path}`, "utf8"));
 }
 
 export function renderBaseline(baseline: Baseline): string {
@@ -724,48 +723,31 @@ export function countBaseline(baseline: Baseline): number {
   return flattenBaseline(baseline).length;
 }
 
-export async function main(
-  args: readonly string[],
-  root: string,
-): Promise<number> {
+export function main(args: readonly string[], root: string): number {
   const write = args.includes("--write-baseline");
-  const denoArg = args.find((a) => a.startsWith("--deno="));
-  if (args.some((a) => a !== "--write-baseline" && a !== denoArg)) {
-    console.error(`${LABEL}: usage: [--deno=<path>] [--write-baseline]`);
+  if (args.some((a) => a !== "--write-baseline")) {
+    console.error(`${LABEL}: usage: [--write-baseline]`);
     return 64;
   }
-  const rules = JSON.parse(
-    await Deno.readTextFile(`${root}/${RULES_PATH}`),
-  ) as LayerRules;
-  const allowList = JSON.parse(
-    await Deno.readTextFile(`${root}/${CYCLES_PATH}`),
-  ) as CycleAllowEntry[];
-  const baseline = JSON.parse(
-    await Deno.readTextFile(`${root}/${BASELINE_PATH}`),
-  ) as Baseline;
-  const sources = await collectSources(root, rules);
-  const modules = [...sources.keys()];
-  const graph = await loadModuleGraph(
-    root,
-    new Set(modules),
-    denoArg?.slice("--deno=".length) ?? "deno",
-    `${root}/${LINT_CONFIG_PATH}`,
-  );
+  const rules = readJson(root, RULES_PATH) as LayerRules;
+  const allowList = readJson(root, CYCLES_PATH) as CycleAllowEntry[];
+  const baseline = readJson(root, BASELINE_PATH) as Baseline;
+  const sources = collectSources(root, rules);
+  const exists = existsIn(root);
+  const graph = loadModuleGraph(root, sources, exists);
   const result = analyze({
-    modules,
+    modules: [...sources.keys()],
     graph,
     rules,
     allowList,
     baseline,
     declaredEnvKeys: new Set(CONFIG_SCHEMA.map((spec) => spec.envVar)),
-    exists: existsIn(root),
+    exists,
   });
 
   console.log(`${LABEL}: size report against the targets (non-failing)`);
   for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
-  const sizeExceptions: unknown = JSON.parse(
-    await Deno.readTextFile(`${root}/${SIZE_EXCEPTIONS_PATH}`),
-  );
+  const sizeExceptions = readJson(root, SIZE_EXCEPTIONS_PATH);
   const sizeErrors = hardLimitViolations(
     sources,
     (path) => {
@@ -785,10 +767,7 @@ export async function main(
     return 1;
   }
   if (write) {
-    await Deno.writeTextFile(
-      `${root}/${BASELINE_PATH}`,
-      renderBaseline(result.current),
-    );
+    writeFileSync(`${root}/${BASELINE_PATH}`, renderBaseline(result.current));
     console.log(
       `${LABEL}: wrote baseline (${countBaseline(result.current)} entries)`,
     );
@@ -813,5 +792,6 @@ export async function main(
 }
 
 if (import.meta.main) {
-  Deno.exit(await main(Deno.args, repoRootFromMeta().replace(/\/$/, "")));
+  const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+  process.exitCode = main(process.argv.slice(2), root);
 }

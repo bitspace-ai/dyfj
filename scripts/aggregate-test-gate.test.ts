@@ -457,13 +457,9 @@ Deno.test("the arch.imports lane runs the checker read-only", () => {
   assertEquals(lane.checkId, "test.aggregate");
   assertEquals(lane.cwd, "/repo");
   assertStringIncludes(lane.args.join(" "), "scripts/arch-imports.ts");
-  assertEquals(lane.args.some((arg) => arg.startsWith("--allow-write")), false);
-  // `deno info` runs through the selected Deno binary, granted by path.
-  assertEquals(
-    lane.args.includes("--allow-run=/fixtures/runtime/deno"),
-    true,
-  );
-  assertEquals(lane.args.includes("--deno=/fixtures/runtime/deno"), true);
+  // On Node, with no runtime permission flags to grant anything.
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, ["scripts/arch-imports.ts"]);
   assertEquals(FAST_LANE_LABELS.includes(lane.label), true);
 });
 

@@ -353,7 +353,7 @@ git config core.hooksPath .githooks
 ```
 
 The repository root is one npm workspace: the root `package.json` holds the
-tooling devDependencies (`typescript` and `@types/node`) and names `prototype`
+tooling devDependencies (`typescript`, `@types/node` and `acorn`) and names `prototype`
 as its member, whose `package.json` holds the runtime dependencies. `npm ci`
 at the repository root installs both into the root `node_modules`, exactly as
 the committed root `package-lock.json` records it. npm is the only resolver of
@@ -1352,15 +1352,21 @@ hung Node test file. Under `node --test`, tests run without a permission
 sandbox.
 
 `arch.imports` (`scripts/arch-imports.ts`, reported under `test.aggregate`)
-builds the module graph of every module under `prototype/src`,
-`prototype/mcp`, `prototype/scripts`, and `prototype/diagnostics` with `deno info --json` (`scripts/arch-imports-graph.ts`, offline and
-config-free): static imports, re-exports, and dynamic `import()`, with
-type-only edges (`import type`, `export type`, `typeof import()`) marked.
-Because deno's graph merges a dynamic import into a static import of the same
-module and has no entry for a non-literal `import()`, every `import()`
-expression is also collected with `deno lint` and a repository-owned plugin
-(`scripts/arch-imports-lint-plugin.ts`, configured by
-`scripts/arch-imports-lint.json`). It maps each module to the target layer in
+runs on Node (`node scripts/arch-imports.ts`, decision D32) and builds the
+module graph of every module under `prototype/src`, `prototype/mcp`,
+`prototype/scripts`, and `prototype/diagnostics` itself
+(`scripts/arch-imports-graph.ts`): static imports, re-exports, and dynamic
+`import()`, with type-only edges (`import type`, `export type`,
+`typeof import()`) marked. Each module is parsed by
+`scripts/arch-imports-parse.ts`: Node's `module.stripTypeScriptTypes` in strip
+mode, which keeps every offset, line and column, then `acorn`, an exact-pinned
+root devDependency, as ESTree. What stripping erases in type positions
+(type-only imports, import types, string literal types) is read back from the
+erased spans with `acorn`'s tokenizer. A relative specifier resolves to the
+file it names, extension included; a bare or `node:` specifier is a package
+or builtin, not an edge. Every `import()` expression, literal or not, is also
+reported on its own, so a dynamic import of a module the same file imports
+statically is still seen. It maps each module to the target layer in
 `specs/01-architecture.md` §3 (modules not yet moved are mapped by name in
 `scripts/arch-layers.json`) and checks import cycles, upward and non-listed
 same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
@@ -1378,8 +1384,8 @@ The write rule sees statements written as literals. The `mysql2` confinement
 keeps any other SQL inside `store/`, and inside it the readers get only a
 handle that runs a single `SELECT`, so only the journal can write. Each
 exemption is named, with its justification, in `scripts/arch-layers.json`. A
-module that fails to load or a local import that does not resolve fails the
-lane. It runs in ratchet mode: current violations are recorded in
+module that fails to parse, or a local import that does not resolve to a
+file or names a module that fails to parse, fails the lane. It runs in ratchet mode: current violations are recorded in
 `scripts/arch-imports-baseline.json`, and the lane fails on any violation not in
 that baseline and on any baseline entry that no longer occurs, so the baseline
 can only shrink. An intentional cycle is allowed only by a named entry in
@@ -1398,7 +1404,9 @@ until it is removed (`scripts/arch-imports-size.ts`; its function spans come
 from a small best-effort tokenizer, and a function is matched by its file and
 reported name). After an intended reduction, regenerate the
 baseline with
-`deno run --allow-read=. --allow-run=deno --allow-write=scripts/arch-imports-baseline.json scripts/arch-imports.ts --write-baseline`.
+`node scripts/arch-imports.ts --write-baseline`. The checker's own tests
+(`scripts/arch-imports.test.ts`) register with `node:test` and run in the
+"Architecture import rules tests" lane through `scripts/run-node-test-files.ts`.
 
 `runtime.neutral` (`scripts/runtime-neutral.ts`, reported under
 `test.aggregate`) is the ratchet for the move of the TypeScript tier from Deno

@@ -1,35 +1,30 @@
 /**
- * Module-graph loader for the arch.imports lane, built on `deno info --json`
- * (the deno_graph parser Deno itself uses) instead of a hand-written lexer.
+ * Module-graph builder for the arch.imports lane, on Node (decision D32).
  *
- * Every scanned module becomes a root of one `deno info` call, through a
- * generated `data:` module that side-effect-imports each file, so modules no
- * entry point reaches are still covered. The call is offline (`--no-remote`,
- * `--no-npm`) and config-free; only local `file:` edges are kept, and package
- * specifiers that do not resolve offline are ignored. Local specifiers must
- * carry their extension, as everywhere in the prototype; an extensionless one
- * does not resolve and fails the lane.
+ * Each scanned module is parsed by `arch-imports-parse.ts` (Node's type
+ * stripping, then `acorn`), and its import references are resolved here:
+ * - a relative specifier resolves to the file it names, extension included,
+ *   as everywhere in the prototype. One that names no file, or names a
+ *   scanned module that failed to parse, is an error: an extensionless
+ *   specifier does not resolve and fails the lane;
+ * - a bare specifier is a package and a `node:` specifier a builtin; neither
+ *   is a graph edge, and both are reported as package imports.
+ * Only edges between scanned modules are kept.
  *
- * What deno_graph reports, and how it maps onto edges:
- * - A dependency with a `code` entry is a value edge; one with only a `type`
- *   entry (`import type`, `export type`, `typeof import(...)`) is type-only. An
- *   import whose named bindings all carry an inline `type` modifier still loads
- *   the module under `verbatimModuleSyntax`, so deno_graph reports a value edge.
- * - `isDynamic` is set only when every value import of that specifier is a
- *   dynamic `import()`, so deno_graph alone would miss a dynamic import of a
- *   module the same file also imports statically, and it has no entry for an
- *   `import()` whose argument is not a string literal.
- *
- * Dynamic imports therefore come from a second parser pass: `deno lint` with
- * the repository-owned plugin `arch-imports-lint-plugin.ts`, which reports
- * every `import()` expression in the AST, literal or not. The same pass
- * reports direct process-environment access, `DYFJ_*` key literals, package
- * import specifiers, and string literals that begin with an SQL write
- * statement. Both passes use Deno's own parser; neither is a hand-written
- * lexer.
+ * Imports of one specifier in a module make one edge:
+ * - it is a value edge when any of them loads the module at runtime, and
+ *   type-only when all are `import type`, `export type ... from` or
+ *   `typeof import(...)`. An import whose named bindings all carry an inline
+ *   `type` modifier still loads the module under `verbatimModuleSyntax`, so it
+ *   is a value edge;
+ * - it is dynamic only when every value import is a dynamic `import()`.
+ * Every `import()` expression, literal or not, is also reported on its own as
+ * a dynamic import, so a dynamic import of a module the same file imports
+ * statically is still seen.
  */
 
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { moduleFacts } from "./arch-imports-parse.ts";
 
 export interface Edge {
   from: string;
@@ -37,27 +32,6 @@ export interface Edge {
   kind: "static" | "dynamic";
   typeOnly: boolean;
   line: number;
-}
-
-export interface DenoInfoDependency {
-  specifier: string;
-  code?: { specifier?: string; error?: string; span?: DenoInfoSpan };
-  type?: { specifier?: string; error?: string; span?: DenoInfoSpan };
-  isDynamic?: boolean;
-}
-
-interface DenoInfoSpan {
-  start: { line: number; character: number };
-}
-
-export interface DenoInfoModule {
-  specifier: string;
-  error?: string;
-  dependencies?: DenoInfoDependency[];
-}
-
-export interface DenoInfoOutput {
-  modules: DenoInfoModule[];
 }
 
 export interface DynamicImport {
@@ -106,7 +80,7 @@ export interface ModuleGraph {
   packageImports: PackageImport[];
   /** Every string literal that begins with an SQL write statement. */
   sqlWrites: SqlWrite[];
-  /** Scanned modules that failed to load, and local imports that did not
+  /** Scanned modules that failed to parse, and local imports that did not
    * resolve to a file. Any entry fails the lane. */
   errors: string[];
 }
@@ -115,273 +89,113 @@ function isLocalSpecifier(specifier: string): boolean {
   return specifier.startsWith("./") || specifier.startsWith("../");
 }
 
+const byLine = (d: { from: string; line: number }) =>
+  `${d.from}:${String(d.line).padStart(8, "0")}`;
+
 /**
- * Turns `deno info --json` output into repo-relative edges between scanned
- * modules. Edges to files outside `modules` (tests, JSON, other packages) are
- * dropped.
+ * Builds the graph of the scanned modules (`sources`: repo-relative path →
+ * source). `exists` says whether a repo-relative path is a file.
  */
-export function graphFromDenoInfo(
-  info: DenoInfoOutput,
+export function loadModuleGraph(
   root: string,
-  modules: ReadonlySet<string>,
+  sources: ReadonlyMap<string, string>,
+  exists: (path: string) => boolean,
 ): ModuleGraph {
-  const relative = (url: string | undefined): string | undefined => {
-    if (url === undefined || !url.startsWith("file:")) return undefined;
-    const path = fileURLToPath(url);
-    return path.startsWith(`${root}/`)
-      ? path.slice(root.length + 1)
-      : undefined;
-  };
-  const failed = new Set(
-    info.modules.filter((m) => m.error !== undefined).map((m) => m.specifier),
-  );
-  const edges: Edge[] = [];
+  const facts = new Map<string, ReturnType<typeof moduleFacts>>();
   const errors: string[] = [];
-  for (const module of info.modules) {
-    const from = relative(module.specifier);
-    if (from === undefined || !modules.has(from)) continue;
-    if (module.error !== undefined) {
-      // A module that does not parse has no dependencies to report.
-      errors.push(`module failed to load: ${from}`);
-      continue;
-    }
-    for (const dep of module.dependencies ?? []) {
-      const resolved = dep.code ?? dep.type;
-      const line = (resolved?.span?.start.line ?? -1) + 1;
-      const target = dep.code?.specifier ?? dep.type?.specifier;
-      if (
-        isLocalSpecifier(dep.specifier) &&
-        (target === undefined || resolved?.error !== undefined ||
-          failed.has(target))
-      ) {
-        errors.push(
-          `unresolved local import "${dep.specifier}" at ${from}:${line}`,
-        );
-        continue;
-      }
-      const to = relative(target);
-      if (to === undefined || !modules.has(to)) continue;
-      edges.push({
-        from,
-        to,
-        kind: dep.isDynamic === true ? "dynamic" : "static",
-        typeOnly: dep.code === undefined,
-        line,
-      });
+  for (const [path, source] of sources) {
+    try {
+      facts.set(path, moduleFacts(source));
+    } catch {
+      // A module that does not parse has no imports to report.
+      errors.push(`module failed to load: ${path}`);
     }
   }
-  const byKey = (e: Edge) => `${e.from} -> ${e.to} ${e.kind}`;
-  edges.sort((a, b) => byKey(a).localeCompare(byKey(b)));
-  return {
-    edges,
+  const resolve = (from: string, specifier: string): string | undefined => {
+    const target = fileURLToPath(
+      new URL(specifier, pathToFileURL(`${root}/${from}`)),
+    );
+    return target.startsWith(`${root}/`)
+      ? target.slice(root.length + 1)
+      : undefined;
+  };
+
+  const graph: ModuleGraph = {
+    edges: [],
     dynamicImports: [],
     envAccesses: [],
     dyfjKeys: [],
     packageImports: [],
     sqlWrites: [],
-    errors: errors.sort(),
+    errors,
   };
-}
+  for (const [from, module] of facts) {
+    const bySpecifier = new Map<string, typeof module.imports>();
+    for (const reference of module.imports) {
+      const list = bySpecifier.get(reference.specifier) ?? [];
+      list.push(reference);
+      bySpecifier.set(reference.specifier, list);
+    }
+    for (const [specifier, references] of bySpecifier) {
+      if (!isLocalSpecifier(specifier)) continue;
+      const values = references.filter((r) => !r.typeOnly);
+      const line = (values[0] ?? references[0]!).line;
+      const to = resolve(from, specifier);
+      if (
+        to === undefined || !exists(to) ||
+        (sources.has(to) && !facts.has(to))
+      ) {
+        errors.push(
+          `unresolved local import "${specifier}" at ${from}:${line}`,
+        );
+        continue;
+      }
+      if (!sources.has(to)) continue;
+      graph.edges.push({
+        from,
+        to,
+        kind: values.length > 0 && values.every((r) => r.dynamic)
+          ? "dynamic"
+          : "static",
+        typeOnly: values.length === 0,
+        line,
+      });
+    }
+    for (const d of module.dynamicImports) {
+      if (d.specifier === null) {
+        graph.dynamicImports.push({ from, to: null, line: d.line });
+        continue;
+      }
+      if (!isLocalSpecifier(d.specifier)) continue;
+      const to = resolve(from, d.specifier);
+      if (to !== undefined && sources.has(to)) {
+        graph.dynamicImports.push({ from, to, line: d.line });
+      }
+    }
+    for (const a of module.envAccesses) graph.envAccesses.push({ from, ...a });
+    for (const k of module.dyfjKeys) graph.dyfjKeys.push({ from, ...k });
+    for (const p of module.packageImports) {
+      graph.packageImports.push({ from, ...p });
+    }
+    for (const w of module.sqlWrites) graph.sqlWrites.push({ from, ...w });
+  }
 
-export interface DenoLintOutput {
-  diagnostics: {
-    filename: string;
-    code: string;
-    message: string;
-    range: { start: { line: number } };
-  }[];
-  errors: { file_path?: string; message?: string }[];
-}
-
-const DYNAMIC_IMPORT_RULE = "arch-imports/dynamic-import";
-
-/** Turns the plugin's `deno lint --json` diagnostics into dynamic imports. */
-export function dynamicImportsFromLint(
-  lint: DenoLintOutput,
-  root: string,
-  modules: ReadonlySet<string>,
-): { dynamicImports: DynamicImport[]; errors: string[] } {
-  const dynamicImports: DynamicImport[] = [];
-  const relative = (name: string) => {
-    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
-    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
-  };
-  // Same wording as the graph pass, so one broken module is one error.
-  const errors = lint.errors.map((e) =>
-    `module failed to load: ${relative(e.file_path ?? "?")}`
+  const edgeKey = (e: Edge) => `${e.from} -> ${e.to} ${e.kind}`;
+  graph.edges.sort((a, b) => edgeKey(a).localeCompare(edgeKey(b)));
+  const dynamicKey = (d: DynamicImport) => `${d.from}:${d.line}`;
+  graph.dynamicImports.sort((a, b) =>
+    dynamicKey(a).localeCompare(dynamicKey(b))
   );
-  for (const d of lint.diagnostics) {
-    if (d.code !== DYNAMIC_IMPORT_RULE) continue;
-    // Deno reports the file as a `file:` URL.
-    const from = relative(d.filename);
-    const file = `${root}/${from}`;
-    if (!modules.has(from)) continue;
-    const line = d.range.start.line;
-    if (d.message === "non-literal") {
-      dynamicImports.push({ from, to: null, line });
-      continue;
-    }
-    const specifier = d.message.slice("literal:".length);
-    if (!isLocalSpecifier(specifier)) continue;
-    const target = fileURLToPath(new URL(specifier, pathToFileURL(file)));
-    const to = target.startsWith(`${root}/`)
-      ? target.slice(root.length + 1)
-      : undefined;
-    if (to !== undefined && modules.has(to)) {
-      dynamicImports.push({ from, to, line });
-    }
+  for (
+    const list of [
+      graph.envAccesses,
+      graph.dyfjKeys,
+      graph.packageImports,
+      graph.sqlWrites,
+    ] as { from: string; line: number }[][]
+  ) {
+    list.sort((a, b) => byLine(a).localeCompare(byLine(b)));
   }
-  const key = (d: DynamicImport) => `${d.from}:${d.line}`;
-  dynamicImports.sort((a, b) => key(a).localeCompare(key(b)));
-  return { dynamicImports, errors };
-}
-
-const ENV_ACCESS_RULE = "arch-imports/env-access";
-const DYFJ_KEY_RULE = "arch-imports/dyfj-key";
-
-/** Turns the plugin's env diagnostics into env accesses and `DYFJ_*` keys. */
-export function envFromLint(
-  lint: DenoLintOutput,
-  root: string,
-  modules: ReadonlySet<string>,
-): { envAccesses: EnvAccess[]; dyfjKeys: DyfjKey[] } {
-  const relative = (name: string) => {
-    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
-    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
-  };
-  const envAccesses: EnvAccess[] = [];
-  const dyfjKeys: DyfjKey[] = [];
-  for (const d of lint.diagnostics) {
-    const from = relative(d.filename);
-    if (!modules.has(from)) continue;
-    const line = d.range.start.line;
-    if (d.code === ENV_ACCESS_RULE) {
-      envAccesses.push({ from, line, via: d.message });
-    } else if (d.code === DYFJ_KEY_RULE) {
-      dyfjKeys.push({ from, line, key: d.message });
-    }
-  }
-  const key = (d: { from: string; line: number }) =>
-    `${d.from}:${String(d.line).padStart(8, "0")}`;
-  envAccesses.sort((a, b) => key(a).localeCompare(key(b)));
-  dyfjKeys.sort((a, b) => key(a).localeCompare(key(b)));
-  return { envAccesses, dyfjKeys };
-}
-
-const PACKAGE_IMPORT_RULE = "arch-imports/package-import";
-const SQL_WRITE_RULE = "arch-imports/sql-write";
-
-/** Turns the plugin's package and SQL diagnostics into graph entries. */
-export function packagesAndSqlFromLint(
-  lint: DenoLintOutput,
-  root: string,
-  modules: ReadonlySet<string>,
-): { packageImports: PackageImport[]; sqlWrites: SqlWrite[] } {
-  const relative = (name: string) => {
-    const file = name.startsWith("file:") ? fileURLToPath(name) : name;
-    return file.startsWith(`${root}/`) ? file.slice(root.length + 1) : file;
-  };
-  const packageImports: PackageImport[] = [];
-  const sqlWrites: SqlWrite[] = [];
-  for (const d of lint.diagnostics) {
-    const from = relative(d.filename);
-    if (!modules.has(from)) continue;
-    const line = d.range.start.line;
-    if (d.code === PACKAGE_IMPORT_RULE) {
-      packageImports.push({ from, line, specifier: d.message });
-    } else if (d.code === SQL_WRITE_RULE) {
-      sqlWrites.push({ from, line, statement: d.message });
-    }
-  }
-  const key = (d: { from: string; line: number }) =>
-    `${d.from}:${String(d.line).padStart(8, "0")}`;
-  packageImports.sort((a, b) => key(a).localeCompare(key(b)));
-  sqlWrites.sort((a, b) => key(a).localeCompare(key(b)));
-  return { packageImports, sqlWrites };
-}
-
-/** The `data:` root module that side-effect-imports every scanned module. */
-export function rootModuleUrl(root: string, modules: Iterable<string>): string {
-  const lines = [...modules].sort().map((path) =>
-    `import ${JSON.stringify(pathToFileURL(`${root}/${path}`).href)};`
-  );
-  return `data:application/typescript,${encodeURIComponent(lines.join("\n"))}`;
-}
-
-async function runDeno(
-  denoExecutable: string,
-  args: string[],
-  cwd: string,
-  okCodes: number[],
-): Promise<unknown> {
-  const output = await new Deno.Command(denoExecutable, {
-    args,
-    cwd,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  if (!okCodes.includes(output.code)) {
-    throw new Error(`deno ${args[0]} exited with code ${output.code}`);
-  }
-  return JSON.parse(new TextDecoder().decode(output.stdout));
-}
-
-/**
- * Builds the graph with `deno info` and collects dynamic imports with
- * `deno lint` and the plugin configured in `lintConfig`.
- */
-export async function loadModuleGraph(
-  root: string,
-  modules: ReadonlySet<string>,
-  denoExecutable: string,
-  lintConfig: string,
-): Promise<ModuleGraph> {
-  const [info, lint] = await Promise.all([
-    runDeno(
-      denoExecutable,
-      [
-        "info",
-        "--json",
-        "--quiet",
-        "--no-config",
-        "--no-lock",
-        "--no-remote",
-        "--no-npm",
-        rootModuleUrl(root, modules),
-      ],
-      root,
-      [0],
-    ),
-    // `deno lint` exits 1 when it reports diagnostics, which it always does
-    // for a tree with dynamic imports.
-    runDeno(
-      denoExecutable,
-      [
-        "lint",
-        "--json",
-        "--quiet",
-        `--config=${lintConfig}`,
-        ...[...modules].sort().map((path) => `${root}/${path}`),
-      ],
-      root,
-      [0, 1],
-    ),
-  ]);
-  const graph = graphFromDenoInfo(info as DenoInfoOutput, root, modules);
-  const dynamic = dynamicImportsFromLint(lint as DenoLintOutput, root, modules);
-  const env = envFromLint(lint as DenoLintOutput, root, modules);
-  const packagesAndSql = packagesAndSqlFromLint(
-    lint as DenoLintOutput,
-    root,
-    modules,
-  );
-  return {
-    edges: graph.edges,
-    dynamicImports: dynamic.dynamicImports,
-    envAccesses: env.envAccesses,
-    dyfjKeys: env.dyfjKeys,
-    packageImports: packagesAndSql.packageImports,
-    sqlWrites: packagesAndSql.sqlWrites,
-    errors: [...new Set([...graph.errors, ...dynamic.errors])].sort(),
-  };
+  graph.errors = [...new Set(errors)].sort();
+  return graph;
 }
