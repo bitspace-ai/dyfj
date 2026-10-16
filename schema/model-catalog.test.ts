@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { test } from "node:test";
 import {
   assertSchemaApplyPlan,
   queryRows,
@@ -31,7 +32,7 @@ async function assertLocalModelStates(
   }
 }
 
-Deno.test("fresh catalog activates Qwen and deactivates DeepSeek", async () => {
+test("fresh catalog activates Qwen and deactivates DeepSeek", async () => {
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
   await withSchemaRepository(
@@ -43,7 +44,7 @@ Deno.test("fresh catalog activates Qwen and deactivates DeepSeek", async () => {
   );
 });
 
-Deno.test("historical replay plus migrations selects Qwen and preserves operator deactivation", async () => {
+test("historical replay plus migrations selects Qwen and preserves operator deactivation", async () => {
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
   const migration = "migrations/014_models_qwen36_llama_cpp_local_default.sql";

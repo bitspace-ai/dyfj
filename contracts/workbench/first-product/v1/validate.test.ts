@@ -11,6 +11,7 @@
  * operator acceptance, or any behaviour of the implemented Workbench.
  */
 
+import { test } from "node:test";
 import {
   type Corpus,
   CORPUS_SCHEMA_ID,
@@ -450,7 +451,7 @@ const BASELINE_FIXTURE = "first-product-baseline.json";
 // never a hand-picked subset and never the fixtures' own `proves` claims.
 const REQUIRED_NEGATIVE_RULES: readonly string[] = RULE_IDS;
 
-Deno.test("the package exposes one version and one corpus schema", async () => {
+test("the package exposes one version and one corpus schema", async () => {
   const registry = await loadSchemaRegistry();
   assertEquals(
     PACKAGE_VERSION,
@@ -475,7 +476,7 @@ Deno.test("the package exposes one version and one corpus schema", async () => {
   );
 });
 
-Deno.test("every schema reference resolves within the package", async () => {
+test("every schema reference resolves within the package", async () => {
   const registry = await loadSchemaRegistry();
   const references: string[] = [];
   const walk = (node: unknown): void => {
@@ -504,7 +505,7 @@ Deno.test("every schema reference resolves within the package", async () => {
   }
 });
 
-Deno.test("positive fixtures are accepted in full", async () => {
+test("positive fixtures are accepted in full", async () => {
   const registry = await loadSchemaRegistry();
   const fixtures = await loadFixtures("positive");
   assert(fixtures.length > 0, "no positive fixtures were found");
@@ -528,7 +529,7 @@ Deno.test("positive fixtures are accepted in full", async () => {
   }
 });
 
-Deno.test("negative-directory fixtures meet their declared outcome", async () => {
+test("negative-directory fixtures meet their declared outcome", async () => {
   const registry = await loadSchemaRegistry();
   const fixtures = await loadFixtures("negative");
   assert(fixtures.length > 0, "no negative fixtures were found");
@@ -566,7 +567,7 @@ Deno.test("negative-directory fixtures meet their declared outcome", async () =>
   }
 });
 
-Deno.test("the baseline carries a witness for every acceptance-matrix item", async () => {
+test("the baseline carries a witness for every acceptance-matrix item", async () => {
   const positives = await loadFixtures("positive");
   const baseline = positives.find((fixture) =>
     fixture.name === BASELINE_FIXTURE
@@ -616,7 +617,7 @@ const WITHDRAWALS: readonly [string, (corpus: Corpus) => void][] = [
   }],
 ];
 
-Deno.test("the acceptance matrix is decided by witnesses, not by the proves list", async () => {
+test("the acceptance matrix is decided by witnesses, not by the proves list", async () => {
   // The regression this guards: `proves` is a claim the fixture makes about
   // itself, so it survives the deletion of the very thing it claims. If the
   // matrix were read off that list, every one of these mutilated corpora
@@ -652,7 +653,7 @@ Deno.test("the acceptance matrix is decided by witnesses, not by the proves list
   }
 });
 
-Deno.test("negative fixtures cover every required rejection", async () => {
+test("negative fixtures cover every required rejection", async () => {
   const negatives = await loadFixtures("negative");
   const rejected = new Set<string>();
   for (const fixture of negatives) {
@@ -664,7 +665,7 @@ Deno.test("negative fixtures cover every required rejection", async () => {
   }
 });
 
-Deno.test("structural findings suppress cross-document conclusions", async () => {
+test("structural findings suppress cross-document conclusions", async () => {
   const registry = await loadSchemaRegistry();
   const malformed = {
     schema: "dyfj.workbench.first-product.corpus/v1",
@@ -696,7 +697,7 @@ Deno.test("structural findings suppress cross-document conclusions", async () =>
   );
 });
 
-Deno.test("diagnostics stay value-free for untrusted fixture content", async () => {
+test("diagnostics stay value-free for untrusted fixture content", async () => {
   const registry = await loadSchemaRegistry();
   const fixtures = [
     ...await loadFixtures("positive"),
@@ -754,7 +755,7 @@ function thrownMessage(action: () => unknown): string {
   return "";
 }
 
-Deno.test("the schema evaluator fails closed on an unsupported keyword", () => {
+test("the schema evaluator fails closed on an unsupported keyword", () => {
   // The keyword sits on a property the validated instance carries, so this
   // covers the actively evaluated path.
   const message = thrownMessage(() => {
@@ -775,7 +776,7 @@ Deno.test("the schema evaluator fails closed on an unsupported keyword", () => {
   );
 });
 
-Deno.test("a dormant unsupported keyword fails closed at construction", () => {
+test("a dormant unsupported keyword fails closed at construction", () => {
   // The regression this guards: evaluation only visits schema nodes the
   // instance reaches, so an unsupported keyword inside an optional property
   // used to pass unnoticed for every document that omits that property.
@@ -799,7 +800,7 @@ Deno.test("a dormant unsupported keyword fails closed at construction", () => {
   );
 });
 
-Deno.test("the authoring audit reaches every schema-bearing location", () => {
+test("the authoring audit reaches every schema-bearing location", () => {
   const offender = { type: "string", format: "email" };
   const locations: [string, Record<string, unknown>][] = [
     ["$defs", { $defs: { spare: offender } }],
@@ -825,7 +826,7 @@ Deno.test("the authoring audit reaches every schema-bearing location", () => {
   }
 });
 
-Deno.test("const and enum values are data, not schemas", () => {
+test("const and enum values are data, not schemas", () => {
   // A const or enum member may hold any JSON, including an object whose keys
   // look like keywords. Auditing them as schemas would reject valid authoring.
   const registry = new SchemaRegistry([
@@ -848,7 +849,7 @@ Deno.test("const and enum values are data, not schemas", () => {
   );
 });
 
-Deno.test("malformed supported-keyword values fail closed", () => {
+test("malformed supported-keyword values fail closed", () => {
   // Each of these would otherwise be skipped at evaluation time and assert
   // nothing at all, so the schema would silently stop checking.
   const malformed: [string, Record<string, unknown>][] = [
@@ -882,7 +883,7 @@ Deno.test("malformed supported-keyword values fail closed", () => {
   }
 });
 
-Deno.test("the package schemas pass the authoring audit", async () => {
+test("the package schemas pass the authoring audit", async () => {
   // loadSchemaRegistry constructs the registry, and construction audits; this
   // states the property directly so a regression names itself.
   const registry = await loadSchemaRegistry();
