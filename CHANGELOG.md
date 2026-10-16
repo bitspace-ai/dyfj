@@ -60,8 +60,39 @@ README are tracked separately in its Revision history section.
   `scripts/retired-surface-scan.test.ts`, which the scan allowlists as it does
   its own source. The tests moved to `node:test` and `node:assert/strict`, the
   ported files left the `tsconfig.json` exclusion list, and the
-  `runtime.neutral` count fell from 1007 references in 44 files to 735 in 33.
+  `runtime.neutral` count fell from 932 references in 44 files to 660 in 33.
 
+- **The `arch.imports` lane runs on Node, with its own parser and import
+  graph.** The gate runs it as `node scripts/arch-imports.ts`; regenerate the
+  baseline with `node scripts/arch-imports.ts --write-baseline`, and the
+  `--deno=<path>` flag is gone. Each module's TypeScript is stripped with
+  Node's `module.stripTypeScriptTypes` in strip mode, which keeps every
+  offset, line and column, then parsed as ESTree with `acorn` 8.19.0, a new
+  exact-pinned root devDependency
+  (`scripts/arch-imports-parse.ts`). Type-only imports, import types and
+  string literal types, which stripping erases, are read back from the erased
+  spans with `acorn`'s tokenizer. The lane's visitors (dynamic imports,
+  environment access, `DYFJ_*` keys, package specifiers, SQL write literals)
+  are ported from the `deno lint` plugin to a walk over that tree, with the
+  same reports and positions. `scripts/arch-imports-graph.ts` resolves
+  specifiers itself in place of `deno info`: a relative specifier resolves to
+  the file it names, and one that names no file, or names a module that fails
+  to parse, fails the lane. A bare or `node:` specifier is a package, not an
+  edge. Over the whole tree and every test fixture, the Node implementation
+  produced the same edges, findings and diagnostics as the Deno one. The
+  plugin (`scripts/arch-imports-lint-plugin.ts`) and its config
+  (`scripts/arch-imports-lint.json`) are deleted. The checker's tests register
+  with `node:test` and run in a new "Architecture import rules tests" lane
+  through `scripts/run-node-test-files.ts`, not in the orchestration
+  `deno test` lane. They gain cases for stripping parity, the warning hook,
+  type-position findings, inline `type` modifiers against `import type` and
+  `export type` statements, malformed modules (a syntax error, an
+  unterminated specifier, a non-literal static specifier, a malformed type),
+  and an import of a module that does not parse. The
+  experimental-feature warning from type stripping is dropped for that call
+  only. `runtime.neutral` falls from 1007 to 932 references; what remains in
+  the checker names the runtime's env object, which the env rule forbids
+  reading. The checker's files leave the tsconfig `exclude` list.
 - **Eight diagnostic, example and helper tasks run on Node, as npm
   scripts.** `context-size-response`, `model-response-modes`,
   `structured-output`, `structured-output-streaming`,

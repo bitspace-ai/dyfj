@@ -1,3 +1,7 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import process from "node:process";
+import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   type AnalysisInput,
@@ -9,6 +13,7 @@ import {
   stronglyConnected,
 } from "./arch-imports.ts";
 import { loadModuleGraph } from "./arch-imports-graph.ts";
+import { stripTypes } from "./arch-imports-parse.ts";
 import {
   functionSpans,
   hardLimitViolations,
@@ -17,25 +22,17 @@ import {
 } from "./arch-imports-size.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
+  assert.deepStrictEqual(actual, expected);
 }
 
 function assertSome(values: readonly string[], needle: string): void {
-  if (!values.some((value) => value.includes(needle))) {
-    throw new Error(
-      `Expected an entry including ${needle}, got ${JSON.stringify(values)}`,
-    );
-  }
+  assert.ok(
+    values.some((value) => value.includes(needle)),
+    `Expected an entry including ${needle}, got ${JSON.stringify(values)}`,
+  );
 }
 
 const S = "prototype/src";
-const LINT_CONFIG = fileURLToPath(
-  new URL("./arch-imports-lint.json", import.meta.url),
-);
 
 const RULES: LayerRules = {
   roots: [S],
@@ -95,10 +92,9 @@ const EMPTY: Baseline = {
   sqlWrites: [],
 };
 
-// Writes the fixture modules into a temporary tree and builds the graph with
-// the real `deno info`, so every rule test runs through the same parser as the
-// lane.
-async function run(
+// Builds the graph of the fixture modules with the lane's own parser, so every
+// rule test runs through the same code as the lane.
+function run(
   files: Record<string, string>,
   overrides: Partial<AnalysisInput> = {},
 ) {
@@ -107,35 +103,22 @@ async function run(
     [`${S}/store/journal.ts`]: "export {};",
     ...files,
   };
-  const root = Deno.realPathSync(await Deno.makeTempDir());
-  try {
-    for (const [path, source] of Object.entries(all)) {
-      await Deno.mkdir(`${root}/${path.split("/").slice(0, -1).join("/")}`, {
-        recursive: true,
-      });
-      await Deno.writeTextFile(`${root}/${path}`, source);
-    }
-    const modules = Object.keys(all);
-    const graph = await loadModuleGraph(
-      root,
-      new Set(modules),
-      Deno.execPath(),
-      LINT_CONFIG,
-    );
-    const extra = new Set(["prototype/testing/cycle.test.ts"]);
-    return analyze({
-      modules,
-      graph,
-      rules: RULES,
-      allowList: [],
-      baseline: EMPTY,
-      declaredEnvKeys: new Set(["DYFJ_DECLARED"]),
-      exists: (path) => path in all || extra.has(path),
-      ...overrides,
-    });
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
+  const graph = loadModuleGraph(
+    "/repo",
+    new Map(Object.entries(all)),
+    (path) => path in all,
+  );
+  const extra = new Set(["prototype/testing/cycle.test.ts"]);
+  return analyze({
+    modules: Object.keys(all),
+    graph,
+    rules: RULES,
+    allowList: [],
+    baseline: EMPTY,
+    declaredEnvKeys: new Set(["DYFJ_DECLARED"]),
+    exists: (path) => path in all || extra.has(path),
+    ...overrides,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +127,7 @@ async function run(
 const E = `${S}/engine`;
 
 function edgesFrom(
-  result: Awaited<ReturnType<typeof run>>,
+  result: ReturnType<typeof run>,
   from: string,
 ): [string, string, boolean][] {
   return result.edges.filter((e) => e.from === from).map((e) => [
@@ -162,8 +145,8 @@ function targets(names: string[]): Record<string, string> {
   );
 }
 
-Deno.test("the graph has static, re-export, type-only, and dynamic edges", async () => {
-  const result = await run({
+test("the graph has static, re-export, type-only, and dynamic edges", () => {
+  const result = run({
     ...targets([
       "a",
       "t",
@@ -207,7 +190,7 @@ Deno.test("the graph has static, re-export, type-only, and dynamic edges", async
   ]);
 });
 
-Deno.test("import-like text outside real imports adds no edges", async () => {
+test("import-like text outside real imports adds no edges", () => {
   // Each case once misled the hand-written lexer this lane used before.
   const names = [
     "comment",
@@ -230,7 +213,7 @@ Deno.test("import-like text outside real imports adds no edges", async () => {
     "ternary",
     "method",
   ];
-  const result = await run({
+  const result = run({
     ...targets(names),
     [`${E}/tricky.ts`]: [
       '// import a from "./comment.ts";',
@@ -274,13 +257,61 @@ Deno.test("import-like text outside real imports adds no edges", async () => {
   ]);
 });
 
-Deno.test("a module that does not parse fails the lane", async () => {
-  const result = await run({ [`${E}/broken.ts`]: "export const = ;" });
+test("a module that does not parse fails the lane", () => {
+  const result = run({ [`${E}/broken.ts`]: "export const = ;" });
   assertEquals(result.errors, [`module failed to load: ${E}/broken.ts`]);
 });
 
-Deno.test("an extensionless local import does not resolve", async () => {
-  const result = await run({
+test("inline type modifiers are value edges; type-only statements are not", () => {
+  const result = run({
+    ...targets([
+      "mixed",
+      "typed",
+      "reexport-inline",
+      "reexport-type",
+      "default-inline",
+    ]),
+    [`${E}/inline.ts`]: [
+      'import { type A, x as B } from "./mixed.ts";',
+      'import type { A as A2 } from "./typed.ts";',
+      'export { type A as A3 } from "./reexport-inline.ts";',
+      'export type { A as A4 } from "./reexport-type.ts";',
+      'import { type default as A5 } from "./default-inline.ts";',
+    ].join("\n"),
+  });
+  assertEquals(result.errors, []);
+  // Under verbatimModuleSyntax a statement with only inline `type`
+  // modifiers still loads its module, so only `import type` and
+  // `export type` statements are type-only.
+  assertEquals(edgesFrom(result, `${E}/inline.ts`), [
+    ["default-inline.ts", "static", false],
+    ["mixed.ts", "static", false],
+    ["reexport-inline.ts", "static", false],
+    ["reexport-type.ts", "static", true],
+    ["typed.ts", "static", true],
+  ]);
+});
+
+test("a malformed module fails the lane by name and is not skipped", () => {
+  const result = run({
+    ...targets(["a"]),
+    [`${E}/syntax.ts`]: "export const = ;",
+    [`${E}/unterminated.ts`]: 'import { x } from "./a.ts;\nexport { x };',
+    [`${E}/non-literal.ts`]: "const name = './a.ts'; import { x } from name;",
+    [`${E}/bad-type.ts`]: "export const y: = 1;",
+    [`${E}/user.ts`]: 'import { x } from "./unterminated.ts";',
+  });
+  assertEquals(result.errors, [
+    `module failed to load: ${E}/bad-type.ts`,
+    `module failed to load: ${E}/non-literal.ts`,
+    `module failed to load: ${E}/syntax.ts`,
+    `module failed to load: ${E}/unterminated.ts`,
+    `unresolved local import "./unterminated.ts" at ${E}/user.ts:1`,
+  ]);
+});
+
+test("an extensionless local import does not resolve", () => {
+  const result = run({
     [`${S}/kernel/a.ts`]: "export const a = 1;",
     [`${S}/engine/x.ts`]: 'import { a } from "../kernel/a";',
     [`${S}/engine/y.ts`]: 'import { a } from "../kernel/a.ts";',
@@ -294,8 +325,8 @@ Deno.test("an extensionless local import does not resolve", async () => {
   );
 });
 
-Deno.test("an unresolved local import and an unmapped module fail", async () => {
-  const result = await run({
+test("an unresolved local import and an unmapped module fail", () => {
+  const result = run({
     [`${S}/kernel/a.ts`]: 'import { gone } from "./gone.ts";',
     [`${S}/mystery.ts`]: "export {};",
   });
@@ -306,8 +337,8 @@ Deno.test("an unresolved local import and an unmapped module fail", async () => 
   );
 });
 
-Deno.test("a name mapping for a module that no longer exists fails", async () => {
-  const result = await run({}, {
+test("a name mapping for a module that no longer exists fails", () => {
+  const result = run({}, {
     rules: {
       ...RULES,
       files: { ...RULES.files, [`${S}/moved-away.ts`]: "store" },
@@ -318,10 +349,77 @@ Deno.test("a name mapping for a module that no longer exists fails", async () =>
   ]);
 });
 
+test("type stripping keeps every offset, line and column", () => {
+  const source = [
+    'import type { T } from "./t.ts";',
+    "export const f = <V,>(value: V, count?: number): V => {",
+    "  const n = count as number;",
+    "  return value satisfies V ? value : (process.env.HOME as V);",
+    "};",
+    "class C { private x?: string; method<W>(w: W): void {} }",
+  ].join("\n");
+  const stripped = stripTypes(source);
+  assertEquals(stripped.length, source.length);
+  // Every character that survives stripping is where it was.
+  for (let i = 0; i < source.length; i++) {
+    if (stripped[i] !== " ") assertEquals(stripped[i], source[i]);
+  }
+  const position = (text: string, needle: string) => {
+    const before = text.slice(0, text.indexOf(needle)).split("\n");
+    return [before.length, before.at(-1)!.length];
+  };
+  for (const needle of ["process.env", "const n", "method", "return"]) {
+    assertEquals(position(stripped, needle), position(source, needle));
+  }
+});
+
+test("type stripping leaves the process warning hook as it found it", () => {
+  const before = process.emitWarning;
+  stripTypes("const x: number = 1;");
+  assert.equal(process.emitWarning, before);
+});
+
+test("findings in type positions survive type stripping", () => {
+  const result = run({
+    ...targets(["star", "multi"]),
+    [`${E}/types.ts`]: [
+      'type K = "DYFJ_TYPED";',
+      'type Q = "INSERT INTO typed";',
+      'import type { env } from "node:process";',
+      'export type * from "./star.ts";',
+      "import type {",
+      "  // a comment inside the erased statement",
+      "  T,",
+      '} from "./multi.ts";',
+      'import type { Pool } from "mysql2";',
+    ].join("\n"),
+  });
+  assertEquals(result.errors, []);
+  assertEquals(edgesFrom(result, `${E}/types.ts`), [
+    ["multi.ts", "static", true],
+    ["star.ts", "static", true],
+  ]);
+  assertEquals(result.current.envKeys, [`${E}/types.ts: DYFJ_TYPED`]);
+  assertEquals(result.current.sqlWrites, [`${E}/types.ts: INSERT INTO`]);
+  assertEquals(result.current.env, [`${E}/types.ts: process.env`]);
+  assertEquals(result.current.packages, [`${E}/types.ts: mysql2`]);
+});
+
+test("an import of a module that does not parse does not resolve", () => {
+  const result = run({
+    [`${E}/broken.ts`]: "export const = ;",
+    [`${E}/user.ts`]: 'import { x } from "./broken.ts";',
+  });
+  assertEquals(result.errors, [
+    `module failed to load: ${E}/broken.ts`,
+    `unresolved local import "./broken.ts" at ${E}/user.ts:1`,
+  ]);
+});
+
 // ---------------------------------------------------------------------------
 // Rule types
 
-Deno.test("Tarjan groups mutually reachable modules", () => {
+test("Tarjan groups mutually reachable modules", () => {
   const adjacency = new Map([
     ["a", ["b"]],
     ["b", ["c"]],
@@ -334,8 +432,8 @@ Deno.test("Tarjan groups mutually reachable modules", () => {
   ]);
 });
 
-Deno.test("an import cycle is a violation, type-only edges included", async () => {
-  const result = await run({
+test("an import cycle is a violation, type-only edges included", () => {
+  const result = run({
     [`${S}/tools/a.ts`]: 'import { b } from "./b.ts";',
     [`${S}/tools/b.ts`]: 'import type { A } from "./a.ts";',
   });
@@ -352,8 +450,8 @@ Deno.test("an import cycle is a violation, type-only edges included", async () =
   ]);
 });
 
-Deno.test("upward and non-listed same-layer edges are layer violations", async () => {
-  const result = await run({
+test("upward and non-listed same-layer edges are layer violations", () => {
+  const result = run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
     [`${S}/providers/p.ts`]: 'import { s } from "../legacy-utils.ts";',
@@ -373,8 +471,8 @@ Deno.test("upward and non-listed same-layer edges are layer violations", async (
   ]);
 });
 
-Deno.test("a types-only same-layer edge fails when it imports values", async () => {
-  const result = await run({
+test("a types-only same-layer edge fails when it imports values", () => {
+  const result = run({
     [`${S}/providers/p.ts`]: "export type P = 1; export const p = 1;",
     [`${S}/context/types.ts`]: 'import type { P } from "../providers/p.ts";',
     [`${S}/context/values.ts`]: 'import { p } from "../providers/p.ts";',
@@ -384,8 +482,8 @@ Deno.test("a types-only same-layer edge fails when it imports values", async () 
   ]);
 });
 
-Deno.test("cli/ may import only its allow-list", async () => {
-  const result = await run({
+test("cli/ may import only its allow-list", () => {
+  const result = run({
     [`${S}/cli/main.ts`]: [
       'import { k } from "../kernel/k.ts";',
       'import { c } from "../extensions/ideas/client.ts";',
@@ -404,8 +502,8 @@ Deno.test("cli/ may import only its allow-list", async () => {
   assertEquals(result.current.layer, []);
 });
 
-Deno.test("only server/ and cli/ may import extensions/, whatever the layer", async () => {
-  const result = await run({
+test("only server/ and cli/ may import extensions/, whatever the layer", () => {
+  const result = run({
     [`${S}/extensions/ideas/mod.ts`]: "export const i = 1;",
     [`${S}/extensions/ideas/client.ts`]: "export const c = 1;",
     [`${S}/extensions/linear/mod.ts`]: 'import { i } from "../ideas/mod.ts";',
@@ -430,8 +528,8 @@ Deno.test("only server/ and cli/ may import extensions/, whatever the layer", as
   assertEquals(result.current.cli, []);
 });
 
-Deno.test("an importOnlyFrom rule must name declared units", async () => {
-  const result = await run({}, {
+test("an importOnlyFrom rule must name declared units", () => {
+  const result = run({}, {
     rules: {
       ...RULES,
       importOnlyFrom: [{ unit: "extensions/*", importers: ["servr"] }],
@@ -440,8 +538,8 @@ Deno.test("an importOnlyFrom rule must name declared units", async () => {
   assertSome(result.errors, "importOnlyFrom rule: unit is not declared: servr");
 });
 
-Deno.test("dynamic local imports are violations; package imports are not", async () => {
-  const result = await run({
+test("dynamic local imports are violations; package imports are not", () => {
+  const result = run({
     [`${S}/engine/e.ts`]: [
       'const { k } = await import("../kernel/k.ts");',
       'const { k: again } = await import("../kernel/k.ts");',
@@ -454,10 +552,10 @@ Deno.test("dynamic local imports are violations; package imports are not", async
   ]);
 });
 
-Deno.test("a dynamic import is a violation even beside a static one", async () => {
+test("a dynamic import is a violation even beside a static one", () => {
   // deno_graph merges these into one static dependency; the lint pass still
   // sees the dynamic import.
-  const result = await run({
+  const result = run({
     [`${S}/engine/e.ts`]: [
       'import { k } from "../kernel/k.ts";',
       'const again = await import("../kernel/k.ts");',
@@ -469,8 +567,8 @@ Deno.test("a dynamic import is a violation even beside a static one", async () =
   ]);
 });
 
-Deno.test("a non-literal dynamic import is a violation", async () => {
-  const result = await run({
+test("a non-literal dynamic import is a violation", () => {
+  const result = run({
     [`${S}/engine/e.ts`]: [
       'const name = "../kernel/k.ts";',
       "const lazy = await import(name);",
@@ -482,9 +580,9 @@ Deno.test("a non-literal dynamic import is a violation", async () => {
   ]);
 });
 
-Deno.test("deep imports past a mod.ts are reported, never failed", async () => {
+test("deep imports past a mod.ts are reported, never failed", () => {
   const baseline: Baseline = EMPTY;
-  const result = await run({
+  const result = run({
     [`${S}/tools/mod.ts`]: 'export { t } from "./t.ts";',
     [`${S}/tools/t.ts`]: "export const t = 1;",
     [`${S}/engine/e.ts`]: 'import { t } from "../tools/t.ts";',
@@ -512,17 +610,17 @@ const ENTRY: CycleAllowEntry = {
   test: "prototype/testing/cycle.test.ts",
 };
 
-Deno.test("an allow-listed cycle passes, including its dynamic edge", async () => {
-  const result = await run(CYCLE, { allowList: [ENTRY] });
+test("an allow-listed cycle passes, including its dynamic edge", () => {
+  const result = run(CYCLE, { allowList: [ENTRY] });
   assertEquals(result.errors, []);
   assertEquals(result.current, EMPTY);
   assertEquals(result.added, []);
 });
 
-Deno.test("an allow-listed cycle still fails layer and cli/ rules", async () => {
+test("an allow-listed cycle still fails layer and cli/ rules", () => {
   const up = `${S}/kernel/k.ts -> ${S}/engine/e.ts`;
   const down = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
-  const result = await run({
+  const result = run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
     [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k.ts");',
   }, {
@@ -534,9 +632,9 @@ Deno.test("an allow-listed cycle still fails layer and cli/ rules", async () => 
   assertEquals(result.current.layer, [up]);
 });
 
-Deno.test("an allow-list entry naming a non-cycle edge fails", async () => {
+test("an allow-list entry naming a non-cycle edge fails", () => {
   const edge = `${S}/engine/e.ts -> ${S}/kernel/k.ts`;
-  const result = await run({
+  const result = run({
     [`${S}/engine/e.ts`]: 'const { k } = await import("../kernel/k.ts");',
     [`${S}/kernel/k.ts`]: "export const k = 1;",
   }, { allowList: [{ ...ENTRY, edges: [edge] }] });
@@ -545,8 +643,8 @@ Deno.test("an allow-list entry naming a non-cycle edge fails", async () => {
   ]);
 });
 
-Deno.test("an allow-list entry whose cited test file is missing fails", async () => {
-  const result = await run(CYCLE, {
+test("an allow-list entry whose cited test file is missing fails", () => {
+  const result = run(CYCLE, {
     allowList: [{ ...ENTRY, test: "prototype/testing/missing.test.ts" }],
   });
   assertEquals(result.errors, [
@@ -554,8 +652,8 @@ Deno.test("an allow-list entry whose cited test file is missing fails", async ()
   ]);
 });
 
-Deno.test("a stale allow-list entry fails when its edges no longer occur", async () => {
-  const result = await run({
+test("a stale allow-list entry fails when its edges no longer occur", () => {
+  const result = run({
     [`${S}/tools/a.ts`]: 'import { b } from "./b.ts";',
     [`${S}/tools/b.ts`]: "export const b = 1;",
   }, { allowList: [ENTRY] });
@@ -566,8 +664,8 @@ Deno.test("a stale allow-list entry fails when its edges no longer occur", async
   ]);
 });
 
-Deno.test("an allow-list entry needs a name, a justification, and a test", async () => {
-  const result = await run(CYCLE, {
+test("an allow-list entry needs a name, a justification, and a test", () => {
+  const result = run(CYCLE, {
     allowList: [
       { name: "", edges: [], justification: " ", test: "" },
       { name: " ", edges: [], justification: " ", test: "" },
@@ -589,7 +687,7 @@ Deno.test("an allow-list entry needs a name, a justification, and a test", async
 // ---------------------------------------------------------------------------
 // Ratchet
 
-Deno.test("the ratchet fails on a new violation and on a stale baseline entry", async () => {
+test("the ratchet fails on a new violation and on a stale baseline entry", () => {
   const baseline: Baseline = {
     cycles: [],
     layer: [`${S}/kernel/k.ts -> ${S}/engine/gone.ts`],
@@ -598,7 +696,7 @@ Deno.test("the ratchet fails on a new violation and on a stale baseline entry", 
     env: [],
     envKeys: [],
   };
-  const result = await run({
+  const result = run({
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
   }, { baseline });
@@ -608,13 +706,13 @@ Deno.test("the ratchet fails on a new violation and on a stale baseline entry", 
   ]);
 });
 
-Deno.test("the ratchet passes when the tree matches the baseline", async () => {
+test("the ratchet passes when the tree matches the baseline", () => {
   const files = {
     [`${S}/kernel/k.ts`]: 'import { e } from "../engine/e.ts";',
     [`${S}/engine/e.ts`]: "export const e = 1;",
   };
-  const first = await run(files);
-  const second = await run(files, { baseline: first.current });
+  const first = run(files);
+  const second = run(files, { baseline: first.current });
   assertEquals(second.added, []);
   assertEquals(second.stale, []);
 });
@@ -622,7 +720,7 @@ Deno.test("the ratchet passes when the tree matches the baseline", async () => {
 // ---------------------------------------------------------------------------
 // Size report
 
-Deno.test("function spans cover declarations, methods, and arrows", () => {
+test("function spans cover declarations, methods, and arrows", () => {
   const spans = functionSpans([
     "export function alpha(a: string): { ok: boolean } {", // 1
     "  return { ok: true };",
@@ -647,7 +745,7 @@ Deno.test("function spans cover declarations, methods, and arrows", () => {
   );
 });
 
-Deno.test("private methods are spans; calls to them are not", () => {
+test("private methods are spans; calls to them are not", () => {
   const spans = functionSpans([
     "class A {",
     "  async #start(x) {",
@@ -664,7 +762,7 @@ Deno.test("private methods are spans; calls to them are not", () => {
   );
 });
 
-Deno.test("the size report lists long modules and long functions", () => {
+test("the size report lists long modules and long functions", () => {
   const long = `function big() {\n${"  work();\n".repeat(150)}}\n`;
   const report = sizeReport(
     new Map([
@@ -684,7 +782,7 @@ const bigModule = "x;\n".repeat(1001);
 const bigFunction = `function big() {\n${"  work();\n".repeat(200)}}\n`;
 const runtimeOnly = (path: string) => path.startsWith("src/");
 
-Deno.test("an unexcepted module or function over its hard limit fails", () => {
+test("an unexcepted module or function over its hard limit fails", () => {
   const errors = hardLimitViolations(
     new Map([["src/big.ts", bigModule], ["src/fn.ts", bigFunction]]),
     runtimeOnly,
@@ -698,7 +796,7 @@ Deno.test("an unexcepted module or function over its hard limit fails", () => {
   );
 });
 
-Deno.test("an excepted module or function passes at or under its recorded size", () => {
+test("an excepted module or function passes at or under its recorded size", () => {
   const exceptions: SizeException[] = [
     { kind: "module", path: "src/big.ts", lines: 1001, reason: "deferred" },
     {
@@ -719,7 +817,7 @@ Deno.test("an excepted module or function passes at or under its recorded size",
   );
 });
 
-Deno.test("an excepted module that grows past its recorded size fails", () => {
+test("an excepted module that grows past its recorded size fails", () => {
   const errors = hardLimitViolations(
     new Map([["src/big.ts", bigModule]]),
     runtimeOnly,
@@ -732,7 +830,7 @@ Deno.test("an excepted module that grows past its recorded size fails", () => {
   );
 });
 
-Deno.test("an exception for something back under its limit must be removed", () => {
+test("an exception for something back under its limit must be removed", () => {
   const errors = hardLimitViolations(
     new Map([["src/small.ts", "x;\n"]]),
     runtimeOnly,
@@ -752,7 +850,7 @@ Deno.test("an exception for something back under its limit must be removed", () 
   assertSome(errors, "remove it: function src/gone.ts old");
 });
 
-Deno.test("hard limits skip modules outside the runtime", () => {
+test("hard limits skip modules outside the runtime", () => {
   assertEquals(
     hardLimitViolations(
       new Map([["prototype/scripts/tool.ts", bigModule + bigFunction]]),
@@ -763,7 +861,7 @@ Deno.test("hard limits skip modules outside the runtime", () => {
   );
 });
 
-Deno.test("a size exception without a reason, or listed twice, fails", () => {
+test("a size exception without a reason, or listed twice, fails", () => {
   const errors = hardLimitViolations(
     new Map([["src/big.ts", bigModule]]),
     runtimeOnly,
@@ -782,7 +880,7 @@ Deno.test("a size exception without a reason, or listed twice, fails", () => {
   );
 });
 
-Deno.test("a size exceptions file that is not an array of objects fails, not throws", () => {
+test("a size exceptions file that is not an array of objects fails, not throws", () => {
   assertSome(
     hardLimitViolations(new Map(), runtimeOnly, {}),
     "size exceptions must be a JSON array",
@@ -797,10 +895,11 @@ Deno.test("a size exceptions file that is not an array of objects fails, not thr
   assertSome(errors, "size exception #2 is malformed: no path");
 });
 
-Deno.test("the committed size exceptions each carry a reason", async () => {
+test("the committed size exceptions each carry a reason", async () => {
   const committed = JSON.parse(
-    await Deno.readTextFile(
+    await readFile(
       fileURLToPath(new URL("./arch-size-exceptions.json", import.meta.url)),
+      "utf8",
     ),
   ) as SizeException[];
   for (const entry of committed) {
@@ -813,8 +912,8 @@ Deno.test("the committed size exceptions each carry a reason", async () => {
 // ---------------------------------------------------------------------------
 // Environment access
 
-Deno.test("direct env access is a violation outside config/ and named entrypoints", async () => {
-  const result = await run({
+test("direct env access is a violation outside config/ and named entrypoints", () => {
+  const result = run({
     [`${S}/config/env.ts`]: "export const e = Deno.env;",
     [`${S}/legacy-config.ts`]: 'Deno.env.get("HOME");',
     [`${S}/server/main.ts`]: 'Deno.env.get("HOME");',
@@ -882,8 +981,8 @@ Deno.test("direct env access is a violation outside config/ and named entrypoint
   assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
 });
 
-Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async () => {
-  const result = await run({
+test("an undeclared DYFJ_* key in any scanned module is a violation", () => {
+  const result = run({
     [`${S}/engine/keys.ts`]: [
       'export const a = "DYFJ_DECLARED";',
       'export const b = "DYFJ_UNDECLARED";',
@@ -908,8 +1007,8 @@ Deno.test("an undeclared DYFJ_* key in any scanned module is a violation", async
   ]);
 });
 
-Deno.test("env entrypoints must name one existing unit or module and justify it", async () => {
-  const result = await run({}, {
+test("env entrypoints must name one existing unit or module and justify it", () => {
+  const result = run({}, {
     rules: {
       ...RULES,
       env: {
@@ -930,8 +1029,8 @@ Deno.test("env entrypoints must name one existing unit or module and justify it"
   assertSome(result.errors, "tooling: missing justification");
 });
 
-Deno.test("a confined package is a violation outside its units and entrypoints", async () => {
-  const result = await run({
+test("a confined package is a violation outside its units and entrypoints", () => {
+  const result = run({
     [`${S}/store/journal.ts`]:
       'import mysql from "mysql2/promise"; export { mysql };',
     [`${S}/store/pool.ts`]: 'export { createPool } from "mysql2";',
@@ -962,13 +1061,14 @@ Deno.test("a confined package is a violation outside its units and entrypoints",
   assertSome(result.added, `package: ${S}/engine/static.ts: mysql2`);
 });
 
-Deno.test("the committed rules confine node:net to the transport unit", async () => {
+test("the committed rules confine node:net to the transport unit", async () => {
   const committed = JSON.parse(
-    await Deno.readTextFile(
+    await readFile(
       fileURLToPath(new URL("./arch-layers.json", import.meta.url)),
+      "utf8",
     ),
   ) as LayerRules;
-  const result = await run({
+  const result = run({
     [`${S}/transport/node-socket.ts`]: 'import net from "node:net"; net;',
     [`${S}/engine/dial.ts`]: 'import net from "node:net"; net;',
     [`${S}/server/listen.ts`]:
@@ -981,13 +1081,14 @@ Deno.test("the committed rules confine node:net to the transport unit", async ()
   ]);
 });
 
-Deno.test("the committed rules confine node:child_process to tools, config and the ACP runner", async () => {
+test("the committed rules confine node:child_process to tools, config and the ACP runner", async () => {
   const committed = JSON.parse(
-    await Deno.readTextFile(
+    await readFile(
       fileURLToPath(new URL("./arch-layers.json", import.meta.url)),
+      "utf8",
     ),
   ) as LayerRules;
-  const result = await run({
+  const result = run({
     [`${S}/config/resolver.ts`]:
       'import { spawn } from "node:child_process"; spawn;',
     [`${S}/tools/builtin/spawn.ts`]:
@@ -1008,8 +1109,8 @@ Deno.test("the committed rules confine node:child_process to tools, config and t
   ]);
 });
 
-Deno.test("an SQL write literal is a violation outside the journal and entrypoints", async () => {
-  const result = await run({
+test("an SQL write literal is a violation outside the journal and entrypoints", () => {
+  const result = run({
     [`${S}/store/journal.ts`]:
       'export const a = "INSERT INTO events (event_id) VALUES (?)";',
     [`${S}/store/readers.ts`]: [
@@ -1046,8 +1147,8 @@ Deno.test("an SQL write literal is a violation outside the journal and entrypoin
   assertSome(result.added, `sql-write: ${S}/engine/writes.ts: INSERT INTO`);
 });
 
-Deno.test("package and sql-write rules must name existing units and modules and justify entrypoints", async () => {
-  const result = await run({}, {
+test("package and sql-write rules must name existing units and modules and justify entrypoints", () => {
+  const result = run({}, {
     rules: {
       ...RULES,
       packages: [{
@@ -1079,7 +1180,7 @@ Deno.test("package and sql-write rules must name existing units and modules and 
   );
 });
 
-Deno.test("packageName strips registries, versions and subpaths", () => {
+test("packageName strips registries, versions and subpaths", () => {
   assertEquals(
     [
       "mysql2",
