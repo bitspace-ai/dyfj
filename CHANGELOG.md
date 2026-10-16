@@ -243,7 +243,10 @@ README are tracked separately in its Revision history section.
   only product tests needed (the MCP and Unix-socket test directories, the
   ambient-secret and ACP probe variables, the MCP child wrapper, `/bin/sleep`
   and `--allow-sys=uid`). The unit gate lane is now labelled
-  `Prototype unit test suite (test.unit)`. Lane test counts are unchanged.
+  `Prototype unit test suite (test.unit)`. Lane test counts are unchanged,
+  apart from the routing tests (`prototype/scripts/test-routing.test.ts`),
+  whose four cases for the deleted kit-import and mixed-file rules go with
+  them.
 
 - **The CLI may read every environment variable.** The `cli` permission
   profile, `compile-cli` and the launcher's source route now grant the CLI the
