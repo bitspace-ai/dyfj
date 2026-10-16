@@ -19,6 +19,19 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`dyfj --socket <path> start` listens on that path.** The runtime took its
+  socket from the environment, so a socket given only by `--socket` was not
+  the one it bound. The launcher now passes the resolved socket to the
+  runtime as `DYFJ_SOCKET`, and the fallback command `dyfj start` prints when
+  it cannot start the runtime sets `DYFJ_SOCKET` to that socket, quoted for
+  the shell.
+
+- **The ACP fixture agent's parent-death watchdog reaps its process group
+  without starting a process.** It signals its group with
+  `process.kill(-pid, "SIGKILL")` in place of running `/bin/kill`, which a
+  runtime or permission model that grants no spawn refused, leaving a group
+  member alive after its parent died.
+
 - **`dyfj start` works with a non-default Dolt endpoint.** The runtime's
   network grant held only the default `127.0.0.1:3306`, so a configured
   `DOLT_HOST` or `DOLT_PORT` elsewhere was refused at the first query. The
@@ -227,6 +240,26 @@ README are tracked separately in its Revision history section.
   server had let pass.
 
 ### Changed
+
+- **The runtime and the `dyfj` CLI run on Node 26.** The launcher
+  (`prototype/scripts/dyfj-launcher.sh`) runs the client as
+  `node src/cli/main.ts`, and `dyfj start` starts the runtime as
+  `node src/server/main.ts`, on the client's own Node executable. The
+  launcher stops with a message naming the problem when `node` is not on
+  `PATH` or is not Node 26. The runtime runs as plain `node`, with no
+  `--permission`: its network, process and environment limits are the
+  product's own seams (the guarded fetch, the Dolt connect check, the guarded
+  spawn and the explicit environment), which Node's permission model cannot
+  express, and Node hands a process's permission flags to every Node process
+  it starts through `NODE_OPTIONS`, so a sandboxed runtime would have
+  sandboxed the ACP agents and any `node` or `npm` a tool runs, refusing their
+  native addons. `dyfj start` and autostart's background start run the client
+  as plain `node` for the same reason. The client's other routes (the REPL,
+  `exec`, `status`, the parse check and the probe) run under
+  `node --permission --allow-fs-read=* --allow-net`. The runtime's
+  environment no longer carries `DENO_DIR`. Test support and the golden
+  harness start the engine and the CLI the same way, on Node; golden
+  snapshots are unchanged. The gate and test tooling still run on Deno.
 
 - **Product tests run on `node:test` only; the Deno test path is narrowed to
   the gate-tooling tests.** Test discovery (`prototype/scripts/test-files.ts`)
@@ -1751,6 +1784,11 @@ README are tracked separately in its Revision history section.
   which the source states rather than hides.
 
 ### Removed
+
+- **The compiled CLI and its `compile-cli` task.** The launcher no longer has
+  a compiled route (`dist/dyfj-bin`) or a Deno route; it runs the client on
+  Node. Link `prototype/scripts/dyfj-launcher.sh` onto your `PATH` as `dyfj`
+  in place of `prototype/dist/`.
 
 - **Vitest is removed; `Deno.test` is the only test framework.** Gone:
   `npm:vitest` and its locked packages, `vitest.config.ts`, the Vitest runner and

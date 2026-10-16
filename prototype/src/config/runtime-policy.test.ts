@@ -4,8 +4,11 @@ import process from "node:process";
 import { describe, it } from "node:test";
 import {
   baseRuntimePolicy,
-  CLI_RUN_GRANTS,
+  CLI_NODE_PERMISSION_FLAGS,
+  cliRuntimePolicy,
   composeRuntimePolicy,
+  nodePermissionArgs,
+  RUNTIME_NODE_PERMISSION_FLAGS,
   RUNTIME_PLATFORM_ENV,
   runtimeChildEnv,
   SERVE_UNIX_ENV_GRANTS,
@@ -51,9 +54,42 @@ describe("runtime policy parity with the deno.json permission profiles", () => {
     assert.deepStrictEqual(profile.run, [...SERVE_UNIX_RUN_GRANTS]);
     assert.deepStrictEqual(profile.env, [...SERVE_UNIX_ENV_GRANTS]);
   });
+});
 
-  it("the cli run list matches the policy module", async () => {
-    assert.deepStrictEqual((await denoProfiles()).cli.run, [...CLI_RUN_GRANTS]);
+describe("the Node permission flags", () => {
+  it("the runtime runs as plain node, with no permission flag", () => {
+    assert.deepStrictEqual([...RUNTIME_NODE_PERMISSION_FLAGS], []);
+    assert.deepStrictEqual(nodePermissionArgs(RUNTIME_NODE_PERMISSION_FLAGS), []);
+  });
+
+  it("the client reads and connects, and writes nothing", () => {
+    assert.deepStrictEqual([...CLI_NODE_PERMISSION_FLAGS], [
+      "--permission",
+      "--allow-fs-read=*",
+      "--allow-net",
+    ]);
+  });
+
+  it("silences the experimental --allow-net warning only where it is granted", () => {
+    assert.deepStrictEqual(nodePermissionArgs(["--permission", "--allow-net"]), [
+      "--permission",
+      "--allow-net",
+      "--disable-warning=ExperimentalWarning",
+    ]);
+    assert.deepStrictEqual(nodePermissionArgs(["--permission"]), [
+      "--permission",
+    ]);
+    assert.deepStrictEqual(nodePermissionArgs([]), []);
+  });
+});
+
+describe("cliRuntimePolicy", () => {
+  it("starts only the Node executable running the client", () => {
+    const policy = cliRuntimePolicy();
+    assert.deepStrictEqual([...policy.run], [process.execPath]);
+    assert.ok(!policy.run.includes("deno"));
+    assert.deepStrictEqual([...policy.net], []);
+    assert.strictEqual(policy.dolt, null);
   });
 });
 
@@ -169,16 +205,14 @@ describe("runtimeChildEnv", () => {
       TMPDIR: "/var/folders/xy/T/",
       TMP: "/tmp/a",
       TEMP: "/tmp/b",
-      DENO_DIR: "/cache/deno",
     });
   });
 
-  it("names TMPDIR, TMP, TEMP and DENO_DIR as the platform variables", () => {
+  it("names TMPDIR, TMP and TEMP as the platform variables", () => {
     assert.deepStrictEqual([...RUNTIME_PLATFORM_ENV], [
       "TMPDIR",
       "TMP",
       "TEMP",
-      "DENO_DIR",
     ]);
   });
 

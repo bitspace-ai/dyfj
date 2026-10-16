@@ -90,9 +90,11 @@ export { assertSecureMemoryUrl, memoryMcpNetGrant } from "./memory-url.ts";
 export { loadNetworkAllow, parseNetworkAllow } from "./network-config.ts";
 export {
   baseRuntimePolicy,
-  CLI_RUN_GRANTS,
+  CLI_NODE_PERMISSION_FLAGS,
   cliRuntimePolicy,
   composeRuntimePolicy,
+  nodePermissionArgs,
+  RUNTIME_NODE_PERMISSION_FLAGS,
   RUNTIME_PLATFORM_ENV,
   runtimeChildEnv,
   type RuntimePolicy,

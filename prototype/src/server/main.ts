@@ -2,7 +2,8 @@
  * server/ (L5): the engine server's composition root
  * (specs/01-architecture.md §7).
  *
- * `deno task serve-unix` and `dyfj start` run this file. It is the only place
+ * `dyfj start` runs this file on Node, and `deno task serve-unix` under its
+ * permission profile until the profiles are removed. It is the only place
  * that reads the resolved config, resolves secrets, builds the store, the
  * external MCP commands, the session owners, the turn runtime and the ACP
  * session map, builds the static extension list (`extensions.ts`), wires the

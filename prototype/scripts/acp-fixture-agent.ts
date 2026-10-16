@@ -30,30 +30,19 @@ async function logMethod(method: string): Promise<void> {
   await appendFile(methodLogFile, `${method}\n`);
 }
 
-// Runs `file` to its exit with no stdio. An explicit empty environment: with
-// none, `node:child_process` copies every variable, which a runtime that
-// grants environment variables by name refuses. Never rejects: a command that
-// cannot start (an `error` event, or a synchronous throw where the runtime
-// refuses the spawn) settles like one that fails.
-function runQuietly(file: string, args: string[]): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      const child = spawn(file, args, { env: {}, stdio: "ignore" });
-      child.once("error", () => resolve());
-      child.once("close", () => resolve());
-    } catch {
-      resolve();
-    }
-  });
-}
-
 const originParent = process.ppid;
 void (async () => {
   while (true) {
     await new Promise((resolve) => setTimeout(resolve, 200));
     if (process.ppid === 1 || process.ppid !== originParent) {
-      // Best-effort group reap; still exit so the fixture itself does not leak.
-      await runQuietly("/bin/kill", ["-KILL", "--", `-${process.pid}`]);
+      // Reap the process group this agent leads with a signal, not a
+      // `/bin/kill` process: a runtime or permission model that grants no
+      // spawn cannot refuse it. SIGKILL ends this agent too.
+      try {
+        process.kill(-process.pid, "SIGKILL");
+      } catch {
+        // Not a group leader, or the group is already gone.
+      }
       process.exit(1);
     }
   }

@@ -55,8 +55,7 @@ if (unsupported.length > 0) {
 const deno = selectedDenoExecutable();
 const root = await Deno.makeTempDir({ prefix: "dyfj_golden_" });
 const forwarded = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP"];
-// The harness spawns the product with the same executable (`testing/deno-bin.ts`).
-const env: Record<string, string> = { DYFJ_GOLDEN_ROOT: root, DENO_BIN: deno };
+const env: Record<string, string> = { DYFJ_GOLDEN_ROOT: root };
 for (const name of forwarded) {
   const value = Deno.env.get(name);
   if (value !== undefined) env[name] = value;

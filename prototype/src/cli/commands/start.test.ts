@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
@@ -67,9 +68,36 @@ describe("runtime lifecycle commands", () => {
       `expected stderr.join("\\n") to include "could not start"`,
     );
     assert.ok(
-      stderr.join("\n").includes("deno task serve-unix"),
-      `expected stderr.join("\\n") to include "deno task serve-unix"`,
+      stderr.join("\n").includes(
+        "cd prototype && DYFJ_SOCKET='/tmp/dyfj-test.sock' node --env-file-if-exists=.env src/server/main.ts",
+      ),
+      "expected the Node fallback command",
     );
+    assert.ok(
+      !stderr.join("\n").includes("deno"),
+      "expected the fallback to name no deno command",
+    );
+  });
+
+  it("the fallback command keeps the requested socket, quoted for the shell", async () => {
+    const socket = "/tmp/dyfj uat/it's.sock";
+    const { io, stderr } = fakeIo();
+    const code = await runStart(cfg({ socket }), io, () => {
+      throw new Error("permission denied");
+    });
+    assert.strictEqual(code, 1);
+    const line = stderr.join("\n").split("\n").find((text) =>
+      text.startsWith("dyfj: fallback command: ")
+    );
+    const assignment = line?.match(/ (DYFJ_SOCKET=.*) node /)?.[1];
+    assert.ok(assignment, `expected a DYFJ_SOCKET assignment in ${line}`);
+    // The shell reads it back as the one path the client resolved.
+    const echoed = execFileSync(
+      "/bin/sh",
+      ["-c", `${assignment} /usr/bin/printenv DYFJ_SOCKET`],
+      { encoding: "utf8", env: {} },
+    );
+    assert.strictEqual(echoed, `${socket}\n`);
   });
 
   // Every client error printer must share one discipline: runStart's printer

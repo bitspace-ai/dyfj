@@ -1,11 +1,9 @@
 /**
- * The runtime child's permission grants, computed at launch. The committed
- * `serve-unix` profile in `deno.json` cannot carry machine-specific or
- * operator-private grants (the socket path, the memory MCP host, external MCP
- * hosts, nameservers, the Node executable, the secrets resolver, inherited env
- * names), so the client resolves them here and passes them explicitly. The
- * static lists those grants extend come from the runtime policy module
- * (`config/runtime-policy.ts`), not from the profile file.
+ * The runtime child's launch, computed by the client: its Node arguments and
+ * the operator's launch-resolved configuration the runtime policy is composed
+ * from (the memory MCP host, external MCP hosts, `[network] allow`, the Node
+ * executable, the secrets resolver). The flags themselves come from the
+ * runtime policy module (`config/runtime-policy.ts`).
  */
 
 import { lstat, realpath, stat } from "node:fs/promises";
@@ -17,87 +15,15 @@ import {
   loadNetworkAllow,
   loadSecretsConfig,
   type McpHttpServerConfig,
+  nodePermissionArgs,
   processEnv,
   readLauncherEnvVar,
   readTextFile as defaultReadTextFile,
-  type RuntimePolicy,
-  SERVE_UNIX_ENV_GRANTS,
+  RUNTIME_NODE_PERMISSION_FLAGS,
   type SecretsConfig,
 } from "../../config/mod.ts";
 
-/**
- * Build the `deno run` args for foregrounding the runtime. The serve-unix
- * permission profile cannot carry the machine-specific `unix:<socket>` net
- * grant (deno.json commits no host paths), and a spawned child cannot prompt
- * for it (the CLI holds stdin in raw mode). So `dyfj start` passes an explicit
- * --allow-net that reproduces the profile's net list plus the one resolved
- * socket path — and, when an external memory endpoint is configured, its
- * launch-resolved host grant (same reasoning: an operator-private hostname
- * never belongs in the committed profile), plus `<ip>:53` for each system
- * nameserver, which the web tools' address check needs to resolve a target;
- * -P still supplies every other permission category.
- */
-export function buildServeUnixArgs(
-  netGrants: string[],
-  socketPath: string,
-  memoryMcpGrant?: string | null,
-  runGrants?: string[] | null,
-  envGrants?: string[] | null,
-  autostarted = false,
-  externalMcpGrants: readonly string[] = [],
-  nameserverGrants: readonly string[] = [],
-): string[] {
-  if (runGrants?.some((grant) => grant.includes(","))) {
-    throw new Error("Deno run grants cannot contain commas");
-  }
-  const socketGrant = `unix:${socketPath}`;
-  if (
-    [
-      ...netGrants,
-      socketGrant,
-      ...(memoryMcpGrant == null ? [] : [memoryMcpGrant]),
-      ...externalMcpGrants,
-      ...nameserverGrants,
-    ]
-      .some((grant) => grant.includes(","))
-  ) {
-    throw new Error("Deno network grants cannot contain commas");
-  }
-  let net = netGrants.includes(socketGrant)
-    ? netGrants
-    : [...netGrants, socketGrant];
-  if (memoryMcpGrant != null && !net.includes(memoryMcpGrant)) {
-    net = [...net, memoryMcpGrant];
-  }
-  for (const grant of [...externalMcpGrants, ...nameserverGrants]) {
-    if (!net.includes(grant)) net = [...net, grant];
-  }
-  return [
-    "run",
-    // A server must never interactively prompt: ungranted access throws
-    // NotCapable (fail-closed) instead of parking the runtime on a TTY
-    // prompt nobody watches while clients hang on a silent turn.
-    "--no-prompt",
-    "-P=serve-unix",
-    `--allow-net=${net.join(",")}`,
-    // An explicit --allow-run REPLACES the profile's run list, so runGrants
-    // must carry the profile grants plus the launch-resolved Node executable,
-    // /bin/kill, and any configured resolver binary.
-    ...(runGrants != null ? [`--allow-run=${runGrants.join(",")}`] : []),
-    // An explicit --allow-env likewise REPLACES the profile's env list, so
-    // envGrants must carry the profile's own env plus the [secrets].inherit_env
-    // names the runtime must READ to forward them into the resolver. Omitted
-    // (null) when inherit_env is empty. The forwarded VALUES never enter the
-    // committed profile — only launch-resolved from the operator's config.
-    ...(envGrants != null ? [`--allow-env=${envGrants.join(",")}`] : []),
-    // No --env-file: the launcher reads .env itself and hands the runtime an
-    // explicit environment holding only the policy's names.
-    "src/server/main.ts",
-    ...(autostarted ? ["--autostarted"] : []),
-  ];
-}
-
-/** Validate the selected executable and carry that same path into exact grants. */
+/** Validate the selected executable and carry that same path into the run policy. */
 export async function nodeRunGrant(
   env: Env = processEnv,
 ): Promise<string | null> {
@@ -202,15 +128,15 @@ export async function rustupHomeReadGrant(
 
 /**
  * Load the `[secrets]` config the SAME way the spawned child will locate it, so
- * the launcher's `--allow-run` grant matches the resolver the runtime actually
- * invokes. The config file lives at `$DYFJ_ROOT/config.toml` (else
+ * the launcher's composed policy (its resolver binary and `inherit_env` names)
+ * matches the resolver the runtime actually invokes. The config file lives at `$DYFJ_ROOT/config.toml` (else
  * `$HOME/.dyfj/config.toml`). The child's environment fills a var from `.env`
  * only when it is NOT already in the ambient environment — so `DYFJ_ROOT`
  * is taken from `.env` ONLY when it is ambiently UNSET. An ambient empty string
  * (`DYFJ_ROOT=""`) is left as-is and treated as absent by `configFilePath`,
  * exactly as the child sees it (`.env` cannot override the empty value).
  * Reading `.env` on `""` too would make the launcher and child pick different
- * configs and mis-grant `--allow-run`.
+ * configs and forward the wrong `inherit_env` names.
  */
 export async function readLauncherSecretsConfig(
   cwd: string,
@@ -271,23 +197,17 @@ export async function readLauncherNetworkAllow(
 }
 
 /**
- * The runtime's `deno run` args, built from its composed policy: the net list
- * is the policy's plus the socket, the run list is the policy's, and the env
- * list is the policy's when it adds `[secrets].inherit_env` names to the
- * profile's (else the profile's own, through -P). The in-code guards read the
- * same policy, so the permission flags and the guards cannot drift.
+ * The runtime's Node arguments: its permission flags (none: the runtime runs
+ * as plain `node`), the server entry (relative to the prototype root it runs
+ * in) and, for a runtime the launcher started in the background,
+ * `--autostarted`. Hosts, binaries and env names are not flags under Node: the
+ * runtime enforces them in code from the policy it composes at boot, and the
+ * launcher passes it only the policy's env.
  */
-export function buildRuntimeArgs(
-  policy: RuntimePolicy,
-  socketPath: string,
-  autostarted = false,
-): string[] {
-  return buildServeUnixArgs(
-    [...policy.net],
-    socketPath,
-    null,
-    [...policy.run],
-    policy.env.length > SERVE_UNIX_ENV_GRANTS.length ? [...policy.env] : null,
-    autostarted,
-  );
+export function buildRuntimeArgs(autostarted = false): string[] {
+  return [
+    ...nodePermissionArgs(RUNTIME_NODE_PERMISSION_FLAGS),
+    "src/server/main.ts",
+    ...(autostarted ? ["--autostarted"] : []),
+  ];
 }

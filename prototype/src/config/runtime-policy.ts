@@ -3,18 +3,17 @@
  * hosts the runtime may reach, the binaries it may start and the environment
  * names it may see.
  *
- * The static lists are the `serve-unix` and `cli` permission profiles in
- * `deno.json`, restated here; `runtime-policy.test.ts` fails when the two
- * disagree, until the profiles are removed. `composeRuntimePolicy` adds the
- * operator's launch-resolved entries with the same functions the launcher has
- * always used for its permission flags, plus `[network] allow` from
- * config.toml (`network-config.ts`), the operator's one way to add a host. The
- * launcher builds the runtime's permission flags and explicit env from the
- * composed policy, and the engine composes the same
- * policy at boot and enforces it in code at its own seams: the guarded fetch
- * and Dolt connect check (`egress.ts`) and the guarded spawn
- * (`spawn-guard.ts`). That enforcement does not depend on the runtime's
- * permission model.
+ * The static lists are the `serve-unix` permission profile in `deno.json`,
+ * restated here; `runtime-policy.test.ts` fails when the two disagree, until
+ * the profile is removed. `composeRuntimePolicy` adds the operator's
+ * launch-resolved entries, plus `[network] allow` from config.toml
+ * (`network-config.ts`), the operator's one way to add a host. The launcher
+ * builds the runtime's explicit env from the composed policy, and the engine
+ * composes the same policy at boot and enforces it in code at its own seams:
+ * the guarded fetch and Dolt connect check (`egress.ts`) and the guarded spawn
+ * (`spawn-guard.ts`). These seams are the runtime's egress, spawn and env
+ * boundary; the runtime itself runs without Node's permission model
+ * (`RUNTIME_NODE_PERMISSION_FLAGS`).
  *
  * Accepted risks: the seams govern the product's own calls. A compromised
  * dependency that opens its own socket or process is outside them, and so is
@@ -109,8 +108,46 @@ export const SERVE_UNIX_ENV_GRANTS: readonly string[] = Object.freeze([
   "NODE_COMPILE_CACHE",
 ]);
 
-/** The one binary the CLI starts: the runtime. */
-export const CLI_RUN_GRANTS: readonly string[] = Object.freeze(["deno"]);
+/**
+ * The runtime's Node permission flags: none. The runtime runs as plain `node`
+ * (decision D32, S4). Its egress, spawn and env limits are the in-code seams
+ * above, which Node's permission model cannot express (it grants network,
+ * child-process and worker access only whole). And Node writes a process's
+ * permission flags into the `NODE_OPTIONS` of every process it starts, so a
+ * sandboxed runtime would sandbox every Node descendant too: the ACP fixture
+ * and Codex agents, and any `node` or `npm` the exec tools run in the
+ * operator's workspace, which could then load no native addon. Scoping the
+ * runtime's own process without that leak is the OS-sandbox follow-up.
+ */
+export const RUNTIME_NODE_PERMISSION_FLAGS: readonly string[] = Object.freeze(
+  [],
+);
+
+/**
+ * The CLI client's Node permission flags, for every client route but
+ * `dyfj start`: it reads its sources, `.env` and config.toml, and connects to
+ * the control socket. It writes nothing and starts nothing. `dyfj start` (and
+ * autostart's background start) runs with no flags instead: a client under
+ * `--permission` would hand its flags to the runtime it starts, through
+ * `NODE_OPTIONS`. `scripts/dyfj-launcher.sh` restates this list, and
+ * `grants.test.ts` fails when the two disagree.
+ */
+export const CLI_NODE_PERMISSION_FLAGS: readonly string[] = Object.freeze([
+  "--permission",
+  "--allow-fs-read=*",
+  "--allow-net",
+]);
+
+/**
+ * `flags` as Node arguments. Node warns on stderr that `--allow-net` is
+ * experimental, once per process; that warning is silenced so it never
+ * reaches the operator's terminal or a client's output.
+ */
+export function nodePermissionArgs(flags: readonly string[]): string[] {
+  return flags.includes("--allow-net")
+    ? [...flags, "--disable-warning=ExperimentalWarning"]
+    : [...flags];
+}
 
 /**
  * Variables the runtime process itself needs, forwarded beside the policy's
@@ -123,9 +160,6 @@ export const RUNTIME_PLATFORM_ENV: readonly string[] = Object.freeze([
   // The Windows temp directory names, forwarded when present.
   "TMP",
   "TEMP",
-  // The current runtime's module cache. Without it, a runtime on a
-  // non-default cache cannot start. Remove it when the runtime moves to Node.
-  "DENO_DIR",
 ]);
 
 /** The fixed signaler the ACP runner's process-group contract uses. */
@@ -161,8 +195,7 @@ export interface RuntimePolicyInputs {
   dolt?: { host: string; port: number } | null;
   /**
    * The runtime's own executable, added to the run list; this process's own
-   * (`process.execPath`) when absent. The launcher, composing for a runtime
-   * it starts by name, passes null.
+   * (`process.execPath`) when absent. Null adds none.
    */
   runtimeExecutable?: string | null;
 }
@@ -174,9 +207,8 @@ function appendNew(list: string[], entries: readonly (string | null)[]) {
 }
 
 /**
- * The static lists plus the operator's entries. Inside the runtime, its own
- * executable is included: the profile grants it by name (`deno`), and the ACP
- * fixture starts it by path.
+ * The static lists plus the operator's entries. The runtime's own executable
+ * is included: the ACP fixture starts it by path.
  */
 export function composeRuntimePolicy(
   inputs: RuntimePolicyInputs = {},
@@ -226,13 +258,13 @@ export function baseRuntimePolicy(): RuntimePolicy {
 }
 
 /**
- * The CLI's own policy: it starts only the runtime, and reaches nothing over
- * HTTP or Dolt.
+ * The CLI's own policy: it starts only the runtime, on the Node executable
+ * running the CLI, and reaches nothing over HTTP or Dolt.
  */
 export function cliRuntimePolicy(): RuntimePolicy {
   return Object.freeze({
     net: Object.freeze([]),
-    run: Object.freeze([...CLI_RUN_GRANTS]),
+    run: Object.freeze([process.execPath]),
     env: Object.freeze([]),
     dolt: null,
   });

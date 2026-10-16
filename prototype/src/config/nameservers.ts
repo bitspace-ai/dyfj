@@ -1,19 +1,21 @@
 /**
- * Launch-resolved `--allow-net` grants for the system's DNS nameservers.
+ * Launch-resolved `<ip>:53` entries for the system's DNS nameservers.
  *
- * The runtime's DNS resolver checks net permission against every nameserver it
- * will query, not against the name being looked up, so the engine can resolve a
- * hostname only when each configured nameserver is granted as `<ip>:53`. The
- * web tools' address check refuses a target it cannot resolve, so `dyfj start`
- * (and `deno task serve-unix`, through `scripts/serve-unix-net-flag.ts`) reads
- * the nameservers from the resolver configuration at launch and appends these
- * grants to the engine's explicit `--allow-net`. They are machine-specific and
+ * Under a permission model that checks net access per host, the DNS resolver
+ * is checked against every nameserver it will query, not against the name
+ * being looked up, so the engine can resolve a hostname only when each
+ * configured nameserver is granted as `<ip>:53`. The web tools' address check
+ * refuses a target it cannot resolve, so `deno task serve-unix` (through
+ * `scripts/serve-unix-net-flag.ts`) appends these entries to its explicit
+ * `--allow-net`, and `dyfj start` and the engine compose them into the runtime
+ * policy. The runtime on Node has no such check: the preflight's queries are
+ * an accepted risk (`runtime-policy.ts`). The entries are machine-specific and
  * never belong in the committed permission profile.
  *
  * A `nameserver` entry that is not a plain IP literal (for example a scoped
- * IPv6 address such as `fe80::1%eth0`, which the runtime's grant cannot express) gets
- * no grant. Lookups through that resolver then fail, and the address check
- * refuses the target.
+ * IPv6 address such as `fe80::1%eth0`, which a grant cannot express) gets no
+ * entry. Under a per-host check, lookups through that resolver then fail, and
+ * the address check refuses the target.
  */
 
 import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
