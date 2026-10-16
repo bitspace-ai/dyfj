@@ -192,7 +192,7 @@ export async function readOpenAIChatStream(
   };
 
   while (true) {
-    let chunk: ReadableStreamReadResult<Uint8Array>;
+    let chunk: Awaited<ReturnType<typeof reader.read>>;
     try {
       chunk = await reader.read();
     } catch (error) {

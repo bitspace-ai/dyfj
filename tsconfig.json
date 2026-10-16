@@ -1,0 +1,88 @@
+{
+  // The typecheck.tsc gate lane (decision D32): tsc --noEmit with Node's
+  // types over the TypeScript the repository runs on Node. erasableSyntaxOnly
+  // holds every file to syntax Node can strip without transforming.
+  "compilerOptions": {
+    "target": "esnext",
+    "lib": ["esnext"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "prototype/src",
+    "prototype/testing",
+    "prototype/examples",
+    "prototype/mcp",
+    "prototype/diagnostics",
+    "prototype/scripts",
+    "schema",
+    "contracts",
+    "scripts"
+  ],
+  // Files that still use the Deno global or import @std/*, plus every file
+  // that imports one (tsc checks an excluded file an included file imports).
+  // They keep their deno check coverage until they port to Node. The list
+  // only shrinks, and it is deleted when the last of them ports.
+  "exclude": [
+    "prototype/examples/uds-jsonrpc-spike.ts",
+    "prototype/scripts/add-import-extensions.test.ts",
+    "prototype/scripts/add-import-extensions.ts",
+    "prototype/scripts/deno-executable.test.ts",
+    "prototype/scripts/deno-executable.ts",
+    "prototype/scripts/dyfj-launcher.integration.test.ts",
+    "prototype/scripts/integration-child-environment.ts",
+    "prototype/scripts/isolated-dolt-fixture.integration.test.ts",
+    "prototype/scripts/isolated-dolt-integration.ts",
+    "prototype/scripts/lane-supervision.test.ts",
+    "prototype/scripts/lane-supervision.ts",
+    "prototype/scripts/run-unit-tests.ts",
+    "prototype/scripts/test-file-args.test.ts",
+    "prototype/scripts/test-file-integration-rejection.integration.test.ts",
+    "prototype/scripts/test-files.test.ts",
+    "prototype/scripts/typecheck.ts",
+    "prototype/testing/golden/run.ts",
+    "schema/codegen.test.ts",
+    "schema/codegen.ts",
+    "schema/equivalence.test.ts",
+    "schema/equivalence.ts",
+    "schema/validate-schema.test.ts",
+    "schema/validate-schema.ts",
+    "scripts/aggregate-test-gate.test.ts",
+    "scripts/aggregate-test-gate.ts",
+    "scripts/arch-imports-graph.ts",
+    "scripts/arch-imports-lint-plugin.ts",
+    "scripts/arch-imports.test.ts",
+    "scripts/arch-imports.ts",
+    "scripts/assurance-receipt.test.ts",
+    "scripts/change-scope.test.ts",
+    "scripts/change-scope.ts",
+    "scripts/ci-workflow.test.ts",
+    "scripts/dependency-policy.test.ts",
+    "scripts/dependency-policy.ts",
+    "scripts/gate-driver.fixture.ts",
+    "scripts/git-hooks.test.ts",
+    "scripts/lane-runner.fixture.ts",
+    "scripts/lane-supervision.test.ts",
+    "scripts/node-lane-runner.fixture.ts",
+    "scripts/node-lane-supervision.test.ts",
+    "scripts/node-modules-check.test.ts",
+    "scripts/node-modules-check.ts",
+    "scripts/public-safety-scan.test.ts",
+    "scripts/public-safety-scan.ts",
+    "scripts/range-checks.test.ts",
+    "scripts/range-checks.ts",
+    "scripts/release-range.ts",
+    "scripts/retired-surface-scan.ts",
+    "scripts/runtime-neutral.test.ts",
+    "scripts/scan-lib.ts",
+    "scripts/subject-check.test.ts",
+    "scripts/subject-check.ts"
+  ]
+}

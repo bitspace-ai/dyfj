@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import process from "node:process";
 import { describe, it, mock } from "node:test";
 import { dirname, join } from "node:path";
+import { codexAcpPackageRoot } from "./acp-adapter-package.ts";
 import {
   codexChatGptProfile,
   fixtureProfile,
@@ -1463,6 +1464,50 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     } finally {
       await rm(nodeDirectory, { recursive: true });
       await rm(home, { recursive: true });
+    }
+  });
+
+  it("finds the adapter nested in the member or hoisted to the workspace root", async () => {
+    const root = await tempDir();
+    try {
+      const prototypeRoot = `${root}/repo/prototype`;
+      const nested =
+        `${prototypeRoot}/node_modules/@agentclientprotocol/codex-acp`;
+      const hoisted =
+        `${root}/repo/node_modules/@agentclientprotocol/codex-acp`;
+      for (const packageRoot of [nested, hoisted]) {
+        await mkdir(packageRoot, { recursive: true });
+      }
+      // npm hoists the adapter to the workspace root's node_modules.
+      await writeFile(`${hoisted}/package.json`, "{}");
+      assert.strictEqual(await codexAcpPackageRoot(prototypeRoot), hoisted);
+      // A copy npm had to nest in the member wins, as Node would resolve it.
+      await writeFile(`${nested}/package.json`, "{}");
+      assert.strictEqual(await codexAcpPackageRoot(prototypeRoot), nested);
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
+  it("never looks for the adapter above the workspace root", async () => {
+    const root = await tempDir();
+    try {
+      const prototypeRoot = `${root}/repo/prototype`;
+      await mkdir(prototypeRoot, { recursive: true });
+      const planted = `${root}/node_modules/@agentclientprotocol/codex-acp`;
+      await mkdir(planted, { recursive: true });
+      await writeFile(
+        `${planted}/package.json`,
+        JSON.stringify({ version: "1.11.0" }),
+      );
+      await assert.rejects(
+        () => codexAcpPackageRoot(prototypeRoot),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("Pinned Codex ACP package is unavailable"),
+      );
+    } finally {
+      await rm(root, { recursive: true });
     }
   });
 

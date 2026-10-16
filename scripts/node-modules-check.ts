@@ -1,6 +1,6 @@
 /**
- * npm install precondition: `prototype/node_modules` must match
- * `prototype/package-lock.json`.
+ * npm install precondition: the repository root's `node_modules` must match
+ * the root `package-lock.json`.
  *
  * npm is the only resolver of npm packages, and the test lanes run against
  * the node_modules npm installed (`nodeModulesDir: "manual"`). A missing or
@@ -13,16 +13,23 @@
  * same packages at the same versions, and every package both name still has
  * its `package.json` on disk, so a directory deleted after the install is
  * caught. A locked optional package may be absent, because npm skips
- * optional packages built for another platform.
+ * optional packages built for another platform. The root is an npm
+ * workspace, so the lockfile also names each member (`prototype`) and the
+ * link npm installs for it (`node_modules/dyfj-prototype`). A member must
+ * have its `package.json` on disk. A link is current only when npm recorded
+ * the same target the lockfile names, that target is a plain relative path
+ * inside the package directory, and the link on disk is a symlink resolving
+ * to exactly that directory, so a link into another directory, inside the
+ * repository or out of it, is caught.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { sanitizeForLog } from "./scan-lib.ts";
 
-export const NODE_MODULES_REMEDY = "run `npm ci` in prototype/";
+export const NODE_MODULES_REMEDY = "run `npm ci` at the repository root";
 
 const MAX_NAMED = 10;
 
@@ -54,16 +61,28 @@ function packageEntries(text: string): PackageEntries | undefined {
   return packages as PackageEntries;
 }
 
+// A link target npm can record for a workspace member: relative, inside the
+// package directory, with no empty, `.` or `..` segment and no backslash.
+function isContainedTarget(target: unknown): target is string {
+  return typeof target === "string" && target !== "" &&
+    !target.startsWith("/") && !target.includes("\\") &&
+    target.split("/").every((segment) =>
+      segment !== "" && segment !== "." && segment !== ".."
+    );
+}
+
 /**
  * Compares the lockfile with npm's record of the install. `hidden` is the
  * text of `node_modules/.package-lock.json`, undefined when it is absent.
  * `hasPackage` says whether a package path (`node_modules/...`) still holds
- * its `package.json`.
+ * its `package.json`. `linksTo` says whether a link path is a symlink that
+ * resolves to exactly the given target directory.
  */
 export function nodeModulesState(
   lock: string,
   hidden: string | undefined,
   hasPackage: (path: string) => boolean,
+  linksTo: (path: string, target: string) => boolean,
 ): NodeModulesState {
   const locked = packageEntries(lock);
   if (locked === undefined) return { state: "invalid" };
@@ -77,6 +96,16 @@ export function nodeModulesState(
     const present = installed[path];
     if (present === undefined) {
       if (entry.optional !== true) differing.add(path);
+      continue;
+    }
+    if (entry.link === true) {
+      if (
+        present.link !== true || present.resolved !== entry.resolved ||
+        !isContainedTarget(entry.resolved) ||
+        !linksTo(path, entry.resolved)
+      ) {
+        differing.add(path);
+      }
       continue;
     }
     if (present.version !== entry.version || !hasPackage(path)) {
@@ -106,7 +135,7 @@ export async function runNodeModulesCheck(
 ): Promise<number> {
   const lock = await readOptional(join(dir, "package-lock.json"));
   if (lock === undefined) {
-    out.error("node_modules: prototype/package-lock.json is missing");
+    out.error("node_modules: package-lock.json is missing");
     return 1;
   }
   const hidden = await readOptional(
@@ -116,23 +145,31 @@ export async function runNodeModulesCheck(
     lock,
     hidden,
     (path) => existsSync(join(dir, path, "package.json")),
+    (path, target) => {
+      try {
+        return lstatSync(join(dir, path)).isSymbolicLink() &&
+          realpathSync(join(dir, path)) === realpathSync(join(dir, target));
+      } catch {
+        return false;
+      }
+    },
   );
   switch (result.state) {
     case "current":
       out.log("node_modules: matches package-lock.json");
       return 0;
     case "invalid":
-      out.error("node_modules: prototype/package-lock.json is not readable");
+      out.error("node_modules: package-lock.json is not readable");
       return 1;
     case "missing":
       out.error(
-        `node_modules: prototype/node_modules is missing; ${NODE_MODULES_REMEDY}`,
+        `node_modules: node_modules is missing; ${NODE_MODULES_REMEDY}`,
       );
       return 1;
     case "stale": {
       const differing = result.differing ?? [];
       out.error(
-        "node_modules: prototype/node_modules is out of date with " +
+        "node_modules: node_modules is out of date with " +
           `package-lock.json; ${NODE_MODULES_REMEDY}`,
       );
       for (const path of differing.slice(0, MAX_NAMED)) {

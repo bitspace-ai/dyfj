@@ -281,6 +281,56 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The npm dependencies install from one npm workspace at the repository
+  root.** A root `package.json` names `prototype` as its workspace member and
+  holds the tooling devDependencies, exact-pinned: `typescript` 7.0.2 and
+  `@types/node` 26.6.5. `npm ci` now runs at the repository root, locally and
+  in both CI jobs, from one root `package-lock.json` into the root
+  `node_modules`; `prototype/package-lock.json` is gone. Every runtime
+  dependency resolves to the same version, tarball and integrity hash as
+  before. The install settings (`save-exact`, `ignore-scripts`,
+  `min-release-age=3`) move to a root `.npmrc`, because npm ignores an
+  `.npmrc` inside a workspace member. The npm install precondition lane
+  checks the root install and its remedy reads `` run `npm ci` at the
+  repository root ``. It also checks the link npm installs for the
+  workspace member: the link must be a symlink resolving to exactly the
+  member directory the lockfile names, inside the repository, so a link into
+  any other directory fails the lane. Dependabot's npm lane watches `/`. TypeScript 7 is the
+  native compiler: `typescript` 7.0.2 ships its `tsc` binary through 20
+  per-platform optional packages (`@typescript/typescript-<os>-<arch>`), each
+  locked with an integrity hash, of which npm installs only the one for the
+  running platform. Install scripts stay off; none of them declares one.
+- **Deno's lockfile is the root `deno.lock`, and Deno runs with it frozen.**
+  The npm workspace makes the repository root Deno's workspace root, so
+  `prototype/deno.lock` moves to the root (every JSR version and integrity
+  hash unchanged) and `nodeModulesDir: "manual"` moves to the root
+  `deno.json`. The root `deno.json` sets `"lock": { "frozen": true }`: a Deno
+  run now fails when the lock is missing or out of date, where before it would
+  silently resolve the JSR ranges again. It also declares `compilerOptions`
+  (`strict`, Deno's default), so Deno keeps its own type-checking settings
+  rather than reading the root `tsconfig.json`. Dependabot's deno lane watches
+  `/`.
+- **`dependency.policy` understands npm workspaces.** A workspace member is
+  held to its workspace root's lockfile and `.npmrc`, and its npm update lane
+  is the root's. A tracked `.npmrc` or `package-lock.json` beside a member
+  fails (`npm-workspace-member-config`), because npm would ignore it, and a
+  `workspaces` field that is not a list of plain relative directories fails
+  (`npm-workspaces-unsupported`), including an entry with a `.`, `..` or
+  empty segment anywhere in its path. The manifest's npm surface is now
+  `npm.workspace`.
+- **The `codex-chatgpt` runner finds its pinned adapter in the workspace
+  install.** It looks for `@agentclientprotocol/codex-acp` in
+  `prototype/node_modules` first, where npm nests a member-only copy, then in
+  the workspace root's `node_modules`, where npm hoists it, and never further
+  up. The version check and the bounded metadata read are unchanged. The
+  `codex-chatgpt-login` task's read grant adds the root `node_modules` for
+  the same reason.
+- **The `deno check` source typecheck covers `prototype/examples/`.** An API
+  change that broke an example used to pass the gate.
+- **Root `npm test` and `npm run test:fast` run the gate**, as
+  `deno task test` and `deno task test:fast` until the gate itself moves to
+  Node.
+
 - **The runtime and the `dyfj` CLI run on Node 26.** The launcher
   (`prototype/scripts/dyfj-launcher.sh`) runs the client as
   `node src/cli/main.ts`, and `dyfj start` starts the runtime as
@@ -753,6 +803,19 @@ README are tracked separately in its Revision history section.
   fakes account for the rest.
 
 ### Added
+
+- **A `typecheck.tsc` gate lane.** It runs `tsc --noEmit` with Node's types
+  over the root `tsconfig.json`, which covers `prototype/src`, `testing`,
+  `examples`, `mcp`, `diagnostics` and `scripts`, plus `schema/`,
+  `contracts/` and `scripts/`, with `strict`, `nodenext`,
+  `verbatimModuleSyntax`, `allowImportingTsExtensions` and
+  `erasableSyntaxOnly`. It runs in the full gate and `test:fast`, alongside
+  the `deno check` lanes. Files that still use the `Deno` global or `@std/*`,
+  and the files that import them, are on the tsconfig's `exclude` list until
+  they port. Four type names that only Deno's DOM library declared
+  (`ReadableStreamReadResult`, `RequestRedirect`,
+  `TextEncoderEncodeIntoResult`) are now derived from globals both checkers
+  know; no behaviour changed.
 
 - **The runtime enforces its egress, spawn and environment limits at its own
   seams.** Before, the only limits on which hosts the runtime reached, which
@@ -1824,6 +1887,13 @@ README are tracked separately in its Revision history section.
   which the source states rather than hides.
 
 ### Removed
+
+- **The `erasable.syntax` lane.** `erasableSyntaxOnly` in the `typecheck.tsc`
+  lane now rejects constructor parameter properties, and every other construct
+  Node's type stripping cannot erase, so the `deno lint` plugin lane
+  (`scripts/erasable-syntax.ts`, its plugin, configuration and tests) is
+  deleted. `scripts/typecheck-tsc.test.ts` pins the rejection with a
+  parameter-property fixture.
 
 - **The compiled CLI and its `compile-cli` task.** The launcher no longer has
   a compiled route (`dist/dyfj-bin`) or a Deno route; it runs the client on

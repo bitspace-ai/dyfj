@@ -10,6 +10,7 @@
         "prototype/deno.json"
       ],
       "lock_paths": [
+        "deno.lock",
         "prototype/deno.lock"
       ],
       "required_evidence_classes": [
@@ -41,13 +42,16 @@
       "known_missing_evidence_classes": []
     },
     {
-      "id": "npm.prototype",
+      "id": "npm.workspace",
       "source_class": "npm-registry",
       "manifest_paths": [
+        "package.json",
+        ".npmrc",
         "prototype/package.json",
         "prototype/.npmrc"
       ],
       "lock_paths": [
+        "package-lock.json",
         "prototype/package-lock.json"
       ],
       "required_evidence_classes": [

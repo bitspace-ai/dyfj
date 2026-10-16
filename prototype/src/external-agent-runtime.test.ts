@@ -101,7 +101,7 @@ describe("reconstructed tool history", () => {
       override encodeInto(
         source: string,
         destination: Uint8Array,
-      ): TextEncoderEncodeIntoResult {
+      ): ReturnType<TextEncoder["encodeInto"]> {
         const result = super.encodeInto(source, destination);
         return { ...result, read: Math.max(0, result.read - 1) };
       }

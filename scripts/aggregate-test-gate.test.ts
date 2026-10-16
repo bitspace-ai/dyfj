@@ -90,14 +90,14 @@ test("the npm install precondition runs first, read-only, in full and fast", () 
   assertEquals(lane.checkId, "test.aggregate");
   assertEquals(lane.command, "/fixtures/runtime/deno");
   assertEquals(lane.cwd, "/repo");
-  // It checks what npm installed; it never installs, so it holds a read
-  // grant on the package directory and nothing else.
+  // It checks what npm installed at the workspace root; it never installs,
+  // so it holds a read grant on the repository and nothing else.
   assertEquals(lane.args, [
     "run",
     "--no-prompt",
-    "--allow-read=/repo/prototype",
+    "--allow-read=/repo",
     "scripts/node-modules-check.ts",
-    "/repo/prototype",
+    "/repo",
   ]);
   assertEquals(FAST_LANE_LABELS[0], lane.label);
   assertEquals(DOCS_ONLY_LANE_LABELS.includes(lane.label), false);
@@ -125,6 +125,37 @@ Deno.test("typecheck lanes derive their file lists instead of hand-listing", () 
     assertEquals(lane.args, ["task", task]);
     assertEquals(lane.cwd, "/repo/prototype");
     assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
+  }
+});
+
+test("the tsc lane runs the root workspace's tsc in full and fast", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.label === "TypeScript typecheck (typecheck.tsc)");
+  if (!lane) throw new Error("typecheck.tsc lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, [
+    "node_modules/typescript/bin/tsc",
+    "--project",
+    "tsconfig.json",
+  ]);
+  assertEquals(lane.cwd, "/repo");
+  assertEquals(FAST_LANE_LABELS.includes(lane.label), true);
+  // It runs alongside the deno check lanes until the gate-tooling port.
+  for (
+    const label of [
+      "Prototype source typecheck",
+      "Prototype test-file typecheck",
+    ]
+  ) {
+    if (
+      !productionLanes("/repo", "/fixtures/runtime/deno").some((candidate) =>
+        candidate.label === label
+      )
+    ) {
+      throw new Error(`${label} lane is missing`);
+    }
   }
 });
 
