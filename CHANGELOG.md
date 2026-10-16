@@ -252,7 +252,10 @@ README are tracked separately in its Revision history section.
   `min-release-age=3`) move to a root `.npmrc`, because npm ignores an
   `.npmrc` inside a workspace member. The npm install precondition lane
   checks the root install and its remedy reads `` run `npm ci` at the
-  repository root ``. Dependabot's npm lane watches `/`. TypeScript 7 is the
+  repository root ``. It also checks the link npm installs for the
+  workspace member: the link must be a symlink resolving to exactly the
+  member directory the lockfile names, inside the repository, so a link into
+  any other directory fails the lane. Dependabot's npm lane watches `/`. TypeScript 7 is the
   native compiler: `typescript` 7.0.2 ships its `tsc` binary through 20
   per-platform optional packages (`@typescript/typescript-<os>-<arch>`), each
   locked with an integrity hash, of which npm installs only the one for the
@@ -272,7 +275,8 @@ README are tracked separately in its Revision history section.
   is the root's. A tracked `.npmrc` or `package-lock.json` beside a member
   fails (`npm-workspace-member-config`), because npm would ignore it, and a
   `workspaces` field that is not a list of plain relative directories fails
-  (`npm-workspaces-unsupported`). The manifest's npm surface is now
+  (`npm-workspaces-unsupported`), including an entry with a `.`, `..` or
+  empty segment anywhere in its path. The manifest's npm surface is now
   `npm.workspace`.
 - **The `codex-chatgpt` runner finds its pinned adapter in the workspace
   install.** It looks for `@agentclientprotocol/codex-acp` in

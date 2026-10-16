@@ -1344,10 +1344,21 @@ test("workspaces other than plain relative directories fail", () => {
   for (
     const workspaces of [
       ["packages/*"],
+      // Dot segments, at the start or anywhere inside the path.
+      ["."],
+      [".."],
       ["../outside"],
       ["./prototype"],
+      ["a/../b"],
+      ["a/./b"],
+      ["a/.."],
+      ["a/."],
+      // Absolute, empty-segment and backslash paths.
       ["/abs"],
       ["prototype/"],
+      ["a//b"],
+      ["a\\b"],
+      [""],
       [7],
       { packages: ["prototype"] },
       "prototype",

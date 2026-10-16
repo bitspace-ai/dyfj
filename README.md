@@ -73,8 +73,10 @@ Section 5.
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
     `external-agent-runtime.ts`, `acp-fixture-command.ts`, which builds
-    the fixture agent's command, and `acp-child-io.ts`, its bounded child
-    stderr capture and settle wait), whose move is deferred;
+    the fixture agent's command, `acp-child-io.ts`, its bounded child
+    stderr capture and settle wait, and `acp-adapter-package.ts`, which
+    finds the pinned Codex adapter in the npm workspace install), whose
+    move is deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
     `core/dyfj-repl` replaces.
 
@@ -1176,8 +1178,10 @@ deno task verify-workbench-events
 lane compares npm's record of the install (`node_modules/.package-lock.json`)
 with the lockfile, package by package and version by version, and checks that
 each recorded package still has its `package.json` on disk; for the workspace
-member, that is `prototype/package.json` and the `node_modules/dyfj-prototype`
-link npm makes to it. A locked optional package may be absent, since npm skips
+member, that is `prototype/package.json`. The `node_modules/dyfj-prototype`
+link npm makes to it must be a symlink that resolves to exactly the member
+directory the lockfile names, inside the repository, and npm must have
+recorded the same target; a link into any other directory fails the lane. A locked optional package may be absent, since npm skips
 builds for other platforms. When node_modules is missing or out of date, the
 lane fails with `` run `npm ci` at the repository root ``. The lane only
 reads: the gate never runs npm. It reports under `test.aggregate` and
@@ -1209,7 +1213,7 @@ member (`prototype/package.json`, named in the root's `workspaces`) is held to
 its workspace root's lockfile and `.npmrc`, because npm installs it from
 there; a tracked `.npmrc` or `package-lock.json` beside a member is rejected,
 since npm would ignore it, and `workspaces` must list plain relative
-directories. It also
+directories, with no `.`, `..` or empty segment anywhere in the path. It also
 checks `.github/dependabot.yml`: every tracked `package.json` outside a
 workspace, and every workspace root, needs an npm update
 lane for its directory, that lane must use the `increase` versioning strategy,

@@ -1242,8 +1242,14 @@ export function scanNpmPackage(
 }
 
 // A workspace entry npm reads as one directory: relative, no glob, no
-// parent step, no trailing slash.
-const WORKSPACE_DIRECTORY = /^(?!\.{1,2}(?:\/|$))[A-Za-z0-9._@-]+(?:\/[A-Za-z0-9._@-]+)*$/;
+// backslash, and no empty, `.` or `..` segment anywhere in the path.
+function isWorkspaceDirectory(entry: unknown): boolean {
+  return typeof entry === "string" &&
+    entry.split("/").every((segment) =>
+      /^[A-Za-z0-9._@-]+$/.test(segment) && segment !== "." &&
+      segment !== ".."
+    );
+}
 
 export interface NpmWorkspaces {
   /** Member package.json path to its workspace root's directory prefix. */
@@ -1275,9 +1281,7 @@ export function npmWorkspaces(
     const entries = parsed.workspaces;
     if (
       !Array.isArray(entries) ||
-      !entries.every((entry) =>
-        typeof entry === "string" && WORKSPACE_DIRECTORY.test(entry)
-      )
+      !entries.every(isWorkspaceDirectory)
     ) {
       hits.push({
         path,
