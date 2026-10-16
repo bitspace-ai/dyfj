@@ -364,10 +364,13 @@ attribution out of history (see `AGENTS.md`, Documentation Discipline):
 and strips tool-attribution trailers from its message, and `pre-push` refuses
 to publish commits that still carry either.
 
-`dyfj` (the launcher, below) runs the Workbench. The diagnostics and examples
-are npm scripts in `prototype/package.json` (`npm run` lists them), and the
-gate, test, typecheck and schema entry points are Deno tasks in `deno.json`
-(`deno task` lists them) until the gate tooling moves to Node.
+`dyfj` (the launcher, below) runs the Workbench. The diagnostics, the event
+check, the smoke example, the Codex login and the memory-recall fixture are npm
+scripts in `prototype/package.json` (`npm run` lists them). The gate, test,
+typecheck and schema entry points are Deno tasks in `deno.json` (`deno task`
+lists them) until the gate tooling moves to Node.
+`prototype/examples/uds-jsonrpc-spike.ts` is a standalone historical example
+with no npm script; it is written for Deno and does not run under Node.
 
 Edit `.env` for your local config. The prototype reads Dolt connection settings
 from environment variables; for the default local SQL server, export:
@@ -1151,9 +1154,9 @@ deno task schema:codegen      # regenerate the DDL-derived row types
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
-The diagnostics and examples are `prototype/package.json` scripts that run on
-Node and load `prototype/.env` when it exists. Each one prints its usage with
-`--help`:
+These diagnostics, examples and helpers are `prototype/package.json` scripts
+that run on Node; the model diagnostics and the event check load
+`prototype/.env` when it exists. Each one prints its usage with `--help`:
 
 ```sh
 cd prototype
@@ -2353,4 +2356,7 @@ Document revisions only. Code and behavior changes are tracked in
   are npm scripts and the gate, test and schema entry points stay Deno tasks;
   the validation tasks list the diagnostics as `npm run <name>`, each with
   `--help`; and the Codex login and the eval-status note use
-  `npm run codex-chatgpt-login` and `npm run model-response-modes`.
+  `npm run codex-chatgpt-login` and `npm run model-response-modes`. The
+  set-up section names `prototype/examples/uds-jsonrpc-spike.ts` as a
+  standalone historical example with no npm script that does not run under
+  Node.

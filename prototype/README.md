@@ -435,17 +435,19 @@ The response must include generated text. Health/list endpoints such as Ollama `
 - `diagnostics/` — the manual local-provider and event-sequence diagnostic helpers (`model-response-modes.ts`, `context-size-response.ts`, `structured-output.ts`, `workbench-events.ts`) that the `examples/` programs run; outside the runtime graph, so no runtime module may import them
 - `examples/` — diagnostic programs, verification helpers, and historical transport spikes; these are not operator launch paths
 
-The diagnostics and examples are npm scripts in `package.json` that run on
-Node, load `.env` when it exists, and print their usage with `--help`
-(`npm run <name> -- --help`). The `context-size-response`,
+The diagnostics, `verify-workbench-events` and the `smoke` example are npm
+scripts in `package.json` that run on Node and print their usage with `--help`
+(`npm run <name> -- --help`); all but `smoke` load `.env` when it exists. The
+`context-size-response`,
 `model-response-modes`, `structured-output` and `structured-output-streaming`
 scripts are manual local-provider diagnostics.
 Pass their `--model` and `--base-url` options (after `--`) when testing the current local
 stack; their built-in values target Ollama `gemma4:e2b` rather than the
 registry's local default.
 `verify-workbench-events` is the live event-sequence check, and `smoke` prints
-the Node version. The standalone
-`uds-jsonrpc-spike.ts` records the original duplex-transport proof; the current
+the Node version. The standalone `examples/uds-jsonrpc-spike.ts` has no npm
+script: it records the original duplex-transport proof, is written for Deno
+(`deno run`, as its header says) and does not run under Node. The current
 transport implementation lives in `src/transport/`, with the engine's method
 handlers in `src/server/rpc/`.
 
