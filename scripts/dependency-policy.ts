@@ -22,8 +22,15 @@
  *   tracked `.npmrc` that disables install scripts and holds npm's release
  *   age at the 72-hour floor (`min-release-age` of at least 3 days), so the
  *   floor holds for anyone installing, not only in the operator's review.
+ *   A workspace member (a directory a tracked `package.json` names in its
+ *   `workspaces` list) is installed from its workspace root, so its lockfile
+ *   and `.npmrc` are the root's. npm ignores a member's own `.npmrc` and
+ *   lockfile, so a tracked one beside a member is rejected rather than left
+ *   to look effective. `workspaces` must be a list of plain relative
+ *   directory paths: globs and the object form are rejected until needed.
  * - `.github/dependabot.yml` must give every tracked `package.json` an npm
- *   update lane for its directory, using the `increase` versioning strategy
+ *   update lane for its directory (for a workspace member, its workspace
+ *   root's directory), using the `increase` versioning strategy
  *   so a bot bump keeps an exact pin exact, and its npm and deno lanes must
  *   declare a cooldown of at least 3 days with no `include` or `exclude`
  *   carve-out, so a bot pull request holds the same 72-hour floor. A lane
@@ -1234,6 +1241,71 @@ export function scanNpmPackage(
   return hits;
 }
 
+// A workspace entry npm reads as one directory: relative, no glob, no
+// parent step, no trailing slash.
+const WORKSPACE_DIRECTORY = /^(?!\.{1,2}(?:\/|$))[A-Za-z0-9._@-]+(?:\/[A-Za-z0-9._@-]+)*$/;
+
+export interface NpmWorkspaces {
+  /** Member package.json path to its workspace root's directory prefix. */
+  owners: Map<string, string>;
+  hits: PublicSafetyHit[];
+}
+
+/**
+ * Resolves npm workspace membership among the tracked `package.json` files.
+ * `packages` maps each tracked package.json path to its content. A member is
+ * checked against its workspace root's lockfile and `.npmrc`, because npm
+ * installs every workspace from the root and ignores a member's own.
+ */
+export function npmWorkspaces(
+  packages: ReadonlyMap<string, string>,
+  tracked: ReadonlySet<string>,
+): NpmWorkspaces {
+  const owners = new Map<string, string>();
+  const hits: PublicSafetyHit[] = [];
+  for (const [path, content] of packages) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      continue; // scanNpmPackage reports the unparsed manifest.
+    }
+    if (!isPlainObject(parsed) || parsed.workspaces === undefined) continue;
+    const dir = path.slice(0, path.length - "package.json".length);
+    const entries = parsed.workspaces;
+    if (
+      !Array.isArray(entries) ||
+      !entries.every((entry) =>
+        typeof entry === "string" && WORKSPACE_DIRECTORY.test(entry)
+      )
+    ) {
+      hits.push({
+        path,
+        line: entryLine(content, "workspaces"),
+        rule: "dependency.policy/npm-workspaces-unsupported",
+      });
+      continue;
+    }
+    for (const entry of entries as string[]) {
+      const member = `${dir}${entry}/package.json`;
+      if (packages.has(member)) owners.set(member, dir);
+    }
+  }
+  for (const member of owners.keys()) {
+    const memberDir = member.slice(0, member.length - "package.json".length);
+    for (const name of [".npmrc", "package-lock.json"]) {
+      if (tracked.has(`${memberDir}${name}`)) {
+        hits.push({
+          path: `${memberDir}${name}`,
+          line: 1,
+          rule: "dependency.policy/npm-workspace-member-config",
+        });
+      }
+    }
+  }
+  return { owners, hits };
+}
+
 const DEPENDABOT_PATH = ".github/dependabot.yml";
 // Dependabot's `cooldown` is in days; 3 days is the 72-hour registry floor.
 const DEPENDABOT_COOLDOWN_MINIMUM_DAYS = MINIMUM_REGISTRY_AGE_HOURS / 24;
@@ -1517,24 +1589,37 @@ export async function dependencyPolicyHits(
     });
   }
   const trackedSet = new Set(tracked.map((path) => posixPath(path)));
-  for (const path of trackedSet) {
+  const packages = new Map<string, string>();
+  for (const path of [...trackedSet].sort()) {
     if (!PACKAGE_JSON_PATH.test(path)) continue;
-    const dir = path.slice(0, path.length - "package.json".length);
+    packages.set(
+      path,
+      new TextDecoder().decode(await readTrackedFile(root, path, LABEL)),
+    );
+  }
+  const workspaces = npmWorkspaces(packages, trackedSet);
+  hits.push(...workspaces.hits);
+  for (const [path, content] of packages) {
+    // A workspace member installs from its root: the root's lockfile and
+    // npmrc are the ones npm uses.
+    const dir = workspaces.owners.get(path) ??
+      path.slice(0, path.length - "package.json".length);
     const npmrcPath = `${dir}.npmrc`;
     const npmrc = trackedSet.has(npmrcPath)
       ? new TextDecoder().decode(
         await readTrackedFile(root, npmrcPath, LABEL),
       )
       : undefined;
-    const bytes = await readTrackedFile(root, path, LABEL);
-    hits.push(...scanNpmPackage(path, new TextDecoder().decode(bytes), {
+    hits.push(...scanNpmPackage(path, content, {
       lockfile: trackedSet.has(`${dir}package-lock.json`),
       npmrc,
     }));
     if (hits.length >= MAX_COLLECTED_HITS) return hits;
   }
-  const packagePaths = [...trackedSet]
-    .filter((path) => PACKAGE_JSON_PATH.test(path)).sort();
+  // Dependabot's npm lane for a workspace root also updates its members, so
+  // only packages outside every workspace need a lane of their own.
+  const packagePaths = [...packages.keys()]
+    .filter((path) => !workspaces.owners.has(path));
   const dependabot = trackedSet.has(DEPENDABOT_PATH)
     ? new TextDecoder().decode(
       await readTrackedFile(root, DEPENDABOT_PATH, LABEL),

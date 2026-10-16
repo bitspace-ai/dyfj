@@ -1,0 +1,19 @@
+{
+  "name": "dyfj",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "prototype"
+  ],
+  "scripts": {
+    "test": "deno task test",
+    "test:fast": "deno task test:fast"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.5",
+    "typescript": "6.0.3"
+  }
+}

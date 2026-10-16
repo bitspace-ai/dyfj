@@ -118,16 +118,17 @@ jobs:
           set -euo pipefail
           rustup toolchain install
           rustc --version | grep -F "rustc 1.98.0"
-      # npm is the only resolver of npm packages: npm ci installs exactly the
-      # committed prototype/package-lock.json, with install scripts off and
-      # the release-age floor from prototype/.npmrc. The gate itself never
-      # installs; it fails closed when node_modules does not match the lock.
+      # npm is the only resolver of npm packages: npm ci at the repository
+      # root installs the one npm workspace (the root and its prototype
+      # member) exactly as the committed root package-lock.json records it,
+      # with install scripts off and the release-age floor from the root
+      # .npmrc. The gate itself never installs; it fails closed when
+      # node_modules does not match the lock.
       - name: Install Node 26.11.1 (exact pinned version)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26.11.1"
       - name: Install npm dependencies (npm ci from the committed lockfile)
-        working-directory: prototype
         run: npm ci
       # The single repository green bar. Lane definitions live in
       # `scripts/` and root `deno.json`; this file does not restate them.
@@ -181,7 +182,6 @@ jobs:
         with:
           node-version: "26.11.1"
       - name: Install npm dependencies (npm ci from the committed lockfile)
-        working-directory: prototype
         run: npm ci
       - name: Run the full deterministic gate
         run: deno task test

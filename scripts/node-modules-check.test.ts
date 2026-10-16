@@ -206,6 +206,40 @@ test("the check passes when node_modules matches the lockfile", async () => {
   });
 });
 
+test("an npm workspace's member and its link are current when present", async () => {
+  // The root lockfile of an npm workspace names the member directory and the
+  // link npm installs for it; neither has a version.
+  const workspace = {
+    ...LOCKED,
+    "node_modules/member": { resolved: "member", link: true },
+    member: { name: "member" },
+  };
+  const installed = {
+    ...INSTALLED,
+    "node_modules/member": { resolved: "member", link: true },
+    member: { name: "member" },
+  };
+  await withPackageDir({
+    "package-lock.json": lockfile(workspace),
+    "node_modules/.package-lock.json": hidden(installed),
+    "member/package.json": "{}",
+    "node_modules/member/package.json": "{}",
+    ...INSTALLED_FILES,
+  }, async (dir) => {
+    const { lines, out } = capture();
+    assertEquals(await runNodeModulesCheck(dir, out), 0);
+    assertEquals(lines, ["node_modules: matches package-lock.json"]);
+  });
+  assertEquals(
+    nodeModulesState(
+      lockfile(workspace),
+      hidden(installed),
+      (path) => path !== "member",
+    ),
+    { state: "stale", differing: ["member"] },
+  );
+});
+
 test("the check fails when a recorded package directory was deleted", async () => {
   const files = { ...INSTALLED_FILES };
   delete files["node_modules/zod/package.json"];

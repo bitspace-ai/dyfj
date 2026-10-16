@@ -325,7 +325,8 @@ How the work actually happens, separate from what gets built.
 ### Prerequisites
 
 - [Node.js](https://nodejs.org) 26 with its bundled npm. The runtime and the
-  `dyfj` CLI run on it, `npm ci` installs the dependencies, and the launcher
+  `dyfj` CLI run on it, `npm ci` at the repository root installs the
+  dependencies, and the launcher
   refuses any other major version (CI uses Node 26.11.1)
 - [Deno](https://deno.com) 2.9+, for the gate, the test lanes and the
   remaining `deno task` tooling, until their own move to Node
@@ -342,21 +343,34 @@ How the work actually happens, separate from what gets built.
 
 ```sh
 git clone https://github.com/bitspace-ai/dyfj
-cd dyfj/prototype
+cd dyfj
 npm ci
+cd prototype
 cp .env.example .env
 git config core.hooksPath .githooks
 ```
 
-`npm ci` installs `prototype/node_modules` exactly as the committed
-`package-lock.json` records it. npm is the only resolver of npm packages:
-`deno.json` sets `nodeModulesDir: "manual"`, so Deno uses that install and
-never resolves or installs npm packages itself. `prototype/.npmrc` keeps
-installs to exact versions, turns install scripts off and holds back any
-release younger than three days. After any pull or merge that changes
-`package-lock.json`, run `npm ci` in `prototype/` again, in every checkout.
-That includes the checkout a `dyfj` on your `PATH` runs from. The gate fails
-until you do (see the npm install precondition below).
+The repository root is one npm workspace: the root `package.json` holds the
+tooling devDependencies (`typescript` and `@types/node`) and names `prototype`
+as its member, whose `package.json` holds the runtime dependencies. `npm ci`
+at the repository root installs both into the root `node_modules`, exactly as
+the committed root `package-lock.json` records it. npm is the only resolver of
+npm packages: the root `deno.json` sets `nodeModulesDir: "manual"`, so Deno
+uses that install and never resolves or installs npm packages itself. The root
+`.npmrc` keeps installs to exact versions, turns install scripts off and holds
+back any release younger than three days; npm reads it for the whole
+workspace and ignores an `.npmrc` inside a member. After any pull or merge
+that changes `package-lock.json`, run `npm ci` at the repository root again,
+in every checkout. That includes the checkout a `dyfj` on your `PATH` runs
+from. The gate fails until you do (see the npm install precondition below).
+
+The npm workspace also makes the repository root Deno's workspace root, so
+Deno's lockfile for the remaining JSR test dependencies is the root
+`deno.lock`, and the root `deno.json` sets `"lock": { "frozen": true }`: a
+Deno run fails, rather than re-resolving, when that lock is missing or out of
+date. The root `deno.json` also declares `compilerOptions`, so Deno keeps its
+own type-checking settings instead of reading the root `tsconfig.json` that
+the `typecheck.tsc` lane uses.
 
 The last line enables the repository's git hooks, which keep AI-tool
 attribution out of history (see `AGENTS.md`, Documentation Discipline):
@@ -850,7 +864,7 @@ predates a migration.
 ### Run Workbench
 
 ```sh
-(cd prototype && npm ci)
+npm ci
 ./prototype/scripts/dyfj-launcher.sh
 ```
 
@@ -1145,8 +1159,9 @@ stream and suppresses late stream errors.
 Useful validation tasks:
 
 ```sh
-deno task test            # repository aggregate gate (full green bar)
-deno task test:fast       # policy checks, source typecheck, unit lane
+npm test                  # repository aggregate gate (full green bar); runs deno task test
+npm run test:fast         # policy checks, typechecks, unit lane; runs deno task test:fast
+deno task test            # the same full gate, called directly
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
@@ -1156,15 +1171,16 @@ deno task verify-workbench-events
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
-`deno task test` first checks the npm install precondition: the
-`prototype/node_modules` that npm installed must match
-`prototype/package-lock.json`. The lane compares npm's record of the install
-(`node_modules/.package-lock.json`) with the lockfile, package by package and
-version by version, and checks that each recorded package still has its
-`package.json` on disk. A locked optional package may be absent, since npm skips
+`deno task test` first checks the npm install precondition: the root
+`node_modules` that npm installed must match the root `package-lock.json`. The
+lane compares npm's record of the install (`node_modules/.package-lock.json`)
+with the lockfile, package by package and version by version, and checks that
+each recorded package still has its `package.json` on disk; for the workspace
+member, that is `prototype/package.json` and the `node_modules/dyfj-prototype`
+link npm makes to it. A locked optional package may be absent, since npm skips
 builds for other platforms. When node_modules is missing or out of date, the
-lane fails with `` run `npm ci` in prototype/ ``. The lane only reads
-`prototype/`: the gate never runs npm. It reports under `test.aggregate` and
+lane fails with `` run `npm ci` at the repository root ``. The lane only
+reads: the gate never runs npm. It reports under `test.aggregate` and
 also runs in `test:fast`. Then the gate runs a set of deterministic policy
 checks, each reported under a stable check id, ahead of the test suites. `subject.resolve` and
 `subject.digest` bind the run to one immutable commit: in CI the workflow
@@ -1188,8 +1204,14 @@ shell, a floating Rust toolchain, and, for each tracked `package.json`, a
 dependency that is not an exact version, an `overrides` field (rejected until
 a policy for overrides exists), a missing tracked
 `package-lock.json`, or a tracked `.npmrc` that does not set
-`ignore-scripts=true` and a `min-release-age` of at least 3 days. It also
-checks `.github/dependabot.yml`: every tracked `package.json` needs an npm update
+`ignore-scripts=true` and a `min-release-age` of at least 3 days. A workspace
+member (`prototype/package.json`, named in the root's `workspaces`) is held to
+its workspace root's lockfile and `.npmrc`, because npm installs it from
+there; a tracked `.npmrc` or `package-lock.json` beside a member is rejected,
+since npm would ignore it, and `workspaces` must list plain relative
+directories. It also
+checks `.github/dependabot.yml`: every tracked `package.json` outside a
+workspace, and every workspace root, needs an npm update
 lane for its directory, that lane must use the `increase` versioning strategy,
 and the npm and deno lanes must declare a cooldown of at least 3 days with no
 dependency carved out by `include` or `exclude`. `receipt.schema` runs the
@@ -1213,10 +1235,11 @@ remain outside this repository.
 
 After the policy checks, the gate runs the retired-surface scan, the
 `arch.imports` module-boundary check, the `runtime.neutral` ratchet, the
-`erasable.syntax` guard, the source
+`typecheck.tsc` lane, the source
 and test-file typechecks (both
 file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
-never hand-listed), the prototype unit lane (`test.unit`: every
+never hand-listed, over `prototype/src`, `mcp`, `scripts`, `testing`,
+`diagnostics` and `examples`), the prototype unit lane (`test.unit`: every
 non-integration, non-golden test file; product files run unsandboxed under
 `node --test`, and its gate-tooling `deno test` subset runs in parallel with
 the op and resource sanitizers enabled, no run or net grant, and env access
@@ -1373,23 +1396,37 @@ entry. The lane and its test are written to `node:` builtins only. It needs
 read access to the repository, `git`, and the one environment variable the Deno
 `node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
 
-`erasable.syntax` (`scripts/erasable-syntax.ts`, reported under
-`test.aggregate`) rejects constructor parameter properties in git-tracked
-`.ts` files: a constructor parameter with `public`, `private`, `protected`,
-`readonly` or `override`. Node runs TypeScript by stripping types without
-transforming code (decision D32), and a parameter property was the one
-construct the codebase used that stripping cannot erase. The lane checks that
-construct only. Other syntax that needs a transform (`enum`, `namespace`,
-decorators and the like) goes unchecked until `tsc --erasableSyntaxOnly`
-takes over when the typecheck lane moves to Node. The lane also fails on a
-file it cannot parse. To fix a violation, declare the field in the class body
-and assign it in the constructor. The scan parses with `deno lint` and the
-repository plugin `scripts/erasable-syntax-lint-plugin.ts` (configured by
-`scripts/erasable-syntax-lint.json`), not a pattern, so it sees the syntax
-across line breaks. It prints one report line, for example
-`erasable.syntax: 548 tracked .ts files scanned, 0 violations`, and needs read
-access to the repository, `git`, the selected Deno binary and
-`NODE_V8_COVERAGE`.
+`typecheck.tsc` (reported under `test.aggregate`) runs `tsc --noEmit` from the
+root npm workspace's `typescript` devDependency (6.0.3) with Node's types
+(`@types/node` 26.6.5), over the root `tsconfig.json`: `prototype/src`,
+`prototype/testing`, `prototype/examples`, `prototype/mcp`,
+`prototype/diagnostics`, `prototype/scripts`, `schema/`, `contracts/` and
+`scripts/`, with `strict`, `module`/`moduleResolution` `nodenext`,
+`verbatimModuleSyntax`, `allowImportingTsExtensions` and
+`erasableSyntaxOnly`. The command is
+`node node_modules/typescript/bin/tsc --project tsconfig.json` from the
+repository root, and it runs in the full gate and in `test:fast`, alongside the
+`deno check` lanes until the gate-tooling port removes them. TypeScript 6.0.3
+is pinned rather than 7.x because 7.x exposes its compiler API only as
+unstable, and the gate-tooling port builds on that API.
+
+Node runs TypeScript by stripping types without transforming code (decision
+D32), so `erasableSyntaxOnly` rejects syntax stripping cannot erase: a
+constructor parameter property (`public`, `private`, `protected`, `readonly`
+or `override` on a constructor parameter), `enum`, `namespace` with values,
+and the like, as `TS1294`. `scripts/typecheck-tsc.test.ts` pins that rejection
+with a parameter-property fixture. To fix a violation, declare the field in
+the class body and assign it in the constructor. This replaces the former
+`erasable.syntax` lane and its `deno lint` plugin.
+
+The tsconfig's `exclude` list names the files `tsc` cannot check yet: those
+that still use the `Deno` global or import `@std/*`, plus every file that
+imports one, since `tsc` checks an excluded file an included file imports.
+That is the gate tooling under `scripts/` and `prototype/scripts/`, the
+`schema/` CLIs and their tests, `prototype/testing/golden/run.ts` and the
+seven `prototype/examples/`. Those files keep their `deno check` coverage
+(the examples through the source typecheck lane), the list only shrinks as
+they port, and it is deleted when the last one ports.
 
 The Node load probe (`scripts/node-load-probe.ts`) is a manual check, not a
 gate lane, until the gate tooling runs on Node. Run it by hand from the
@@ -1397,8 +1434,9 @@ repository root with Node 22.18 or later: `node scripts/node-load-probe.ts`.
 It imports each git-tracked non-test module under `prototype/src`,
 `prototype/testing` (shared test support) and `contracts/` only, and reports
 each one. Test files are those test discovery recognises (`isTestSource` in
-`prototype/scripts/test-files.ts`). It resolves npm packages from
-`prototype/node_modules`, which `npm ci` installs. One module fails by design:
+`prototype/scripts/test-files.ts`). It resolves npm packages the way Node
+does, from the repository root's `node_modules`, which `npm ci` at the root
+installs. One module fails by design:
 `prototype/testing/golden/run.ts`, the golden lane's runner, is a script that
 still runs under `deno`, so the probe reports it as a failure until the gate
 tooling runs under Node.
@@ -1440,14 +1478,14 @@ remain as secondary evidence, not as the integrity control. Release signatures
 are still not verified, and the dependency manifest declares that gap. The Rust
 toolchain is installed from the exact pin in `core/rust-toolchain.toml`. Each
 job then installs Node 26.11.1 through the digest-pinned `actions/setup-node`
-action and runs `npm ci` in `prototype/` before the gate. For Node, the
+action and runs `npm ci` at the repository root before the gate. For Node, the
 evidence is that digest pin plus the exact version, not a repository-owned
 archive digest.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
-`deno task test:fast` runs every deterministic policy check (including
-`arch.imports`, `runtime.neutral` and `erasable.syntax`) plus the contract package checks, the source typecheck, and the
+`deno task test:fast` (or `npm run test:fast`) runs every deterministic policy check (including
+`arch.imports` and `runtime.neutral`) plus the contract package checks, the `typecheck.tsc` lane, the source typecheck, and the
 `test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `deno task test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
@@ -1456,14 +1494,16 @@ public deterministic checks it runs.
 ### Dependency updates
 
 Dependabot proposes weekly update PRs for four surfaces, configured in
-`.github/dependabot.yml`: the npm packages under `prototype/` (`package.json`
-and `package-lock.json`), the Deno workspace under `prototype/` (its `deno.json`
-imports and `deno.lock`, which now hold only the JSR test dependencies), the
+`.github/dependabot.yml`: the npm workspace at the repository root (the root
+`package.json` and its member `prototype/package.json`, locked by the root
+`package-lock.json`), the Deno workspace at the repository root (the
+`prototype/deno.json` imports and the root `deno.lock`, which now hold only the
+JSR test dependencies), the
 Rust crate set under `core/` (`Cargo.toml` and
 `Cargo.lock`), and the digest-pinned workflow actions under
 `.github/workflows/`. The npm and deno lanes declare a `cooldown` of 3 days, so
 a bot PR never proposes a release younger than the 72-hour floor that
-`min-release-age` in `prototype/.npmrc` holds at install time. Dependabot's own
+`min-release-age` in the root `.npmrc` holds at install time. Dependabot's own
 default cooldown is also 3 days, and cooldown does not apply to security
 updates. The npm lane uses the `increase` versioning strategy, which rewrites
 an exact pin to the new exact version, so a bot PR keeps the exact-pin rule.
@@ -1482,7 +1522,7 @@ them when they age, so keeping them fresh is a manual cadence. The
 `dependency.policy` check enforces
 pin discipline — exact versions, digests, and a declared 72-hour minimum
 release-age floor for registry-published dependencies (for npm, also set at
-install time by `min-release-age` in `prototype/.npmrc`) — but it detects no
+install time by `min-release-age` in the root `.npmrc`) — but it detects no
 staleness: freshness is the
 operator's responsibility, not the gate's.
 
@@ -2332,3 +2372,11 @@ Document revisions only. Code and behavior changes are tracked in
   `--permission` flags, and the OS-sandbox follow-up that would scope the
   runtime's own process; the golden harness description says it starts the
   engine and CLI on `node`.
+- 2026-10-16 - Setup, "Run Workbench", the gate section and "Dependency
+  updates" describe the one npm workspace at the repository root: `npm ci` at
+  the root, the root `.npmrc`, `package-lock.json` and frozen `deno.lock`, the
+  root `npm test` and `npm run test:fast` entries, and the npm install
+  precondition's root check. The gate section documents the `typecheck.tsc`
+  lane, its tsconfig coverage and exclusion list, and the TypeScript 6.0.3 pin,
+  in place of the `erasable.syntax` lane, and says the source typecheck now
+  covers `prototype/examples/`.

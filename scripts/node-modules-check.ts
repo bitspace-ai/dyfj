@@ -1,6 +1,6 @@
 /**
- * npm install precondition: `prototype/node_modules` must match
- * `prototype/package-lock.json`.
+ * npm install precondition: the repository root's `node_modules` must match
+ * the root `package-lock.json`.
  *
  * npm is the only resolver of npm packages, and the test lanes run against
  * the node_modules npm installed (`nodeModulesDir: "manual"`). A missing or
@@ -13,7 +13,10 @@
  * same packages at the same versions, and every package both name still has
  * its `package.json` on disk, so a directory deleted after the install is
  * caught. A locked optional package may be absent, because npm skips
- * optional packages built for another platform.
+ * optional packages built for another platform. The root is an npm
+ * workspace, so the lockfile also names each member (`prototype`) and the
+ * link npm installs for it (`node_modules/dyfj-prototype`); neither carries a
+ * version, and each must still resolve to a `package.json` on disk.
  */
 
 import { existsSync } from "node:fs";
@@ -22,7 +25,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { sanitizeForLog } from "./scan-lib.ts";
 
-export const NODE_MODULES_REMEDY = "run `npm ci` in prototype/";
+export const NODE_MODULES_REMEDY = "run `npm ci` at the repository root";
 
 const MAX_NAMED = 10;
 
@@ -106,7 +109,7 @@ export async function runNodeModulesCheck(
 ): Promise<number> {
   const lock = await readOptional(join(dir, "package-lock.json"));
   if (lock === undefined) {
-    out.error("node_modules: prototype/package-lock.json is missing");
+    out.error("node_modules: package-lock.json is missing");
     return 1;
   }
   const hidden = await readOptional(
@@ -122,17 +125,17 @@ export async function runNodeModulesCheck(
       out.log("node_modules: matches package-lock.json");
       return 0;
     case "invalid":
-      out.error("node_modules: prototype/package-lock.json is not readable");
+      out.error("node_modules: package-lock.json is not readable");
       return 1;
     case "missing":
       out.error(
-        `node_modules: prototype/node_modules is missing; ${NODE_MODULES_REMEDY}`,
+        `node_modules: node_modules is missing; ${NODE_MODULES_REMEDY}`,
       );
       return 1;
     case "stale": {
       const differing = result.differing ?? [];
       out.error(
-        "node_modules: prototype/node_modules is out of date with " +
+        "node_modules: node_modules is out of date with " +
           `package-lock.json; ${NODE_MODULES_REMEDY}`,
       );
       for (const path of differing.slice(0, MAX_NAMED)) {

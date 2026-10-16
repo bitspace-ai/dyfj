@@ -1,9 +1,0 @@
-{
-  "lint": {
-    "plugins": ["./erasable-syntax-lint-plugin.ts"],
-    "rules": {
-      "tags": [],
-      "include": ["erasable-syntax/parameter-property"]
-    }
-  }
-}

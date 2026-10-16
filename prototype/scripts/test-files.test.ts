@@ -77,7 +77,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
         "testing/golden/run.test.ts",
         "diagnostics/workbench-events.ts",
         "diagnostics/workbench-events.test.ts",
-        "examples/outside.ts",
+        "examples/example.ts",
         "root-config.ts",
       ]
     ) {
@@ -89,6 +89,7 @@ Deno.test("discovery walks every source root and nothing else", async () => {
     }
     assertEquals(discoverTypecheckSources(root), [
       "diagnostics/workbench-events.ts",
+      "examples/example.ts",
       "mcp/server.ts",
       "scripts/tool.ts",
       "src/cli.ts",

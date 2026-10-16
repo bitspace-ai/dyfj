@@ -10,12 +10,15 @@ If you want to understand DYFJ's stance on why prototype-and-substrate coexist i
 
 You'll need [Node.js](https://nodejs.org) 26 with npm: the runtime and the
 `dyfj` CLI run on it, and the launcher refuses any other major version. npm
-alone installs the npm dependencies; rerun `npm ci` after any change to
-`package-lock.json`. [Deno](https://deno.com) 2.9+ runs the gate, the test
-lanes and the remaining `deno task` tooling until their own move to Node.
+alone installs the npm dependencies. This directory is a member of the one
+npm workspace at the repository root, so run `npm ci` at the repository root,
+which holds the lockfile and installs into the root `node_modules`; rerun it
+after any change to the root `package-lock.json`. [Deno](https://deno.com)
+2.9+ runs the gate, the test lanes and the remaining `deno task` tooling until
+their own move to Node.
 
 ```sh
-npm ci
+(cd .. && npm ci)
 ./scripts/dyfj-launcher.sh
 ```
 

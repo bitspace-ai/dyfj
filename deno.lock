@@ -36,21 +36,31 @@
     }
   },
   "workspace": {
-    "dependencies": [
-      "jsr:@std/assert@1.0.19",
-      "jsr:@std/testing@1.0.21"
-    ],
     "packageJson": {
       "dependencies": [
-        "npm:@agentclientprotocol/codex-acp@1.11.0",
-        "npm:@agentclientprotocol/sdk@1.7.0",
-        "npm:@modelcontextprotocol/client@2.3.1",
-        "npm:@modelcontextprotocol/server@2.3.1",
-        "npm:mysql2@3.24.5",
-        "npm:smol-toml@1.9.1",
-        "npm:ulid@3.0.2",
-        "npm:zod@4.6.5"
+        "npm:@types/node@26.6.5",
+        "npm:typescript@6.0.3"
       ]
+    },
+    "members": {
+      "prototype": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.21"
+        ],
+        "packageJson": {
+          "dependencies": [
+            "npm:@agentclientprotocol/codex-acp@1.11.0",
+            "npm:@agentclientprotocol/sdk@1.7.0",
+            "npm:@modelcontextprotocol/client@2.3.1",
+            "npm:@modelcontextprotocol/server@2.3.1",
+            "npm:mysql2@3.24.5",
+            "npm:smol-toml@1.9.1",
+            "npm:ulid@3.0.2",
+            "npm:zod@4.6.5"
+          ]
+        }
+      }
     }
   }
 }

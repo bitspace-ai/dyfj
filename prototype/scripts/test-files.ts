@@ -16,6 +16,7 @@ export const SOURCE_ROOTS = [
   "scripts",
   "testing",
   "diagnostics",
+  "examples",
 ] as const;
 
 const ignoredDirectories = new Set([".git", "node_modules"]);

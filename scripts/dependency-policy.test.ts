@@ -7,6 +7,7 @@ import {
   manifestDigest,
   manifestViolations,
   mutatedSurfaces,
+  npmWorkspaces,
   REQUIRED_EVIDENCE_BY_SOURCE,
   scanDependabotText,
   scanNpmPackage,
@@ -293,10 +294,14 @@ Deno.test("dependency surfaces are classified deterministically", () => {
     ".github/workflows/gate.yml",
     ".github/dependabot.yml",
     "deno.json",
+    "deno.lock",
     "prototype/deno.lock",
     "core/Cargo.toml",
     "core/Cargo.lock",
     "core/rust-toolchain.toml",
+    "package.json",
+    "package-lock.json",
+    ".npmrc",
     "prototype/package.json",
     "prototype/package-lock.json",
     "prototype/.npmrc",
@@ -1233,15 +1238,22 @@ test("the committed manifest declares the npm surface under the registry floor",
   const load = await loadManifest(repoRootFromMeta());
   assertEquals(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
-  const npm = surfaces.filter((surface) => surface.id === "npm.prototype");
+  const npm = surfaces.filter((surface) => surface.id === "npm.workspace");
   assertEquals(npm.length, 1);
   const surface = npm[0]!;
   assertEquals(surface.source_class, "npm-registry");
+  // The root workspace and its member. The prototype .npmrc and lockfile
+  // stay declared so the release range that removed them matches a surface.
   assertEquals(surface.manifest_paths, [
+    "package.json",
+    ".npmrc",
     "prototype/package.json",
     "prototype/.npmrc",
   ]);
-  assertEquals(surface.lock_paths, ["prototype/package-lock.json"]);
+  assertEquals(surface.lock_paths, [
+    "package-lock.json",
+    "prototype/package-lock.json",
+  ]);
   assertEquals(surface.age_policy, {
     class: "registry-minimum-hours",
     minimum_hours: 72,
@@ -1249,7 +1261,7 @@ test("the committed manifest declares the npm surface under the registry floor",
   // deno.workspace keeps the deno.json files and deno.lock only.
   const deno = surfaces.find((entry) => entry.id === "deno.workspace");
   assertEquals(deno?.manifest_paths, ["deno.json", "prototype/deno.json"]);
-  assertEquals(deno?.lock_paths, ["prototype/deno.lock"]);
+  assertEquals(deno?.lock_paths, ["deno.lock", "prototype/deno.lock"]);
 });
 
 test("tracked npm packages are checked for lockfile and npmrc", async () => {
@@ -1277,6 +1289,120 @@ test("tracked npm packages are checked for lockfile and npmrc", async () => {
         "dependency.policy/npm-release-age",
         // No tracked Dependabot config, so no npm lane watches it.
         "dependency.policy/dependabot-npm-unwatched",
+      ],
+    );
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+const ROOT_WORKSPACE = JSON.stringify({
+  private: true,
+  workspaces: ["prototype"],
+  devDependencies: { typescript: "6.0.3" },
+}) + "\n";
+
+test("a workspace member is owned by the root that lists it", () => {
+  const packages = new Map([
+    ["package.json", ROOT_WORKSPACE],
+    ["prototype/package.json", packageJson({ zod: "4.6.5" })],
+    ["other/package.json", packageJson({ zod: "4.6.5" })],
+  ]);
+  const result = npmWorkspaces(
+    packages,
+    new Set([...packages.keys(), "package-lock.json", ".npmrc"]),
+  );
+  assertEquals([...result.owners], [["prototype/package.json", ""]]);
+  assertEquals(result.hits, []);
+});
+
+test("a tracked npmrc or lockfile beside a workspace member fails", () => {
+  // npm ignores both inside a workspace, so a tracked one only looks
+  // effective.
+  const packages = new Map([
+    ["package.json", ROOT_WORKSPACE],
+    ["prototype/package.json", packageJson({ zod: "4.6.5" })],
+  ]);
+  const result = npmWorkspaces(
+    packages,
+    new Set([
+      ...packages.keys(),
+      "prototype/.npmrc",
+      "prototype/package-lock.json",
+    ]),
+  );
+  assertEquals(result.hits.map((hit) => [hit.path, hit.rule]), [
+    ["prototype/.npmrc", "dependency.policy/npm-workspace-member-config"],
+    [
+      "prototype/package-lock.json",
+      "dependency.policy/npm-workspace-member-config",
+    ],
+  ]);
+});
+
+test("workspaces other than plain relative directories fail", () => {
+  for (
+    const workspaces of [
+      ["packages/*"],
+      ["../outside"],
+      ["./prototype"],
+      ["/abs"],
+      ["prototype/"],
+      [7],
+      { packages: ["prototype"] },
+      "prototype",
+    ]
+  ) {
+    const content = JSON.stringify({ private: true, workspaces }, null, 2);
+    const result = npmWorkspaces(
+      new Map([["package.json", content]]),
+      new Set(["package.json"]),
+    );
+    assertEquals(result.hits.map((hit) => [hit.line, hit.rule]), [
+      [3, "dependency.policy/npm-workspaces-unsupported"],
+    ]);
+    assertEquals(result.owners.size, 0);
+  }
+});
+
+test("a workspace member is checked against the root lockfile, npmrc and npm lane", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-npm-ws-"));
+  try {
+    await gitIn(dir, ["init", "-q"]);
+    await mkdir(`${dir}/prototype`);
+    await mkdir(`${dir}/.github`);
+    await writeFile(`${dir}/package.json`, ROOT_WORKSPACE);
+    await writeFile(`${dir}/package-lock.json`, "{}\n");
+    await writeFile(`${dir}/.npmrc`, NPMRC);
+    await writeFile(
+      `${dir}/prototype/package.json`,
+      packageJson({ zod: "4.6.5" }),
+    );
+    await writeFile(
+      `${dir}/.github/dependabot.yml`,
+      dependabotConfig(NPM_LANE, DENO_LANE)
+        .replaceAll('directory: "/prototype"', 'directory: "/"'),
+    );
+    await gitIn(dir, ["add", "."]);
+    await gitIn(dir, ["commit", "-q", "-m", "base"]);
+    assertEquals(
+      (await dependencyPolicyHits(dir)).filter((hit) =>
+        hit.path !== "core/rust-toolchain.toml"
+      ),
+      [],
+    );
+    // Without the root's lockfile and npmrc the member fails as the root
+    // does: neither of the member's own would be used.
+    await gitIn(dir, ["rm", "-q", "package-lock.json", ".npmrc"]);
+    await gitIn(dir, ["commit", "-q", "-m", "drop root config"]);
+    const hits = await dependencyPolicyHits(dir);
+    assertEquals(
+      hits.filter((hit) => hit.path === "prototype/package.json")
+        .map((hit) => hit.rule),
+      [
+        "dependency.policy/npm-missing-lockfile",
+        "dependency.policy/npm-install-scripts",
+        "dependency.policy/npm-release-age",
       ],
     );
   } finally {
