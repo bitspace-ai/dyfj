@@ -380,8 +380,13 @@ attribution out of history (see `AGENTS.md`, Documentation Discipline):
 and strips tool-attribution trailers from its message, and `pre-push` refuses
 to publish commits that still carry either.
 
-The prototype uses Deno tasks defined in `deno.json`. See `deno task` for the
-list of entry points.
+`dyfj` (the launcher, below) runs the Workbench. The diagnostics, the event
+check, the smoke example, the Codex login and the memory-recall fixture are npm
+scripts in `prototype/package.json` (`npm run` lists them). The gate, test,
+typecheck and schema entry points are Deno tasks in `deno.json` (`deno task`
+lists them) until the gate tooling moves to Node.
+`prototype/examples/uds-jsonrpc-spike.ts` is a standalone historical example
+with no npm script; it is written for Deno and does not run under Node.
 
 Edit `.env` for your local config. The prototype reads Dolt connection settings
 from environment variables; for the default local SQL server, export:
@@ -815,11 +820,7 @@ fetch tool. A hostname passes only when its A and AAAA lookups both answer
 (either may have no records), together they return at least one address, and
 none of those is private, loopback or internal; a public IP literal needs no
 lookup. The runtime's network policy holds the nameservers in
-`/etc/resolv.conf` for these lookups, under `dyfj start` and
-`deno task serve-unix` alike, and the `serve-unix` profile grants the
-`networkInterfaces` system information the resolver reads to find them under
-Deno. Per turn, at
-most 3 searches and 5 fetches run, returned text is capped at 40,000 characters
+`/etc/resolv.conf` for these lookups. Per turn, at most 3 searches and 5 fetches run, returned text is capped at 40,000 characters
 per fetch and 100,000 per turn, and results are framed as untrusted external
 data.
 
@@ -900,12 +901,10 @@ The workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket â€
 the canonical `loopback` transport (no TCP port; gated by filesystem
 permissions; full local clearance). It is the seam the terminal clients use. The
 bare `dyfj` launcher starts this runtime automatically when needed, and
-`dyfj start` runs it in the foreground. The Deno task that serves the same
-engine under Deno's permission profile remains, for development, until the
-profiles are removed:
+`dyfj start` runs it in the foreground, on Node:
 
 ```sh
-deno task serve-unix      # serve the JSON-RPC seam on the Unix socket, under Deno
+dyfj start
 ```
 
 The socket path resolves from `DYFJ_SOCKET`, else
@@ -1128,7 +1127,7 @@ Authenticate the dedicated home once before using the route:
 
 ```sh
 cd prototype
-deno task codex-chatgpt-login
+npm run codex-chatgpt-login
 ```
 
 After ACP initialization and before `session/new`, Workbench asks the adapter
@@ -1169,9 +1168,27 @@ deno task test:schema
 deno task validate-schema
 deno task schema:equivalence  # fresh-install and upgrade paths match
 deno task schema:codegen      # regenerate the DDL-derived row types
-deno task verify-workbench-events
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
+
+These diagnostics, examples and helpers are `prototype/package.json` scripts
+that run on Node; the model diagnostics and the event check load
+`prototype/.env` when it exists. Each one prints its usage with `--help`:
+
+```sh
+cd prototype
+npm run verify-workbench-events      # one live turn, then check its journal events
+npm run model-response-modes         # streamed vs non-streamed, local Ollama
+npm run context-size-response        # small vs large context, local Ollama
+npm run structured-output            # structured-output modes, local Ollama
+npm run structured-output-streaming  # the same, streamed
+npm run memory-recall-uat-fixture    # a fixture MCP memory server on loopback
+npm run codex-chatgpt-login          # sign the Codex runner home in to ChatGPT
+npm run smoke                        # print the Node version
+```
+
+Arguments after `--` reach the script, for example
+`npm run structured-output -- --model qwen3.6:35b-a3b`.
 
 `deno task test` first checks the npm install precondition: the root
 `node_modules` that npm installed must match the root `package-lock.json`. The
@@ -1778,7 +1795,7 @@ Touch every subsystem.
   regression catches, model-comparison and prompt-comparison runs. Measurement
   is part of the work product, not a side artifact.
   _Runtime status: not implemented. The prototype has manual local-provider
-  diagnostics (`deno task model-response-modes` and similar), not an eval
+  diagnostics (`npm run model-response-modes` and similar), not an eval
   harness._
 - **Self-reflection / planning / review loops.** Built-in mechanisms for the
   agent to critique its own output, decompose subtasks, verify results, and
@@ -2390,3 +2407,14 @@ Document revisions only. Code and behavior changes are tracked in
   lane, its tsconfig coverage and exclusion list, and the TypeScript 7.0.2 pin,
   in place of the `erasable.syntax` lane, and says the source typecheck now
   covers `prototype/examples/`.
+- 2026-10-16 - The product's Deno launch surface is removed. "Run Workbench"
+  and the JSON-RPC seam section start the runtime with `dyfj start` in place
+  of `deno task serve-unix`; the web tools paragraph no longer describes the
+  `serve-unix` profile; the set-up section says the diagnostics and examples
+  are npm scripts and the gate, test and schema entry points stay Deno tasks;
+  the validation tasks list the diagnostics as `npm run <name>`, each with
+  `--help`; and the Codex login and the eval-status note use
+  `npm run codex-chatgpt-login` and `npm run model-response-modes`. The
+  set-up section names `prototype/examples/uds-jsonrpc-spike.ts` as a
+  standalone historical example with no npm script that does not run under
+  Node.

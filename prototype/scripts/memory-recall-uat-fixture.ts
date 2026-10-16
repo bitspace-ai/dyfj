@@ -2,7 +2,9 @@ import {
   createMcpHandler,
   McpServer,
 } from "@modelcontextprotocol/server";
+import process from "node:process";
 import { z } from "zod";
+import { serveFetch } from "../testing/servers/fetch-server.ts";
 
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 43_137;
@@ -46,43 +48,34 @@ export async function settleFixtureShutdown(
 }
 
 export async function runMemoryRecallUatFixture(
-  args: string[] = Deno.args,
+  args: string[] = process.argv.slice(2),
 ): Promise<void> {
+  if (args.includes("--help")) {
+    console.log(
+      `usage: npm run memory-recall-uat-fixture -- [--port <n>]\n\nServes a fixture MCP memory server on http://${HOST}:<port>/mcp (port\n${DEFAULT_PORT} by default; 0 picks a free one) with one tool, ${FIXTURE_TOOL}.\nPoint DYFJ_MEMORY_MCP_URL at it to exercise memory recall. Stop it with Ctrl-C.`,
+    );
+    return;
+  }
   let calls = 0;
   const mcp = createMcpHandler(
     () => fixtureServer(() => console.log(`fixture tool calls: ${++calls}`)),
     { legacy: "reject" },
   );
-  const http = Deno.serve(
-    {
-      hostname: HOST,
-      port: fixturePort(args),
-      onListen: ({ port }) =>
-        console.log(`memory recall UAT fixture: http://${HOST}:${port}/mcp`),
-    },
-    (request) => mcp.fetch(request),
-  );
+  const http = await serveFetch((request) => mcp.fetch(request), {
+    port: fixturePort(args),
+  });
+  console.log(`memory recall UAT fixture: http://${HOST}:${http.port}/mcp`);
 
-  let closing: Promise<boolean> | undefined;
-  const close = (): Promise<boolean> => {
-    if (closing !== undefined) return closing;
-    closing = settleFixtureShutdown(
-      () => http.shutdown(),
-      () => mcp.close(),
-    );
-    return closing;
-  };
-  const onSignal = () => void close();
-  Deno.addSignalListener("SIGINT", onSignal);
-  Deno.addSignalListener("SIGTERM", onSignal);
-  try {
-    await http.finished;
-  } finally {
-    Deno.removeSignalListener("SIGINT", onSignal);
-    Deno.removeSignalListener("SIGTERM", onSignal);
-    if (!await close()) {
-      throw new Error("memory recall UAT fixture failed to shut down");
-    }
+  let onSignal = () => {};
+  await new Promise<void>((resolve) => {
+    onSignal = resolve;
+    process.on("SIGINT", onSignal);
+    process.on("SIGTERM", onSignal);
+  });
+  process.off("SIGINT", onSignal);
+  process.off("SIGTERM", onSignal);
+  if (!await settleFixtureShutdown(() => http.close(), () => mcp.close())) {
+    throw new Error("memory recall UAT fixture failed to shut down");
   }
 }
 

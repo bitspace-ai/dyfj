@@ -9,11 +9,12 @@
  *     engine-free CLI owns its own slice (server URL, socket, routing prefs). The
  *     `CONFIG_SCHEMA` registry tags each key with its domain so the two slices
  *     stay distinct (the thin client never loads the engine's schema).
- *   - ONE declared surface the permission allowlist derives from. `CONFIG_SCHEMA`
- *     is the single source of truth for the engine env surface; a parity test
- *     asserts the `deno.json` permission `env` profiles against it, so the
- *     allowlist-drift class of bug (a runtime env var present in one profile and
- *     missing from another) is caught structurally, not band-aided.
+ *   - ONE declared surface the runtime env allowlist derives from.
+ *     `CONFIG_SCHEMA` is the single source of truth for the engine env surface;
+ *     a parity test asserts the runtime policy's env list
+ *     (`RUNTIME_ENV_GRANTS` in `runtime-policy.ts`) against it, so the
+ *     allowlist-drift class of bug (a runtime env var declared but not
+ *     forwarded, or forwarded but not declared) is caught structurally.
  *   - Every `DYFJ_*` key named anywhere under `prototype/` (runtime, `mcp/` and
  *     the `scripts/` tooling) is declared here; the `arch.imports` lane fails
  *     on an undeclared one.
@@ -31,10 +32,10 @@ export const PERMISSION_LEVELS: readonly PermissionLevel[] = [
  * Which slice owns a key. The engine owns runtime/data/secret config; the
  * engine-free CLI client owns its own transport/routing slice. One system, two
  * domains — so the thin client never has to load the engine's schema. `test`
- * keys are set only by test harnesses; no runtime permission profile grants
- * them, and a read of one outside a test treats the ungranted key as absent.
+ * keys are set only by test harnesses; the runtime policy never forwards them
+ * to the runtime, and a read of one outside a test treats the key as absent.
  * `tooling` keys are read only by the test and gate programs under
- * `prototype/scripts`; no runtime permission profile grants them either.
+ * `prototype/scripts`; the runtime policy never forwards them either.
  */
 export type ConfigDomain = "engine" | "client" | "test" | "tooling";
 
@@ -78,8 +79,8 @@ export interface ConfigKeySpec {
 }
 
 /**
- * The single declared surface. Engine keys' env vars must appear in the engine
- * `deno.json` permission profiles (asserted by the parity test); client keys
+ * The single declared surface. Engine keys' env vars must appear in the runtime
+ * policy's env list (asserted by the parity test); client keys
  * belong to the engine-free CLI slice. Secret-pointer keys are declared so the
  * allowlist covers them — their values are resolved at point of use, never
  * stored here.

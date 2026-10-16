@@ -9,6 +9,46 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Removed
+
+- **The Deno launch entry points for the runtime and the CLI.**
+  `prototype/deno.json` no longer holds any permission profile (`test`,
+  `cli`, `serve-unix`, `local-model-diagnostic`, `verify-workbench-events`),
+  and the `serve-unix` and `cli` tasks are gone from both `deno.json` files,
+  with `prototype/scripts/serve-unix-net-flag.ts`. Run the runtime with
+  `dyfj start` (or let `dyfj` autostart it) and the CLI as `dyfj`; both
+  already ran on Node. The runtime policy module
+  (`prototype/src/config/runtime-policy.ts`) is now the only source of the
+  runtime's static net, run and env lists, which keep their values and are
+  renamed `RUNTIME_NET_GRANTS`, `RUNTIME_RUN_GRANTS` and
+  `RUNTIME_ENV_GRANTS`. The profile/policy parity test goes with the
+  profiles, and the declared-config parity test (`schema.test.ts`) now checks
+  `RUNTIME_ENV_GRANTS`. The ACP fixture agent always starts as
+  `<node> <script>`; the branch that started it under Deno with permission
+  grants is gone. Not covered: the gate, the test, check and typecheck tasks,
+  the schema CLIs and their tasks, and the gate-tooling tests under
+  `prototype/scripts/` still run on Deno through `deno.json` until the gate
+  tooling moves to Node.
+
+### Changed
+
+- **Eight diagnostic, example and helper tasks run on Node, as npm
+  scripts.** `context-size-response`, `model-response-modes`,
+  `structured-output`, `structured-output-streaming`,
+  `verify-workbench-events`, `smoke`, `codex-chatgpt-login` and
+  `memory-recall-uat-fixture` moved from Deno tasks to `prototype/package.json`
+  scripts with the same names: run them with `npm run <name>` from
+  `prototype/`, passing arguments after `--`. Each prints its usage with
+  `--help`. The model diagnostics and `verify-workbench-events` load
+  `prototype/.env` when it exists. The smoke example is now
+  `examples/smoke-test.ts` and prints the Node version.
+  `codex-chatgpt-login` runs the Codex adapter on `DYFJ_NODE_PATH` when it is
+  set, and otherwise on the Node running the script; when the adapter cannot
+  be started it prints the error code and exits 1. The memory-recall UAT
+  fixture serves through the tests' `node:http` fetch server, which now takes
+  an optional fixed port. `examples/uds-jsonrpc-spike.ts`, a historical
+  transport spike with no task, stays Deno-only.
+
 ### Security
 
 - **A `core` integration test no longer writes `DATABASE_URL` into its own

@@ -32,16 +32,9 @@ function fixtureProfile(
   methodLog?: string,
 ): AcpExecutionProfile {
   const home = process.env.HOME ?? "/tmp";
-  const writePaths = [pidFile, methodLog].filter((path): path is string =>
-    path !== undefined
-  );
   return {
     slug: "fixture",
     ...fixtureAgentCommand({
-      grants: [
-        "--allow-run=/bin/kill",
-        ...writePaths.map((path) => `--allow-write=${path}`),
-      ],
       scriptArgs: [
         ...(pidFile === undefined ? [] : [`--pid-file=${pidFile}`]),
         ...(methodLog === undefined ? [] : [`--method-log=${methodLog}`]),

@@ -2,13 +2,12 @@
  * server/ (L5): the engine server's composition root
  * (specs/01-architecture.md §7).
  *
- * `dyfj start` runs this file on Node, and `deno task serve-unix` under its
- * permission profile until the profiles are removed. It is the only place
- * that reads the resolved config, resolves secrets, builds the store, the
- * external MCP commands, the session owners, the turn runtime and the ACP
- * session map, builds the static extension list (`extensions.ts`), wires the
- * RPC method modules under `rpc/` (one per namespace) and the extensions'
- * methods, and binds the socket. `serveWorkbenchUnix` is the composition
+ * `dyfj start` runs this file on Node. It is the only place that reads the
+ * resolved config, resolves secrets, builds the store, the external MCP
+ * commands, the session owners, the turn runtime and the ACP session map,
+ * builds the static extension list (`extensions.ts`), wires the RPC method
+ * modules under `rpc/` (one per namespace) and the extensions' methods, and
+ * binds the socket. `serveWorkbenchUnix` is the composition
  * without the boot: the tests build a server from it over their own store.
  *
  * UDS is the canonical `loopback` transport: full clearance, gated by
@@ -142,7 +141,7 @@ export interface WorkbenchUnixServerOptions {
   onShutdown?: () => Promise<void> | void;
   /**
    * Invoked after the runtime/stop RPC has been answered. `0` means the
-   * shutdown callback succeeded; `1` means it failed. The serve-unix process
+   * shutdown callback succeeded; `1` means it failed. The runtime process
    * uses this to exit with a matching status after the client has the result.
    */
   onStopComplete?: (code: 0 | 1) => Promise<void> | void;

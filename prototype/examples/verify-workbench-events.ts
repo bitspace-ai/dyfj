@@ -15,6 +15,13 @@ import {
   type WorkbenchEventRow,
 } from "../diagnostics/workbench-events.ts";
 
+if (process.argv.includes("--help")) {
+  console.log(
+    "usage: npm run verify-workbench-events\n\nRuns one Workbench turn against the configured model and Dolt store, then\nverifies the turn's event sequence and trace in the journal. Reads the\nDYFJ_* and DOLT_* settings from the environment and prototype/.env.",
+  );
+  process.exit(0);
+}
+
 const prompt = "Say ok.";
 // This entrypoint composes the engine itself, so it builds the store the
 // same way the engine server does.
@@ -80,12 +87,12 @@ try {
     console.error("Workbench event sequence verification failed:");
     for (const error of result.errors) console.error(`- ${error}`);
     console.error(`Observed events: ${result.eventTypes.join(" -> ")}`);
-    Deno.exit(1);
+    process.exit(1);
   }
 
   if (result.traceId !== traceId) {
     console.error(`Workbench trace mismatch: receipt=${traceId} events=${result.traceId}`);
-    Deno.exit(1);
+    process.exit(1);
   }
 
   console.log("");

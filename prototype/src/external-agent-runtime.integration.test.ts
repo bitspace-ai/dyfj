@@ -390,10 +390,7 @@ function stalledInitializeProfile(
     promptTimeoutMs: 2_000,
     cancellationTimeoutMs: 500,
     terminationTimeoutMs: 500,
-    ...fixtureAgentCommand({
-      grants: ["--allow-run=/bin/kill", `--allow-write=${pidFile}`],
-      scriptArgs: [`--pid-file=${pidFile}`],
-    }),
+    ...fixtureAgentCommand({ scriptArgs: [`--pid-file=${pidFile}`] }),
     environment: {
       ...base.environment,
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
@@ -417,10 +414,7 @@ function methodLogProfile(
     promptTimeoutMs: 5_000,
     cancellationTimeoutMs: 500,
     terminationTimeoutMs: 500,
-    ...fixtureAgentCommand({
-      grants: [`--allow-write=${methodLog}`],
-      scriptArgs: [`--method-log=${methodLog}`],
-    }),
+    ...fixtureAgentCommand({ scriptArgs: [`--method-log=${methodLog}`] }),
     environment: {
       ...base.environment,
       DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),

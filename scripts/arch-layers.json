@@ -107,6 +107,10 @@
           "justification": "The deterministic ACP fixture agent, a test agent the fixture profile and the ACP tests start as a child process. On its parent's death it signals its own process group through /bin/kill, and on one test prompt it starts a TERM-ignoring bash descendant. It runs as its own process, outside the runtime graph, which no runtime module may import."
         },
         {
+          "path": "prototype/scripts/codex-chatgpt-login.ts",
+          "justification": "The operator's one-off Codex ChatGPT login (`npm run codex-chatgpt-login`) starts the pinned Codex adapter's `login` here, with the runner profile's cleared environment and the terminal inherited. It runs as its own process, outside the runtime graph, which no runtime module may import."
+        },
+        {
           "path": "prototype/scripts/node-test-lane.ts",
           "justification": "The unit, integration and golden lane runners start their node:test files under `node --test` here, and read `node --version` to require Node 26. It is test tooling that runs in the lane runner's own process, outside the runtime graph, which no runtime module may import."
         }
