@@ -817,7 +817,7 @@ export function productionLanes(
       env: { DENO_BIN: denoExecutable },
     },
     {
-      label: "Prototype unit Deno.test suite (test.unit)",
+      label: "Prototype unit test suite (test.unit)",
       checkId: "test.aggregate",
       command: denoExecutable,
       commandLabel: "deno",
@@ -826,7 +826,9 @@ export function productionLanes(
       args: [
         "run",
         // NODE_V8_COVERAGE: read by node:child_process on every spawn; node:
-        // the files that register with node:test run under `node --test`.
+        // the product tests run under `node --test`; the selected Deno: the
+        // gate-tooling tests under `prototype/scripts/` still run under
+        // `deno test` until the gate-tooling port, and lane supervision.
         `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,NODE_V8_COVERAGE,${laneEnv}`,
         "--allow-read=.",
         `--allow-run=${denoExecutable},node`,
@@ -1016,7 +1018,7 @@ export function productionLanes(
         "run",
         `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT,NODE_V8_COVERAGE,${laneEnv}`,
         // Read on the temp roots lets the lane resolve the real path of the
-        // temp directory it hands the Deno.test files (macOS /tmp is a symlink).
+        // temp directory it hands the tests (macOS /tmp is a symlink).
         "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
         "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
         `--allow-run=${denoExecutable},dolt,cargo,node`,
@@ -1029,8 +1031,7 @@ export function productionLanes(
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
     // the engine server and CLI over an isolated Dolt fixture. The runner
-    // itself needs no network; it grants the tests loopback and the exact
-    // engine sockets it creates.
+    // itself needs no network; its tests run under `node --test`, unsandboxed.
     {
       label: "Golden characterization suite (test.golden)",
       checkId: "test.aggregate",
@@ -1074,7 +1075,7 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Contract closure report generation",
   "Contract package tests",
   "Prototype source typecheck",
-  "Prototype unit Deno.test suite (test.unit)",
+  "Prototype unit test suite (test.unit)",
 ];
 
 function laneSubset(

@@ -1,20 +1,20 @@
-// The `test.unit` lane: every `Deno.test` file outside the integration tier
+// The `test.unit` lane: every test file outside the integration tier
 // (`*.integration.test.ts`) and the golden suite (`testing/golden/`, run by
-// its own lane), discovered by `scripts/test-files.ts` and run with
-// `deno test --parallel`. Unit and component
-// tests may use port fakes and temp directories only, so that child gets read
-// access to the prototype and the temp roots, write access to the temp roots,
-// env access to TMPDIR, TMP and TEMP only (node:os `tmpdir()` reads them),
-// and no run, net, sys, or ffi grant. These grants bind that subset only. Sanitizers are on: in the pinned
-// Deno (2.9.6) the op and resource sanitizers are opt-in, so the lane enables
-// them explicitly, and a test that leaks an async op, timer, or resource the
-// runtime tracks fails at that test; they do not see `node:` resources. A test
+// its own lane), discovered by `scripts/test-files.ts`. Product tests register
+// with `node:test` and run under `node --test`, with the per-file handle check
+// and no permission sandbox (`node-test-lane.ts`, `specs/03-testing.md` §1).
+// Unit and component tests may use port fakes and temp directories only; for
+// them that is a rule the tests keep, not a grant.
+//
+// Until the gate-tooling port, the gate-tooling tests under `scripts/` that
+// register with the existing runtime's runner (`test-files.ts`) run first,
+// with `deno test --parallel`. That child gets read access to the prototype
+// and the temp roots, write access to the temp roots, env access to TMPDIR,
+// TMP and TEMP only (node:os `tmpdir()` reads them), and no run, net, sys, or
+// ffi grant. Its sanitizers are on: in the pinned Deno (2.9.6) the op and
+// resource sanitizers are opt-in, so the lane enables them explicitly. A test
 // may opt out only with a comment naming the leak and why it is unavoidable
 // (`specs/03-testing.md` §2).
-//
-// A file that registers with `node:test` is routed to `node --test` instead
-// (`test-files.ts`), after that subset, with the per-file handle check and no
-// permission sandbox (`node-test-lane.ts`, `specs/03-testing.md` §1).
 //
 // Given arguments (`deno task test:file <path>... [--filter <pattern>]`), it
 // runs those instead of the discovered files, routed and run as above, so a
@@ -46,6 +46,10 @@ export const TEMP_ROOTS = [
   "/private/var/folders",
 ] as const;
 
+/**
+ * The `deno test` arguments for the gate-tooling subset (`scripts/` files on
+ * the existing runner), until the gate-tooling port.
+ */
 export function unitTestArgs(
   files: readonly string[],
   filter?: string,
@@ -143,9 +147,9 @@ if (import.meta.main) {
   let stopCurrent = () => {};
   const backstop = startBackstop(supervision, deno, () => stopCurrent());
   let code = 0;
-  if (partition.deno.length === 0) {
-    console.log("test.unit deno test: 0 files");
-  } else {
+  // The gate-tooling subset, until the gate-tooling port; empty when
+  // `test:file` names product files only.
+  if (partition.deno.length > 0) {
     const child = new Deno.Command(deno, {
       args: unitTestArgs(partition.deno, selection.filter),
       cwd: root,
@@ -158,8 +162,8 @@ if (import.meta.main) {
     code = (await child.status).code;
   }
   if (!backstop.expired) {
-    // The Node subset runs after a failing first subset too, so one run
-    // reports both; the first failure's code is the lane's.
+    // The product tests run after a failing gate-tooling subset too, so one
+    // run reports both; the first failure's code is the lane's.
     const node = startNodeTests({
       lane: "test.unit",
       files: partition.node,

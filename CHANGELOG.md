@@ -228,6 +228,23 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Product tests run on `node:test` only; the Deno test path is narrowed to
+  the gate-tooling tests.** Test discovery (`prototype/scripts/test-files.ts`)
+  now routes by path and content: a test file under `prototype/scripts/` that
+  calls `Deno.test` or imports `@std/testing/bdd` runs under `deno test` until
+  the gate tooling moves to Node; every other test file runs under
+  `node --test` with the per-file handle check; and a `Deno.test` or bdd
+  registration in any other test file fails discovery with the file's path
+  (decision D32). The conformance-kit import rule and the mixed-file case are
+  gone. The golden runner (`testing/golden/run.ts`) no longer spawns
+  `deno test`, and refuses any suite argument other than `--update`. The
+  unit and integration runners keep a `deno test` run only for their
+  gate-tooling files, and the integration lane's `deno test` grants drop what
+  only product tests needed (the MCP and Unix-socket test directories, the
+  ambient-secret and ACP probe variables, the MCP child wrapper, `/bin/sleep`
+  and `--allow-sys=uid`). The unit gate lane is now labelled
+  `Prototype unit test suite (test.unit)`. Lane test counts are unchanged.
+
 - **The CLI may read every environment variable.** The `cli` permission
   profile, `compile-cli` and the launcher's source route now grant the CLI the
   whole environment, where it named 14 variables before. To start the runtime
