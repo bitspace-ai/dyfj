@@ -163,10 +163,14 @@ export async function startLocalRuntime(
   const launch = await resolveRuntimeLaunch(cwd, config.socket, autostarted, {
     env: options.env ?? processEnv,
   });
-  // Autostarted supervisor and server share the client's terminal process
-  // group. Both must survive the SIGINT that the client converts into cancel.
+  // This process and the runtime share a terminal process group, so a
+  // terminal Ctrl-C reaches the runtime directly; this process never acts on
+  // it. Autostarted, both must survive the SIGINT that the client converts
+  // into cancel. In the foreground, this process holds the terminal until the
+  // runtime exits, so a repeated Ctrl-C reaches the runtime's escalation
+  // (server/sigint.ts) instead of the shell.
   const ignoreSigint = () => {};
-  if (autostarted) processSigintSource.add(ignoreSigint);
+  processSigintSource.add(ignoreSigint);
   try {
     const child = guardedSpawn(cliRuntimePolicy())(command, launch.args, {
       cwd,
@@ -183,6 +187,6 @@ export async function startLocalRuntime(
       });
     });
   } finally {
-    if (autostarted) processSigintSource.remove(ignoreSigint);
+    processSigintSource.remove(ignoreSigint);
   }
 }

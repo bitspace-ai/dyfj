@@ -45,7 +45,11 @@ it: it stops on its own 10 s after its last client disconnects, through the same
 shutdown as `dyfj stop` (warm ACP sessions and their children are closed, then
 the store). A client that connects inside those 10 s keeps it, so back-to-back
 `dyfj exec` calls share one runtime. A runtime started with `dyfj start` stays up
-until `dyfj stop` or Ctrl-C. At boot the runtime records which code it loaded:
+until `dyfj stop` or Ctrl-C. `dyfj start` holds the terminal until its runtime
+has exited and leaves the terminal's modes alone, so Ctrl-C reaches the runtime
+as a signal. A second Ctrl-C while the shutdown is pending prints what it is
+waiting on; a third exits at once with status 130, without finishing the
+cleanup. At boot the runtime records which code it loaded:
 the checkout's git HEAD, read from the `.git` files without running git, and a
 SHA-256 content hash of the files under `src/` (dotfiles and symlinks skipped;
 `unknown` when either cannot be read). `dyfj status` shows it, along with open
