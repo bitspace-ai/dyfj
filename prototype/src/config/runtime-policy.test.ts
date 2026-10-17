@@ -69,6 +69,20 @@ describe("cliRuntimePolicy", () => {
   });
 });
 
+describe("RUNTIME_RUN_GRANTS", () => {
+  // The runtime is Node; its own executable is granted by path in the base
+  // policy, so no runtime is granted by name (decision D32).
+  it("grants the exec tools and the ACP runner's helpers, and no runtime by name", () => {
+    assert.deepStrictEqual([...RUNTIME_RUN_GRANTS], [
+      "bash",
+      "git",
+      "/bin/kill",
+      "/bin/sleep",
+    ]);
+    assert.ok(!RUNTIME_RUN_GRANTS.includes("deno"));
+  });
+});
+
 describe("composeRuntimePolicy", () => {
   it("the base policy is the static lists plus the runtime's own executable", () => {
     const policy = baseRuntimePolicy();
@@ -163,7 +177,7 @@ describe("runtimeChildEnv", () => {
     ["TMPDIR", "/var/folders/xy/T/"],
     ["TMP", "/tmp/a"],
     ["TEMP", "/tmp/b"],
-    ["DENO_DIR", "/cache/deno"],
+    ["XDG_CACHE_HOME", "/cache/home"],
     ["DYFJ_TEST_OUTSIDE_POLICY", "leaked"],
     ["DYFJ_TEST_SECOND_OUTSIDER", "leaked"],
   ]);

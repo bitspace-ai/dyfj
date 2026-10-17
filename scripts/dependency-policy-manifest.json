@@ -3,45 +3,6 @@
   "version": 1,
   "surfaces": [
     {
-      "id": "deno.workspace",
-      "source_class": "deno-registry",
-      "manifest_paths": [
-        "deno.json",
-        "prototype/deno.json"
-      ],
-      "lock_paths": [
-        "deno.lock",
-        "prototype/deno.lock"
-      ],
-      "required_evidence_classes": [
-        "inspect-result",
-        "selected-version",
-        "publication-timestamp",
-        "minimum-release-age",
-        "manifest-diff",
-        "lock-diff",
-        "clean-room-resolution",
-        "operator-inspect-before-apply"
-      ],
-      "age_policy": {
-        "class": "registry-minimum-hours",
-        "minimum_hours": 72
-      },
-      "mutable_references_allowed": false,
-      "integrity_evidence_classes": [
-        "exact-version-pin",
-        "lockfile-integrity-hash"
-      ],
-      "provenance_evidence_classes": [
-        "registry-source-provenance"
-      ],
-      "clean_room_check_ids": [
-        "dependency.policy",
-        "test.aggregate"
-      ],
-      "known_missing_evidence_classes": []
-    },
-    {
       "id": "npm.workspace",
       "source_class": "npm-registry",
       "manifest_paths": [
@@ -185,43 +146,6 @@
         "test.aggregate"
       ],
       "known_missing_evidence_classes": []
-    },
-    {
-      "id": "release.deno-archive",
-      "source_class": "github-release-asset",
-      "manifest_paths": [
-        ".github/workflows/gate.yml"
-      ],
-      "lock_paths": [],
-      "required_evidence_classes": [
-        "immutable-upstream-revision",
-        "source-identity",
-        "artifact-integrity-when-available",
-        "archive-checksum",
-        "provenance-class",
-        "clean-room-version-check",
-        "operator-inspect-before-apply"
-      ],
-      "age_policy": {
-        "class": "not-applicable",
-        "reason_class": "non-registry-versioned-release"
-      },
-      "mutable_references_allowed": false,
-      "integrity_evidence_classes": [
-        "archive-checksum",
-        "exact-version-url",
-        "reported-version-check"
-      ],
-      "provenance_evidence_classes": [
-        "upstream-release-provenance"
-      ],
-      "clean_room_check_ids": [
-        "dependency.policy",
-        "test.aggregate"
-      ],
-      "known_missing_evidence_classes": [
-        "archive-signature"
-      ]
     },
     {
       "id": "release.dolt-archive",

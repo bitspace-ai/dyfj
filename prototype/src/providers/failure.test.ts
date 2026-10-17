@@ -134,7 +134,6 @@ async function settlesWithin<T>(
 
 describe("provider failure classification at the adapter", () => {
   const classified: ReadonlyArray<
-    // deno-lint-ignore no-explicit-any
     [F.FailureFixture, new (...args: any[]) => ProviderFailureError]
   > = [
     [F.LLAMA_SERVER_CONTEXT_EXCEEDED, ProviderContextExceededError],

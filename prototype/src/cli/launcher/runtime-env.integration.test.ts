@@ -46,7 +46,7 @@ test("the runtime receives only policy names and the platform variables", async 
       TMPDIR: join(root, "tmpdir"),
       TMP: join(root, "tmp"),
       TEMP: join(root, "temp"),
-      DENO_DIR: join(root, "deno-dir"),
+      XDG_CACHE_HOME: join(root, "cache-home"),
       DYFJ_TEST_OUTSIDE_POLICY: "must-not-reach-the-runtime",
       DYFJ_TEST_SECOND_OUTSIDER: "must-not-reach-the-runtime",
     });
@@ -70,8 +70,8 @@ test("the runtime receives only policy names and the platform variables", async 
     for (const name of ["TMPDIR", "TMP", "TEMP"]) {
       assert.strictEqual(seen[name], ambient.get(name), name);
     }
-    // The replaced runtime's module cache is not forwarded.
-    assert.strictEqual(seen.DENO_DIR, undefined);
+    // A name outside the policy, such as a caller's cache home, is not forwarded.
+    assert.strictEqual(seen.XDG_CACHE_HOME, undefined);
     assert.strictEqual(seen.DYFJ_TEST_OUTSIDE_POLICY, undefined);
     // .env fills a policy name and nothing else.
     assert.strictEqual(seen.DYFJ_WORKBENCH_TIER, "1");

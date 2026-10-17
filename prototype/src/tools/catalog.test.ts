@@ -61,7 +61,7 @@ describe("buildToolCatalog", () => {
     const readFile = registry.lookup("read_file")!;
     const result = evaluateCommandPolicy(
       readFile,
-      call({ path: "deno.json" }, { commandId: "read_file" }),
+      call({ path: "package.json" }, { commandId: "read_file" }),
     );
     assert.strictEqual(result.decision, "allow");
   });

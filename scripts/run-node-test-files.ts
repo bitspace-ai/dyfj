@@ -6,9 +6,7 @@
 // Usage (from the repository root):
 //   node scripts/run-node-test-files.ts --lane <name> <file>...
 //
-// The child gets PATH, HOME, the temp variables and, when set, DENO_BIN (the
-// selected `deno` the gate's own tests drive, until close-out of decision D32)
-// and nothing else. Written to node: builtins only, like the shared runner, so
+// The child gets PATH, HOME and the temp variables, and nothing else. Written to node: builtins only, like the shared runner, so
 // it adds nothing to the runtime.neutral ratchet.
 import process from "node:process";
 import {
@@ -29,7 +27,14 @@ export function parseArgs(
   return { lane: args[1], files };
 }
 
-const FORWARDED = ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "DENO_BIN"] as const;
+/** The caller's variables the `node --test` child receives. */
+export const FORWARDED_ENVIRONMENT_NAMES: readonly string[] = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+];
 
 async function main(): Promise<number> {
   let selection: { lane: string; files: string[] };
@@ -41,7 +46,7 @@ async function main(): Promise<number> {
     return 2;
   }
   const env: Record<string, string> = {};
-  for (const name of FORWARDED) {
+  for (const name of FORWARDED_ENVIRONMENT_NAMES) {
     const value = process.env[name];
     if (value !== undefined) env[name] = value;
   }

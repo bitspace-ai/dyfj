@@ -19,12 +19,26 @@ or `public`; it does not expose private or shareable memory rows.
 ## Running
 
 ```bash
-deno run --config /path/to/dyfj/prototype/deno.json --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE /path/to/dyfj/prototype/mcp/server.ts
+node --permission --allow-fs-read=/path/to/dyfj --allow-net /path/to/dyfj/prototype/mcp/server.ts
 ```
 
-`--config` points Deno at the prototype's import map, which resolves the
-server's package imports; without it the command fails to load when run from
-outside `prototype/`.
+It runs on Node 26, after `npm ci` at the repository root: Node resolves the
+server's package imports from the root `node_modules`, from any working
+directory. The Dolt connection comes from `DOLT_HOST`, `DOLT_PORT`,
+`DOLT_USER`, `DOLT_PASSWORD` and `DOLT_DATABASE`.
+
+`--permission` turns on Node's permission model: the server may read the
+checkout and use the network, and it may not write files, start child
+processes or load native addons. Node's model cannot narrow the network grant
+to the Dolt endpoint or the environment to the Dolt variables, so the network
+grant is broad and the server can read any environment variable it is given.
+Give the agent's MCP entry only the variables the server needs. This command,
+which scopes reads to the checkout, is the preferred launch. The file's
+shebang (`node --permission --allow-fs-read=* --allow-net`) cannot know the
+checkout path, so running the file directly grants reads of every path. Node
+prints an
+`ExperimentalWarning` for `--allow-net` on stderr; it does not affect the
+stdio protocol on stdout.
 
 Transport: stdio (standard for CLI agents). The server uses the MCP v2 split
 SDK and accepts both the modern `2026-07-28` opening and legacy `initialize`
@@ -34,7 +48,8 @@ falls back to a fresh legacy session process.
 
 ## Agent Configuration
 
-Replace `/path/to/dyfj` with your actual install path. Find your Deno binary with `which deno`.
+Replace `/path/to/dyfj` with your actual install path and `/path/to/node` with
+the output of `which node` (Node 26).
 
 ### Claude Code (`~/.claude/settings.json`)
 
@@ -42,8 +57,8 @@ Replace `/path/to/dyfj` with your actual install path. Find your Deno binary wit
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/deno",
-      "args": ["run", "--config", "/path/to/dyfj/prototype/deno.json", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "command": "/path/to/node",
+      "args": ["--permission", "--allow-fs-read=/path/to/dyfj", "--allow-net", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }
@@ -67,8 +82,8 @@ Add to the MCP server list in settings. Same command/args pattern.
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/deno",
-      "args": ["run", "--config", "/path/to/dyfj/prototype/deno.json", "--allow-net=127.0.0.1:3306", "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE", "/path/to/dyfj/prototype/mcp/server.ts"]
+      "command": "/path/to/node",
+      "args": ["--permission", "--allow-fs-read=/path/to/dyfj", "--allow-net", "/path/to/dyfj/prototype/mcp/server.ts"]
     }
   }
 }

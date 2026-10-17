@@ -28,12 +28,10 @@ describe("socketTurn over a real Unix socket (integration)", () => {
       env: new MapEnv(),
       // Stub runtime: stream two deltas, then return a receipt. Cast loosely so
       // the test need not import the engine's runtime result type.
-      // deno-lint-ignore no-explicit-any
       runRuntime: (async (input: any) => {
         input.frames?.onTextDelta?.("Hello ");
         input.frames?.onTextDelta?.("socket");
         return result({ text: "Hello socket" });
-        // deno-lint-ignore no-explicit-any
       }) as any,
     });
     try {

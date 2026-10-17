@@ -1,14 +1,11 @@
-// The Node half of the unit, integration and golden lanes (decision D32,
-// `specs/03-testing.md` §6). Each lane runner partitions its discovered files
-// with `partitionByRuntime` (`test-files.ts`): every product test runs here,
-// under `node --test` with one process per file and the per-file handle check
-// preloaded (`testing/node-handle-check.ts`); the gate-tooling tests under
-// `scripts/` that register with the existing runner keep it until the
-// gate-tooling port.
+// The shared `node --test` runner of the unit, integration and golden lanes
+// (decision D32, `specs/03-testing.md` §6). Each lane runner checks its
+// discovered files with `nodeTestFiles` (`test-files.ts`), and every one runs
+// here, under `node --test` with one process per file and the per-file handle
+// check preloaded (`testing/node-handle-check.ts`).
 //
 // The run's TAP stream is passed through to the lane's output and its closing
-// summary is parsed, so the lane prints a count line for its Node files next
-// to the existing runner's own. TAP is Node's stable, documented line format,
+// summary is parsed, so the lane prints a count line for its files. TAP is Node's stable, documented line format,
 // and its summary (`# tests`, `# pass`, `# fail`, ...) is the aggregate the
 // runner computes across files. Reading it from the stream needs no reporter
 // module of our own and no second output file. A run that exits zero without
@@ -16,12 +13,12 @@
 // unnoticed.
 //
 // Written to `node:` builtins only, so it adds nothing to the runtime.neutral
-// ratchet and runs unchanged on either runtime.
+// ratchet.
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { availableParallelism } from "node:os";
 import process from "node:process";
 
-/** The Node major the track pins (decision D32; CI's `setup-node`). */
+/** The Node major `.node-version` pins (decision D32). */
 export const NODE_MAJOR = 26;
 
 export const HANDLE_CHECK_URL = new URL(
@@ -69,17 +66,9 @@ export function requireNode(
   if (problem !== undefined) throw new Error(problem);
 }
 
-/**
- * The parallelism a parallel lane asks of `node --test`: `DENO_JOBS`, the
- * variable the existing runner's `--parallel` honours, when it is a positive
- * integer, and the machine's available parallelism otherwise.
- */
-export function parallelJobs(
-  value: string | undefined = process.env.DENO_JOBS,
-): number {
-  return value !== undefined && /^[1-9][0-9]{0,3}$/.test(value)
-    ? Number(value)
-    : availableParallelism();
+/** The parallelism a parallel lane asks of `node --test`. */
+export function parallelJobs(): number {
+  return availableParallelism();
 }
 
 /**

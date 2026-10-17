@@ -29,13 +29,14 @@
 # the repository's own exact pin in `core/rust-toolchain.toml` via the
 # runner's preinstalled rustup. Its
 # evidence here is therefore that exact pin plus the reported `rustc
-# --version` check — not a repository-owned archive digest like the Deno and
-# Dolt archives carry.
+# --version` check — not a repository-owned archive digest like the Dolt
+# archive carries.
 # Node is not downloaded by this workflow either: the digest-pinned
-# setup-node action fetches the exact release named below. Its evidence here
-# is the action's digest pin plus the exact version — not a
-# repository-owned archive digest. npm packages are installed by `npm ci`
-# from the committed lockfile, whose integrity hashes npm checks.
+# setup-node action fetches the exact release `.node-version` names, the
+# repository's single Node pin. Its evidence here is the action's digest pin
+# plus that exact version — not a repository-owned archive digest. npm
+# packages are installed by `npm ci` from the committed lockfile, whose
+# integrity hashes npm checks.
 name: gate
 
 on:
@@ -93,16 +94,6 @@ jobs:
       # is checked before the archive is unpacked or any byte of it is
       # executed. The verifier prints only the checked path and an OK/FAILED
       # status, so a mismatch stays value-free.
-      - name: Install Deno 2.9.6 (exact pinned version, digest-verified)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/deno.zip \
-            "https://github.com/denoland/deno/releases/download/v2.9.6/deno-x86_64-unknown-linux-gnu.zip"
-          printf '%s  %s\n' "394f07f4da2bebe6ce6f1e7ce0fa16429b29b08c35e3fac3fe25972676dff4b2" /tmp/deno.zip | sha256sum -c -
-          mkdir -p "$HOME/.deno-pinned"
-          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"
-          "$HOME/.deno-pinned/deno" --version | grep -F "deno 2.9.6"
-          echo "$HOME/.deno-pinned" >> "$GITHUB_PATH"
       - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
         run: |
           set -euo pipefail
@@ -124,17 +115,15 @@ jobs:
       # with install scripts off and the release-age floor from the root
       # .npmrc. The gate itself never installs; it fails closed when
       # node_modules does not match the lock.
-      - name: Install Node 26.11.1 (exact pinned version)
+      - name: Install Node (exact version from .node-version)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26.11.1"
+          node-version-file: .node-version
       - name: Install npm dependencies (npm ci from the committed lockfile)
         run: npm ci
       # The single repository green bar: the root package.json's `test`
       # script runs the gate on Node. Lane definitions live in `scripts/`;
-      # this file does not restate them. Deno stays installed for the
-      # `deno check` lanes and the remaining Deno subsets until close-out of
-      # decision D32.
+      # this file does not restate them.
       - name: Run the full deterministic gate
         run: npm test
 
@@ -154,16 +143,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install Deno 2.9.6 (exact pinned version, digest-verified)
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/deno.zip \
-            "https://github.com/denoland/deno/releases/download/v2.9.6/deno-aarch64-apple-darwin.zip"
-          printf '%s  %s\n' "213a2f304f04d3c9cb5220669afad138f60a5aab1fe80962abdeb8f35807a472" /tmp/deno.zip | shasum -a 256 -c -
-          mkdir -p "$HOME/.deno-pinned"
-          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"
-          "$HOME/.deno-pinned/deno" --version | grep -F "deno 2.9.6"
-          echo "$HOME/.deno-pinned" >> "$GITHUB_PATH"
       - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
         run: |
           set -euo pipefail
@@ -180,10 +159,10 @@ jobs:
           set -euo pipefail
           rustup toolchain install
           rustc --version | grep -F "rustc 1.98.0"
-      - name: Install Node 26.11.1 (exact pinned version)
+      - name: Install Node (exact version from .node-version)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "26.11.1"
+          node-version-file: .node-version
       - name: Install npm dependencies (npm ci from the committed lockfile)
         run: npm ci
       - name: Run the full deterministic gate

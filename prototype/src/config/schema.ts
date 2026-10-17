@@ -387,7 +387,7 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
-  // The trusted install root whose deno.json and .env the launched runtime uses.
+  // The trusted install root whose .env the launched runtime uses.
   {
     key: "prototypeRoot",
     envVar: "DYFJ_PROTOTYPE_ROOT",

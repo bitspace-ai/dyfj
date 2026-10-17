@@ -113,17 +113,15 @@ npm run schema:codegen       # regenerate prototype/src/store/generated/rows.ts
 ```
 
 `npm run schema:codegen -- --check` compares instead of writing, as the gate
-lane does. They run on Node from the repository root. The generated file's
-header and the gate's stale-file message name `deno task schema:codegen`,
-which the root `deno.json` keeps as a one-line shim to the npm script. None of these connect to or mutate a long-running local Dolt SQL
-server.
+lane does. They run on Node from the repository root. None of these connect
+to or mutate a long-running local Dolt SQL server.
 
 ## Forward migration workflow
 
 For the current MVP, keep forward migrations as numbered SQL files in
 `schema/migrations/` and fold each one into `schema/current/` (or
 `schema/catalog/`) in the same change, so the two paths stay equivalent. Then
-regenerate the row types with `deno task schema:codegen`.
+regenerate the row types with `npm run schema:codegen`.
 
 If this becomes difficult to audit, the next step is a tiny DYFJ-native
 migration ledger table that records applied migration ids and checksums. Do not

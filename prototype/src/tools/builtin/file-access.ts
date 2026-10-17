@@ -386,7 +386,6 @@ export function excludedSegment(
  * display integrity, not about producing a canonical encoding.
  */
 export function sanitizeOutputText(p: string): string {
-  // deno-lint-ignore no-control-regex
   return p.replace(
     /[\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
     escapeChar,
@@ -415,7 +414,6 @@ function escapeChar(c: string): string {
  * readability than it buys.
  */
 export function sanitizeOutputPathField(p: string): string {
-  // deno-lint-ignore no-control-regex
   const out = p.replace(
     /[\\:\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
     (c) => {

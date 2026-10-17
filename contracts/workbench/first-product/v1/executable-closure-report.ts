@@ -1528,12 +1528,15 @@ export async function buildClosureReport(
     ladder: [
       [
         "focused-tests",
-        "deno test --allow-read=. contracts/workbench/first-product/v1/validate.test.ts contracts/workbench/first-product/v1/executable-closure.test.ts contracts/workbench/first-product/v1/executable-closure-report.test.ts",
+        "node scripts/run-node-test-files.ts --lane contracts contracts/workbench/first-product/v1/validate.test.ts contracts/workbench/first-product/v1/executable-closure.test.ts contracts/workbench/first-product/v1/executable-closure-report.test.ts",
       ],
-      ["format-check", "deno fmt --check (changed files)"],
+      [
+        "format-check",
+        "node scripts/range-checks.ts --check diff.whitespace",
+      ],
       ["diff-check", "git diff --check"],
-      ["fast-aggregate", "deno task test:fast"],
-      ["full-aggregate", "deno task test"],
+      ["fast-aggregate", "npm run test:fast"],
+      ["full-aggregate", "npm test"],
       [
         "dependency-inspection",
         "dependency.policy aggregate lane plus final diff inspection",

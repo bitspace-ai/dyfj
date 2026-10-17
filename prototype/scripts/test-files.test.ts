@@ -6,18 +6,11 @@ import { test } from "node:test";
 import {
   discoverIntegrationTests,
   discoverTestSources,
-  discoverTypecheckSources,
   discoverUnitTests,
   isIntegrationLaneTest,
-  isTypecheckSource,
   isUnitTest,
 } from "./test-files.ts";
-import { parseTypecheckScope } from "./typecheck.ts";
-import {
-  parseTestFileArgs,
-  TEST_FILE_USAGE,
-  unitTestArgs,
-} from "./run-unit-tests.ts";
+import { parseTestFileArgs, TEST_FILE_USAGE } from "./run-unit-tests.ts";
 
 test("isUnitTest keeps integration and golden files out", () => {
   assert.deepStrictEqual(isUnitTest("src/a.test.ts"), true);
@@ -55,15 +48,6 @@ test("the prototype tree splits into unit and integration lanes", () => {
   );
 });
 
-test("isTypecheckSource takes modules, not tests or declarations", () => {
-  assert.deepStrictEqual(isTypecheckSource("src/cli.ts"), true);
-  assert.deepStrictEqual(isTypecheckSource("testing/fakes/map-env.ts"), true);
-  assert.deepStrictEqual(isTypecheckSource("src/cli.test.ts"), false);
-  assert.deepStrictEqual(isTypecheckSource("src/a.integration.test.ts"), false);
-  assert.deepStrictEqual(isTypecheckSource("src/types.d.ts"), false);
-  assert.deepStrictEqual(isTypecheckSource("scripts/dyfj-launcher.sh"), false);
-});
-
 test("discovery walks every source root and nothing else", async () => {
   const root = await mkdtemp(join(tmpdir(), "dyfj-test-files-"));
   try {
@@ -91,15 +75,6 @@ test("discovery walks every source root and nothing else", async () => {
       }
       await writeFile(`${root}/${path}`, "");
     }
-    assert.deepStrictEqual(discoverTypecheckSources(root), [
-      "diagnostics/workbench-events.ts",
-      "examples/example.ts",
-      "mcp/server.ts",
-      "scripts/tool.ts",
-      "src/cli.ts",
-      "src/nested/deep.ts",
-      "testing/fakes/map-env.ts",
-    ]);
     assert.deepStrictEqual(discoverTestSources(root), [
       "diagnostics/workbench-events.test.ts",
       "src/cli.test.ts",
@@ -112,37 +87,6 @@ test("discovery walks every source root and nothing else", async () => {
   }
 });
 
-test("parseTypecheckScope accepts exactly one known scope", () => {
-  assert.deepStrictEqual(parseTypecheckScope(["sources"]), "sources");
-  assert.deepStrictEqual(parseTypecheckScope(["tests"]), "tests");
-  assert.throws(() => parseTypecheckScope([]));
-  assert.throws(() => parseTypecheckScope(["all"]));
-  assert.throws(() => parseTypecheckScope(["sources", "tests"]));
-});
-
-test("the unit lane's gate-tooling subset runs in parallel, sanitized, with no run or net grant and env only for the temp directory", () => {
-  const args = unitTestArgs(["testing/fakes/map-env.test.ts"]);
-  assert.deepStrictEqual(args.slice(0, 2), ["test", "--parallel"]);
-  assert.deepStrictEqual(args.at(-1), "testing/fakes/map-env.test.ts");
-  for (const banned of ["--allow-run", "--allow-net", "-A"]) {
-    assert.deepStrictEqual(
-      args.some((argument) => argument.startsWith(banned)),
-      false,
-      banned,
-    );
-  }
-  // node:os tmpdir() reads TMPDIR, then TMP and TEMP when it is unset; no
-  // other variable is granted.
-  assert.deepStrictEqual(
-    args.filter((argument) => argument.startsWith("--allow-env")),
-    ["--allow-env=TMPDIR,TMP,TEMP"],
-  );
-  // The pinned Deno makes the op and resource sanitizers opt-in; the lane
-  // opts in.
-  assert.deepStrictEqual(args.includes("--sanitize-ops"), true);
-  assert.deepStrictEqual(args.includes("--sanitize-resources"), true);
-});
-
 test("test:file takes test paths and one optional --filter", () => {
   assert.deepStrictEqual(parseTestFileArgs(["src/a.test.ts"]), {
     files: ["src/a.test.ts"],
@@ -151,9 +95,6 @@ test("test:file takes test paths and one optional --filter", () => {
     parseTestFileArgs(["src/a.test.ts", "--filter", "x y", "src/b.test.ts"]),
     { files: ["src/a.test.ts", "src/b.test.ts"], filter: "x y" },
   );
-  const args = unitTestArgs(["src/a.test.ts"], "x y");
-  assert.deepStrictEqual(args.slice(-3), ["--filter", "x y", "src/a.test.ts"]);
-  assert.deepStrictEqual(args.includes("--sanitize-ops"), true);
 });
 
 test("test:file rejects anything but test paths and one --filter", () => {

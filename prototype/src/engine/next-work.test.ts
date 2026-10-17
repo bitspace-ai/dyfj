@@ -43,7 +43,7 @@ test("validateNextWorkJson: accepts a complete strict JSON next-work result", ()
     rationale: "It is the ready routing experiment slice.",
     evidence: ["notes/workbench-model-routing-mvp.md"],
     risks: ["Local model output may drift."],
-    next_commands: ["deno task test"],
+    next_commands: ["npm test"],
     confidence: "medium",
   }));
 
@@ -56,7 +56,7 @@ test("validateNextWorkJson: accepts a complete strict JSON next-work result", ()
       rationale: "It is the ready routing experiment slice.",
       evidence: ["notes/workbench-model-routing-mvp.md"],
       risks: ["Local model output may drift."],
-      next_commands: ["deno task test"],
+      next_commands: ["npm test"],
       confidence: "medium",
     },
     errors: [],

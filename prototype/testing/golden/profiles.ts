@@ -31,9 +31,8 @@ export const STRICT: ServerProfile = {
 export const SERVER_PROFILES: readonly ServerProfile[] = [OPERATOR, STRICT];
 
 /**
- * The profile's socket path. `deno test` grants Unix sockets by exact path, so
- * the runner grants these ahead of time. Names stay short: a socket path is
- * capped near 104 bytes on macOS, where temp roots are already long.
+ * The profile's socket path. Names stay short: a socket path is capped near
+ * 104 bytes on macOS, where temp roots are already long.
  */
 export function socketPathFor(root: string, profile: ServerProfile): string {
   return `${root}/${profile.name}/wb.sock`;

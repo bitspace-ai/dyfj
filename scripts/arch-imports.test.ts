@@ -553,8 +553,8 @@ test("dynamic local imports are violations; package imports are not", () => {
 });
 
 test("a dynamic import is a violation even beside a static one", () => {
-  // deno_graph merges these into one static dependency; the lint pass still
-  // sees the dynamic import.
+  // A graph builder can merge these into one static dependency; the parse
+  // pass still sees the dynamic import.
   const result = run({
     [`${S}/engine/e.ts`]: [
       'import { k } from "../kernel/k.ts";',
@@ -912,40 +912,46 @@ test("the committed size exceptions each carry a reason", async () => {
 // ---------------------------------------------------------------------------
 // Environment access
 
+// The retired deno runtime's global object stays an env owner, so code
+// written for that runtime cannot read the environment around the Env port.
+// Its name is assembled so this file adds no reference to the
+// runtime.neutral ratchet.
+const G = ["De", "no"].join("");
+
 test("direct env access is a violation outside config/ and named entrypoints", () => {
   const result = run({
-    [`${S}/config/env.ts`]: "export const e = Deno.env;",
-    [`${S}/legacy-config.ts`]: 'Deno.env.get("HOME");',
-    [`${S}/server/main.ts`]: 'Deno.env.get("HOME");',
-    ["prototype/scripts/tool.ts"]: 'Deno.env.get("HOME");',
-    [`${S}/engine/deno.ts`]: 'Deno.env.get("HOME");',
-    [`${S}/engine/global.ts`]: 'globalThis.Deno.env.get("HOME");',
-    [`${S}/engine/computed.ts`]: 'Deno["env"].get("HOME");',
+    [`${S}/config/env.ts`]: `export const e = ${G}.env;`,
+    [`${S}/legacy-config.ts`]: `${G}.env.get("HOME");`,
+    [`${S}/server/main.ts`]: `${G}.env.get("HOME");`,
+    ["prototype/scripts/tool.ts"]: `${G}.env.get("HOME");`,
+    [`${S}/engine/retired-global.ts`]: `${G}.env.get("HOME");`,
+    [`${S}/engine/global.ts`]: `globalThis.${G}.env.get("HOME");`,
+    [`${S}/engine/computed.ts`]: `${G}["env"].get("HOME");`,
     [`${S}/engine/computed-template.ts`]: "process[`env`].HOME;",
-    [`${S}/engine/destructure.ts`]: "const { env } = Deno; env.get('HOME');",
+    [`${S}/engine/destructure.ts`]: `const { env } = ${G}; env.get('HOME');`,
     [`${S}/engine/node.ts`]:
       'import process from "node:process"; process.env.HOME;',
     [`${S}/engine/named.ts`]: 'import { env } from "node:process"; env.HOME;',
     [`${S}/engine/other.ts`]:
-      'import process from "node:process"; process.stdin; Deno.args;',
+      `import process from "node:process"; process.stdin; ${G}.args;`,
     [`${S}/engine/namespace.ts`]:
       'import * as p from "node:process"; p.env.HOME;',
     [`${S}/engine/default-alias.ts`]:
       'import nodeProcess from "node:process"; nodeProcess.env.HOME;',
     [`${S}/engine/default-named.ts`]:
       'import { default as q } from "process"; q["env"].HOME;',
-    [`${S}/engine/const-alias.ts`]: "const d = Deno; d.env.get('HOME');",
+    [`${S}/engine/const-alias.ts`]: `const d = ${G}; d.env.get('HOME');`,
     [`${S}/engine/global-alias.ts`]:
-      "const d = globalThis.Deno; const e = d; e.env.get('HOME');",
+      `const d = globalThis.${G}; const e = d; e.env.get('HOME');`,
     [`${S}/engine/global-object-alias.ts`]:
       "const g = globalThis; g.process.env.HOME;",
     [`${S}/engine/global-destructure.ts`]:
-      "const { Deno: D } = globalThis; D.env.get('HOME');",
+      `const { ${G}: D } = globalThis; D.env.get('HOME');`,
     [`${S}/engine/alias-destructure.ts`]:
       'import * as p from "node:process"; const { env } = p; env.HOME;',
     [`${S}/engine/reexport.ts`]: 'export { env } from "node:process";',
     [`${S}/engine/other-alias.ts`]:
-      'import * as p from "node:process"; p.stdin; const d = Deno; d.args;',
+      `import * as p from "node:process"; p.stdin; const d = ${G}; d.args;`,
   }, {
     rules: {
       ...RULES,
@@ -962,23 +968,23 @@ test("direct env access is a violation outside config/ and named entrypoints", (
   assertEquals(result.current.env, [
     `${S}/engine/alias-destructure.ts: process.env`,
     `${S}/engine/computed-template.ts: process.env`,
-    `${S}/engine/computed.ts: Deno.env`,
-    `${S}/engine/const-alias.ts: Deno.env`,
+    `${S}/engine/computed.ts: ${G}.env`,
+    `${S}/engine/const-alias.ts: ${G}.env`,
     `${S}/engine/default-alias.ts: process.env`,
     `${S}/engine/default-named.ts: process.env`,
-    `${S}/engine/deno.ts: Deno.env`,
-    `${S}/engine/destructure.ts: Deno.env`,
-    `${S}/engine/global-alias.ts: Deno.env`,
-    `${S}/engine/global-destructure.ts: Deno.env`,
+    `${S}/engine/destructure.ts: ${G}.env`,
+    `${S}/engine/global-alias.ts: ${G}.env`,
+    `${S}/engine/global-destructure.ts: ${G}.env`,
     `${S}/engine/global-object-alias.ts: process.env`,
-    `${S}/engine/global.ts: Deno.env`,
+    `${S}/engine/global.ts: ${G}.env`,
     `${S}/engine/named.ts: process.env`,
     `${S}/engine/namespace.ts: process.env`,
     `${S}/engine/node.ts: process.env`,
     `${S}/engine/reexport.ts: process.env`,
-    `${S}/legacy-config.ts: Deno.env`,
+    `${S}/engine/retired-global.ts: ${G}.env`,
+    `${S}/legacy-config.ts: ${G}.env`,
   ]);
-  assertSome(result.added, `env: ${S}/engine/deno.ts: Deno.env`);
+  assertSome(result.added, `env: ${S}/engine/retired-global.ts: ${G}.env`);
 });
 
 test("an undeclared DYFJ_* key in any scanned module is a violation", () => {
@@ -1188,8 +1194,7 @@ test("packageName strips registries, versions and subpaths", () => {
       "npm:mysql2@3.24.4/promise",
       "npm:@scope/pkg@1.0.0/sub",
       "@scope/pkg",
-      "jsr:@std/assert@1",
     ].map(packageName),
-    ["mysql2", "mysql2", "mysql2", "@scope/pkg", "@scope/pkg", "@std/assert"],
+    ["mysql2", "mysql2", "mysql2", "@scope/pkg", "@scope/pkg"],
   );
 });

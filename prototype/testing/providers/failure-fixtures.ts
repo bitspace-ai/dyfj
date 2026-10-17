@@ -485,8 +485,8 @@ export function oversizedErrorBody(bytes: number): string {
 // ─── no response at all ──────────────────────────────────────────────────────
 
 /**
- * What `fetch` throws when nothing listens at the base URL. The message is
- * the `deno` runtime's, and it is still never relayed.
+ * What `fetch` throws when nothing listens at the base URL. The message is a
+ * runtime's own, and it is still never relayed.
  */
 export const CONNECTION_REFUSED = () =>
   new TypeError(

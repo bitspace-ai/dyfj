@@ -466,7 +466,7 @@ _representation_, using a placeholder value.
 ## Running the tests
 
 ```sh
-deno test --allow-read=. \
+node scripts/run-node-test-files.ts --lane contracts \
   contracts/workbench/first-product/v1/validate.test.ts \
   contracts/workbench/first-product/v1/executable-closure.test.ts \
   contracts/workbench/first-product/v1/executable-closure-report.test.ts

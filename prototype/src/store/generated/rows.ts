@@ -1,7 +1,7 @@
 // generated from schema/ — do not edit
 //
 // Emitted by schema/codegen.ts from schema/current/ + schema/catalog/.
-// Regenerate with `deno task schema:codegen`; the schema.codegen gate lane
+// Regenerate with `npm run schema:codegen`; the schema.codegen gate lane
 // fails when this file is stale.
 
 /** A column's declared shape, as `information_schema` reports it. */

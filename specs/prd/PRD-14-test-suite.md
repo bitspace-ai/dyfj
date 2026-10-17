@@ -1,5 +1,8 @@
 # PRD-14 — Test suite rebuild
 
+> Requirements as written for phase 1, when tests ran on Deno; the test
+> runtime is Node since decision D32.
+
 **Phase:** 1, running continuously alongside PRD-11/12/13. **Work orders:**
 WO-03, WO-23, WO-24 (plus the per-PR migration rule inside every structural WO).
 

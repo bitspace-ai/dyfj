@@ -2,10 +2,8 @@ import {
   type ChildProcess,
   execFile,
   spawn,
-  spawnSync,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
 import {
   mkdir,
   readdir,
@@ -17,10 +15,6 @@ import {
 } from "node:fs/promises";
 import { constants } from "node:os";
 import process from "node:process";
-import {
-  DENO_EXECUTABLE_DIAGNOSTIC,
-  validateDenoExecutable,
-} from "../prototype/scripts/deno-executable.ts";
 import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
@@ -111,10 +105,6 @@ export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "HOME",
   "CARGO_HOME",
   "RUSTUP_HOME",
-  // A caller's Deno cache, so the Deno processes left in the lanes (the
-  // `deno check` lanes and the remaining Deno subsets) reuse it instead of
-  // fetching modules again.
-  "DENO_DIR",
 ];
 
 // Subject and release-range bindings supplied by CI (or an operator) are the
@@ -558,36 +548,7 @@ async function writeLaneRecord(
   }
 }
 
-// The Deno executable the `deno check` lanes and the remaining Deno subsets
-// run, as an absolute path: the one `prototype/scripts/deno-executable.ts`
-// reports when the `deno` on PATH runs it, with symbolic links resolved. Inside
-// a `deno task`, `deno` is the running executable's real path, and the
-// typecheck tasks refuse a DENO_BIN that differs from it. Anything else fails
-// closed with the selector's fixed diagnostic. Deno leaves the gate at
-// close-out of decision D32.
-export function gateDenoExecutable(
-  root = process.cwd(),
-  env: Record<string, string> = safeEnvironment(),
-): string {
-  const result = spawnSync(
-    "deno",
-    ["run", "--no-prompt", "prototype/scripts/deno-executable.ts"],
-    { cwd: root, env, encoding: "utf8", stdio: "pipe" },
-  );
-  if (result.status !== 0 || typeof result.stdout !== "string") {
-    throw new Error(DENO_EXECUTABLE_DIAGNOSTIC);
-  }
-  try {
-    return validateDenoExecutable(realpathSync(result.stdout.trim()));
-  } catch {
-    throw new Error(DENO_EXECUTABLE_DIAGNOSTIC);
-  }
-}
-
-export function productionLanes(
-  root = process.cwd(),
-  denoExecutable = gateDenoExecutable(root),
-): GateLane[] {
+export function productionLanes(root = process.cwd()): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
   const binding = bindingEnvironment();
@@ -726,8 +687,7 @@ export function productionLanes(
       checkId: "test.aggregate",
       // These files register with node:test, so they run under `node --test`
       // with the per-file handle check, through the shared Node runner
-      // (decision D32). DENO_BIN reaches the tests that drive the selected
-      // Deno: the executable selector's own CLI and the `deno check` lane.
+      // (decision D32).
       command: "node",
       args: [
         "scripts/run-node-test-files.ts",
@@ -751,13 +711,12 @@ export function productionLanes(
         "scripts/ratchet-base.test.ts",
       ],
       cwd: root,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      env: { TMPDIR: "/tmp" },
     },
     {
       // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
-      // workspace's devDependencies, over the root tsconfig.json. It runs
-      // alongside the `deno check` lanes below until close-out of decision
-      // D32 removes them. `erasableSyntaxOnly` rejects syntax Node cannot strip,
+      // workspace's devDependencies, over the root tsconfig.json, which
+      // includes every source and test file. `erasableSyntaxOnly` rejects syntax Node cannot strip,
       // such as a constructor parameter property. Under the aggregate check
       // id; it only reads.
       label: "TypeScript typecheck (typecheck.tsc)",
@@ -767,38 +726,15 @@ export function productionLanes(
       cwd: root,
     },
     {
-      label: "Prototype source typecheck",
-      command: denoExecutable,
-      checkId: "test.aggregate",
-      commandLabel: "deno",
-      // `deno check` until close-out of decision D32. The file list is
-      // derived by globbing in `scripts/test-files.ts`, the same source the
-      // `check` task uses; nothing is hand-listed here.
-      args: ["task", "check:sources"],
-      cwd: prototype,
-      env: { DENO_BIN: denoExecutable },
-    },
-    {
-      label: "Prototype test-file typecheck",
-      checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: ["task", "check:tests"],
-      cwd: prototype,
-      env: { DENO_BIN: denoExecutable },
-    },
-    {
       label: "Prototype unit test suite (test.unit)",
       checkId: "test.aggregate",
-      // The runner itself, on Node, not `deno task test:unit`: it has to lead
-      // the lane group so its end-of-run group stop reaches the group and
-      // nothing else. It runs the remaining Deno tests under
-      // `prototype/scripts/` with the executable DENO_BIN names until S3.3d
-      // of decision D32, then the product tests under `node --test`.
+      // The runner itself, not `npm run test:unit`: it has to lead the lane
+      // group so its end-of-run group stop reaches the group and nothing
+      // else. It runs every unit test file under `node --test`.
       command: "node",
       args: ["scripts/run-unit-tests.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      env: { TMPDIR: "/tmp" },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.unit, bound),
     },
     {
@@ -915,13 +851,12 @@ export function productionLanes(
     {
       label: "Isolated Dolt integration lane",
       checkId: "test.aggregate",
-      // The runner, on Node. No integration file is left on the existing
-      // runner; its `deno test` step, under the executable DENO_BIN names,
-      // runs only when one is discovered, until close-out of decision D32.
+      // The runner starts the isolated Dolt fixture and runs every
+      // integration file under `node --test` against it.
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      env: { TMPDIR: "/tmp" },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
@@ -933,7 +868,7 @@ export function productionLanes(
       command: "node",
       args: ["testing/golden/run.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
+      env: { TMPDIR: "/tmp" },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.golden, bound),
     },
   ];
@@ -962,17 +897,12 @@ export const FAST_LANE_LABELS: readonly string[] = [
   "Contract closure report generation",
   "Contract package tests",
   "TypeScript typecheck (typecheck.tsc)",
-  "Prototype source typecheck",
   "Prototype unit test suite (test.unit)",
 ];
 
-function laneSubset(
-  labels: readonly string[],
-  root: string,
-  denoExecutable: string,
-): GateLane[] {
+function laneSubset(labels: readonly string[], root: string): GateLane[] {
   const byLabel = new Map(
-    productionLanes(root, denoExecutable).map((lane) => [lane.label, lane]),
+    productionLanes(root).map((lane) => [lane.label, lane]),
   );
   return labels.map((label) => {
     const lane = byLabel.get(label);
@@ -983,11 +913,8 @@ function laneSubset(
   });
 }
 
-export function fastLanes(
-  root = process.cwd(),
-  denoExecutable = gateDenoExecutable(root),
-): GateLane[] {
-  return laneSubset(FAST_LANE_LABELS, root, denoExecutable);
+export function fastLanes(root = process.cwd()): GateLane[] {
+  return laneSubset(FAST_LANE_LABELS, root);
 }
 
 // A pull request whose release range changes Markdown files only runs these
@@ -1015,11 +942,8 @@ export const DOCS_ONLY_LANE_LABELS: readonly string[] = [
   "Contract package tests",
 ];
 
-export function docsOnlyLanes(
-  root = process.cwd(),
-  denoExecutable = gateDenoExecutable(root),
-): GateLane[] {
-  return laneSubset(DOCS_ONLY_LANE_LABELS, root, denoExecutable);
+export function docsOnlyLanes(root = process.cwd()): GateLane[] {
+  return laneSubset(DOCS_ONLY_LANE_LABELS, root);
 }
 
 // Only a pull-request run of the CI gate may take the docs-only path. A push
@@ -1063,28 +987,26 @@ export interface PlanGateOptions {
   fast: boolean;
   env: (name: string) => string | undefined;
   root?: string;
-  denoExecutable?: string;
   // Injected by tests; defaults to `releaseChangeScope`.
   changeScope?: () => Promise<ChangeScope>;
 }
 
 export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
   const root = options.root ?? process.cwd();
-  const denoExecutable = options.denoExecutable ?? gateDenoExecutable(root);
   if (options.fast) {
     return {
-      lanes: fastLanes(root, denoExecutable),
+      lanes: fastLanes(root),
       mode: "fast",
       successMessage:
         "✓ fast gate subset passed (not the full green bar; run `npm test`)",
     };
   }
-  const production = productionLanes(root, denoExecutable);
+  const production = productionLanes(root);
   if (docsOnlyEligible(options.env)) {
     const scope = await (options.changeScope ??
       (() => releaseChangeScope(root)))();
     if (scope === "markdown-only") {
-      const lanes = docsOnlyLanes(root, denoExecutable);
+      const lanes = docsOnlyLanes(root);
       return {
         lanes,
         mode: "docs-only",
@@ -1353,13 +1275,7 @@ if (import.meta.main) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(64);
   }
-  let plan: GatePlan | undefined;
-  try {
-    plan = await planGate({ fast, env: readOptionalEnv });
-  } catch {
-    console.error(DENO_EXECUTABLE_DIAGNOSTIC);
-    process.exit(64);
-  }
+  const plan = await planGate({ fast, env: readOptionalEnv });
   const abortController = new AbortController();
   const onSigint = () => abortController.abort("SIGINT");
   const onSigterm = () => abortController.abort("SIGTERM");

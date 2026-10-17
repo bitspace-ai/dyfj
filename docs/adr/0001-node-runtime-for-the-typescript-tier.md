@@ -1,6 +1,9 @@
 # ADR-0001: Node.js LTS replaces Deno as the runtime of the TypeScript tier
 
 - Status: accepted (2026-10-10)
+- Implementation: complete. The S3.4 close-out (BIT-682) removed the last Deno
+  configuration, gate lanes and CI steps; the runtime, the tests and the gate
+  run on Node alone.
 - Decision log: D32 in `specs/README.md`
 - Tracker: BIT-592
 

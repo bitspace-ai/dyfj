@@ -42,7 +42,6 @@ function fixtureProfile(
   pidFile?: string,
   grandchildPidFile?: string,
 ): AcpExecutionProfile {
-  const home = process.env.HOME ?? "/tmp";
   return {
     slug: "fixture",
     ...fixtureAgentCommand({
@@ -54,7 +53,6 @@ function fixtureProfile(
       ],
     }),
     environment: {
-      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
@@ -76,8 +74,6 @@ function fixtureEnvironment(
   extra: Record<string, string>,
 ): Record<string, string> {
   return {
-    DENO_DIR: process.env.DENO_DIR ??
-      join(process.env.HOME ?? "/tmp", ".cache/deno"),
     ...extra,
   };
 }

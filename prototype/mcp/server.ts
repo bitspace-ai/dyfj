@@ -1,4 +1,4 @@
-#!/usr/bin/env -S deno run --allow-net=127.0.0.1:3306 --allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE
+#!/usr/bin/env -S node --permission --allow-fs-read=* --allow-net
 /**
  * DYFJ Memory MCP Server
  *

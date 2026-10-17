@@ -163,7 +163,6 @@ export class WorkspaceContextUnavailableError extends DomainError {
 // subclass is added — an unlisted one still classifies safely, to the
 // generic "DomainError" literal below, just without per-class fidelity.
 const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
-  // deno-lint-ignore no-explicit-any
   readonly [new (...args: any[]) => DomainError, string]
 > = [
   [BudgetExceededError, "BudgetExceededError"],

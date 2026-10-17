@@ -123,7 +123,6 @@ test("gate workflow names explicit Linux and macOS runner versions", async () =>
   assertIncludes(text, "runs-on: ubuntu-24.04");
   assertIncludes(text, "\n  macos-portability:\n");
   assertIncludes(text, "runs-on: macos-15");
-  assertIncludes(text, "deno-aarch64-apple-darwin.zip");
   assertIncludes(text, "dolt-darwin-arm64.tar.gz");
   assertExcludes(text, "runs-on: ubuntu-latest");
   assertExcludes(text, "runs-on: macos-latest");
@@ -160,8 +159,6 @@ test("gate workflow uses no mutable installer shapes", async () => {
 
 test("gate workflow verifies exact pinned tool versions", async () => {
   const text = await workflowText();
-  assertIncludes(text, "releases/download/v2.9.6/");
-  assertIncludes(text, 'grep -F "deno 2.9.6"');
   assertIncludes(text, "releases/download/v2.3.1/");
   assertIncludes(text, 'grep -F "2.3.1"');
   assertIncludes(text, 'grep -F "rustc 1.98.0"');
@@ -215,7 +212,7 @@ test("gate workflow verifies a pinned digest before unpacking any archive", asyn
   const uses = archiveUses(text);
   if (uses.length < 2) {
     throw new Error(
-      "expected the Deno and Dolt archive downloads; a removed download " +
+      "expected a Dolt archive download in each job; a removed download " +
         "must not silently drop its integrity check",
     );
   }
@@ -278,8 +275,8 @@ test("gate workflow pins archive digests in-repository, never at run time", asyn
   }
 });
 
-// A step name is an evidence claim a reader takes at face value. The Deno and
-// Dolt archives are checked against a digest committed here; the Rust
+// A step name is an evidence claim a reader takes at face value. The Dolt
+// archives are checked against a digest committed here; the Rust
 // toolchain is not downloaded by this workflow at all, and its visible
 // evidence is the repository's exact pin plus a reported-version check. A
 // step may not claim more than its own body does.
@@ -320,10 +317,10 @@ test("gate workflow run blocks fail closed on pipeline errors", async () => {
 
 // npm alone resolves npm packages, and the gate checks node_modules against
 // the lockfile without installing anything, so each job installs the exact
-// Node release and runs `npm ci` at the repository root, where the one npm
-// workspace and its lockfile live, before the gate. The job is split at each
+// Node release `.node-version` pins and runs `npm ci` at the repository root,
+// where the one npm workspace and its lockfile live, before the gate. The job is split at each
 // top-level job key so both jobs are checked on their own.
-test("each gate job installs Node 26.11.1 and runs npm ci before the gate", async () => {
+test("each gate job installs the pinned Node and runs npm ci before the gate", async () => {
   const text = await workflowText();
   const jobs = text.split(/^  (?=[a-z-]+:\n)/m).slice(1)
     .filter((job) =>
@@ -333,18 +330,47 @@ test("each gate job installs Node 26.11.1 and runs npm ci before the gate", asyn
   if (jobs.length !== 2) throw new Error("expected the two gate jobs");
   for (const job of jobs) {
     const setup = job.search(
-      /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+node-version: "26\.11\.1"\n/,
+      /uses: actions\/setup-node@[0-9a-f]{40} # v\d+\.\d+\.\d+\n\s+with:\n\s+node-version-file: \.node-version\n/,
     );
     const install = job.search(
       /- name: Install npm dependencies \(npm ci from the committed lockfile\)\n\s+run: npm ci\n/,
     );
     const gate = job.search(/run: npm test\n/);
-    if (setup < 0) throw new Error("a gate job does not set up Node 26.11.1");
+    if (setup < 0) {
+      throw new Error("a gate job does not set up Node from .node-version");
+    }
     if (install < 0) {
       throw new Error("a gate job does not run npm ci at the repository root");
     }
     if (!(setup < install && install < gate)) {
       throw new Error("Node setup and npm ci must precede the gate");
+    }
+  }
+});
+
+// `.node-version` is the single Node pin: both setup-node steps read it, and
+// both package.json `engines` fields admit its major and nothing older.
+test("the Node pin agrees across .node-version, the workflow and engines", async () => {
+  const pin = await readFile(
+    fileURLToPath(new URL("../.node-version", import.meta.url)),
+    "utf8",
+  );
+  const exact = /^(\d+)\.\d+\.\d+\n$/.exec(pin);
+  if (!exact) throw new Error(".node-version must hold one exact version");
+  const text = await workflowText();
+  const reads = text.match(/^\s+node-version-file: \.node-version$/gm) ?? [];
+  if (reads.length !== 2) {
+    throw new Error("both setup-node steps must read .node-version");
+  }
+  if (/^\s+node-version:/m.test(text)) {
+    throw new Error("the workflow restates the Node version");
+  }
+  for (const manifest of ["../package.json", "../prototype/package.json"]) {
+    const engines = JSON.parse(
+      await readFile(fileURLToPath(new URL(manifest, import.meta.url)), "utf8"),
+    ).engines?.node;
+    if (engines !== `>=${exact[1]}`) {
+      throw new Error(`${manifest} engines.node must be >=${exact[1]}`);
     }
   }
 });

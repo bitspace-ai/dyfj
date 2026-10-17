@@ -13,7 +13,7 @@
  * 10 see everything written before them.
  *
  * Update snapshots only as the snapshot rules in `specs/03-testing.md` §4
- * allow:  deno task test:golden --update
+ * allow:  npm run test:golden -- --update
  */
 
 import { lstat } from "node:fs/promises";

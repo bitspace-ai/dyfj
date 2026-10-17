@@ -331,7 +331,7 @@ describe("bash timeoutSec", () => {
   it("policy refuses a timeout above the ceiling before any approval, naming the ceiling", () => {
     const policy = evaluateCommandPolicy(
       defineBash("/work"),
-      call({ command: "deno task test", timeoutSec: 601 }),
+      call({ command: "npm test", timeoutSec: 601 }),
       operator,
     );
     assert.strictEqual(policy.decision, "deny");
@@ -392,7 +392,7 @@ describe("bash timeoutSec", () => {
   it("the approval title shows the effective timeout", () => {
     const bash = defineBash("/work");
     assert.strictEqual(
-      bash.approvalTitle!(call({ command: "deno task test", timeoutSec: 300 })),
+      bash.approvalTitle!(call({ command: "npm test", timeoutSec: 300 })),
       "Run Bash Command (timeout 300 s)",
     );
     assert.strictEqual(
@@ -432,7 +432,7 @@ describe("bash timeoutSec", () => {
     const bash = defineBash("/work");
     const redacted = redactToolCall(
       bash,
-      call({ command: "deno task test", timeoutSec: 300 }),
+      call({ command: "npm test", timeoutSec: 300 }),
       {
         decision: "allow",
         authzBasis: "policy:allow:operator-approved",
@@ -441,7 +441,7 @@ describe("bash timeoutSec", () => {
       },
     );
     assert.deepStrictEqual(redacted.arguments, {
-      command: "deno task test",
+      command: "npm test",
       timeoutSec: 300,
     });
     assert.strictEqual(redacted.result, "[redacted]");

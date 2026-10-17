@@ -2,15 +2,12 @@ import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { connect } from "node:net";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { testSourcesFromPaths } from "../prototype/scripts/test-files.ts";
 import { integrationChildEnvironment } from "../prototype/scripts/integration-child-environment.ts";
-import {
-  DENO_EXECUTABLE_DIAGNOSTIC,
-  requiredDenoExecutable,
-} from "../prototype/scripts/deno-executable.ts";
+import { parallelJobs } from "../prototype/scripts/node-test-lane.ts";
 import {
   COMPOSED_FAIL_EXIT_CODE,
   composeGateStatus,
@@ -19,7 +16,6 @@ import {
   docsOnlyEligible,
   FAST_LANE_LABELS,
   fastLanes,
-  gateDenoExecutable,
   type GateLane,
   INHERITED_ENVIRONMENT_NAMES,
   LANE_DEADLINE_EXIT_CODE,
@@ -55,8 +51,6 @@ function assertStringIncludes(actual: string, expected: string): void {
   }
 }
 
-// A stand-in Deno path for lane-table tests that never run a Deno lane.
-const FIXTURE_DENO = "/fixtures/runtime/deno";
 
 // Runs a lane's command directly, outside the gate, and captures its output.
 function runLaneDirectly(
@@ -108,7 +102,7 @@ test("aggregate gate source does not advertise a stale direct entrypoint", async
 });
 
 test("the npm install precondition runs first, read-only, in full and fast", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const lane = lanes[0];
   if (!lane) throw new Error("no production lanes");
   assertEquals(lane.label, "npm install precondition (node_modules)");
@@ -122,7 +116,7 @@ test("the npm install precondition runs first, read-only, in full and fast", () 
 });
 
 test("aggregate lanes include the retired-surface scan", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Retired-surface scan");
   if (!lane) throw new Error("retired-surface scan lane is missing");
@@ -130,24 +124,8 @@ test("aggregate lanes include the retired-surface scan", () => {
   assertEquals(lane.args, ["scripts/retired-surface-scan.ts"]);
 });
 
-test("typecheck lanes derive their file lists instead of hand-listing", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
-  for (
-    const [label, task] of [
-      ["Prototype source typecheck", "check:sources"],
-      ["Prototype test-file typecheck", "check:tests"],
-    ]
-  ) {
-    const lane = lanes.find((candidate) => candidate.label === label);
-    if (!lane) throw new Error(`${label} lane is missing`);
-    assertEquals(lane.args, ["task", task]);
-    assertEquals(lane.cwd, "/repo/prototype");
-    assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
-  }
-});
-
 test("the tsc lane runs the root workspace's tsc in full and fast", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "TypeScript typecheck (typecheck.tsc)");
   if (!lane) throw new Error("typecheck.tsc lane is missing");
@@ -160,34 +138,17 @@ test("the tsc lane runs the root workspace's tsc in full and fast", () => {
   ]);
   assertEquals(lane.cwd, "/repo");
   assertEquals(FAST_LANE_LABELS.includes(lane.label), true);
-  // It runs alongside the deno check lanes until close-out of decision D32.
-  for (
-    const label of [
-      "Prototype source typecheck",
-      "Prototype test-file typecheck",
-    ]
-  ) {
-    if (
-      !productionLanes("/repo", "/fixtures/runtime/deno").some((candidate) =>
-        candidate.label === label
-      )
-    ) {
-      throw new Error(`${label} lane is missing`);
-    }
-  }
 });
 
 test("aggregate lanes include the test.unit suite", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Prototype unit test suite (test.unit)");
   if (!lane) throw new Error("test.unit lane is missing");
   assertEquals(lane.checkId, "test.aggregate");
-  // The runner itself leads the lane group, on Node, not `deno task`.
+  // The runner itself leads the lane group, not an npm script.
   assertEquals(lane.command, "node");
   assertEquals(lane.args, ["scripts/run-unit-tests.ts"]);
-  // It runs the remaining Deno subset with the selected Deno.
-  assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
   assertEquals(lane.cwd, "/repo/prototype");
   assertEquals(lane.env?.TMPDIR, "/tmp");
   if (!FAST_LANE_LABELS.includes(lane.label)) {
@@ -196,7 +157,7 @@ test("aggregate lanes include the test.unit suite", () => {
 });
 
 test("the three test lanes carry deadlines and run their runners on Node", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   for (
     const [label, deadline] of [
       ["Prototype unit test suite (test.unit)", LANE_DEADLINES_MS.unit],
@@ -245,13 +206,13 @@ test("lane records live under an absolute HOME only", () => {
 test("recovery signals only a group that still carries the lane token", () => {
   const token = "0f8b7c2e-5a41-4d7e-9c3b-2e1f0a9d8c7b";
   const record = { gatePid: 100, group: 200, token };
-  const marker = `deno test a.test.ts -- --dyfj-lane=${token}`;
+  const marker = `node --test a.test.ts -- --dyfj-lane=${token}`;
   assertEquals(
     orphanedLaneGroup(record, [
       {
         pid: 100,
         group: 100,
-        command: "deno run scripts/aggregate-test-gate.ts",
+        command: "node scripts/aggregate-test-gate.ts",
       },
       { pid: 201, group: 200, command: marker },
     ]),
@@ -278,16 +239,16 @@ test("recovery signals only a group that still carries the lane token", () => {
     "drop",
   );
   assertEquals(
-    parseProcessList("  201   200 deno test -- x\n garbage\n 5 5 sh"),
+    parseProcessList("  201   200 node --test -- x\n garbage\n 5 5 sh"),
     [
-      { pid: 201, group: 200, command: "deno test -- x" },
+      { pid: 201, group: 200, command: "node --test -- x" },
       { pid: 5, group: 5, command: "sh" },
     ],
   );
 });
 
 test("aggregate lanes include the contract package tests", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Contract package tests");
   if (!lane) throw new Error("contract package test lane is missing");
@@ -319,7 +280,7 @@ test("aggregate lanes include the contract package tests", () => {
 });
 
 test("aggregate lanes compare a regenerated closure report", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Contract closure report generation");
   if (!lane) {
@@ -348,7 +309,7 @@ test("aggregate lanes compare a regenerated closure report", () => {
 });
 
 test("closure report comparison succeeds and leaves the report unchanged", async () => {
-  const lane = productionLanes(process.cwd(), FIXTURE_DENO).find((candidate) =>
+  const lane = productionLanes(process.cwd()).find((candidate) =>
     candidate.label === "Contract closure report generation"
   );
   if (!lane) throw new Error("closure comparison lane missing");
@@ -368,7 +329,7 @@ test("closure report lane fails when regeneration differs", async () => {
   try {
     const committed = await readFile(committedPath, "utf8");
     await writeFile(alteredPath, `${committed}\n`);
-    const lane = productionLanes(process.cwd(), FIXTURE_DENO).find((
+    const lane = productionLanes(process.cwd()).find((
       candidate,
     ) => candidate.label === "Contract closure report generation");
     if (!lane) {
@@ -395,7 +356,7 @@ test("closure report lane fails when regeneration differs", async () => {
 
 test("aggregate lanes include both public-safety scan families", () => {
   for (const family of ["secret.tree", "public.boundary"]) {
-    const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    const lane = productionLanes("/repo").find((
       candidate,
     ) => candidate.checkId === family);
     if (!lane) throw new Error(`${family} scan lane is missing`);
@@ -409,7 +370,7 @@ test("aggregate lanes include both public-safety scan families", () => {
 });
 
 test("every stable required check id has a production lane", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const covered = new Set(
     lanes.flatMap((lane) => lane.checkId === undefined ? [] : [lane.checkId]),
   );
@@ -426,7 +387,7 @@ test("every stable required check id has a production lane", () => {
 });
 
 test("policy check lanes invoke their dedicated scripts", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const expectations: Array<[string, string]> = [
     ["subject.resolve", "scripts/subject-check.ts"],
     ["subject.digest", "scripts/subject-check.ts"],
@@ -445,7 +406,7 @@ test("policy check lanes invoke their dedicated scripts", () => {
 });
 
 test("the ported static-check lanes run their scripts on node", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   for (
     const checkId of [
       "subject.resolve",
@@ -468,7 +429,7 @@ test("the ported static-check lanes run their scripts on node", () => {
 });
 
 test("the ratchet.base lane runs on node with the range binding", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const lane = lanes.find((candidate) =>
     candidate.label === "Ratchet lists against the merge base (ratchet.base)"
   );
@@ -485,7 +446,7 @@ test("the ratchet.base lane runs on node with the range binding", () => {
 });
 
 test("the receipt.schema lane runs its tests on node through the shared runner", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.checkId === "receipt.schema");
   if (!lane) throw new Error("receipt.schema lane is missing");
@@ -501,7 +462,7 @@ test("the receipt.schema lane runs its tests on node through the shared runner",
 });
 
 test("the arch.imports lane runs the checker read-only", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Architecture import rules (arch.imports)");
   if (!lane) throw new Error("arch.imports lane is missing");
@@ -519,7 +480,7 @@ test("binding-aware lanes forward the CI subject and range", () => {
   const prior = process.env.DYFJ_GATE_SUBJECT;
   process.env.DYFJ_GATE_SUBJECT = sentinel;
   try {
-    const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+    const lanes = productionLanes("/repo");
     for (const checkId of ["subject.resolve", "secret.diff"]) {
       const lane = lanes.find((candidate) => candidate.checkId === checkId);
       if (!lane) throw new Error(`${checkId} lane is missing`);
@@ -532,7 +493,7 @@ test("binding-aware lanes forward the CI subject and range", () => {
 });
 
 test("orchestration lane covers the CI workflow hygiene tests", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Aggregate gate orchestration tests");
   if (!lane) throw new Error("orchestration test lane is missing");
@@ -546,15 +507,13 @@ test("orchestration lane covers the CI workflow hygiene tests", () => {
     "gate.orchestration",
   ]);
   // Lane children start from a cleared environment: the deterministic temp
-  // root must be set explicitly, never inherited, and the selected Deno
-  // reaches the tests that drive it.
-  assertEquals(lane.env?.TMPDIR, "/tmp");
-  assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
+  // root must be set explicitly, never inherited.
+  assertEquals(lane.env, { TMPDIR: "/tmp" });
 });
 
 test("fast lanes reuse the production lane definitions verbatim", () => {
-  const production = productionLanes("/repo", "/fixtures/runtime/deno");
-  const fast = fastLanes("/repo", "/fixtures/runtime/deno");
+  const production = productionLanes("/repo");
+  const fast = fastLanes("/repo");
   assertEquals(fast.map((lane) => lane.label), [...FAST_LANE_LABELS]);
   for (const lane of fast) {
     assertEquals(
@@ -565,7 +524,7 @@ test("fast lanes reuse the production lane definitions verbatim", () => {
 });
 
 test("fast lanes keep the scans and exclude the heavyweight suites", () => {
-  const fast = fastLanes("/repo", "/fixtures/runtime/deno");
+  const fast = fastLanes("/repo");
   const labels = fast.map((lane) => lane.label);
   for (
     const scan of [
@@ -615,10 +574,9 @@ test("a Markdown-only pull request runs only the policy lanes", async () => {
     fast: false,
     env: pullRequest,
     root: "/repo",
-    denoExecutable: "/fixtures/runtime/deno",
     changeScope: () => Promise.resolve("markdown-only"),
   });
-  const production = productionLanes("/repo", "/fixtures/runtime/deno");
+  const production = productionLanes("/repo");
   assertEquals(plan.mode, "docs-only");
   assertEquals(plan.lanes.map((lane) => lane.label), [
     ...DOCS_ONLY_LANE_LABELS,
@@ -673,13 +631,12 @@ test("a pull request with any non-Markdown path runs the full gate", async () =>
     fast: false,
     env: pullRequest,
     root: "/repo",
-    denoExecutable: "/fixtures/runtime/deno",
     changeScope: () => Promise.resolve("other"),
   });
   assertEquals(plan.mode, "full");
   assertEquals(
     plan.lanes,
-    productionLanes("/repo", "/fixtures/runtime/deno"),
+    productionLanes("/repo"),
   );
   assertEquals(plan.skipped, undefined);
   assertEquals(plan.requiredCheckIds, REQUIRED_CHECK_IDS);
@@ -702,7 +659,6 @@ test("push, dispatch and local runs keep the full gate on a Markdown-only range"
       fast: false,
       env,
       root: "/repo",
-      denoExecutable: "/fixtures/runtime/deno",
       changeScope: () => {
         asked = true;
         return Promise.resolve("markdown-only");
@@ -712,7 +668,7 @@ test("push, dispatch and local runs keep the full gate on a Markdown-only range"
     assertEquals(plan.skipped, undefined);
     assertEquals(
       plan.lanes.length,
-      productionLanes("/repo", "/fixtures/runtime/deno").length,
+      productionLanes("/repo").length,
     );
     if (asked) throw new Error("a non-pull-request run classified its range");
   }
@@ -724,7 +680,6 @@ test("the fast subset is unaffected by change scope", async () => {
     fast: true,
     env: pullRequest,
     root: "/repo",
-    denoExecutable: "/fixtures/runtime/deno",
     changeScope: () => Promise.resolve("markdown-only"),
   });
   assertEquals(plan.mode, "fast");
@@ -801,7 +756,7 @@ test("gate arguments select the fast subset and fail closed otherwise", () => {
 });
 
 test("aggregate lanes include the golden characterization suite", async () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const lane = lanes.find((candidate) =>
     candidate.label === "Golden characterization suite (test.golden)"
   );
@@ -810,10 +765,7 @@ test("aggregate lanes include the golden characterization suite", async () => {
   // The runner and its tests run on Node (decision D32).
   assertEquals(lane.command, "node");
   assertEquals(lane.cwd, "/repo/prototype");
-  assertEquals(lane.env, {
-    TMPDIR: "/tmp",
-    DENO_BIN: "/fixtures/runtime/deno",
-  });
+  assertEquals(lane.env, { TMPDIR: "/tmp" });
   assertEquals(lane.args, ["testing/golden/run.ts"]);
   if (FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("golden lane must not run in the fast subset");
@@ -821,8 +773,7 @@ test("aggregate lanes include the golden characterization suite", async () => {
   const runner = await readFile("prototype/testing/golden/run.ts", "utf8");
   // The lane can never rewrite its own snapshots: only an explicit update
   // turns on update mode, without which the one snapshot writer refuses
-  // (`testing/golden/snapshots.ts`, pinned by its own tests). The runner
-  // spawns no `deno test`, so no snapshot write grant exists to issue.
+  // (`testing/golden/snapshots.ts`, pinned by its own tests).
   assertStringIncludes(
     runner,
     'const update = suiteArgs.includes("--update");',
@@ -835,7 +786,7 @@ test("aggregate lanes include the golden characterization suite", async () => {
 });
 
 test("aggregate lanes include schema catalog, codegen, and equivalence checks", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const catalog = lanes.find((candidate) =>
     candidate.label === "Local model catalog data validation"
   );
@@ -878,7 +829,7 @@ test("aggregate lanes include schema catalog, codegen, and equivalence checks", 
 });
 
 test("isolated Dolt lane passes custom Rust toolchain roots to children", () => {
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Isolated Dolt integration lane");
   if (!lane) throw new Error("isolated Dolt integration lane is missing");
@@ -907,77 +858,35 @@ test("isolated Dolt lane passes custom Rust toolchain roots to children", () => 
   );
 });
 
-test("a caller's DENO_DIR reaches the integration lane's children", () => {
-  // The gate forwards it into the lane's cleared environment, the lane's
-  // `node` runner reads it, and the lane passes it on to its remaining Deno
-  // subset.
-  if (!INHERITED_ENVIRONMENT_NAMES.includes("DENO_DIR")) {
-    throw new Error("the gate does not forward DENO_DIR to lanes");
-  }
-  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+test("a caller's Rust homes reach the integration lane's children", () => {
+  // The gate forwards them into the lane's cleared environment, and the
+  // lane's runner passes them on to the Rust schema round trip.
+  const lane = productionLanes("/repo").find((
     candidate,
   ) => candidate.label === "Isolated Dolt integration lane");
   if (!lane) throw new Error("isolated Dolt integration lane is missing");
   assertEquals(lane.command, "node");
+  const homes = { CARGO_HOME: "/custom/cargo", RUSTUP_HOME: "/custom/rustup" };
+  for (const name of Object.keys(homes)) {
+    if (!INHERITED_ENVIRONMENT_NAMES.includes(name)) {
+      throw new Error(`the gate does not forward ${name} to lanes`);
+    }
+  }
   assertEquals(
     integrationChildEnvironment(
       {},
-      (name) => ({ DENO_DIR: "/custom/deno-cache" })[name],
+      (name) => (homes as Record<string, string>)[name],
     ),
-    { DENO_DIR: "/custom/deno-cache" },
+    homes,
   );
 });
 
-test("Deno lanes use the one selected Deno and no lane carries a grant", () => {
-  const selected = "/fixtures/runtime/deno";
-  const lanes = productionLanes("/repo", selected);
-  // Lanes run as plain node, cargo and dolt; the Deno lanes left are the
-  // typechecks, until close-out.
-  assertEquals(
-    lanes.filter((lane) => lane.commandLabel === "deno").map((lane) =>
-      lane.label
-    ),
-    [
-      "Prototype source typecheck",
-      "Prototype test-file typecheck",
-    ],
-  );
-  for (const lane of lanes) {
-    if (lane.commandLabel === "deno") assertEquals(lane.command, selected);
+test("no lane carries a runtime permission flag", () => {
+  for (const lane of productionLanes("/repo")) {
     if (lane.args.some((argument) => /^--(allow|deny)-/.test(argument))) {
       throw new Error(`${lane.label} carries a runtime permission flag`);
     }
   }
-});
-
-test("Deno executable selector CLI has fixed success and failure output", () => {
-  const deno = requiredDenoExecutable();
-  const script = "prototype/scripts/deno-executable.ts";
-  const success = spawnSync(deno, ["run", script], { encoding: "utf8" });
-  assertEquals(success.status, 0);
-  assertEquals(success.stdout, `${deno}\n`);
-  assertEquals(success.stderr, "");
-
-  const failure = spawnSync(deno, ["run", script, "/fixtures/other/deno"], {
-    encoding: "utf8",
-  });
-  assertEquals(failure.status, 64);
-  assertEquals(failure.stdout, "");
-  assertEquals(failure.stderr, `${DENO_EXECUTABLE_DIAGNOSTIC}\n`);
-});
-
-test("the gate asks the selector for the real deno path and fails closed", () => {
-  // The orchestration lane's DENO_BIN is the gate's own answer.
-  assertEquals(gateDenoExecutable(process.cwd()), requiredDenoExecutable());
-  assertEquals(
-    realpathSync(gateDenoExecutable(process.cwd())),
-    gateDenoExecutable(process.cwd()),
-  );
-  // No `deno` on PATH: the selector cannot run.
-  assertThrows(
-    () => gateDenoExecutable(process.cwd(), { PATH: "/nonexistent" }),
-    DENO_EXECUTABLE_DIAGNOSTIC,
-  );
 });
 
 test("aggregate lane children do not inherit unrelated environment", async () => {
@@ -1801,4 +1710,64 @@ test("the gate emits a bounded machine-readable status line", async () => {
     { id: "demo.fail", result: "fail" },
     { id: "demo.pass", result: "pass" },
   ]);
+});
+
+// Tripwires for the close-out of decision D32: the gate and its test runners
+// run on Node alone. No lane starts deno, and no lane or runner hands a child
+// a DENO_ variable.
+const RETIRED_RUNTIME = /(^|\/)deno$/i;
+const RETIRED_RUNTIME_VARIABLE = /^DENO_/i;
+
+test("no gate lane starts deno or forwards a DENO_ variable", () => {
+  const offenders: string[] = [];
+  for (const lane of productionLanes(process.cwd())) {
+    const words = [lane.command, lane.commandLabel ?? "", ...lane.args];
+    if (words.some((word) => RETIRED_RUNTIME.test(word))) {
+      offenders.push(`${lane.label} starts deno`);
+    }
+    for (const name of Object.keys(lane.env ?? {})) {
+      if (RETIRED_RUNTIME_VARIABLE.test(name)) {
+        offenders.push(`${lane.label} forwards ${name}`);
+      }
+    }
+  }
+  for (const name of INHERITED_ENVIRONMENT_NAMES) {
+    if (RETIRED_RUNTIME_VARIABLE.test(name)) {
+      offenders.push(`every lane inherits ${name}`);
+    }
+  }
+  assertEquals(offenders, []);
+});
+
+test("no test runner forwards a DENO_ variable", async () => {
+  const everyName = (name: string) => `/set/${name}`;
+  const lists: Record<string, unknown> = {
+    "integration child environment": Object.keys(
+      integrationChildEnvironment({}, everyName),
+    ),
+    "unit runner": (await import("../prototype/scripts/run-unit-tests.ts"))
+      .UNIT_LANE_ENVIRONMENT_NAMES,
+    "node test-file runner": (await import("./run-node-test-files.ts"))
+      .FORWARDED_ENVIRONMENT_NAMES,
+  };
+  for (const [runner, names] of Object.entries(lists)) {
+    if (!Array.isArray(names)) {
+      throw new Error(`${runner} does not export its forwarded names`);
+    }
+    const forwarded = names.filter((name) =>
+      RETIRED_RUNTIME_VARIABLE.test(String(name))
+    );
+    assertEquals([runner, forwarded], [runner, []]);
+  }
+});
+
+test("node --test parallelism does not read DENO_JOBS", () => {
+  const saved = process.env.DENO_JOBS;
+  process.env.DENO_JOBS = "1";
+  try {
+    assertEquals(parallelJobs(), availableParallelism());
+  } finally {
+    if (saved === undefined) delete process.env.DENO_JOBS;
+    else process.env.DENO_JOBS = saved;
+  }
 });

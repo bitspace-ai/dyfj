@@ -9,7 +9,6 @@ import {
   nameFilterPattern,
   nodeTestArgs,
   nodeVersionProblem,
-  parallelJobs,
   parseTapSummary,
   requireNode,
   startNodeTests,
@@ -63,14 +62,6 @@ test("a test:file filter is a substring unless written as /regex/", () => {
   assert.equal(nameFilterPattern("round trip (x)"), "round trip \\(x\\)");
   assert.equal(nameFilterPattern("/^round/"), "^round");
   assert.equal(nameFilterPattern("/"), "/");
-});
-
-test("parallel jobs follow DENO_JOBS when it is a positive integer", () => {
-  assert.equal(parallelJobs("3"), 3);
-  for (const bad of ["0", "-1", "x", "", "1.5"]) {
-    assert.ok(parallelJobs(bad) >= 1, bad);
-    assert.notEqual(parallelJobs(bad), 0);
-  }
 });
 
 test("the TAP summary is parsed from the closing unindented lines", () => {

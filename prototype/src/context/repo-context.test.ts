@@ -323,7 +323,7 @@ test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a
       "Workbench loop: ship the smallest useful slice. ".repeat(4),
     );
     await writeFile(
-      path.join(selectedRoot, "deno.json"),
+      path.join(selectedRoot, "package.json"),
       JSON.stringify({ description: "manifest context ".repeat(100) }),
     );
 
@@ -335,11 +335,11 @@ test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a
     const paths = context.sources.map((source) => source.path);
 
     assert.ok(paths.includes("notes/workbench-mvp-loop.md"));
-    if (paths.includes("deno.json")) {
+    if (paths.includes("package.json")) {
       assert.ok(
         paths.indexOf("notes/workbench-mvp-loop.md") <
-          paths.indexOf("deno.json"),
-        `expected paths.indexOf("notes/workbench-mvp-loop.md") < paths.indexOf("deno.json")`,
+          paths.indexOf("package.json"),
+        `expected paths.indexOf("notes/workbench-mvp-loop.md") < paths.indexOf("package.json")`,
       );
     }
   } finally {

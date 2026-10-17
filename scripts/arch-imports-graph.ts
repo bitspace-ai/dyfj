@@ -44,7 +44,7 @@ export interface DynamicImport {
 export interface EnvAccess {
   from: string;
   line: number;
-  /** `Deno.env` or `process.env`. */
+  /** `<owner>.env`, for an owner in `ENV_OWNERS` (`arch-imports-parse.ts`). */
   via: string;
 }
 
