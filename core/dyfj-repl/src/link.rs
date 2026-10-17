@@ -8,6 +8,7 @@
 
 use crate::approval::visible;
 use crate::client::{Client, Incoming, Verdict};
+use crate::dev_control::ExitWatch;
 use crate::session::Session;
 use crate::terminal::{Ask, ReadOutcome};
 use crate::submission::{Submission, classify};
@@ -47,12 +48,17 @@ pub enum Waited {
 /// Each failed attempt checks the runtime's log, when its path is known, and
 /// shows a new error line from it: a runtime that crashes while starting says
 /// why there, and the REPL keeps waiting for the next start.
+///
+/// Under `dyfj dev`, the supervisor asking the REPL to exit ends the wait as a
+/// quit does.
+#[allow(clippy::too_many_arguments)]
 pub async fn wait_for_runtime(
     socket: &str,
     input: &mpsc::Sender<Ask>,
     pending: &mut Option<oneshot::Receiver<ReadOutcome>>,
     orphans: &mut mpsc::Receiver<ReadOutcome>,
     interrupts: &mut mpsc::Receiver<()>,
+    exit: &mut ExitWatch,
     log: &mut Option<LogTail>,
     delays: &mut dyn Iterator<Item = Duration>,
 ) -> Waited {
@@ -71,6 +77,7 @@ pub async fn wait_for_runtime(
         let event = tokio::select! {
             biased;
             Some(()) = interrupts.recv() => return Waited::Quit,
+            () = exit.requested() => return Waited::Quit,
             Some(orphan) = orphans.recv() => {
                 if orphan_quits(&orphan) {
                     return Waited::Quit;
@@ -125,6 +132,8 @@ async fn connect_after(socket: &str, delay: Duration) -> anyhow::Result<(Client,
 pub enum Prompted {
     Read(Result<ReadOutcome, oneshot::error::RecvError>),
     Disconnected,
+    /// The `dyfj dev` supervisor asked the REPL to exit.
+    Exit,
 }
 
 /// Wait for the operator's next line while the runtime is up, or for the
@@ -142,11 +151,13 @@ pub async fn await_prompt(
     incoming: &mut mpsc::Receiver<Incoming>,
     read: &mut oneshot::Receiver<ReadOutcome>,
     orphans: &mut mpsc::Receiver<ReadOutcome>,
+    exit: &mut ExitWatch,
 ) -> Prompted {
     loop {
         tokio::select! {
             biased;
             () = client.closed() => return Prompted::Disconnected,
+            () = exit.requested() => return Prompted::Exit,
             Some(orphan) = orphans.recv() => note_orphan(&orphan),
             message = incoming.recv() => match message {
                 Some(Incoming::Stream(_)) => {}
@@ -189,8 +200,9 @@ pub fn note_orphan(outcome: &ReadOutcome) {
 ///
 /// The session is resumed the way `--session` resumes one: the runtime keeps
 /// it in its store, and the next turn names its id. Nothing about the session
-/// changes here, and nothing that was in flight is resent.
-pub async fn resume(client: &Client, session: &Session, socket: &str) {
+/// changes here, and nothing that was in flight is resent. `reason` is why the
+/// runtime restarted, when `dyfj dev` said.
+pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Option<String>) {
     let status = client.request("runtime/status", json!({})).await;
     let resumed = match &session.id {
         Some(id) => match commands::recorded_model(client, id).await {
@@ -202,8 +214,16 @@ pub async fn resume(client: &Client, session: &Session, socket: &str) {
         },
         None => String::new(),
     };
-    println!("\nruntime reloaded{resumed}");
+    println!("\n{}", reloaded_notice(reason.as_deref(), &resumed));
     posture::show(&status, session, socket);
+}
+
+/// `runtime reloaded`, with the restart's reason when there is one.
+pub fn reloaded_notice(reason: Option<&str>, resumed: &str) -> String {
+    match reason {
+        Some(reason) => format!("runtime reloaded ({reason}){resumed}"),
+        None => format!("runtime reloaded{resumed}"),
+    }
 }
 
 /// The longest log line shown, in characters. The log is the runtime's output
@@ -289,6 +309,7 @@ fn cap(line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dev_control::DevControl;
     use crate::fake_runtime::{FakeRuntime, PATIENCE, socket_path};
     use crate::{TurnEnd, run_turn};
     use serde_json::json;
@@ -302,6 +323,7 @@ mod tests {
         pending: Option<oneshot::Receiver<ReadOutcome>>,
         orphans: mpsc::Receiver<ReadOutcome>,
         interrupts: mpsc::Receiver<()>,
+        exit: ExitWatch,
     }
 
     /// The test's side: it receives the asks and answers them, as the
@@ -317,7 +339,7 @@ mod tests {
         let (orphans_tx, orphans) = mpsc::channel(8);
         let (interrupts_tx, interrupts) = mpsc::channel(1);
         (
-            Repl { input, pending: None, orphans, interrupts },
+            Repl { input, pending: None, orphans, interrupts, exit: ExitWatch::none() },
             Terminal { asks, orphans_tx, interrupts_tx },
         )
     }
@@ -331,6 +353,7 @@ mod tests {
                 &mut self.pending,
                 &mut self.orphans,
                 &mut self.interrupts,
+                &mut self.exit,
                 &mut None,
                 &mut delays,
             )
@@ -418,7 +441,7 @@ mod tests {
 
         let mut session = resumed_session(SESSION);
         let attach = async { conn.answer_attach(Some(SESSION)).await };
-        tokio::join!(resume(&client, &session, &path), attach);
+        tokio::join!(resume(&client, &session, &path, None), attach);
 
         let turn = async {
             let frame = conn.expect_request("turn").await;
@@ -474,7 +497,7 @@ mod tests {
             conn.answer(&frame, json!({"sessionId": SESSION, "text": "ok"})).await;
         };
         let run = async {
-            resume(&client, &session, &path).await;
+            resume(&client, &session, &path, None).await;
             run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "again", &mut session)
                 .await
         };
@@ -533,7 +556,7 @@ mod tests {
             panic!("must reconnect");
         };
         let mut conn = second.accept().await;
-        tokio::join!(resume(&client, &session, &path), conn.answer_attach(Some(SESSION)));
+        tokio::join!(resume(&client, &session, &path, None), conn.answer_attach(Some(SESSION)));
 
         // The operator answers the cancelled question only now.
         let _ = open_read.send(ReadOutcome::Line("y".into()));
@@ -577,7 +600,7 @@ mod tests {
         }
         drop(conn);
 
-        let prompted = timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans))
+        let prompted = timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans, &mut repl.exit))
             .await
             .expect("the drop must be noticed behind the flood");
         assert!(matches!(prompted, Prompted::Disconnected));
@@ -607,7 +630,7 @@ mod tests {
             drop(conn);
         };
         let (prompted, ()) = tokio::join!(
-            timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans)),
+            timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans, &mut repl.exit)),
             runtime_side
         );
         assert!(matches!(prompted.expect("the drop must end the wait"), Prompted::Disconnected));
@@ -682,7 +705,7 @@ mod tests {
             conn.answer(&frame, json!({"sessionId": SESSION, "text": "ok"})).await;
         };
         let run = async {
-            resume(&client, &session, &path).await;
+            resume(&client, &session, &path, None).await;
             run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "again", &mut session).await
         };
         let (end, ()) = tokio::join!(run, next);
@@ -838,5 +861,51 @@ mod tests {
         assert_eq!(tail.new_error_line().as_deref(), Some("Error: fresh boot failed"));
         std::fs::remove_file(&path).unwrap();
         assert_eq!(tail.new_error_line(), None);
+    }
+
+    /// The notice after a restart says why, when the supervisor said.
+    #[test]
+    fn the_reloaded_notice_names_the_reason_when_there_is_one() {
+        assert_eq!(
+            reloaded_notice(Some("3 files changed"), "; resumed session X"),
+            "runtime reloaded (3 files changed); resumed session X"
+        );
+        assert_eq!(reloaded_notice(None, ""), "runtime reloaded");
+    }
+
+    /// `dyfj dev` asks the REPL to leave before a rebuilt one takes over; at
+    /// the idle prompt that ends the wait as a quit would.
+    #[tokio::test]
+    async fn a_supervisor_exit_request_ends_the_idle_prompt() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, mut incoming) = Client::connect(&path).await.unwrap();
+        let _conn = runtime.accept().await;
+        let (mut repl, _terminal) = harness();
+        let (ours, mut supervisor) = tokio::net::UnixStream::pair().unwrap();
+        let control = DevControl::over(ours);
+        repl.exit = control.exit_watch();
+        let (_respond, mut read) = oneshot::channel();
+        tokio::io::AsyncWriteExt::write_all(&mut supervisor, b"{\"type\":\"exit\"}\n").await.unwrap();
+        let prompted = timeout(
+            PATIENCE,
+            await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans, &mut repl.exit),
+        )
+        .await
+        .expect("the exit request must end the wait");
+        assert!(matches!(prompted, Prompted::Exit));
+    }
+
+    /// The same request while the runtime is down ends the wait for it.
+    #[tokio::test]
+    async fn a_supervisor_exit_request_ends_a_wait_for_the_runtime() {
+        let path = socket_path();
+        let (mut repl, _terminal) = harness();
+        let (ours, mut supervisor) = tokio::net::UnixStream::pair().unwrap();
+        let control = DevControl::over(ours);
+        repl.exit = control.exit_watch();
+        tokio::io::AsyncWriteExt::write_all(&mut supervisor, b"{\"type\":\"exit\"}\n").await.unwrap();
+        let waited = timeout(PATIENCE, repl.wait(&path)).await.expect("must end");
+        assert!(matches!(waited, Waited::Quit));
     }
 }

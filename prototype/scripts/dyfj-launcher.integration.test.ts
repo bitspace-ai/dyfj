@@ -187,6 +187,31 @@ async function dryRun(
 }
 
 describe("dyfj launcher routing", () => {
+  it("routes dyfj dev to the dev supervisor on its own socket, never the daily one", async () => {
+    assert.partialDeepStrictEqual(
+      await dryRun({ HOME: FAKE_HOME, XDG_RUNTIME_DIR: "", DYFJ_SOCKET: "/elsewhere/daily.sock" }, ["dev"]),
+      { route: "dev", autostart: "no", sock: `${FAKE_HOME}/.dyfj/run/dev.sock` },
+    );
+    assert.partialDeepStrictEqual(
+      await dryRun({ HOME: FAKE_HOME, XDG_RUNTIME_DIR: "/xdg" }, ["dev", "--model", "m"]),
+      { route: "dev", autostart: "no", sock: "/xdg/dyfj/dev.sock" },
+    );
+    assert.partialDeepStrictEqual(
+      await dryRun({ HOME: FAKE_HOME }, ["dev", "--socket", "/tmp/mine.sock"]),
+      { route: "dev", sock: "/tmp/mine.sock" },
+    );
+    // An invalid invocation is the client's to refuse, not dev's to start.
+    for (const args of [["dev", "--socket"], ["dev", "--socket", ""]]) {
+      const { route } = await dryRun({ HOME: FAKE_HOME }, args);
+      assert.notEqual(route, "dev", JSON.stringify(args));
+    }
+    // `dev` in a value slot, or as a prompt, is not the subcommand.
+    for (const args of [["--model", "dev"], ["-p", "dev"]]) {
+      const { route } = await dryRun({ HOME: FAKE_HOME }, args);
+      assert.notEqual(route, "dev", args.join(" "));
+    }
+  });
+
   it("accepts an operator-authorized executable and ignores stale optional paths", async () => {
     const node = await output("bash", ["-c", "node -p process.execPath"]);
     assert.equal(node.code, 0);

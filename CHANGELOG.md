@@ -11,6 +11,31 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`dyfj dev`: the runtime and the Rust REPL reload when their code
+  changes.** One command in one terminal: it builds the REPL
+  (`cargo build -p dyfj-repl`, debug), starts its own runtime on a dev socket
+  (`--socket`, else `dev.sock` beside the default daily socket) with the real
+  config and Dolt, and runs the REPL in the foreground. It watches
+  `prototype/src` and `core/` and takes each batch of saves 300 ms after the
+  last one. A module the server's import graph reaches (from the `arch.imports`
+  graph code) restarts the runtime. A file in the REPL's crate, or a workspace
+  crate it depends on, rebuilds the REPL and restarts it in the same session.
+  A `contract/` or `transport/` module restarts both, the runtime first. Test
+  files and modules only the TypeScript client loads restart nothing. Reloads
+  wait while a turn is in flight; `/reload` in the REPL forces one, and the
+  REPL's `runtime reloaded` notice says why (`3 files changed`). A REPL build
+  failure keeps the running REPL and runtime and shows the error on one line;
+  a runtime that fails to start leaves the REPL waiting, and the next save
+  starts it again. Quitting the REPL stops the runtime and ends `dyfj dev`; a
+  `dyfj dev` killed outright leaves a runtime that stops 10 s after its last
+  client. Plain `dyfj` is unchanged.
+- **The Rust REPL takes a `dyfj dev` control channel** on the socket
+  descriptor named by `DYFJ_DEV_CONTROL_FD`: the supervisor sends the reload
+  reason and asks it to exit before a rebuilt REPL replaces it; the REPL
+  reports its session id and `/reload`. Malformed or unknown messages are
+  dropped, and a closed channel leaves a plain REPL. Without the variable,
+  `/reload` is still sent as a prompt.
+
 - **The Rust REPL survives a runtime restart.** When the socket drops,
   `dyfj-repl` prints `runtime disconnected; waiting…` and retries with a
   backoff that doubles from 100 ms to a 2 s cap, without a limit. The prompt

@@ -8,6 +8,7 @@ mod activity;
 mod approval;
 mod client;
 mod commands;
+mod dev_control;
 #[cfg(test)]
 mod fake_runtime;
 mod link;
@@ -135,6 +136,10 @@ async fn main() -> Result<()> {
     // Where the launcher writes this runtime's output, when it knows. Read only
     // while the runtime is down, to show why a restart failed.
     let runtime_log = std::env::var("DYFJ_RUNTIME_LOG").ok().filter(|path| !path.is_empty());
+    // Under `dyfj dev`, the supervisor's channel: why the runtime restarts,
+    // `/reload`, and its request to exit before a rebuilt REPL takes over.
+    let mut control = dev_control::DevControl::attach();
+    let mut exit = control.as_ref().map_or_else(dev_control::ExitWatch::none, |c| c.exit_watch());
     // A runtime has to be there at startup; the launcher starts one when it
     // is not. Only an established connection is waited for when it drops.
     let (mut client, mut incoming) = Client::connect(&socket)
@@ -162,6 +167,9 @@ async fn main() -> Result<()> {
     posture::show(&client.request("runtime/status", json!({})).await, &session, &socket);
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
+    }
+    if let Some(control) = control.as_mut() {
+        control.note_session(session.id.as_deref());
     }
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
@@ -199,6 +207,7 @@ async fn main() -> Result<()> {
                 &mut pending,
                 &mut orphans,
                 &mut interrupts,
+                &mut exit,
                 &mut log,
                 &mut link::backoff(),
             )
@@ -208,7 +217,8 @@ async fn main() -> Result<()> {
                 link::Waited::Reconnected(restarted, restarted_incoming) => {
                     client = restarted;
                     incoming = restarted_incoming;
-                    link::resume(&client, &session, &socket).await;
+                    let reason = control.as_ref().and_then(|c| c.take_reason());
+                    link::resume(&client, &session, &socket, reason).await;
                     continue;
                 }
             }
@@ -221,8 +231,9 @@ async fn main() -> Result<()> {
             pending = Some(answer);
         }
         let Some(read) = pending.as_mut() else { continue };
-        let outcome = match link::await_prompt(&client, &mut incoming, read, &mut orphans).await {
+        let outcome = match link::await_prompt(&client, &mut incoming, read, &mut orphans, &mut exit).await {
             link::Prompted::Read(outcome) => outcome,
+            link::Prompted::Exit => break,
             // Back to the top, where the disconnect is announced; the prompt
             // read stays open.
             link::Prompted::Disconnected => continue,
@@ -259,6 +270,16 @@ async fn main() -> Result<()> {
             Submission::Prompt => {}
         }
 
+        // `/reload` is a command only under `dyfj dev`; elsewhere it stays a
+        // prompt, as any unknown `/word` does.
+        if let Some(control) = control.as_ref()
+            && line.trim() == "/reload"
+        {
+            control.request_reload();
+            eprintln!("reload requested");
+            continue;
+        }
+
         if let Some(command) = commands::parse(&line) {
             // `/friction` is not context for the next `/friction`: recording it
             // would post one report's text inside the next one's context.
@@ -268,9 +289,16 @@ async fn main() -> Result<()> {
                 incoming: &mut incoming,
                 interrupts: &mut interrupts,
             };
+            let help = command == commands::Command::Help;
             commands::run(command, &client, &mut session, prompter).await;
             if records {
                 session.last_command = Some(line.trim().to_string());
+            }
+            if let Some(control) = control.as_mut() {
+                if help {
+                    eprintln!("  /reload                                              restart the dev runtime now (dyfj dev)");
+                }
+                control.note_session(session.id.as_deref());
             }
             continue;
         }
@@ -289,6 +317,9 @@ async fn main() -> Result<()> {
         // `/friction` names only a slash command typed just before it, as the
         // TypeScript REPL does; a turn in between ends that attribution.
         session.last_command = None;
+        if let Some(control) = control.as_mut() {
+            control.note_session(session.id.as_deref());
+        }
     }
 
     // Ordinary exit (Ctrl-D or /quit, including while waiting for the runtime):

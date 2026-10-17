@@ -311,6 +311,8 @@ Usage:
   dyfj stop                 stop the running local runtime at the socket
   dyfj models               list available model slugs
   dyfj sessions             list sessions
+  dyfj dev                  launcher only: work on the harness; reload the
+                            runtime and the Rust REPL when their code changes
 
 Launcher lifecycle (the dyfj wrapper script, local UDS seam only):
   a REPL or one-shot turn probes the socket first and, when no runtime

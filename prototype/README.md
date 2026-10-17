@@ -68,6 +68,66 @@ under `../core/dyfj-repl/src`, the workspace `Cargo.toml` files or `Cargo.lock`,
 the launcher prints the `cargo build --release -p dyfj-repl` command; it builds
 nothing itself.
 
+`dyfj dev` is the variant for working on the harness itself, with the same
+one-terminal shape. The launcher routes it to `scripts/dyfj-dev.ts` on plain
+`node`, with the dev socket (`--socket`, else `$XDG_RUNTIME_DIR/dyfj/dev.sock`,
+else `~/.dyfj/run/dev.sock`; `DYFJ_SOCKET` names the daily runtime and is not
+read) and that socket's runtime log. It takes the arguments the Rust REPL
+takes (`--model`, `--session`, `--workspace`, `--approve-paid`, `--fast`) and
+refuses any other. It refuses to start when a runtime already answers on the
+dev socket. Then:
+
+- It builds the REPL with `cargo build -p dyfj-repl` (a debug build, into
+  `../core/target/debug/`), starts a runtime on the dev socket with the real
+  config and the real Dolt, and runs the REPL in the foreground. Every child it
+  starts goes through the config unit's guarded spawn, with a run list of
+  `node`, `cargo` and that REPL binary.
+- The runtime's output goes to the dev socket's log under `~/.dyfj/log/`,
+  held to what the autostart log is: the directory is set to 0700 and the
+  file to 0600 whether or not they existed, a symlinked log is refused, and a
+  log that cannot be made owner-only (another account's, say) stops the
+  runtime from starting, with one line naming the path.
+- The runtime runs in its own process group, so the terminal's Ctrl-C (the
+  REPL's, to cancel a turn) never reaches it, and with the autostarted
+  lifetime. The supervisor holds a connection to it, so it stays up while the
+  supervisor runs; if the supervisor is killed without stopping it, the
+  runtime stops itself 10 s after its last client, the REPL included, leaves.
+  While that connection is open, the launcher's freshness check declines to
+  restart it (`ifSoleClient` sees a second client); the supervisor owns its
+  restarts.
+- It watches `src/` and `../core/` with Node's recursive `fs.watch`, dropping
+  editor scratch files, and takes each batch of saves 300 ms after the last
+  one. `../core/target/` is not watched: `../core/`'s top level is watched on
+  its own and each other directory recursively, so a directory added there is
+  watched only after `dyfj dev` restarts. `scripts/dev-classify.ts` classifies the batch
+  from the `arch.imports` module graph (`../scripts/arch-imports-graph.ts`),
+  rebuilt for each batch: a module reachable from `src/server/main.ts` over
+  value edges restarts the runtime; `contract/` and `transport/` restart the
+  runtime and then the REPL; a test or fixture file, or a module only the
+  TypeScript client reaches, restarts nothing; any other file under `src/`
+  restarts the runtime. A file under `../core/` belongs to the Cargo workspace
+  member with the longest matching directory (`cargo metadata`), and rebuilds
+  the REPL when that member is `dyfj-repl` or a workspace crate it depends on
+  by path; `Cargo.lock`, the root `Cargo.toml` and `rust-toolchain.toml` always
+  do. Without `cargo metadata`, every `../core/` change rebuilds the REPL.
+- A reload waits while `runtime/status` reports a turn in flight, and `/reload`
+  in the REPL forces one now. A runtime restart goes through `runtime/stop`,
+  then SIGTERM and SIGKILL to the runtime's process group if it has not exited
+  in 10 s. The REPL shows `runtime reloaded (<n> files changed)` when it
+  reconnects. A REPL rebuild asks the REPL to exit, then starts the new binary
+  with `--session` and the session it was in.
+- A REPL build failure changes nothing: the REPL and the runtime keep running,
+  the first `error` line of the build is shown, and the next save retries. A
+  runtime that fails to start stays down while the REPL waits for it and shows
+  the error from the log; the next save of any file starts it again.
+- Quitting the REPL stops the runtime and ends `dyfj dev` with the REPL's exit
+  status. SIGTERM or SIGHUP to `dyfj dev` stops both.
+
+The supervisor talks to the REPL over a socket pair on the REPL's descriptor 3
+(`DYFJ_DEV_CONTROL_FD`): the reload reason and an exit request go down, the
+session id and `/reload` come up. `scripts/dev-supervisor.ts` holds the reload
+state machine over ports, so its timing is tested on a fake clock.
+
 The local default is Qwen3.6 35B-A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:
 
 ```sh

@@ -675,7 +675,7 @@ const CYCLES_PATH = "scripts/arch-cycles.json";
 const BASELINE_PATH = "scripts/arch-imports-baseline.json";
 const SIZE_EXCEPTIONS_PATH = "scripts/arch-size-exceptions.json";
 
-function collectSources(root: string, rules: LayerRules): Map<string, string> {
+export function collectSources(root: string, rules: LayerRules): Map<string, string> {
   const sources = new Map<string, string>();
   const walk = (relative: string) => {
     let entries;
@@ -701,7 +701,7 @@ function collectSources(root: string, rules: LayerRules): Map<string, string> {
   return sources;
 }
 
-function existsIn(root: string): (path: string) => boolean {
+export function existsIn(root: string): (path: string) => boolean {
   return (path) => {
     try {
       return statSync(`${root}/${path}`).isFile();

@@ -395,6 +395,23 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
+  // The runtime's log, which the Rust REPL reads while the runtime is down to
+  // show why a restart failed. The launcher and `dyfj dev` set it.
+  {
+    key: "runtimeLog",
+    envVar: "DYFJ_RUNTIME_LOG",
+    domain: "client",
+    type: "string",
+    kind: "value",
+  },
+  // The descriptor of the control channel `dyfj dev` gives the Rust REPL.
+  {
+    key: "devControlFd",
+    envVar: "DYFJ_DEV_CONTROL_FD",
+    domain: "client",
+    type: "number",
+    kind: "value",
+  },
   // Launch-time grants the CLI derives for the external-agent runner.
   {
     key: "clientNodePath",

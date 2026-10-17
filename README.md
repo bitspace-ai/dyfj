@@ -877,9 +877,22 @@ dyfj --runner codex-chatgpt exec "Inspect this repository"
 dyfj status
 dyfj models
 dyfj sessions
-dyfj start   # explicitly foreground the runtime; Ctrl-C stops it
+dyfj start   # foreground the runtime; Ctrl-C stops it (a third exits at once)
 dyfj stop    # stop the running runtime at the socket
+dyfj dev     # work on the harness: reload the runtime and REPL on save
 ```
+
+`dyfj dev` is `dyfj` for working on DYFJ itself, in one terminal. It builds
+the Rust REPL (`cargo build -p dyfj-repl`, a debug build), starts its own
+runtime on a dev socket (`--socket`, else `dev.sock` beside the default daily
+socket; `DYFJ_SOCKET` is not read) with the real config and the real Dolt, and
+runs the REPL in the foreground. It watches `prototype/src` and `core/` and,
+300 ms after the last save, restarts the runtime when the server's import
+graph reaches a saved module, rebuilds and restarts the REPL in the same
+session when a saved file belongs to the REPL's crate, and restarts both
+(runtime first) for `contract/` or `transport/`. A reload waits until no turn
+is in flight; `/reload` in the REPL forces one. Quitting the REPL stops the
+runtime and ends `dyfj dev`. `prototype/README.md` has the details.
 
 The HTTP peer server is retired. UDS JSON-RPC is the only seam (`dyfj`); a
 remote or browser surface returns later as a thin gateway client of that seam.
@@ -893,7 +906,11 @@ bare `dyfj` launcher starts this runtime automatically when needed, and
 `dyfj start` runs it in the foreground, on Node. An autostarted runtime stops on
 its own 10 s after its last client disconnects, and a client connecting inside
 that grace keeps it; a runtime started with `dyfj start` stays up until
-`dyfj stop` or Ctrl-C. Each runtime records the code it loaded (git HEAD and a
+`dyfj stop` or Ctrl-C. `dyfj start` holds the terminal until its runtime has
+exited and leaves the terminal's modes alone, so Ctrl-C reaches the runtime as
+a signal. A second Ctrl-C while the shutdown is pending prints what it is
+waiting on; a third exits at once with status 130, without finishing the
+cleanup. Each runtime records the code it loaded (git HEAD and a
 content hash of `prototype/src`); `dyfj status` and the REPL's posture line say
 when it is behind the working tree, and the launcher restarts a stale runtime it
 autostarted when nothing else is using it (see `prototype/README.md`):
@@ -2510,3 +2527,7 @@ Document revisions only. Code and behavior changes are tracked in
   autostarted runtime stops 10 s after its last client; `dyfj start` stays up),
   its recorded code fingerprint and the freshness warning and restart, and the
   added `runtime/status` fields and conditional `runtime/stop`.
+- 2026-10-17 - The launcher's common commands add `dyfj dev`, the dev loop that
+  reloads the runtime and the Rust REPL when their code changes. The seam
+  section says how `dyfj start` holds the terminal and escalates a repeated
+  Ctrl-C.
