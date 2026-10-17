@@ -105,8 +105,10 @@ const defaultCopy = (from: string, to: string) =>
 
 /**
  * Copy `src` and swap it in as the snapshot, if the copy is the code that
- * booted (`booted`, the runtime's reported content hash). Anything else, a
- * save that landed after the boot included, leaves the current snapshot.
+ * booted (`booted`, the runtime's reported content hash). A copy that is
+ * not, a save that landed after the boot included, leaves the current
+ * snapshot as it is; a failure during the swap itself only attempts to put
+ * the current snapshot back.
  * `bootLock` is the lock file's hash sampled just before the runtime was
  * spawned; the record keeps it, not the lock file's hash at copy time.
  */
