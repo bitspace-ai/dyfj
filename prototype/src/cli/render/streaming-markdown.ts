@@ -37,7 +37,6 @@ const QUOTE = "\x1b[2m";
 
 /** Visible width of a string that may contain ANSI escape sequences. */
 export function visibleWidth(text: string): number {
-  // deno-lint-ignore no-control-regex
   return text
     .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")

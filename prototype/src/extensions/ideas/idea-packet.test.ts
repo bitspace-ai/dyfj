@@ -406,7 +406,7 @@ describe("draftWorkPacketFromContext", () => {
         eventId: "evt-tc-1",
         eventType: "tool_call",
         toolName: "execute_command",
-        toolArguments: { command: "deno task test" },
+        toolArguments: { command: "npm test" },
         createdAt: "2026-08-15T12:00:00Z",
       } as any,
     ];
@@ -424,8 +424,8 @@ describe("draftWorkPacketFromContext", () => {
       `expected packet.sourceContext.excerpt to include "[Tool Call: execute_command]"`,
     );
     assert.ok(
-      packet.sourceContext.excerpt.includes("deno task test"),
-      `expected packet.sourceContext.excerpt to include "deno task test"`,
+      packet.sourceContext.excerpt.includes("npm test"),
+      `expected packet.sourceContext.excerpt to include "npm test"`,
     );
   });
 

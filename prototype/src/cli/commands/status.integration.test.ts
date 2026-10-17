@@ -31,7 +31,6 @@ function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   };
 }
 
-// deno-lint-ignore no-explicit-any
 const anyVal = (v: unknown): any => v;
 
 describe("runStatus and liveness over real Unix domain sockets", () => {

@@ -153,7 +153,7 @@ function insertRequired(column: ColumnDescription): boolean {
     !column.defaultGenerated;
 }
 
-/** One entry of an object literal, wrapped the way `deno fmt` wraps it. */
+/** One entry of an object literal, wrapped at the generated file's width. */
 function objectEntry(
   indent: string,
   key: string,
@@ -289,7 +289,7 @@ export function renderRows(schema: SchemaDescription): string {
     "// generated from schema/ — do not edit",
     "//",
     "// Emitted by schema/codegen.ts from schema/current/ + schema/catalog/.",
-    "// Regenerate with `deno task schema:codegen`; the schema.codegen gate lane",
+    "// Regenerate with `npm run schema:codegen`; the schema.codegen gate lane",
     "// fails when this file is stale.",
     "",
     "/** A column's declared shape, as `information_schema` reports it. */",
@@ -359,7 +359,7 @@ if (import.meta.main) {
     if (committed !== generated) {
       console.error(
         `schema.codegen: ${GENERATED_ROWS_PATH} is stale against schema/. ` +
-          "Regenerate it with `deno task schema:codegen` and commit the result.",
+          "Regenerate it with `npm run schema:codegen` and commit the result.",
       );
       process.exitCode = 1;
     } else {

@@ -6,6 +6,8 @@
     "node": ">=26"
   },
   "scripts": {
+    "test:file": "bash -c 'test $# -gt 0 || { echo \"usage: npm run test:file -- <path>... [--filter <pattern>]\" >&2; exit 2; }; exec node scripts/run-unit-tests.ts \"$@\"' dyfj-test-file",
+    "test:golden": "node testing/golden/run.ts",
     "context-size-response": "node --env-file-if-exists=.env examples/context-size-response.ts",
     "model-response-modes": "node --env-file-if-exists=.env examples/model-response-modes.ts",
     "structured-output": "node --env-file-if-exists=.env examples/structured-output.ts",

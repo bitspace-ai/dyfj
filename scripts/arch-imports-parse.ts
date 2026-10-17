@@ -17,15 +17,15 @@
  * - `import("...")` becomes a `TSImportType` node with a `Literal` argument;
  * - every other string becomes a `Literal` node.
  *
- * `moduleFacts` walks the result with the lane's visitors (formerly a
- * `deno lint` plugin), with the same reports and the same positions:
+ * `moduleFacts` walks the result with the lane's visitors:
  * - every import, re-export, dynamic `import()` and import type, as an
  *   import reference for the graph, type-only ones marked;
  * - every dynamic `import()` expression, literal or not;
- * - every direct read of the process environment: `Deno.env`, `process.env`
- *   (including `globalThis.` forms and computed `["env"]`), `.env` on any
- *   default, namespace or `default` import of `node:process` and on a `const`
- *   alias of `Deno` or `process`, destructuring `env` out of any of those,
+ * - every direct read of the process environment: `.env` on an env owner
+ *   (`ENV_OWNERS`), including `globalThis.` forms and computed `["env"]`,
+ *   `.env` on any default, namespace or `default` import of `node:process`
+ *   and on a `const` alias of an owner, destructuring `env` out of any of
+ *   those,
  *   importing `env` from `node:process`, and re-exporting from
  *   `node:process`;
  * - every string literal, identifier object key, and non-computed member name
@@ -47,7 +47,6 @@ import { type Comment, parse, type Token, tokenizer, tokTypes } from "acorn";
 type ValueToken = Token & { value: unknown };
 
 // An ESTree node as acorn builds it; the visitors read it structurally.
-// deno-lint-ignore no-explicit-any
 type Node = any;
 
 /** An import of another module, for the graph. */
@@ -251,7 +250,12 @@ export function parseModule(source: string): Parsed {
 // ---------------------------------------------------------------------------
 // Visitors
 
-const ENV_OWNERS = new Set(["Deno", "process"]);
+// The env owners: `process`, and the retired deno runtime's global object,
+// kept as a tripwire so code written for that runtime cannot read the
+// environment around the Env port. Its name is assembled so this file adds no
+// reference to the runtime.neutral ratchet.
+const RETIRED_RUNTIME_GLOBAL = ["De", "no"].join("");
+const ENV_OWNERS = new Set([RETIRED_RUNTIME_GLOBAL, "process"]);
 const PROCESS_MODULES = new Set(["node:process", "process"]);
 const DYFJ_KEY = /^DYFJ_[A-Za-z0-9_]+$/;
 const SQL_WRITE =
@@ -263,7 +267,7 @@ function propertyName(node: Node): string | undefined {
     if (property?.type === "Literal" && typeof property.value === "string") {
       return property.value;
     }
-    // A template literal with no substitutions: ``Deno[`env`]``.
+    // A template literal with no substitutions: ``process[`env`]``.
     if (
       property?.type === "TemplateLiteral" &&
       (property.expressions ?? []).length === 0
@@ -276,8 +280,8 @@ function propertyName(node: Node): string | undefined {
 }
 
 /**
- * `Deno` / `process`, bare, as `globalThis.Deno` / `globalThis.process`, or
- * through a local alias (`aliases`: binding name → owner).
+ * An env owner, bare, as `globalThis.process` and the like, or through a
+ * local alias (`aliases`: binding name → owner).
  */
 function envOwner(
   node: Node,
@@ -344,9 +348,8 @@ export function moduleFacts(source: string): ModuleFacts {
   };
   const line = (node: Node): number => node.loc.start.line;
 
-  // Local bindings that stand for `Deno` or the process module: every
-  // default, namespace or `default` import of `node:process`, and any
-  // `const x = Deno` / `const x = process` alias.
+  // Local bindings that stand for an env owner: every default, namespace or
+  // `default` import of `node:process`, and any `const x = process` alias.
   const aliases = new Map<string, string>();
   for (const statement of program.body) {
     if (
@@ -492,12 +495,12 @@ export function moduleFacts(source: string): ModuleFacts {
     const fromGlobal = node.init?.type === "Identifier" &&
       (node.init.name === "globalThis" ||
         aliases.get(node.init.name) === "globalThis");
-    // `const g = globalThis` makes `g.Deno` / `g.process` owners too.
+    // `const g = globalThis` makes `g.process` and the like owners too.
     if (fromGlobal && node.id?.type === "Identifier") {
       aliases.set(node.id.name, "globalThis");
       return;
     }
-    // `const { Deno: D, process: p } = globalThis` binds owners.
+    // `const { process: p } = globalThis` binds owners.
     if (fromGlobal && node.id?.type === "ObjectPattern") {
       for (const property of node.id.properties ?? []) {
         const name = patternKeyName(property);

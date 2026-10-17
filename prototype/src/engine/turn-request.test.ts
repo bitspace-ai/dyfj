@@ -11,7 +11,6 @@ import {
 const SESSION_ID = "01ABCDEF0123456789ABCDEF01";
 const TURN_ID = "123e4567-e89b-42d3-a456-426614174000";
 
-// deno-lint-ignore no-explicit-any
 function match(actual: unknown, expected: Record<string, any>): void {
   assert.partialDeepStrictEqual(actual as Record<string, unknown>, expected);
 }

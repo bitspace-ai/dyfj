@@ -5,7 +5,6 @@
 // rejects), check the class when one is given, and return the error.
 import assert from "node:assert/strict";
 
-// deno-lint-ignore no-explicit-any
 type ErrorClass<E> = abstract new (...args: any[]) => E;
 
 function checkClass(caught: unknown, Cls: ErrorClass<unknown> | undefined) {

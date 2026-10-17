@@ -348,7 +348,7 @@ mod tests {
     fn shows_the_timeout_carried_in_a_bash_request_title() {
         let rendered = describe(&json!({
             "title": "Run Bash Command (timeout 300 s)",
-            "arguments": {"command": "deno task test", "timeoutSec": 300}
+            "arguments": {"command": "npm test", "timeoutSec": 300}
         }));
         assert!(
             rendered.starts_with("Run Bash Command (timeout 300 s) "),

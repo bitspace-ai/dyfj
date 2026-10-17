@@ -1,12 +1,12 @@
 /**
- * Golden lane runner: `deno task test:golden` and the `test.golden` gate lane,
- * run on Node (`node testing/golden/run.ts`).
+ * Golden lane runner: `npm run test:golden` and the `test.golden` gate lane
+ * (`node testing/golden/run.ts`).
  *
  * Creates the harness temp root (`DYFJ_GOLDEN_ROOT`, where the engine sockets
  * live), then runs the golden tests under `node --test` with
  * the per-file handle check (`scripts/node-test-lane.ts`). `node --test`
  * passes a test file no arguments, so `--update` (for example
- * `deno task test:golden --update`), the one suite argument the golden suite
+ * `npm run test:golden -- --update`), the one suite argument the golden suite
  * takes, reaches the tests as `DYFJ_GOLDEN_UPDATE=1`, and `snapshots.ts`
  * refuses every snapshot write without it: with no permission sandbox under
  * `node --test`, the guard is in code. Any other argument is refused before
@@ -26,7 +26,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   discoverGoldenTests,
-  partitionByRuntime,
+  nodeTestFiles,
 } from "../../scripts/test-files.ts";
 import { requireNode, startNodeTests } from "../../scripts/node-test-lane.ts";
 import { GOLDEN_UPDATE_ENV } from "./snapshots.ts";
@@ -41,11 +41,11 @@ import {
 async function main(suiteArgs: readonly string[]): Promise<number> {
   const prototypeRoot = fileURLToPath(new URL("../..", import.meta.url));
   // Every golden file runs under `node --test`; one that registers with the
-  // existing runtime's runner fails here (`scripts/test-files.ts`).
-  const goldenFiles = partitionByRuntime(
+  // retired runtime's runner fails here (`scripts/test-files.ts`).
+  const goldenFiles = nodeTestFiles(
     prototypeRoot,
     discoverGoldenTests(prototypeRoot),
-  ).node;
+  );
   requireNode();
   const update = suiteArgs.includes("--update");
   const unsupported = suiteArgs.filter((arg) => arg !== "--update");

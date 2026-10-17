@@ -6,8 +6,8 @@
  * recall consume this module; it imports no tool adapter, so MCP-backed tools
  * can be added without import cycles.
  *
- * The SDK is pinned in `prototype/deno.json` `imports`; every SDK import in
- * runtime code goes through that specifier.
+ * The SDK is pinned exactly in `prototype/package.json` and locked by the root
+ * `package-lock.json`; every SDK import in runtime code names that package.
  */
 
 import type {

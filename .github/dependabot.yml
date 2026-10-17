@@ -1,7 +1,7 @@
 # Dependabot version-update configuration. See:
 # https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# The npm and deno lanes declare a cooldown of 3 days, the 72-hour registry
+# The npm lane declares a cooldown of 3 days, the 72-hour registry
 # release-age floor that the root .npmrc (`min-release-age`) and the
 # dependency policy hold, so a bot pull request never proposes a release
 # younger than an install would accept. Dependabot's own default is also 3
@@ -34,16 +34,6 @@ updates:
     # upgraded deliberately, with the pin and fixtures, when that resumes.
     ignore:
       - dependency-name: "@agentclientprotocol/codex-acp"
-  # prototype/deno.json imports and the root deno.lock now hold only the JSR
-  # test dependencies. The npm workspace makes the repository root Deno's
-  # workspace root, so the lock lives there. This lane stays while those JSR
-  # imports remain.
-  - package-ecosystem: "deno"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 3
   # The Rust substrate's crates are declared in core/Cargo.toml and locked by
   # the committed core/Cargo.lock.
   - package-ecosystem: "cargo"
@@ -58,8 +48,9 @@ updates:
       interval: "weekly"
 
 # Not Dependabot-covered: the Rust toolchain channel in
-# core/rust-toolchain.toml, and the exact Deno/Dolt archive versions plus
-# their committed SHA-256 digests in .github/workflows/gate.yml. Applying a
+# core/rust-toolchain.toml, the exact Node version in .node-version, and the
+# exact Dolt archive versions plus their committed SHA-256 digests in
+# .github/workflows/gate.yml. Applying a
 # change to those is intended to be a manual, operator-inspected step; this
 # config enforces neither the inspection nor who may change them. Nothing in
 # the gate flags those pins when they age; see README "Dependency updates".

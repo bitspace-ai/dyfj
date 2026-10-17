@@ -31,13 +31,18 @@
  * - `.github/dependabot.yml` must give every tracked `package.json` an npm
  *   update lane for its directory (for a workspace member, its workspace
  *   root's directory), using the `increase` versioning strategy
- *   so a bot bump keeps an exact pin exact, and its npm and deno lanes must
+ *   so a bot bump keeps an exact pin exact, and its npm lanes must
  *   declare a cooldown of at least 3 days with no `include` or `exclude`
  *   carve-out, so a bot pull request holds the same 72-hour floor. A lane
  *   key, or a value the policy decides on, that the scan cannot read is
  *   reported rather than skipped: an escaped double-quoted scalar, a flow
  *   collection, an anchor, alias, tag or block scalar. Settings the policy
  *   does not decide on, such as `schedule` and `ignore`, are not read.
+ * - The repository runs on Node alone (decision D32), so the retired deno
+ *   runtime cannot come back unnoticed: a tracked `deno.json`, `deno.jsonc`
+ *   or `deno.lock` at any depth, a quoted specifier of a scoped package
+ *   under the `jsr:` scheme in tracked code or JSON, and a `deno` Dependabot
+ *   lane each fail the policy.
  * - The committed `dyfj.dependency.policy.manifest/v1` declaration
  *   (`scripts/dependency-policy-manifest.json`) must validate fail-closed:
  *   known schema and version, no unknown fields, unique surface ids,
@@ -55,7 +60,7 @@
  *
  * The manifest declares evidence classes; it does not carry artifact
  * hashes, signatures, publication dates, or upstream verification results.
- * For the exact-version Deno and Dolt release archives, the workflow checks
+ * For the exact-version Dolt release archives, the workflow checks
  * a repository-committed SHA-256 before unpacking, so `archive-checksum` is
  * claimed evidence; release signatures are still not verified and stay
  * declared as a known missing evidence class.
@@ -513,8 +518,6 @@ function pipesFetchIntoShell(command: ShellCommand): boolean {
 export const DEPENDENCY_SURFACES: readonly RegExp[] = [
   /^\.github\/workflows\//,
   /^\.github\/dependabot\.yml$/,
-  /(^|\/)deno\.jsonc?$/,
-  /(^|\/)deno\.lock$/,
   /(^|\/)Cargo\.toml$/,
   /(^|\/)Cargo\.lock$/,
   /(^|\/)rust-toolchain\.toml$/,
@@ -538,7 +541,6 @@ export const MANIFEST_VERSION = 1;
 export const MINIMUM_REGISTRY_AGE_HOURS = 72;
 
 export const SOURCE_CLASSES = [
-  "deno-registry",
   "npm-registry",
   "cargo-registry",
   "rust-toolchain-release",
@@ -591,7 +593,6 @@ export const AGE_REASON_CLASSES = [
 // with a not-applicable reason, while each non-registry surface must
 // declare exactly the not-applicable reason class matching its source.
 const REGISTRY_SOURCE_CLASSES: readonly string[] = [
-  "deno-registry",
   "npm-registry",
   "cargo-registry",
 ];
@@ -634,7 +635,6 @@ const REGISTRY_EVIDENCE_CONTRACT: readonly string[] = [
 export const REQUIRED_EVIDENCE_BY_SOURCE: Readonly<
   Record<SourceClass, readonly string[]>
 > = {
-  "deno-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
   "npm-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
   "cargo-registry": [...REGISTRY_EVIDENCE_CONTRACT, INSPECT_BEFORE_APPLY],
   "rust-toolchain-release": [
@@ -1315,7 +1315,7 @@ const DEPENDABOT_PATH = ".github/dependabot.yml";
 // Dependabot's `cooldown` is in days; 3 days is the 72-hour registry floor.
 const DEPENDABOT_COOLDOWN_MINIMUM_DAYS = MINIMUM_REGISTRY_AGE_HOURS / 24;
 // The update lanes whose registries the release-age floor governs here.
-const COOLDOWN_ECOSYSTEMS: ReadonlySet<string> = new Set(["npm", "deno"]);
+const COOLDOWN_ECOSYSTEMS: ReadonlySet<string> = new Set(["npm"]);
 // The cooldown keys that set a period. `include` and `exclude` narrow which
 // dependencies the cooldown covers, so a lane declaring either lets some
 // dependency skip the floor and is rejected.
@@ -1338,7 +1338,7 @@ const AFTER_QUOTED_SCALAR = /^(?:\s+#.*)?$/;
  * A plain or quoted YAML scalar with any trailing comment removed, or
  * `undefined` when the scan does not read it. A double-quoted scalar that
  * contains a backslash is not read: YAML decodes escapes there, so
- * `"de\u006eo"` names `deno`, and comparing the undecoded text would let a
+ * `"\u006epm"` names `npm`, and comparing the undecoded text would let a
  * lane skip the policy. A single-quoted scalar's only escape, `''`, is
  * decoded. A plain scalar has no escapes, but one opening a flow
  * collection, anchor, alias, tag or block scalar is not followed either.
@@ -1515,11 +1515,12 @@ function dependabotDirectoryFor(packagePath: string): string {
  * Checks the Dependabot update configuration against the npm surfaces it
  * must watch. Every tracked `package.json` needs an npm lane for its
  * directory, so the shipped dependency tree gets update pull requests. The
- * npm and deno lanes must declare a cooldown of at least the 72-hour
+ * npm lanes must declare a cooldown of at least the 72-hour
  * registry floor, so a bot pull request never proposes a release younger
  * than `min-release-age` would install. The npm lane must use the
  * `increase` versioning strategy, which rewrites an exact pin to the new
- * exact version, so a bot pull request keeps the exact-pin rule above.
+ * exact version, so a bot pull request keeps the exact-pin rule above. A
+ * lane for the retired deno ecosystem fails.
  */
 export function scanDependabotText(
   path: string,
@@ -1538,6 +1539,11 @@ export function scanDependabotText(
   const npmDirectories = new Set<string>();
   for (const lane of lanes) {
     const ecosystem = lane.keys.get("package-ecosystem") ?? "";
+    if (ecosystem === RETIRED_RUNTIME_ECOSYSTEM) {
+      hits.push(
+        at(path, lane.line, "dependency.policy/retired-runtime-ecosystem"),
+      );
+    }
     if (
       COOLDOWN_ECOSYSTEMS.has(ecosystem) && !cooldownHoldsFloor(lane.cooldown)
     ) {
@@ -1569,12 +1575,49 @@ export function scanDependabotText(
   return hits.slice(0, MAX_COLLECTED_HITS);
 }
 
+// The retired deno runtime's tripwire (decision D32): its manifest and lock
+// file names, a quoted specifier of a scoped package under the `jsr:` scheme
+// (its registry's) in tracked code or JSON, and its Dependabot ecosystem.
+const RETIRED_RUNTIME_FILE = /(^|\/)deno\.(?:jsonc?|lock)$/;
+const RETIRED_RUNTIME_ECOSYSTEM = "deno";
+const SPECIFIER_SOURCE = /\.(?:[cm]?[jt]sx?|jsonc?)$/;
+const JSR_SPECIFIER = /["'`]jsr:@/;
+
+/**
+ * A hit for each tracked deno manifest or lock file and `jsr:` specifier, at
+ * most `MAX_COLLECTED_HITS` of them: the scan stops at the cap.
+ */
+export async function retiredRuntimeHits(
+  root: string,
+  tracked: readonly string[],
+): Promise<PublicSafetyHit[]> {
+  const hits: PublicSafetyHit[] = [];
+  for (const path of tracked.map((each) => posixPath(each)).sort()) {
+    if (RETIRED_RUNTIME_FILE.test(path)) {
+      hits.push({ path, line: 1, rule: "dependency.policy/retired-runtime-file" });
+    } else if (SPECIFIER_SOURCE.test(path)) {
+      const text = new TextDecoder().decode(
+        await readTrackedFile(root, path, LABEL),
+      );
+      if (!JSR_SPECIFIER.test(text)) continue;
+      const lines = text.split("\n");
+      for (let index = 0; index < lines.length; index++) {
+        if (!JSR_SPECIFIER.test(lines[index] ?? "")) continue;
+        hits.push({ path, line: index + 1, rule: "dependency.policy/jsr-import" });
+        if (hits.length >= MAX_COLLECTED_HITS) return hits;
+      }
+    }
+    if (hits.length >= MAX_COLLECTED_HITS) return hits;
+  }
+  return hits;
+}
+
 export async function dependencyPolicyHits(
   root: string,
   trackedPaths?: readonly string[],
 ): Promise<PublicSafetyHit[]> {
   const tracked = trackedPaths ?? await trackedFiles(root, LABEL);
-  const hits: PublicSafetyHit[] = [];
+  const hits: PublicSafetyHit[] = await retiredRuntimeHits(root, tracked);
   for (const path of tracked) {
     if (!WORKFLOW_PATH.test(posixPath(path))) continue;
     const bytes = await readTrackedFile(root, path, LABEL);

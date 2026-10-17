@@ -110,8 +110,8 @@ static and dynamic local imports.
 - a `cli/` import outside its allow-list;
 - a dynamic `import()` of a local module that is not in the allow-list. Today
   these exist only to hide cycles;
-- `mysql2` imported outside `store/`, and `Deno.env`/`process.env` read outside
-  `config/` and the entrypoints.
+- `mysql2` imported outside `store/`, and `process.env` (or the retired
+  runtime's env object) read outside `config/` and the entrypoints.
 
 **Reports, without failing:** deep imports that bypass a `mod.ts`.
 
@@ -397,7 +397,7 @@ No other module reads process-global state.
 
 1. **The standalone argv CLI in the former `workbench.ts`:** `resolveWorkbenchInvocation`,
    `runWorkbench`, `promptPaidEscalationTty`, `main`. Also the `start` and
-   `workbench` Deno tasks in both `deno.json` files, plus the root `workbench`
+   `workbench` tasks in both task files of the time, plus the root `workbench`
    task.
 2. **The schema-drift fallbacks** (`sessions.ts:457-553`, `provider.ts:584`).
    The runtime then requires an up-to-date schema and fails with a clear error

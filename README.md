@@ -46,9 +46,8 @@ Section 5.
   an event through Dolt. Also holds `dyfj-repl`, an interactive REPL front-end
   that owns the terminal and is a second client of the prototype's UDS protocol;
   the agent loop stays in `prototype/`. Where stabilized components live.
-- `prototype/` - TypeScript; the runtime, the `dyfj` CLI and the gate run on
-  Node 26, and some test and schema tooling still runs on Deno. Real working code and the active
-  prototyping surface. Components either move down into `core/` as they
+- `prototype/` - TypeScript; the runtime, the `dyfj` CLI, the tests and the
+  gate run on Node 26. Real working code and the active prototyping surface. Components either move down into `core/` as they
   stabilize or stay here as fast-moving prototype code. `prototype/src/` is
   organized by layer (`specs/01-architecture.md` §3); a module imports only
   from lower layers or listed same-layer edges, which the `arch.imports` gate
@@ -108,8 +107,8 @@ stance #3 below.
 ## Status
 
 Early and active. The prototype is functional - the `dyfj` CLI (REPL and
-one-shot; the earlier standalone in-process workbench CLI and its
-`deno task start` / `deno task workbench` tasks are removed) over a duplex
+one-shot; the earlier standalone in-process workbench CLI and its launch
+tasks are removed) over a duplex
 JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
@@ -296,10 +295,9 @@ How the work actually happens, separate from what gets built.
   Shared fakes live in `prototype/testing/fakes/`. Product tests run on
   `node:test` only (decision D32), under `node --test` with the per-file handle
   check, with assertions and mocks from `node:assert/strict` and `node:test`.
-  The gate's own tests under `scripts/`, the receipt-schema tests among them,
-  register with `node:test`; the rest of the `prototype/scripts/` tests may
-  still use `Deno.test` until S3.3d of decision D32. The end state is
-  `node:test` only.
+  The gate's own tests, under `scripts/` and `prototype/scripts/`, register
+  with `node:test` too, and a test file that registers with any other runner
+  fails discovery.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -327,13 +325,10 @@ How the work actually happens, separate from what gets built.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org) 26 with its bundled npm. The runtime and the
-  `dyfj` CLI run on it, `npm ci` at the repository root installs the
-  dependencies, and the launcher
-  refuses any other major version (CI uses Node 26.11.1)
-- [Deno](https://deno.com) 2.9+, for the gate's `deno check` lanes, its
-  remaining Deno test subsets and the remaining `deno task` tooling, until
-  their own move to Node
+- [Node.js](https://nodejs.org) 26 with its bundled npm. The runtime, the
+  `dyfj` CLI, the tests and the gate run on it, `npm ci` at the repository
+  root installs the dependencies, and the launcher refuses any other major
+  version. `.node-version` holds the exact release CI installs (26.11.1)
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
   local default model; [Ollama](https://ollama.com) and
@@ -359,22 +354,13 @@ tooling devDependencies (`typescript`, `@types/node` and `acorn`) and names `pro
 as its member, whose `package.json` holds the runtime dependencies. `npm ci`
 at the repository root installs both into the root `node_modules`, exactly as
 the committed root `package-lock.json` records it. npm is the only resolver of
-npm packages: the root `deno.json` sets `nodeModulesDir: "manual"`, so Deno
-uses that install and never resolves or installs npm packages itself. The root
+npm packages. The root
 `.npmrc` keeps installs to exact versions, turns install scripts off and holds
 back any release younger than three days; npm reads it for the whole
 workspace and ignores an `.npmrc` inside a member. After any pull or merge
 that changes `package-lock.json`, run `npm ci` at the repository root again,
 in every checkout. That includes the checkout a `dyfj` on your `PATH` runs
 from. The gate fails until you do (see the npm install precondition below).
-
-The npm workspace also makes the repository root Deno's workspace root, so
-Deno's lockfile for the remaining JSR test dependencies is the root
-`deno.lock`, and the root `deno.json` sets `"lock": { "frozen": true }`: a
-Deno run fails, rather than re-resolving, when that lock is missing or out of
-date. The root `deno.json` also declares `compilerOptions`, so Deno keeps its
-own type-checking settings instead of reading the root `tsconfig.json` that
-the `typecheck.tsc` lane uses.
 
 The last line enables the repository's git hooks, which keep AI-tool
 attribution out of history (see `AGENTS.md`, Documentation Discipline):
@@ -385,15 +371,11 @@ to publish commits that still carry either.
 `dyfj` (the launcher, below) runs the Workbench. The diagnostics, the event
 check, the smoke example, the Codex login and the memory-recall fixture are npm
 scripts in `prototype/package.json` (`npm run` lists them). The gate is the
-root `npm test` and `npm run test:fast`; the root `deno.json`'s `test` and
-`test:fast` tasks are one-line shims to them until close-out of decision D32.
-The schema tooling is root npm scripts: `npm run validate-schema`,
-`npm run schema:equivalence`, `npm run schema:codegen` and
-`npm run test:schema`. The root `deno.json` keeps a one-line
-`schema:codegen` shim to its npm script, because the generated row-types file
-and the codegen lane's stale-file message name that task. The prototype's
-typecheck and test entry points are still Deno tasks in `prototype/deno.json`
-(`deno task` lists them) until they move to Node.
+root `npm test` and `npm run test:fast`. The schema tooling is root npm
+scripts: `npm run validate-schema`, `npm run schema:equivalence`,
+`npm run schema:codegen` and `npm run test:schema`. The prototype's test
+entry points are npm scripts too: `npm run test:file -- <path>...` runs named
+unit test files, and `npm run test:golden` runs the golden suite.
 
 Edit `.env` for your local config. The prototype reads Dolt connection settings
 from environment variables; for the default local SQL server, export:
@@ -1055,9 +1037,9 @@ systems where `/bin/kill` supports negative process-group signaling, with
 stdio child using the community-maintained `@agentclientprotocol/codex-acp`
 adapter; subscription inference may use remote services. Sequential Workbench
 turns reuse the same live adapter process and ACP session under the same
-session/workspace/profile rule as the fixture. Commas cannot be represented
-safely in the login task's comma-separated Deno grants, and colons would split
-the child's `PATH`, so the login task and runtime reject either delimiter. The
+session/workspace/profile rule as the fixture. The login task and runtime
+reject a comma or a colon in the operator home and the selected paths; a colon
+would split the child's `PATH`. The
 route is separate from native model routing and does not accept `--model`,
 `--tier`, `--hint`, or remote callers. It also requires the standing
 trusted-workspace posture because the Codex agent can inspect workspace
@@ -1113,8 +1095,8 @@ dedicated receipt evidence fields disclose only how many distinct canonical
 operator directories were projected; agent-produced text is not a redaction
 boundary.
 
-The project configuration pins adapter version `1.11.0` exactly, and the Deno
-lockfile records its transitive graph and registry integrity. The runtime reads
+The project configuration pins adapter version `1.11.0` exactly, and the root
+`package-lock.json` records its transitive graph and registry integrity. The runtime reads
 the installed package metadata and rejects metadata that does not declare
 version `1.11.0`.
 
@@ -1169,13 +1151,12 @@ Useful validation tasks:
 ```sh
 npm test                  # repository aggregate gate (full green bar): node scripts/aggregate-test-gate.ts
 npm run test:fast         # policy checks, typechecks, unit lane: the same with --fast
-deno task test            # shim to npm test, until close-out of decision D32
-deno task check           # strict typecheck of production and test import graphs
 npm run test:schema
 npm run validate-schema
 npm run schema:equivalence    # fresh-install and upgrade paths match
 npm run schema:codegen        # regenerate the DDL-derived row types
-(cd prototype && deno task test:golden)  # golden characterization suite alone
+(cd prototype && npm run test:golden)    # golden characterization suite alone
+(cd prototype && npm run test:file -- src/kernel/clock.test.ts)  # named unit test files
 ```
 
 These diagnostics, examples and helpers are `prototype/package.json` scripts
@@ -1198,17 +1179,11 @@ Arguments after `--` reach the script, for example
 `npm run structured-output -- --model qwen3.6:35b-a3b`.
 
 The gate runs on Node (`node scripts/aggregate-test-gate.ts`, decision D32):
-it starts each lane as a plain `node`, `cargo` or `dolt` process, or as the
-selected Deno for the Deno lanes left, from a cleared environment with only
-the names it forwards, and holds no per-lane permission sandbox. Its lanes run
-unsandboxed as the operator's user, as product tests do. The Deno lanes left
-are the two `deno check` typecheck lanes, until close-out; the receipt-schema
-tests and the four schema CLI lanes run as plain `node`. The gate finds the
-selected Deno by running
-`prototype/scripts/deno-executable.ts` with the `deno` on `PATH` and resolving
-symbolic links, so the path it hands the typecheck tasks as `DENO_BIN` is the
-one those tasks run; when that fails, the gate prints the selector's fixed
-diagnostic and exits 64 before any lane runs.
+it starts each lane as a plain `node`, `cargo` or `dolt` process, from a
+cleared environment with only the names it forwards, and holds no per-lane
+permission sandbox. Its lanes run unsandboxed as the operator's user, as
+product tests do. The TypeScript typecheck is the `typecheck.tsc` lane, over
+every file the root `tsconfig.json` includes.
 
 `npm test` first checks the npm install precondition: the root
 `node_modules` that npm installed must match the root `package-lock.json`. The
@@ -1256,8 +1231,12 @@ directories, with no `.`, `..` or empty segment anywhere in the path. It also
 checks `.github/dependabot.yml`: every tracked `package.json` outside a
 workspace, and every workspace root, needs an npm update
 lane for its directory, that lane must use the `increase` versioning strategy,
-and the npm and deno lanes must declare a cooldown of at least 3 days with no
-dependency carved out by `include` or `exclude`. `receipt.schema` runs the
+and the npm lanes must declare a cooldown of at least 3 days with no
+dependency carved out by `include` or `exclude`. The repository runs on Node
+alone, so the policy also fails on a tracked manifest or lock file of the
+retired runtime at any depth, on a quoted specifier of a scoped package under
+the `jsr:` scheme in tracked code or JSON, and on an update lane for that
+runtime's ecosystem (`scripts/dependency-policy.ts` names each). `receipt.schema` runs the
 `dyfj.assurance.receipt/v1` validator's tests (`scripts/assurance-receipt.ts`),
 the fail-closed schema for the public v1 assurance evidence envelope contract.
 Every scan diagnostic is value-free — rule id, path, and line only, never the
@@ -1279,15 +1258,9 @@ remain outside this repository.
 After the policy checks, the gate runs the retired-surface scan, the
 `arch.imports` module-boundary check, the `runtime.neutral` ratchet, the
 `ratchet.base` comparison of the ratchet lists with the merge base, the
-`typecheck.tsc` lane, the source
-and test-file typechecks (both
-file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
-never hand-listed, over `prototype/src`, `mcp`, `scripts`, `testing`,
-`diagnostics` and `examples`), the prototype unit lane (`test.unit`: every
-non-integration, non-golden test file; product files run unsandboxed under
-`node --test`, and its remaining `deno test` subset runs in parallel with
-the op and resource sanitizers enabled, no run or net grant, and env access
-only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), the
+`typecheck.tsc` lane, the prototype unit lane (`test.unit`: every
+non-integration, non-golden test file, found by walking the tree in
+`prototype/scripts/test-files.ts` and run unsandboxed under `node --test`), the
 schema unit tests (`schema/validate-schema.test.ts`, `codegen.test.ts` and
 `equivalence.test.ts`, which register with `node:test` and run under
 `node --test` with the per-file handle check through
@@ -1299,8 +1272,9 @@ committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
-`*.integration.test.ts`, found by file name, under `node --test`; no
-integration file is left on `Deno.test`; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+`*.integration.test.ts`, found by file name, under `node --test`, including
+UDS and MCP round trips), and the golden characterization lane
+(`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
@@ -1312,12 +1286,11 @@ no permission sandbox. Only an update may write a snapshot: `--update` reaches
 the test process as `DYFJ_GOLDEN_UPDATE=1`, and every snapshot write goes
 through one function (`prototype/testing/golden/snapshots.ts`) that throws
 unless that variable is set. A plain run fails on a missing or changed snapshot
-and writes nothing. The golden runner spawns no `deno test`. The harness starts
+and writes nothing. The harness starts
 the engine server and CLI on the `node` running the suite, as the launcher
 does: the engine as plain `node`, the CLI under the client's permission flags,
-both read from `prototype/src/config/runtime-policy.ts`. The gate resolves the
-Deno executable selected for the invocation once and uses that same absolute
-command identity for each Deno lane and as each lane's `DENO_BIN`. Outside Windows, each lane runs in a process group
+both read from `prototype/src/config/runtime-policy.ts`. Outside Windows, each
+lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
 lane ends or the gate is interrupted, so a test's same-group child processes do
 not outlive its lane. Windows has no POSIX process groups, so there the gate
@@ -1359,20 +1332,15 @@ handled failure. SIGINT and SIGTERM request cooperative cancellation; the direct
 lane process receives SIGTERM followed by a bounded wait and possible SIGKILL.
 The Rust tracer test retains its manual-run `.env` loader, but the fixture's
 explicit `DATABASE_URL` takes precedence, so the lane does not use the
-operator's Dolt database. It requires Deno, Node 26, Dolt, and the pinned Rust
+operator's Dolt database. It requires Node 26, Dolt, and the pinned Rust
 toolchain.
 
 Product tests run on `node:test` only (decision D32, `specs/03-testing.md`
 §1). Each discovered file goes by its path and content
-(`prototype/scripts/test-files.ts`): a test file under `prototype/scripts/`
-that calls `Deno.test` or imports `@std/testing/bdd` is a remaining Deno test
-and runs under `deno test`, before the lane's Node files, until S3.3d of
-decision D32; every other file runs under `node --test`, one process per
-file; a file outside `prototype/scripts/` that calls `Deno.test` or imports
-`@std/testing/bdd` fails discovery, naming the file. The golden lane runs no
-`deno test`. Deno's sanitizers on that subset do not see `node:`
-resources (a `node:net` server or socket, a `node:child_process` child). The
-Node files instead preload a per-file handle check (`prototype/testing/node-handle-check.ts`):
+(`prototype/scripts/test-files.ts`): every file runs under `node --test`, one
+process per file, and a file anywhere that calls the retired runtime's test
+function or imports `@std/testing/bdd` fails discovery, naming the file. The
+files preload a per-file handle check (`prototype/testing/node-handle-check.ts`):
 a file that leaves a server, socket, timer or child process live after its
 last test fails, with the file and the leaked resource types named, and its
 process exits so the run cannot hang. It first waits for the file's own
@@ -1407,7 +1375,8 @@ statically is still seen. It maps each module to the target layer in
 `scripts/arch-layers.json`) and checks import cycles, upward and non-listed
 same-layer edges, the `cli/` allow-list, and dynamic local imports, literal or
 not. It confines environment access to the declared configuration surface:
-`Deno.env` and `process.env` may be read only in `prototype/src/config/`
+`process.env`, and the retired runtime's env object, may be read only in
+`prototype/src/config/`
 (through its `Env` port) and in the `prototype/scripts/` tooling, a legacy
 module mapped into `config` by name gets no exemption, and every `DYFJ_*` key
 named anywhere under the lane's roots must be declared in `CONFIG_SCHEMA`. It
@@ -1447,8 +1416,9 @@ baseline with
 "Architecture import rules tests" lane through `scripts/run-node-test-files.ts`.
 
 `runtime.neutral` (`scripts/runtime-neutral.ts`, reported under
-`test.aggregate`) is the ratchet for the move of the TypeScript tier from Deno
-to Node.js (decision D32). It counts each whole-word `Deno`
+`test.aggregate`) is the ratchet that kept the move of the TypeScript tier to
+Node.js (decision D32) from regressing, and now keeps the retired runtime out.
+It counts each whole-word reference to that runtime's global object
 (identifier boundaries, comments and strings included) in every git-tracked
 `.ts` file, so a member access, an optional chain, an index, a value passed on,
 a destructuring and an alias all count, and compares each file's count to `scripts/runtime-neutral-exceptions.json`, one `{path, count, reason}`
@@ -1456,12 +1426,10 @@ entry per file with references. The ratchet is exact. The lane fails on a file
 with references and no entry, on a count above its entry, on a count below its
 entry (the entry must be lowered in the same change, so a port leaf's drop
 shows in its diff), on an entry whose file is gone or has no references, and on
-a malformed or duplicate entry. It prints one report line on every run, for
-example `runtime.neutral: 3225 Deno references in 253 files`. When no
-reference remains the list is `[]`, and any new reference fails for want of an
-entry. The lane and its test are written to `node:` builtins only. It needs
-read access to the repository, `git`, and the one environment variable the Deno
-`node:child_process` shim reads when it spawns (`NODE_V8_COVERAGE`).
+a malformed or duplicate entry. It prints one report line on every run, with
+the reference and file counts. No reference remains, so the list is `[]`, and
+any new reference fails for want of an entry. The lane and its test are
+written to `node:` builtins only. It reads the repository and runs `git`.
 
 `ratchet.base` (`scripts/ratchet-base.ts`, run as `node scripts/ratchet-base.ts`
 and reported under `test.aggregate`, in the full gate and `test:fast`; a
@@ -1493,8 +1461,8 @@ root npm workspace's `typescript` devDependency (7.0.2) with Node's types
 `verbatimModuleSyntax`, `allowImportingTsExtensions` and
 `erasableSyntaxOnly`. The command is
 `node node_modules/typescript/bin/tsc --project tsconfig.json` from the
-repository root, and it runs in the full gate and in `test:fast`, alongside the
-`deno check` lanes until close-out of decision D32 removes them. TypeScript 7 is
+repository root, and it runs in the full gate and in `test:fast`. It is the
+gate's only typecheck, over every file the include list names. TypeScript 7 is
 the native compiler: the `typescript` package ships its `tsc` binary through
 per-platform optional packages (`@typescript/typescript-<os>-<arch>@7.0.2`),
 each locked with an integrity hash in the root `package-lock.json`. npm
@@ -1509,14 +1477,7 @@ or `override` on a constructor parameter), `enum`, `namespace` with values,
 and the like, as `TS1294`. `scripts/typecheck-tsc.test.ts` pins that rejection
 with a parameter-property fixture. To fix a violation, declare the field in
 the class body and assign it in the constructor. This replaces the former
-`erasable.syntax` lane and its `deno lint` plugin.
-
-The tsconfig's `exclude` list names the files `tsc` cannot check yet: those
-that still use the `Deno` global or import `@std/*`, plus every file that
-imports one, since `tsc` checks an excluded file an included file imports.
-That is part of the gate tooling under `scripts/` and `prototype/scripts/`.
-Those files keep their `deno check` coverage, the list only shrinks as they
-port, and it is deleted when the last one ports.
+`erasable.syntax` lane.
 
 The Node load probe (`scripts/node-load-probe.ts`) is a manual check, not a
 gate lane, until the gate tooling runs on Node. Run it by hand from the
@@ -1555,8 +1516,8 @@ both jobs still report a status and the required checks can pass. A push to
 docs-only pull request skipped is still checked on `main`. A second job,
 `macos-portability`, runs the same command on a macOS runner so process,
 filesystem, and runtime portability are observable. The workflow pins its two
-third-party actions (checkout and setup-node) by full commit digest (watched by Dependabot), installs Deno
-2.9.6 and Dolt 2.3.1 from exact-version release URLs — never a `latest` URL,
+third-party actions (checkout and setup-node) by full commit digest (watched
+by Dependabot), installs Dolt 2.3.1 from an exact-version release URL — never a `latest` URL,
 never a script piped into a shell — and checks each downloaded archive against a
 SHA-256 digest committed in the workflow before it is unpacked or executed.
 Those digests are repository-owned and never fetched at run time: a checksum
@@ -1565,15 +1526,16 @@ who controls that origin. The exact-version URL and the reported tool version
 remain as secondary evidence, not as the integrity control. Release signatures
 are still not verified, and the dependency manifest declares that gap. The Rust
 toolchain is installed from the exact pin in `core/rust-toolchain.toml`. Each
-job then installs Node 26.11.1 through the digest-pinned `actions/setup-node`
-action and runs `npm ci` at the repository root before the gate. For Node, the
+job then installs the exact Node release `.node-version` names (26.11.1),
+the repository's single Node pin, through the digest-pinned
+`actions/setup-node` action, and runs `npm ci` at the repository root before the gate. For Node, the
 evidence is that digest pin plus the exact version, not a repository-owned
 archive digest.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
 `npm run test:fast` runs every deterministic policy check (including
-`arch.imports` and `runtime.neutral`) plus the contract package checks, the `typecheck.tsc` lane, the source typecheck, and the
+`arch.imports` and `runtime.neutral`) plus the contract package checks, the `typecheck.tsc` lane and the
 `test.unit` lane, reusing the production lane definitions verbatim for quick local
 feedback; it is a convenience, not the green bar — `npm test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
@@ -1581,17 +1543,14 @@ public deterministic checks it runs.
 
 ### Dependency updates
 
-Dependabot proposes weekly update PRs for four surfaces, configured in
+Dependabot proposes weekly update PRs for three surfaces, configured in
 `.github/dependabot.yml`: the npm workspace at the repository root (the root
 `package.json` and its member `prototype/package.json`, locked by the root
 `package-lock.json`; `typescript` among them ships native binaries through
-per-platform optional packages, which the same lock and lane cover), the Deno
-workspace at the repository root (the
-`prototype/deno.json` imports and the root `deno.lock`, which now hold only the
-JSR test dependencies), the
+per-platform optional packages, which the same lock and lane cover), the
 Rust crate set under `core/` (`Cargo.toml` and
 `Cargo.lock`), and the digest-pinned workflow actions under
-`.github/workflows/`. The npm and deno lanes declare a `cooldown` of 3 days, so
+`.github/workflows/`. The npm lane declares a `cooldown` of 3 days, so
 a bot PR never proposes a release younger than the 72-hour floor that
 `min-release-age` in the root `.npmrc` holds at install time. Dependabot's own
 default cooldown is also 3 days, and cooldown does not apply to security
@@ -1604,8 +1563,9 @@ same string, so a bot bump cannot pass the gate; that adapter is upgraded
 deliberately, pin and fixtures together, when external-agent work resumes.
 
 The pins Dependabot does not cover are the Rust toolchain channel in
-`core/rust-toolchain.toml`, and the exact Deno/Dolt archive versions plus their
-committed SHA-256 digests in `.github/workflows/gate.yml`. Applying a change to
+`core/rust-toolchain.toml`, the exact Node version in `.node-version`, and the
+exact Dolt archive versions plus their committed SHA-256 digests in
+`.github/workflows/gate.yml`. Applying a change to
 those is intended to be a manual, operator-inspected step; the configuration
 enforces neither the inspection nor who may change them. No gate check flags
 them when they age, so keeping them fresh is a manual cadence. The
@@ -1712,18 +1672,19 @@ See [`core/README.md`](core/README.md).
 ### MCP integration
 
 The prototype exposes its memory substrate over MCP via
-`prototype/mcp/server.ts`. Point your agent at it. Replace `/path/to/deno` with
-`which deno` and `/path/to/dyfj` with the absolute path of your clone.
+`prototype/mcp/server.ts`, which runs on Node 26 under Node's permission model.
+Point your agent at it. Replace `/path/to/node` with `which node` and
+`/path/to/dyfj` with the absolute path of your clone.
 
 ```json
 {
   "mcpServers": {
     "dyfj-memory": {
-      "command": "/path/to/deno",
+      "command": "/path/to/node",
       "args": [
-        "run",
-        "--allow-net=127.0.0.1:3306",
-        "--allow-env=HOME,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE",
+        "--permission",
+        "--allow-fs-read=/path/to/dyfj",
+        "--allow-net",
         "/path/to/dyfj/prototype/mcp/server.ts"
       ]
     }
@@ -1731,7 +1692,10 @@ The prototype exposes its memory substrate over MCP via
 }
 ```
 
-See `prototype/mcp/README.md` for per-client examples.
+The `--allow-fs-read` grant scopes the server's reads to the checkout; the
+file's shebang grants reads of every path, so prefer this command. See
+`prototype/mcp/README.md` for what the permission model allows and what it
+cannot narrow, and for per-client examples.
 
 ---
 
@@ -2513,3 +2477,14 @@ Document revisions only. Code and behavior changes are tracked in
   testing doctrine counts the receipt-schema tests among the gate's own
   `node:test` tests; the Deno prerequisite drops the schema lanes; and the
   tsconfig exclusion paragraph names only the gate tooling.
+- 2026-10-17 - Deno removed; the Node runtime track (decision D32) is complete.
+  The prerequisites, set-up, "Run it", the repository layout and the
+  engineering posture describe a repository that runs, tests and gates on
+  Node alone, with `.node-version` as the single Node pin and the prototype's
+  test entry points as npm scripts (`test:file`, `test:golden`). The gate
+  section drops the typecheck lanes, the executable selector and the
+  forwarded runtime variables, names `typecheck.tsc` as the only typecheck,
+  and describes the dependency-policy tripwire; the CI, Dependabot and
+  dependency-update paragraphs drop the retired runtime's archive and update
+  lane. The MCP integration section launches the memory server on Node under
+  its permission model.

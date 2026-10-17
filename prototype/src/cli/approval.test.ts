@@ -257,7 +257,7 @@ describe("promptMidTurnApproval", () => {
       commandId: "bash",
       callId: "call-1",
       title: "Run Bash Command (timeout 300 s)",
-      arguments: { command: "deno task test", timeoutSec: 300 },
+      arguments: { command: "npm test", timeoutSec: 300 },
     }, true);
     const rendered = stderr.join("\n");
     assert.ok(

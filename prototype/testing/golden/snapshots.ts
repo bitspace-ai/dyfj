@@ -34,7 +34,7 @@ export async function writeSnapshot(
   if (!updateMode(env)) {
     throw new Error(
       `dyfj: golden snapshot ${id} may be written only in update mode ` +
-        `(${GOLDEN_UPDATE_ENV}=1, set by \`deno task test:golden --update\`)`,
+        `(${GOLDEN_UPDATE_ENV}=1, set by \`npm run test:golden -- --update\`)`,
     );
   }
   await mkdir(dir, { recursive: true });
@@ -80,7 +80,7 @@ export async function matchSnapshot(
     ) {
       throw new AssertionError({
         message:
-          `missing golden snapshot ${id}; run deno task test:golden --update`,
+          `missing golden snapshot ${id}; run npm run test:golden -- --update`,
       });
     }
     throw error;

@@ -1,4 +1,3 @@
-// deno-lint-ignore-file no-control-regex -- matching ESC is the point.
 /** Terminal escape-sequence removal. */
 
 /**

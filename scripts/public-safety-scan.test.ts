@@ -121,7 +121,7 @@ test("package and version specifiers are not emails", () => {
     "esbuild@0.20.1 pinned",
     "mysql://root@127.0.0.1:3306/dolt",
   ].join("\n");
-  assert.deepStrictEqual(scanText("prototype/deno.json", content), []);
+  assert.deepStrictEqual(scanText("prototype/package.json", content), []);
 });
 
 test("allowed-domain classification covers only RFC-reserved shapes", () => {

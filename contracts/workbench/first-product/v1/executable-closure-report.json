@@ -8,9 +8,9 @@
   },
   "candidate_identity": {
     "contract_source_manifest": {
-      "sha256": "e9dab10961f67b852184187e78ebcbcc985b0aeefdda831e2fdbf3ae3d5efb5d",
+      "sha256": "ec1f3781f292c17311353a9086cbb3cd3db831747b34c97c2d85ee6989ccc69c",
       "file_count": 126,
-      "line_count": 26492,
+      "line_count": 26495,
       "formula": "Sort package files by package-relative path; exclude executable-closure-report.json; for each file append lowercase SHA-256(file bytes), two ASCII spaces, the package-relative path, and one LF; SHA-256 the concatenated rows.",
       "excludes": [
         "executable-closure-report.json (generated output)"
@@ -3165,12 +3165,12 @@
   "ladder": [
     {
       "id": "focused-tests",
-      "command": "deno test --allow-read=. contracts/workbench/first-product/v1/validate.test.ts contracts/workbench/first-product/v1/executable-closure.test.ts contracts/workbench/first-product/v1/executable-closure-report.test.ts",
+      "command": "node scripts/run-node-test-files.ts --lane contracts contracts/workbench/first-product/v1/validate.test.ts contracts/workbench/first-product/v1/executable-closure.test.ts contracts/workbench/first-product/v1/executable-closure-report.test.ts",
       "result": "not-evaluated"
     },
     {
       "id": "format-check",
-      "command": "deno fmt --check (changed files)",
+      "command": "node scripts/range-checks.ts --check diff.whitespace",
       "result": "not-evaluated"
     },
     {
@@ -3180,12 +3180,12 @@
     },
     {
       "id": "fast-aggregate",
-      "command": "deno task test:fast",
+      "command": "npm run test:fast",
       "result": "not-evaluated"
     },
     {
       "id": "full-aggregate",
-      "command": "deno task test",
+      "command": "npm test",
       "result": "not-evaluated"
     },
     {

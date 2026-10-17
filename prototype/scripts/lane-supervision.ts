@@ -4,9 +4,9 @@
 //
 // The gate starts each test-lane runner as the leader of a process group of
 // its own and hands it four values in its environment. Their presence is
-// what marks a run as a gate lane; a direct run (`deno task test:unit` from a
-// terminal) has none of them and supervises nothing, because it shares the
-// invoking shell's process group.
+// what marks a run as a gate lane; a direct run (`node
+// scripts/run-unit-tests.ts` from a terminal) has none of them and supervises
+// nothing, because it shares the invoking shell's process group.
 //
 // - A backstop deadline. The gate enforces its own, shorter deadline; the
 //   runner's backstop matters only when the gate itself is gone. On expiry

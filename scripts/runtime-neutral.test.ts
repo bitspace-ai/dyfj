@@ -279,7 +279,7 @@ describe("checkRuntimeNeutral", () => {
 });
 
 describe("the gate wiring", () => {
-  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lanes = productionLanes("/repo");
   const lane = lanes.find((candidate) => candidate.label.includes(LABEL));
 
   it("runs the lane under test.aggregate on node, with no grant", () => {

@@ -1,5 +1,8 @@
 # PRD-10 — Guardrails before restructuring
 
+> Requirements as written for phase 1, when tests ran on Deno; the test
+> runtime is Node since decision D32.
+
 **Phase:** 1 (first). **Work orders:** WO-01 … WO-06.
 
 ## Problem

@@ -25,7 +25,7 @@ test("a range is markdown-only when every path, and at least one, is Markdown", 
     "markdown-only",
   );
   assert.deepStrictEqual(
-    classifyChangedPaths(["README.md", "deno.json"]),
+    classifyChangedPaths(["README.md", "package.json"]),
     "other",
   );
   assert.deepStrictEqual(classifyChangedPaths([]), "other");

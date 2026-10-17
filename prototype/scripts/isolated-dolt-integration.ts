@@ -1,9 +1,7 @@
 // The isolated-Dolt integration lane's runner, run on Node
 // (`node scripts/isolated-dolt-integration.ts`): starts the isolated Dolt
-// fixture, runs the integration files (the gate-tooling subset under
-// `deno test` until the gate-tooling port, then the Node subset), then the
-// Rust schema round trip, and cleans up. The selected Deno reaches it as
-// DENO_BIN, which the gate sets.
+// fixture, runs the integration files under `node --test`, then the Rust
+// schema round trip, and cleans up.
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,8 +12,7 @@ import {
   startIsolatedDoltFixture,
 } from "./isolated-dolt-fixture.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
-import { requiredDenoExecutable } from "./deno-executable.ts";
-import { discoverIntegrationTests, partitionByRuntime } from "./test-files.ts";
+import { discoverIntegrationTests, nodeTestFiles } from "./test-files.ts";
 import { requireNode, startNodeTests } from "./node-test-lane.ts";
 import {
   backstopMessage,
@@ -132,13 +129,6 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   /[\\\/]$/,
   "",
 );
-let denoExecutable: string;
-try {
-  denoExecutable = requiredDenoExecutable();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(2);
-}
 const abortController = new AbortController();
 let interruptedExitCode: number | undefined;
 const interrupt = (exitCode: number) => {
@@ -162,15 +152,13 @@ let failure: unknown;
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
 let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
-let denoTestTempDir: string | undefined;
+let testTempDir: string | undefined;
 try {
   // The backstop can fire as it starts, when the gate is already gone.
   throwIfAborted(abortController.signal);
-  // Product integration files run under `node --test`; the gate-tooling
-  // files under `scripts/` that register with the existing runner run under
-  // `deno test` until the gate-tooling port (`test-files.ts`). A product file
-  // that registers with the existing runner fails here, before the fixture.
-  const integrationFiles = partitionByRuntime(
+  // Every integration file runs under `node --test`. A file that registers
+  // with the retired runner fails here, before the fixture (`test-files.ts`).
+  const integrationFiles = nodeTestFiles(
     prototypeRoot,
     discoverIntegrationTests(prototypeRoot),
   );
@@ -184,71 +172,27 @@ try {
   const env = {
     ...fixture.env,
     DYFJ_ROOT: prototypeRoot,
-    DENO_BIN: denoExecutable,
   };
   mcpTestTempDir = await mkdtemp(join(tmpdir(), "dyfj-mcp-roundtrip-"));
   // The files that bind real Unix sockets name them inside this directory.
   udsTestSocketDir = await mkdtemp(join(tmpdir(), "dyfj-uds-"));
-  // The tests' own temp files go under TMPDIR, pointed at this directory, so
-  // the gate-tooling subset's read and write grants cover it alone. Its real
-  // path is what is granted and exported: the code under test resolves real
-  // paths, and on macOS the temp root /tmp is a symlink to /private/tmp.
-  denoTestTempDir = await realpath(
-    await mkdtemp(join(tmpdir(), "dyfj-deno-test-")),
-  );
-  // Both subsets get this environment; the Node subset also runs the product
-  // through DENO_BIN, which `env` carries.
+  // The tests' own temp files go under TMPDIR, pointed at this directory and
+  // removed with it. Its real path is what is exported: the code under test
+  // resolves real paths, and on macOS the temp root /tmp is a symlink to
+  // /private/tmp.
+  testTempDir = await realpath(await mkdtemp(join(tmpdir(), "dyfj-test-")));
   const testEnv = {
     ...env,
     DYFJ_MCP_TEST_TEMP_DIR: mcpTestTempDir,
     [UDS_TEST_SOCKET_DIR_ENV]: udsTestSocketDir,
-    TMPDIR: denoTestTempDir,
+    TMPDIR: testTempDir,
   };
-  // The product tests run after a failing gate-tooling subset too, so one run
-  // reports both; the first failure is the lane's.
-  let subsetFailure: unknown;
-  // The gate-tooling subset, until the gate-tooling port.
-  if (integrationFiles.deno.length > 0) {
-    await runChecked(denoExecutable, [
-      "test",
-      // Ungranted access throws instead of prompting, as it does in CI, so a
-      // local run from a terminal never parks on a permission prompt.
-      "--no-prompt",
-      // The pinned Deno runs the op and resource sanitizers only when asked.
-      // They fail the test that leaks a timer or an op or resource the runtime
-      // tracks, but they do not see `node:` servers, sockets or child
-      // processes (`specs/03-testing.md` §2).
-      "--sanitize-ops",
-      "--sanitize-resources",
-      // The grants of the gate-tooling subset, until the gate-tooling port.
-      // The isolated Dolt fixture's own tests start throwaway fixtures: they
-      // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
-      // their temp roots under TMPDIR (the per-run directory above), run
-      // `dolt` and connect to 127.0.0.1.
-      `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,TMPDIR,TEMP,TMP`,
-      `--allow-read=.,../schema,${denoTestTempDir}`,
-      `--allow-write=${denoTestTempDir}`,
-      // dolt: the fixture tests.
-      `--allow-run=${denoExecutable},dolt`,
-      "--allow-net=127.0.0.1",
-      // The gate-tooling `*.integration.test.ts` files on the existing
-      // runner; every other integration file runs in the Node subset.
-      ...integrationFiles.deno,
-    ], {
-      cwd: prototypeRoot,
-      env: testEnv,
-      signal: abortController.signal,
-    }).catch((error) => {
-      if (abortController.signal.aborted) throw error;
-      subsetFailure = error;
-    });
-  }
   const nodeRun = startNodeTests({
     lane: "integration",
-    files: integrationFiles.node,
+    files: integrationFiles,
     cwd: prototypeRoot,
     env: integrationChildEnvironment(testEnv),
-    // The files run one at a time, as the first subset's do.
+    // The files share one Dolt fixture, so they run one at a time.
     jobs: 1,
   });
   const stopNode = () => nodeRun.kill();
@@ -256,7 +200,6 @@ try {
   const nodeCode = await nodeRun.code;
   abortController.signal.removeEventListener("abort", stopNode);
   throwIfAborted(abortController.signal);
-  if (subsetFailure !== undefined) throw subsetFailure;
   if (nodeCode !== 0) {
     throw new Error(
       `node --test over the integration files failed with ${nodeCode}`,
@@ -283,8 +226,8 @@ try {
     if (udsTestSocketDir !== undefined) {
       await rm(udsTestSocketDir, { recursive: true });
     }
-    if (denoTestTempDir !== undefined) {
-      await rm(denoTestTempDir, { recursive: true });
+    if (testTempDir !== undefined) {
+      await rm(testTempDir, { recursive: true });
     }
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);

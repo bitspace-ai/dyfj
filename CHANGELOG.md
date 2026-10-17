@@ -11,6 +11,25 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`.node-version` is the single Node pin.** It holds `26.11.1`, and both
+  CI jobs install Node through `actions/setup-node` with
+  `node-version-file: .node-version` instead of two hard-coded copies of the
+  version. A gate test (`scripts/ci-workflow.test.ts`) fails when the file,
+  the workflow and the `engines` field of both `package.json` files (`>=26`)
+  disagree.
+- **A dependency-policy tripwire for the retired Deno runtime.** The
+  `dependency.policy` lane now fails on a tracked `deno.json`, `deno.jsonc`
+  or `deno.lock` at any depth, on a quoted `jsr:@scope/name` specifier in
+  tracked code or JSON, and on a `deno` Dependabot lane. Gate tests also fail
+  when a gate lane starts `deno` or any lane or test runner forwards a
+  `DENO_*` variable, and test discovery fails on a file anywhere that
+  registers with the retired runner.
+- **`npm run test:file` and `npm run test:golden` in `prototype/`.** They
+  replace the `deno task` entries of the same names:
+  `npm run test:file -- <path>... [--filter <pattern>]` runs named unit test
+  files (it exits 2 without a path), and `npm run test:golden` (with
+  `-- --update` to rewrite snapshots) runs the golden suite.
+
 - **`ratchet.base`: the ratchet lists are checked against the merge base.**
   A new gate lane, `node scripts/ratchet-base.ts`, under `test.aggregate` in
   the full gate and `test:fast` (a docs-only pull-request run skips it, since
@@ -27,6 +46,21 @@ README are tracked separately in its Revision history section.
   CI and reports a skip locally.
 
 ### Removed
+
+- **Deno's lanes, tooling, config and CI steps: the Node runtime track
+  (decision D32) is complete.** The runtime, the tests and the gate now run with no Deno on
+  `PATH`. Deleted: the two `deno check` typecheck lanes (`typecheck.tsc`
+  covers every file, and the tsconfig exclusion list is gone), the Deno
+  executable selector (`prototype/scripts/deno-executable.ts`, its test and
+  the gate's lookup of it), `prototype/scripts/typecheck.ts`, the unit and
+  integration runners' Deno test step and the routing that fed it, the unused
+  `prototype/scripts/mcp-child-wrapper.sh`, and every `DENO_BIN`, `DENO_DIR`
+  and `DENO_JOBS` forward (`node --test` parallelism is now the machine's
+  available parallelism). Deleted config: `deno.json`, `deno.lock` and
+  `prototype/deno.json`, with their `deno task` shims. CI no longer installs
+  Deno, Dependabot no longer runs a `deno` lane, and the dependency manifest
+  no longer declares the Deno workspace or the Deno release archive. The
+  `runtime.neutral` allow-list is empty.
 
 - **The migration-only tooling.** The test codemods (`scripts/codemod/`:
   the test-dialect and test-registrations codemods, their fixtures and their
@@ -60,6 +94,27 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The runtime no longer grants `deno` by name.** `RUNTIME_RUN_GRANTS` drops
+  `deno`, a narrowing of what the runtime may start; the runtime's own Node
+  executable stays granted by path, as before.
+- **The memory MCP server runs on Node under its permission model.** The
+  documented launch is
+  `node --permission --allow-fs-read=/path/to/dyfj --allow-net /path/to/dyfj/prototype/mcp/server.ts`,
+  and the file's shebang is the same with `--allow-fs-read=*`. The server may
+  read files and use the network, and may not write files, start child
+  processes or load addons. The former Deno launch also limited the network
+  to `127.0.0.1:3306` and the environment to the Dolt variables; Node's model
+  cannot express either, so those two limits are gone;
+  `prototype/mcp/README.md` says so.
+- **The contract closure report names the Node entry points.** Its ladder
+  commands are now `node scripts/run-node-test-files.ts --lane contracts …`,
+  the `diff.whitespace` range check, `npm run test:fast` and `npm test`; no
+  ladder result changes.
+- **Generated-code and snapshot messages name npm scripts.** The row-types
+  header and the codegen lane's stale-file message say
+  `npm run schema:codegen`, and the golden suite's messages say
+  `npm run test:golden -- --update`.
 
 - **The schema CLIs and the receipt-schema tests run on Node.**
   `schema/validate-schema.ts`, `schema/codegen.ts` and `schema/equivalence.ts`

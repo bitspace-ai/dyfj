@@ -46,13 +46,12 @@ export const RUNTIME_NET_GRANTS: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Binaries every runtime may start: the exec tools' `bash` and `git`, the
- * runtime itself by name, and the ACP runner's `/bin/kill` signaler and
- * `/bin/sleep` process-group probe.
+ * Binaries every runtime may start: the exec tools' `bash` and `git`, and the
+ * ACP runner's `/bin/kill` signaler and `/bin/sleep` process-group probe. The
+ * runtime's own Node executable is granted by path in the base policy.
  */
 export const RUNTIME_RUN_GRANTS: readonly string[] = Object.freeze([
   "bash",
-  "deno",
   "git",
   "/bin/kill",
   "/bin/sleep",

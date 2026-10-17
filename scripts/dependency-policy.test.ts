@@ -10,6 +10,7 @@ import {
   declaredSurfacePaths,
   dependencyPolicyHits,
   isDependencySurface,
+  retiredRuntimeHits,
   loadManifest,
   manifestDigest,
   manifestViolations,
@@ -23,7 +24,11 @@ import {
   SOURCE_CLASSES,
   type SourceClass,
 } from "./dependency-policy.ts";
-import { repoRootFromMeta, trackedFiles } from "./scan-lib.ts";
+import {
+  MAX_COLLECTED_HITS,
+  repoRootFromMeta,
+  trackedFiles,
+} from "./scan-lib.ts";
 import { formatHits } from "./public-safety-scan.ts";
 import { headCommit } from "./subject-check.ts";
 
@@ -52,7 +57,7 @@ test("digest-pinned action references pass", () => {
   const content = [
     "steps:",
     `  - uses: actions/checkout@${DIGEST} # v4.2.2`,
-    `  - uses: "denoland/setup-deno@${DIGEST}"`,
+    `  - uses: "actions/setup-node@${DIGEST}"`,
   ].join("\n");
   assert.deepStrictEqual(scanWorkflowText(WF, content), []);
 });
@@ -249,20 +254,20 @@ test("a verified-download block is not a network-to-shell hit", () => {
   const content = [
     "      - run: |",
     "          set -euo pipefail",
-    "          curl -fsSL -o /tmp/deno.zip \\",
-    '            "https://example.invalid/download/v1.0.0/deno.zip"',
+    "          curl -fsSL -o /tmp/tool.zip \\",
+    '            "https://example.invalid/download/v1.0.0/tool.zip"',
     "          printf '%s  %s\\n' \"" + "a".repeat(64) +
-    '" /tmp/deno.zip | sha256sum -c -',
-    '          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"',
-    '          "$HOME/.deno-pinned/deno" --version | grep -F "deno 1.0.0"',
+    '" /tmp/tool.zip | sha256sum -c -',
+    '          unzip -q -o /tmp/tool.zip -d "$HOME/.tool-pinned"',
+    '          "$HOME/.tool-pinned/tool" --version | grep -F "tool 1.0.0"',
   ].join("\n");
   assert.deepStrictEqual(scanWorkflowText(WF, `${content}\n`), []);
 });
 
 test("piping to a non-shell filter is not a policy hit", () => {
   const content = [
-    '      run: curl -fsSL -o /tmp/deno.zip "https://example.invalid/v1.0.0/deno.zip"',
-    '      run: deno --version | grep -F "deno 2.9.6"',
+    '      run: curl -fsSL -o /tmp/tool.zip "https://example.invalid/v1.0.0/tool.zip"',
+    '      run: tool --version | grep -F "tool 1.0.0"',
   ].join("\n");
   assert.deepStrictEqual(scanWorkflowText(WF, content), []);
 });
@@ -290,9 +295,6 @@ test("dependency surfaces are classified deterministically", () => {
   const surfaces = [
     ".github/workflows/gate.yml",
     ".github/dependabot.yml",
-    "deno.json",
-    "deno.lock",
-    "prototype/deno.lock",
     "core/Cargo.toml",
     "core/Cargo.lock",
     "core/rust-toolchain.toml",
@@ -466,18 +468,15 @@ test("an unparseable package.json fails closed", () => {
 
 const DEPENDABOT = ".github/dependabot.yml";
 
-// A Dependabot config with one npm lane and one deno lane for `prototype/`,
-// with `npm` and `deno` replaced by the given entry bodies.
-function dependabotConfig(npm: string, deno: string): string {
+// A Dependabot config with one npm lane for `prototype/`, with `npm` replaced
+// by the given entry body, and one cargo lane.
+function dependabotConfig(npm: string): string {
   return [
     "version: 2",
     "updates:",
     '  - package-ecosystem: "npm"',
     '    directory: "/prototype"',
     npm,
-    '  - package-ecosystem: "deno"',
-    '    directory: "/prototype"',
-    deno,
     '  - package-ecosystem: "cargo"',
     '    directory: "/core"',
     "    schedule:",
@@ -495,12 +494,6 @@ const NPM_LANE = [
   "    ignore:",
   '      - dependency-name: "@scope/pinned"',
 ].join("\n");
-const DENO_LANE = [
-  "    schedule:",
-  '      interval: "weekly"',
-  "    cooldown:",
-  "      default-days: 3",
-].join("\n");
 
 function dependabotRules(
   content: string,
@@ -512,7 +505,7 @@ function dependabotRules(
 
 test("a dependabot config watching npm with cooldown and exact bumps passes", () => {
   assert.deepStrictEqual(
-    dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE)),
+    dependabotRules(dependabotConfig(NPM_LANE)),
     [],
   );
 });
@@ -521,9 +514,10 @@ test("a tracked package.json no npm update lane watches fails", () => {
   const withoutNpm = [
     "version: 2",
     "updates:",
-    '  - package-ecosystem: "deno"',
+    '  - package-ecosystem: "cargo"',
     '    directory: "/prototype"',
-    DENO_LANE,
+    "    schedule:",
+    '      interval: "weekly"',
     "",
   ].join("\n");
   assert.deepStrictEqual(scanDependabotText(DEPENDABOT, withoutNpm, [PKG]), [{
@@ -533,18 +527,18 @@ test("a tracked package.json no npm update lane watches fails", () => {
   }]);
   // An npm lane for another directory does not watch this one, and a
   // root package.json is watched only by the "/" directory.
-  const elsewhere = dependabotConfig(NPM_LANE, DENO_LANE)
+  const elsewhere = dependabotConfig(NPM_LANE)
     .replace('directory: "/prototype"', 'directory: "/other"');
   assert.deepStrictEqual(dependabotRules(elsewhere), [
     "dependency.policy/dependabot-npm-unwatched",
   ]);
   assert.deepStrictEqual(
-    dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE), ["package.json"]),
+    dependabotRules(dependabotConfig(NPM_LANE), ["package.json"]),
     ["dependency.policy/dependabot-npm-unwatched"],
   );
   assert.deepStrictEqual(
     dependabotRules(
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
         .replace('directory: "/prototype"', 'directory: "/"'),
       ["package.json"],
     ),
@@ -552,7 +546,7 @@ test("a tracked package.json no npm update lane watches fails", () => {
   );
 });
 
-test("npm and deno update lanes must hold the 72-hour cooldown", () => {
+test("the npm update lane must hold the 72-hour cooldown", () => {
   const cooldownLanes = [
     // No cooldown at all: the floor would rest on an undeclared default.
     NPM_LANE.replace("    cooldown:\n      default-days: 3\n", ""),
@@ -574,17 +568,10 @@ test("npm and deno update lanes must hold the 72-hour cooldown", () => {
     ),
   ];
   for (const lane of cooldownLanes) {
-    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane)), [
       "dependency.policy/dependabot-cooldown",
     ]);
   }
-  assert.deepStrictEqual(
-    dependabotRules(dependabotConfig(
-      NPM_LANE,
-      DENO_LANE.replace("default-days: 3", "default-days: 1"),
-    )),
-    ["dependency.policy/dependabot-cooldown"],
-  );
   // A longer cooldown, per bump level, still holds the floor.
   assert.deepStrictEqual(
     dependabotRules(dependabotConfig(
@@ -592,7 +579,6 @@ test("npm and deno update lanes must hold the 72-hour cooldown", () => {
         "default-days: 3",
         "default-days: 7\n      semver-major-days: 14",
       ),
-      DENO_LANE,
     )),
     [],
   );
@@ -607,7 +593,7 @@ test("the npm update lane must bump exact pins with the increase strategy", () =
       NPM_LANE.replace('"increase"', '"lockfile-only"'),
     ]
   ) {
-    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane)), [
       "dependency.policy/dependabot-versioning-strategy",
     ]);
   }
@@ -615,52 +601,48 @@ test("the npm update lane must bump exact pins with the increase strategy", () =
 
 test("a lane hit names the line of its update entry", () => {
   const content = dependabotConfig(
-    NPM_LANE,
-    DENO_LANE.replace("default-days: 3", "default-days: 1"),
+    NPM_LANE.replace("default-days: 3", "default-days: 1"),
   );
   assert.deepStrictEqual(scanDependabotText(DEPENDABOT, content, [PKG]), [{
     path: DEPENDABOT,
-    line: 12,
+    line: 3,
     rule: "dependency.policy/dependabot-cooldown",
   }]);
 });
 
 test("an escaped quoted scalar fails closed instead of being trusted", () => {
-  // YAML decodes escapes in a double-quoted scalar, so "de\u006eo" names the
-  // deno ecosystem. The scan does not decode escapes; it rejects them, so a
+  // YAML decodes escapes in a double-quoted scalar, so "\u006epm" names the
+  // npm ecosystem. The scan does not decode escapes; it rejects them, so a
   // spelling the scan cannot read never skips the cooldown check.
-  const denoWithoutCooldown = [
+  const npmWithoutCooldown = [
     "version: 2",
     "updates:",
-    '  - package-ecosystem: "npm"',
-    '    directory: "/prototype"',
-    NPM_LANE,
-    '  - package-ecosystem: "de\\u006eo"',
+    '  - package-ecosystem: "\\u006epm"',
     '    directory: "/prototype"',
     "    schedule:",
     '      interval: "weekly"',
     "",
   ].join("\n");
   assert.deepStrictEqual(
-    scanDependabotText(DEPENDABOT, denoWithoutCooldown, [PKG]),
+    scanDependabotText(DEPENDABOT, npmWithoutCooldown, [PKG]),
     [{
       path: DEPENDABOT,
-      line: 12,
+      line: 3,
       rule: "dependency.policy/dependabot-unparsed",
+    }, {
+      path: PKG,
+      line: 1,
+      rule: "dependency.policy/dependabot-npm-unwatched",
     }],
   );
   // Every scalar the policy decides on is held to the same rule.
   for (
     const content of [
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
         .replace('directory: "/prototype"', 'directory: "/proto\\x74ype"'),
-      dependabotConfig(
-        NPM_LANE.replace('"increase"', '"incr\\x65ase"'),
-        DENO_LANE,
-      ),
+      dependabotConfig(NPM_LANE.replace('"increase"', '"incr\\x65ase"')),
       dependabotConfig(
         NPM_LANE.replace("default-days: 3", 'default-days: "\\x33"'),
-        DENO_LANE,
       ),
     ]
   ) {
@@ -675,7 +657,7 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
   // unterminated quote is not understood.
   assert.deepStrictEqual(
     dependabotRules(
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
         .replace('"npm"', "'npm'")
         .replace('"increase"', "'increase' # exact pins stay exact"),
     ),
@@ -683,14 +665,14 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
   );
   assert.deepStrictEqual(
     dependabotRules(
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
         .replace('directory: "/prototype"', "directory: '/proto''type'"),
     ),
     ["dependency.policy/dependabot-npm-unwatched"],
   );
   assert.deepStrictEqual(
     dependabotRules(
-      dependabotConfig(NPM_LANE, DENO_LANE).replace('"npm"', "'npm"),
+      dependabotConfig(NPM_LANE).replace('"npm"', "'npm"),
     ).includes("dependency.policy/dependabot-unparsed"),
     true,
   );
@@ -706,11 +688,10 @@ test("a dependabot config whose structure is not understood fails closed", () =>
           "    cooldown:\n      default-days: 3",
           "    cooldown: { default-days: 3 }",
         ),
-        DENO_LANE,
       ),
-      dependabotConfig(NPM_LANE, DENO_LANE)
-        .replace('  - package-ecosystem: "deno"\n', "  - schedule: {}\n"),
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
+        .replace('  - package-ecosystem: "cargo"\n', "  - schedule: {}\n"),
+      dependabotConfig(NPM_LANE)
         .replace("    schedule:", "    directory: /x\n    schedule:"),
     ]
   ) {
@@ -764,7 +745,7 @@ function validSurface(): Record<string, unknown> {
 
 function validReleaseSurface(): Record<string, unknown> {
   return {
-    id: "release.deno-archive",
+    id: "release.tool-archive",
     source_class: "github-release-asset",
     manifest_paths: [".github/workflows/gate.yml"],
     lock_paths: [],
@@ -1158,11 +1139,11 @@ test("a deleted tracked dependency file is reported as mutated", async () => {
   const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-deleted-"));
   try {
     await gitIn(dir, ["init", "-q"]);
-    await writeFile(`${dir}/deno.json`, "{}\n");
+    await writeFile(`${dir}/Cargo.toml`, "[package]\n");
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
     const base = await headCommit(dir);
-    await rm(`${dir}/deno.json`);
+    await rm(`${dir}/Cargo.toml`);
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "delete dependency surface"]);
     const mutated = await mutatedSurfaces(dir, {
@@ -1170,7 +1151,7 @@ test("a deleted tracked dependency file is reported as mutated", async () => {
       authoritative: false,
       description: "fixture range",
     });
-    assert.deepStrictEqual(mutated, ["deno.json"]);
+    assert.deepStrictEqual(mutated, ["Cargo.toml"]);
   } finally {
     await rm(dir, { recursive: true });
   }
@@ -1200,7 +1181,7 @@ test("the committed manifest claims the verified archive checksum", async () => 
   const releases = surfaces.filter(
     (surface) => surface.source_class === "github-release-asset",
   );
-  assert.deepStrictEqual(releases.length, 2);
+  assert.deepStrictEqual(releases.length, 1);
   for (const surface of releases) {
     // The workflow checks a repository-committed SHA-256 before unpacking,
     // so the checksum is claimed evidence rather than a declared gap.
@@ -1222,7 +1203,7 @@ test("the committed manifest keeps the signature gap a known unknown", async () 
   const releases = surfaces.filter(
     (surface) => surface.source_class === "github-release-asset",
   );
-  assert.deepStrictEqual(releases.length, 2);
+  assert.deepStrictEqual(releases.length, 1);
   for (const surface of releases) {
     const missing = surface.known_missing_evidence_classes as string[];
     const claimed = [
@@ -1265,16 +1246,6 @@ test("the committed manifest declares the npm surface under the registry floor",
     class: "registry-minimum-hours",
     minimum_hours: 72,
   });
-  // deno.workspace keeps the deno.json files and deno.lock only.
-  const deno = surfaces.find((entry) => entry.id === "deno.workspace");
-  assert.deepStrictEqual(deno?.manifest_paths, [
-    "deno.json",
-    "prototype/deno.json",
-  ]);
-  assert.deepStrictEqual(deno?.lock_paths, [
-    "deno.lock",
-    "prototype/deno.lock",
-  ]);
 });
 
 test("tracked npm packages are checked for lockfile and npmrc", async () => {
@@ -1404,7 +1375,7 @@ test("a workspace member is checked against the root lockfile, npmrc and npm lan
     );
     await writeFile(
       `${dir}/.github/dependabot.yml`,
-      dependabotConfig(NPM_LANE, DENO_LANE)
+      dependabotConfig(NPM_LANE)
         .replaceAll('directory: "/prototype"', 'directory: "/"'),
     );
     await gitIn(dir, ["add", "."]);
@@ -1431,5 +1402,101 @@ test("a workspace member is checked against the root lockfile, npmrc and npm lan
     );
   } finally {
     await rm(dir, { recursive: true });
+  }
+});
+
+// Tripwire for the close-out of decision D32: the repository runs on Node
+// alone, so a deno manifest or lockfile, a `jsr:` import, or a deno update
+// lane that reappears fails the policy. The specifier prefix is assembled so
+// this file does not trip the scan it tests.
+const JSR = ["js", "r:"].join("");
+
+async function trackedFixture(
+  files: Record<string, string>,
+): Promise<{ dir: string; rules: (rule: string) => string[] }> {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-retired-"));
+  await gitIn(dir, ["init", "-q"]);
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(join(dir, path, ".."), { recursive: true });
+    await writeFile(join(dir, path), content);
+  }
+  await gitIn(dir, ["add", "."]);
+  await gitIn(dir, ["commit", "-q", "-m", "base"]);
+  const hits = await dependencyPolicyHits(dir);
+  return {
+    dir,
+    rules: (rule) =>
+      hits.filter((hit) => hit.rule === rule)
+        .map((hit) => `${hit.path}:${hit.line}`),
+  };
+}
+
+test("a tracked deno manifest or lockfile fails at any depth", async () => {
+  const fixture = await trackedFixture({
+    "deno.json": "{}\n",
+    "pkg/deno.jsonc": "{}\n",
+    "deno.lock": "{}\n",
+    "pkg/not-deno.json": "{}\n",
+  });
+  try {
+    assert.deepStrictEqual(
+      fixture.rules("dependency.policy/retired-runtime-file"),
+      ["deno.json:1", "deno.lock:1", "pkg/deno.jsonc:1"],
+    );
+  } finally {
+    await rm(fixture.dir, { recursive: true });
+  }
+});
+
+test("a jsr: specifier in tracked code or config fails at its line", async () => {
+  const fixture = await trackedFixture({
+    "src/a.ts": `// one\nimport { assert } from "${JSR}@std/assert";\n`,
+    "src/b.mjs": `await import('${JSR}@std/path');\n`,
+    "config.json": `{\n  "imports": { "x": "${JSR}@std/x" }\n}\n`,
+    "notes.md": `A ${JSR} specifier in prose is not an import.\n`,
+    "src/c.ts": `const scheme = "${JSR.slice(0, -1)}";\n`,
+  });
+  try {
+    assert.deepStrictEqual(
+      fixture.rules("dependency.policy/jsr-import"),
+      ["config.json:2", "src/a.ts:2", "src/b.mjs:1"],
+    );
+  } finally {
+    await rm(fixture.dir, { recursive: true });
+  }
+});
+
+test("a deno update lane fails", () => {
+  const content = [
+    "version: 2",
+    "updates:",
+    '  - package-ecosystem: "npm"',
+    '    directory: "/prototype"',
+    NPM_LANE,
+    `  - package-ecosystem: "${["de", "no"].join("")}"`,
+    '    directory: "/"',
+    "    schedule:",
+    '      interval: "weekly"',
+    "",
+  ].join("\n");
+  assert.deepStrictEqual(scanDependabotText(DEPENDABOT, content, [PKG]), [{
+    path: DEPENDABOT,
+    line: 12,
+    rule: "dependency.policy/retired-runtime-ecosystem",
+  }]);
+});
+
+test("the retired-runtime scan stops at the hit cap, within a file", async () => {
+  const line = `import "${JSR}@std/x";\n`;
+  const fixture = await trackedFixture({
+    "a.ts": line.repeat(MAX_COLLECTED_HITS + 5),
+    "b.ts": line,
+  });
+  try {
+    const hits = await retiredRuntimeHits(fixture.dir, ["a.ts", "b.ts"]);
+    assert.deepStrictEqual(hits.length, MAX_COLLECTED_HITS);
+    assert.ok(hits.every((hit) => hit.path === "a.ts"));
+  } finally {
+    await rm(fixture.dir, { recursive: true });
   }
 });

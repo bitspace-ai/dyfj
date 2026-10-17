@@ -70,6 +70,7 @@ const README_PATHS = ["README.md", "README", "README.rst"];
 
 const PROJECT_MANIFEST_PATHS = [
   "package.json",
+  // A manifest name in the user's repository, not this project's runtime.
   "deno.json",
   "pyproject.toml",
   "Cargo.toml",

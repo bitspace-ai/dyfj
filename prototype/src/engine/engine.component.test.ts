@@ -299,7 +299,7 @@ test("[follow-up A1] resumed native next-work excludes omission notice and recei
       rationale: "The scoped work is ready.",
       evidence: ["README.md"],
       risks: ["Keep the change bounded."],
-      next_commands: ["deno task test"],
+      next_commands: ["npm test"],
       confidence: "high",
     }),
   })]);

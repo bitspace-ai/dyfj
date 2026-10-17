@@ -91,9 +91,10 @@ level = "strict"
 # The command runs with stdin closed (no terminal prompt) and this timeout
 # bounds the wait. Fail-closed on timeout is RESULT-LEVEL: the env var is never
 # set (the provider gets no key) and the IMMEDIATE resolver process is SIGKILLed.
-# The engine does NOT reap the resolver's process tree (Deno has no process-group
-# primitive), so a shell-wrapper resolver can leave a descendant running past the
-# timeout — it cannot inject into the runtime, but may keep a vault unlocked.
+# The engine does NOT reap the resolver's process tree (the resolver is not
+# started as a process-group leader), so a shell-wrapper resolver can leave a
+# descendant running past the timeout — it cannot inject into the runtime, but
+# may keep a vault unlocked.
 # PREFER A DIRECT-BINARY RESOLVER (`op read` has no descendant tree). Closing
 # stdin also does NOT stop a GUI-integrated manager from raising a biometric
 # prompt out-of-band. Milliseconds; default 10000.

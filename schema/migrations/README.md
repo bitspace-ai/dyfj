@@ -14,7 +14,7 @@ against the shape it upgrades from, and fold its effect into `schema/current/`
    must each apply cleanly (`npm run validate-schema`).
 2. The two must produce the same structure (`schema.equivalence`).
 3. The generated row types must match the DDL (`schema.codegen`; regenerate
-   with `deno task schema:codegen`).
+   with `npm run schema:codegen`).
 
 The historical replay files in `schema/history/` remain validation input, but
 new work should not add files there unless reconstructing prior provenance.

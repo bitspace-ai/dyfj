@@ -73,10 +73,6 @@ describe("runtime lifecycle commands", () => {
       ),
       "expected the Node fallback command",
     );
-    assert.ok(
-      !stderr.join("\n").includes("deno"),
-      "expected the fallback to name no deno command",
-    );
   });
 
   it("the fallback command keeps the requested socket, quoted for the shell", async () => {

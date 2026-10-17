@@ -382,7 +382,6 @@ function stalledInitializeProfile(
   pidFile: string,
 ): AcpExecutionProfile {
   const base = fixtureProfile(workspace);
-  const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
     initializeTimeoutMs: 2_000,
@@ -393,7 +392,6 @@ function stalledInitializeProfile(
     ...fixtureAgentCommand({ scriptArgs: [`--pid-file=${pidFile}`] }),
     environment: {
       ...base.environment,
-      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
       ACP_FIXTURE_MODE: "initialize_mute",
@@ -406,7 +404,6 @@ function methodLogProfile(
   methodLog: string,
 ): AcpExecutionProfile {
   const base = fixtureProfile(workspace);
-  const home = process.env.HOME ?? "/tmp";
   return {
     ...base,
     initializeTimeoutMs: 2_000,
@@ -417,7 +414,6 @@ function methodLogProfile(
     ...fixtureAgentCommand({ scriptArgs: [`--method-log=${methodLog}`] }),
     environment: {
       ...base.environment,
-      DENO_DIR: process.env.DENO_DIR ?? join(home, ".cache/deno"),
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       ACP_FIXTURE_ALLOWED: "yes",
     },
@@ -834,10 +830,10 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     assert.deepStrictEqual(h.events, []);
   });
 
-  it("does not read or forward an ambient runtime cache path", async () => {
-    await withEnvOverlay({ DENO_DIR: "/tmp/acp-declared-deno-dir" }, () => {
+  it("does not read or forward an ambient cache path", async () => {
+    await withEnvOverlay({ XDG_CACHE_HOME: "/tmp/acp-declared-cache" }, () => {
       const profile = fixtureProfile(process.cwd());
-      assertNoProperty(profile.environment, "DENO_DIR");
+      assertNoProperty(profile.environment, "XDG_CACHE_HOME");
       assert.deepStrictEqual(
         { command: profile.command, args: profile.args },
         fixtureAgentCommand(),

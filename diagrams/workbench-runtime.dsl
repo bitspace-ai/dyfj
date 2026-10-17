@@ -7,8 +7,8 @@ workspace "DYFJ Workbench Runtime" "C4 views for the Workbench runtime and its C
     mcpServers = softwareSystem "External MCP Servers" "Configured Streamable HTTP servers behind allowlisted tools, including web_search and web_fetch."
 
     dyfj = softwareSystem "DYFJ" "Local-first AI workbench and automation framework." {
-      cli = container "Workbench CLI" "Parses command-line input, runs the interactive REPL, renders text output and receipts." "Deno / TypeScript"
-      uds = container "JSON-RPC/UDS Seam" "Exposes the local Unix-socket JSON-RPC transport." "Deno / TypeScript"
+      cli = container "Workbench CLI" "Parses command-line input, runs the interactive REPL, renders text output and receipts." "Node.js / TypeScript"
+      uds = container "JSON-RPC/UDS Seam" "Exposes the local Unix-socket JSON-RPC transport." "Node.js / TypeScript"
       runtime = container "Workbench Runtime" "Executes one Workbench turn: context loading, model routing, command/tool calls, events, sessions, budgets, and receipt facts; runs external-agent turns over ACP." "TypeScript"
       commands = container "Command Registry" "Projects bounded commands as model tools and executes policy-checked command calls." "TypeScript"
       modelRouter = container "Provider Path" "Selects a model, shapes OpenAI-compatible, Anthropic, and Gemini requests, parses responses, tool calls, timings, usage, and cost." "TypeScript"

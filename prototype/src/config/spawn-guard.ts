@@ -44,7 +44,6 @@ export class SpawnRefusedError extends Error {
 }
 
 function printable(command: string): string {
-  // deno-lint-ignore no-control-regex
   const visible = command.replace(/[\u0000-\u001f\u007f]/g, "?");
   return visible.length > 256 ? `${visible.slice(0, 256)}…` : visible;
 }

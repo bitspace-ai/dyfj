@@ -17,7 +17,7 @@
  *   same-layer edges, imports of a unit from outside its `importOnlyFrom`
  *   importers (only `server/` and `cli/` import `extensions/`), `cli/`
  *   allow-list breaches, dynamic local imports,
- *   direct `Deno.env`/`process.env` access outside `config/` and the
+ *   direct env access (`process.env` and the like) outside `config/` and the
  *   entrypoints named in `arch-layers.json`, and `DYFJ_*` key literals in
  *   any scanned module (runtime, `mcp/` and the `scripts/` tooling) that
  *   `CONFIG_SCHEMA` does not declare; a confined package (`mysql2`) imported
@@ -131,7 +131,7 @@ export interface Baseline {
   layer: string[];
   cli: string[];
   dynamic: string[];
-  /** `<module>: Deno.env|process.env` read outside config/ and entrypoints. */
+  /** `<module>: <owner>.env` read outside config/ and entrypoints. */
   env: string[];
   /** `<module>: DYFJ_*` key in a scanned module that the schema lacks. */
   envKeys: string[];
@@ -369,7 +369,7 @@ export function validatePackageAndSqlRules(
 
 /** `mysql2/promise`, `npm:mysql2@3/promise` -> `mysql2`; scoped names kept. */
 export function packageName(specifier: string): string {
-  const bare = specifier.replace(/^(?:npm|jsr):/, "");
+  const bare = specifier.replace(/^npm:/, "");
   const segments = bare.split("/");
   const strip = (segment: string) => segment.replace(/(.)@.*$/, "$1");
   return bare.startsWith("@")

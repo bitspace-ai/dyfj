@@ -2,12 +2,10 @@
  * Unix socket paths for integration tests that bind or dial a real socket (the
  * `src/transport/`, `src/server/` and `src/cli/` integration tests).
  *
- * `deno test` grants Unix-socket access per exact path
- * (`--allow-net=unix:<path>`);
- * a directory grant does not cover the sockets inside it. The integration
- * lane (`scripts/isolated-dolt-integration.ts`) therefore creates one
- * directory, passes it in `UDS_TEST_SOCKET_DIR_ENV`, and grants every path
- * named here. A test that needs another socket adds its name to the list.
+ * The integration lane (`scripts/isolated-dolt-integration.ts`) creates one
+ * directory, passes it in `UDS_TEST_SOCKET_DIR_ENV`, and removes it after the
+ * run. Every socket a test binds is named here, inside that directory. A test
+ * that needs another socket adds its name to the list.
  */
 
 import { processEnv } from "../../src/config/env.ts";
