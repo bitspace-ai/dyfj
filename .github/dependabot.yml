@@ -7,7 +7,7 @@
 # younger than an install would accept. Dependabot's own default is also 3
 # days; declaring it keeps the floor from resting on an upstream default.
 # Cooldown applies to version updates only, not security updates.
-# `deno task test` (dependency.policy) checks these lanes.
+# `npm test` (dependency.policy) checks these lanes.
 
 version: 2
 updates:

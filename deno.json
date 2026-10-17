@@ -7,8 +7,8 @@
     "frozen": true
   },
   "tasks": {
-    "test": "DENO_BIN=$(deno run prototype/scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DENO_BIN,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS,GITHUB_EVENT_NAME,DYFJ_TEST_BOUND_SEC \"--allow-read=.,$HOME/.dyfj/run/gate-lanes\" \"--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,$HOME/.dyfj/run/gate-lanes\" --allow-run=\"$DENO_BIN,cargo,dolt,node\" --allow-net=127.0.0.1 scripts/aggregate-test-gate.ts",
-    "test:fast": "DENO_BIN=$(deno run prototype/scripts/deno-executable.ts) && DENO_BIN=\"$DENO_BIN\" deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DENO_BIN,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS,DYFJ_TEST_BOUND_SEC \"--allow-read=.,$HOME/.dyfj/run/gate-lanes\" \"--allow-write=$HOME/.dyfj/run/gate-lanes\" --allow-run=\"$DENO_BIN,node\" scripts/aggregate-test-gate.ts --fast",
+    "test": "npm test",
+    "test:fast": "npm run test:fast",
     "test:schema": "deno run --no-prompt --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE --allow-read=. --allow-run=node scripts/run-node-test-files.ts --lane schema schema/validate-schema.test.ts schema/codegen.test.ts schema/equivalence.test.ts schema/model-catalog.test.ts",
     "validate-schema": "deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE --allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders --allow-run=dolt schema/validate-schema.ts",
     "schema:codegen": "deno run --allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE --allow-read=schema,prototype/src/store/generated,/tmp,/private/tmp,/var/folders,/private/var/folders --allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,prototype/src/store/generated --allow-run=dolt schema/codegen.ts",

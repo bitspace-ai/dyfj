@@ -48,7 +48,7 @@ Agents: read these before starting any WO.
      private tracker link (a Linear URL or other deep link a public reader
      cannot open) in a public artifact (AGENTS.md; `specs/README.md` D30).
 6. **Gate before push.**
-   - `deno task test` is green locally.
+   - `npm test` is green locally.
    - The PR description lists the gate result, the `arch.imports` baseline
      delta, and the size report for touched modules.
 7. **Stop and ask** if a WO step would require a behavior change, a DDL change,

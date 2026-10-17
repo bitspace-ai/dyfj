@@ -38,8 +38,8 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
    on the unchanged code before the fix, and that evidence is recorded on
    the issue. Changes with nothing to test, such as docs, have no such
    step.
-4. Before a change is called done, the aggregate gate (`deno task test` from
-   the repository root) is green in full, Dolt integration lane included.
+4. Before a change is called done, the aggregate gate (`npm test` from the
+   repository root) is green in full, Dolt integration lane included.
    Report the gate's own status line, not a summary of it. A red lane is not
    "pre-existing" until that lane has been run on `main` and shown red there.
 5. Stop at believed-final and wait. No self-review; no acting on a review

@@ -10,13 +10,14 @@
  * properties on the workflow text so a drift fails the aggregate gate itself.
  */
 
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const WORKFLOW_URL = new URL("../.github/workflows/gate.yml", import.meta.url);
 
 function workflowText(): Promise<string> {
-  return Deno.readTextFile(fileURLToPath(WORKFLOW_URL));
+  return readFile(fileURLToPath(WORKFLOW_URL), "utf8");
 }
 
 function assertIncludes(text: string, expected: string): void {
@@ -31,17 +32,17 @@ function assertExcludes(text: string, banned: string): void {
   }
 }
 
-Deno.test("gate workflow runs the repository-owned aggregate command", async () => {
+test("gate workflow runs the repository-owned aggregate command", async () => {
   const text = await workflowText();
-  const runs = text.match(/^\s+run: deno task test$/gm) ?? [];
+  const runs = text.match(/^\s+run: npm test$/gm) ?? [];
   if (runs.length !== 2) {
     throw new Error("Linux and macOS must each run the repository-owned gate");
   }
 });
 
-Deno.test("gate workflow does not restate lane definitions in YAML", async () => {
+test("gate workflow does not restate lane definitions in YAML", async () => {
   const text = await workflowText();
-  // Lane vocabulary lives in scripts/ and deno.json; its presence here would
+  // Lane vocabulary lives in scripts/ and package.json; its presence here would
   // mean a second copy of the gate's ontology.
   for (
     const banned of [
@@ -57,7 +58,7 @@ Deno.test("gate workflow does not restate lane definitions in YAML", async () =>
   }
 });
 
-Deno.test("gate workflow holds least-privilege permissions", async () => {
+test("gate workflow holds least-privilege permissions", async () => {
   const text = await workflowText();
   assertIncludes(text, "permissions:\n  contents: read");
   if (/^\s*[a-z-]+:\s*write\s*$/m.test(text)) {
@@ -65,7 +66,7 @@ Deno.test("gate workflow holds least-privilege permissions", async () => {
   }
 });
 
-Deno.test("gate workflow keeps untrusted pull-request code away from secrets", async () => {
+test("gate workflow keeps untrusted pull-request code away from secrets", async () => {
   const text = await workflowText();
   assertExcludes(text, "pull_request_target");
   assertExcludes(text, "workflow_run");
@@ -73,7 +74,7 @@ Deno.test("gate workflow keeps untrusted pull-request code away from secrets", a
   assertIncludes(text, "pull_request:");
 });
 
-Deno.test("gate workflow pins every action to a full commit digest", async () => {
+test("gate workflow pins every action to a full commit digest", async () => {
   const text = await workflowText();
   const uses = [...text.matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)].map(
     (match) => match[1] ?? "",
@@ -88,13 +89,13 @@ Deno.test("gate workflow pins every action to a full commit digest", async () =>
   }
 });
 
-Deno.test("gate workflow triggers on pull requests and main-branch pushes", async () => {
+test("gate workflow triggers on pull requests and main-branch pushes", async () => {
   const text = await workflowText();
   assertIncludes(text, "pull_request:");
   assertIncludes(text, "push:\n    branches: [main]");
 });
 
-Deno.test("gate workflow can be dispatched only with an explicit range base", async () => {
+test("gate workflow can be dispatched only with an explicit range base", async () => {
   const text = await workflowText();
   // A manual run has no push or pull-request base, so the caller must name
   // one; the range lanes still fail closed on a base they cannot resolve.
@@ -105,19 +106,19 @@ Deno.test("gate workflow can be dispatched only with an explicit range base", as
   assertIncludes(text, "required: true");
 });
 
-Deno.test("gate workflow bounds runtime and separates cancellation from failure", async () => {
+test("gate workflow bounds runtime and separates cancellation from failure", async () => {
   const text = await workflowText();
   assertIncludes(text, "timeout-minutes:");
   assertIncludes(text, "concurrency:");
   assertIncludes(text, "cancel-in-progress:");
 });
 
-Deno.test("gate workflow exposes the stable required-check job name", async () => {
+test("gate workflow exposes the stable required-check job name", async () => {
   const text = await workflowText();
   assertIncludes(text, "\n  full-gate:\n");
 });
 
-Deno.test("gate workflow names explicit Linux and macOS runner versions", async () => {
+test("gate workflow names explicit Linux and macOS runner versions", async () => {
   const text = await workflowText();
   assertIncludes(text, "runs-on: ubuntu-24.04");
   assertIncludes(text, "\n  macos-portability:\n");
@@ -128,7 +129,7 @@ Deno.test("gate workflow names explicit Linux and macOS runner versions", async 
   assertExcludes(text, "runs-on: macos-latest");
 });
 
-Deno.test("gate workflow binds the exact subject and release range", async () => {
+test("gate workflow binds the exact subject and release range", async () => {
   const text = await workflowText();
   assertIncludes(text, "DYFJ_GATE_SUBJECT: ${{ github.sha }}");
   // Both jobs (Linux and macOS) bind the same subject and range, including
@@ -142,12 +143,12 @@ Deno.test("gate workflow binds the exact subject and release range", async () =>
   assertIncludes(text, "fetch-depth: 0");
 });
 
-Deno.test("gate workflow drops the checkout credential", async () => {
+test("gate workflow drops the checkout credential", async () => {
   const text = await workflowText();
   assertIncludes(text, "persist-credentials: false");
 });
 
-Deno.test("gate workflow uses no mutable installer shapes", async () => {
+test("gate workflow uses no mutable installer shapes", async () => {
   const text = await workflowText();
   assertExcludes(text, "releases/latest");
   assertExcludes(text, "latest/download");
@@ -157,7 +158,7 @@ Deno.test("gate workflow uses no mutable installer shapes", async () => {
   }
 });
 
-Deno.test("gate workflow verifies exact pinned tool versions", async () => {
+test("gate workflow verifies exact pinned tool versions", async () => {
   const text = await workflowText();
   assertIncludes(text, "releases/download/v2.9.6/");
   assertIncludes(text, 'grep -F "deno 2.9.6"');
@@ -209,7 +210,7 @@ function archiveUses(text: string): ArchiveUse[] {
   return uses;
 }
 
-Deno.test("gate workflow verifies a pinned digest before unpacking any archive", async () => {
+test("gate workflow verifies a pinned digest before unpacking any archive", async () => {
   const text = await workflowText();
   const uses = archiveUses(text);
   if (uses.length < 2) {
@@ -240,7 +241,7 @@ Deno.test("gate workflow verifies a pinned digest before unpacking any archive",
   }
 });
 
-Deno.test("gate workflow pins archive digests in-repository, never at run time", async () => {
+test("gate workflow pins archive digests in-repository, never at run time", async () => {
   const text = await workflowText();
   const checks = text.split("\n").filter((line) => DIGEST_CHECK.test(line));
   if (checks.length === 0) {
@@ -282,7 +283,7 @@ Deno.test("gate workflow pins archive digests in-repository, never at run time",
 // toolchain is not downloaded by this workflow at all, and its visible
 // evidence is the repository's exact pin plus a reported-version check. A
 // step may not claim more than its own body does.
-Deno.test("gate workflow claims digest verification only where a digest is checked", async () => {
+test("gate workflow claims digest verification only where a digest is checked", async () => {
   const text = await workflowText();
   assertIncludes(
     text,
@@ -302,7 +303,7 @@ Deno.test("gate workflow claims digest verification only where a digest is check
   }
 });
 
-Deno.test("gate workflow run blocks fail closed on pipeline errors", async () => {
+test("gate workflow run blocks fail closed on pipeline errors", async () => {
   const text = await workflowText();
   const multiline = text.match(/run: \|/g) ?? [];
   const strict = text.match(/set -euo pipefail/g) ?? [];
@@ -337,7 +338,7 @@ test("each gate job installs Node 26.11.1 and runs npm ci before the gate", asyn
     const install = job.search(
       /- name: Install npm dependencies \(npm ci from the committed lockfile\)\n\s+run: npm ci\n/,
     );
-    const gate = job.search(/run: deno task test\n/);
+    const gate = job.search(/run: npm test\n/);
     if (setup < 0) throw new Error("a gate job does not set up Node 26.11.1");
     if (install < 0) {
       throw new Error("a gate job does not run npm ci at the repository root");

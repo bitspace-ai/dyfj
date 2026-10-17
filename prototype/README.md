@@ -13,9 +13,10 @@ You'll need [Node.js](https://nodejs.org) 26 with npm: the runtime and the
 alone installs the npm dependencies. This directory is a member of the one
 npm workspace at the repository root, so run `npm ci` at the repository root,
 which holds the lockfile and installs into the root `node_modules`; rerun it
-after any change to the root `package-lock.json`. [Deno](https://deno.com)
-2.9+ runs the gate, the test lanes and the typecheck and schema `deno task`
-tooling until their own move to Node.
+after any change to the root `package-lock.json`. The repository gate runs on
+Node (`npm test` at the repository root). [Deno](https://deno.com) 2.9+ still
+runs the `deno check` typecheck lanes, the schema `deno task` tooling and the
+remaining `deno test` subsets until their own move to Node.
 
 ```sh
 (cd .. && npm ci)
@@ -246,7 +247,7 @@ Useful checks:
 deno task check          # check:sources, then check:tests
 deno task check:sources  # every non-test module under src, mcp, scripts, testing
 deno task check:tests    # every test file
-deno task test:unit      # unit lane (test.unit): node --test (gate-tooling files: deno test)
+deno task test:unit      # unit lane (test.unit): node --test (remaining Deno files: deno test)
 deno task test           # checks, then test:unit
 deno task test:file <path>... [--filter <pattern>]
                          # named unit test files, no full typecheck
@@ -254,16 +255,16 @@ deno task test:file <path>... [--filter <pattern>]
 npm run verify-workbench-events  # one live turn, then check its journal events
 deno task test:golden    # golden characterization suite (needs Dolt)
 deno task test:golden --update  # rewrite snapshots (see below)
-(cd .. && deno task test) # repository aggregate gate
+(cd .. && npm test)      # repository aggregate gate
 ```
 
 Use `test:file` for tight iteration loops on a unit test file: it skips the full
 typecheck and runs only the named files, routed as `test:unit` routes them: a
-product test file runs under `node --test` (unsandboxed), and a gate-tooling file
-under `scripts/` that registers with `Deno.test` gets `deno test` with the lane's
+product test file runs under `node --test` (unsandboxed), and a file under
+`scripts/` that still registers with `Deno.test` gets `deno test` with the lane's
 grants and sanitizers. It runs unit files only: a
 `*.integration.test.ts` path is rejected before either runtime starts, with exit 2
-and a message naming the file and the integration lane (`deno task test` from the
+and a message naming the file and the integration lane (`npm test` from the
 repository root), since an integration file needs the isolated Dolt fixture. Use `test` before commit: it
 typechecks the entire codebase and runs the unit lane.
 
@@ -274,11 +275,11 @@ name: `*.integration.test.ts` files run in the isolated-Dolt integration lane,
 
 Product tests run on `node:test` only (decision D32, `specs/03-testing.md` §1). Each
 lane routes every file by its path and content: a test file under `scripts/` that
-calls `Deno.test` or imports `@std/testing/bdd` is a gate-tooling test and runs under
-`deno test` until the gate-tooling port; every other file runs under `node --test`;
+calls `Deno.test` or imports `@std/testing/bdd` is a remaining Deno test and runs under
+`deno test` until S3.3d of decision D32; every other file runs under `node --test`;
 and a file outside `scripts/` that calls `Deno.test` or imports `@std/testing/bdd`
 fails discovery with its path in the message. The unit and integration runners run
-their gate-tooling `deno test` subset first; all three runners run their Node files
+their remaining `deno test` subset first; all three runners run their Node files
 with `node --test --import testing/node-handle-check.ts --test-concurrency=<jobs>
 --test-reporter=tap`, one process per file, with the lane's environment
 (`scripts/node-test-lane.ts`); the unit and integration runners add `DENO_BIN`
@@ -306,8 +307,8 @@ from `prototype/`.
 
 Product unit and component tests run unsandboxed under `node --test`, so nothing
 stops one from reaching Dolt, the network or a child process; keeping them off those
-is the test author's job. Until the gate-tooling port, `test:unit` runs its
-gate-tooling `deno test` subset with `deno test --parallel --sanitize-ops
+is the test author's job. Until S3.3d of decision D32, `test:unit` runs its
+remaining `deno test` subset with `deno test --parallel --sanitize-ops
 --sanitize-resources` (both sanitizers are opt-in in the pinned Deno), with read
 access to the prototype and temp roots, write access to temp roots only, env access to
 `TMPDIR`, `TMP` and `TEMP` only (`node:os` `tmpdir()` reads them), and no run or net
@@ -374,7 +375,7 @@ The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
 lane runs every `*.integration.test.ts`: product files under `node --test` with the
 per-file handle check, which catches a leaked server, socket, timer or child process, per
-file; and, until the gate-tooling port, its `scripts/` files on `Deno.test` under
+file; and, until S3.3d of decision D32, its `scripts/` files on `Deno.test` under
 `deno test` with the op and resource sanitizers enabled. The sanitizers fail the test
 that leaks a timer, but they do not see `node:` resources. A test may opt out of a
 sanitizer only with a comment naming the leak and why it is unavoidable. Under the gate,
@@ -385,10 +386,10 @@ dies; the root README describes it. A direct `deno task` run is unsupervised. Th
 a temporary Dolt repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane process
 receives SIGTERM followed by a bounded wait and possible SIGKILL. The prototype and root
-test tasks resolve the selected Deno executable once per entrypoint and reuse that
-absolute command identity in nested run grants; the `node` runners of `test:unit`,
-`test:file` and the integration lane take it as `DENO_BIN` for their gate-tooling
-`deno test` subset, and `test:golden` (`node testing/golden/run.ts`) needs none. The Rust tracer test retains
+test tasks resolve the selected Deno executable once per entrypoint (the root gate
+takes `DENO_BIN`, else asks `scripts/deno-executable.ts`) and reuse that absolute
+command identity; the `node` runners of `test:unit`, `test:file` and the integration
+lane take it as `DENO_BIN` for their remaining `deno test` subset, and `test:golden` (`node testing/golden/run.ts`) needs none. The Rust tracer test retains
 its manual-run `.env` loader, but the fixture's explicit `DATABASE_URL` takes
 precedence, so the lane does not use an operator database.
 

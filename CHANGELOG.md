@@ -49,6 +49,33 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The gate runs on Node, and `npm test` is its entry.** The aggregate gate
+  (`scripts/aggregate-test-gate.ts`) is written to `node:` builtins: it starts
+  each lane with `node:child_process` as the leader of its own process group,
+  handles SIGINT and SIGTERM through `process`, lists processes with `ps` and
+  signals lane groups itself in place of short-lived `deno eval` children, and
+  keeps its lane table, labels, check ids, deadlines, fast and docs-only
+  subsets and `gate-status` line unchanged. The root `npm test` and
+  `npm run test:fast` run `node scripts/aggregate-test-gate.ts [--fast]`, the
+  root `deno.json`'s `test` and `test:fast` tasks are one-line shims to them,
+  and both CI jobs run `npm test` after `npm ci`, with the pinned Deno still
+  installed. Every per-lane `--allow-*` grant string is gone: lanes run as
+  plain `node`, `cargo` and `dolt`, unsandboxed, from the same cleared
+  environment. The Deno lanes left are the two `deno check` typecheck lanes,
+  until close-out, and the receipt-schema test and the four schema CLI lanes,
+  which run as `deno run -A` with no grant list, until S3.3d. The gate finds
+  the selected Deno by running `prototype/scripts/deno-executable.ts` with the
+  `deno` on `PATH` and resolving symbolic links, and exits 64 with the
+  selector's diagnostic before any lane when that fails. The contract
+  closure-report comparison runs as `node` and writes nothing, in place of a
+  `deno run` with writes denied. The gate's own tests
+  (`scripts/aggregate-test-gate.test.ts`, the gate-driver fixture,
+  `ci-workflow`, `git-hooks`, `lane-supervision`, `runtime-neutral` and the
+  ported static checks' tests) and `prototype/scripts/test-files.test.ts` are
+  on `node:test`; the orchestration lane runs them under `node --test` through
+  `scripts/run-node-test-files.ts`, which now also forwards `DENO_BIN`. The
+  docs, the rooms guide and the work orders name `npm test` as the gate.
+  Decision D32.
 - **The test-lane runners and their supervision run on Node.** The unit,
   isolated-Dolt integration and golden runners
   (`prototype/scripts/run-unit-tests.ts`,

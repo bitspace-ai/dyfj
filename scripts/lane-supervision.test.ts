@@ -49,17 +49,11 @@ const SUPERVISION_URL = new URL(
   import.meta.url,
 ).href;
 const skip = process.platform === "win32";
-// The runtime running these tests, which runs the gate driver: the gate
-// stays on it until the gate-tooling port.
-const gateRuntime = process.execPath;
-
-// An explicit environment for every child: with none, `node:child_process`
-// copies every variable, which this lane's grant of named variables forbids.
-// The gate driver runs on the gate's runtime, which reads its cache from HOME
-// or DENO_DIR.
+// An explicit environment for every child: the gate driver gets the names
+// the gate itself forwards, and nothing else from this process.
 function childEnv(): Record<string, string> {
   return Object.fromEntries(
-    ["PATH", "HOME", "TMPDIR", "DENO_DIR"].flatMap((name) => {
+    ["PATH", "HOME", "TMPDIR"].flatMap((name) => {
       const value = process.env[name];
       return value === undefined ? [] : [[name, value]];
     }),
@@ -180,12 +174,7 @@ function exited(child: ChildProcess): Promise<number | null> {
 }
 
 function startGateDriver(dir: string, mode: RunnerMode, deadlineMs: number) {
-  return spawn(gateRuntime, [
-    "run",
-    "--allow-env",
-    "--allow-read",
-    "--allow-write",
-    "--allow-run",
+  return spawn(process.execPath, [
     DRIVER,
     dir,
     mode,

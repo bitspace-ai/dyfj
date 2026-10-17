@@ -3,11 +3,12 @@
 // supervision tests can SIGKILL the gate mid-lane. Lane records go to
 // `<dir>/records`.
 //
-// Usage: gate-driver.fixture.ts <dir> <exit|hang|second-step> <deadline-ms>
+// Usage: node gate-driver.fixture.ts <dir> <exit|hang|second-step> <deadline-ms>
 import { runGate } from "./aggregate-test-gate.ts";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const [dir, mode, deadline] = Deno.args;
+const [dir, mode, deadline] = process.argv.slice(2);
 const runner = fileURLToPath(
   new URL("./lane-runner.fixture.ts", import.meta.url),
 );
@@ -20,4 +21,4 @@ const code = await runGate({
   }],
   laneRecordDir: `${dir}/records`,
 });
-Deno.exit(code);
+process.exit(code);

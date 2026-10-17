@@ -83,7 +83,7 @@ export function unitTestArgs(
 export function integrationFileRejection(path: string): string {
   return `${path} is an integration test; test:file runs unit test files ` +
     "only, on neither runtime. Run it in the isolated-Dolt integration lane " +
-    "with `deno task test` from the repository root.";
+    "with `npm test` from the repository root.";
 }
 
 export const TEST_FILE_USAGE =

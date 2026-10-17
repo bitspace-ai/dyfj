@@ -125,6 +125,8 @@ test("only gate-tooling tests in the prototype tree run on the existing runner",
     assert.ok(path.startsWith("scripts/"), path);
   }
   assert.ok(partition.node.includes("scripts/test-routing.test.ts"));
-  assert.ok(partition.deno.includes("scripts/test-files.test.ts"));
+  // On node:test since the gate-tooling port.
+  assert.ok(partition.node.includes("scripts/test-files.test.ts"));
+  assert.ok(partition.deno.includes("scripts/deno-executable.test.ts"));
   assert.ok(partition.node.includes("src/kernel/clock.test.ts"));
 });
