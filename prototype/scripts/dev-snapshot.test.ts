@@ -152,3 +152,20 @@ test("the lock recorded is the one the runtime booted on, not the one at copy ti
   await promoteSnapshot(f, await sourceTreeHash(f.source), at, bootLock);
   assert.deepStrictEqual(await checkSnapshot(f), { ok: false, reason: "lock" });
 });
+
+test("a swap whose restore also fails says where the previous snapshot is", async () => {
+  await using f = await fixture();
+  await promoteSnapshot(f, await sourceTreeHash(f.source), at);
+  await writeFile(join(f.source, "a.ts"), "export const a = 4;\n");
+  let renames = 0;
+  const failing: SnapshotPaths = {
+    ...f,
+    rename: async (from, to) => {
+      if (++renames >= 2) throw new Error("EIO");
+      await rename(from, to);
+    },
+  };
+  const result = await promoteSnapshot(failing, await sourceTreeHash(f.source), at);
+  assert.ok(!result.ok);
+  assert.match(result.error, /could not be put back and is at .*\.dyfj-dev-last-good\.retired-\d+$/);
+});

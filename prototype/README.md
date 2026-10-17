@@ -123,8 +123,8 @@ dev socket. Then:
   for the process, the copy is kept only if its content hash is the
   `fingerprint.contentHash` the runtime reported (a save can land between the
   boot and the copy), and it is swapped in at `.dyfj-dev-last-good/` with a
-  record of that hash, the time and the sha256 of `../package-lock.json` when
-  the runtime started. The
+  record of that hash, the time and the sha256 of `../package-lock.json`
+  sampled just before the runtime was spawned. The
   copy sits beside `src/`, so the files the runtime finds from its own
   location resolve as they do from `src/`: the Codex ACP package from the
   directory above, the code fingerprint from the copy itself. Every

@@ -45,7 +45,7 @@ export type StartOutcome =
   | {
     ok: true;
     contentHash?: string | null;
-    /** The lock file's hash when this start began, for the snapshot record. */
+    /** The lock file's hash sampled just before the spawn, for the snapshot record. */
     lockHash?: string;
   }
   | { ok: false; error: string; detail?: string };

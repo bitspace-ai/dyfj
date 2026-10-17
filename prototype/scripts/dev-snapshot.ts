@@ -19,9 +19,10 @@
  *   reported), writes the record, and swaps it in: the current snapshot
  *   moves to a retired directory, staging moves into place, and the retired
  *   copy is removed. `rename(2)` cannot replace a directory that has files,
- *   hence two renames. If the second fails, the retired copy is moved back. A
- *   crash between them leaves no snapshot, never a partial one, and every use
- *   re-hashes the snapshot against its record.
+ *   hence two renames. If the second fails, moving the retired copy back is
+ *   attempted; if that fails too, the error names where the retired copy is
+ *   left. A crash between them leaves no snapshot, never a partial one, and
+ *   every use re-hashes the snapshot against its record.
  * - Staging and retired directories are named for the promoting process, so
  *   two `dyfj dev` processes on one checkout (a test lane beside the
  *   operator's, say) never copy into the same directory. The published
@@ -106,8 +107,8 @@ const defaultCopy = (from: string, to: string) =>
  * Copy `src` and swap it in as the snapshot, if the copy is the code that
  * booted (`booted`, the runtime's reported content hash). Anything else, a
  * save that landed after the boot included, leaves the current snapshot.
- * `bootLock` is the lock file's hash when the runtime started; the record
- * keeps it, not the lock file's hash at copy time.
+ * `bootLock` is the lock file's hash sampled just before the runtime was
+ * spawned; the record keeps it, not the lock file's hash at copy time.
  */
 export async function promoteSnapshot(
   paths: SnapshotPaths,
@@ -143,7 +144,16 @@ export async function promoteSnapshot(
     try {
       await move(staging, paths.snapshot);
     } catch (error) {
-      if (retiredOne) await move(retired, paths.snapshot).catch(() => {});
+      if (retiredOne) {
+        try {
+          await move(retired, paths.snapshot);
+        } catch {
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)}; ` +
+              `the previous last good code could not be put back and is at ${retired}`,
+          );
+        }
+      }
       throw error;
     }
     await rm(retired, { recursive: true, force: true });
