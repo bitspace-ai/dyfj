@@ -393,3 +393,49 @@ describe("formatUnavailableSecrets", () => {
     );
   });
 });
+
+describe("dyfj status code fingerprint", () => {
+  const fingerprint = {
+    head: "0123456789abcdef0123456789abcdef01234567",
+    contentHash: `sha256:${"c".repeat(64)}`,
+  };
+
+  it("shows the runtime's code version, open clients and turns in flight", () => {
+    const text = formatRuntimeStatus(cfg(), {
+      runtime: { fingerprint, clients: 2, inFlightTurns: 1 },
+    });
+    assert.match(
+      text,
+      /^code: 0123456789ab · sha256:cccccccccccc$/m,
+    );
+    assert.match(text, /^clients: 2 · turns in flight: 1$/m);
+  });
+
+  it("compares the runtime's code with this checkout's", () => {
+    const behind = formatRuntimeStatus(
+      cfg(),
+      { runtime: { fingerprint } },
+      `sha256:${"d".repeat(64)}`,
+    );
+    assert.match(behind, /^code: .* \(runtime is behind the working tree\)$/m);
+    const current = formatRuntimeStatus(
+      cfg(),
+      { runtime: { fingerprint } },
+      fingerprint.contentHash,
+    );
+    assert.match(current, /^code: .* \(matches the working tree\)$/m);
+  });
+
+  it("names an unknown HEAD or hash rather than inventing one", () => {
+    const text = formatRuntimeStatus(cfg(), {
+      runtime: { fingerprint: { head: "unknown", contentHash: "unknown" } },
+    }, `sha256:${"d".repeat(64)}`);
+    assert.match(text, /^code: unknown · unknown$/m);
+  });
+
+  it("an older runtime without these fields keeps the older output", () => {
+    const text = formatRuntimeStatus(cfg(), { runtime: {} }, fingerprint.contentHash);
+    assert.doesNotMatch(text, /^code:/m);
+    assert.doesNotMatch(text, /^clients:/m);
+  });
+});

@@ -110,6 +110,7 @@ export interface BudgetScopes {
 /** The engine's session owners, one per session with a turn in flight. */
 export class SessionOwners implements BudgetScopes {
   readonly #owners = new Map<string, SessionOwner>();
+  #inFlightTurns = 0;
   readonly #confirmations: CeilingConfirmationStore;
 
   /**
@@ -128,6 +129,15 @@ export class SessionOwners implements BudgetScopes {
    */
   budgetScope(sessionId: string): BudgetCeilingConfirmations {
     return this.#confirmations.for(sessionId);
+  }
+
+  /**
+   * The turns admitted through `runTurn` that have not settled, those queued
+   * behind a session's lock included. `runtime/status` reports it, and an
+   * autostarted runtime does not stop while it is above zero.
+   */
+  get inFlightTurns(): number {
+    return this.#inFlightTurns;
   }
 
   /** Admit a turn: issue its cancel signal before it takes the lock. */
@@ -158,7 +168,9 @@ export class SessionOwners implements BudgetScopes {
       ? owner.start(() => run(id))
       : owner.enqueue(() => run(id));
     const current = owner;
+    this.#inFlightTurns++;
     void queued.settled.finally(() => {
+      this.#inFlightTurns--;
       // Drop the owner once this turn is its last, so the registry does not
       // grow with every session ever served.
       if (

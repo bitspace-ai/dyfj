@@ -1229,11 +1229,11 @@ describe("interactive REPL front-end selection", () => {
   async function launch(
     env: Record<string, string>,
     args: string[],
-    { terminal = false } = {},
+    { terminal = false, launcher = LAUNCHER } = {},
   ): Promise<{ code: number | null; out: string; err: string }> {
     const [command, commandArgs] = terminal
-      ? ["python3", ["-c", ON_A_PTY, BASH, LAUNCHER, ...args]]
-      : [BASH, [LAUNCHER, ...args]];
+      ? ["python3", ["-c", ON_A_PTY, BASH, launcher, ...args]]
+      : [BASH, [launcher, ...args]];
     const { code, stdout, stderr } = await output(command, commandArgs, {
       env: {
         DYFJ_LAUNCHER_DRY_RUN: "1",
@@ -1406,6 +1406,101 @@ describe("interactive REPL front-end selection", () => {
       terminal: true,
     });
     assert.doesNotMatch(ts.out, /route=rust_repl/);
+  });
+
+  // A checkout laid out as the launcher expects (prototype/ beside core/),
+  // with the real client sources, a stand-in built REPL binary and stand-ins
+  // for the sources it is built from.
+  async function checkoutWithBuiltRepl(): Promise<{
+    launcher: string;
+    core: string;
+    bin: string;
+  }> {
+    const root = await realTempDir();
+    const prototype = `${root}/prototype`;
+    const core = `${root}/core`;
+    await mkdir(`${prototype}/scripts`, { recursive: true });
+    await writeFile(
+      `${prototype}/scripts/dyfj-launcher.sh`,
+      await readFile(LAUNCHER, "utf8"),
+    );
+    await symlink(fileURLToPath(new URL("../src", import.meta.url)), `${prototype}/src`);
+    await mkdir(`${core}/dyfj-repl/src`, { recursive: true });
+    await mkdir(`${core}/target/release`, { recursive: true });
+    const bin = `${core}/target/release/dyfj-repl`;
+    await writeFile(bin, "#!/bin/sh\nexit 0\n");
+    await chmod(bin, 0o755);
+    const sources = [
+      `${core}/dyfj-repl/src/main.rs`,
+      `${core}/Cargo.toml`,
+      `${core}/dyfj-repl/Cargo.toml`,
+      `${core}/Cargo.lock`,
+    ];
+    for (const source of sources) await writeFile(source, "");
+    // Every source predates the binary.
+    const { utimes } = await import("node:fs/promises");
+    const built = new Date(Date.now() - 60_000);
+    const older = new Date(Date.now() - 120_000);
+    for (const source of sources) await utimes(source, older, older);
+    await utimes(bin, built, built);
+    return { launcher: `${prototype}/scripts/dyfj-launcher.sh`, core, bin };
+  }
+
+  it("warns when the built Rust REPL binary is older than its sources, and builds nothing", async () => {
+    const { launcher, core } = await checkoutWithBuiltRepl();
+    const { utimes } = await import("node:fs/promises");
+    // A cargo on PATH that records any call: the launcher must not run it.
+    const tools = await tempDir("dyfj-cargo-");
+    await writeFile(`${tools}/cargo`, `#!/bin/sh\ntouch '${tools}/called'\n`);
+    await chmod(`${tools}/cargo`, 0o755);
+    const env = { PATH: `${tools}:${process.env.PATH ?? ""}` };
+
+    const fresh = await launch(env, [], { terminal: true, launcher });
+    assert.equal(fresh.code, 0, fresh.out);
+    includes(fresh.out, "route=rust_repl");
+    assert.doesNotMatch(fresh.out, /older than its sources/);
+
+    for (
+      const source of [
+        `${core}/dyfj-repl/src/main.rs`,
+        `${core}/Cargo.toml`,
+        `${core}/dyfj-repl/Cargo.toml`,
+        `${core}/Cargo.lock`,
+      ]
+    ) {
+      const newer = new Date();
+      await utimes(source, newer, newer);
+      const stale = await launch(env, [], { terminal: true, launcher });
+      assert.equal(stale.code, 0, stale.out);
+      includes(stale.out, "route=rust_repl");
+      includes(
+        stale.out,
+        "dyfj: the Rust REPL binary is older than its sources; rebuild it from core/ with: cargo build --release -p dyfj-repl",
+      );
+      const before = new Date(Date.now() - 120_000);
+      await utimes(source, before, before);
+    }
+    assert.equal(
+      await stat(`${tools}/called`).then(() => true, () => false),
+      false,
+      "the launcher never runs cargo",
+    );
+  });
+
+  it("does not judge a REPL binary the operator chose with DYFJ_REPL_BIN", async () => {
+    const { launcher, core } = await checkoutWithBuiltRepl();
+    const { utimes } = await import("node:fs/promises");
+    const newer = new Date();
+    await utimes(`${core}/dyfj-repl/src/main.rs`, newer, newer);
+    const chosen = await fakeReplBin();
+    const { code, out } = await launch(
+      { DYFJ_REPL_BIN: chosen },
+      [],
+      { terminal: true, launcher },
+    );
+    assert.equal(code, 0, out);
+    includes(out, "route=rust_repl");
+    assert.doesNotMatch(out, /older than its sources/);
   });
 });
 

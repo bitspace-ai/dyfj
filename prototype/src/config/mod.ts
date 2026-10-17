@@ -7,7 +7,8 @@
  * into the environment (`secrets.ts`), the launch-resolved
  * nameserver net grants, and the runtime's egress, spawn and env policy with
  * the guards that enforce it at the product's seams (`runtime-policy.ts`,
- * `egress.ts`, `spawn-guard.ts`). Nothing else in the runtime
+ * `egress.ts`, `spawn-guard.ts`), and the code fingerprint the runtime records
+ * and its clients compare (`code-fingerprint.ts`). Nothing else in the runtime
  * reads the process environment directly.
  *
  * Allowed dependencies: none outside this directory (and `smol-toml`, loaded
@@ -15,6 +16,15 @@
  */
 
 export { type Env, type MutableEnv, processEnv } from "./env.ts";
+export {
+  type CodeFingerprint,
+  codeFingerprint,
+  compareFreshness,
+  FINGERPRINT_UNKNOWN,
+  type Freshness,
+  prototypeSourceDir,
+  sourceTreeHash,
+} from "./code-fingerprint.ts";
 export { readTextFile } from "./read-text-file.ts";
 export {
   envFileVar,

@@ -253,3 +253,98 @@ test("runtime/stop surfaces an onShutdown failure as internalError", async () =>
     `expected error.message to include "runtime shutdown failed"`,
   );
 });
+
+const FINGERPRINT = {
+  head: "0123456789abcdef0123456789abcdef01234567",
+  contentHash: `sha256:${"c".repeat(64)}`,
+};
+
+test("runtime/status reports the code fingerprint, open clients and in-flight turns", async () => {
+  const { runtime } = await callRpc(
+    handlers({
+      fingerprint: FINGERPRINT,
+      activity: () => ({ clients: 2, inFlightTurns: 1 }),
+    }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert.deepStrictEqual(runtime.fingerprint, FINGERPRINT);
+  assert.strictEqual(runtime.clients, 2);
+  assert.strictEqual(runtime.inFlightTurns, 1);
+});
+
+test("runtime/status reads activity at call time, not at build time", async () => {
+  let inFlightTurns = 0;
+  const built = handlers({
+    activity: () => ({ clients: 1, inFlightTurns }),
+  });
+  inFlightTurns = 3;
+  const { runtime } = await callRpc(built, "runtime/status") as {
+    runtime: Record<string, unknown>;
+  };
+  assert.strictEqual(runtime.inFlightTurns, 3);
+});
+
+test("runtime/stop with ifSoleClient stops when this is the only client and no turn runs", async () => {
+  let shutdownCalled = false;
+  const result = await callRpc(
+    handlers({
+      activity: () => ({ clients: 1, inFlightTurns: 0 }),
+      onShutdown: () => {
+        shutdownCalled = true;
+      },
+    }),
+    "runtime/stop",
+    { ifSoleClient: true },
+  );
+  assert.deepStrictEqual(result, { status: "stopping" });
+  assert.ok(shutdownCalled);
+});
+
+test("runtime/stop with ifSoleClient is declined while another client is connected", async () => {
+  let shutdownCalled = false;
+  const result = await callRpc(
+    handlers({
+      activity: () => ({ clients: 2, inFlightTurns: 0 }),
+      onShutdown: () => {
+        shutdownCalled = true;
+      },
+    }),
+    "runtime/stop",
+    { ifSoleClient: true },
+  ) as { status: string; reason?: string };
+  assert.strictEqual(result.status, "declined");
+  assert.match(result.reason ?? "", /another client/);
+  assert.strictEqual(shutdownCalled, false);
+});
+
+test("runtime/stop with ifSoleClient is declined while a turn is in flight", async () => {
+  let shutdownCalled = false;
+  const result = await callRpc(
+    handlers({
+      activity: () => ({ clients: 1, inFlightTurns: 1 }),
+      onShutdown: () => {
+        shutdownCalled = true;
+      },
+    }),
+    "runtime/stop",
+    { ifSoleClient: true },
+  ) as { status: string; reason?: string };
+  assert.strictEqual(result.status, "declined");
+  assert.match(result.reason ?? "", /turn/);
+  assert.strictEqual(shutdownCalled, false);
+});
+
+test("runtime/stop with ifSoleClient is declined when the server cannot count its clients", async () => {
+  let shutdownCalled = false;
+  const result = await callRpc(
+    handlers({
+      onShutdown: () => {
+        shutdownCalled = true;
+      },
+    }),
+    "runtime/stop",
+    { ifSoleClient: true },
+  ) as { status: string };
+  assert.strictEqual(result.status, "declined");
+  assert.strictEqual(shutdownCalled, false);
+});

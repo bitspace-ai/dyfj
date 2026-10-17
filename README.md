@@ -890,7 +890,13 @@ The workbench speaks a duplex JSON-RPC 2.0 protocol over a Unix domain socket â€
 the canonical `loopback` transport (no TCP port; gated by filesystem
 permissions; full local clearance). It is the seam the terminal clients use. The
 bare `dyfj` launcher starts this runtime automatically when needed, and
-`dyfj start` runs it in the foreground, on Node:
+`dyfj start` runs it in the foreground, on Node. An autostarted runtime stops on
+its own 10 s after its last client disconnects, and a client connecting inside
+that grace keeps it; a runtime started with `dyfj start` stays up until
+`dyfj stop` or Ctrl-C. Each runtime records the code it loaded (git HEAD and a
+content hash of `prototype/src`); `dyfj status` and the REPL's posture line say
+when it is behind the working tree, and the launcher restarts a stale runtime it
+autostarted when nothing else is using it (see `prototype/README.md`):
 
 ```sh
 dyfj start
@@ -915,8 +921,11 @@ for `dyfj stop`; the narrow operator-approved `friction/post` method;
 `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications;
 the receipt is the result). `runtime/liveness` is the cheap probe `dyfj status`
-(and so the launcher's autostart check) sends first; it loads no models and
-queries no Dolt state.
+and the launcher's first probe send first; it loads no models and queries no
+Dolt state. `runtime/status` also reports the runtime's code `fingerprint`, its
+open `clients` and its `inFlightTurns`, and `runtime/stop` with
+`{ ifSoleClient: true }` declines rather than stops while another client is
+connected or a turn is in flight; older clients ignore the added fields.
 `sessions/inspect` returns one session's record, workspace, recorded model (the
 model of its latest completed `provider_call` or `model_response`, compression
 calls excluded, or null), the external-agent runner profile when a later `agent_response` shows
@@ -2497,3 +2506,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-17 - "Build the core" says the Rust REPL survives a runtime restart
   (reconnect, session resume, interrupted turns, cancelled approvals) and that
   the launcher passes it the runtime log as `DYFJ_RUNTIME_LOG`.
+- 2026-10-17 - The JSON-RPC seam section documents the runtime's lifetime (an
+  autostarted runtime stops 10 s after its last client; `dyfj start` stays up),
+  its recorded code fingerprint and the freshness warning and restart, and the
+  added `runtime/status` fields and conditional `runtime/stop`.

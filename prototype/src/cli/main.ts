@@ -15,7 +15,11 @@
  */
 
 import process from "node:process";
-import { processEnv } from "../config/mod.ts";
+import {
+  processEnv,
+  prototypeSourceDir,
+  sourceTreeHash,
+} from "../config/mod.ts";
 import { connectUnixClient } from "../transport/mod.ts";
 import { runRepl } from "../cli.ts";
 import { runExec } from "./commands/exec.ts";
@@ -23,6 +27,7 @@ import { HELP, parseArgs, resolveConfig } from "./args.ts";
 import { type Io, realIo } from "./io.ts";
 import { runModels } from "./commands/models.ts";
 import { runSessions } from "./commands/sessions.ts";
+import { runFreshnessProbe } from "./commands/freshness.ts";
 import { runStart } from "./commands/start.ts";
 import { runStatus } from "./commands/status.ts";
 import { runStop } from "./commands/stop.ts";
@@ -44,6 +49,31 @@ export async function main(argv: string[], io: Io): Promise<number> {
       // which shape the rejection takes.
       return 2;
     }
+  }
+  // Launcher-internal, and out of --help: `--freshness-probe [--socket <path>]`
+  // probes the runtime and stops a stale one the launcher autostarted, for a
+  // restart (commands/freshness.ts). It exits 0 (use the runtime), 1 (nothing
+  // answered) or 3 (stopped; autostart again). The launcher always sets
+  // DYFJ_PROTOTYPE_ROOT on the client it runs, so a call without it did not
+  // come from the launcher and is refused, as `--launcher-autostarted` is
+  // refused outside `start`.
+  if (argv[0] === "--freshness-probe") {
+    const rest = argv.slice(1);
+    const socketOnly = rest.length === 0 ||
+      (rest.length === 2 && rest[0] === "--socket" && rest[1].length > 0);
+    if (!processEnv.get("DYFJ_PROTOTYPE_ROOT") || !socketOnly) {
+      io.err("dyfj: --freshness-probe is launcher-internal");
+      return 2;
+    }
+    const config = resolveConfig(
+      parseArgs(rest).overrides,
+      processEnv,
+      false,
+      process.cwd(),
+    );
+    return await runFreshnessProbe(config, io, {
+      localHash: () => sourceTreeHash(prototypeSourceDir()),
+    });
   }
   const parsed = parseArgs(argv);
   if (parsed.error) io.err(`dyfj: ${parsed.error}`);

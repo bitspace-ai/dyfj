@@ -72,3 +72,53 @@ export async function reapPidsAndCommandsContaining(
   await delay(opts.graceMs ?? 200);
   for (const pid of targets) await killPid(pid, "SIGKILL");
 }
+
+/** A process and its parent, from one scan of the process list. */
+export interface ProcessNode {
+  pid: number;
+  ppid: number;
+  command: string;
+}
+
+/** Every process with its parent pid; empty if `/bin/ps` fails. */
+export async function listProcessTree(): Promise<ProcessNode[]> {
+  const output = await run("/bin/ps", ["-ax", "-o", "pid=,ppid=,command="]);
+  if (output === undefined) return [];
+  const nodes: ProcessNode[] = [];
+  for (const line of output.split("\n")) {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+    if (match) {
+      nodes.push({
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        command: match[3],
+      });
+    }
+  }
+  return nodes;
+}
+
+/**
+ * The processes whose command line contains `needle`, and every descendant
+ * of theirs, from one scan.
+ */
+export async function processTreeContaining(
+  needle: string,
+): Promise<ProcessNode[]> {
+  const nodes = await listProcessTree();
+  const found = new Map<number, ProcessNode>();
+  for (const node of nodes) {
+    if (node.command.includes(needle)) found.set(node.pid, node);
+  }
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const node of nodes) {
+      if (!found.has(node.pid) && found.has(node.ppid)) {
+        found.set(node.pid, node);
+        grew = true;
+      }
+    }
+  }
+  return [...found.values()];
+}

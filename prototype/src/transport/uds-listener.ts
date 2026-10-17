@@ -19,6 +19,12 @@ export interface UnixJsonRpcServerOptions {
   onRequestSettled?: JsonRpcPeerOptions["onRequestSettled"];
   /** The socket implementation; defaults to the node:net adapter. */
   host?: SocketHost;
+  /**
+   * Called with the number of open connections each time a connection opens
+   * or ends. A connection ends once its client has disconnected and every
+   * request it sent is answered.
+   */
+  onConnectionsChanged?: (count: number) => void;
 }
 
 export interface UnixJsonRpcServer {
@@ -97,11 +103,13 @@ export async function serveUnixJsonRpc(
         onRequestSettled: options.onRequestSettled,
       });
       peers.add(peer);
+      options.onConnectionsChanged?.(peers.size);
       // The read loop ends when the client disconnects. Once the requests it
       // already sent are answered, close this side too, so a finished
       // connection releases its resources when it ends.
       peer.run().then(() => peer.settled()).finally(() => {
-        peers.delete(peer);
+        // close() may already have cleared the set; that is not a change.
+        if (peers.delete(peer)) options.onConnectionsChanged?.(peers.size);
         peer.close();
       });
     }

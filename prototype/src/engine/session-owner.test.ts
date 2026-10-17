@@ -206,3 +206,32 @@ test("a session's budget scope keeps its marks across turns; the daily mark is s
   assert.deepStrictEqual(other.session_limit, undefined);
   assert.deepStrictEqual(other.daily_limit, 9);
 });
+
+test("inFlightTurns counts admitted turns, queued ones included, until each settles", async () => {
+  const owners = new SessionOwners();
+  const log: string[] = [];
+  const first = heldTurn(log, "first");
+  const second = heldTurn(log, "second");
+  const other = heldTurn(log, "other");
+  assert.strictEqual(owners.inFlightTurns, 0);
+
+  const firstResult = owners.runTurn(SESSION, first.run);
+  const secondResult = owners.runTurn(SESSION, second.run);
+  const otherResult = owners.runTurn(undefined, other.run);
+  assert.strictEqual(owners.inFlightTurns, 3);
+
+  first.finish();
+  await firstResult;
+  await drain();
+  assert.strictEqual(owners.inFlightTurns, 2);
+
+  second.fail(new Error("turn failed"));
+  await assert.rejects(secondResult);
+  await drain();
+  assert.strictEqual(owners.inFlightTurns, 1);
+
+  other.finish();
+  await otherResult;
+  await drain();
+  assert.strictEqual(owners.inFlightTurns, 0);
+});

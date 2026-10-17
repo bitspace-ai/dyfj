@@ -35,14 +35,14 @@
   {
     "kind": "module",
     "path": "prototype/src/cli.ts",
-    "lines": 1763,
+    "lines": 1644,
     "reason": "Part of the interactive REPL, which the Rust client in core/dyfj-repl replaces (decision D23); not split in TypeScript."
   },
   {
     "kind": "function",
     "path": "prototype/src/cli.ts",
     "name": "runRepl",
-    "lines": 235,
+    "lines": 227,
     "reason": "Part of the interactive REPL, which the Rust client in core/dyfj-repl replaces (decision D23); not split in TypeScript."
   },
   {
