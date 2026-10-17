@@ -3,7 +3,8 @@
  * turn's workspace root, then assemble what the model sees before the
  * conversation — repo context for ask and next-work turns; memory, tools,
  * workspace instructions and the summary trust policy for companion turns —
- * and, for a companion turn, the persisted-history omission notice.
+ * then, under `dyfj dev`'s fallback, the boot-failure block, and for a
+ * companion turn the persisted-history omission notice.
  *
  * It writes into the turn's state as it goes, so a turn that fails partway
  * still reports the context sources it had loaded.
@@ -14,9 +15,12 @@ import { memoryClearanceFor, toolCallEvent } from "../store/mod.ts";
 import {
   buildAskSystemPrompt,
   buildContextSourceLines,
+  devBootFailureBlock,
+  devBootFailureSourceLine,
   loadAgentsInstructions,
   loadAskRepoContext,
   loadCompanionBasePrompt,
+  readDevBootFailure,
   SUMMARY_TRUST_POLICY,
 } from "../context/mod.ts";
 import {
@@ -33,6 +37,7 @@ import {
 } from "../tools/mod.ts";
 import {
   buildHistoryOmissionNotice,
+  hasOperatorClearance,
   historyOmissionForDelivery,
   summarizeError,
 } from "../contract/mod.ts";
@@ -112,7 +117,26 @@ export async function buildContext(
   } else {
     await buildCompanionContext(state, input, ports);
   }
+  applyDevBootFailure(state, ports);
   applyHistoryOmissionNotice(state, input);
+}
+
+/**
+ * Under `dyfj dev`, a runtime running the last good code after the working
+ * tree's failed to start carries that failure in its env
+ * (`context/dev-boot-failure.ts`). Every native loopback turn it runs gets
+ * the failure as one labelled block, so the model can repair the breakage,
+ * and the context sources record it, so the receipt shows the turn included
+ * it. The failure is local runtime output, at the operator's clearance: a
+ * caller without it (`hasOperatorClearance`) gets no block, as it gets only
+ * the client-safe and public memory rows.
+ */
+function applyDevBootFailure(state: TurnState, ports: NativeTurnPorts): void {
+  if (!hasOperatorClearance(state.session.authContext.transport)) return;
+  const failure = readDevBootFailure(ports.env);
+  if (failure === null) return;
+  state.systemPrompt += `\n\n${devBootFailureBlock(failure)}`;
+  state.contextSourceLines.push(devBootFailureSourceLine(failure));
 }
 
 /**

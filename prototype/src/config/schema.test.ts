@@ -55,6 +55,14 @@ import { RUNTIME_ENV_GRANTS } from "./runtime-policy.ts";
     assert.deepStrictEqual(testKeys.filter((key) => granted.has(key)), []);
   });
 
+  // `dyfj dev` sets its key on the fallback runtime's spawn itself; the
+  // launcher must never forward an ambient value to an ordinary runtime.
+  test("config surface ⇄ runtime env allowlist: the runtime is granted no dev-domain key", () => {
+    const devKeys = declaredEnvVars("dev");
+    assert.deepStrictEqual(devKeys, ["DYFJ_DEV_BOOT_FAILURE"]);
+    assert.deepStrictEqual(devKeys.filter((key) => granted.has(key)), []);
+  });
+
   // Reverse: a new runtime env var can't be added to the allowlist without
   // joining the declared surface (only system env is exempt).
   test("config surface ⇄ runtime env allowlist: the runtime gets no undeclared env var", () => {

@@ -894,6 +894,45 @@ session when a saved file belongs to the REPL's crate, and restarts both
 is in flight; `/reload` in the REPL forces one. Quitting the REPL stops the
 runtime and ends `dyfj dev`. `prototype/README.md` has the details.
 
+#### Working on the harness from inside it
+
+To change DYFJ with DYFJ, run `dyfj dev` from the checkout (`dyfj dev` from
+anywhere runs the checkout the launcher lives in). It is a real session: the
+real config, Dolt, sessions, memory and tools. Edits the model makes with its
+tools are saves like any other, so the runtime or the REPL reloads once the
+turn that made them ends, and the REPL resumes the same session.
+
+- **When an edit breaks the runtime.** A runtime that boots on the working
+  tree becomes the *last good code*: a copy of `prototype/src` at
+  `prototype/.dyfj-dev-last-good/` (gitignored, and outside every gate lane).
+  If a later reload's runtime fails to start, `dyfj dev` runs the last good
+  code instead, on the same socket, and the REPL resumes on it with
+  `dyfj dev: the working tree's runtime failed to start; running the last good
+  code (<time>). Fix and save to retry.` Its posture line says the runtime is
+  behind the working tree. Each native loopback turn the fallback runs carries the
+  failed start's error output from the runtime log as one labelled block of
+  local diagnostic output (sanitized, capped at 2 KB, listed under the
+  receipt's `Context sources:`), so the model can repair the breakage with its
+  own tools. The next save tries the working tree again, and a working tree
+  that boots replaces the last good code. External-agent turns (Codex ACP and
+  the fixture) do not carry the block, and neither does a turn from any
+  transport other than loopback; only native loopback turns do.
+- **When it starts but every turn fails.** `/rollback` switches to the last
+  good code by hand; `/reload`, or a save, returns to the working tree.
+- **Limits.** Only `prototype/src` is copied. A last good copy recorded with
+  a different `package-lock.json` hash is not run, and neither is one whose
+  files no longer match its record. Installed packages that change without
+  the lock file changing are not detected.
+  With no usable last good code, a failed reload leaves the REPL waiting for a
+  save, and a failed first start ends `dyfj dev`. A last good copy from an
+  earlier `dyfj dev` run is used for a failed first start, and the notice says
+  it is from an earlier run, with its time.
+- **Plain `dyfj` afterwards.** `dyfj dev` builds a debug REPL and runs the
+  runtime from source, so plain `dyfj` picks up runtime changes on its next
+  start. It runs the release REPL, though: after changing `core/`, rebuild it
+  with `cargo build --release -p dyfj-repl` (the launcher prints that command
+  when the release binary is older than its sources).
+
 The HTTP peer server is retired. UDS JSON-RPC is the only seam (`dyfj`); a
 remote or browser surface returns later as a thin gateway client of that seam.
 
@@ -2531,3 +2570,8 @@ Document revisions only. Code and behavior changes are tracked in
   reloads the runtime and the Rust REPL when their code changes. The seam
   section says how `dyfj start` holds the terminal and escalates a repeated
   Ctrl-C.
+- 2026-10-17 - "Working on the harness from inside it" (after the `dyfj dev`
+  paragraph): running `dyfj dev` from the checkout, the fallback to the last
+  good code when an edit breaks the runtime, the boot-failure block native
+  turns carry to the model, `/rollback`, the snapshot's limits, and when to
+  rebuild the release REPL for plain `dyfj`.

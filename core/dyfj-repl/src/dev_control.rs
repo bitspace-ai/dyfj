@@ -9,7 +9,8 @@
 //!   `runtime reloaded` notice can say why; and `exit`, which asks the REPL to
 //!   leave as `/quit` does, before a rebuilt REPL takes its place;
 //! - REPL to supervisor: `session` (with the `id` the REPL is in), so the
-//!   rebuilt REPL resumes it; and `reload`, for `/reload`.
+//!   rebuilt REPL resumes it; `reload`, for `/reload`; and `rollback`, for
+//!   `/rollback`, which switches the runtime to the last good code.
 //!
 //! Anything else is dropped without a word: a line that is not JSON, an
 //! unknown type, a line longer than `MAX_LINE`. A channel that closes means
@@ -160,6 +161,11 @@ impl DevControl {
         self.send(json!({"type": "reload"}));
     }
 
+    /// Ask the supervisor to run the last good code now.
+    pub fn request_rollback(&self) {
+        self.send(json!({"type": "rollback"}));
+    }
+
     /// Tell the supervisor which session the REPL is in, once per change.
     pub fn note_session(&mut self, id: Option<&str>) {
         let Some(id) = id else { return };
@@ -307,6 +313,20 @@ mod tests {
         control.note_session(Some("01J0000000000000000000000A"));
         control.request_reload();
         let expected = "{\"id\":\"01J0000000000000000000000A\",\"type\":\"session\"}\n{\"type\":\"reload\"}\n";
+        let mut got = vec![0; expected.len()];
+        tokio::time::timeout(Duration::from_secs(2), supervisor.read_exact(&mut got))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(String::from_utf8(got).unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn sends_rollback_on_request() {
+        // `parseReplMessage` in `prototype/scripts/dyfj-dev.ts` pins the same bytes.
+        let (control, mut supervisor) = pair().await;
+        control.request_rollback();
+        let expected = "{\"type\":\"rollback\"}\n";
         let mut got = vec![0; expected.len()];
         tokio::time::timeout(Duration::from_secs(2), supervisor.read_exact(&mut got))
             .await

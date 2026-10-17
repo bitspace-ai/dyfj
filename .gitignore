@@ -16,6 +16,10 @@ data/
 # Runtime logs
 logs/
 
+# dyfj dev's last-good snapshot of prototype/src, its staging copy and the
+# copy it retires (prototype/scripts/dev-snapshot.ts)
+prototype/.dyfj-dev-*/
+
 # IDEs and OS
 .idea/
 .vscode/

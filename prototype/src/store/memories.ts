@@ -8,6 +8,7 @@
  * receive the row at injection time.
  */
 
+import { hasOperatorClearance } from "../contract/mod.ts";
 import type { MemoryVisibility } from "./generated/rows.ts";
 
 /** Full clearance: a local operator sees every class. */
@@ -29,7 +30,7 @@ export const MEMORY_VISIBILITY_ALL: readonly MemoryVisibility[] = [
 export function memoryClearanceFor(
   transport: "loopback" | "remote",
 ): MemoryVisibility[] {
-  return transport === "loopback"
+  return hasOperatorClearance(transport)
     ? [...MEMORY_VISIBILITY_ALL]
     : ["client_safe", "public"];
 }

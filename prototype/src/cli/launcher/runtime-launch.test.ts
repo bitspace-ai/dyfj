@@ -74,3 +74,15 @@ test("the runtime's policy may start the Node executable running the client", as
     assert.ok(launch.policy.run.includes(process.execPath));
   });
 });
+
+test("an ambient dyfj dev boot failure never reaches a runtime the launcher starts", async () => {
+  await withRoot("DYFJ_DEV_BOOT_FAILURE=from-dotenv\n", async (root) => {
+    for (const autostarted of [false, true]) {
+      const launch = await resolveRuntimeLaunch(root, "/run/wb.sock", autostarted, {
+        env: new MapEnv({ HOME: root, DYFJ_DEV_BOOT_FAILURE: "from-the-shell" }),
+      });
+      assert.strictEqual(launch.env.DYFJ_DEV_BOOT_FAILURE, undefined);
+      assert.ok(!launch.policy.env.includes("DYFJ_DEV_BOOT_FAILURE"));
+    }
+  });
+});

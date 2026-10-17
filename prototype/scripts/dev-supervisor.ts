@@ -14,13 +14,20 @@
  * - A REPL change is built first. A build failure applies nothing: the REPL
  *   and the runtime keep running, the error is shown on one line, and the
  *   reload stays pending for the next save.
- * - The runtime restarts before the REPL. A runtime that fails to boot stays
- *   down and the REPL waits for it; the next save of any file starts it again.
+ * - The runtime restarts before the REPL. A runtime that boots on the working
+ *   tree becomes the last good code (`dev-snapshot.ts`). One that fails to
+ *   boot is replaced by the last good code, with the failure passed to it for
+ *   the model to read, and the REPL resumes on it; the next save of any file
+ *   tries the working tree again. With no usable last good code, the runtime
+ *   stays down and the REPL waits for it, as before.
+ * - `/rollback` switches to the last good code on purpose, for a runtime that
+ *   starts but fails every turn; `/reload` or a save returns to the tree.
  * - The REPL exiting when nothing asked it to is the operator quitting: the
  *   runtime is stopped and `done` resolves with the REPL's exit code.
  */
 
 import type { BatchClass } from "./dev-classify.ts";
+import type { SnapshotCheck } from "./dev-snapshot.ts";
 
 export const DEBOUNCE_MS = 300;
 export const IN_FLIGHT_POLL_MS = 250;
@@ -33,9 +40,29 @@ export interface DevClock {
 
 export type Outcome = { ok: true } | { ok: false; error: string };
 
+/** How a runtime start went: the code it reports loading, or why it failed. */
+export type StartOutcome =
+  | {
+    ok: true;
+    contentHash?: string | null;
+    /** The lock file's hash sampled just before the spawn, for the snapshot record. */
+    lockHash?: string;
+  }
+  | { ok: false; error: string; detail?: string };
+
+/** What the last good code is told, as `DYFJ_DEV_BOOT_FAILURE`, on `/rollback`. */
+export const ROLLBACK_NOTE =
+  "rolled back by /rollback: the operator switched dyfj dev to the last good " +
+  "code. The working tree's runtime started, but it was set aside.";
+
 export interface DevRuntimePort {
-  /** Start the runtime and wait until it answers, or until it exits. */
-  start(): Promise<Outcome>;
+  /** Start the working tree's runtime and wait until it answers, or exits. */
+  start(): Promise<StartOutcome>;
+  /**
+   * Start the last good code instead, telling it why (`failure`, the failed
+   * start's log or `ROLLBACK_NOTE`), and wait until it answers, or exits.
+   */
+  startLastGood(failure: string): Promise<StartOutcome>;
   /** Stop the runtime and wait for it to exit; a runtime not running is fine. */
   stop(): Promise<void>;
   /** Turns in flight, or null when the runtime does not answer. */
@@ -60,16 +87,28 @@ export interface DevPorts {
   build(): Promise<Outcome>;
   /** Show one line to the operator. */
   report(line: string): void;
+  snapshot: {
+    /** Whether the last good code may run now. */
+    check(): Promise<SnapshotCheck>;
+    /**
+     * Make the working tree the last good code, if it is what booted
+     * (`contentHash`), recording the lock file it booted on (`lockHash`).
+     */
+    promote(contentHash: string, lockHash?: string): Promise<Outcome>;
+  };
 }
 
 /** What the REPL sends the supervisor over its control channel. */
 export type ReplMessage =
   | { type: "reload" }
+  | { type: "rollback" }
   | { type: "session"; id: string };
 
 interface Pending {
   runtime: boolean;
   repl: boolean;
+  /** Switch to the last good code; a later reload of the tree replaces it. */
+  rollback: boolean;
   files: Set<string>;
   forced: boolean;
 }
@@ -77,9 +116,24 @@ interface Pending {
 const nothingPending = (): Pending => ({
   runtime: false,
   repl: false,
+  rollback: false,
   files: new Set(),
   forced: false,
 });
+
+/** A snapshot's time, local, to the second. */
+export function formatTakenAt(iso: string): string {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return "time unknown";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ` +
+    `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+}
+
+const REFUSED: Record<"corrupt" | "lock", string> = {
+  lock: "package-lock.json changed since the last good code, so dyfj dev will not run it. Fix and save to retry.",
+  corrupt: "the last good code no longer matches its record, so dyfj dev will not run it. Fix and save to retry.",
+};
 
 /** The line of a multi-line error that says what failed, capped. */
 export function oneLine(error: string): string {
@@ -107,6 +161,10 @@ export class DevSupervisor {
   #poll: unknown;
   #pending = nothingPending();
   #runtimeUp = true;
+  /** Which code the running runtime loaded. */
+  #mode: "tree" | "last-good" = "tree";
+  /** This run made a snapshot, so a fallback is not to an earlier run's. */
+  #promoted = false;
   #session: string | null = null;
   #busy = false;
   /** A build or boot failed; nothing is retried until the next save. */
@@ -145,10 +203,47 @@ export class DevSupervisor {
       this.#debounce = undefined;
     }
     this.#flush();
-    this.#pending.runtime = true;
+    this.#pending.runtime = message.type === "reload";
+    this.#pending.rollback = message.type === "rollback";
     this.#pending.forced = true;
     this.#awaitingSave = false;
     this.#drain();
+  }
+
+  /**
+   * The first start. A working tree that boots becomes the last good code;
+   * one that does not falls back to an earlier run's last good code, when
+   * there is one that may run. False when no runtime is up.
+   */
+  async boot(): Promise<boolean> {
+    this.#busy = true;
+    try {
+      const started = await this.#ports.runtime.start();
+      if (started.ok) {
+        await this.#promote(started);
+        return true;
+      }
+      const check = await this.#ports.snapshot.check();
+      if (!check.ok) {
+        this.#ports.report(`the runtime did not start: ${started.error}`);
+        if (check.reason !== "none") this.#ports.report(REFUSED[check.reason]);
+        return false;
+      }
+      const fallback = await this.#ports.runtime.startLastGood(started.detail ?? started.error);
+      if (!fallback.ok) {
+        this.#ports.report(`the runtime did not start: ${started.error}`);
+        this.#ports.report(`the last good code did not start either: ${oneLine(fallback.error)}`);
+        return false;
+      }
+      this.#mode = "last-good";
+      this.#ports.report(
+        "the working tree's runtime failed to start; running the last good code " +
+          `from an earlier run (${formatTakenAt(check.meta.takenAt)}). Fix and save to retry.`,
+      );
+      return true;
+    } finally {
+      this.#busy = false;
+    }
   }
 
   /** The runtime process exited. Exits during a restart are expected. */
@@ -178,9 +273,11 @@ export class DevSupervisor {
     const paths = [...this.#batch].sort();
     this.#batch.clear();
     const kind = this.#ports.classify(paths);
-    const runtime = kind.runtime || !this.#runtimeUp;
+    // Down, or on the last good code: any save tries the working tree.
+    const runtime = kind.runtime || !this.#runtimeUp || this.#mode === "last-good";
     if (!runtime && !kind.repl) return;
     this.#pending.runtime ||= runtime;
+    if (runtime) this.#pending.rollback = false;
     this.#pending.repl ||= kind.repl;
     for (const path of paths) this.#pending.files.add(path);
     this.#awaitingSave = false;
@@ -189,7 +286,7 @@ export class DevSupervisor {
   #drain(): void {
     if (this.#busy || this.#stopping || this.#awaitingSave) return;
     if (this.#poll !== undefined) return;
-    if (!this.#pending.runtime && !this.#pending.repl) return;
+    if (!this.#pending.runtime && !this.#pending.repl && !this.#pending.rollback) return;
     this.#busy = true;
     void this.#apply().finally(() => {
       this.#busy = false;
@@ -218,6 +315,13 @@ export class DevSupervisor {
     this.#pending = nothingPending();
     const reason = reasonFor(job);
 
+    if (job.rollback) {
+      await this.#rollback();
+      // A REPL rebuild queued before the rollback still happens, next.
+      if (job.repl) this.#keep({ ...job, rollback: false, runtime: false }, false);
+      return;
+    }
+
     if (job.repl) {
       const built = await ports.build();
       if (this.#stopping) return;
@@ -236,14 +340,12 @@ export class DevSupervisor {
       const started = await ports.runtime.start();
       if (this.#stopping) return;
       if (!started.ok) {
-        ports.report(
-          `runtime failed to start: ${oneLine(started.error)}; ` +
-            "save a file to try again",
-        );
+        await this.#fallBack(started);
         this.#keep({ ...job, runtime: false });
         return;
       }
       this.#runtimeUp = true;
+      await this.#promote(started);
     }
 
     if (job.repl) {
@@ -259,12 +361,97 @@ export class DevSupervisor {
     }
   }
 
-  /** Put a job that could not finish back, to retry on the next save. */
-  #keep(job: Pending): void {
+  /** The working tree booted: it runs, and becomes the last good code. */
+  async #promote(started: { contentHash?: string | null; lockHash?: string }): Promise<void> {
+    this.#mode = "tree";
+    if (started.contentHash === undefined || started.contentHash === null) {
+      this.#ports.report("last good code not updated: the runtime reported no code fingerprint");
+      return;
+    }
+    const promoted = await this.#ports.snapshot.promote(started.contentHash, started.lockHash);
+    if (promoted.ok) this.#promoted = true;
+    else this.#ports.report(`last good code not updated: ${oneLine(promoted.error)}`);
+  }
+
+  /**
+   * The working tree's runtime did not start. Run the last good code in its
+   * place, told why, when it may run; otherwise stay down until a save.
+   */
+  async #fallBack(failed: { error: string; detail?: string }): Promise<void> {
+    const ports = this.#ports;
+    const check = await ports.snapshot.check();
+    if (this.#stopping) return;
+    if (!check.ok) {
+      ports.report(
+        check.reason === "none"
+          ? `runtime failed to start: ${oneLine(failed.error)}; save a file to try again`
+          : `runtime failed to start: ${oneLine(failed.error)}; ${REFUSED[check.reason]}`,
+      );
+      return;
+    }
+    ports.report(`runtime failed to start: ${oneLine(failed.error)}`);
+    ports.repl.notify({ type: "reloading", reason: "running the last good code" });
+    const fallback = await ports.runtime.startLastGood(failed.detail ?? failed.error);
+    if (this.#stopping) return;
+    if (!fallback.ok) {
+      ports.report(
+        `the last good code did not start either: ${oneLine(fallback.error)}; ` +
+          "save a file to try again",
+      );
+      return;
+    }
+    this.#runtimeUp = true;
+    this.#mode = "last-good";
+    const earlier = this.#promoted ? "" : "from an earlier run ";
+    ports.report(
+      "the working tree's runtime failed to start; running the last good code " +
+        `${earlier}(${formatTakenAt(check.meta.takenAt)}). Fix and save to retry.`,
+    );
+  }
+
+  /** `/rollback`: run the last good code now, if it may run. */
+  async #rollback(): Promise<void> {
+    const ports = this.#ports;
+    const check = await ports.snapshot.check();
+    if (this.#stopping) return;
+    if (!check.ok) {
+      ports.report(
+        check.reason === "none"
+          ? "no last good code to roll back to; nothing changed"
+          : `not rolled back: ${REFUSED[check.reason].replace(/ Fix and save to retry\.$/, "")}`,
+      );
+      return;
+    }
+    ports.repl.notify({ type: "reloading", reason: "rollback requested" });
+    if (this.#runtimeUp) await ports.runtime.stop();
+    this.#runtimeUp = false;
+    if (this.#stopping) return;
+    const started = await ports.runtime.startLastGood(ROLLBACK_NOTE);
+    if (this.#stopping) return;
+    if (!started.ok) {
+      ports.report(
+        `the last good code did not start: ${oneLine(started.error)}; ` +
+          "save a file or /reload to start the working tree's runtime",
+      );
+      return;
+    }
+    this.#runtimeUp = true;
+    this.#mode = "last-good";
+    ports.report(
+      `running the last good code (${formatTakenAt(check.meta.takenAt)}); ` +
+        "save or /reload to return to the working tree",
+    );
+  }
+
+  /**
+   * Put a job back: by default one that could not finish, to retry on the
+   * next save; with `awaitSave` false, one to run next.
+   */
+  #keep(job: Pending, awaitSave = true): void {
     this.#pending.runtime ||= job.runtime;
     this.#pending.repl ||= job.repl;
     for (const path of job.files) this.#pending.files.add(path);
-    this.#awaitingSave = true;
+    this.#awaitingSave ||= awaitSave;
   }
 
   #beginShutdown(code: number): void {

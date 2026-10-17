@@ -1,7 +1,21 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { test } from "node:test";
-import { inFlightTurnsFrom, openOwnerOnlyLog, parseDevArgs, parseReplMessage, replArgs } from "./dyfj-dev.ts";
+import {
+  bootFailureDetail,
+  contentHashFrom,
+  inFlightTurnsFrom,
+  lastGoodArgs,
+  localizePaths,
+  openOwnerOnlyLog,
+  parseDevArgs,
+  parseReplMessage,
+  readLogSince,
+  replArgs,
+} from "./dyfj-dev.ts";
 
 const ID = "01J0000000000000000000000A";
 
@@ -37,6 +51,7 @@ test("a re-exec resumes the session the REPL last reported", () => {
 
 test("REPL messages are parsed strictly", () => {
   assert.deepStrictEqual(parseReplMessage('{"type":"reload"}'), { type: "reload" });
+  assert.deepStrictEqual(parseReplMessage('{"type":"rollback"}'), { type: "rollback" });
   assert.deepStrictEqual(parseReplMessage(`{"type":"session","id":"${ID}"}`), { type: "session", id: ID });
   for (const line of [
     "nope",
@@ -112,4 +127,65 @@ test("the session message parses exactly as the Rust REPL writes it", () => {
     { type: "session", id: "01J0000000000000000000000A" },
   );
   assert.deepStrictEqual(parseReplMessage('{"type":"reload"}'), { type: "reload" });
+});
+
+test("the booted code's hash is read from the server's own runtime/status response", async () => {
+  const { buildRuntimeHandlers } = await import("../src/server/rpc/runtime.ts");
+  const hash = `sha256:${"a".repeat(64)}`;
+  const status = await buildRuntimeHandlers({
+    loadModels: async () => [],
+    fingerprint: { head: "unknown", contentHash: hash },
+  })["runtime/status"]!(undefined, undefined as never);
+  assert.strictEqual(contentHashFrom(status), hash);
+  for (const odd of [undefined, null, {}, { runtime: {} }, { runtime: { fingerprint: { contentHash: 3 } } }]) {
+    assert.strictEqual(contentHashFrom(odd), null, JSON.stringify(odd));
+  }
+});
+
+test("the last good code runs from the snapshot with the runtime's own args", () => {
+  assert.deepStrictEqual(
+    lastGoodArgs(["--flag", "src/server/main.ts", "--autostarted"], ".dyfj-dev-last-good/server/main.ts"),
+    ["--flag", ".dyfj-dev-last-good/server/main.ts", "--autostarted"],
+  );
+  assert.throws(() => lastGoodArgs(["--autostarted"], "x"), /server entry/);
+});
+
+test("a failed boot's detail is its own log output, without the dev header", () => {
+  const log = "── dyfj dev runtime at 2026-10-17T20:00:00Z, socket /s ──\nold run\n" +
+    "── dyfj dev runtime at 2026-10-17T20:01:00Z, socket /s ──\n" +
+    "file:///repo/prototype/src/engine/agent-loop.ts:3\nexport const x = ;\n" +
+    "SyntaxError [ERR_INVALID_TYPESCRIPT_SYNTAX]: Expression expected\n";
+  const offset = log.indexOf("── dyfj dev runtime at 2026-10-17T20:01");
+  assert.strictEqual(
+    bootFailureDetail(log, offset),
+    "file:///repo/prototype/src/engine/agent-loop.ts:3\nexport const x = ;\n" +
+      "SyntaxError [ERR_INVALID_TYPESCRIPT_SYNTAX]: Expression expected\n",
+  );
+});
+
+test("host paths in a boot failure become repo-relative, and the home directory ~", () => {
+  assert.strictEqual(
+    localizePaths(
+      "at file:///srv/op/dyfj/prototype/src/a.ts:3 and /srv/op/dyfj/core/x.rs, /srv/op/.npm",
+      "/srv/op/dyfj",
+      "/srv/op",
+    ),
+    "at prototype/src/a.ts:3 and core/x.rs, ~/.npm",
+  );
+});
+
+test("a failed start's log is read from its offset, and only so far", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-log-"));
+  try {
+    const log = join(dir, "dev.log");
+    const before = "x".repeat(100_000);
+    await writeFile(log, `${before}── dyfj dev runtime at t, socket /s ──\nSyntaxError: bad\n${"y".repeat(200_000)}`);
+    const text = readLogSince(log, Buffer.byteLength(before));
+    assert.ok(text.startsWith("── dyfj dev runtime at t"), text.slice(0, 40));
+    assert.ok(!text.includes("xxx"));
+    assert.ok(Buffer.byteLength(text) <= 64 * 1024, `${Buffer.byteLength(text)} bytes`);
+    assert.strictEqual(readLogSince(join(dir, "missing.log"), 0), "");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

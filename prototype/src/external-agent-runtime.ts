@@ -7,7 +7,6 @@ import {
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
 import { processEnv, type RuntimePolicy } from "./config/mod.ts";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -32,7 +31,7 @@ import {
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
-import { codexAcpPackageRoot } from "./acp-adapter-package.ts";
+import { codexAcpPackageRoot, ownPrototypeRoot } from "./acp-adapter-package.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import type {
   AcpPermissionPrompt,
@@ -414,8 +413,7 @@ export async function codexChatGptProfile(
   const codexHome = join(isolatedHome, ".codex");
   const cargoHome = join(isolatedHome, ".cargo");
 
-  const prototypeRoot = options.prototypeRoot ??
-    fileURLToPath(new URL("..", import.meta.url));
+  const prototypeRoot = options.prototypeRoot ?? ownPrototypeRoot();
   const packageRoot = await codexAcpPackageRoot(prototypeRoot);
   let packageVersion: unknown;
   try {

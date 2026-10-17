@@ -12,8 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { sourceTreeHash } from "../src/config/mod.ts";
 import { connectUnixClient } from "../src/transport/mod.ts";
+import { checkSnapshot, snapshotPaths } from "./dev-snapshot.ts";
 import {
   type ProcessNode,
   processTreeContaining,
@@ -23,6 +25,8 @@ import {
 const LAUNCHER = fileURLToPath(new URL("./dyfj-launcher.sh", import.meta.url));
 /** A module the server reaches; the test only touches its timestamps. */
 const RUNTIME_MODULE = fileURLToPath(new URL("../src/engine/agent-loop.ts", import.meta.url));
+const REPO = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
+const SNAPSHOT = snapshotPaths(REPO);
 const BASH = process.platform === "darwin" ? "/bin/bash" : "bash";
 /** The first case may build the REPL from cold. */
 const BOOT_MS = 240_000;
@@ -91,6 +95,19 @@ async function allGone(tree: ProcessNode[], ms: number): Promise<number> {
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
 
+/** The content hash of the code the runtime at `sock` loaded. */
+async function runtimeHash(sock: string): Promise<unknown> {
+  const client = await connectUnixClient(sock, {});
+  try {
+    const status = await client.request("runtime/status", {}) as {
+      runtime?: { fingerprint?: { contentHash?: unknown } };
+    };
+    return status.runtime?.fingerprint?.contentHash;
+  } finally {
+    client.close();
+  }
+}
+
 describe("dyfj dev", () => {
   it(
     "runs the REPL on its own runtime, reloads it on /reload, and leaves nothing behind on /quit",
@@ -117,6 +134,64 @@ describe("dyfj dev", () => {
           `no orphans (${elapsed} ms after quit)\n${dev.output()}`,
         );
         assert.equal(await exists(sock), false, "the socket is removed");
+      } finally {
+        dev.child.kill("SIGKILL");
+        await reapPidsAndCommandsContaining(tree.map((node) => node.pid), sock);
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "a boot becomes the last good code; /rollback runs it, and /reload returns to the tree",
+    { timeout: BOOT_MS + 60_000 },
+    async () => {
+      const { home, sock } = await workspace();
+      const dev = dyfjDev(home, sock);
+      let tree: ProcessNode[] = [];
+      try {
+        await dev.waitFor(/^posture: /m, BOOT_MS);
+        tree = await processTreeContaining(sock);
+        const tree0 = await sourceTreeHash(SNAPSHOT.source);
+        assert.equal(await runtimeHash(sock), tree0);
+        const check = await checkSnapshot(SNAPSHOT);
+        assert.ok(check.ok, JSON.stringify(check));
+        assert.equal(check.meta.contentHash, tree0);
+
+        dev.child.stdin!.write("/rollback\n");
+        await dev.waitFor(/runtime reloaded \(rollback requested\)/);
+        await dev.waitFor(/running the last good code \(.+\); save or \/reload to return/);
+        const rolledBack = await processTreeContaining(sock);
+        assert.ok(
+          rolledBack.some((node) => node.command.includes(SNAPSHOT.entry)),
+          `a runtime runs the snapshot: ${JSON.stringify(rolledBack)}`,
+        );
+        // The snapshot fingerprints itself: the same code, so the same hash.
+        assert.equal(await runtimeHash(sock), tree0);
+
+        // From the snapshot, the Codex ACP package resolves as it does from src.
+        const fromSnapshot = await import(
+          pathToFileURL(join(SNAPSHOT.snapshot, "acp-adapter-package.ts")).href
+        ) as typeof import("../src/acp-adapter-package.ts");
+        assert.equal(fromSnapshot.ownPrototypeRoot(), `${SNAPSHOT.prototype}/`);
+        assert.equal(
+          await fromSnapshot.codexAcpPackageRoot(fromSnapshot.ownPrototypeRoot()),
+          join(REPO, "node_modules", "@agentclientprotocol", "codex-acp"),
+        );
+
+        dev.child.stdin!.write("/reload\n");
+        await dev.waitFor(/runtime reloaded \(reload requested\)/);
+        const reloaded = await processTreeContaining(sock);
+        assert.ok(
+          !reloaded.some((node) => node.command.includes(SNAPSHOT.entry)),
+          `the working tree runs again: ${JSON.stringify(reloaded)}`,
+        );
+
+        dev.child.stdin!.write("/quit\n");
+        assert.equal(await dev.closed, 0, dev.output());
+        tree = [...tree, ...rolledBack, ...reloaded];
+        await allGone(tree, 15_000);
+        assert.deepEqual(tree.filter((node) => isAlive(node.pid)), [], dev.output());
       } finally {
         dev.child.kill("SIGKILL");
         await reapPidsAndCommandsContaining(tree.map((node) => node.pid), sock);

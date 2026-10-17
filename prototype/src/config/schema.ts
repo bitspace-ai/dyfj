@@ -35,9 +35,12 @@ export const PERMISSION_LEVELS: readonly PermissionLevel[] = [
  * keys are set only by test harnesses; the runtime policy never forwards them
  * to the runtime, and a read of one outside a test treats the key as absent.
  * `tooling` keys are read only by the test and gate programs under
- * `prototype/scripts`; the runtime policy never forwards them either.
+ * `prototype/scripts`; the runtime policy never forwards them either. `dev`
+ * keys are read by the runtime but set only by `dyfj dev` on a runtime it
+ * starts itself; the runtime policy never forwards them, so an ambient value
+ * never reaches a runtime started any other way.
  */
-export type ConfigDomain = "engine" | "client" | "test" | "tooling";
+export type ConfigDomain = "engine" | "client" | "test" | "tooling" | "dev";
 
 /**
  * `value` is an ordinary config value. `secret-pointer` holds a POINTER to a
@@ -449,6 +452,16 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     key: "udsTestSocketDir",
     envVar: "DYFJ_UDS_TEST_SOCKET_DIR",
     domain: "test",
+    type: "string",
+    kind: "value",
+  },
+  // ── dev: set only by `dyfj dev` on a runtime it starts ──
+  // The working tree's failed start, on the runtime `dyfj dev` runs from the
+  // last good code instead (context/dev-boot-failure.ts).
+  {
+    key: "devBootFailure",
+    envVar: "DYFJ_DEV_BOOT_FAILURE",
+    domain: "dev",
     type: "string",
     kind: "value",
   },
