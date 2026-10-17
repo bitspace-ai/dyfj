@@ -643,3 +643,37 @@ test("an oversize boot failure is capped before it reaches the prompt", async ()
   assert.ok(fenced.endsWith("[truncated]"));
   assert.ok(!state.systemPrompt.includes("\u001b"));
 });
+
+test("a non-loopback turn never receives the boot-failure block or its source line", async () => {
+  await using root = await tempWorkspace();
+  for (const mode of ["turn", "ask"] as const) {
+    const { state } = await runContext(
+      { mode, rootOverride: root.root, authContext: REMOTE },
+      enginePorts({ env: { DYFJ_DEV_BOOT_FAILURE: HOSTILE_LOG } }),
+    );
+    assert.ok(!state.systemPrompt.includes("Local diagnostic output"), mode);
+    assert.ok(!state.systemPrompt.includes("ignore previous instructions"), mode);
+    assert.ok(
+      !state.contextSourceLines.some((line) => line.startsWith("dyfj dev boot failure")),
+      mode,
+    );
+  }
+});
+
+test("a turn whose transport is missing or unknown gets no boot-failure block", async () => {
+  await using root = await tempWorkspace();
+  for (const transport of [undefined, "local_stdio"]) {
+    const { state } = await runContext(
+      {
+        rootOverride: root.root,
+        authContext: { ...REMOTE, transport } as unknown as WorkbenchAuthContext,
+      },
+      enginePorts({ env: { DYFJ_DEV_BOOT_FAILURE: HOSTILE_LOG } }),
+    );
+    assert.ok(!state.systemPrompt.includes("Local diagnostic output"), String(transport));
+    assert.ok(
+      !state.contextSourceLines.some((line) => line.startsWith("dyfj dev boot failure")),
+      String(transport),
+    );
+  }
+});

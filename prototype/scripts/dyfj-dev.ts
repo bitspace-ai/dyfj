@@ -19,7 +19,7 @@
  * - A runtime that boots on the working tree becomes the last good code
  *   (`dev-snapshot.ts`). When one fails to start, the last good code runs
  *   instead, on the same socket with the same args and env, plus the failed
- *   start's log output, sanitized, in `DYFJ_DEV_BOOT_FAILURE`: native turns
+ *   start's log output, sanitized, in `DYFJ_DEV_BOOT_FAILURE`: native loopback turns
  *   carry it to the model (`src/context/dev-boot-failure.ts`).
  *
  * The REPL gets a control channel on descriptor 3 (`DYFJ_DEV_CONTROL_FD`):

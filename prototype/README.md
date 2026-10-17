@@ -150,7 +150,8 @@ dev socket. Then:
   has it. The runtime sanitizes it again when it reads it
   (`src/context/dev-boot-failure.ts`: escape sequences, control and bidi
   characters stripped, capped at 2 KB) and `buildContext` adds it to each
-  native turn's system prompt as a labelled block of local diagnostic output,
+  native loopback turn's system prompt (a turn on any other transport, or none,
+  gets nothing) as a labelled block of local diagnostic output,
   framed as data and not instructions, with a `dyfj dev boot failure` line
   under the receipt's context sources. External-agent turns do not carry it.
 - Quitting the REPL stops the runtime and ends `dyfj dev` with the REPL's exit

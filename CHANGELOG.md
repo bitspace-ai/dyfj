@@ -16,10 +16,10 @@ README are tracked separately in its Revision history section.
   to `prototype/.dyfj-dev-last-good/` (gitignored). When a reload's runtime
   fails to start, `dyfj dev` runs that copy instead on the same socket, the
   REPL resumes on it, and one line says so; the next save tries the working
-  tree again. Each native turn the fallback runs carries the failed start's
+  tree again. Each native loopback turn the fallback runs carries the failed start's
   error output as a labelled block of local diagnostic output (sanitized,
   capped at 2 KB, listed in the receipt's context sources); external-agent
-  turns do not. A copy taken on a different `package-lock.json`, or one whose
+  turns do not. A copy recorded with a different `package-lock.json` hash, or one whose
   files no longer match its record, is not run. A failed first start uses a
   copy from an earlier run and says so. `/rollback` switches to the last good
   code by hand, and `/reload` returns to the working tree. Under `dyfj dev`,

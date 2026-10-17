@@ -909,13 +909,14 @@ turn that made them ends, and the REPL resumes the same session.
   code instead, on the same socket, and the REPL resumes on it with
   `dyfj dev: the working tree's runtime failed to start; running the last good
   code (<time>). Fix and save to retry.` Its posture line says the runtime is
-  behind the working tree. Each native turn the fallback runs carries the
+  behind the working tree. Each native loopback turn the fallback runs carries the
   failed start's error output from the runtime log as one labelled block of
   local diagnostic output (sanitized, capped at 2 KB, listed under the
   receipt's `Context sources:`), so the model can repair the breakage with its
   own tools. The next save tries the working tree again, and a working tree
   that boots replaces the last good code. External-agent turns (Codex ACP and
-  the fixture) do not carry the block; only native turns do.
+  the fixture) do not carry the block, and neither does a turn from any
+  transport other than loopback; only native loopback turns do.
 - **When it starts but every turn fails.** `/rollback` switches to the last
   good code by hand; `/reload`, or a save, returns to the working tree.
 - **Limits.** Only `prototype/src` is copied. A last good copy recorded with

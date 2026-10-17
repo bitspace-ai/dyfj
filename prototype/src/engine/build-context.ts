@@ -37,6 +37,7 @@ import {
 } from "../tools/mod.ts";
 import {
   buildHistoryOmissionNotice,
+  hasOperatorClearance,
   historyOmissionForDelivery,
   summarizeError,
 } from "../contract/mod.ts";
@@ -123,11 +124,15 @@ export async function buildContext(
 /**
  * Under `dyfj dev`, a runtime running the last good code after the working
  * tree's failed to start carries that failure in its env
- * (`context/dev-boot-failure.ts`). Every native turn it runs gets the
- * failure as one labelled block, so the model can repair the breakage, and
- * the context sources record it, so the receipt shows the turn included it.
+ * (`context/dev-boot-failure.ts`). Every native loopback turn it runs gets
+ * the failure as one labelled block, so the model can repair the breakage,
+ * and the context sources record it, so the receipt shows the turn included
+ * it. The failure is local runtime output, at the operator's clearance: a
+ * non-loopback caller never receives it, as it never receives the personal
+ * memory corpus.
  */
 function applyDevBootFailure(state: TurnState, ports: NativeTurnPorts): void {
+  if (!hasOperatorClearance(state.session.authContext.transport)) return;
   const failure = readDevBootFailure(ports.env);
   if (failure === null) return;
   state.systemPrompt += `\n\n${devBootFailureBlock(failure)}`;

@@ -103,6 +103,16 @@ export interface WorkbenchRuntimeRequest {
 }
 
 /**
+ * Whether a caller on `transport` has the operator's clearance: the local
+ * operator on loopback, and no one else. A missing or unknown transport has
+ * none. The personal memory corpus (`memoryClearanceFor`) and the `dyfj dev`
+ * boot-failure block (`applyDevBootFailure`) both go only where this holds.
+ */
+export function hasOperatorClearance(transport: unknown): boolean {
+  return transport === "loopback";
+}
+
+/**
  * Decide whether to honor a client-requested workspace root for the read-only
  * file tools. Only a loopback operator — who already has full local file access,
  * since the server runs as them — may steer the root to their own working
