@@ -11,6 +11,21 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`dyfj dev` falls back to the last good runtime, so the model can repair
+  an edit that breaks it.** A runtime that boots on the working tree is copied
+  to `prototype/.dyfj-dev-last-good/` (gitignored). When a reload's runtime
+  fails to start, `dyfj dev` runs that copy instead on the same socket, the
+  REPL resumes on it, and one line says so; the next save tries the working
+  tree again. Each native turn the fallback runs carries the failed start's
+  error output as a labelled block of local diagnostic output (sanitized,
+  capped at 2 KB, listed in the receipt's context sources); external-agent
+  turns do not. A copy taken on a different `package-lock.json`, or one whose
+  files no longer match its record, is not run. A failed first start uses a
+  copy from an earlier run and says so. `/rollback` switches to the last good
+  code by hand, and `/reload` returns to the working tree. Under `dyfj dev`,
+  the REPL's freshness warning says the last good code is running. The
+  README adds "Working on the harness from inside it".
+
 - **`dyfj dev`: the runtime and the Rust REPL reload when their code
   changes.** One command in one terminal: it builds the REPL
   (`cargo build -p dyfj-repl`, debug), starts its own runtime on a dev socket

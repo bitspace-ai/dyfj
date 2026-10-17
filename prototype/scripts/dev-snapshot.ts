@@ -12,29 +12,36 @@
  * - Only `src` is copied. Dependencies are not: a snapshot records the hash
  *   of the repository's `package-lock.json`, and a snapshot whose lock no
  *   longer matches is refused, so old code never runs on new dependencies.
- * - A promotion copies into `.dyfj-dev-staging/`, checks that the copy is the
- *   code the runtime booted (the content hash it reported), writes the
- *   record, and swaps it in: the current snapshot moves to
- *   `.dyfj-dev-retired/`, staging moves into place, and the retired copy is
- *   removed. `rename(2)` cannot replace a directory that has files, hence
- *   two renames. A crash between them leaves no snapshot, never a partial
- *   one, and every use re-hashes the snapshot against its record first.
- * - `dyfj dev` is the only writer, and it never promotes and falls back at
- *   the same time.
+ * - A promotion copies into a staging directory beside the snapshot, checks
+ *   that the copy is the code the runtime booted (the content hash it
+ *   reported), writes the record, and swaps it in: the current snapshot
+ *   moves to a retired directory, staging moves into place, and the retired
+ *   copy is removed. `rename(2)` cannot replace a directory that has files,
+ *   hence two renames. A crash between them leaves no snapshot, never a
+ *   partial one, and every use re-hashes the snapshot against its record.
+ * - Staging and retired directories are named for the promoting process.
+ *   A `dyfj dev` never promotes and falls back at the same time. Two on one
+ *   checkout (a test lane beside the operator's, say) do not share a copy:
+ *   the slower one's final rename fails, and it reports that it did not
+ *   update the snapshot.
  *
- * The three directories are gitignored (`prototype/.dyfj-dev-*`) and sit
- * outside every root the gate's lanes, the type check and the dev watcher
- * read.
+ * Every one of these directories is gitignored (`prototype/.dyfj-dev-*`) and
+ * sits outside every root the gate's lanes, the type check and the dev
+ * watcher read.
  */
 
 import { createHash } from "node:crypto";
 import { cp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import process from "node:process";
 import { FINGERPRINT_UNKNOWN, sourceTreeHash } from "../src/config/mod.ts";
 
 export const SNAPSHOT_DIR = ".dyfj-dev-last-good";
-export const STAGING_DIR = ".dyfj-dev-staging";
-export const RETIRED_DIR = ".dyfj-dev-retired";
+
+/** Where a promotion by process `pid` stages its copy. */
+export const stagingDir = (snapshot: string, pid = process.pid) => `${snapshot}.staging-${pid}`;
+/** Where a promotion by process `pid` moves the snapshot it replaces. */
+export const retiredDir = (snapshot: string, pid = process.pid) => `${snapshot}.retired-${pid}`;
 /** The record, a dot file so the content hash skips it. */
 const RECORD = ".dyfj-dev-snapshot.json";
 
@@ -98,8 +105,8 @@ export async function promoteSnapshot(
   booted: string,
   now: Date,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const staging = join(paths.prototype, STAGING_DIR);
-  const retired = join(paths.prototype, RETIRED_DIR);
+  const staging = stagingDir(paths.snapshot);
+  const retired = retiredDir(paths.snapshot);
   try {
     await rm(staging, { recursive: true, force: true });
     await (paths.copy ?? defaultCopy)(paths.source, staging);

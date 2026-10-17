@@ -117,15 +117,49 @@ dev socket. Then:
   reconnects. A REPL rebuild asks the REPL to exit, then starts the new binary
   with `--session` and the session it was in.
 - A REPL build failure changes nothing: the REPL and the runtime keep running,
-  the first `error` line of the build is shown, and the next save retries. A
-  runtime that fails to start stays down while the REPL waits for it and shows
-  the error from the log; the next save of any file starts it again.
+  the first `error` line of the build is shown, and the next save retries.
+- A runtime that boots on the working tree becomes the last good code
+  (`scripts/dev-snapshot.ts`): `src/` is copied to a staging directory named
+  for the process, the copy is kept only if its content hash is the
+  `fingerprint.contentHash` the runtime reported (a save can land between the
+  boot and the copy), and it is swapped in at `.dyfj-dev-last-good/` with a
+  record of that hash, the time and the sha256 of `../package-lock.json`. The
+  copy sits beside `src/`, so the files the runtime finds from its own
+  location resolve as they do from `src/`: the Codex ACP package from the
+  directory above, the code fingerprint from the copy itself. Every
+  `.dyfj-dev-*` directory is gitignored and outside every lane's roots
+  (`scripts/dev-snapshot-exclusion.test.ts`).
+- A runtime that fails to start (it exits, or does not answer in 60 s) is
+  replaced by the last good code: `node .dyfj-dev-last-good/server/main.ts`,
+  with the same args, env and socket, plus `DYFJ_DEV_BOOT_FAILURE`, the failed
+  start's log output with repository paths made relative and the home
+  directory as `~`. The REPL resumes on it. Before it runs, the copy is
+  re-hashed against its record and the lock file compared; a mismatch refuses
+  it with one line, and so does a missing copy, and the runtime then stays
+  down while the REPL waits and shows the error from the log, as before. While
+  the last good code runs, the next save of any file tries the working tree.
+  A failed first start uses a copy from an earlier run if one passes those
+  checks, and says it is from an earlier run; with none, `dyfj dev` exits.
+- `/rollback` runs the last good code on purpose, for a runtime that starts
+  but fails every turn; its `DYFJ_DEV_BOOT_FAILURE` says the operator rolled
+  back. `/reload` or a save returns to the working tree.
+- `DYFJ_DEV_BOOT_FAILURE` is a `dev`-domain key: declared in the config
+  schema, never in the runtime's env grants, so the launcher never forwards an
+  ambient value and only a runtime `dyfj dev` started as the last good code
+  has it. The runtime sanitizes it again when it reads it
+  (`src/context/dev-boot-failure.ts`: escape sequences, control and bidi
+  characters stripped, capped at 2 KB) and `buildContext` adds it to each
+  native turn's system prompt as a labelled block of local diagnostic output,
+  framed as data and not instructions, with a `dyfj dev boot failure` line
+  under the receipt's context sources. External-agent turns do not carry it.
 - Quitting the REPL stops the runtime and ends `dyfj dev` with the REPL's exit
   status. SIGTERM or SIGHUP to `dyfj dev` stops both.
 
 The supervisor talks to the REPL over a socket pair on the REPL's descriptor 3
 (`DYFJ_DEV_CONTROL_FD`): the reload reason and an exit request go down, the
-session id and `/reload` come up. `scripts/dev-supervisor.ts` holds the reload
+session id, `/reload` and `/rollback` come up. Under the channel, the REPL's
+freshness warning says the last good code is running and a save retries the
+working tree, instead of naming the autostarted lifetime. `scripts/dev-supervisor.ts` holds the reload
 state machine over ports, so its timing is tested on a fake clock.
 
 The local default is Qwen3.6 35B-A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:

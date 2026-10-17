@@ -17,12 +17,12 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { collectSources } from "../../scripts/arch-imports.ts";
 import { readLayerRules } from "./dev-classify.ts";
-import { RETIRED_DIR, SNAPSHOT_DIR, STAGING_DIR } from "./dev-snapshot.ts";
+import { retiredDir, SNAPSHOT_DIR, stagingDir } from "./dev-snapshot.ts";
 import { devTrees } from "./dev-watch.ts";
 import { discoverSync, isIntegrationLaneTest, isUnitTest } from "./test-files.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
-const DIRS = [SNAPSHOT_DIR, STAGING_DIR, RETIRED_DIR];
+const DIRS = [SNAPSHOT_DIR, stagingDir(SNAPSHOT_DIR, 4242), retiredDir(SNAPSHOT_DIR, 4242)];
 const SHAPES = [
   "server/main.ts",
   "engine/agent-loop.test.ts",

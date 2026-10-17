@@ -10,7 +10,7 @@ import {
   SNAPSHOT_DIR,
   type SnapshotPaths,
   snapshotPaths,
-  STAGING_DIR,
+  stagingDir,
 } from "./dev-snapshot.ts";
 
 async function fixture(): Promise<SnapshotPaths & AsyncDisposable> {
@@ -81,14 +81,21 @@ test("a snapshot whose files no longer match its record is never used", async ()
 
 test("a staging copy left by an interrupted promotion is never used", async () => {
   await using f = await fixture();
-  await mkdir(join(f.prototype, STAGING_DIR, "server"), { recursive: true });
-  await writeFile(join(f.prototype, STAGING_DIR, "server", "main.ts"), "partial");
+  // Another process's, and this one's own from before a crash.
+  for (const staging of [stagingDir(f.snapshot, 1), stagingDir(f.snapshot)]) {
+    await mkdir(join(staging, "server"), { recursive: true });
+    await writeFile(join(staging, "server", "main.ts"), "partial");
+  }
   assert.deepStrictEqual(await checkSnapshot(f), { ok: false, reason: "none" });
   // The next promotion replaces it.
   assert.deepStrictEqual(await promoteSnapshot(f, await sourceTreeHash(f.source), at), {
     ok: true,
   });
   assert.ok((await checkSnapshot(f)).ok);
+  assert.deepStrictEqual(
+    (await readdir(f.prototype)).filter((name) => name.startsWith(".dyfj-dev")).sort(),
+    [SNAPSHOT_DIR, `${SNAPSHOT_DIR}.staging-1`],
+  );
 });
 
 test("a changed package-lock.json refuses the snapshot", async () => {
