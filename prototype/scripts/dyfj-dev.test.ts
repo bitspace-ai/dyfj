@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import process from "node:process";
 import { test } from "node:test";
-import { parseDevArgs, parseReplMessage, replArgs } from "./dyfj-dev.ts";
+import { openOwnerOnlyLog, parseDevArgs, parseReplMessage, replArgs } from "./dyfj-dev.ts";
 
 const ID = "01J0000000000000000000000A";
 
@@ -46,5 +47,44 @@ test("REPL messages are parsed strictly", () => {
     `${"x".repeat(5000)}`,
   ]) {
     assert.deepStrictEqual(parseReplMessage(line), null, line.slice(0, 40));
+  }
+});
+
+test("the runtime log is made owner-only even when it and its directory already exist open", async () => {
+  const { chmod, mkdtemp, mkdir, writeFile, stat, rm, symlink, realpath } = await import("node:fs/promises");
+  const { closeSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "dyfj-dev-log-")));
+  try {
+    const dir = join(root, "log");
+    await mkdir(dir, { mode: 0o755 });
+    await chmod(dir, 0o755);
+    const log = join(dir, "runtime.log");
+    await writeFile(log, "LOG-CONTENT-MARKER\n", { mode: 0o644 });
+    await chmod(log, 0o644);
+    closeSync(openOwnerOnlyLog(log));
+    assert.deepStrictEqual((await stat(dir)).mode & 0o777, 0o700);
+    assert.deepStrictEqual((await stat(log)).mode & 0o777, 0o600);
+
+    const elsewhere = join(root, "elsewhere.log");
+    await writeFile(elsewhere, "");
+    const linked = join(dir, "linked.log");
+    await symlink(elsewhere, linked);
+    assert.throws(() => openOwnerOnlyLog(linked), (error: Error) => {
+      assert.deepStrictEqual(error.message, `the runtime log ${linked} cannot be made owner-only (ELOOP)`);
+      return true;
+    });
+
+    // A log another account owns is refused, as root is not at hand here, by
+    // naming a different owner.
+    const owner = (process.getuid?.() ?? 0) + 1;
+    assert.throws(() => openOwnerOnlyLog(log, owner), (error: Error) => {
+      assert.deepStrictEqual(error.message, `the runtime log ${log} cannot be made owner-only`);
+      assert.doesNotMatch(error.message, /LOG-CONTENT-MARKER/);
+      return true;
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

@@ -22,11 +22,14 @@
  */
 
 import {
+  chmodSync,
   closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
-  statSync,
   writeSync,
 } from "node:fs";
 import { constants as osConstants } from "node:os";
@@ -249,6 +252,56 @@ async function readCrates(): Promise<ClassifyContext["crates"]> {
   }
 }
 
+/**
+ * Open the runtime's log for appending, owner-only. The runtime's whole
+ * output lands in it, so it is held to what the launcher's autostart log is:
+ * a 0600 regular file in a 0700 directory. Creation modes do not restrict a
+ * directory or file that already exists, so both are set explicitly; a
+ * symlink is refused, and anything that cannot be made owner-only throws.
+ */
+/** A runtime log that could not be made owner-only; names the path only. */
+class LogRefusedError extends Error {}
+
+export function openOwnerOnlyLog(
+  path: string,
+  owner: number | undefined = process.getuid?.(),
+): number {
+  const refused = (code?: string) =>
+    new LogRefusedError(
+      `the runtime log ${path} cannot be made owner-only${code ? ` (${code})` : ""}`,
+    );
+  let fd: number;
+  try {
+    // As the launcher's autostart does for this directory: create it 0700,
+    // then set 0700 on it whether or not it existed.
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    fd = openSync(
+      path,
+      fsConstants.O_WRONLY | fsConstants.O_APPEND | fsConstants.O_CREAT |
+        fsConstants.O_NOFOLLOW,
+      0o600,
+    );
+  } catch (error) {
+    throw refused((error as NodeJS.ErrnoException).code);
+  }
+  try {
+    const before = fstatSync(fd);
+    if (!before.isFile() || (owner !== undefined && before.uid !== owner)) {
+      throw refused();
+    }
+    fchmodSync(fd, 0o600);
+    if ((fstatSync(fd).mode & 0o077) !== 0) throw refused();
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error instanceof LogRefusedError
+      ? error
+      : refused((error as NodeJS.ErrnoException).code);
+  }
+}
+
 /** The line of the runtime's log, since `offset`, that best says why it died. */
 function logReason(log: string, offset: number): string {
   let text = "";
@@ -277,9 +330,13 @@ class DevRuntime implements DevRuntimePort {
 
   async start(): Promise<Outcome> {
     const launch = await resolveRuntimeLaunch(PROTOTYPE, this.socket, true);
-    mkdirSync(dirname(this.log), { recursive: true, mode: 0o700 });
-    const fd = openSync(this.log, "a", 0o600);
-    const offset = statSync(this.log).size;
+    let fd: number;
+    try {
+      fd = openOwnerOnlyLog(this.log);
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+    const offset = fstatSync(fd).size;
     writeSync(fd, `── dyfj dev runtime at ${new Date().toISOString()}, socket ${this.socket} ──\n`);
     let child: ChildProcess;
     try {

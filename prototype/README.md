@@ -82,6 +82,11 @@ dev socket. Then:
   config and the real Dolt, and runs the REPL in the foreground. Every child it
   starts goes through the config unit's guarded spawn, with a run list of
   `node`, `cargo` and that REPL binary.
+- The runtime's output goes to the dev socket's log under `~/.dyfj/log/`,
+  held to what the autostart log is: the directory is set to 0700 and the
+  file to 0600 whether or not they existed, a symlinked log is refused, and a
+  log that cannot be made owner-only (another account's, say) stops the
+  runtime from starting, with one line naming the path.
 - The runtime runs in its own process group, so the terminal's Ctrl-C (the
   REPL's, to cancel a turn) never reaches it, and with the autostarted
   lifetime. The supervisor holds a connection to it, so it stays up while the
