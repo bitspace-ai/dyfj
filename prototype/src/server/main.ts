@@ -144,8 +144,9 @@ export interface WorkbenchUnixServerOptions {
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
   /**
-   * Invoked after the runtime/stop RPC has been answered. `0` means the
-   * shutdown callback succeeded; `1` means it failed. The runtime process
+   * Invoked after the runtime/stop RPC has been answered, unless a
+   * conditional stop was declined. `0` means the shutdown callback succeeded;
+   * `1` means it failed. The runtime process
    * uses this to exit with a matching status after the client has the result.
    */
   onStopComplete?: (code: 0 | 1) => Promise<void> | void;
@@ -405,6 +406,14 @@ export async function serveWorkbenchUnix(
     onParseError: options.onParseError,
     onRequestSettled: async (req, res) => {
       if (req.method !== "runtime/stop") return;
+      // A conditional stop (`ifSoleClient`) that was declined left the
+      // runtime serving; only a stop or a failed stop ends it.
+      if (
+        "result" in res &&
+        (res.result as { status?: unknown } | null)?.status === "declined"
+      ) {
+        return;
+      }
       const code = "result" in res ? 0 : 1;
       try {
         await options.onStopComplete?.(code);

@@ -304,12 +304,18 @@ test("a runtime started with dyfj start stays up with no clients", async () => {
 
 test("a conditional stop is refused when a second client connects after the probe", async () => {
   let stopped = false;
+  const stopCompletions: number[] = [];
   let server: WorkbenchUnixServer | undefined;
   await using started = await startServer("server-sole-client-race", {
     autostarted: true,
     onShutdown: async () => {
       stopped = true;
       await server!.close({ disconnectPeers: false });
+    },
+    // The runtime process exits here after a stop; a declined stop must
+    // not reach it.
+    onStopComplete: (code) => {
+      stopCompletions.push(code);
     },
   });
   server = started.server;
@@ -333,4 +339,5 @@ test("a conditional stop is refused when a second client connects after the prob
     (await other.peer.request("runtime/liveness") as { status: string }).status,
     "ok",
   );
+  assert.deepStrictEqual(stopCompletions, [], "a declined stop does not exit");
 });

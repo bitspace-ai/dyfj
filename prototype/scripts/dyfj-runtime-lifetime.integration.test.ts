@@ -6,7 +6,18 @@
 // These cases wait out the real 10 s grace, so each takes a while.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -30,9 +41,10 @@ interface Output {
 function launcher(
   home: string,
   args: string[],
+  launcherPath = LAUNCHER,
 ): Promise<Output> {
   return new Promise((resolve, reject) => {
-    const child = spawn(BASH, [LAUNCHER, ...args], {
+    const child = spawn(BASH, [launcherPath, ...args], {
       env: {
         ...process.env,
         HOME: home,
@@ -186,6 +198,91 @@ describe("a runtime started with dyfj start", () => {
           runtime.kill("SIGTERM");
         }
         await reapPidsAndCommandsContaining([runtime.pid ?? 0], sock);
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+describe("a stale autostarted runtime", () => {
+  // A checkout of its own: a copy of prototype/src, so the test can make the
+  // runtime stale by changing that copy, with the real dependencies linked.
+  async function checkoutCopy(root: string): Promise<{
+    launcher: string;
+    src: string;
+  }> {
+    const prototype = fileURLToPath(new URL("..", import.meta.url));
+    await mkdir(`${root}/prototype/scripts`, { recursive: true });
+    await cp(`${prototype}/src`, `${root}/prototype/src`, { recursive: true });
+    await cp(`${prototype}/package.json`, `${root}/prototype/package.json`);
+    await writeFile(
+      `${root}/prototype/scripts/dyfj-launcher.sh`,
+      await readFile(LAUNCHER, "utf8"),
+    );
+    await symlink(
+      fileURLToPath(new URL("../../node_modules", import.meta.url)),
+      `${root}/node_modules`,
+    );
+    return {
+      launcher: `${root}/prototype/scripts/dyfj-launcher.sh`,
+      src: `${root}/prototype/src`,
+    };
+  }
+
+  it(
+    "is restarted only when nothing else uses it, and otherwise keeps serving with a warning",
+    { timeout: 120_000 },
+    async () => {
+      const { home, sock } = await workspace();
+      const { launcher: copy, src } = await checkoutCopy(home);
+      const run = (args: string[]) =>
+        launcher(home, ["--socket", sock, ...args], copy);
+      let held: net.Socket | undefined;
+      try {
+        const first = await run(["models"]);
+        assert.equal(first.code, 0, first.stderr);
+        assert.match(first.stderr, /starting it/);
+        const original = await processTreeContaining(sock);
+
+        // Another client stays connected while the code changes under it.
+        held = net.createConnection(sock);
+        await new Promise<void>((resolve, reject) => {
+          held!.once("connect", resolve).once("error", reject);
+        });
+        await writeFile(`${src}/zz-stale.txt`, "changed\n");
+        const stale = await run(["status"]);
+        assert.match(stale.stdout, /\(runtime is behind the working tree\)/);
+
+        const declined = await run(["models"]);
+        assert.equal(declined.code, 0, declined.stderr);
+        assert.match(
+          declined.stderr,
+          /not restarting it because another client is connected/,
+        );
+        assert.doesNotMatch(declined.stderr, /runtime not running at/);
+        assert.ok(
+          original.every((node) => isAlive(node.pid)),
+          "the shared runtime keeps serving",
+        );
+        const after = await run(["status"]);
+        assert.equal(after.code, 0, after.stderr);
+        assert.match(after.stdout, /behind the working tree/);
+
+        // Alone, the next invocation restarts it on the current code.
+        held.destroy();
+        held = undefined;
+        await delay(300);
+        const restarted = await run(["models"]);
+        assert.equal(restarted.code, 0, restarted.stderr);
+        assert.match(restarted.stderr, /behind the working tree; restarting it/);
+        assert.match(restarted.stderr, /runtime not running at .*; starting it/);
+        assert.ok(original.every((node) => !isAlive(node.pid)));
+        const current = await run(["status"]);
+        assert.match(current.stdout, /\(matches the working tree\)/);
+        await run(["stop"]);
+      } finally {
+        held?.destroy();
+        await reapPidsAndCommandsContaining([], sock);
         await rm(home, { recursive: true, force: true });
       }
     },
