@@ -705,8 +705,64 @@ rust_repl_route() {
   printf '%s' "$bin"
 }
 
+# ── dyfj dev ─────────────────────────────────────────────────────────────────
+#
+# `dyfj dev` is `dyfj` for working on the harness itself: a supervisor
+# (scripts/dyfj-dev.ts) runs its own runtime on a dev socket, with the real
+# config and the real Dolt, runs the Rust REPL in the foreground, and reloads
+# either when their code changes. The dev socket is --socket when given, else
+# dev.sock beside where the daily socket would be by default. DYFJ_SOCKET is
+# not read: it names the daily runtime, which `dyfj dev` must never replace.
+
+dev_route_applies() {
+  [[ "$LAUNCHER_SUBCOMMAND" == "dev" && "$LAUNCHER_SAW_PROMPT" == "0" ]]
+}
+
+dev_socket_path() {
+  if [[ "$SOCKET_FLAG_SET" == "1" && -n "$SOCKET_FLAG_VALUE" ]]; then
+    printf '%s' "$SOCKET_FLAG_VALUE"
+  elif [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    printf '%s' "$XDG_RUNTIME_DIR/dyfj/dev.sock"
+  else
+    printf '%s' "${HOME:-.}/.dyfj/run/dev.sock"
+  fi
+}
+
+# DEV_ARGS: the invocation without the `dev` subcommand and --socket, which
+# the supervisor receives resolved.
+dev_args() {
+  DEV_ARGS=()
+  local i=0 dropped=0
+  local args=(${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"})
+  while [[ $i -lt ${#args[@]} ]]; do
+    local arg="${args[$i]}"
+    if [[ "$arg" == "--socket" ]]; then
+      i=$((i + 2))
+      continue
+    fi
+    if is_value_flag "$arg"; then
+      DEV_ARGS+=("$arg")
+      [[ $((i + 1)) -lt ${#args[@]} ]] && DEV_ARGS+=("${args[$((i + 1))]}")
+      i=$((i + 2))
+      continue
+    fi
+    if [[ "$dropped" == "0" && "$arg" == "dev" ]]; then
+      dropped=1
+    else
+      DEV_ARGS+=("$arg")
+    fi
+    i=$((i + 1))
+  done
+}
+
 main() {
   parse_launcher_args "$@"
+  if dev_route_applies; then
+    # Every later socket resolution (the log name, the dry run) sees the dev
+    # socket, the same way an explicit --socket is seen.
+    SOCKET_FLAG_VALUE="$(dev_socket_path)"
+    SOCKET_FLAG_SET=1
+  fi
   socket_forward_args
   # Fail loudly here, before any routing: later resolutions run inside
   # condition contexts where a rejection could be misread as ordinary
@@ -715,12 +771,19 @@ main() {
   require_node || exit 1
   local route="node" autostart
   local repl_bin repl_status=0
+  if dev_route_applies; then
+    route="dev"
+  fi
   # Tested here: inside the command substitution below, stdout is a pipe.
   LAUNCHER_ON_TERMINAL=0
   if [[ -t 0 && -t 1 ]]; then
     LAUNCHER_ON_TERMINAL=1
   fi
-  repl_bin="$(rust_repl_route)" || repl_status=$?
+  if [[ "$route" == "dev" ]]; then
+    repl_status=1
+  else
+    repl_bin="$(rust_repl_route)" || repl_status=$?
+  fi
   if [[ "$repl_status" == "2" ]]; then
     exit 2
   elif [[ "$repl_status" == "0" ]]; then
@@ -733,13 +796,13 @@ main() {
   # here (the Node client finds it from its own path).
   DYFJ_PROTOTYPE_ROOT="$(prototype_root)"
   export DYFJ_PROTOTYPE_ROOT
-  if autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then
+  if [[ "$route" != "dev" ]] && autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then
     autostart="yes"
   else
     autostart="no"
   fi
 
-  if [[ "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
+  if [[ "$LAUNCHER_SUBCOMMAND" == "start" || "$route" == "dev" ]]; then
     prepare_node_path
     prepare_toolchain_path || exit 1
     prepare_rustup_home || exit 1
@@ -779,6 +842,17 @@ main() {
   fi
 
   case "$route" in
+    dev)
+      local dev_log proto
+      if ! dev_log="$(runtime_log_path)"; then
+        echo "dyfj: dyfj dev needs an absolute HOME for its runtime log" >&2
+        exit 1
+      fi
+      dev_args
+      proto="$(prototype_root)"
+      exec node "${proto}/scripts/dyfj-dev.ts" --socket "$(resolve_socket_path)" \
+        --log "$dev_log" ${DEV_ARGS[@]+"${DEV_ARGS[@]}"}
+      ;;
     rust_repl)
       # The REPL reads this log while the runtime is down, to show why a
       # restart failed. It is the autostart log for this socket; empty when
