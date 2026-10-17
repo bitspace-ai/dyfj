@@ -17,14 +17,24 @@ pub const FINGERPRINT_UNKNOWN: &str = "unknown";
 /// it carries, or say the posture is unavailable. Shown at startup and again
 /// when the REPL re-attaches to a restarted runtime.
 pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str) {
+    let (out, err) = render(status, session, socket, &local_source_hash());
+    for line in out {
+        println!("{line}");
+    }
+    for line in err {
+        eprintln!("{line}");
+    }
+}
+
+/// What `show` prints, to stdout and to stderr, given this checkout's source
+/// hash.
+fn render(status: &anyhow::Result<Value>, session: &Session, socket: &str, local_hash: &str) -> (Vec<String>, Vec<String>) {
     match status {
-        Ok(status) => {
-            println!("{}", line(status, session, socket));
-            for warning in unresolved_pointer_warnings(status) {
-                eprintln!("{warning}");
-            }
-        }
-        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), socket)),
+        Ok(status) => (
+            vec![line_with_local_hash(status, session, socket, local_hash)],
+            unresolved_pointer_warnings(status),
+        ),
+        Err(err) => (vec![runtime_line("posture: unavailable", &err.to_string(), socket)], Vec::new()),
     }
 }
 
@@ -35,21 +45,28 @@ pub fn runtime_line(context: &str, message: &str, local: &str) -> String {
     format!("{context} ({}) · {local}", visible(message))
 }
 
+/// `line_with_local_hash` with this checkout's hash, for tests of the line
+/// itself; `show` renders through `render`.
+#[cfg(test)]
+pub fn line(status: &Value, session: &Session, socket: &str) -> String {
+    line_with_local_hash(status, session, socket, &local_source_hash())
+}
+
+/// The source hash of the checkout the launcher names in
+/// `DYFJ_PROTOTYPE_ROOT`, or `unknown` without one.
+fn local_source_hash() -> String {
+    match std::env::var_os("DYFJ_PROTOTYPE_ROOT") {
+        Some(root) => source_tree_hash(&PathBuf::from(root).join("src")),
+        None => FINGERPRINT_UNKNOWN.to_string(),
+    }
+}
+
 /// Render the posture from a `runtime/status` result and the choices the
 /// command line made for this session, which override the runtime's defaults
 /// on the first turn. Every status field is optional: a runtime that stops
 /// reporting one should cost a narrower line, not a failed startup. When the
-/// runtime is behind this checkout's code, a warning line follows.
-pub fn line(status: &Value, session: &Session, socket: &str) -> String {
-    let local = match std::env::var_os("DYFJ_PROTOTYPE_ROOT") {
-        Some(root) => source_tree_hash(&PathBuf::from(root).join("src")),
-        None => FINGERPRINT_UNKNOWN.to_string(),
-    };
-    line_with_local_hash(status, session, socket, &local)
-}
-
-/// `line`, with this checkout's source hash supplied rather than read from
-/// the checkout `DYFJ_PROTOTYPE_ROOT` names (the launcher exports it).
+/// runtime's code differs from this checkout's (`local_hash`), a warning line
+/// follows.
 pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, local_hash: &str) -> String {
     let posture = posture_line(status, session, socket);
     match freshness_warning(status, local_hash) {
@@ -489,6 +506,23 @@ mod tests {
             }
             let same = json!({"runtime": {"fingerprint": {"contentHash": "sha256:x"}}});
             assert_eq!(freshness_warning(&same, "sha256:y"), None);
+        }
+
+        /// `render` is what `show` prints; startup (`main.rs`) and a
+        /// reconnect (`link.rs`) both call `show`. This checks only `render`.
+        #[test]
+        fn render_puts_the_warning_after_the_posture_line() {
+            use super::super::render;
+            let behind = Ok(json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": OLD}}}));
+            let (out, _) = render(&behind, &Session::default(), "/tmp/s.sock", LOCAL);
+            assert_eq!(out.len(), 1, "{out:?}");
+            let mut lines = out[0].lines();
+            assert_eq!(lines.next(), Some("posture: /tmp/s.sock"));
+            assert!(lines.next().unwrap().starts_with("warning: runtime is behind the working tree"), "{out:?}");
+
+            let current = Ok(json!({"runtime": {"fingerprint": {"head": "x", "contentHash": LOCAL}}}));
+            let (out, _) = render(&current, &Session::default(), "/tmp/s.sock", LOCAL);
+            assert_eq!(out, ["posture: /tmp/s.sock"]);
         }
 
         /// An older client ignores the new fields: the posture line it
