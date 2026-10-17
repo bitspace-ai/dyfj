@@ -74,9 +74,12 @@ README are tracked separately in its Revision history section.
   `runtime/stop` parameter `{ ifSoleClient: true }`, and the launcher
   autostarts a current one. The runtime declines that stop
   (`{ status: "declined", reason }`) while another client is connected or a
-  turn is in flight, deciding in the same step as the stop, so a restart never
-  cuts off another client; the launcher then warns and uses the running
-  runtime. A runtime started with `dyfj start` is never restarted.
+  turn is in flight; the launcher then warns and uses the running runtime.
+  When it does stop, it stops admitting connections in the same step as that
+  check, before any cleanup; a client that connects after that is refused or
+  disconnected unserved, as after any stop, and a `dyfj` invocation then
+  autostarts a current runtime. Tests enforce both orderings. A runtime started with
+  `dyfj start` is never restarted.
 - **The launcher warns when the Rust REPL binary is stale.** When
   `core/target/release/dyfj-repl` is older than a file under
   `core/dyfj-repl/src`, the workspace `Cargo.toml` files or `Cargo.lock`, a

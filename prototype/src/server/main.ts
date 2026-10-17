@@ -399,7 +399,28 @@ export async function serveWorkbenchUnix(
         );
     },
   });
-  const handlers = buildHandlers(options, owners, runRuntime, lifetime);
+  // Assigned once the socket is bound, before any request can arrive.
+  let stopAccepting = () => {};
+  const onShutdown = options.onShutdown;
+  const handlers = buildHandlers(
+    {
+      ...options,
+      // A `runtime/stop` shutdown first stops admitting connections. The stop
+      // handler calls this in the same synchronous step as its `ifSoleClient`
+      // check, which rpc/runtime.test.ts enforces, and no connection is
+      // admitted after `stopAccepting()`, which transport/uds-listener.test.ts
+      // enforces.
+      ...(onShutdown === undefined ? {} : {
+        onShutdown: () => {
+          stopAccepting();
+          return onShutdown();
+        },
+      }),
+    },
+    owners,
+    runRuntime,
+    lifetime,
+  );
   const transport = await serveUnixJsonRpc(socketPath, {
     handlers,
     onConnectionsChanged: (count) => lifetime.clientsChanged(count),
@@ -425,19 +446,25 @@ export async function serveWorkbenchUnix(
     },
   });
 
+  stopAccepting = () => transport.stopAccepting();
   lifetime.start();
 
   return {
     socketPath,
     async close(options: { disconnectPeers?: boolean } = {}) {
       lifetime.dispose();
+      // Closing the transport first stops admitting connections before the
+      // ACP cleanup is awaited; one not yet admitted is closed, as if it had
+      // arrived after the stop. The asking client's
+      // connection stays open for its answer when `disconnectPeers` is false.
+      const transportClosed = transport.close(options);
       let shutdownError: unknown;
       try {
         await acpSessions.shutdown();
       } catch (error) {
         shutdownError = error;
       }
-      await transport.close(options);
+      await transportClosed;
       if (shutdownError !== undefined) throw shutdownError;
     },
   };

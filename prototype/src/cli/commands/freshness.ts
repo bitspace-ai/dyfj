@@ -6,12 +6,12 @@
  * runtime. A runtime `dyfj` autostarted is `dyfj`'s own, so when it is behind
  * the working tree the probe stops it and the launcher autostarts a current
  * one. The stop is conditional (`ifSoleClient`): the runtime refuses it while
- * another client is connected or a turn is in flight, deciding in the same
- * step as the stop, so a restart never cuts off another client. Then the probe
- * warns and leaves it running. A runtime started with `dyfj start` is the
- * operator's and is never stopped here; the posture line warns about it. An
- * older runtime that reports no fingerprint, or an unknown hash on either
- * side, is never compared.
+ * another client is connected or a turn is in flight, and the probe then warns
+ * and leaves it running. When the runtime does stop, it stops admitting
+ * connections in the same step as that check (see `serveWorkbenchUnix`).
+ * A runtime started with `dyfj start` is the operator's and is never stopped
+ * here; the posture line warns about it. An older runtime that reports no
+ * fingerprint, or an unknown hash on either side, is never compared.
  */
 
 import {

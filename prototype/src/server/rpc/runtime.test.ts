@@ -348,3 +348,22 @@ test("runtime/stop with ifSoleClient is declined when the server cannot count it
   assert.strictEqual(result.status, "declined");
   assert.strictEqual(shutdownCalled, false);
 });
+
+test("runtime/stop with ifSoleClient calls onShutdown in the same synchronous step as its check", async () => {
+  // A client could connect at any await between the check and the shutdown,
+  // which begins by closing the socket to new clients. Not awaiting the call
+  // and looking at once fails if an await is ever inserted between them.
+  let shutdownCalled = false;
+  const pending = callRpc(
+    handlers({
+      activity: () => ({ clients: 1, inFlightTurns: 0 }),
+      onShutdown: () => {
+        shutdownCalled = true;
+      },
+    }),
+    "runtime/stop",
+    { ifSoleClient: true },
+  );
+  assert.strictEqual(shutdownCalled, true);
+  await pending;
+});

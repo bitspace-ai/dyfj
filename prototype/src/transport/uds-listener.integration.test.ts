@@ -375,3 +375,22 @@ test("serveUnixJsonRpc reports the open-connection count as clients come and go"
   // Closing the server with no connection open reports nothing more.
   assert.deepStrictEqual(counts, [1, 2, 1, 0]);
 });
+
+test("serveUnixJsonRpc stopAccepting refuses new clients at once and keeps open ones serving", async () => {
+  const socketPath = udsTestSocket("listener-stop-accepting");
+  await removeIfPresent(socketPath);
+  const server = await serveUnixJsonRpc(socketPath, {
+    handlers: { ping: () => "pong" },
+  });
+  await using open = await dial(socketPath);
+  try {
+    // Synchronous by contract: nothing is returned to await, so no caller
+    // can let a client in between deciding to stop and this call.
+    const returned: void = server.stopAccepting();
+    assert.strictEqual(returned, undefined);
+    await assert.rejects(() => rawConnect(socketPath));
+    assert.strictEqual(await open.peer.request("ping"), "pong");
+  } finally {
+    await server.close();
+  }
+});

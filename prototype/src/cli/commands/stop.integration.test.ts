@@ -11,6 +11,7 @@ import {
 } from "../../server/main.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import { udsTestSocket } from "../../../testing/servers/uds-sockets.ts";
+import { serveUnixJsonRpc } from "../../transport/mod.ts";
 import {
   fabricateStaleUdsSocket,
   startMuteListener,
@@ -177,21 +178,15 @@ describe("runStop behavior over real sockets", () => {
     async () => {
       const socketPath = udsTestSocket("cli-stop-slow");
 
-      let serverInstance: WorkbenchUnixServer | undefined;
-
-      serverInstance = await serveWorkbenchUnix(socketPath, {
-        store: new MemoryStore(),
-        onShutdown: () => {
-          // Stubborn server acknowledges stop but does not close
-        },
+      // A stubborn server: it acknowledges the stop but keeps accepting
+      // connections. The runtime itself closes its socket to new clients
+      // when it stops, so this stand-in is a bare transport.
+      const stubborn = await serveUnixJsonRpc(socketPath, {
+        handlers: { "runtime/stop": () => ({ status: "stopping" }) },
       });
 
       cleanups.push(async () => {
-        if (serverInstance) {
-          try {
-            await serverInstance.close();
-          } catch {}
-        }
+        await stubborn.close();
         try {
           await unlink(socketPath);
         } catch {}

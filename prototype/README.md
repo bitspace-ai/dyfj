@@ -53,10 +53,12 @@ clients and turns in flight, and says whether it matches the working tree. When
 it does not, the REPL's posture line (TypeScript and Rust) warns
 `runtime is behind the working tree`. Before an invocation that needs a runtime,
 the launcher restarts a stale runtime it autostarted when the launcher is that
-runtime's only client and no turn is in flight; the runtime makes that check in
-the same step as the stop (`runtime/stop` with `ifSoleClient`), so a restart
-never cuts off another client, and otherwise the launcher warns and leaves it
-running. A runtime started with `dyfj start` is never restarted for this. When
+runtime's only client and no turn is in flight, and otherwise warns and leaves
+it running. The runtime makes that check itself (`runtime/stop` with
+`ifSoleClient`) and, when it stops, stops admitting connections in the same
+step, before any cleanup; a client that connects after that is refused or
+disconnected unserved, as after any stop. A runtime started with `dyfj start`
+is never restarted for this. When
 the Rust REPL binary at `../core/target/release/dyfj-repl` is older than a file
 under `../core/dyfj-repl/src`, the workspace `Cargo.toml` files or `Cargo.lock`,
 the launcher prints the `cargo build --release -p dyfj-repl` command; it builds

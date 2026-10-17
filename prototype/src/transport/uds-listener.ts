@@ -30,6 +30,12 @@ export interface UnixJsonRpcServerOptions {
 export interface UnixJsonRpcServer {
   readonly socketPath: string;
   /**
+   * Stop accepting connections now; open ones keep serving. Synchronous, so
+   * a caller can stop admission in the same step as the decision to shut
+   * down, with nothing to await in between.
+   */
+  stopAccepting(): void;
+  /**
    * Stop accepting, close every open connection unless `disconnectPeers` is
    * false, and remove the socket file.
    */
@@ -87,6 +93,9 @@ export async function serveUnixJsonRpc(
 
   const listener = await host.listen(socketPath);
   const peers = new Set<JsonRpcPeer>();
+  // Set by stopAccepting(). An accept can settle before stopAccepting() while
+  // this loop resumes only after it, so the loop checks the flag itself.
+  let accepting = true;
 
   (async () => {
     for (;;) {
@@ -97,6 +106,10 @@ export async function serveUnixJsonRpc(
         break; // listener failed
       }
       if (conn === null) break; // listener closed
+      if (!accepting) {
+        conn.close();
+        break;
+      }
       const peer = new JsonRpcPeer(conn, {
         handlers: options.handlers,
         onParseError: options.onParseError,
@@ -115,14 +128,20 @@ export async function serveUnixJsonRpc(
     }
   })();
 
+  const stopAccepting = (): void => {
+    accepting = false;
+    try {
+      listener.close();
+    } catch {
+      // already closed
+    }
+  };
+
   return {
     socketPath,
+    stopAccepting,
     async close(closeOptions: { disconnectPeers?: boolean } = {}) {
-      try {
-        listener.close();
-      } catch {
-        // already closed
-      }
+      stopAccepting();
       if (closeOptions.disconnectPeers !== false) {
         for (const peer of peers) peer.close();
         peers.clear();
