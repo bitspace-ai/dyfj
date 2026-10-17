@@ -128,8 +128,8 @@ export async function buildContext(
  * the failure as one labelled block, so the model can repair the breakage,
  * and the context sources record it, so the receipt shows the turn included
  * it. The failure is local runtime output, at the operator's clearance: a
- * non-loopback caller never receives it, as it never receives the personal
- * memory corpus.
+ * caller without it (`hasOperatorClearance`) gets no block, as it gets only
+ * the client-safe and public memory rows.
  */
 function applyDevBootFailure(state: TurnState, ports: NativeTurnPorts): void {
   if (!hasOperatorClearance(state.session.authContext.transport)) return;
