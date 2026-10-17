@@ -28,6 +28,18 @@ README are tracked separately in its Revision history section.
 
 ### Removed
 
+- **The migration-only tooling.** The test codemods (`scripts/codemod/`:
+  the test-dialect and test-registrations codemods, their fixtures and their
+  tests), the import-extension rewriter
+  (`prototype/scripts/add-import-extensions.ts` and its test) and the
+  historical UDS JSON-RPC spike (`prototype/examples/uds-jsonrpc-spike.ts`)
+  are deleted. The codemods and the rewriter served the move of the tests to
+  `node:test`, which is done; the spike ran only under Deno, and the
+  transport it proved lives in `prototype/src/transport/`. The git history
+  keeps all of them. Their entries leave the gate's orchestration lane, the
+  `runtime.neutral` list and the tsconfig exclusion list, and the READMEs no
+  longer describe them. Decision D32.
+
 - **The Deno launch entry points for the runtime and the CLI.**
   `prototype/deno.json` no longer holds any permission profile (`test`,
   `cli`, `serve-unix`, `local-model-diagnostic`, `verify-workbench-events`),
@@ -48,6 +60,28 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The schema CLIs and the receipt-schema tests run on Node.**
+  `schema/validate-schema.ts`, `schema/codegen.ts` and `schema/equivalence.ts`
+  are written to `node:` builtins (`process.argv`, `process.on` for SIGINT and
+  SIGTERM, `node:fs/promises`), with their output, exit codes and the
+  generated `prototype/src/store/generated/rows.ts` byte-identical. The four
+  schema gate lanes (current-schema apply, historical replay plus forward
+  migrations, `schema.codegen` and `schema.equivalence`) run them as plain
+  `node` in place of `deno run -A`, so the only Deno lanes left are the two
+  `deno check` typecheck lanes. The root `validate-schema`, `schema:codegen`,
+  `schema:equivalence` and `test:schema` entry points are now root npm
+  scripts (`npm run <name>`); the root `deno.json` keeps only a one-line
+  `schema:codegen` shim, because the generated file's header and the codegen
+  lane's stale-file message name `deno task schema:codegen`.
+  `scripts/assurance-receipt.test.ts` registers with `node:test` and
+  `node:assert/strict`, and the `receipt.schema` lane runs it under
+  `node --test` through `scripts/run-node-test-files.ts` (50 tests, as
+  before). `prototype/scripts/isolated-dolt-fixture.integration.test.ts`
+  registers with `node:test` too, so the integration lane runs it in its Node
+  subset. The tsconfig exclusion list drops the ported files and
+  `scripts/node-modules-check.ts` with its test, which `tsc` already checks
+  cleanly. Decision D32.
 
 - **The gate runs on Node, and `npm test` is its entry.** The aggregate gate
   (`scripts/aggregate-test-gate.ts`) is written to `node:` builtins: it starts

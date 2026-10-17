@@ -11,7 +11,7 @@ against the shape it upgrades from, and fold its effect into `schema/current/`
 
 1. `schema/current/*.sql` then `schema/catalog/*.sql` (fresh install) and
    `schema/history/*.sql` then `schema/migrations/*.sql` (existing database)
-   must each apply cleanly (`deno task validate-schema`).
+   must each apply cleanly (`npm run validate-schema`).
 2. The two must produce the same structure (`schema.equivalence`).
 3. The generated row types must match the DDL (`schema.codegen`; regenerate
    with `deno task schema:codegen`).

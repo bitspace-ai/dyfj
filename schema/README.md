@@ -14,7 +14,7 @@ The TypeScript row types are generated from it: `codegen.ts` applies
 `information_schema`, and writes `prototype/src/store/generated/rows.ts`
 (`<Table>Row` and `<Table>Insert` shapes, column-name tuples, per-column
 declarations, and the SQL enum unions). Never edit that file by hand;
-regenerate it with `deno task schema:codegen` in the same change as the DDL.
+regenerate it with `npm run schema:codegen` in the same change as the DDL.
 The `schema.codegen` gate lane fails when the committed file is stale.
 
 ## Layout
@@ -92,7 +92,7 @@ dolt --host 127.0.0.1 --port 3306 --no-tls \
 Run the canonical validation against fresh disposable Dolt repositories:
 
 ```sh
-deno task validate-schema
+npm run validate-schema
 ```
 
 The command applies two sequences, each to its own fresh repository:
@@ -108,12 +108,14 @@ fails on invalid DDL or ordering errors and confirms the `events` table exists.
 Two more checks run in the gate, and can be run directly:
 
 ```sh
-deno task schema:equivalence   # both paths produce the same structure
-deno task schema:codegen       # regenerate prototype/src/store/generated/rows.ts
+npm run schema:equivalence   # both paths produce the same structure
+npm run schema:codegen       # regenerate prototype/src/store/generated/rows.ts
 ```
 
-`deno task schema:codegen --check` compares instead of writing, as the gate
-lane does. None of these connect to or mutate a long-running local Dolt SQL
+`npm run schema:codegen -- --check` compares instead of writing, as the gate
+lane does. They run on Node from the repository root. The generated file's
+header and the gate's stale-file message name `deno task schema:codegen`,
+which the root `deno.json` keeps as a one-line shim to the npm script. None of these connect to or mutate a long-running local Dolt SQL
 server.
 
 ## Forward migration workflow

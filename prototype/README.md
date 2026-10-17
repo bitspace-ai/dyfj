@@ -15,8 +15,8 @@ npm workspace at the repository root, so run `npm ci` at the repository root,
 which holds the lockfile and installs into the root `node_modules`; rerun it
 after any change to the root `package-lock.json`. The repository gate runs on
 Node (`npm test` at the repository root). [Deno](https://deno.com) 2.9+ still
-runs the `deno check` typecheck lanes, the schema `deno task` tooling and the
-remaining `deno test` subsets until their own move to Node.
+runs the `deno check` typecheck lanes and the remaining `deno test` subsets
+until their own move to Node.
 
 ```sh
 (cd .. && npm ci)
@@ -341,11 +341,7 @@ its socket name there.
 Local imports name the file they load, extension included (`./utils.ts`, not
 `./utils`); no task passes `--sloppy-imports`, so an extensionless local import
 fails the typecheck. Third-party packages resolve through the `imports` map in
-`deno.json` rather than inline `npm:` or `jsr:` specifiers. To fix up a batch of
-extensionless imports, for example after a merge, run
-`deno run --allow-read=. --allow-write=. scripts/add-import-extensions.ts` from
-this directory; it rewrites each one to the file it resolves to and reports any
-it cannot resolve.
+`deno.json` rather than inline `npm:` or `jsr:` specifiers.
 
 `test:golden` runs the golden characterization suite in `testing/golden/`:
 thirteen black-box scenarios that drive the engine server (`src/server/main.ts`)
@@ -450,11 +446,8 @@ Pass their `--model` and `--base-url` options (after `--`) when testing the curr
 stack; their built-in values target Ollama `gemma4:e2b` rather than the
 registry's local default.
 `verify-workbench-events` is the live event-sequence check, and `smoke` prints
-the Node version. The standalone `examples/uds-jsonrpc-spike.ts` has no npm
-script: it records the original duplex-transport proof, is written for Deno
-(`deno run`, as its header says) and does not run under Node. The current
-transport implementation lives in `src/transport/`, with the engine's method
-handlers in `src/server/rpc/`.
+the Node version. The transport implementation lives in `src/transport/`,
+with the engine's method handlers in `src/server/rpc/`.
 
 ## Where this is heading
 

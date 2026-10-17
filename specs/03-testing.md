@@ -68,13 +68,14 @@ in the same change that lands this spec's first work order.
     `node --test` with the per-file handle check (§1).
   - The gate's own tests under `scripts/` (the orchestration lane: the gate
     driver, its fixtures, the CI workflow, git hooks, lane supervision and the
-    ported static checks) and `prototype/scripts/test-files.test.ts` register
-    with `node:test`, take assertions from `node:assert/strict`, and run
-    under `node --test` with the per-file handle check, the orchestration
-    lane through the shared Node runner (`scripts/run-node-test-files.ts`).
-    The other `prototype/scripts/` tests and `scripts/assurance-receipt.test.ts`
-    may still use `Deno.test`, `@std/testing/bdd` and `@std/assert` until
-    S3.3d of decision D32.
+    ported static checks; and the receipt-schema lane,
+    `scripts/assurance-receipt.test.ts`) and
+    `prototype/scripts/test-files.test.ts` register with `node:test`, take
+    assertions from `node:assert/strict`, and run under `node --test` with the
+    per-file handle check, the orchestration and receipt-schema lanes through
+    the shared Node runner (`scripts/run-node-test-files.ts`). The other
+    `prototype/scripts/` tests may still use `Deno.test`, `@std/testing/bdd`
+    and `@std/assert` until S3.3d of decision D32.
   - The end state under decision D32 is `node:test` as the only test
     framework, with `Deno.test`, `@std/testing` and `@std/assert` gone.
 - **Sanitizers stay on for the remaining `deno test` subset**, until S3.3d of
@@ -106,8 +107,7 @@ in the same change that lands this spec's first work order.
     does the gate driver (`node scripts/aggregate-test-gate.ts`, the root
     `npm test`). Its lanes run as plain `node`, `cargo` and `dolt`, with no
     per-lane permission sandbox; the Deno lanes left (the two `deno check`
-    lanes until close-out, the receipt-schema and schema CLI lanes until
-    S3.3d) carry no grant list. Decision D32.
+    lanes, until close-out) carry no grant list. Decision D32.
   - **Lane helpers exit when their parent dies.** Each helper compares its
     parent with the parent it must have, never with one it observed itself,
     as it starts and then every 200 ms. A gate lane's runner gets the gate's
@@ -312,7 +312,7 @@ internal move.
 | `typecheck.tsc` (new)                        | `tsc --noEmit` from the root npm workspace's `typescript` devDependency (7.0.2, the native compiler, whose binary comes from per-platform optional packages; with `@types/node`) over the root `tsconfig.json`, which covers `src`, `testing`, `examples`, `mcp`, `diagnostics` and `scripts` under `prototype/`, plus the root `schema/`, `contracts/` and `scripts/`, with `strict`, `nodenext`, `verbatimModuleSyntax`, `allowImportingTsExtensions` and `erasableSyntaxOnly`. `erasableSyntaxOnly` rejects a constructor parameter property and every other construct Node's type stripping cannot erase, which replaces the former `erasable.syntax` lint lane; `scripts/typecheck-tsc.test.ts` pins that with a fixture. Files that still use the `Deno` global or `@std/*`, and every file that imports one, are on the tsconfig's `exclude` list, which only shrinks and goes when the last of them ports; they keep their `deno check` coverage meanwhile. Runs in the full gate and `test:fast`, alongside the `deno check` lanes until close-out of decision D32; reported under `test.aggregate`. The Node load probe (`scripts/node-load-probe.ts`) is a manual check of non-test modules under `prototype/src`, `prototype/testing` and `contracts/` only. Decision D32. |
 | npm install precondition (new)               | First lane of the full gate and `test:fast`: fails with `` run `npm ci` at the repository root `` when the root `node_modules` is missing or does not match the root `package-lock.json` of the one npm workspace (npm's `node_modules/.package-lock.json` against the lockfile, by package and version, and each recorded package's `package.json` present on disk; absent optional packages allowed; the workspace member's link must be a symlink resolving to exactly the member directory the lockfile names, inside the repository). Read-only: the gate never runs npm. Reported under `test.aggregate`, because it judges the checkout's install, not the committed tree. Decision D32. |
 | `schema.codegen`, `schema.equivalence` (new) | `02-data-layer.md`.                                                                                                                                                                   |
-| Schema unit tests                            | `schema/validate-schema.test.ts`, `codegen.test.ts` and `equivalence.test.ts` register with `node:test` and run under `node --test` with the per-file handle check and a count line, through the shared Node runner (`scripts/run-node-test-files.ts`), one file at a time. The "Local model catalog data validation" lane (`schema/model-catalog.test.ts`), the contract package tests lane (the three `contracts/workbench/first-product/v1` tests) and the root `deno task test:schema` (all four schema test files) run the same way. The contract closure-report comparison runs as `node`: the generator is written to `node:` builtins, and with `--compare-path` it writes nothing. Decision D32. |
+| Schema unit tests                            | `schema/validate-schema.test.ts`, `codegen.test.ts` and `equivalence.test.ts` register with `node:test` and run under `node --test` with the per-file handle check and a count line, through the shared Node runner (`scripts/run-node-test-files.ts`), one file at a time. The "Local model catalog data validation" lane (`schema/model-catalog.test.ts`), the contract package tests lane (the three `contracts/workbench/first-product/v1` tests) and the root `npm run test:schema` (all four schema test files) run the same way. The contract closure-report comparison runs as `node`: the generator is written to `node:` builtins, and with `--compare-path` it writes nothing. Decision D32. |
 | `projections.replay` (roadmap)               | `02-data-layer.md` §7. Added by roadmap durable-state work.                                                                                                                           |
 | typecheck lanes                              | One source of truth for the file list: derived by globbing, not hand-listed. This removes the current drift between `prototype/deno.json check` and `aggregate-test-gate.ts:438-456`. The `deno check` source lane walks `prototype/src`, `mcp`, `scripts`, `testing`, `diagnostics` and `examples`. |
 | `test:fast`                                  | Adds `test.unit`, so the fast loop exercises product behavior.                                                                                                                        |

@@ -59,9 +59,9 @@ describe("runtime lifecycle commands", () => {
     );
   });
 
-  it("memoryMcpNetGrant keeps IPv6 hosts bracketed, as Deno grants require", () => {
+  it("memoryMcpNetGrant keeps IPv6 hosts bracketed, as host:port net entries require", () => {
     // WHATWG URL.hostname returns IPv6 literals WITH brackets (unlike legacy
-    // url.parse), which is exactly the shape --allow-net expects.
+    // url.parse), which is exactly the shape a host:port net entry needs.
     assert.strictEqual(
       memoryMcpNetGrant("http://[::1]:8443/mcp"),
       "[::1]:8443",

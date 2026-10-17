@@ -31,33 +31,20 @@
   // They keep their deno check coverage until they port to Node. The list
   // only shrinks, and it is deleted when the last of them ports.
   "exclude": [
-    "prototype/examples/uds-jsonrpc-spike.ts",
-    "prototype/scripts/add-import-extensions.test.ts",
-    "prototype/scripts/add-import-extensions.ts",
     "prototype/scripts/deno-executable.test.ts",
     "prototype/scripts/deno-executable.ts",
     "prototype/scripts/dyfj-launcher.integration.test.ts",
-    "prototype/scripts/isolated-dolt-fixture.integration.test.ts",
     "prototype/scripts/isolated-dolt-integration.ts",
     "prototype/scripts/run-unit-tests.ts",
     "prototype/scripts/test-file-args.test.ts",
     "prototype/scripts/test-file-integration-rejection.integration.test.ts",
     "prototype/scripts/test-files.test.ts",
     "prototype/scripts/typecheck.ts",
-    "schema/codegen.test.ts",
-    "schema/codegen.ts",
-    "schema/equivalence.test.ts",
-    "schema/equivalence.ts",
-    "schema/validate-schema.test.ts",
-    "schema/validate-schema.ts",
     "scripts/aggregate-test-gate.test.ts",
     "scripts/aggregate-test-gate.ts",
-    "scripts/assurance-receipt.test.ts",
     "scripts/gate-driver.fixture.ts",
     "scripts/lane-supervision.test.ts",
     "scripts/node-lane-supervision.test.ts",
-    "scripts/node-modules-check.test.ts",
-    "scripts/node-modules-check.ts",
     "scripts/runtime-neutral.test.ts"
   ]
 }
