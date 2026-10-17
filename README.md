@@ -1309,14 +1309,28 @@ three test lanes (`test.unit`, the isolated-Dolt integration lane and
 decides. Each has a deadline (120 s, 900 s and 900 s; `DYFJ_TEST_BOUND_SEC`
 overrides all three in whole seconds, up to 2147423): past it the gate tears
 the lane down as on an interruption and fails it with a message naming the
-deadline. The gate starts each test-lane runner directly as its group's leader
-and hands it a backstop 60 s past that deadline and a lane token, which an idle
-same-group token carrier holds on its command line for the whole run. When all
-of its work is done, the runner stops its own process group (TERM, then KILL to
-whatever is left), so a same-group descendant does not outlive the lane even if
-the gate was killed. If the gate is gone and a test hangs, the runner's
-backstop kills the child it is waiting on and then stops its group; a runner
-still running 30 s past its backstop stops its group and exits regardless. The
+deadline. The gate starts each test-lane runner directly as its group's leader,
+on Node (`node scripts/run-unit-tests.ts`,
+`node scripts/isolated-dolt-integration.ts` and `node testing/golden/run.ts`
+under `prototype/`), and hands it a backstop 60 s past that deadline and a lane
+token, which an idle same-group token carrier, a `node` child of the runner,
+holds on its command line for the whole run. When all of its work is done, the
+runner stops its own process group (TERM, then KILL to whatever is left after
+2 s), so a same-group descendant does not outlive the lane even if the gate was
+killed. The lane helpers exit when their parent dies. The gate hands each
+runner its own pid (`DYFJ_LANE_PARENT_PID`), and the runner checks as it
+starts, then every 200 ms, that its parent is still that pid; once it is not,
+even if the gate died before the runner started, the runner ends the step it
+is waiting on and stops its group, as when a test hangs past its backstop. A
+runner still running 30 s after either stops its group and exits regardless.
+The carrier checks the same way that its parent is still the runner whose pid
+names the group, and once it is not, it stops the group itself and exits. If
+the group stop cannot list processes (`ps` fails), it does not take the group
+for empty: it says so on the lane's output and KILLs the whole group, which
+fails the lane. So a gate, or a gate and its runner, killed outright leaves no
+lane process behind. The one case this does not cover is a carrier killed
+outright as well: its group then holds no token, and a later gate run cannot
+recognise it. The
 gate records each running test lane's group and token under
 `$HOME/.dyfj/run/gate-lanes/`; at its next start it stops a group left behind
 by a gate that is no longer running, but only when a live member of that group
@@ -1483,8 +1497,7 @@ The tsconfig's `exclude` list names the files `tsc` cannot check yet: those
 that still use the `Deno` global or import `@std/*`, plus every file that
 imports one, since `tsc` checks an excluded file an included file imports.
 That is the gate tooling under `scripts/` and `prototype/scripts/`, the
-`schema/` CLIs and their tests, `prototype/testing/golden/run.ts` and the
-seven `prototype/examples/`. Those files keep their `deno check` coverage
+`schema/` CLIs and their tests and the seven `prototype/examples/`. Those files keep their `deno check` coverage
 (the examples through the source typecheck lane), the list only shrinks as
 they port, and it is deleted when the last one ports.
 
@@ -1496,10 +1509,8 @@ It imports each git-tracked non-test module under `prototype/src`,
 each one. Test files are those test discovery recognises (`isTestSource` in
 `prototype/scripts/test-files.ts`). It resolves npm packages the way Node
 does, from the repository root's `node_modules`, which `npm ci` at the root
-installs. One module fails by design:
-`prototype/testing/golden/run.ts`, the golden lane's runner, is a script that
-still runs under `deno`, so the probe reports it as a failure until the gate
-tooling runs under Node.
+installs. The golden lane's runner (`prototype/testing/golden/run.ts`) runs
+on Node and does nothing when imported, so it loads like any other module.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
 (`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
@@ -2461,3 +2472,11 @@ Document revisions only. Code and behavior changes are tracked in
   gain an entry, and each is checked against the merge base rather than only
   against the same checkout. The `arch.imports` paragraph and the testing
   doctrine are brought in line with that.
+- 2026-10-17 - The gate section says the three test-lane runners and their
+  supervision helpers run on Node, and describes the guarantee that lane
+  helpers exit when their parent dies: a runner whose gate is gone, or a
+  token carrier whose runner is gone, stops the lane's group within a bounded
+  time instead of waiting for a later gate run. It names the expected-parent
+  value the gate hands each runner, the fail-closed group stop, and the one
+  case left uncovered, a carrier killed outright as well. The tsconfig exclusion list
+  and the Node load probe paragraphs no longer name the golden lane's runner.

@@ -1,12 +1,24 @@
+// The isolated-Dolt integration lane's runner, run on Node
+// (`node scripts/isolated-dolt-integration.ts`): starts the isolated Dolt
+// fixture, runs the integration files (the gate-tooling subset under
+// `deno test` until the gate-tooling port, then the Node subset), then the
+// Rust schema round trip, and cleans up. The selected Deno reaches it as
+// DENO_BIN, which the gate sets.
+import { type ChildProcess, spawn } from "node:child_process";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
 import {
   seedFixtureMemories,
   startIsolatedDoltFixture,
 } from "./isolated-dolt-fixture.ts";
 import { integrationChildEnvironment } from "./integration-child-environment.ts";
-import { selectedDenoExecutable } from "./deno-executable.ts";
+import { requiredDenoExecutable } from "./deno-executable.ts";
 import { discoverIntegrationTests, partitionByRuntime } from "./test-files.ts";
 import { requireNode, startNodeTests } from "./node-test-lane.ts";
 import {
+  backstopMessage,
   laneSupervision,
   startBackstop,
   startTokenCarrier,
@@ -25,9 +37,24 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw new IntegrationInterruptedError();
 }
 
+interface ChildStatus {
+  code: number;
+}
+
+// The child's exit, as a status whose code is 1 for a signal or a failed
+// start.
+function childStatus(child: ChildProcess): Promise<ChildStatus> {
+  return new Promise((resolve) => {
+    child.once("error", () => resolve({ code: 1 }));
+    child.once("exit", (code) => resolve({ code: code ?? 1 }));
+  });
+}
+
 async function stopChild(
-  child: ReturnType<Deno.Command["spawn"]>,
+  child: ChildProcess,
+  status: Promise<ChildStatus>,
 ): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
   try {
     child.kill("SIGTERM");
   } catch {
@@ -35,7 +62,7 @@ async function stopChild(
   }
   try {
     await Promise.race([
-      child.status,
+      status,
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error("shutdown timeout")), 2_000)
       ),
@@ -46,17 +73,17 @@ async function stopChild(
     } catch {
       // The process exited while the timeout elapsed.
     }
-    await child.status.catch(() => undefined);
+    await status;
   }
 }
 
 async function statusOrAbort(
-  child: ReturnType<Deno.Command["spawn"]>,
+  child: ChildProcess,
+  status: Promise<ChildStatus>,
   signal: AbortSignal,
-): Promise<Deno.CommandStatus> {
-  const status = child.status;
+): Promise<ChildStatus> {
   if (signal.aborted) {
-    await stopChild(child);
+    await stopChild(child, status);
     throw new IntegrationInterruptedError();
   }
   let onAbort: (() => void) | undefined;
@@ -71,8 +98,8 @@ async function statusOrAbort(
   if (onAbort) signal.removeEventListener("abort", onAbort);
   if (result.type === "status") return result.value;
 
-  await stopChild(child);
-  await status.catch(() => undefined);
+  await stopChild(child, status);
+  await status;
   throw new IntegrationInterruptedError();
 }
 
@@ -82,15 +109,16 @@ async function runChecked(
   options: { cwd: string; env: Record<string, string>; signal: AbortSignal },
 ): Promise<void> {
   throwIfAborted(options.signal);
-  const child = new Deno.Command(command, {
-    args,
+  const child = spawn(command, args, {
     cwd: options.cwd,
     env: integrationChildEnvironment(options.env),
-    clearEnv: true,
-    stdout: "inherit",
-    stderr: "inherit",
-  }).spawn();
-  const status = await statusOrAbort(child, options.signal);
+    stdio: "inherit",
+  });
+  const status = await statusOrAbort(
+    child,
+    childStatus(child),
+    options.signal,
+  );
   if (status.code !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed with ${status.code}`);
   }
@@ -104,7 +132,13 @@ const prototypeRoot = fileURLToPath(new URL("..", import.meta.url)).replace(
   /[\\\/]$/,
   "",
 );
-const denoExecutable = selectedDenoExecutable();
+let denoExecutable: string;
+try {
+  denoExecutable = requiredDenoExecutable();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 const abortController = new AbortController();
 let interruptedExitCode: number | undefined;
 const interrupt = (exitCode: number) => {
@@ -114,19 +148,15 @@ const interrupt = (exitCode: number) => {
 };
 const onSigint = () => interrupt(130);
 const onSigterm = () => interrupt(143);
-Deno.addSignalListener("SIGINT", onSigint);
-Deno.addSignalListener("SIGTERM", onSigterm);
+process.on("SIGINT", onSigint);
+process.on("SIGTERM", onSigterm);
 // Under the gate: a token carrier for the whole run, and past the backstop,
-// stop the step in progress (its child is signalled by pid) and clean up as
-// on an interruption. A step or cleanup that does not observe the abort is
-// ended by the backstop's own exit.
+// or once the gate is gone, stop the step in progress (its child is signalled
+// by pid) and clean up as on an interruption. A step or cleanup that does not
+// observe the abort is ended by the backstop's own exit.
 const supervision = laneSupervision();
-startTokenCarrier(supervision, denoExecutable);
-const backstop = startBackstop(
-  supervision,
-  denoExecutable,
-  () => abortController.abort(),
-);
+startTokenCarrier(supervision);
+const backstop = startBackstop(supervision, () => abortController.abort());
 let failure: unknown;
 
 let fixture: Awaited<ReturnType<typeof startIsolatedDoltFixture>> | undefined;
@@ -134,6 +164,8 @@ let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
 let denoTestTempDir: string | undefined;
 try {
+  // The backstop can fire as it starts, when the gate is already gone.
+  throwIfAborted(abortController.signal);
   // Product integration files run under `node --test`; the gate-tooling
   // files under `scripts/` that register with the existing runner run under
   // `deno test` until the gate-tooling port (`test-files.ts`). A product file
@@ -154,15 +186,15 @@ try {
     DYFJ_ROOT: prototypeRoot,
     DENO_BIN: denoExecutable,
   };
-  mcpTestTempDir = await Deno.makeTempDir({ prefix: "dyfj-mcp-roundtrip-" });
+  mcpTestTempDir = await mkdtemp(join(tmpdir(), "dyfj-mcp-roundtrip-"));
   // The files that bind real Unix sockets name them inside this directory.
-  udsTestSocketDir = await Deno.makeTempDir({ prefix: "dyfj-uds-" });
+  udsTestSocketDir = await mkdtemp(join(tmpdir(), "dyfj-uds-"));
   // The tests' own temp files go under TMPDIR, pointed at this directory, so
   // the gate-tooling subset's read and write grants cover it alone. Its real
   // path is what is granted and exported: the code under test resolves real
   // paths, and on macOS the temp root /tmp is a symlink to /private/tmp.
-  denoTestTempDir = await Deno.realPath(
-    await Deno.makeTempDir({ prefix: "dyfj-deno-test-" }),
+  denoTestTempDir = await realpath(
+    await mkdtemp(join(tmpdir(), "dyfj-deno-test-")),
   );
   // Both subsets get this environment; the Node subset also runs the product
   // through DENO_BIN, which `env` carries.
@@ -254,32 +286,30 @@ try {
   try {
     await fixture?.cleanup();
     if (mcpTestTempDir !== undefined) {
-      await Deno.remove(mcpTestTempDir, { recursive: true });
+      await rm(mcpTestTempDir, { recursive: true });
     }
     if (udsTestSocketDir !== undefined) {
-      await Deno.remove(udsTestSocketDir, { recursive: true });
+      await rm(udsTestSocketDir, { recursive: true });
     }
     if (denoTestTempDir !== undefined) {
-      await Deno.remove(denoTestTempDir, { recursive: true });
+      await rm(denoTestTempDir, { recursive: true });
     }
-    Deno.removeSignalListener("SIGINT", onSigint);
-    Deno.removeSignalListener("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
   } finally {
     backstop.clear();
     // Every step has ended, and the fixture is stopped or its cleanup failed:
     // either way a gate lane now stops its own process group, so a same-group
     // descendant does not outlive the lane.
-    await stopOwnGroup(supervision, denoExecutable);
+    await stopOwnGroup(supervision);
   }
 }
 
 if (backstop.expired) {
   console.error(
-    `dyfj: the integration lane passed its backstop deadline (${
-      supervision!.backstopMs
-    } ms)`,
+    backstopMessage("the integration lane", supervision!, backstop),
   );
-  Deno.exit(1);
+  process.exit(1);
 }
-if (interruptedExitCode !== undefined) Deno.exit(interruptedExitCode);
+if (interruptedExitCode !== undefined) process.exit(interruptedExitCode);
 if (failure !== undefined) throw failure;

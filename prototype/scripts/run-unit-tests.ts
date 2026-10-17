@@ -16,13 +16,18 @@
 // may opt out only with a comment naming the leak and why it is unavoidable
 // (`specs/03-testing.md` §2).
 //
+// The runner itself runs on Node, from `node`; the selected Deno reaches it as
+// DENO_BIN, which the `deno task` entries and the gate set.
+//
 // Given arguments (`deno task test:file <path>... [--filter <pattern>]`), it
 // runs those instead of the discovered files, routed and run as above, so a
 // single unit test file can be iterated on without a full typecheck. An
 // integration file (`*.integration.test.ts`) is rejected before either runtime
 // starts: it needs the isolated Dolt fixture, and a Node-routed one would run
 // unsandboxed (`integrationFileRejection`).
-import { selectedDenoExecutable } from "./deno-executable.ts";
+import { spawn } from "node:child_process";
+import process from "node:process";
+import { requiredDenoExecutable } from "./deno-executable.ts";
 import {
   discoverUnitTests,
   isIntegrationTest,
@@ -32,6 +37,7 @@ import {
 } from "./test-files.ts";
 import { parallelJobs, requireNode, startNodeTests } from "./node-test-lane.ts";
 import {
+  backstopMessage,
   killChild,
   laneSupervision,
   startBackstop,
@@ -116,50 +122,53 @@ export function parseTestFileArgs(
 }
 
 if (import.meta.main) {
-  const root = Deno.cwd();
+  const root = process.cwd();
+  const args = process.argv.slice(2);
   let selection: { files: string[]; filter?: string };
   let partition: Record<TestRuntime, string[]>;
+  let deno: string;
   try {
-    if (Deno.args.length === 0) {
+    if (args.length === 0) {
       selection = { files: discoverUnitTests(root) };
       if (selection.files.length === 0) {
         throw new Error("no unit test files found");
       }
     } else {
-      selection = parseTestFileArgs(Deno.args);
+      selection = parseTestFileArgs(args);
     }
     partition = partitionByRuntime(root, selection.files);
     requireNode();
+    deno = requiredDenoExecutable();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    Deno.exit(2);
+    process.exit(2);
   }
-  const deno = selectedDenoExecutable();
   const env = Object.fromEntries(
     ["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "DENO_JOBS"].flatMap((name) => {
-      const value = Deno.env.get(name);
+      const value = process.env[name];
       return value === undefined ? [] : [[name, value]];
     }),
   );
   const supervision = laneSupervision();
-  startTokenCarrier(supervision, deno);
+  startTokenCarrier(supervision);
   // The backstop ends whichever subset is running when it expires.
   let stopCurrent = () => {};
-  const backstop = startBackstop(supervision, deno, () => stopCurrent());
+  const backstop = startBackstop(supervision, () => stopCurrent());
   let code = 0;
   // The gate-tooling subset, until the gate-tooling port; empty when
-  // `test:file` names product files only.
-  if (partition.deno.length > 0) {
-    const child = new Deno.Command(deno, {
-      args: unitTestArgs(partition.deno, selection.filter),
+  // `test:file` names product files only. Neither subset starts once the
+  // backstop has fired, which it can as it starts, when the gate is gone.
+  if (partition.deno.length > 0 && !backstop.expired) {
+    const child = spawn(deno, unitTestArgs(partition.deno, selection.filter), {
       cwd: root,
-      clearEnv: true,
       env,
-      stdout: "inherit",
-      stderr: "inherit",
-    }).spawn();
+      stdio: "inherit",
+    });
     stopCurrent = () => killChild(child);
-    code = (await child.status).code;
+    code = await new Promise<number>((resolve) => {
+      child.once("error", () => resolve(1));
+      child.once("exit", (exitCode) => resolve(exitCode ?? 1));
+    });
   }
   if (!backstop.expired) {
     // The product tests run after a failing gate-tooling subset too, so one
@@ -177,14 +186,10 @@ if (import.meta.main) {
     if (code === 0) code = nodeCode;
   }
   backstop.clear();
-  await stopOwnGroup(supervision, deno);
+  await stopOwnGroup(supervision);
   if (backstop.expired) {
-    console.error(
-      `dyfj: test.unit passed its backstop deadline (${
-        supervision!.backstopMs
-      } ms)`,
-    );
-    Deno.exit(1);
+    console.error(backstopMessage("test.unit", supervision!, backstop));
+    process.exit(1);
   }
-  Deno.exit(code);
+  process.exit(code);
 }

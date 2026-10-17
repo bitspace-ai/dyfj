@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import process from "node:process";
 
 export const DENO_EXECUTABLE_DIAGNOSTIC =
   "dyfj test gate: selected Deno executable is unavailable or unsafe";
@@ -19,6 +20,21 @@ export function selectedDenoExecutable(
   read: (name: string) => string | undefined = (name) => Deno.env.get(name),
 ): string {
   return validateDenoExecutable(read("DENO_BIN") ?? Deno.execPath());
+}
+
+/**
+ * The selected executable for a script that runs on Node, which has no
+ * running executable of this kind to fall back on: DENO_BIN, required and
+ * validated.
+ */
+export function requiredDenoExecutable(
+  read: (name: string) => string | undefined = (name) => process.env[name],
+): string {
+  const executable = read("DENO_BIN");
+  if (executable === undefined || executable === "") {
+    throw new Error(DENO_EXECUTABLE_DIAGNOSTIC);
+  }
+  return validateDenoExecutable(executable);
 }
 
 export function resolveDenoExecutable(

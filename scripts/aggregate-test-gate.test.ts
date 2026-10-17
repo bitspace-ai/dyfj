@@ -25,7 +25,6 @@ import {
   runGate,
 } from "./aggregate-test-gate.ts";
 import { test } from "node:test";
-import { LANE_ENV_NAMES } from "../prototype/scripts/lane-supervision.ts";
 import { MANDATORY_CHECK_IDS } from "./assurance-receipt.ts";
 import { fileURLToPath } from "node:url";
 
@@ -165,9 +164,11 @@ Deno.test("aggregate lanes include the test.unit suite", () => {
   ) => candidate.label === "Prototype unit test suite (test.unit)");
   if (!lane) throw new Error("test.unit lane is missing");
   assertEquals(lane.checkId, "test.aggregate");
-  // The runner itself leads the lane group, not `deno task`.
-  assertEquals(lane.args.at(-1), "scripts/run-unit-tests.ts");
-  assertEquals(lane.args.includes("task"), false);
+  // The runner itself leads the lane group, on Node, not `deno task`.
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, ["scripts/run-unit-tests.ts"]);
+  // It runs the gate-tooling subset with the selected Deno.
+  assertEquals(lane.env?.DENO_BIN, "/fixtures/runtime/deno");
   assertEquals(lane.cwd, "/repo/prototype");
   assertEquals(lane.env?.TMPDIR, "/tmp");
   if (!FAST_LANE_LABELS.includes(lane.label)) {
@@ -175,7 +176,7 @@ Deno.test("aggregate lanes include the test.unit suite", () => {
   }
 });
 
-Deno.test("the three test lanes carry deadlines and grant the lane names", () => {
+Deno.test("the three test lanes carry deadlines and run their runners on Node", () => {
   const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
   for (
     const [label, deadline] of [
@@ -188,10 +189,10 @@ Deno.test("the three test lanes carry deadlines and grant the lane names", () =>
     if (!lane) throw new Error(`${label} is missing`);
     // This lane is not granted DYFJ_TEST_BOUND_SEC, so the defaults apply.
     assertEquals(lane.deadlineMs, laneDeadlineMs(deadline, undefined));
-    const envGrant = lane.args.find((arg) => arg.startsWith("--allow-env="));
-    for (const name of LANE_ENV_NAMES) {
-      assertStringIncludes(envGrant ?? "", name);
-    }
+    // A plain `node` runner holds no grant, so it reads the supervision
+    // names the gate adds to its environment (`runGate`).
+    assertEquals(lane.command, "node");
+    assertEquals(lane.args.length, 1);
   }
   // Every other lane is unsupervised.
   assertEquals(
@@ -789,22 +790,14 @@ Deno.test("aggregate lanes include the golden characterization suite", async () 
   );
   if (!lane) throw new Error("golden characterization lane is missing");
   assertEquals(lane.checkId, "test.aggregate");
-  assertEquals(lane.command, "/fixtures/runtime/deno");
+  // The runner and its tests run on Node (decision D32).
+  assertEquals(lane.command, "node");
   assertEquals(lane.cwd, "/repo/prototype");
   assertEquals(lane.env, {
     TMPDIR: "/tmp",
     DENO_BIN: "/fixtures/runtime/deno",
   });
-  assertEquals(lane.args.at(-1), "testing/golden/run.ts");
-  // The runner spawns only the selected Deno (its lane supervision) and
-  // `node` (the golden files register with node:test) and needs no network.
-  assertEquals(
-    lane.args.find((argument) => argument.startsWith("--allow-run=")),
-    "--allow-run=/fixtures/runtime/deno,node",
-  );
-  if (lane.args.some((argument) => argument.startsWith("--allow-net"))) {
-    throw new Error("golden lane runner must not hold a network grant");
-  }
+  assertEquals(lane.args, ["testing/golden/run.ts"]);
   if (FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("golden lane must not run in the fast subset");
   }
@@ -894,8 +887,13 @@ Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", (
     candidate,
   ) => candidate.label === "Isolated Dolt integration lane");
   if (!lane) throw new Error("isolated Dolt integration lane is missing");
-  assertStringIncludes(lane.args.join(" "), "CARGO_HOME");
-  assertStringIncludes(lane.args.join(" "), "RUSTUP_HOME");
+  // A plain `node` runner reads every name the gate forwards.
+  assertEquals(lane.command, "node");
+  for (const name of ["CARGO_HOME", "RUSTUP_HOME"]) {
+    if (!INHERITED_ENVIRONMENT_NAMES.includes(name)) {
+      throw new Error(`the gate does not forward ${name} to lanes`);
+    }
+  }
   assertEquals(lane.env?.TMPDIR, "/tmp");
   assertEquals(
     integrationChildEnvironment(
@@ -915,8 +913,9 @@ Deno.test("isolated Dolt lane passes custom Rust toolchain roots to children", (
 });
 
 Deno.test("a caller's DENO_DIR reaches the integration lane's children", () => {
-  // The gate forwards it into the lane's cleared environment, the lane may
-  // read it, and the lane passes it on to the Deno.test children.
+  // The gate forwards it into the lane's cleared environment, the lane's
+  // `node` runner reads it, and the lane passes it on to the Deno.test
+  // children.
   if (!INHERITED_ENVIRONMENT_NAMES.includes("DENO_DIR")) {
     throw new Error("the gate does not forward DENO_DIR to lanes");
   }
@@ -924,10 +923,7 @@ Deno.test("a caller's DENO_DIR reaches the integration lane's children", () => {
     candidate,
   ) => candidate.label === "Isolated Dolt integration lane");
   if (!lane) throw new Error("isolated Dolt integration lane is missing");
-  assertStringIncludes(
-    lane.args.find((argument) => argument.startsWith("--allow-env=")) ?? "",
-    "DENO_DIR",
-  );
+  assertEquals(lane.command, "node");
   assertEquals(
     integrationChildEnvironment(
       {},
@@ -951,8 +947,6 @@ Deno.test("aggregate lanes use one selected Deno command and grant identity", ()
   for (
     const label of [
       "Aggregate gate orchestration tests",
-      "Isolated Dolt integration lane",
-      "Golden characterization suite (test.golden)",
     ]
   ) {
     const lane = denoLanes.find((candidate) => candidate.label === label);

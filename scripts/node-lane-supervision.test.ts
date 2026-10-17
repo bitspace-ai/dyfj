@@ -70,16 +70,8 @@ test("a hung node --test file is stopped at its lane's deadline", {
     const code = await runGate({
       lanes: [{
         label: "Stand-in Node test lane",
-        command: process.execPath,
-        commandLabel: "deno",
-        args: [
-          "run",
-          "--allow-env",
-          "--allow-read",
-          "--allow-run",
-          RUNNER,
-          dir,
-        ],
+        command: "node",
+        args: [RUNNER, dir],
         deadlineMs: 3_000,
       }],
       laneRecordDir: join(dir, "records"),

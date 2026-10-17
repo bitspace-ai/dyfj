@@ -42,17 +42,10 @@ for (
     );
     const deno = process.env.DENO_BIN;
     assert.ok(deno, "DENO_BIN is unset: the integration lane sets it");
+    // The runner runs on Node, as `deno task test:file` starts it.
     const result = spawnSync(
-      deno,
-      [
-        "run",
-        "--no-prompt",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,NODE_V8_COVERAGE",
-        "--allow-read=.",
-        `--allow-run=${deno},node`,
-        RUNNER,
-        file,
-      ],
+      "node",
+      [RUNNER, file],
       {
         cwd: root,
         encoding: "utf8",

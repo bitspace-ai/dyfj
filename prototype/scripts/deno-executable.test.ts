@@ -2,6 +2,7 @@ import { assertStrictEquals, assertThrows } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import {
   DENO_EXECUTABLE_DIAGNOSTIC,
+  requiredDenoExecutable,
   resolveDenoExecutable,
   selectedDenoExecutable,
   validateDenoExecutable,
@@ -71,5 +72,21 @@ describe("Deno executable authority", () => {
       Error,
       DENO_EXECUTABLE_DIAGNOSTIC,
     );
+  });
+
+  it("requires DENO_BIN on Node, which has no executable to fall back on", () => {
+    assertStrictEquals(
+      requiredDenoExecutable((name) =>
+        name === "DENO_BIN" ? "/fixtures/runtime/deno" : undefined
+      ),
+      "/fixtures/runtime/deno",
+    );
+    for (const value of [undefined, "", "deno"]) {
+      assertThrows(
+        () => requiredDenoExecutable(() => value),
+        Error,
+        DENO_EXECUTABLE_DIAGNOSTIC,
+      );
+    }
   });
 });
