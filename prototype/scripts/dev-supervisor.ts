@@ -42,7 +42,12 @@ export type Outcome = { ok: true } | { ok: false; error: string };
 
 /** How a runtime start went: the code it reports loading, or why it failed. */
 export type StartOutcome =
-  | { ok: true; contentHash?: string | null }
+  | {
+    ok: true;
+    contentHash?: string | null;
+    /** The lock file's hash when this start began, for the snapshot record. */
+    lockHash?: string;
+  }
   | { ok: false; error: string; detail?: string };
 
 /** What the last good code is told, as `DYFJ_DEV_BOOT_FAILURE`, on `/rollback`. */
@@ -85,8 +90,11 @@ export interface DevPorts {
   snapshot: {
     /** Whether the last good code may run now. */
     check(): Promise<SnapshotCheck>;
-    /** Make the working tree the last good code, if it is what booted. */
-    promote(contentHash: string): Promise<Outcome>;
+    /**
+     * Make the working tree the last good code, if it is what booted
+     * (`contentHash`), recording the lock file it booted on (`lockHash`).
+     */
+    promote(contentHash: string, lockHash?: string): Promise<Outcome>;
   };
 }
 
@@ -309,6 +317,8 @@ export class DevSupervisor {
 
     if (job.rollback) {
       await this.#rollback();
+      // A REPL rebuild queued before the rollback still happens, next.
+      if (job.repl) this.#keep({ ...job, rollback: false, runtime: false }, false);
       return;
     }
 
@@ -352,13 +362,13 @@ export class DevSupervisor {
   }
 
   /** The working tree booted: it runs, and becomes the last good code. */
-  async #promote(started: { contentHash?: string | null }): Promise<void> {
+  async #promote(started: { contentHash?: string | null; lockHash?: string }): Promise<void> {
     this.#mode = "tree";
     if (started.contentHash === undefined || started.contentHash === null) {
       this.#ports.report("last good code not updated: the runtime reported no code fingerprint");
       return;
     }
-    const promoted = await this.#ports.snapshot.promote(started.contentHash);
+    const promoted = await this.#ports.snapshot.promote(started.contentHash, started.lockHash);
     if (promoted.ok) this.#promoted = true;
     else this.#ports.report(`last good code not updated: ${oneLine(promoted.error)}`);
   }
@@ -433,12 +443,15 @@ export class DevSupervisor {
     );
   }
 
-  /** Put a job that could not finish back, to retry on the next save. */
-  #keep(job: Pending): void {
+  /**
+   * Put a job back: by default one that could not finish, to retry on the
+   * next save; with `awaitSave` false, one to run next.
+   */
+  #keep(job: Pending, awaitSave = true): void {
     this.#pending.runtime ||= job.runtime;
     this.#pending.repl ||= job.repl;
     for (const path of job.files) this.#pending.files.add(path);
-    this.#awaitingSave = true;
+    this.#awaitingSave ||= awaitSave;
   }
 
   #beginShutdown(code: number): void {

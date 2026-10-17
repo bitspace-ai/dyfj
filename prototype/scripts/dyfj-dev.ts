@@ -34,7 +34,7 @@ import {
   fstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
+  readSync,
   writeSync,
 } from "node:fs";
 import { constants as osConstants } from "node:os";
@@ -65,7 +65,7 @@ import {
   type ReplMessage,
   type StartOutcome,
 } from "./dev-supervisor.ts";
-import { checkSnapshot, promoteSnapshot, snapshotPaths } from "./dev-snapshot.ts";
+import { checkSnapshot, lockFileHash, promoteSnapshot, snapshotPaths } from "./dev-snapshot.ts";
 import { devTrees, watchTrees } from "./dev-watch.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
@@ -211,7 +211,8 @@ export function bootFailureDetail(log: string, offset: number): string {
 /**
  * Paths in a boot failure as the model's file tools name them: the
  * repository's prefix dropped, with or without `file://`, and the home
- * directory as `~`, so no host path reaches a hosted provider.
+ * directory as `~`. Only those two literal prefixes are rewritten; a path
+ * outside both, or an encoded one, is left as it is.
  */
 export function localizePaths(text: string, repo: string, home: string): string {
   let out = text.replaceAll(`file://${repo}/`, "").replaceAll(`${repo}/`, "");
@@ -369,25 +370,48 @@ export function openOwnerOnlyLog(
   }
 }
 
+/** The most of the runtime's log read after a failed start. */
+const MAX_LOG_READ = 64 * 1024;
+
+/**
+ * The runtime's log from byte `offset`, at most `MAX_LOG_READ` bytes of it,
+ * or "" when it cannot be read. However long the log has grown over many
+ * reloads, only the failed start's own output is read.
+ */
+export function readLogSince(log: string, offset: number): string {
+  let fd: number;
+  try {
+    fd = openSync(log, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch {
+    return "";
+  }
+  try {
+    const buffer = Buffer.alloc(MAX_LOG_READ);
+    let length = 0;
+    while (length < MAX_LOG_READ) {
+      const read = readSync(fd, buffer, length, MAX_LOG_READ - length, offset + length);
+      if (read === 0) break;
+      length += read;
+    }
+    return buffer.subarray(0, length).toString("utf8");
+  } catch {
+    return "";
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** The line of the runtime's log, since `offset`, that best says why it died. */
 function logReason(log: string, offset: number): string {
-  let text = "";
-  try {
-    text = readFileSync(log).subarray(offset).toString("utf8");
-  } catch {
-    return `see ${log}`;
-  }
+  const text = readLogSince(log, offset);
+  if (text === "") return `see ${log}`;
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   return lines.findLast((l) => /error/i.test(l)) ?? lines.at(-1) ?? `see ${log}`;
 }
 
-/** The failed start's whole output, for the last good code to show the model. */
+/** The failed start's output, for the last good code to show the model. */
 function logDetail(log: string, offset: number): string {
-  try {
-    return bootFailureDetail(readFileSync(log).subarray(offset).toString("utf8"), 0);
-  } catch {
-    return "";
-  }
+  return bootFailureDetail(readLogSince(log, offset), 0);
 }
 
 /** The dev runtime: one child process at a time, in its own process group. */
@@ -422,6 +446,7 @@ class DevRuntime implements DevRuntimePort {
     extraEnv: Record<string, string>,
   ): Promise<StartOutcome> {
     const launch = await resolveRuntimeLaunch(PROTOTYPE, this.socket, true);
+    const lockHash = await lockFileHash(SNAPSHOT.lock);
     let fd: number;
     try {
       fd = openOwnerOnlyLog(this.log);
@@ -456,22 +481,27 @@ class DevRuntime implements DevRuntimePort {
     });
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (!gone && Date.now() < deadline) {
+      let client: UnixClient | undefined;
       try {
-        const client = await connectUnixClient(this.socket, {}, AbortSignal.timeout(500));
+        client = await connectUnixClient(this.socket, {}, AbortSignal.timeout(500));
         const status = await client.request("runtime/status", {}, AbortSignal.timeout(2000));
-        if (gone) {
-          client.close();
-          break;
-        }
+        if (gone) break;
         this.#anchor = client;
-        return { ok: true, contentHash: contentHashFrom(status) };
+        client = undefined;
+        return { ok: true, contentHash: contentHashFrom(status), lockHash };
       } catch {
         await delay(200);
+      } finally {
+        client?.close();
       }
     }
     if (!gone) {
       await this.#terminate(child);
-      return { ok: false, error: `the runtime did not answer within ${READY_TIMEOUT_MS / 1000} s` };
+      return {
+        ok: false,
+        error: `the runtime did not answer within ${READY_TIMEOUT_MS / 1000} s`,
+        detail: logDetail(this.log, offset),
+      };
     }
     return {
       ok: false,
@@ -661,7 +691,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     report,
     snapshot: {
       check: () => checkSnapshot(SNAPSHOT),
-      promote: (contentHash) => promoteSnapshot(SNAPSHOT, contentHash, new Date()),
+      promote: (contentHash, lockHash) =>
+        promoteSnapshot(SNAPSHOT, contentHash, new Date(), lockHash),
     },
   });
   runtime.onExit = (code) => supervisor.runtimeExited(code);

@@ -6,8 +6,9 @@
  * of the code instead and passes it the failed start's error output in
  * `DYFJ_DEV_BOOT_FAILURE` (`prototype/scripts/dyfj-dev.ts`). The variable is
  * set on that spawn only and is not a runtime env grant, so the launcher never
- * forwards an ambient value: a runtime started any other way carries no block,
- * and the next good boot, a new process, clears it.
+ * forwards an ambient value, and the next good boot, a new process, clears
+ * it. The runtime does not check where the variable came from: one started by
+ * hand with it set shows the block too.
  *
  * The text is untrusted: it is a log, and a log can hold anything the broken
  * code printed. It is sanitized twice with the one function below, by the

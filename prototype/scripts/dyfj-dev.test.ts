@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { test } from "node:test";
 import {
@@ -10,6 +13,7 @@ import {
   openOwnerOnlyLog,
   parseDevArgs,
   parseReplMessage,
+  readLogSince,
   replArgs,
 } from "./dyfj-dev.ts";
 
@@ -168,4 +172,20 @@ test("host paths in a boot failure become repo-relative, and the home directory 
     ),
     "at prototype/src/a.ts:3 and core/x.rs, ~/.npm",
   );
+});
+
+test("a failed start's log is read from its offset, and only so far", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-log-"));
+  try {
+    const log = join(dir, "dev.log");
+    const before = "x".repeat(100_000);
+    await writeFile(log, `${before}── dyfj dev runtime at t, socket /s ──\nSyntaxError: bad\n${"y".repeat(200_000)}`);
+    const text = readLogSince(log, Buffer.byteLength(before));
+    assert.ok(text.startsWith("── dyfj dev runtime at t"), text.slice(0, 40));
+    assert.ok(!text.includes("xxx"));
+    assert.ok(Buffer.byteLength(text) <= 64 * 1024, `${Buffer.byteLength(text)} bytes`);
+    assert.strictEqual(readLogSince(join(dir, "missing.log"), 0), "");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });

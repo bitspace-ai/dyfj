@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { sourceTreeHash } from "../src/config/mod.ts";
 import {
   checkSnapshot,
+  lockFileHash,
   promoteSnapshot,
   SNAPSHOT_DIR,
   type SnapshotPaths,
@@ -120,4 +121,34 @@ test("a failed copy leaves the previous snapshot whole", async () => {
   const check = await checkSnapshot(f);
   assert.ok(check.ok);
   assert.strictEqual(check.meta.contentHash, first);
+});
+
+test("a swap that fails after the old snapshot moved aside puts it back", async () => {
+  await using f = await fixture();
+  const first = await sourceTreeHash(f.source);
+  await promoteSnapshot(f, first, at);
+  await writeFile(join(f.source, "a.ts"), "export const a = 3;\n");
+  let renames = 0;
+  const failing: SnapshotPaths = {
+    ...f,
+    rename: async (from, to) => {
+      // The second rename, staging into place, fails.
+      if (++renames === 2) throw new Error("EIO");
+      await rename(from, to);
+    },
+  };
+  const result = await promoteSnapshot(failing, await sourceTreeHash(f.source), at);
+  assert.strictEqual(result.ok, false);
+  const check = await checkSnapshot(f);
+  assert.ok(check.ok, JSON.stringify(check));
+  assert.strictEqual(check.meta.contentHash, first);
+});
+
+test("the lock recorded is the one the runtime booted on, not the one at copy time", async () => {
+  await using f = await fixture();
+  const bootLock = await lockFileHash(f.lock);
+  // package-lock.json changes between the boot and the copy.
+  await writeFile(f.lock, '{"lockfileVersion":3,"changed":true}\n');
+  await promoteSnapshot(f, await sourceTreeHash(f.source), at, bootLock);
+  assert.deepStrictEqual(await checkSnapshot(f), { ok: false, reason: "lock" });
 });

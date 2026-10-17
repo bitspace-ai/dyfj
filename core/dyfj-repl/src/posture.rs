@@ -89,8 +89,9 @@ pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, loc
 /// reports no fingerprint (an older runtime). The TypeScript REPL prints the
 /// same text (`formatFreshnessWarning` in `prototype/src/cli/posture.ts`),
 /// except under `dyfj dev` (`dev`), which the TypeScript REPL never runs
-/// under: there a runtime behind the tree is the last good code, running
-/// because the tree's runtime did not start or `/rollback` chose it.
+/// under: there a runtime behind the tree is the last good code (the tree's
+/// runtime did not start, or `/rollback` chose it) or a reload still pending,
+/// and the supervisor, not the autostarted lifetime, restarts it.
 pub fn freshness_warning(status: &Value, local_hash: &str, dev: bool) -> Option<String> {
     let runtime = status.get("runtime").unwrap_or(status);
     let runtime_hash = runtime.get("fingerprint")?.get("contentHash")?.as_str()?;
@@ -98,8 +99,8 @@ pub fn freshness_warning(status: &Value, local_hash: &str, dev: bool) -> Option<
         return None;
     }
     Some(if dev {
-        "warning: runtime is behind the working tree; dyfj dev is running the last \
-         good code, and saving a file retries the working tree's runtime"
+        "warning: runtime is behind the working tree (under dyfj dev, the last good \
+         code or a reload still pending); saving a file retries the working tree's runtime"
             .into()
     } else if runtime.get("autostarted").and_then(Value::as_bool) == Some(true) {
         "warning: runtime is behind the working tree; dyfj started it, so it \
@@ -495,8 +496,8 @@ mod tests {
                 let warning = freshness_warning(&behind, LOCAL, true).expect("behind");
                 assert_eq!(
                     warning,
-                    "warning: runtime is behind the working tree; dyfj dev is running the last \
-                     good code, and saving a file retries the working tree's runtime"
+                    "warning: runtime is behind the working tree (under dyfj dev, the last good \
+                     code or a reload still pending); saving a file retries the working tree's runtime"
                 );
                 assert!(!warning.contains("10 s"), "{warning}");
             }

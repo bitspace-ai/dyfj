@@ -91,10 +91,10 @@ test("the dev watcher watches no snapshot directory", () => {
   }
 });
 
-test("git ignores the snapshot directories, so tracked-file lanes and CodeQL never see them", async () => {
+test("the snapshot directories match git's ignore rules", async () => {
   // runtime.neutral and public-safety read `git ls-files` (public-safety's
   // local scan adds `--others --exclude-standard`), and CodeQL reads the CI
-  // checkout: an ignored path reaches none of them.
+  // checkout. An ignored path that is never force-added reaches none of them.
   const paths = DIRS.map((dir) => `prototype/${dir}/server/main.ts`);
   const ignored = await new Promise<string>((resolve, reject) =>
     execFile("git", ["check-ignore", "--no-index", ...paths], { cwd: REPO }, (error, stdout) =>

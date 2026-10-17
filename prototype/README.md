@@ -123,7 +123,8 @@ dev socket. Then:
   for the process, the copy is kept only if its content hash is the
   `fingerprint.contentHash` the runtime reported (a save can land between the
   boot and the copy), and it is swapped in at `.dyfj-dev-last-good/` with a
-  record of that hash, the time and the sha256 of `../package-lock.json`. The
+  record of that hash, the time and the sha256 of `../package-lock.json` when
+  the runtime started. The
   copy sits beside `src/`, so the files the runtime finds from its own
   location resolve as they do from `src/`: the Codex ACP package from the
   directory above, the code fingerprint from the copy itself. Every
@@ -158,8 +159,9 @@ dev socket. Then:
 The supervisor talks to the REPL over a socket pair on the REPL's descriptor 3
 (`DYFJ_DEV_CONTROL_FD`): the reload reason and an exit request go down, the
 session id, `/reload` and `/rollback` come up. Under the channel, the REPL's
-freshness warning says the last good code is running and a save retries the
-working tree, instead of naming the autostarted lifetime. `scripts/dev-supervisor.ts` holds the reload
+freshness warning says the runtime is the last good code or a reload still
+pending, and that a save retries the working tree, instead of naming the
+autostarted lifetime. `scripts/dev-supervisor.ts` holds the reload
 state machine over ports, so its timing is tested on a fake clock.
 
 The local default is Qwen3.6 35B-A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:

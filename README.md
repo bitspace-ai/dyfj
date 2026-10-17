@@ -918,9 +918,10 @@ turn that made them ends, and the REPL resumes the same session.
   the fixture) do not carry the block; only native turns do.
 - **When it starts but every turn fails.** `/rollback` switches to the last
   good code by hand; `/reload`, or a save, returns to the working tree.
-- **Limits.** Only `prototype/src` is copied. A last good copy taken on a
-  different `package-lock.json` is not run (old code is not run against new
-  dependencies), and neither is one whose files no longer match its record.
+- **Limits.** Only `prototype/src` is copied. A last good copy recorded with
+  a different `package-lock.json` hash is not run, and neither is one whose
+  files no longer match its record. Installed packages that change without
+  the lock file changing are not detected.
   With no usable last good code, a failed reload leaves the REPL waiting for a
   save, and a failed first start ends `dyfj dev`. A last good copy from an
   earlier `dyfj dev` run is used for a failed first start, and the notice says

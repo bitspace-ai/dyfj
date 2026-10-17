@@ -10,20 +10,24 @@
  *   fingerprint from its source directory. From beside `src`, the first
  *   resolves as it does from `src`, and the second hashes the snapshot.
  * - Only `src` is copied. Dependencies are not: a snapshot records the hash
- *   of the repository's `package-lock.json`, and a snapshot whose lock no
- *   longer matches is refused, so old code never runs on new dependencies.
+ *   of the repository's `package-lock.json` as it was when the runtime
+ *   booted, and a snapshot whose recorded hash differs from the current lock
+ *   file is refused. Installed packages that changed without the lock file
+ *   changing are not detected.
  * - A promotion copies into a staging directory beside the snapshot, checks
  *   that the copy is the code the runtime booted (the content hash it
  *   reported), writes the record, and swaps it in: the current snapshot
  *   moves to a retired directory, staging moves into place, and the retired
  *   copy is removed. `rename(2)` cannot replace a directory that has files,
- *   hence two renames. A crash between them leaves no snapshot, never a
- *   partial one, and every use re-hashes the snapshot against its record.
- * - Staging and retired directories are named for the promoting process.
- *   A `dyfj dev` never promotes and falls back at the same time. Two on one
- *   checkout (a test lane beside the operator's, say) do not share a copy:
- *   the slower one's final rename fails, and it reports that it did not
- *   update the snapshot.
+ *   hence two renames. If the second fails, the retired copy is moved back. A
+ *   crash between them leaves no snapshot, never a partial one, and every use
+ *   re-hashes the snapshot against its record.
+ * - Staging and retired directories are named for the promoting process, so
+ *   two `dyfj dev` processes on one checkout (a test lane beside the
+ *   operator's, say) never copy into the same directory. The published
+ *   snapshot is shared: whichever promotes last wins, and a promotion that
+ *   loses a rename race reports that it did not update the snapshot. A
+ *   `dyfj dev` never promotes and falls back at the same time.
  *
  * Every one of these directories is gitignored (`prototype/.dyfj-dev-*`) and
  * sits outside every root the gate's lanes, the type check and the dev
@@ -58,6 +62,8 @@ export interface SnapshotPaths {
   entry: string;
   /** Copy a tree; a test can make it fail. */
   copy?: (from: string, to: string) => Promise<void>;
+  /** Rename a directory; a test can make it fail. */
+  rename?: (from: string, to: string) => Promise<void>;
 }
 
 export function snapshotPaths(repo: string): SnapshotPaths {
@@ -84,7 +90,8 @@ export type SnapshotCheck =
   | { ok: true; meta: SnapshotRecord }
   | { ok: false; reason: "none" | "corrupt" | "lock" };
 
-async function lockHash(path: string): Promise<string> {
+/** sha256 of the lock file at `path`, or `missing`. */
+export async function lockFileHash(path: string): Promise<string> {
   try {
     return `sha256:${createHash("sha256").update(await readFile(path)).digest("hex")}`;
   } catch {
@@ -99,14 +106,18 @@ const defaultCopy = (from: string, to: string) =>
  * Copy `src` and swap it in as the snapshot, if the copy is the code that
  * booted (`booted`, the runtime's reported content hash). Anything else, a
  * save that landed after the boot included, leaves the current snapshot.
+ * `bootLock` is the lock file's hash when the runtime started; the record
+ * keeps it, not the lock file's hash at copy time.
  */
 export async function promoteSnapshot(
   paths: SnapshotPaths,
   booted: string,
   now: Date,
+  bootLock?: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const staging = stagingDir(paths.snapshot);
   const retired = retiredDir(paths.snapshot);
+  const move = paths.rename ?? rename;
   try {
     await rm(staging, { recursive: true, force: true });
     await (paths.copy ?? defaultCopy)(paths.source, staging);
@@ -118,16 +129,23 @@ export async function promoteSnapshot(
     const record: SnapshotRecord = {
       contentHash: copied,
       takenAt: now.toISOString(),
-      lockHash: await lockHash(paths.lock),
+      lockHash: bootLock ?? await lockFileHash(paths.lock),
     };
     await writeFile(join(staging, RECORD), `${JSON.stringify(record)}\n`);
     await rm(retired, { recursive: true, force: true });
+    let retiredOne = true;
     try {
-      await rename(paths.snapshot, retired);
+      await move(paths.snapshot, retired);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      retiredOne = false;
     }
-    await rename(staging, paths.snapshot);
+    try {
+      await move(staging, paths.snapshot);
+    } catch (error) {
+      if (retiredOne) await move(retired, paths.snapshot).catch(() => {});
+      throw error;
+    }
     await rm(retired, { recursive: true, force: true });
     return { ok: true };
   } catch (error) {
@@ -165,6 +183,6 @@ export async function checkSnapshot(paths: SnapshotPaths): Promise<SnapshotCheck
   if (hash === FINGERPRINT_UNKNOWN || hash !== meta.contentHash) {
     return { ok: false, reason: "corrupt" };
   }
-  if ((await lockHash(paths.lock)) !== meta.lockHash) return { ok: false, reason: "lock" };
+  if ((await lockFileHash(paths.lock)) !== meta.lockHash) return { ok: false, reason: "lock" };
   return { ok: true, meta };
 }

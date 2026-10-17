@@ -23,7 +23,8 @@ README are tracked separately in its Revision history section.
   files no longer match its record, is not run. A failed first start uses a
   copy from an earlier run and says so. `/rollback` switches to the last good
   code by hand, and `/reload` returns to the working tree. Under `dyfj dev`,
-  the REPL's freshness warning says the last good code is running. The
+  the REPL's freshness warning names the last good code (or a pending
+  reload) instead of the autostarted lifetime. The
   README adds "Working on the harness from inside it".
 
 - **`dyfj dev`: the runtime and the Rust REPL reload when their code

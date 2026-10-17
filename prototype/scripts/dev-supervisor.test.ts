@@ -445,3 +445,21 @@ test("a first boot that starts is promoted", async () => {
   assert.strictEqual(await h.supervisor.boot(), true);
   assert.deepStrictEqual(h.promotions, ["sha256:tree"]);
 });
+
+test("/rollback keeps a REPL rebuild that was already queued", async () => {
+  const h = harness({
+    snapshot: [GOOD],
+    classify: (p) => ({ runtime: false, repl: true, files: p.length }),
+  });
+  h.supervisor.changed("core/dyfj-repl/src/link.rs");
+  h.supervisor.replMessage({ type: "rollback" });
+  await settle();
+  assert.deepStrictEqual(h.log, [
+    "repl.notify rollback requested",
+    "runtime.stop",
+    "runtime.startLastGood",
+    "build",
+    "repl.exit",
+    "repl.launch -",
+  ]);
+});
