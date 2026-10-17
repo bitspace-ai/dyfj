@@ -91,8 +91,10 @@ dev socket. Then:
   restart it (`ifSoleClient` sees a second client); the supervisor owns its
   restarts.
 - It watches `src/` and `../core/` with Node's recursive `fs.watch`, dropping
-  editor scratch files and `../core/target/`, and takes each batch of saves
-  300 ms after the last one. `scripts/dev-classify.ts` classifies the batch
+  editor scratch files, and takes each batch of saves 300 ms after the last
+  one. `../core/target/` is not watched: `../core/`'s top level is watched on
+  its own and each other directory recursively, so a directory added there is
+  watched only after `dyfj dev` restarts. `scripts/dev-classify.ts` classifies the batch
   from the `arch.imports` module graph (`../scripts/arch-imports-graph.ts`),
   rebuilt for each batch: a module reachable from `src/server/main.ts` over
   value edges restarts the runtime; `contract/` and `transport/` restart the

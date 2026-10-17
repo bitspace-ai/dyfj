@@ -53,7 +53,7 @@ import {
   type Outcome,
   type ReplMessage,
 } from "./dev-supervisor.ts";
-import { watchTrees } from "./dev-watch.ts";
+import { coreTrees, watchTrees } from "./dev-watch.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
 const PROTOTYPE = `${REPO}/prototype`;
@@ -517,10 +517,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   repl.onExit = (code) => supervisor.replExited(code);
 
   const watcher = watchTrees(
-    [
-      { dir: `${PROTOTYPE}/src`, prefix: "prototype/src" },
-      { dir: CORE, prefix: "core" },
-    ],
+    [{ dir: `${PROTOTYPE}/src`, prefix: "prototype/src" }, ...coreTrees(CORE, "core")],
     (path) => {
       if (path.endsWith("/Cargo.toml")) void readCrates().then((next) => (crates = next));
       supervisor.changed(path);

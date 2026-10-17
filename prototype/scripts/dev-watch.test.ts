@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { isEditorNoise, watchTrees, type WatchFn } from "./dev-watch.ts";
+import { coreTrees, isEditorNoise, watchTrees, type WatchFn } from "./dev-watch.ts";
 
 test("editor scratch files are noise; sources and deletions are not", () => {
   for (const path of [
@@ -48,4 +48,32 @@ test("events map to repo-relative paths under each tree, noise dropped", () => {
   assert.deepStrictEqual(seen, ["prototype/src/engine/agent-loop.ts", "core/dyfj-repl/src/link.rs"]);
   watcher.close();
   assert.deepStrictEqual(closed.sort(), ["/repo/core", "/repo/prototype/src"]);
+});
+
+test("the core tree is watched without core/target: its top level alone, each other directory recursively", async () => {
+  const { mkdtemp, mkdir, writeFile, rm, realpath } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const core = await realpath(await mkdtemp(join(tmpdir(), "dyfj-core-")));
+  try {
+    for (const dir of ["src", "dyfj-repl", "target", ".sqlx"]) await mkdir(join(core, dir));
+    await writeFile(join(core, "Cargo.toml"), "");
+    assert.deepStrictEqual(coreTrees(core, "core"), [
+      { dir: core, prefix: "core", recursive: false },
+      { dir: join(core, "dyfj-repl"), prefix: "core/dyfj-repl" },
+      { dir: join(core, "src"), prefix: "core/src" },
+    ]);
+  } finally {
+    await rm(core, { recursive: true, force: true });
+  }
+});
+
+test("a tree marked non-recursive is watched without recursion", () => {
+  const seen: boolean[] = [];
+  const fakeWatch: WatchFn = (_dir, options) => {
+    seen.push(options.recursive);
+    return { close() {} };
+  };
+  watchTrees([{ dir: "/a", prefix: "a" }, { dir: "/b", prefix: "b", recursive: false }], () => {}, fakeWatch);
+  assert.deepStrictEqual(seen, [true, false]);
 });

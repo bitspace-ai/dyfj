@@ -5,21 +5,25 @@
  * Node's recursive watch works on macOS and Linux (the integration test runs
  * it on whichever the gate runs on). Editor scratch files and Cargo's build
  * output are dropped here, so a build never triggers a build and a swap file
- * never restarts the runtime.
+ * never restarts the runtime. `core/target` is not watched at all: on Linux a
+ * recursive watch holds one inotify watch per directory, and the build output
+ * has hundreds (`coreTrees`).
  */
 
-import { watch } from "node:fs";
+import { readdirSync, watch } from "node:fs";
 
 export interface WatchedTree {
   /** Absolute directory to watch. */
   dir: string;
   /** Its repo-relative path, prefixed to every reported file. */
   prefix: string;
+  /** Watch subdirectories too; true unless false. */
+  recursive?: boolean;
 }
 
 export type WatchFn = (
   dir: string,
-  options: { recursive: true },
+  options: { recursive: boolean },
   listener: (event: string, name: string | null) => void,
 ) => { close(): void };
 
@@ -43,7 +47,7 @@ export function watchTrees(
   watchFn: WatchFn = nodeWatch,
 ): { close(): void } {
   const watchers = trees.map((tree) =>
-    watchFn(tree.dir, { recursive: true }, (_event, name) => {
+    watchFn(tree.dir, { recursive: tree.recursive !== false }, (_event, name) => {
       if (name === null || name === "") return;
       const path = `${tree.prefix}/${name.replaceAll("\\", "/")}`;
       if (!isEditorNoise(path)) onChange(path);
@@ -54,4 +58,24 @@ export function watchTrees(
       for (const watcher of watchers) watcher.close();
     },
   };
+}
+
+/**
+ * The trees that cover the Cargo workspace at `dir` without its `target/`:
+ * the top level on its own (the manifests, the lock file, the toolchain file),
+ * and each other directory recursively. Dot directories are skipped, as their
+ * files are. A directory created later is not watched until `dyfj dev`
+ * restarts.
+ */
+export function coreTrees(dir: string, prefix: string): WatchedTree[] {
+  const subdirectories = readdirSync(dir, { withFileTypes: true })
+    .filter((entry) =>
+      entry.isDirectory() && entry.name !== "target" && !entry.name.startsWith(".")
+    )
+    .map((entry) => entry.name)
+    .sort();
+  return [
+    { dir, prefix, recursive: false },
+    ...subdirectories.map((name) => ({ dir: `${dir}/${name}`, prefix: `${prefix}/${name}` })),
+  ];
 }
