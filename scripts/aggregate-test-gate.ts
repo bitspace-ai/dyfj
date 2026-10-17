@@ -915,9 +915,9 @@ export function productionLanes(
     {
       label: "Isolated Dolt integration lane",
       checkId: "test.aggregate",
-      // The runner, on Node: its remaining Deno subset runs under the
-      // executable DENO_BIN names, with its own grants, until S3.3d of
-      // decision D32.
+      // The runner, on Node. No integration file is left on the existing
+      // runner; its `deno test` step, under the executable DENO_BIN names,
+      // runs only when one is discovered, until close-out of decision D32.
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,

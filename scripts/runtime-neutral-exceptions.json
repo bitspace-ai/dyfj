@@ -10,18 +10,13 @@
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
-    "path": "prototype/scripts/dyfj-launcher.integration.test.ts",
-    "count": 118,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "prototype/scripts/integration-child-environment.ts",
     "count": 1,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
     "path": "prototype/scripts/isolated-dolt-integration.ts",
-    "count": 4,
+    "count": 2,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -46,7 +41,7 @@
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 9,
+    "count": 8,
     "reason": "On node: builtins since the gate-tooling port of decision D32. Names the Deno processes the gate still starts, the two deno check lanes and the runners' remaining Deno subsets, until close-out of decision D32."
   },
   {

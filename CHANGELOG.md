@@ -79,10 +79,26 @@ README are tracked separately in its Revision history section.
   `node --test` through `scripts/run-node-test-files.ts` (50 tests, as
   before). `prototype/scripts/isolated-dolt-fixture.integration.test.ts`
   registers with `node:test` too, so the integration lane runs it in its Node
-  subset. The tsconfig exclusion list drops the ported files and
+  subset; with the launcher test already moved, the lane's `deno test` subset
+  is now empty. The tsconfig exclusion list drops the ported files and
   `scripts/node-modules-check.ts` with its test, which `tsc` already checks
   cleanly. Decision D32.
 
+- **The launcher integration test runs under `node --test`.**
+  `prototype/scripts/dyfj-launcher.integration.test.ts` registers with
+  `node:test` and takes its assertions from `node:assert/strict`. It runs the
+  bash launcher with `node:child_process`, and builds its temp roots, symlink
+  fixtures and stand-in executables with `node:fs`. It therefore leaves the
+  integration lane's `deno test` subset for the lane's Node subset, which
+  runs it with the per-file handle check. It keeps all 73 cases, with the same
+  names in the same 13 groups. The file is now under `tsc` (it is off the root
+  `tsconfig.json` exclude list) and off the `runtime.neutral` exception list.
+  The `deno test` subset's grants lose what only this file used: `bash`,
+  `/bin/bash`, `ln`, `python3`, `/bin/kill` and `/bin/ps` to run, and
+  `DENO_DIR`, `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH` and
+  `DYFJ_CODEX_RUSTUP_HOME` to read. What remains in that subset is
+  `isolated-dolt-fixture.integration.test.ts`. The launcher itself is
+  unchanged.
 - **The gate runs on Node, and `npm test` is its entry.** The aggregate gate
   (`scripts/aggregate-test-gate.ts`) is written to `node:` builtins: it starts
   each lane with `node:child_process` as the leader of its own process group,

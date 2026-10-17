@@ -1299,9 +1299,8 @@ committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
-`*.integration.test.ts`, found by file name, product files under `node --test`
-and its remaining `deno test` subset with the op and resource sanitizers
-enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+`*.integration.test.ts`, found by file name, under `node --test`; no
+integration file is left on `Deno.test`; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,

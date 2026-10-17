@@ -224,20 +224,12 @@ try {
       // The isolated Dolt fixture's own tests start throwaway fixtures: they
       // read the fixture environment (TMPDIR, TEMP, TMP) and the schema, make
       // their temp roots under TMPDIR (the per-run directory above), run
-      // `dolt` and connect to 127.0.0.1. The launcher test pins its
-      // children's Deno cache through DENO_DIR and reads the Codex profile
-      // inputs (DYFJ_NODE_PATH and the toolchain directories), which stay
-      // unset here.
-      `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DENO_DIR,DYFJ_ROOT,TMPDIR,TEMP,TMP,DYFJ_NODE_PATH,DYFJ_CODEX_TOOLCHAIN_PATH,DYFJ_CODEX_RUSTUP_HOME`,
+      // `dolt` and connect to 127.0.0.1.
+      `--allow-env=HOME,LOGNAME,PATH,SHELL,TERM,USER,OSTYPE,NODE_V8_COVERAGE,DOLT_HOST,DOLT_PORT,DOLT_USER,DOLT_PASSWORD,DOLT_DATABASE,DENO_BIN,DYFJ_ROOT,TMPDIR,TEMP,TMP`,
       `--allow-read=.,../schema,${denoTestTempDir}`,
       `--allow-write=${denoTestTempDir}`,
-      // bash, /bin/bash: the launcher script and its symlink setup. ln:
-      // symlink fixtures (`Deno.symlink` needs unscoped read and write).
-      // /bin/ps, /bin/kill: reaping a launcher-started runtime
-      // (`testing/processes.ts`). dolt: the fixture tests. python3: a
-      // pseudo-terminal (its `pty` module) for the launcher cases that need an
-      // interactive session.
-      `--allow-run=${denoExecutable},/bin/kill,/bin/ps,dolt,bash,/bin/bash,ln,python3`,
+      // dolt: the fixture tests.
+      `--allow-run=${denoExecutable},dolt`,
       "--allow-net=127.0.0.1",
       // The gate-tooling `*.integration.test.ts` files on the existing
       // runner; every other integration file runs in the Node subset.

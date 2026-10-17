@@ -278,8 +278,8 @@ lane routes every file by its path and content: a test file under `scripts/` tha
 calls `Deno.test` or imports `@std/testing/bdd` is a remaining Deno test and runs under
 `deno test` until S3.3d of decision D32; every other file runs under `node --test`;
 and a file outside `scripts/` that calls `Deno.test` or imports `@std/testing/bdd`
-fails discovery with its path in the message. The unit and integration runners run
-their remaining `deno test` subset first; all three runners run their Node files
+fails discovery with its path in the message. The unit runner runs its remaining
+`deno test` subset first (no integration file is left on `Deno.test`); all three runners run their Node files
 with `node --test --import testing/node-handle-check.ts --test-concurrency=<jobs>
 --test-reporter=tap`, one process per file, with the lane's environment
 (`scripts/node-test-lane.ts`); the unit and integration runners add `DENO_BIN`
@@ -371,9 +371,9 @@ The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
 lane runs every `*.integration.test.ts`: product files under `node --test` with the
 per-file handle check, which catches a leaked server, socket, timer or child process, per
-file; and, until S3.3d of decision D32, its `scripts/` files on `Deno.test` under
-`deno test` with the op and resource sanitizers enabled. The sanitizers fail the test
-that leaks a timer, but they do not see `node:` resources. A test may opt out of a
+file. No integration file is left on `Deno.test`; the runner's `deno test` step runs only
+when one is discovered, and goes at close-out of decision D32. The `deno test`
+sanitizers on the unit runner's remaining subset fail the test that leaks a timer, but they do not see `node:` resources. A test may opt out of a
 sanitizer only with a comment naming the leak and why it is unavoidable. Under the gate,
 the unit, integration and golden runners are supervised test lanes
 (`scripts/lane-supervision.ts`): each runs on Node, has a deadline, a backstop for when
