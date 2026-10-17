@@ -1,3 +1,10 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import process from "node:process";
 import {
   coverageHits,
   declaredSurfacePaths,
@@ -19,23 +26,11 @@ import {
 import { repoRootFromMeta, trackedFiles } from "./scan-lib.ts";
 import { formatHits } from "./public-safety-scan.ts";
 import { headCommit } from "./subject-check.ts";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test } from "node:test";
-
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
 
 async function gitIn(dir: string, args: string[]): Promise<void> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", dir, ...args],
+  const result = spawnSync("git", ["-C", dir, ...args], {
     env: {
+      PATH: process.env.PATH ?? "",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "dyfj-test",
@@ -43,27 +38,26 @@ async function gitIn(dir: string, args: string[]): Promise<void> {
       GIT_COMMITTER_NAME: "dyfj-test",
       GIT_COMMITTER_EMAIL: "gate@example.invalid",
     },
-    stdout: "null",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
-    throw new Error(`git ${args[0]} failed in fixture (exit ${result.code})`);
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args[0]} failed in fixture (exit ${result.status})`);
   }
 }
 
 const WF = ".github/workflows/example.yml";
 const DIGEST = "1".repeat(40);
 
-Deno.test("digest-pinned action references pass", () => {
+test("digest-pinned action references pass", () => {
   const content = [
     "steps:",
     `  - uses: actions/checkout@${DIGEST} # v4.2.2`,
     `  - uses: "denoland/setup-deno@${DIGEST}"`,
   ].join("\n");
-  assertEquals(scanWorkflowText(WF, content), []);
+  assert.deepStrictEqual(scanWorkflowText(WF, content), []);
 });
 
-Deno.test("tag, branch, and short-digest action references fail", () => {
+test("tag, branch, and short-digest action references fail", () => {
   const references = [
     "uses: actions/checkout@v4",
     "uses: actions/checkout@main",
@@ -72,26 +66,26 @@ Deno.test("tag, branch, and short-digest action references fail", () => {
   ];
   for (const line of references) {
     const hits = scanWorkflowText(WF, `steps:\n  - ${line}\n`);
-    assertEquals(hits.map((hit) => hit.rule), [
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [
       "dependency.policy/unpinned-action",
     ]);
   }
 });
 
-Deno.test("mutable installer URLs fail", () => {
+test("mutable installer URLs fail", () => {
   const lines = [
     "      run: curl -fsSL -o /tmp/x https://example.invalid/releases/latest/download/install.sh",
     "      run: wget https://raw.githubusercontent.com/owner/repo/main/setup.sh",
   ];
   for (const line of lines) {
     const hits = scanWorkflowText(WF, `${line}\n`);
-    assertEquals(hits.map((hit) => hit.rule), [
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [
       "dependency.policy/mutable-installer-url",
     ]);
   }
 });
 
-Deno.test("piping a download into a shell fails", () => {
+test("piping a download into a shell fails", () => {
   const lines = [
     "      run: curl -fsSL https://example.invalid/install.sh | sh",
     "      run: curl -fsSL https://example.invalid/install.sh | sudo bash",
@@ -99,7 +93,7 @@ Deno.test("piping a download into a shell fails", () => {
   ];
   for (const line of lines) {
     const hits = scanWorkflowText(WF, `${line}\n`);
-    assertEquals(hits.map((hit) => hit.rule), [
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [
       "dependency.policy/pipe-to-shell",
     ]);
   }
@@ -158,7 +152,7 @@ const MULTILINE_PIPELINES: [string, string[], number][] = [
   ], 5],
 ];
 
-Deno.test("a multiline curl or wget pipeline into a shell fails", () => {
+test("a multiline curl or wget pipeline into a shell fails", () => {
   for (const [form, lines, line] of MULTILINE_PIPELINES) {
     const hits = scanWorkflowText(WF, `${lines.join("\n")}\n`);
     if (
@@ -168,11 +162,11 @@ Deno.test("a multiline curl or wget pipeline into a shell fails", () => {
         `${form}: expected one pipe-to-shell hit, got ${JSON.stringify(hits)}`,
       );
     }
-    assertEquals(hits[0]?.line, line);
+    assert.deepStrictEqual(hits[0]?.line, line);
   }
 });
 
-Deno.test("a pipeline reaching a shell through a filter fails", () => {
+test("a pipeline reaching a shell through a filter fails", () => {
   const content = [
     "      - run: |",
     "          curl -fsSL https://example.invalid/i.sh \\",
@@ -180,37 +174,40 @@ Deno.test("a pipeline reaching a shell through a filter fails", () => {
     "            | /bin/bash",
   ].join("\n");
   const hits = scanWorkflowText(WF, `${content}\n`);
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "dependency.policy/pipe-to-shell",
   ]);
 });
 
-Deno.test("quoting or escaping the shell name does not evade the policy", () => {
+test("quoting or escaping the shell name does not evade the policy", () => {
   for (const stage of ['"/bin/sh"', "'sh'", "s\\h", "env bash"]) {
     const content =
       `      - run: curl -fsSL https://example.invalid/i.sh | ${stage}`;
     const hits = scanWorkflowText(WF, `${content}\n`);
-    assertEquals(hits.map((hit) => hit.rule), [
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [
       "dependency.policy/pipe-to-shell",
     ]);
   }
 });
 
-Deno.test("a comment character cannot hide the rest of a pipeline", () => {
+test("a comment character cannot hide the rest of a pipeline", () => {
   // `#` inside a quoted word is data, not a comment: stripping from the first
   // `#` would drop the pipe and pass this workflow.
   const hidden = '      - run: curl -fsSL "https://example.invalid/a#b" | sh';
-  assertEquals(scanWorkflowText(WF, `${hidden}\n`).map((hit) => hit.rule), [
-    "dependency.policy/pipe-to-shell",
-  ]);
+  assert.deepStrictEqual(
+    scanWorkflowText(WF, `${hidden}\n`).map((hit) => hit.rule),
+    [
+      "dependency.policy/pipe-to-shell",
+    ],
+  );
   // A real comment at a word start ends the command, exactly as the shell
   // reads it.
   const commented =
     "      - run: curl -fsSL -o /tmp/i.sh https://example.invalid/i.sh # | sh";
-  assertEquals(scanWorkflowText(WF, `${commented}\n`), []);
+  assert.deepStrictEqual(scanWorkflowText(WF, `${commented}\n`), []);
 });
 
-Deno.test("a run block whose structure is not understood fails closed", () => {
+test("a run block whose structure is not understood fails closed", () => {
   const blocks: [string, string[]][] = [
     ["unterminated quote", [
       "      - run: |",
@@ -241,11 +238,11 @@ Deno.test("a run block whose structure is not understood fails closed", () => {
     if (!hits.some((hit) => hit.rule === "dependency.policy/unparsed-shell")) {
       throw new Error(`${form}: an unreadable run block was accepted`);
     }
-    assertEquals(hits[0]?.line, 1);
+    assert.deepStrictEqual(hits[0]?.line, 1);
   }
 });
 
-Deno.test("a verified-download block is not a network-to-shell hit", () => {
+test("a verified-download block is not a network-to-shell hit", () => {
   // The shape the gate actually runs: download to a file, check a committed
   // digest, unpack. Separate commands, and the only pipes feed a checksum
   // verifier and a version filter.
@@ -259,19 +256,19 @@ Deno.test("a verified-download block is not a network-to-shell hit", () => {
     '          unzip -q -o /tmp/deno.zip -d "$HOME/.deno-pinned"',
     '          "$HOME/.deno-pinned/deno" --version | grep -F "deno 1.0.0"',
   ].join("\n");
-  assertEquals(scanWorkflowText(WF, `${content}\n`), []);
+  assert.deepStrictEqual(scanWorkflowText(WF, `${content}\n`), []);
 });
 
-Deno.test("piping to a non-shell filter is not a policy hit", () => {
+test("piping to a non-shell filter is not a policy hit", () => {
   const content = [
     '      run: curl -fsSL -o /tmp/deno.zip "https://example.invalid/v1.0.0/deno.zip"',
     '      run: deno --version | grep -F "deno 2.9.6"',
   ].join("\n");
-  assertEquals(scanWorkflowText(WF, content), []);
+  assert.deepStrictEqual(scanWorkflowText(WF, content), []);
 });
 
-Deno.test("the toolchain pin must be an exact version", () => {
-  assertEquals(
+test("the toolchain pin must be an exact version", () => {
+  assert.deepStrictEqual(
     scanToolchainText("core/rust-toolchain.toml", 'channel = "1.98.0"\n'),
     [],
   );
@@ -283,13 +280,13 @@ Deno.test("the toolchain pin must be an exact version", () => {
     ]
   ) {
     const hits = scanToolchainText("core/rust-toolchain.toml", content);
-    assertEquals(hits.map((hit) => hit.rule), [
+    assert.deepStrictEqual(hits.map((hit) => hit.rule), [
       "dependency.policy/unpinned-toolchain",
     ]);
   }
 });
 
-Deno.test("dependency surfaces are classified deterministically", () => {
+test("dependency surfaces are classified deterministically", () => {
   const surfaces = [
     ".github/workflows/gate.yml",
     ".github/dependabot.yml",
@@ -308,10 +305,10 @@ Deno.test("dependency surfaces are classified deterministically", () => {
     "scripts/dependency-policy-manifest.json",
   ];
   for (const path of surfaces) {
-    assertEquals(isDependencySurface(path), true);
+    assert.deepStrictEqual(isDependencySurface(path), true);
   }
   for (const path of ["README.md", "scripts/scan-lib.ts", "schema/x.sql"]) {
-    assertEquals(isDependencySurface(path), false);
+    assert.deepStrictEqual(isDependencySurface(path), false);
   }
 });
 
@@ -333,7 +330,7 @@ function npmRules(
 }
 
 test("an exactly pinned npm package with its lockfile and npmrc passes", () => {
-  assertEquals(
+  assert.deepStrictEqual(
     npmRules(packageJson({ zod: "4.6.5", "@scope/pkg": "1.0.0-rc.1" })),
     [],
   );
@@ -355,7 +352,7 @@ test("a non-exact npm version range fails", () => {
       "4.6.5+build",
     ]
   ) {
-    assertEquals(npmRules(packageJson({ zod: range })), [
+    assert.deepStrictEqual(npmRules(packageJson({ zod: range })), [
       "dependency.policy/npm-range-version",
     ]);
   }
@@ -368,7 +365,9 @@ test("a non-exact npm version range fails", () => {
     ]
   ) {
     const content = JSON.stringify({ [field]: { zod: "^4.6.5" } });
-    assertEquals(npmRules(content), ["dependency.policy/npm-range-version"]);
+    assert.deepStrictEqual(npmRules(content), [
+      "dependency.policy/npm-range-version",
+    ]);
   }
 });
 
@@ -378,7 +377,7 @@ test("an npm range hit names the line of the offending entry", () => {
     packageJson({ ulid: "3.0.2", zod: "^4.6.5" }),
     { lockfile: true, npmrc: NPMRC },
   );
-  assertEquals(hits, [{
+  assert.deepStrictEqual(hits, [{
     path: PKG,
     line: 5,
     rule: "dependency.policy/npm-range-version",
@@ -386,9 +385,12 @@ test("an npm range hit names the line of the offending entry", () => {
 });
 
 test("a package.json without a tracked lockfile fails", () => {
-  assertEquals(npmRules(packageJson({ zod: "4.6.5" }), { lockfile: false }), [
-    "dependency.policy/npm-missing-lockfile",
-  ]);
+  assert.deepStrictEqual(
+    npmRules(packageJson({ zod: "4.6.5" }), { lockfile: false }),
+    [
+      "dependency.policy/npm-missing-lockfile",
+    ],
+  );
 });
 
 test("install scripts must be disabled by a tracked npmrc", () => {
@@ -403,14 +405,14 @@ test("install scripts must be disabled by a tracked npmrc", () => {
       "# ignore-scripts=true\nmin-release-age=3\n",
     ]
   ) {
-    assertEquals(
+    assert.deepStrictEqual(
       npmRules(content, { npmrc }).includes(
         "dependency.policy/npm-install-scripts",
       ),
       true,
     );
   }
-  assertEquals(
+  assert.deepStrictEqual(
     npmRules(content, { npmrc: " ignore-scripts = true \nmin-release-age=3" }),
     [],
   );
@@ -425,11 +427,11 @@ test("the npm release-age floor must hold at install time", () => {
       "ignore-scripts=true\nmin-release-age=three\n",
     ]
   ) {
-    assertEquals(npmRules(content, { npmrc }), [
+    assert.deepStrictEqual(npmRules(content, { npmrc }), [
       "dependency.policy/npm-release-age",
     ]);
   }
-  assertEquals(
+  assert.deepStrictEqual(
     npmRules(content, { npmrc: "ignore-scripts=true\nmin-release-age=7\n" }),
     [],
   );
@@ -444,7 +446,7 @@ test("an npm overrides field fails closed at its line", () => {
     null,
     2,
   );
-  assertEquals(
+  assert.deepStrictEqual(
     scanNpmPackage(PKG, content, { lockfile: true, npmrc: NPMRC }),
     [{
       path: PKG,
@@ -456,7 +458,7 @@ test("an npm overrides field fails closed at its line", () => {
 
 test("an unparseable package.json fails closed", () => {
   for (const content of ["{", "[]", '{"dependencies": ["zod"]}']) {
-    assertEquals(npmRules(content), [
+    assert.deepStrictEqual(npmRules(content), [
       "dependency.policy/npm-unparsed-manifest",
     ]);
   }
@@ -509,7 +511,10 @@ function dependabotRules(
 }
 
 test("a dependabot config watching npm with cooldown and exact bumps passes", () => {
-  assertEquals(dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE)), []);
+  assert.deepStrictEqual(
+    dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE)),
+    [],
+  );
 });
 
 test("a tracked package.json no npm update lane watches fails", () => {
@@ -521,7 +526,7 @@ test("a tracked package.json no npm update lane watches fails", () => {
     DENO_LANE,
     "",
   ].join("\n");
-  assertEquals(scanDependabotText(DEPENDABOT, withoutNpm, [PKG]), [{
+  assert.deepStrictEqual(scanDependabotText(DEPENDABOT, withoutNpm, [PKG]), [{
     path: PKG,
     line: 1,
     rule: "dependency.policy/dependabot-npm-unwatched",
@@ -530,14 +535,14 @@ test("a tracked package.json no npm update lane watches fails", () => {
   // root package.json is watched only by the "/" directory.
   const elsewhere = dependabotConfig(NPM_LANE, DENO_LANE)
     .replace('directory: "/prototype"', 'directory: "/other"');
-  assertEquals(dependabotRules(elsewhere), [
+  assert.deepStrictEqual(dependabotRules(elsewhere), [
     "dependency.policy/dependabot-npm-unwatched",
   ]);
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(dependabotConfig(NPM_LANE, DENO_LANE), ["package.json"]),
     ["dependency.policy/dependabot-npm-unwatched"],
   );
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(
       dependabotConfig(NPM_LANE, DENO_LANE)
         .replace('directory: "/prototype"', 'directory: "/"'),
@@ -569,11 +574,11 @@ test("npm and deno update lanes must hold the 72-hour cooldown", () => {
     ),
   ];
   for (const lane of cooldownLanes) {
-    assertEquals(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
       "dependency.policy/dependabot-cooldown",
     ]);
   }
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(dependabotConfig(
       NPM_LANE,
       DENO_LANE.replace("default-days: 3", "default-days: 1"),
@@ -581,7 +586,7 @@ test("npm and deno update lanes must hold the 72-hour cooldown", () => {
     ["dependency.policy/dependabot-cooldown"],
   );
   // A longer cooldown, per bump level, still holds the floor.
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(dependabotConfig(
       NPM_LANE.replace(
         "default-days: 3",
@@ -602,7 +607,7 @@ test("the npm update lane must bump exact pins with the increase strategy", () =
       NPM_LANE.replace('"increase"', '"lockfile-only"'),
     ]
   ) {
-    assertEquals(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
+    assert.deepStrictEqual(dependabotRules(dependabotConfig(lane, DENO_LANE)), [
       "dependency.policy/dependabot-versioning-strategy",
     ]);
   }
@@ -613,7 +618,7 @@ test("a lane hit names the line of its update entry", () => {
     NPM_LANE,
     DENO_LANE.replace("default-days: 3", "default-days: 1"),
   );
-  assertEquals(scanDependabotText(DEPENDABOT, content, [PKG]), [{
+  assert.deepStrictEqual(scanDependabotText(DEPENDABOT, content, [PKG]), [{
     path: DEPENDABOT,
     line: 12,
     rule: "dependency.policy/dependabot-cooldown",
@@ -636,11 +641,14 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
     '      interval: "weekly"',
     "",
   ].join("\n");
-  assertEquals(scanDependabotText(DEPENDABOT, denoWithoutCooldown, [PKG]), [{
-    path: DEPENDABOT,
-    line: 12,
-    rule: "dependency.policy/dependabot-unparsed",
-  }]);
+  assert.deepStrictEqual(
+    scanDependabotText(DEPENDABOT, denoWithoutCooldown, [PKG]),
+    [{
+      path: DEPENDABOT,
+      line: 12,
+      rule: "dependency.policy/dependabot-unparsed",
+    }],
+  );
   // Every scalar the policy decides on is held to the same rule.
   for (
     const content of [
@@ -656,7 +664,7 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
       ),
     ]
   ) {
-    assertEquals(
+    assert.deepStrictEqual(
       dependabotRules(content).includes(
         "dependency.policy/dependabot-unparsed",
       ),
@@ -665,7 +673,7 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
   }
   // A single-quoted scalar has only the '' escape, which is decoded; an
   // unterminated quote is not understood.
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(
       dependabotConfig(NPM_LANE, DENO_LANE)
         .replace('"npm"', "'npm'")
@@ -673,14 +681,14 @@ test("an escaped quoted scalar fails closed instead of being trusted", () => {
     ),
     [],
   );
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(
       dependabotConfig(NPM_LANE, DENO_LANE)
         .replace('directory: "/prototype"', "directory: '/proto''type'"),
     ),
     ["dependency.policy/dependabot-npm-unwatched"],
   );
-  assertEquals(
+  assert.deepStrictEqual(
     dependabotRules(
       dependabotConfig(NPM_LANE, DENO_LANE).replace('"npm"', "'npm"),
     ).includes("dependency.policy/dependabot-unparsed"),
@@ -706,7 +714,7 @@ test("a dependabot config whose structure is not understood fails closed", () =>
         .replace("    schedule:", "    directory: /x\n    schedule:"),
     ]
   ) {
-    assertEquals(
+    assert.deepStrictEqual(
       dependabotRules(content).includes(
         "dependency.policy/dependabot-unparsed",
       ),
@@ -715,10 +723,10 @@ test("a dependabot config whose structure is not understood fails closed", () =>
   }
 });
 
-Deno.test("hostile workflow content stays out of diagnostics", () => {
+test("hostile workflow content stays out of diagnostics", () => {
   const hostile = `uses: evil\x1b[2J@latest ${"x".repeat(1_000)}`;
   const hits = scanWorkflowText(WF, `  - ${hostile}\n`);
-  assertEquals(hits.map((hit) => hit.rule), [
+  assert.deepStrictEqual(hits.map((hit) => hit.rule), [
     "dependency.policy/unpinned-action",
   ]);
   const formatted = formatHits(hits);
@@ -727,7 +735,7 @@ Deno.test("hostile workflow content stays out of diagnostics", () => {
   }
 });
 
-Deno.test("tracked workflow and toolchain files satisfy the policy", async () => {
+test("tracked workflow and toolchain files satisfy the policy", async () => {
   const hits = await dependencyPolicyHits(repoRootFromMeta());
   if (hits.length > 0) {
     throw new Error(
@@ -835,19 +843,18 @@ function assertViolation(
   const manifest = validManifest();
   mutate(manifest);
   const violations = manifestViolations(manifest);
-  if (!violations.includes(expected)) {
-    throw new Error(
-      `expected ${expected}, got [${violations.join(", ")}]`,
-    );
-  }
+  assert.ok(
+    violations.includes(expected),
+    `expected ${expected}, got [${violations.join(", ")}]`,
+  );
 }
 
-Deno.test("a valid dependency manifest has no violations", () => {
-  assertEquals(manifestViolations(validManifest()), []);
+test("a valid dependency manifest has no violations", () => {
+  assert.deepStrictEqual(manifestViolations(validManifest()), []);
 });
 
-Deno.test("manifest schema and shape discipline fails closed", () => {
-  assertEquals(manifestViolations("nope"), [
+test("manifest schema and shape discipline fails closed", () => {
+  assert.deepStrictEqual(manifestViolations("nope"), [
     "dependency.manifest/not-an-object",
   ]);
   assertViolation((m) => {
@@ -876,7 +883,7 @@ Deno.test("manifest schema and shape discipline fails closed", () => {
   }, "dependency.manifest/unknown-source-class");
 });
 
-Deno.test("manifest path declarations must be explicit", () => {
+test("manifest path declarations must be explicit", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).manifest_paths = [];
   }, "dependency.manifest/invalid:manifest_paths");
@@ -889,7 +896,7 @@ Deno.test("manifest path declarations must be explicit", () => {
   }, "dependency.manifest/invalid:lock_paths");
 });
 
-Deno.test("manifest age policy enforces the registry floor", () => {
+test("manifest age policy enforces the registry floor", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).age_policy = {
       class: "registry-minimum-hours",
@@ -904,7 +911,7 @@ Deno.test("manifest age policy enforces the registry floor", () => {
   }, "dependency.manifest/invalid:age_policy");
 });
 
-Deno.test("age policy is bound to the source class", () => {
+test("age policy is bound to the source class", () => {
   // Registry evasion: a shape-valid not-applicable reason cannot lift a
   // registry surface out of the age floor.
   assertViolation((m) => {
@@ -935,16 +942,16 @@ Deno.test("age policy is bound to the source class", () => {
   }, "dependency.manifest/age-policy-source-mismatch");
 });
 
-Deno.test("every source class validates with its full contract", () => {
+test("every source class validates with its full contract", () => {
   for (const sourceClass of SOURCE_CLASSES) {
-    assertEquals(
+    assert.deepStrictEqual(
       manifestViolations(manifestWith(validSurfaceFor(sourceClass))),
       [],
     );
   }
 });
 
-Deno.test("dropping one contract-required evidence class fails", () => {
+test("dropping one contract-required evidence class fails", () => {
   for (const sourceClass of SOURCE_CLASSES) {
     for (const dropped of REQUIRED_EVIDENCE_BY_SOURCE[sourceClass]) {
       const surface = validSurfaceFor(sourceClass);
@@ -969,7 +976,7 @@ Deno.test("dropping one contract-required evidence class fails", () => {
   }
 });
 
-Deno.test("manifest paths must be normalized repository-relative", () => {
+test("manifest paths must be normalized repository-relative", () => {
   const rejected = [
     "/etc/hosts",
     "a/../b.json",
@@ -991,10 +998,10 @@ Deno.test("manifest paths must be normalized repository-relative", () => {
   }
   const manifest = validManifest();
   surfaceOf(manifest, 0).manifest_paths = ["core/Cargo.toml"];
-  assertEquals(manifestViolations(manifest), []);
+  assert.deepStrictEqual(manifestViolations(manifest), []);
 });
 
-Deno.test("manifest evidence declarations fail closed", () => {
+test("manifest evidence declarations fail closed", () => {
   assertViolation((m) => {
     surfaceOf(m, 0).mutable_references_allowed = true;
   }, "dependency.manifest/mutable-references-allowed");
@@ -1018,7 +1025,7 @@ Deno.test("manifest evidence declarations fail closed", () => {
   }, "dependency.manifest/unknown-evidence-class");
 });
 
-Deno.test("a release asset cannot claim unverified archive integrity", () => {
+test("a release asset cannot claim unverified archive integrity", () => {
   // Dropping the known-missing declaration silently upgrades the claim.
   assertViolation((m) => {
     surfaceOf(m, 1).known_missing_evidence_classes = [];
@@ -1032,7 +1039,7 @@ Deno.test("a release asset cannot claim unverified archive integrity", () => {
   }, "dependency.manifest/contradictory-evidence");
 });
 
-Deno.test("every source class must require inspect-before-apply", () => {
+test("every source class must require inspect-before-apply", () => {
   for (const sourceClass of SOURCE_CLASSES) {
     const contract = REQUIRED_EVIDENCE_BY_SOURCE[sourceClass];
     if (!contract.includes("operator-inspect-before-apply")) {
@@ -1053,7 +1060,7 @@ Deno.test("every source class must require inspect-before-apply", () => {
   }
 });
 
-Deno.test("inspect evidence cannot stand in for artifact evidence", () => {
+test("inspect evidence cannot stand in for artifact evidence", () => {
   // Inspection records that a human looked; it is not a claim about the
   // bytes, so it can never be declared as integrity or provenance proof.
   for (const inspect of ["operator-inspect-before-apply", "inspect-result"]) {
@@ -1066,9 +1073,9 @@ Deno.test("inspect evidence cannot stand in for artifact evidence", () => {
   }
 });
 
-Deno.test("the committed manifest requires inspect-before-apply everywhere", async () => {
+test("the committed manifest requires inspect-before-apply everywhere", async () => {
   const load = await loadManifest(repoRootFromMeta());
-  assertEquals(load.violations, []);
+  assert.deepStrictEqual(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
   if (surfaces.length === 0) throw new Error("manifest declares no surfaces");
   for (const surface of surfaces) {
@@ -1079,7 +1086,7 @@ Deno.test("the committed manifest requires inspect-before-apply everywhere", asy
   }
 });
 
-Deno.test("the manifest digest is canonical and tamper-evident", async () => {
+test("the manifest digest is canonical and tamper-evident", async () => {
   const digest = await manifestDigest(validManifest());
   if (!/^[0-9a-f]{64}$/.test(digest)) {
     throw new Error("manifest digest is not lowercase sha-256 hex");
@@ -1090,7 +1097,7 @@ Deno.test("the manifest digest is canonical and tamper-evident", async () => {
     version: base.version,
     schema: base.schema,
   };
-  assertEquals(await manifestDigest(reordered), digest);
+  assert.deepStrictEqual(await manifestDigest(reordered), digest);
   const tampered = validManifest();
   surfaceOf(tampered, 0).id = "cargo.other";
   if (await manifestDigest(tampered) === digest) {
@@ -1098,64 +1105,64 @@ Deno.test("the manifest digest is canonical and tamper-evident", async () => {
   }
 });
 
-Deno.test("a missing or malformed manifest file fails closed", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-manifest-" });
+test("a missing or malformed manifest file fails closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-manifest-"));
   try {
-    assertEquals((await loadManifest(dir)).violations, [
+    assert.deepStrictEqual((await loadManifest(dir)).violations, [
       "dependency.manifest/unreadable",
     ]);
-    await Deno.mkdir(`${dir}/scripts`);
+    await mkdir(`${dir}/scripts`);
     const path = `${dir}/scripts/dependency-policy-manifest.json`;
-    await Deno.writeTextFile(path, "{ not json");
-    assertEquals((await loadManifest(dir)).violations, [
+    await writeFile(path, "{ not json");
+    assert.deepStrictEqual((await loadManifest(dir)).violations, [
       "dependency.manifest/invalid-json",
     ]);
-    await Deno.writeTextFile(path, '{"schema":"other.schema"}');
+    await writeFile(path, '{"schema":"other.schema"}');
     const rejected = await loadManifest(dir);
     if (rejected.manifest !== undefined || rejected.violations.length === 0) {
       throw new Error("an invalid manifest was accepted");
     }
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("an undeclared tracked dependency surface fails", () => {
+test("an undeclared tracked dependency surface fails", () => {
   const declared = new Set(["core/Cargo.toml"]);
   const hits = coverageHits(
     ["core/Cargo.toml", "prototype/package.json", "README.md"],
     [],
     declared,
   );
-  assertEquals(hits, [{
+  assert.deepStrictEqual(hits, [{
     path: "prototype/package.json",
     line: 1,
     rule: "dependency.policy/undeclared-surface",
   }]);
 });
 
-Deno.test("a changed dependency path outside every declaration fails", () => {
+test("a changed dependency path outside every declaration fails", () => {
   const hits = coverageHits(
     [],
     ["tools/package.json", "docs/notes.md"],
     new Set<string>(),
   );
-  assertEquals(hits, [{
+  assert.deepStrictEqual(hits, [{
     path: "tools/package.json",
     line: 1,
     rule: "dependency.policy/unmatched-surface-change",
   }]);
 });
 
-Deno.test("a deleted tracked dependency file is reported as mutated", async () => {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-dep-deleted-" });
+test("a deleted tracked dependency file is reported as mutated", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-dep-deleted-"));
   try {
     await gitIn(dir, ["init", "-q"]);
-    await Deno.writeTextFile(`${dir}/deno.json`, "{}\n");
+    await writeFile(`${dir}/deno.json`, "{}\n");
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
     const base = await headCommit(dir);
-    await Deno.remove(`${dir}/deno.json`);
+    await rm(`${dir}/deno.json`);
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "delete dependency surface"]);
     const mutated = await mutatedSurfaces(dir, {
@@ -1163,16 +1170,16 @@ Deno.test("a deleted tracked dependency file is reported as mutated", async () =
       authoritative: false,
       description: "fixture range",
     });
-    assertEquals(mutated, ["deno.json"]);
+    assert.deepStrictEqual(mutated, ["deno.json"]);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("the committed manifest validates and covers tracked surfaces", async () => {
+test("the committed manifest validates and covers tracked surfaces", async () => {
   const root = repoRootFromMeta();
   const load = await loadManifest(root);
-  assertEquals(load.violations, []);
+  assert.deepStrictEqual(load.violations, []);
   const tracked = await trackedFiles(root, "dependency policy test");
   const hits = coverageHits(
     tracked,
@@ -1186,14 +1193,14 @@ Deno.test("the committed manifest validates and covers tracked surfaces", async 
   }
 });
 
-Deno.test("the committed manifest claims the verified archive checksum", async () => {
+test("the committed manifest claims the verified archive checksum", async () => {
   const load = await loadManifest(repoRootFromMeta());
-  assertEquals(load.violations, []);
+  assert.deepStrictEqual(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
   const releases = surfaces.filter(
     (surface) => surface.source_class === "github-release-asset",
   );
-  assertEquals(releases.length, 2);
+  assert.deepStrictEqual(releases.length, 2);
   for (const surface of releases) {
     // The workflow checks a repository-committed SHA-256 before unpacking,
     // so the checksum is claimed evidence rather than a declared gap.
@@ -1208,14 +1215,14 @@ Deno.test("the committed manifest claims the verified archive checksum", async (
   }
 });
 
-Deno.test("the committed manifest keeps the signature gap a known unknown", async () => {
+test("the committed manifest keeps the signature gap a known unknown", async () => {
   const load = await loadManifest(repoRootFromMeta());
-  assertEquals(load.violations, []);
+  assert.deepStrictEqual(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
   const releases = surfaces.filter(
     (surface) => surface.source_class === "github-release-asset",
   );
-  assertEquals(releases.length, 2);
+  assert.deepStrictEqual(releases.length, 2);
   for (const surface of releases) {
     const missing = surface.known_missing_evidence_classes as string[];
     const claimed = [
@@ -1236,32 +1243,38 @@ Deno.test("the committed manifest keeps the signature gap a known unknown", asyn
 
 test("the committed manifest declares the npm surface under the registry floor", async () => {
   const load = await loadManifest(repoRootFromMeta());
-  assertEquals(load.violations, []);
+  assert.deepStrictEqual(load.violations, []);
   const surfaces = (load.manifest?.surfaces ?? []) as Record<string, unknown>[];
   const npm = surfaces.filter((surface) => surface.id === "npm.workspace");
-  assertEquals(npm.length, 1);
+  assert.deepStrictEqual(npm.length, 1);
   const surface = npm[0]!;
-  assertEquals(surface.source_class, "npm-registry");
+  assert.deepStrictEqual(surface.source_class, "npm-registry");
   // The root workspace and its member. The prototype .npmrc and lockfile
   // stay declared so the release range that removed them matches a surface.
-  assertEquals(surface.manifest_paths, [
+  assert.deepStrictEqual(surface.manifest_paths, [
     "package.json",
     ".npmrc",
     "prototype/package.json",
     "prototype/.npmrc",
   ]);
-  assertEquals(surface.lock_paths, [
+  assert.deepStrictEqual(surface.lock_paths, [
     "package-lock.json",
     "prototype/package-lock.json",
   ]);
-  assertEquals(surface.age_policy, {
+  assert.deepStrictEqual(surface.age_policy, {
     class: "registry-minimum-hours",
     minimum_hours: 72,
   });
   // deno.workspace keeps the deno.json files and deno.lock only.
   const deno = surfaces.find((entry) => entry.id === "deno.workspace");
-  assertEquals(deno?.manifest_paths, ["deno.json", "prototype/deno.json"]);
-  assertEquals(deno?.lock_paths, ["deno.lock", "prototype/deno.lock"]);
+  assert.deepStrictEqual(deno?.manifest_paths, [
+    "deno.json",
+    "prototype/deno.json",
+  ]);
+  assert.deepStrictEqual(deno?.lock_paths, [
+    "deno.lock",
+    "prototype/deno.lock",
+  ]);
 });
 
 test("tracked npm packages are checked for lockfile and npmrc", async () => {
@@ -1280,7 +1293,7 @@ test("tracked npm packages are checked for lockfile and npmrc", async () => {
     await gitIn(dir, ["add", "pkg/package.json"]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
     const hits = await dependencyPolicyHits(dir);
-    assertEquals(
+    assert.deepStrictEqual(
       hits.filter((hit) => hit.path === "pkg/package.json")
         .map((hit) => hit.rule),
       [
@@ -1312,8 +1325,8 @@ test("a workspace member is owned by the root that lists it", () => {
     packages,
     new Set([...packages.keys(), "package-lock.json", ".npmrc"]),
   );
-  assertEquals([...result.owners], [["prototype/package.json", ""]]);
-  assertEquals(result.hits, []);
+  assert.deepStrictEqual([...result.owners], [["prototype/package.json", ""]]);
+  assert.deepStrictEqual(result.hits, []);
 });
 
 test("a tracked npmrc or lockfile beside a workspace member fails", () => {
@@ -1331,7 +1344,7 @@ test("a tracked npmrc or lockfile beside a workspace member fails", () => {
       "prototype/package-lock.json",
     ]),
   );
-  assertEquals(result.hits.map((hit) => [hit.path, hit.rule]), [
+  assert.deepStrictEqual(result.hits.map((hit) => [hit.path, hit.rule]), [
     ["prototype/.npmrc", "dependency.policy/npm-workspace-member-config"],
     [
       "prototype/package-lock.json",
@@ -1369,10 +1382,10 @@ test("workspaces other than plain relative directories fail", () => {
       new Map([["package.json", content]]),
       new Set(["package.json"]),
     );
-    assertEquals(result.hits.map((hit) => [hit.line, hit.rule]), [
+    assert.deepStrictEqual(result.hits.map((hit) => [hit.line, hit.rule]), [
       [3, "dependency.policy/npm-workspaces-unsupported"],
     ]);
-    assertEquals(result.owners.size, 0);
+    assert.deepStrictEqual(result.owners.size, 0);
   }
 });
 
@@ -1396,7 +1409,7 @@ test("a workspace member is checked against the root lockfile, npmrc and npm lan
     );
     await gitIn(dir, ["add", "."]);
     await gitIn(dir, ["commit", "-q", "-m", "base"]);
-    assertEquals(
+    assert.deepStrictEqual(
       (await dependencyPolicyHits(dir)).filter((hit) =>
         hit.path !== "core/rust-toolchain.toml"
       ),
@@ -1407,7 +1420,7 @@ test("a workspace member is checked against the root lockfile, npmrc and npm lan
     await gitIn(dir, ["rm", "-q", "package-lock.json", ".npmrc"]);
     await gitIn(dir, ["commit", "-q", "-m", "drop root config"]);
     const hits = await dependencyPolicyHits(dir);
-    assertEquals(
+    assert.deepStrictEqual(
       hits.filter((hit) => hit.path === "prototype/package.json")
         .map((hit) => hit.rule),
       [

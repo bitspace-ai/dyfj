@@ -131,15 +131,22 @@ cycle, and it needs no entry here. Those round trips are documented in §5.7.
 Rollout:
 
 - **Before the move.** The lane starts in ratchet mode, with a committed
-  baseline of current violations that may only shrink.
+  baseline of current violations. The lane fails on a violation not in the
+  baseline and on a baseline entry that no longer occurs; the `ratchet.base`
+  lane fails on any baseline entry that is not at the merge base, with no
+  override, so the baseline only shrinks.
 - **Phase-1 exit.** The baseline is empty.
 
 A companion size report (non-failing) lists modules over 600 LOC and functions
 over 150 lines. The lane enforces the PRD-11 R2 hard limits: a runtime module
 over 1,000 LOC or a function over 200 lines fails it, unless
 `scripts/arch-size-exceptions.json` names it with its reason and the size it
-may not exceed (it may shrink, not grow, and an entry no longer needed must be
-removed). An excepted item is an R2 deferral under decision D28, not R2 met.
+may not exceed (an entry no longer needed must be removed). The lane fails on
+an item that grows past its recorded size. The `ratchet.base` lane compares the
+list with itself at the merge base and fails on a recorded size that rose, or
+an entry that is new, unless that entry carries a `growth_reason` added in the
+same change; the lane prints each such reason. An excepted item is an R2
+deferral under decision D28, not R2 met.
 
 ## 5. Seams
 

@@ -45,7 +45,11 @@
  * `scan-lib.ts`).
  */
 
+import { lstat, stat } from "node:fs/promises";
+import process from "node:process";
 import {
+  type CommandOutput,
+  commandOutput,
   type CoverageGaps,
   coverageIsComplete,
   emptyCoverage,
@@ -306,7 +310,7 @@ export function markdownLinkTargets(content: string): {
 
 async function pathExists(root: string, relative: string): Promise<boolean> {
   try {
-    await Deno.stat(`${root}/${relative}`);
+    await stat(`${root}/${relative}`);
     return true;
   } catch {
     return false;
@@ -384,7 +388,7 @@ export async function shellParseHits(
     // never invoke the parser on it.
     let isLink: boolean;
     try {
-      isLink = (await Deno.lstat(`${root}/${path}`)).isSymlink;
+      isLink = (await lstat(`${root}/${path}`)).isSymbolicLink();
     } catch {
       throw new Error(
         `${LABEL}: cannot read tracked file ${
@@ -400,13 +404,9 @@ export async function shellParseHits(
       });
       continue;
     }
-    let result: Deno.CommandOutput;
+    let result: CommandOutput;
     try {
-      result = await new Deno.Command(shellCommand, {
-        args: ["-n", `${root}/${path}`],
-        stdout: "piped",
-        stderr: "piped",
-      }).output();
+      result = await commandOutput(shellCommand, ["-n", `${root}/${path}`]);
     } catch {
       // An unavailable parser must fail the check, never skip it. The raw
       // platform exception is not relayed.
@@ -484,26 +484,27 @@ export async function runRangeCheck(
 }
 
 if (import.meta.main) {
-  const [flag, check] = Deno.args;
+  const args = process.argv.slice(2);
+  const [flag, check] = args;
   if (
-    Deno.args.length !== 2 || flag !== "--check" ||
+    args.length !== 2 || flag !== "--check" ||
     !(RANGE_CHECKS as readonly string[]).includes(check ?? "")
   ) {
     console.error(
       `${LABEL}: usage: --check <${RANGE_CHECKS.join("|")}>`,
     );
-    Deno.exit(64);
+    process.exit(64);
   }
   let code: number;
   try {
     code = await runRangeCheck(
       check as RangeCheck,
       repoRootFromMeta(),
-      (name) => Deno.env.get(name),
+      (name) => process.env[name],
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     code = 1;
   }
-  Deno.exit(code);
+  process.exitCode = code;
 }

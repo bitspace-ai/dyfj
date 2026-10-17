@@ -16,6 +16,7 @@
  * gate treats that, like any other answer, as `other`.
  */
 
+import process from "node:process";
 import { type EnvReader, resolveReleaseRange } from "./release-range.ts";
 import { gitStdout, repoRootFromMeta } from "./scan-lib.ts";
 
@@ -53,10 +54,10 @@ export async function changeScope(
 if (import.meta.main) {
   try {
     console.log(
-      await changeScope(repoRootFromMeta(), (name) => Deno.env.get(name)),
+      await changeScope(repoRootFromMeta(), (name) => process.env[name]),
     );
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    Deno.exit(1);
+    process.exitCode = 1;
   }
 }

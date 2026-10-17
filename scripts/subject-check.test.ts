@@ -1,25 +1,16 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
+import { test } from "node:test";
 import {
   headCommit,
   recomputeCommitDigest,
   resolveSubjectBinding,
   runSubjectCheck,
 } from "./subject-check.ts";
-
-function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
-}
-
-function assertStringIncludes(actual: string, expected: string): void {
-  if (!actual.includes(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(actual)} to include ${expected}`,
-    );
-  }
-}
 
 function envOf(
   vars: Record<string, string>,
@@ -31,9 +22,9 @@ function envOf(
 // configuration, so a global commit-signing or hooks setting cannot break or
 // leak into the fixture.
 async function gitIn(dir: string, args: string[]): Promise<void> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", dir, ...args],
+  const result = spawnSync("git", ["-C", dir, ...args], {
     env: {
+      PATH: process.env.PATH ?? "",
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       GIT_AUTHOR_NAME: "dyfj-test",
@@ -41,26 +32,27 @@ async function gitIn(dir: string, args: string[]): Promise<void> {
       GIT_COMMITTER_NAME: "dyfj-test",
       GIT_COMMITTER_EMAIL: "gate@example.invalid",
     },
-    stdout: "null",
-    stderr: "piped",
-  }).output();
-  if (!result.success) {
-    throw new Error(`git ${args[0]} failed in fixture (exit ${result.code})`);
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args[0]} failed in fixture (exit ${result.status})`);
   }
 }
 
 async function makeRepo(): Promise<{ dir: string; sha: string }> {
-  const dir = await Deno.makeTempDir({ prefix: "dyfj-subject-check-" });
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-subject-check-"));
   await gitIn(dir, ["init", "-q"]);
-  await Deno.writeTextFile(`${dir}/file.txt`, "fixture content\n");
+  await writeFile(`${dir}/file.txt`, "fixture content\n");
   await gitIn(dir, ["add", "."]);
   await gitIn(dir, ["commit", "-q", "-m", "fixture"]);
   const sha = await headCommit(dir);
   return { dir, sha };
 }
 
-Deno.test("subject binding fails closed in CI without an immutable id", () => {
-  assertEquals(resolveSubjectBinding(envOf({})), { authoritative: false });
+test("subject binding fails closed in CI without an immutable id", () => {
+  assert.deepStrictEqual(resolveSubjectBinding(envOf({})), {
+    authoritative: false,
+  });
   const cases: Record<string, string>[] = [
     { GITHUB_ACTIONS: "true" },
     { GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: "" },
@@ -74,35 +66,35 @@ Deno.test("subject binding fails closed in CI without an immutable id", () => {
       resolveSubjectBinding(envOf(vars));
     } catch (error) {
       threw = true;
-      assertStringIncludes(String(error), "failing closed");
+      assert.match(String(error), /failing closed/);
     }
     if (!threw) {
       throw new Error(`binding accepted ${JSON.stringify(vars)}`);
     }
   }
   const sha = "a".repeat(40);
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSubjectBinding(
       envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
     ),
     { expected: sha, authoritative: true },
   );
-  assertEquals(
+  assert.deepStrictEqual(
     resolveSubjectBinding(envOf({ DYFJ_GATE_SUBJECT: sha })),
     { expected: sha, authoritative: false },
   );
 });
 
-Deno.test("the commit digest is recomputed from object bytes", async () => {
+test("the commit digest is recomputed from object bytes", async () => {
   const { dir, sha } = await makeRepo();
   try {
-    assertEquals(await recomputeCommitDigest(dir, sha), sha);
+    assert.deepStrictEqual(await recomputeCommitDigest(dir, sha), sha);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("subject.resolve passes locally and labels itself", async () => {
+test("subject.resolve passes locally and labels itself", async () => {
   const { dir } = await makeRepo();
   const logs: string[] = [];
   try {
@@ -111,14 +103,14 @@ Deno.test("subject.resolve passes locally and labels itself", async () => {
       env: envOf({}),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 0);
-    assertStringIncludes(logs.join("\n"), "non-authoritative");
+    assert.deepStrictEqual(code, 0);
+    assert.match(logs.join("\n"), /non-authoritative/);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("a bound subject mismatch fails closed", async () => {
+test("a bound subject mismatch fails closed", async () => {
   const { dir } = await makeRepo();
   const logs: string[] = [];
   try {
@@ -130,31 +122,31 @@ Deno.test("a bound subject mismatch fails closed", async () => {
       }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 1);
-    assertStringIncludes(logs.join("\n"), "does not match the bound subject");
+    assert.deepStrictEqual(code, 1);
+    assert.match(logs.join("\n"), /does not match the bound subject/);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("an authoritative run rejects a modified subject tree", async () => {
+test("an authoritative run rejects a modified subject tree", async () => {
   const { dir, sha } = await makeRepo();
   const logs: string[] = [];
   try {
-    await Deno.writeTextFile(`${dir}/file.txt`, "modified after commit\n");
+    await writeFile(`${dir}/file.txt`, "modified after commit\n");
     const code = await runSubjectCheck("subject.resolve", {
       root: dir,
       env: envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 1);
-    assertStringIncludes(logs.join("\n"), "local modifications");
+    assert.deepStrictEqual(code, 1);
+    assert.match(logs.join("\n"), /local modifications/);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("subject.digest passes and reports the recomputation", async () => {
+test("subject.digest passes and reports the recomputation", async () => {
   const { dir, sha } = await makeRepo();
   const logs: string[] = [];
   try {
@@ -163,15 +155,15 @@ Deno.test("subject.digest passes and reports the recomputation", async () => {
       env: envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_SUBJECT: sha }),
       out: { log: (m) => logs.push(m), error: (m) => logs.push(m) },
     });
-    assertEquals(code, 0);
-    assertStringIncludes(logs.join("\n"), `sha1 ${sha} recomputed`);
-    assertStringIncludes(logs.join("\n"), "git version");
+    assert.deepStrictEqual(code, 0);
+    assert.match(logs.join("\n"), new RegExp(`sha1 ${sha} recomputed`));
+    assert.match(logs.join("\n"), /git version/);
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });
 
-Deno.test("an unavailable git tool fails closed and value-free", async () => {
+test("an unavailable git tool fails closed and value-free", async () => {
   const { dir, sha } = await makeRepo();
   try {
     let message = "";
@@ -181,11 +173,11 @@ Deno.test("an unavailable git tool fails closed and value-free", async () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    assertEquals(
+    assert.deepStrictEqual(
       message,
       "subject check: cannot run git (is it installed and executable?)",
     );
   } finally {
-    await Deno.remove(dir, { recursive: true });
+    await rm(dir, { recursive: true });
   }
 });

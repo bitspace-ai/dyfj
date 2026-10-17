@@ -108,8 +108,8 @@ Deno.test("aggregate lanes include the retired-surface scan", () => {
     candidate,
   ) => candidate.label === "Retired-surface scan");
   if (!lane) throw new Error("retired-surface scan lane is missing");
-  assertEquals(lane.command, "/fixtures/runtime/deno");
-  assertStringIncludes(lane.args.join(" "), "scripts/retired-surface-scan.ts");
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, ["scripts/retired-surface-scan.ts"]);
 });
 
 Deno.test("typecheck lanes derive their file lists instead of hand-listing", () => {
@@ -407,9 +407,12 @@ Deno.test("aggregate lanes include both public-safety scan families", () => {
       candidate,
     ) => candidate.checkId === family);
     if (!lane) throw new Error(`${family} scan lane is missing`);
-    assertEquals(lane.command, "/fixtures/runtime/deno");
-    assertStringIncludes(lane.args.join(" "), "scripts/public-safety-scan.ts");
-    assertStringIncludes(lane.args.join(" "), `--family ${family}`);
+    assertEquals(lane.command, "node");
+    assertEquals(lane.args, [
+      "scripts/public-safety-scan.ts",
+      "--family",
+      family,
+    ]);
   }
 });
 
@@ -447,6 +450,46 @@ Deno.test("policy check lanes invoke their dedicated scripts", () => {
     if (!lane) throw new Error(`${checkId} lane is missing`);
     assertStringIncludes(lane.args.join(" "), script);
   }
+});
+
+test("the ported static-check lanes run their scripts on node", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  for (
+    const checkId of [
+      "subject.resolve",
+      "subject.digest",
+      "secret.tree",
+      "public.boundary",
+      "secret.diff",
+      "diff.whitespace",
+      "markdown.links",
+      "shell.parse",
+      "dependency.policy",
+    ]
+  ) {
+    const lane = lanes.find((candidate) => candidate.checkId === checkId);
+    if (!lane) throw new Error(`${checkId} lane is missing`);
+    assertEquals(lane.command, "node");
+    assertEquals(lane.args[0]?.startsWith("scripts/"), true);
+    assertEquals(lane.args.some((arg) => arg.startsWith("--allow")), false);
+  }
+});
+
+test("the ratchet.base lane runs on node with the range binding", () => {
+  const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
+  const lane = lanes.find((candidate) =>
+    candidate.label === "Ratchet lists against the merge base (ratchet.base)"
+  );
+  if (!lane) throw new Error("ratchet.base lane is missing");
+  assertEquals(lane.checkId, "test.aggregate");
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, ["scripts/ratchet-base.ts"]);
+  assertEquals(lane.cwd, "/repo");
+  // The same binding the range lanes get, so it sees DYFJ_GATE_RANGE_BASE.
+  const range = lanes.find((candidate) => candidate.checkId === "secret.diff");
+  assertEquals(lane.env, range?.env);
+  assertEquals(FAST_LANE_LABELS.includes(lane.label), true);
+  assertEquals(REQUIRED_CHECK_IDS.includes("ratchet.base"), false);
 });
 
 Deno.test("the arch.imports lane runs the checker read-only", () => {

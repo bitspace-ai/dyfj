@@ -106,7 +106,7 @@
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 46,
+    "count": 45,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -135,29 +135,14 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "scripts/change-scope.test.ts",
-    "count": 19,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/change-scope.ts",
-    "count": 2,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "scripts/ci-workflow.test.ts",
     "count": 21,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "scripts/dependency-policy.test.ts",
-    "count": 46,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
     "path": "scripts/dependency-policy.ts",
-    "count": 3,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
+    "count": 1,
+    "reason": "One doc-comment mention of the Deno release archive the CI workflow pins by checksum; it goes when the workflow stops installing Deno under decision D32."
   },
   {
     "path": "scripts/gate-driver.fixture.ts",
@@ -178,45 +163,5 @@
     "path": "scripts/lane-supervision.test.ts",
     "count": 47,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/public-safety-scan.test.ts",
-    "count": 71,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/public-safety-scan.ts",
-    "count": 5,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "scripts/range-checks.test.ts",
-    "count": 67,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/range-checks.ts",
-    "count": 9,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "scripts/retired-surface-scan.ts",
-    "count": 20,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "scripts/scan-lib.ts",
-    "count": 8,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "scripts/subject-check.test.ts",
-    "count": 17,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/subject-check.ts",
-    "count": 5,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   }
 ]
