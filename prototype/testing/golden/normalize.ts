@@ -2,8 +2,8 @@
  * Golden-snapshot normalizer.
  *
  * Replaces only the volatile values the golden suite spec lists — ULIDs and
- * other generated IDs (trace, span, UUID), timestamps, durations, temp paths
- * and PIDs — with stable placeholders. Harness-chosen ephemeral endpoints
+ * other generated IDs (trace, span, UUID), timestamps, durations, temp paths,
+ * PIDs and the runtime's code fingerprint — with stable placeholders. Harness-chosen ephemeral endpoints
  * (the loopback ports of the Dolt and model servers) are handled like temp
  * paths: the harness registers them as literal substitutions. Nothing else is
  * rewritten, so any other change in behavior shows up as a snapshot diff.
@@ -45,6 +45,24 @@ const TEXT_DURATION = /\b\d+(?:\.\d+)?\s?(?:ms|s)\b/g;
 const DURATION_KEY =
   /(?:^|_)(?:duration|elapsed|latency|uptime)|(?:[a-z]Ms|_ms|[a-z]Seconds|_seconds)$/;
 const PID_KEY = /(?:^|_)pid$/i;
+// The runtime's code fingerprint (`runtime/status`): the checkout's HEAD and
+// content hash change with every commit. Masked only inside a `fingerprint`
+// object, and `unknown` stays visible.
+const GIT_HEAD = /^[0-9a-f]{40}$/;
+const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/;
+
+function maskFingerprint(fingerprint: Record<string, unknown>): unknown {
+  const out = { ...fingerprint };
+  if (typeof out.head === "string" && GIT_HEAD.test(out.head)) {
+    out.head = "<GIT-HEAD>";
+  }
+  if (
+    typeof out.contentHash === "string" && CONTENT_HASH.test(out.contentHash)
+  ) {
+    out.contentHash = "sha256:<CONTENT-HASH>";
+  }
+  return out;
+}
 
 export interface Normalizer {
   normalize<T>(value: T): unknown;
@@ -104,6 +122,9 @@ export function createNormalizer(options: NormalizerOptions = {}): Normalizer {
     if (Array.isArray(value)) return value.map((item) => walk(item));
     if (value instanceof Date) return "<TIMESTAMP date-object>";
     if (typeof value === "object" && value !== null) {
+      if (key === "fingerprint" && !Array.isArray(value)) {
+        return maskFingerprint(value as Record<string, unknown>);
+      }
       const out: Record<string, unknown> = {};
       for (const [childKey, child] of Object.entries(value)) {
         out[childKey] = walk(child, childKey);

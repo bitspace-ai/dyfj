@@ -313,6 +313,16 @@ probe_runtime() {
   run_node_client ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} status >/dev/null 2>&1
 }
 
+# The first probe of an invocation that needs a runtime: the client's
+# launcher-internal freshness probe (src/cli/commands/freshness.ts). It exits
+# 0 when a runtime answers and can be used as it is, 1 when nothing answers,
+# and 3 when it stopped a runtime this launcher autostarted because that
+# runtime is behind the working tree and no other client was using it; the
+# caller then autostarts a current one. Its warnings reach stderr.
+probe_runtime_freshness() {
+  run_node_client --freshness-probe ${SOCKET_ARGS[@]+"${SOCKET_ARGS[@]}"} >/dev/null
+}
+
 get_file_mtime() {
   local f="$1" out
   out="$(stat -c '%Y' "$f" 2>/dev/null || true)"
@@ -366,9 +376,10 @@ inspect_start_lock_in_flight() {
 }
 
 ensure_runtime() {
-  local start_lock
+  local start_lock probe_status=0
   start_lock="$(runtime_start_lock_path 2>/dev/null || true)"
-  if probe_runtime "$@"; then
+  probe_runtime_freshness || probe_status=$?
+  if [[ "$probe_status" == "0" ]]; then
     [[ -n "$start_lock" ]] && rm -f "$start_lock" 2>/dev/null || true
     return 0
   fi
@@ -597,6 +608,24 @@ rust_repl_bin() {
   command -v dyfj-repl 2>/dev/null
 }
 
+# Warns, without building anything, when the built Rust REPL binary is older
+# than a file it is built from: anything under core/dyfj-repl/src, the
+# workspace's Cargo.toml files, or Cargo.lock. A release build takes too long
+# to run on every launch, so the launcher names the command instead. A binary
+# the operator chose (DYFJ_REPL_BIN, or one on PATH) is not judged.
+warn_if_rust_repl_stale() {
+  local bin="$1" core
+  core="$(prototype_root)/../core"
+  [[ "$bin" == "${core}/target/release/dyfj-repl" ]] || return 0
+  local newer
+  newer="$(find "${core}/dyfj-repl/src" "${core}/Cargo.toml" \
+    "${core}/dyfj-repl/Cargo.toml" "${core}/Cargo.lock" \
+    -type f -newer "$bin" -print -quit 2>/dev/null || true)"
+  if [[ -n "$newer" ]]; then
+    echo "dyfj: the Rust REPL binary is older than its sources; rebuild it from core/ with: cargo build --release -p dyfj-repl" >&2
+  fi
+}
+
 # Translate CLIENT_ARGS into RUST_REPL_ARGS; fails on any argument the Rust
 # REPL does not take (a subcommand, a prompt, --tier, --hint, --runner, …).
 # --socket becomes DYFJ_SOCKET, which the Rust REPL resolves the same way.
@@ -698,7 +727,12 @@ main() {
     route="rust_repl"
     # rust_repl_route ran in a subshell; rebuild its argument arrays here.
     rust_repl_args
+    warn_if_rust_repl_stale "$repl_bin"
   fi
+  # The REPL compares the runtime's code with this checkout's, which it finds
+  # here (the Node client finds it from its own path).
+  DYFJ_PROTOTYPE_ROOT="$(prototype_root)"
+  export DYFJ_PROTOTYPE_ROOT
   if autostart_applies ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"} && client_parse_check; then
     autostart="yes"
   else

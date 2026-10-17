@@ -168,3 +168,272 @@ test("an unknown method -> methodNotFound", async () => {
   assert.ok(error instanceof RpcError);
   assert.strictEqual(error.code, RpcErrorCode.methodNotFound);
 });
+
+// A warm ACP session backed by a real child process, so a test can assert
+// that a shutdown leaves no orphan behind.
+async function warmAcpChild() {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    stdio: "ignore",
+  });
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+  await map.acquire({
+    sessionId: "s1",
+    workspace: process.cwd(),
+    profile: {
+      slug: "fixture",
+      command: process.execPath,
+      args: ["eval", "1"],
+      environment: {},
+      workspace: process.cwd(),
+      transport: "local_stdio",
+      accessRoute: "local_sidecar",
+      costBasis: "local_free",
+    },
+    create: () =>
+      Promise.resolve({
+        get isAlive() {
+          return child.exitCode === null && child.signalCode === null;
+        },
+        durableSessionLoad: false,
+        prompt: () =>
+          Promise.resolve({
+            text: "",
+            stopReason: "stop" as const,
+            capabilities: [],
+            elapsedMs: 0,
+          }),
+        close: async () => {
+          child.kill("SIGTERM");
+          await exited;
+        },
+      }),
+  });
+  return { map, child, exited };
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("an autostarted runtime closes through its shutdown path after its last client leaves, reaping ACP children", async () => {
+  const { map, child, exited } = await warmAcpChild();
+  let server: WorkbenchUnixServer | undefined;
+  const idle: number[] = [];
+  let resolveIdleClosed!: () => void;
+  const idleClosed = new Promise<void>((resolve) => resolveIdleClosed = resolve);
+  await using started = await startServer("server-idle-stop", {
+    acpSessions: map,
+    autostarted: true,
+    idleGraceMs: 300,
+    onIdle: async () => {
+      idle.push(Date.now());
+      await server!.close();
+      resolveIdleClosed();
+    },
+  });
+  server = started.server;
+  {
+    await using client = await dial(server);
+    const status = await client.peer.request("runtime/status") as {
+      runtime: { clients: number };
+    };
+    assert.strictEqual(status.runtime.clients, 1);
+    await delay(600);
+    assert.deepStrictEqual(idle, [], "a connected client holds the runtime up");
+  }
+  await idleClosed;
+  await exited;
+  assert.strictEqual(idle.length, 1);
+  assert.strictEqual(isAlive(child.pid!), false);
+  assert.strictEqual(map.size, 0);
+});
+
+test("a client connecting inside the grace keeps an autostarted runtime up", async () => {
+  const idle: number[] = [];
+  await using started = await startServer("server-idle-cancel", {
+    autostarted: true,
+    idleGraceMs: 400,
+    onIdle: () => {
+      idle.push(Date.now());
+    },
+  });
+  {
+    await using _first = await dial(started.server);
+  }
+  await delay(200);
+  {
+    await using second = await dial(started.server);
+    await delay(600);
+    assert.deepStrictEqual(idle, []);
+    assert.deepStrictEqual(
+      await second.peer.request("runtime/liveness"),
+      { status: "ok", transport: "uds", clearance: "loopback" },
+    );
+  }
+});
+
+test("a runtime started with dyfj start stays up with no clients", async () => {
+  const idle: number[] = [];
+  await using started = await startServer("server-manual-stays", {
+    autostarted: false,
+    idleGraceMs: 100,
+    onIdle: () => {
+      idle.push(Date.now());
+    },
+  });
+  {
+    await using _client = await dial(started.server);
+  }
+  await delay(400);
+  assert.deepStrictEqual(idle, []);
+  await using client = await dial(started.server);
+  assert.strictEqual(
+    (await client.peer.request("runtime/liveness") as { status: string }).status,
+    "ok",
+  );
+});
+
+test("a conditional stop is refused when a second client connects after the probe", async () => {
+  let stopped = false;
+  const stopCompletions: number[] = [];
+  let server: WorkbenchUnixServer | undefined;
+  await using started = await startServer("server-sole-client-race", {
+    autostarted: true,
+    onShutdown: async () => {
+      stopped = true;
+      await server!.close({ disconnectPeers: false });
+    },
+    // The runtime process exits here after a stop; a declined stop must
+    // not reach it.
+    onStopComplete: (code) => {
+      stopCompletions.push(code);
+    },
+  });
+  server = started.server;
+  await using prober = await dial(server);
+  const probe = await prober.peer.request("runtime/status") as {
+    runtime: { clients: number };
+  };
+  assert.strictEqual(probe.runtime.clients, 1, "the probe saw itself alone");
+  // Another client arrives between the probe and the stop.
+  await using other = await dial(server);
+  assert.strictEqual(
+    (await other.peer.request("runtime/liveness") as { status: string }).status,
+    "ok",
+  );
+  const result = await prober.peer.request("runtime/stop", {
+    ifSoleClient: true,
+  }) as { status: string };
+  assert.strictEqual(result.status, "declined");
+  assert.strictEqual(stopped, false);
+  assert.strictEqual(
+    (await other.peer.request("runtime/liveness") as { status: string }).status,
+    "ok",
+  );
+  assert.deepStrictEqual(stopCompletions, [], "a declined stop does not exit");
+});
+
+test("a conditional stop closes admission before it awaits cleanup", async () => {
+  // ACP cleanup the test holds open, so it can try to connect in the window
+  // between the stop's decision and the end of cleanup.
+  let releaseCleanup!: () => void;
+  const cleanupHeld = new Promise<void>((resolve) => releaseCleanup = resolve);
+  let markCleanupStarted!: () => void;
+  const cleanupStarted = new Promise<void>((resolve) => markCleanupStarted = resolve);
+  const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+  await map.acquire({
+    sessionId: "s1",
+    workspace: process.cwd(),
+    profile: {
+      slug: "fixture",
+      command: process.execPath,
+      args: ["eval", "1"],
+      environment: {},
+      workspace: process.cwd(),
+      transport: "local_stdio",
+      accessRoute: "local_sidecar",
+      costBasis: "local_free",
+    },
+    create: () =>
+      Promise.resolve({
+        isAlive: true,
+        durableSessionLoad: false,
+        prompt: () =>
+          Promise.resolve({
+            text: "",
+            stopReason: "stop" as const,
+            capabilities: [],
+            elapsedMs: 0,
+          }),
+        close: async () => {
+          markCleanupStarted();
+          await cleanupHeld;
+        },
+      }),
+  });
+  let server: WorkbenchUnixServer | undefined;
+  await using started = await startServer("server-stop-closes-admission", {
+    acpSessions: map,
+    autostarted: true,
+    onShutdown: async () => {
+      await server!.close({ disconnectPeers: false });
+    },
+  });
+  server = started.server;
+  await using prober = await dial(server);
+  const stopping = prober.peer.request("runtime/stop", { ifSoleClient: true })
+    .then((result) => result, (error: unknown) => error);
+  await cleanupStarted;
+  // The stop has been decided and cleanup is under way: no new client is
+  // admitted.
+  let late: Awaited<ReturnType<typeof nodeSocketHost.connect>> | undefined;
+  try {
+    late = await nodeSocketHost.connect(server.socketPath).catch(() => undefined);
+    assert.strictEqual(late, undefined, "a client connected during cleanup");
+  } finally {
+    late?.close();
+    releaseCleanup();
+  }
+  assert.deepStrictEqual(await stopping, { status: "stopping" });
+});
+
+test("an autostarted runtime that cannot bind fails its boot and leaves nothing running", async () => {
+  // The boot's failure path: a second runtime on a live socket. Its lifetime
+  // must not arm a stop timer (the file's handle check fails on a leaked
+  // one), and the runtime already serving is untouched.
+  const { map, state } = await warmAcpSessions();
+  const idle: number[] = [];
+  await using live = await startServer("server-boot-bind-fail");
+  await assert.rejects(
+    () =>
+      serveWorkbenchUnix(live.server.socketPath, {
+        store: new MemoryStore(),
+        runRuntime: noRuntime,
+        acpSessions: map,
+        autostarted: true,
+        idleGraceMs: 50,
+        onIdle: () => {
+          idle.push(Date.now());
+        },
+      }),
+    /live runtime is already serving/,
+  );
+  await delay(150);
+  assert.deepStrictEqual(idle, []);
+  await using client = await dial(live.server);
+  assert.strictEqual(
+    (await client.peer.request("runtime/liveness") as { status: string }).status,
+    "ok",
+  );
+  await map.shutdown();
+  assert.strictEqual(state.closed, true);
+});

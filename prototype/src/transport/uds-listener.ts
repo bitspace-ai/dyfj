@@ -19,10 +19,22 @@ export interface UnixJsonRpcServerOptions {
   onRequestSettled?: JsonRpcPeerOptions["onRequestSettled"];
   /** The socket implementation; defaults to the node:net adapter. */
   host?: SocketHost;
+  /**
+   * Called with the number of open connections each time a connection opens
+   * or ends. A connection ends once its client has disconnected and every
+   * request it sent is answered.
+   */
+  onConnectionsChanged?: (count: number) => void;
 }
 
 export interface UnixJsonRpcServer {
   readonly socketPath: string;
+  /**
+   * Stop accepting connections now; open ones keep serving. Synchronous, so
+   * a caller can stop admission in the same step as the decision to shut
+   * down, with nothing to await in between.
+   */
+  stopAccepting(): void;
   /**
    * Stop accepting, close every open connection unless `disconnectPeers` is
    * false, and remove the socket file.
@@ -81,6 +93,9 @@ export async function serveUnixJsonRpc(
 
   const listener = await host.listen(socketPath);
   const peers = new Set<JsonRpcPeer>();
+  // Set by stopAccepting(). An accept can settle before stopAccepting() while
+  // this loop resumes only after it, so the loop checks the flag itself.
+  let accepting = true;
 
   (async () => {
     for (;;) {
@@ -91,30 +106,42 @@ export async function serveUnixJsonRpc(
         break; // listener failed
       }
       if (conn === null) break; // listener closed
+      if (!accepting) {
+        conn.close();
+        break;
+      }
       const peer = new JsonRpcPeer(conn, {
         handlers: options.handlers,
         onParseError: options.onParseError,
         onRequestSettled: options.onRequestSettled,
       });
       peers.add(peer);
+      options.onConnectionsChanged?.(peers.size);
       // The read loop ends when the client disconnects. Once the requests it
       // already sent are answered, close this side too, so a finished
       // connection releases its resources when it ends.
       peer.run().then(() => peer.settled()).finally(() => {
-        peers.delete(peer);
+        // close() may already have cleared the set; that is not a change.
+        if (peers.delete(peer)) options.onConnectionsChanged?.(peers.size);
         peer.close();
       });
     }
   })();
 
+  const stopAccepting = (): void => {
+    accepting = false;
+    try {
+      listener.close();
+    } catch {
+      // already closed
+    }
+  };
+
   return {
     socketPath,
+    stopAccepting,
     async close(closeOptions: { disconnectPeers?: boolean } = {}) {
-      try {
-        listener.close();
-      } catch {
-        // already closed
-      }
+      stopAccepting();
       if (closeOptions.disconnectPeers !== false) {
         for (const peer of peers) peer.close();
         peers.clear();

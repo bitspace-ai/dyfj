@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "node:test";
 import { fakeIo } from "../../testing/fakes/fake-io.ts";
+import { HELP, parseArgs } from "./args.ts";
 import { main } from "./main.ts";
 
 describe("main usage errors", () => {
@@ -43,5 +45,53 @@ describe("main --parse-check", () => {
       await main(["--parse-check", "--session", "garbage-value"], silentIo),
       2,
     );
+  });
+});
+
+describe("main --freshness-probe is launcher-internal", () => {
+  function capturingIo() {
+    const err: string[] = [];
+    return {
+      err,
+      io: {
+        out: () => {},
+        err: (line: string) => err.push(line),
+        readLine: () => Promise.resolve(null),
+        close: () => {},
+      },
+    };
+  }
+
+  it("refuses outside the launcher's invocation context", async () => {
+    const saved = process.env.DYFJ_PROTOTYPE_ROOT;
+    delete process.env.DYFJ_PROTOTYPE_ROOT;
+    try {
+      const { io, err } = capturingIo();
+      assert.strictEqual(await main(["--freshness-probe"], io), 2);
+      assert.match(err.join("\n"), /--freshness-probe is launcher-internal/);
+    } finally {
+      if (saved !== undefined) process.env.DYFJ_PROTOTYPE_ROOT = saved;
+    }
+  });
+
+  it("refuses any argument but --socket <path>", async () => {
+    const saved = process.env.DYFJ_PROTOTYPE_ROOT;
+    process.env.DYFJ_PROTOTYPE_ROOT = "/nonexistent/prototype";
+    try {
+      const { io } = capturingIo();
+      assert.strictEqual(
+        await main(["--freshness-probe", "--model", "x"], io),
+        2,
+      );
+      assert.strictEqual(await main(["--freshness-probe", "--socket"], io), 2);
+    } finally {
+      if (saved === undefined) delete process.env.DYFJ_PROTOTYPE_ROOT;
+      else process.env.DYFJ_PROTOTYPE_ROOT = saved;
+    }
+  });
+
+  it("is not in --help, and the ordinary parser rejects it", () => {
+    assert.ok(!HELP.includes("--freshness-probe"));
+    assert.ok(parseArgs(["status", "--freshness-probe"]).error);
   });
 });

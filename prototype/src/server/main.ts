@@ -49,6 +49,8 @@ import {
 } from "../transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
 import {
+  type CodeFingerprint,
+  codeFingerprint,
   composeRuntimePolicy,
   type Env,
   loadConfig,
@@ -57,6 +59,7 @@ import {
   loadSecretsConfig,
   type PermissionLevel,
   processEnv,
+  prototypeSourceDir,
   readNameserverNetGrants,
   resolveDoltConnection,
   resolveSecrets,
@@ -78,6 +81,7 @@ import {
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
+import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
 import {
@@ -140,13 +144,27 @@ export interface WorkbenchUnixServerOptions {
   /** Callback invoked when a client sends a runtime/stop RPC request. */
   onShutdown?: () => Promise<void> | void;
   /**
-   * Invoked after the runtime/stop RPC has been answered. `0` means the
-   * shutdown callback succeeded; `1` means it failed. The runtime process
+   * Invoked after the runtime/stop RPC has been answered, unless a
+   * conditional stop was declined. `0` means the shutdown callback succeeded;
+   * `1` means it failed. The runtime process
    * uses this to exit with a matching status after the client has the result.
    */
   onStopComplete?: (code: 0 | 1) => Promise<void> | void;
-  /** Whether the runtime was started via background autostart. */
+  /**
+   * Whether the runtime was started via background autostart. An autostarted
+   * runtime calls `onIdle` once no client has been connected for the grace.
+   */
   autostarted?: boolean;
+  /**
+   * Stop the runtime, for an autostarted one whose last client left more
+   * than the grace ago. The server has stopped counting clients by then; the
+   * callback runs the same shutdown as `runtime/stop` and SIGINT.
+   */
+  onIdle?: () => Promise<void> | void;
+  /** The grace an autostarted runtime waits; 10 s when omitted. */
+  idleGraceMs?: number;
+  /** The code this runtime loaded at boot, for `runtime/status`. */
+  fingerprint?: CodeFingerprint;
   /** Secret pointers that failed to resolve at start, for `runtime/status`. */
   unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
   /** Boot-discovered external MCP commands available to this runtime. */
@@ -243,6 +261,7 @@ function buildHandlers(
   options: WorkbenchUnixServerOptions,
   owners: SessionOwners,
   runRuntime: TurnRuntime,
+  lifetime: RuntimeLifetime,
 ): RpcHandlers {
   const store = () => requireStore(options);
   const loadModels = options.loadModels ?? (() => loadPickerModels(store));
@@ -276,7 +295,14 @@ function buildHandlers(
     frictionEventWriter,
   );
   return {
-    ...buildRuntimeHandlers({ ...options, loadModels }),
+    ...buildRuntimeHandlers({
+      ...options,
+      loadModels,
+      activity: () => ({
+        clients: lifetime.clients,
+        inFlightTurns: owners.inFlightTurns,
+      }),
+    }),
     ...buildSurfaceHandlers({ ...options, loadModels, listSessions }),
     ...buildModelsHandlers({ loadModels }),
     ...buildToolsHandlers(options),
@@ -361,12 +387,54 @@ export async function serveWorkbenchUnix(
       options.env,
       options.policy,
     );
-  const handlers = buildHandlers(options, owners, runRuntime);
+  const lifetime = new RuntimeLifetime({
+    autostarted: options.autostarted === true,
+    inFlightTurns: () => owners.inFlightTurns,
+    graceMs: options.idleGraceMs,
+    onIdle: () => {
+      Promise.resolve()
+        .then(() => options.onIdle?.())
+        .catch((err) =>
+          options.onParseError?.(`onIdle error: ${summarizeError(err)}`)
+        );
+    },
+  });
+  // Assigned once the socket is bound, before any request can arrive.
+  let stopAccepting = () => {};
+  const onShutdown = options.onShutdown;
+  const handlers = buildHandlers(
+    {
+      ...options,
+      // A `runtime/stop` shutdown first stops admitting connections. The stop
+      // handler calls this in the same synchronous step as its `ifSoleClient`
+      // check, which rpc/runtime.test.ts enforces, and no connection is
+      // admitted after `stopAccepting()`, which transport/uds-listener.test.ts
+      // enforces.
+      ...(onShutdown === undefined ? {} : {
+        onShutdown: () => {
+          stopAccepting();
+          return onShutdown();
+        },
+      }),
+    },
+    owners,
+    runRuntime,
+    lifetime,
+  );
   const transport = await serveUnixJsonRpc(socketPath, {
     handlers,
+    onConnectionsChanged: (count) => lifetime.clientsChanged(count),
     onParseError: options.onParseError,
     onRequestSettled: async (req, res) => {
       if (req.method !== "runtime/stop") return;
+      // A conditional stop (`ifSoleClient`) that was declined left the
+      // runtime serving; only a stop or a failed stop ends it.
+      if (
+        "result" in res &&
+        (res.result as { status?: unknown } | null)?.status === "declined"
+      ) {
+        return;
+      }
       const code = "result" in res ? 0 : 1;
       try {
         await options.onStopComplete?.(code);
@@ -378,16 +446,25 @@ export async function serveWorkbenchUnix(
     },
   });
 
+  stopAccepting = () => transport.stopAccepting();
+  lifetime.start();
+
   return {
     socketPath,
     async close(options: { disconnectPeers?: boolean } = {}) {
+      lifetime.dispose();
+      // Closing the transport first stops admitting connections before the
+      // ACP cleanup is awaited; one not yet admitted is closed, as if it had
+      // arrived after the stop. The asking client's
+      // connection stays open for its answer when `disconnectPeers` is false.
+      const transportClosed = transport.close(options);
       let shutdownError: unknown;
       try {
         await acpSessions.shutdown();
       } catch (error) {
         shutdownError = error;
       }
-      await transport.close(options);
+      await transportClosed;
       if (shutdownError !== undefined) throw shutdownError;
     },
   };
@@ -399,6 +476,9 @@ async function main(): Promise<void> {
   const socketPath = resolveSocketPath();
   const autostarted = process.argv.slice(2).includes("--autostarted");
   ensureSocketDir(socketPath);
+  // The code this process loaded, recorded before anything else can change
+  // under it; clients compare it with their working tree.
+  const fingerprint = await codeFingerprint(prototypeSourceDir());
 
   // Engine config (defaults → ~/.dyfj/config.toml → env), resolved once at the
   // boundary and passed into the runtime; a malformed config fails the boot loudly.
@@ -518,8 +598,28 @@ async function main(): Promise<void> {
       frictionIssueId: processEnv.get("DYFJ_FRICTION_ISSUE_ID")?.trim() ||
         undefined,
       autostarted,
+      fingerprint,
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       onShutdown: () => shutdown({ disconnectPeers: false }),
+      // The same shutdown SIGINT runs: close the server (which reaps the
+      // warm ACP sessions and their children), then the store.
+      onIdle: async () => {
+        console.error(
+          `dyfj runtime: no client for ${
+            AUTOSTARTED_IDLE_GRACE_MS / 1000
+          } s; stopping`,
+        );
+        let code = 0;
+        try {
+          await shutdown();
+        } catch (error) {
+          console.error(
+            `dyfj runtime: shutdown failed: ${summarizeError(error)}`,
+          );
+          code = 1;
+        }
+        process.exit(code);
+      },
       onStopComplete: (code) => {
         process.exit(code);
       },
@@ -528,7 +628,16 @@ async function main(): Promise<void> {
     resolveCloseServer(() => shutdown());
     console.error(
       `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${
-        autostarted ? "(autostarted)" : "(ctrl-c to stop)"
+        autostarted
+          ? `(autostarted; stops ${
+            AUTOSTARTED_IDLE_GRACE_MS / 1000
+          } s after its last client disconnects)`
+          : "(ctrl-c to stop)"
+      }`,
+    );
+    console.error(
+      `dyfj runtime: code ${fingerprint.head.slice(0, 12)} · ${
+        fingerprint.contentHash.slice(0, 19)
       }`,
     );
   } catch (error) {

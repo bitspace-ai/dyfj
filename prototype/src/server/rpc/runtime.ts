@@ -10,11 +10,13 @@ import {
 } from "../../providers/mod.ts";
 import {
   AGENT_DEFAULTS,
+  type CodeFingerprint,
   type PermissionLevel,
   type WorkbenchConfig,
 } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
 import {
+  asRecord,
   RpcError,
   RpcErrorCode,
   type RpcHandlers,
@@ -70,6 +72,18 @@ export interface WorkbenchRuntimeStatus {
   autostarted?: boolean;
   /** Present only when a declared secret pointer failed to resolve at start. */
   unavailableSecrets?: WorkbenchUnavailableSecret[];
+  /** The code this runtime loaded at boot. */
+  fingerprint?: CodeFingerprint;
+  /** Open client connections, the asking one included. */
+  clients?: number;
+  /** Turns admitted and not yet settled, queued ones included. */
+  inFlightTurns?: number;
+}
+
+/** What the runtime is doing right now, read at each call. */
+export interface RuntimeActivity {
+  clients: number;
+  inFlightTurns: number;
 }
 
 /** The engine posture `runtime/status` reports. */
@@ -92,6 +106,10 @@ export interface RuntimePosture {
   autostarted?: boolean;
   /** Secret pointers that failed to resolve when the runtime started. */
   unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
+  /** The code this runtime loaded at boot. */
+  fingerprint?: CodeFingerprint;
+  /** Open clients and in-flight turns; absent where nothing counts them. */
+  activity?: () => RuntimeActivity;
 }
 
 export interface RuntimeHandlerDeps extends RuntimePosture {
@@ -202,7 +220,24 @@ export function runtimeStatus(
         })),
       }
       : {}),
+    ...(options.fingerprint !== undefined
+      ? { fingerprint: { ...options.fingerprint } }
+      : {}),
+    ...(options.activity !== undefined ? options.activity() : {}),
   };
+}
+
+/**
+ * Why a conditional stop (`ifSoleClient`) must not stop the runtime now, or
+ * null when it may. The launcher asks for one to restart a stale autostarted
+ * runtime; checking here, in the same step as the stop, closes the window in
+ * which another client could connect between its probe and its stop.
+ */
+function soleClientRefusal(activity: RuntimeActivity | undefined): string | null {
+  if (activity === undefined) return "this runtime does not count its clients";
+  if (activity.clients > 1) return "another client is connected";
+  if (activity.inFlightTurns > 0) return "a turn is in flight";
+  return null;
 }
 
 export function buildRuntimeHandlers(deps: RuntimeHandlerDeps): RpcHandlers {
@@ -220,7 +255,13 @@ export function buildRuntimeHandlers(deps: RuntimeHandlerDeps): RpcHandlers {
       return { runtime: runtimeStatus(deps, models) };
     },
 
-    "runtime/stop": async () => {
+    "runtime/stop": async (params) => {
+      // `ifSoleClient: true` stops only when the asking client is the only
+      // one and no turn runs; otherwise the stop is declined, not an error.
+      if (asRecord(params).ifSoleClient === true) {
+        const reason = soleClientRefusal(deps.activity?.());
+        if (reason !== null) return { status: "declined", reason };
+      }
       if (!deps.onShutdown) {
         throw new RpcError(
           RpcErrorCode.internalError,

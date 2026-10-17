@@ -81,3 +81,24 @@ test("a receipt-string change is not normalized away", () => {
   const b = n.text("Paid inference used: No\nActual cost:    $0.000000");
   strictEqual(a === b, false);
 });
+
+test("the runtime's code fingerprint is masked by key, keeping unknown visible", () => {
+  const n = createNormalizer();
+  deepStrictEqual(
+    n.normalize({
+      fingerprint: {
+        head: "0893426f3c3203f72181a3d683f768efacb01521",
+        contentHash: `sha256:${"7".repeat(64)}`,
+      },
+      other: { head: "not a fingerprint field" },
+    }),
+    {
+      fingerprint: { head: "<GIT-HEAD>", contentHash: "sha256:<CONTENT-HASH>" },
+      other: { head: "not a fingerprint field" },
+    },
+  );
+  deepStrictEqual(
+    n.normalize({ fingerprint: { head: "unknown", contentHash: "unknown" } }),
+    { fingerprint: { head: "unknown", contentHash: "unknown" } },
+  );
+});

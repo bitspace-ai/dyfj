@@ -144,7 +144,13 @@
             "local": 4,
             "hosted": 0
           },
-          "autostarted": false
+          "autostarted": false,
+          "fingerprint": {
+            "head": "<GIT-HEAD>",
+            "contentHash": "sha256:<CONTENT-HASH>"
+          },
+          "clients": 1,
+          "inFlightTurns": 0
         }
       }
     },
@@ -299,7 +305,11 @@
             "local": 4,
             "hosted": 0
           },
-          "autostarted": false
+          "autostarted": false,
+          "fingerprint": {
+            "head": "<GIT-HEAD>",
+            "contentHash": "sha256:<CONTENT-HASH>"
+          }
         },
         "models": [
           {

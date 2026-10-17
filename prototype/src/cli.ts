@@ -1,8 +1,8 @@
 /**
  * dyfj — the interactive line REPL (multi-turn, streaming), with its slash
- * commands and session posture line. The entrypoint is `cli/main.ts`; the
- * turn client, approval prompt, rendering and subcommands it shares with
- * `exec` live under `cli/`.
+ * commands. The entrypoint is `cli/main.ts`; the session posture line
+ * (`cli/posture.ts`), and the turn client, approval prompt, rendering and
+ * subcommands it shares with `exec`, live under `cli/`.
  *
  * A THIN client over the Workbench runtime's JSON-RPC/UDS seam — it never
  * imports the engine (no mysql2, no provider SDKs), so the compiled binary
@@ -46,9 +46,17 @@ import {
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import {
-  LIVENESS_PROBE_TIMEOUT_MS,
-  type RuntimeStatusPayload,
-} from "./cli/commands/status.ts";
+  fetchSessionPosture,
+  formatPostureLine,
+  openReplSession,
+} from "./cli/posture.ts";
+
+export {
+  fetchSessionPosture,
+  formatFreshnessWarning,
+  formatPostureLine,
+  type SessionPosture,
+} from "./cli/posture.ts";
 
 /**
  * The REPL entry prompt. On a color terminal the gutter is bold green — a hue
@@ -61,58 +69,6 @@ export function replPrompt(color: boolean): string {
   return color ? "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m " : "\ndyfj> ";
 }
 
-/** Inputs for the operator posture line (session start and /model switches). */
-export interface SessionPosture {
-  /** Active model slug, or the server-resolved bare-turn default. */
-  slug: string;
-  tier?: number;
-  /** true = on-machine local provider; false = hosted; undefined = unknown. */
-  local?: boolean;
-  /** This session opted into paid inference (--approve-paid / /model --approve-paid). */
-  approvePaidSession: boolean;
-  /** Standing paid posture from engine config (approve_paid_default). */
-  approvePaidDefault?: boolean;
-  permissionLevel?: string;
-  /** Standing workspace-instruction trust from engine config (trust_workspace_instructions). */
-  trustWorkspaceInstructions?: boolean;
-  fast?: boolean;
-}
-
-/**
- * One plain stderr line stating the routing/spend/permission posture: model,
- * tier, local vs hosted, paid posture, permission level, and whether workspace
- * instructions are trusted. Printed at REPL start and after every /model switch;
- * deliberately uncolored so NO_COLOR and non-TTY output carry the identical bytes.
- */
-export function formatPostureLine(posture: SessionPosture): string {
-  const tier = posture.tier !== undefined ? `tier ${posture.tier}` : "tier ?";
-  const locality = posture.local === undefined
-    ? "locality unknown"
-    : posture.local
-    ? "local"
-    : "hosted";
-  const speed = posture.fast === true ? " · ⚡ fast" : "";
-  const paid = posture.approvePaidSession
-    ? "paid approved (session)"
-    : posture.approvePaidDefault === true
-    ? "paid approved (standing config)"
-    : "paid off (hosted turns fail closed)";
-  // Three states, mirroring the locality/permission convention above: an absent
-  // field is missing evidence, not a confirmed-off stance — say "unknown" rather
-  // than overclaiming a reassuring "off" the runtime never reported.
-  // Strict classification: the wire value is unvalidated JSON, so "trusted"
-  // and "off" require the literal booleans — every other shape (absent, null,
-  // a stringly "false", 0) is missing evidence and renders "unknown".
-  const workspace = posture.trustWorkspaceInstructions === true
-    ? "trusted"
-    : posture.trustWorkspaceInstructions === false
-    ? "off"
-    : "unknown";
-  return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
-    `permission ${posture.permissionLevel ?? "unknown"} · ` +
-    `workspace instructions: ${workspace}`;
-}
-
 export async function runRepl(
   config: CliConfig,
   io: Io,
@@ -123,16 +79,7 @@ export async function runRepl(
   io.err(
     `dyfj — ${config.socket} · Ctrl-D or /exit to quit`,
   );
-  // Session-start posture line. An unreachable runtime prints nothing here:
-  // the first turn already reports reachability loudly, and the REPL must
-  // still open. Interactive sessions only: with piped stdin, readline closes
-  // on EOF during any await that precedes the first readLine, so this probe
-  // would silently swallow the piped input; scripted sessions keep main-line
-  // behavior byte-identical.
-  if (interactive) {
-    const posture = await fetchSessionPosture(config, connect);
-    if (!("error" in posture)) io.err(formatPostureLine(posture));
-  }
+  const releaseSession = await openReplSession(config, io, connect, interactive);
   const sessionState: ReplSessionState = {
     sessionId: config.sessionId,
     turnCount: 0,
@@ -344,76 +291,10 @@ export async function runRepl(
       sessionState.lastReplCommand = undefined;
     }
   } finally {
+    releaseSession();
     io.close();
   }
   return exitCode;
-}
-
-/**
- * Resolve the posture line's inputs over the UDS seam: the runtime's standing
- * config (permission level, paid default) plus the active model's tier and
- * locality — the explicit `config.model` when set, else the server-resolved
- * bare-turn default. One connection for the whole read.
- */
-export async function fetchSessionPosture(
-  config: CliConfig,
-  connect: ConnectFn = connectUnixClient,
-): Promise<SessionPosture | { error: string }> {
-  try {
-    const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
-    const client = await connect(config.socket, undefined, signal);
-    try {
-      const { runtime } = await client.request(
-        "runtime/status",
-        undefined,
-        signal,
-      ) as RuntimeStatusPayload;
-      let slug = config.model;
-      let tier: number | undefined;
-      let local: boolean | undefined;
-      if (slug !== undefined) {
-        const { models } = await client.request(
-          "models/list",
-          undefined,
-          signal,
-        ) as {
-          models: ModelRow[];
-        };
-        const row = models.find((m) => m.slug === slug);
-        tier = row?.tier;
-        local = row?.local;
-      } else if (config.tier !== undefined || config.hint !== undefined) {
-        // Explicit tier/hint routing rides every turn, so the server's
-        // bare-turn default does not describe this session; name the routing
-        // rather than showing a default the session never uses.
-        slug = config.tier !== undefined
-          ? `(tier ${config.tier} route)`
-          : `(hint ${config.hint} route)`;
-        tier = config.tier;
-      } else {
-        const resolved = runtime?.defaultTurnModel;
-        if (resolved != null && typeof resolved.slug === "string") {
-          slug = resolved.slug;
-          tier = resolved.tier;
-          local = resolved.local;
-        }
-      }
-      return {
-        slug: slug ?? "(registry default)",
-        tier,
-        local,
-        approvePaidSession: config.approvePaid === true,
-        approvePaidDefault: runtime?.approvePaidDefault,
-        permissionLevel: runtime?.permissionLevel,
-        trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
-        ...(config.fast !== undefined ? { fast: config.fast } : {}),
-      };
-    } finally {
-      client.close();
-    }
-  } catch (error) {
-    return { error: socketError(error, config) };
-  }
 }
 
 function createCliSessionEvent(input: {

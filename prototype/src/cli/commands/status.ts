@@ -1,6 +1,11 @@
 /** `dyfj status`: probe the runtime and print its standing configuration. */
 
 import {
+  compareFreshness,
+  prototypeSourceDir,
+  sourceTreeHash,
+} from "../../config/mod.ts";
+import {
   connectUnixClient,
   RpcError,
   RpcErrorCode,
@@ -35,7 +40,44 @@ export interface RuntimeStatusPayload {
     autostarted?: boolean;
     /** Secret pointers that failed to resolve when the runtime started. */
     unavailableSecrets?: UnavailableSecretEntry[];
+    /** The code the runtime loaded at boot; absent on older servers. */
+    fingerprint?: { head?: unknown; contentHash?: unknown };
+    /** Open client connections, this one included; absent on older servers. */
+    clients?: number;
+    /** Turns not yet settled; absent on older servers. */
+    inFlightTurns?: number;
   };
+}
+
+/** A fingerprint field for display: its first 12 characters (of the hex). */
+function shortFingerprintField(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) return "unknown";
+  if (value.startsWith("sha256:")) return value.slice(0, 19);
+  return value.slice(0, 12).replace(/[^0-9a-z]/gi, "?");
+}
+
+/**
+ * The runtime's code version, and, given this checkout's hash, whether it
+ * matches; no line for an older runtime that reports no fingerprint.
+ */
+function formatCodeLine(
+  fingerprint: { head?: unknown; contentHash?: unknown } | undefined,
+  localHash: string | undefined,
+): string[] {
+  if (typeof fingerprint !== "object" || fingerprint === null) return [];
+  const freshness = localHash === undefined
+    ? "unknown"
+    : compareFreshness(fingerprint, localHash);
+  const verdict = freshness === "behind"
+    ? " (runtime is behind the working tree)"
+    : freshness === "current"
+    ? " (matches the working tree)"
+    : "";
+  return [
+    `code: ${shortFingerprintField(fingerprint.head)} · ${
+      shortFingerprintField(fingerprint.contentHash)
+    }${verdict}`,
+  ];
 }
 
 /** A failed pointer as `runtime/status` reports it: an env var or a name. */
@@ -108,6 +150,7 @@ export async function probeRuntimeLiveness(
 export function formatRuntimeStatus(
   config: CliConfig,
   payload: RuntimeStatusPayload,
+  localHash?: string,
 ): string {
   const runtime = payload.runtime ?? {};
   const models = runtime.models ?? {};
@@ -169,6 +212,13 @@ export function formatRuntimeStatus(
         }`,
       ]
       : []),
+    ...formatCodeLine(runtime.fingerprint, localHash),
+    ...(typeof runtime.clients === "number" &&
+        typeof runtime.inFlightTurns === "number"
+      ? [
+        `clients: ${runtime.clients} · turns in flight: ${runtime.inFlightTurns}`,
+      ]
+      : []),
     ...formatUnavailableSecrets(runtime.unavailableSecrets),
     `methods: ${methods.length}`,
   ].join("\n");
@@ -190,7 +240,8 @@ export async function runStatus(
           undefined,
           signal,
         ) as RuntimeStatusPayload);
-      io.out(`${formatRuntimeStatus(config, payload)}\n`);
+      const localHash = await sourceTreeHash(prototypeSourceDir());
+      io.out(`${formatRuntimeStatus(config, payload, localHash)}\n`);
       return 0;
     } finally {
       client.close();

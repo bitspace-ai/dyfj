@@ -33,7 +33,22 @@ processes or load native addons. Node's model cannot narrow the network grant
 to the Dolt endpoint or the environment to the Dolt variables, so the network
 grant is broad and the server can read any environment variable it is given.
 Give the agent's MCP entry only the variables the server needs. This command,
-which scopes reads to the checkout, is the preferred launch. The file's
+which scopes reads to the checkout, is the preferred launch.
+
+`--allow-fs-read` must name the checkout's resolved path, with every symlink in
+it followed, for example `$(cd /path/to/dyfj && pwd -P)`. Node's permission
+check compares resolved paths, so a grant spelled through a symlink does not
+cover the files the server loads, and the server fails to load. On macOS,
+`/var` is a symlink to `/private/var`, so a checkout under a `mktemp` directory
+needs the `/private/var/...` spelling that `pwd -P` prints:
+
+```bash
+DYFJ_ROOT="$(cd /path/to/dyfj && pwd -P)"
+node --permission --allow-fs-read="$DYFJ_ROOT" --allow-net "$DYFJ_ROOT/prototype/mcp/server.ts"
+```
+
+The same applies to the `--allow-fs-read` argument in the agent configurations
+below. The file's
 shebang (`node --permission --allow-fs-read=* --allow-net`) cannot know the
 checkout path, so running the file directly grants reads of every path. Node
 prints an

@@ -40,7 +40,54 @@ README are tracked separately in its Revision history section.
   capped at 200 characters, so a runtime that crashes while starting says
   why. A missing or unreadable log is skipped silently; a replaced or
   truncated one is read from its start.
-
+- **An autostarted runtime stops with its last client.** A runtime the
+  launcher autostarted (`--launcher-autostarted`) now stops 10 s after its
+  last client disconnects, through the same shutdown as `dyfj stop`: warm ACP
+  sessions and their child processes are closed, then the store. A client
+  that connects inside the 10 s keeps it, so back-to-back `dyfj exec` calls
+  share one runtime. An interactive REPL keeps it up while it waits at the
+  prompt: the Rust REPL holds its one connection, and the TypeScript REPL now
+  holds a connection for the session besides the one each turn opens. The
+  golden normalizer masks the new code fingerprint (`specs/03-testing.md`).
+  A runtime started with `dyfj start` is unchanged and
+  stays up until `dyfj stop` or Ctrl-C. Before this, an autostarted runtime
+  ran until stopped by hand.
+- **The runtime records which code it loaded, and clients say when it is
+  stale.** At boot the runtime records a code fingerprint: the checkout's git
+  HEAD, read from the `.git` files without running git (worktrees, packed refs
+  and a detached HEAD included), and a SHA-256 content hash of the files under
+  `prototype/src` (dotfiles and symlinks skipped). Either is `unknown` when it
+  cannot be read, and a hash that is unknown or not well formed (on either
+  side) is never compared, so it never causes a warning or a restart.
+  `runtime/status` reports it as `fingerprint` (`{ head, contentHash }`), along with the open
+  `clients` and the `inFlightTurns`; clients that predate these fields ignore
+  them. `dyfj status` shows the code version, whether it matches the working
+  tree, and the client and turn counts. The TypeScript and Rust REPLs print
+  `warning: runtime is behind the working tree` after the posture line when
+  the runtime's hash differs from their own checkout's. The Rust REPL finds its
+  checkout through `DYFJ_PROTOTYPE_ROOT`, which the launcher now exports.
+  The three implementations of the hash share one test vector
+  (`prototype/testing/fixtures/code-fingerprint`).
+- **The launcher restarts a stale runtime it autostarted.** Its first probe is
+  now a launcher-internal client mode (`--freshness-probe`, refused outside the
+  launcher and absent from `--help`). When the runtime was autostarted and is
+  behind the working tree, the probe asks it to stop with the new conditional
+  `runtime/stop` parameter `{ ifSoleClient: true }`, and the launcher
+  autostarts a current one. The runtime declines that stop
+  (`{ status: "declined", reason }`) while another client is connected or a
+  turn is in flight; the launcher then warns and uses the running runtime.
+  When it does stop, it stops admitting connections in the same step as that
+  check, before any cleanup; a client that connects after that is refused or
+  disconnected unserved, as after any stop, and a `dyfj` invocation then
+  autostarts a current runtime. Tests enforce both orderings. A runtime started with
+  `dyfj start` is never restarted.
+- **The launcher warns when the Rust REPL binary is stale.** When
+  `core/target/release/dyfj-repl` is older than a file under
+  `core/dyfj-repl/src`, the workspace `Cargo.toml` files or `Cargo.lock`, a
+  bare interactive `dyfj` routed to it prints
+  `cargo build --release -p dyfj-repl` to run from `core/`. The launcher builds
+  nothing. A binary chosen with `DYFJ_REPL_BIN` or found on `PATH` is not
+  checked.
 - **`.node-version` is the single Node pin.** It holds `26.11.1`, and both
   CI jobs install Node through `actions/setup-node` with
   `node-version-file: .node-version` instead of two hard-coded copies of the
@@ -124,6 +171,12 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The memory MCP README says `--allow-fs-read` needs the resolved path.**
+  `prototype/mcp/README.md` now says that the grant must name the checkout's
+  resolved path (for example `$(cd /path/to/dyfj && pwd -P)`), because Node's
+  permission check compares resolved paths. On macOS, a checkout under a
+  `mktemp` directory (`/var` → `/private/var`) otherwise fails to load.
 
 - **The runtime no longer grants `deno` by name.** `RUNTIME_RUN_GRANTS` drops
   `deno`, a narrowing of what the runtime may start; the runtime's own Node

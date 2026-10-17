@@ -168,8 +168,10 @@ internal move.
   - Stream frames and RPC responses.
   - The rendered CLI output.
   - `events` and `sessions` rows (all columns).
-- **Normalization.** ULIDs, trace IDs, timestamps, durations, temp paths and
-  PIDs are replaced by stable placeholders. Nothing else is normalized.
+- **Normalization.** ULIDs, trace IDs, timestamps, durations, temp paths,
+  PIDs and the runtime's code fingerprint (the `head` and `contentHash` of a
+  `fingerprint` object) are replaced by stable placeholders. Nothing else is
+  normalized.
 - **Minimum scenario set**
   1. One-shot text turn, local model.
   2. Multi-step turn with `read_file` then an answer (`operator` permission

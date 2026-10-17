@@ -340,3 +340,57 @@ test("assertSocketBindable is a no-op for an absent path", async () => {
   await assertSocketBindable(path);
   assert.ok(!exists(path));
 });
+
+test("serveUnixJsonRpc reports the open-connection count as clients come and go", async () => {
+  const socketPath = udsTestSocket("listener-count");
+  await removeIfPresent(socketPath);
+  const counts: number[] = [];
+  let changed: () => void = () => {};
+  const server = await serveUnixJsonRpc(socketPath, {
+    handlers: { ping: () => "pong" },
+    onConnectionsChanged: (count) => {
+      counts.push(count);
+      changed();
+    },
+  });
+  const next = () => new Promise<void>((resolve) => changed = resolve);
+  try {
+    let seen = next();
+    const first = await dial(socketPath);
+    await seen;
+    seen = next();
+    const second = await dial(socketPath);
+    await seen;
+    assert.strictEqual(await second.peer.request("ping"), "pong");
+    seen = next();
+    await first[Symbol.asyncDispose]();
+    await seen;
+    seen = next();
+    await second[Symbol.asyncDispose]();
+    await seen;
+    assert.deepStrictEqual(counts, [1, 2, 1, 0]);
+  } finally {
+    await server.close();
+  }
+  // Closing the server with no connection open reports nothing more.
+  assert.deepStrictEqual(counts, [1, 2, 1, 0]);
+});
+
+test("serveUnixJsonRpc stopAccepting refuses new clients at once and keeps open ones serving", async () => {
+  const socketPath = udsTestSocket("listener-stop-accepting");
+  await removeIfPresent(socketPath);
+  const server = await serveUnixJsonRpc(socketPath, {
+    handlers: { ping: () => "pong" },
+  });
+  await using open = await dial(socketPath);
+  try {
+    // Synchronous by contract: nothing is returned to await, so no caller
+    // can let a client in between deciding to stop and this call.
+    const returned: void = server.stopAccepting();
+    assert.strictEqual(returned, undefined);
+    await assert.rejects(() => rawConnect(socketPath));
+    assert.strictEqual(await open.peer.request("ping"), "pong");
+  } finally {
+    await server.close();
+  }
+});

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   fetchSessionPosture,
+  formatFreshnessWarning,
   formatPostureLine,
   handleReplFastCommand,
   handleReplFrictionCommand,
@@ -157,6 +158,35 @@ describe("runRepl", () => {
         context: { command: truncatedSlashCommand },
       },
     );
+  });
+
+  it("an interactive session holds a connection open throughout, so an autostarted runtime stays up while the REPL waits", async () => {
+    let open = 0;
+    const connect: ConnectFn = () => {
+      open++;
+      let closed = false;
+      return Promise.resolve({
+        request: () => Promise.resolve(undefined),
+        close: () => {
+          if (!closed) {
+            closed = true;
+            open--;
+          }
+        },
+      } as unknown as Awaited<ReturnType<ConnectFn>>);
+    };
+    const lines = ["", "", "/exit"];
+    const openWhileReading: number[] = [];
+    const { io } = fakeIo([]);
+    io.readLine = async () => {
+      // Let the session's connection settle, as an operator's pause would.
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      openWhileReading.push(open);
+      return lines.shift() ?? null;
+    };
+    await runRepl(cfg(), io, connect, true);
+    assert.deepStrictEqual(openWhileReading, [1, 1, 1]);
+    assert.strictEqual(open, 0, "closed when the REPL exits");
   });
 
   it("skips blank lines and exits on /exit", async () => {
@@ -2891,3 +2921,63 @@ describe("replPrompt", () => {
 });
 
 // ── --parse-check (launcher validity contract) ───────────────────────────────
+
+describe("REPL freshness warning", () => {
+  const local = `sha256:${"a".repeat(64)}`;
+  const old = `sha256:${"b".repeat(64)}`;
+  const fingerprint = { head: "x", contentHash: old };
+
+  it("warns that a runtime started with dyfj start is behind, and how to restart it", () => {
+    const warning = formatFreshnessWarning(
+      { runtimeFingerprint: fingerprint, autostarted: false },
+      local,
+    );
+    assert.match(warning ?? "", /^warning: runtime is behind the working tree; /);
+    assert.match(warning ?? "", /`dyfj stop`, then `dyfj start`/);
+  });
+
+  it("tells an autostarted runtime's client that it stops after its last client", () => {
+    const warning = formatFreshnessWarning(
+      { runtimeFingerprint: fingerprint, autostarted: true },
+      local,
+    );
+    assert.match(warning ?? "", /^warning: runtime is behind the working tree; /);
+    assert.match(warning ?? "", /10 s after its last client/);
+  });
+
+  it("says nothing when the code matches, or either side is unknown or absent", () => {
+    assert.equal(
+      formatFreshnessWarning({ runtimeFingerprint: { head: "x", contentHash: local } }, local),
+      null,
+    );
+    assert.equal(formatFreshnessWarning({ runtimeFingerprint: fingerprint }, "unknown"), null);
+    assert.equal(
+      formatFreshnessWarning({ runtimeFingerprint: { head: "x", contentHash: "unknown" } }, local),
+      null,
+    );
+    assert.equal(formatFreshnessWarning({}, local), null);
+  });
+
+  it("the posture an older client renders is unchanged by the new status fields", async () => {
+    const runtime = {
+      defaultTurnModel: { slug: "local-x", tier: 0, local: true },
+      approvePaidDefault: false,
+      permissionLevel: "strict",
+      trustWorkspaceInstructions: false,
+    };
+    const connectWith = (extra: Record<string, unknown>): ConnectFn => () =>
+      Promise.resolve({
+        request: () => Promise.resolve({ runtime: { ...runtime, ...extra } }),
+        close: () => {},
+      } as unknown as Awaited<ReturnType<ConnectFn>>);
+    const config: CliConfig = { socket: "/tmp/x.sock", mode: "turn", color: false };
+    const before = await fetchSessionPosture(config, connectWith({}));
+    const after = await fetchSessionPosture(
+      config,
+      connectWith({ fingerprint, clients: 3, inFlightTurns: 1 }),
+    );
+    assert.ok(!("error" in before) && !("error" in after));
+    assert.equal(formatPostureLine(after), formatPostureLine(before));
+    assert.deepEqual(after.runtimeFingerprint, fingerprint);
+  });
+});

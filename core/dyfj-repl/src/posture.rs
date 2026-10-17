@@ -7,19 +7,34 @@
 use crate::approval::visible;
 use crate::session::{ModelOrigin, Session};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+
+/// A fingerprint field that could not be read. Never compared.
+pub const FINGERPRINT_UNKNOWN: &str = "unknown";
 
 /// Print the posture line for a `runtime/status` answer, with any warnings
 /// it carries, or say the posture is unavailable. Shown at startup and again
 /// when the REPL re-attaches to a restarted runtime.
 pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str) {
+    let (out, err) = render(status, session, socket, &local_source_hash());
+    for line in out {
+        println!("{line}");
+    }
+    for line in err {
+        eprintln!("{line}");
+    }
+}
+
+/// What `show` prints, to stdout and to stderr, given this checkout's source
+/// hash.
+fn render(status: &anyhow::Result<Value>, session: &Session, socket: &str, local_hash: &str) -> (Vec<String>, Vec<String>) {
     match status {
-        Ok(status) => {
-            println!("{}", line(status, session, socket));
-            for warning in unresolved_pointer_warnings(status) {
-                eprintln!("{warning}");
-            }
-        }
-        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), socket)),
+        Ok(status) => (
+            vec![line_with_local_hash(status, session, socket, local_hash)],
+            unresolved_pointer_warnings(status),
+        ),
+        Err(err) => (vec![runtime_line("posture: unavailable", &err.to_string(), socket)], Vec::new()),
     }
 }
 
@@ -30,11 +45,118 @@ pub fn runtime_line(context: &str, message: &str, local: &str) -> String {
     format!("{context} ({}) · {local}", visible(message))
 }
 
+/// `line_with_local_hash` with this checkout's hash, for tests of the line
+/// itself; `show` renders through `render`.
+#[cfg(test)]
+pub fn line(status: &Value, session: &Session, socket: &str) -> String {
+    line_with_local_hash(status, session, socket, &local_source_hash())
+}
+
+/// The source hash of the checkout the launcher names in
+/// `DYFJ_PROTOTYPE_ROOT`, or `unknown` without one.
+fn local_source_hash() -> String {
+    match std::env::var_os("DYFJ_PROTOTYPE_ROOT") {
+        Some(root) => source_tree_hash(&PathBuf::from(root).join("src")),
+        None => FINGERPRINT_UNKNOWN.to_string(),
+    }
+}
+
 /// Render the posture from a `runtime/status` result and the choices the
 /// command line made for this session, which override the runtime's defaults
 /// on the first turn. Every status field is optional: a runtime that stops
-/// reporting one should cost a narrower line, not a failed startup.
-pub fn line(status: &Value, session: &Session, socket: &str) -> String {
+/// reporting one should cost a narrower line, not a failed startup. When the
+/// runtime's code differs from this checkout's (`local_hash`), a warning line
+/// follows.
+pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, local_hash: &str) -> String {
+    let posture = posture_line(status, session, socket);
+    match freshness_warning(status, local_hash) {
+        Some(warning) => format!("{posture}\n{warning}"),
+        None => posture,
+    }
+}
+
+/// The line after the posture line when the runtime's code differs from this
+/// checkout's, saying how it will catch up. `None` when they match, when
+/// either hash is unknown or not a well-formed hash, or when the runtime
+/// reports no fingerprint (an older runtime). The TypeScript REPL prints the
+/// same text (`formatFreshnessWarning` in `prototype/src/cli/posture.ts`).
+pub fn freshness_warning(status: &Value, local_hash: &str) -> Option<String> {
+    let runtime = status.get("runtime").unwrap_or(status);
+    let runtime_hash = runtime.get("fingerprint")?.get("contentHash")?.as_str()?;
+    if !is_content_hash(runtime_hash) || !is_content_hash(local_hash) || runtime_hash == local_hash {
+        return None;
+    }
+    Some(if runtime.get("autostarted").and_then(Value::as_bool) == Some(true) {
+        "warning: runtime is behind the working tree; dyfj started it, so it \
+         stops 10 s after its last client disconnects and the next dyfj loads \
+         the current code"
+            .into()
+    } else {
+        "warning: runtime is behind the working tree; it was started with \
+         `dyfj start`, so restart it to load the current code: `dyfj stop`, \
+         then `dyfj start`"
+            .into()
+    })
+}
+
+/// Whether `hash` is a content hash as `source_tree_hash` writes it:
+/// `sha256:` and 64 lowercase hex digits. The runtime's comes from
+/// unvalidated JSON, so any other shape means no comparison.
+fn is_content_hash(hash: &str) -> bool {
+    hash.strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+}
+
+/// The content hash of the source tree at `root`, as the runtime records it
+/// (`prototype/src/config/code-fingerprint.ts`), so the two can be compared.
+/// Every regular file under `root`, skipping any entry whose name starts with
+/// `.`; sorted by relative path (`/`-separated, compared as bytes); SHA-256
+/// over, for each file, its path, a NUL, its length in decimal, a NUL, and its
+/// content; `sha256:<hex>`. Symlinks are skipped, neither followed nor
+/// hashed. Any read error gives `unknown`, never a partial hash.
+/// `prototype/testing/fixtures/code-fingerprint` pins both implementations
+/// to one test vector.
+pub fn source_tree_hash(root: &Path) -> String {
+    fn collect(root: &Path, prefix: &str, files: &mut Vec<String>) -> std::io::Result<()> {
+        let dir = if prefix.is_empty() { root.to_path_buf() } else { root.join(prefix) };
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                // A name that is not UTF-8 cannot be hashed the way the
+                // runtime hashes it.
+                return Err(std::io::Error::other("non-UTF-8 file name"));
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let relative = if prefix.is_empty() { name } else { format!("{prefix}/{name}") };
+            // `file_type` does not follow symlinks, so a symlink is neither.
+            let kind = entry.file_type()?;
+            if kind.is_dir() {
+                collect(root, &relative, files)?;
+            } else if kind.is_file() {
+                files.push(relative);
+            }
+        }
+        Ok(())
+    }
+    let hash = || -> std::io::Result<String> {
+        let mut files = Vec::new();
+        collect(root, "", &mut files)?;
+        files.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        let mut hasher = Sha256::new();
+        for relative in &files {
+            let content = std::fs::read(root.join(relative))?;
+            hasher.update(format!("{relative}\0{}\0", content.len()).as_bytes());
+            hasher.update(&content);
+        }
+        let hex: String = hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect();
+        Ok(format!("sha256:{hex}"))
+    };
+    hash().unwrap_or_else(|_| FINGERPRINT_UNKNOWN.to_string())
+}
+
+fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     let runtime = status.get("runtime").unwrap_or(status);
     let mut parts: Vec<String> = Vec::new();
 
@@ -256,5 +378,169 @@ mod tests {
         let status = json!({"runtime": {"permissionLevel": "operator"}});
         let rendered = line(&status, &Session::default(), "/tmp/s.sock");
         assert!(!rendered.contains("paid"), "{rendered}");
+    }
+
+    mod freshness {
+        use super::super::{FINGERPRINT_UNKNOWN, freshness_warning, line, line_with_local_hash, source_tree_hash};
+        use crate::session::Session;
+        use serde_json::json;
+        use std::fs;
+        use std::path::{Path, PathBuf};
+
+        const LOCAL: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const OLD: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+        fn fixture() -> PathBuf {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prototype/testing/fixtures/code-fingerprint")
+        }
+
+        fn expected_hash() -> String {
+            fs::read_to_string(fixture().join("expected-hash.txt")).unwrap().trim().to_string()
+        }
+
+        /// A writable copy of the fixture tree, removed when dropped.
+        struct TreeCopy(PathBuf);
+        impl Drop for TreeCopy {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        fn copy_dir(from: &Path, to: &Path) {
+            fs::create_dir_all(to).unwrap();
+            for entry in fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let target = to.join(entry.file_name());
+                if entry.file_type().unwrap().is_dir() {
+                    copy_dir(&entry.path(), &target);
+                } else {
+                    fs::copy(entry.path(), target).unwrap();
+                }
+            }
+        }
+        fn tree_copy() -> TreeCopy {
+            let dir = std::env::temp_dir().join(format!("dyfj-fingerprint-{}", uuid::Uuid::new_v4()));
+            copy_dir(&fixture().join("tree"), &dir);
+            TreeCopy(dir)
+        }
+
+        #[test]
+        fn hashes_the_shared_fixture_tree_to_the_shared_expected_value() {
+            assert_eq!(source_tree_hash(&fixture().join("tree")), expected_hash());
+        }
+
+        #[test]
+        fn skips_symlinks_without_following_them() {
+            let tree = tree_copy();
+            std::os::unix::fs::symlink(tree.0.join("a.txt"), tree.0.join("link-to-file.txt")).unwrap();
+            std::os::unix::fs::symlink(tree.0.join("nested"), tree.0.join("link-to-dir")).unwrap();
+            assert_eq!(source_tree_hash(&tree.0), expected_hash());
+        }
+
+        #[test]
+        fn a_changed_file_changes_the_hash() {
+            let tree = tree_copy();
+            fs::write(tree.0.join("a.txt"), "export const a = 2;\n").unwrap();
+            assert_ne!(source_tree_hash(&tree.0), expected_hash());
+        }
+
+        #[test]
+        fn an_unreadable_tree_is_unknown_never_partial() {
+            use std::os::unix::fs::PermissionsExt;
+            if unsafe { libc::geteuid() } == 0 {
+                return;
+            }
+            let tree = tree_copy();
+            let file = tree.0.join("nested/c.txt");
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+            assert_eq!(source_tree_hash(&tree.0), FINGERPRINT_UNKNOWN);
+            assert_eq!(source_tree_hash(&tree.0.join("missing")), FINGERPRINT_UNKNOWN);
+        }
+
+        #[test]
+        fn warns_when_the_runtime_is_behind_and_says_how_it_recovers() {
+            let manual = json!({"runtime": {"autostarted": false, "fingerprint": {"head": "x", "contentHash": OLD}}});
+            let warning = freshness_warning(&manual, LOCAL).expect("behind");
+            assert!(warning.starts_with("warning: runtime is behind the working tree; "), "{warning}");
+            assert!(warning.contains("`dyfj stop`, then `dyfj start`"), "{warning}");
+
+            let auto = json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": OLD}}});
+            let warning = freshness_warning(&auto, LOCAL).expect("behind");
+            assert!(warning.contains("10 s after its last client"), "{warning}");
+
+            let rendered = line_with_local_hash(&manual, &Session::default(), "/tmp/s.sock", LOCAL);
+            let mut lines = rendered.lines();
+            assert_eq!(lines.next(), Some("posture: /tmp/s.sock"));
+            assert!(lines.next().unwrap().starts_with("warning: runtime is behind the working tree"));
+        }
+
+        #[test]
+        fn says_nothing_when_current_or_either_side_is_unknown() {
+            let current = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": LOCAL}}});
+            assert_eq!(freshness_warning(&current, LOCAL), None);
+            let stale = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": OLD}}});
+            assert_eq!(freshness_warning(&stale, FINGERPRINT_UNKNOWN), None);
+            let unknown = json!({"runtime": {"fingerprint": {"head": "unknown", "contentHash": "unknown"}}});
+            assert_eq!(freshness_warning(&unknown, LOCAL), None);
+            assert_eq!(freshness_warning(&json!({"runtime": {}}), LOCAL), None);
+            assert_eq!(freshness_warning(&json!({"runtime": {"fingerprint": {"contentHash": 7}}}), LOCAL), None);
+        }
+
+        /// "Behind" can restart a runtime, so a hash that is not a full
+        /// lowercase SHA-256 on either side means no comparison at all.
+        #[test]
+        fn a_malformed_hash_on_either_side_means_no_comparison() {
+            let malformed = [
+                "sha256:not-a-hash".to_string(),
+                "sha256:".to_string(),
+                format!("sha256:{}", "a".repeat(63)),
+                format!("sha256:{}", "a".repeat(65)),
+                format!("sha256:{}", "A".repeat(64)),
+                format!("sha256:{}\n", "a".repeat(64)),
+                format!("SHA256:{}", "a".repeat(64)),
+            ];
+            for hash in &malformed {
+                let runtime = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": hash}}});
+                assert_eq!(freshness_warning(&runtime, LOCAL), None, "runtime {hash:?}");
+                let valid = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": OLD}}});
+                assert_eq!(freshness_warning(&valid, hash), None, "local {hash:?}");
+            }
+            let same = json!({"runtime": {"fingerprint": {"contentHash": "sha256:x"}}});
+            assert_eq!(freshness_warning(&same, "sha256:y"), None);
+        }
+
+        /// `render` is what `show` prints; startup (`main.rs`) and a
+        /// reconnect (`link.rs`) both call `show`. This checks only `render`.
+        #[test]
+        fn render_puts_the_warning_after_the_posture_line() {
+            use super::super::render;
+            let behind = Ok(json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": OLD}}}));
+            let (out, _) = render(&behind, &Session::default(), "/tmp/s.sock", LOCAL);
+            assert_eq!(out.len(), 1, "{out:?}");
+            let mut lines = out[0].lines();
+            assert_eq!(lines.next(), Some("posture: /tmp/s.sock"));
+            assert!(lines.next().unwrap().starts_with("warning: runtime is behind the working tree"), "{out:?}");
+
+            let current = Ok(json!({"runtime": {"fingerprint": {"head": "x", "contentHash": LOCAL}}}));
+            let (out, _) = render(&current, &Session::default(), "/tmp/s.sock", LOCAL);
+            assert_eq!(out, ["posture: /tmp/s.sock"]);
+        }
+
+        /// An older client ignores the new fields: the posture line it
+        /// renders is the same with or without them.
+        #[test]
+        fn the_new_status_fields_leave_the_posture_line_unchanged() {
+            let before = json!({"runtime": {
+                "defaultTurnModel": {"slug": "qwen", "tier": 0, "local": true},
+                "permissionLevel": "strict"
+            }});
+            let mut after = before.clone();
+            after["runtime"]["fingerprint"] = json!({"head": "x", "contentHash": LOCAL});
+            after["runtime"]["clients"] = json!(2);
+            after["runtime"]["inFlightTurns"] = json!(1);
+            assert_eq!(
+                line_with_local_hash(&after, &Session::default(), "/tmp/s.sock", LOCAL),
+                line(&before, &Session::default(), "/tmp/s.sock"),
+            );
+        }
     }
 }
