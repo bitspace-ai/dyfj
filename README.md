@@ -296,9 +296,10 @@ How the work actually happens, separate from what gets built.
   Shared fakes live in `prototype/testing/fakes/`. Product tests run on
   `node:test` only (decision D32), under `node --test` with the per-file handle
   check, with assertions and mocks from `node:assert/strict` and `node:test`.
-  The gate's own tests under `scripts/` register with `node:test`; the rest
-  of the `prototype/scripts/` tests and the receipt-schema tests may still use
-  `Deno.test` until S3.3d of decision D32. The end state is `node:test` only.
+  The gate's own tests under `scripts/`, the receipt-schema tests among them,
+  register with `node:test`; the rest of the `prototype/scripts/` tests may
+  still use `Deno.test` until S3.3d of decision D32. The end state is
+  `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -331,8 +332,8 @@ How the work actually happens, separate from what gets built.
   dependencies, and the launcher
   refuses any other major version (CI uses Node 26.11.1)
 - [Deno](https://deno.com) 2.9+, for the gate's `deno check` lanes, its
-  remaining Deno test and schema lanes and the remaining `deno task` tooling,
-  until their own move to Node
+  remaining Deno test subsets and the remaining `deno task` tooling, until
+  their own move to Node
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
   local default model; [Ollama](https://ollama.com) and
@@ -386,10 +387,13 @@ check, the smoke example, the Codex login and the memory-recall fixture are npm
 scripts in `prototype/package.json` (`npm run` lists them). The gate is the
 root `npm test` and `npm run test:fast`; the root `deno.json`'s `test` and
 `test:fast` tasks are one-line shims to them until close-out of decision D32.
-The test, typecheck and schema entry points are still Deno tasks in
-`deno.json` (`deno task` lists them) until they move to Node.
-`prototype/examples/uds-jsonrpc-spike.ts` is a standalone historical example
-with no npm script; it is written for Deno and does not run under Node.
+The schema tooling is root npm scripts: `npm run validate-schema`,
+`npm run schema:equivalence`, `npm run schema:codegen` and
+`npm run test:schema`. The root `deno.json` keeps a one-line
+`schema:codegen` shim to its npm script, because the generated row-types file
+and the codegen lane's stale-file message name that task. The prototype's
+typecheck and test entry points are still Deno tasks in `prototype/deno.json`
+(`deno task` lists them) until they move to Node.
 
 Edit `.env` for your local config. The prototype reads Dolt connection settings
 from environment variables; for the default local SQL server, export:
@@ -1167,10 +1171,10 @@ npm test                  # repository aggregate gate (full green bar): node scr
 npm run test:fast         # policy checks, typechecks, unit lane: the same with --fast
 deno task test            # shim to npm test, until close-out of decision D32
 deno task check           # strict typecheck of production and test import graphs
-deno task test:schema
-deno task validate-schema
-deno task schema:equivalence  # fresh-install and upgrade paths match
-deno task schema:codegen      # regenerate the DDL-derived row types
+npm run test:schema
+npm run validate-schema
+npm run schema:equivalence    # fresh-install and upgrade paths match
+npm run schema:codegen        # regenerate the DDL-derived row types
 (cd prototype && deno task test:golden)  # golden characterization suite alone
 ```
 
@@ -1198,9 +1202,9 @@ it starts each lane as a plain `node`, `cargo` or `dolt` process, or as the
 selected Deno for the Deno lanes left, from a cleared environment with only
 the names it forwards, and holds no per-lane permission sandbox. Its lanes run
 unsandboxed as the operator's user, as product tests do. The Deno lanes left
-are the two `deno check` typecheck lanes, until close-out, and the
-receipt-schema test and the four schema CLI lanes (`deno run -A`, with no grant
-list), until S3.3d. The gate finds the selected Deno by running
+are the two `deno check` typecheck lanes, until close-out; the receipt-schema
+tests and the four schema CLI lanes run as plain `node`. The gate finds the
+selected Deno by running
 `prototype/scripts/deno-executable.ts` with the `deno` on `PATH` and resolving
 symbolic links, so the path it hands the typecheck tasks as `DENO_BIN` is the
 one those tasks run; when that fails, the gate prints the selector's fixed
@@ -1295,9 +1299,8 @@ committed file) and `schema.equivalence` (`current/` + `catalog/` and
 `history/` + `migrations/` must produce the same structure), non-ignored Rust
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
-`*.integration.test.ts`, found by file name, product files under `node --test`
-and its remaining `deno test` subset with the op and resource sanitizers
-enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
+`*.integration.test.ts`, found by file name, under `node --test`; no
+integration file is left on `Deno.test`; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
 `dyfj` CLI as child processes, and compares normalized captures (stream frames,
@@ -1511,10 +1514,9 @@ the class body and assign it in the constructor. This replaces the former
 The tsconfig's `exclude` list names the files `tsc` cannot check yet: those
 that still use the `Deno` global or import `@std/*`, plus every file that
 imports one, since `tsc` checks an excluded file an included file imports.
-That is the gate tooling under `scripts/` and `prototype/scripts/`, the
-`schema/` CLIs and their tests and the seven `prototype/examples/`. Those files keep their `deno check` coverage
-(the examples through the source typecheck lane), the list only shrinks as
-they port, and it is deleted when the last one ports.
+That is part of the gate tooling under `scripts/` and `prototype/scripts/`.
+Those files keep their `deno check` coverage, the list only shrinks as they
+port, and it is deleted when the last one ports.
 
 The Node load probe (`scripts/node-load-probe.ts`) is a manual check, not a
 gate lane, until the gate tooling runs on Node. Run it by hand from the
@@ -2502,3 +2504,12 @@ Document revisions only. Code and behavior changes are tracked in
   the CI and fast-subset paragraphs name `npm test` and `npm run test:fast`,
   with `deno task test` a shim until close-out. The contract closure-report
   comparison is described as a `node` run that writes nothing.
+- 2026-10-17 - The schema CLIs and the receipt-schema tests run on Node. The
+  set-up section and "Run it" name the schema tooling as root npm scripts
+  (`npm run validate-schema`, `schema:equivalence`, `schema:codegen` and
+  `test:schema`), with a one-line `deno task schema:codegen` shim, and no
+  longer name the historical UDS JSON-RPC spike, which is deleted. The gate
+  section says the only Deno lanes left are the two `deno check` lanes; the
+  testing doctrine counts the receipt-schema tests among the gate's own
+  `node:test` tests; the Deno prerequisite drops the schema lanes; and the
+  tsconfig exclusion paragraph names only the gate tooling.

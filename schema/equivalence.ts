@@ -9,6 +9,7 @@
  * check constraints fails. Catalog data is not compared.
  */
 
+import process from "node:process";
 import {
   assertSchemaApplyPlan,
   readSchemaApplyPlan,
@@ -134,7 +135,8 @@ if (import.meta.main) {
       "Fold every migration into schema/current/, or add the migration that " +
         "brings an existing database to the current baseline.",
     );
-    Deno.exit(1);
+    process.exitCode = 1;
+  } else {
+    console.log("schema.equivalence: structures match.");
   }
-  console.log("schema.equivalence: structures match.");
 }

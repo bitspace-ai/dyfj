@@ -707,13 +707,18 @@ export function productionLanes(
       env: binding,
     },
     {
-      // Deno until the schema CLIs port (S3.3d): the validator's tests are
-      // still on Deno.test. `deno test` gets no grant.
+      // The validator's tests register with node:test, so they run under
+      // `node --test` through the shared Node runner (decision D32). They
+      // build their receipts in memory and only read the validator.
       label: "Receipt schema validation",
       checkId: "receipt.schema",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: ["test", "scripts/assurance-receipt.test.ts"],
+      command: "node",
+      args: [
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "receipt.schema",
+        "scripts/assurance-receipt.test.ts",
+      ],
       cwd: root,
     },
     {
@@ -744,11 +749,6 @@ export function productionLanes(
         "scripts/change-scope.test.ts",
         "scripts/retired-surface-scan.test.ts",
         "scripts/ratchet-base.test.ts",
-        // Deleted with the test-dialect codemod once decision D32's S2 is done.
-        "scripts/codemod/deno-test-dialect.test.ts",
-        // Deleted with the registrations codemod once S3.2b of decision D32
-        // is done.
-        "scripts/codemod/deno-test-registrations.test.ts",
       ],
       cwd: root,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
@@ -867,36 +867,22 @@ export function productionLanes(
       ],
       cwd: root,
     },
-    // The four schema lanes below run their CLIs under `deno run -A`, with no
-    // grant list, until the schema CLIs port (S3.3d). Each reaches
-    // `schema/dolt-apply.ts`, which spawns `dolt` through node:child_process
-    // and makes its repository with node:fs (decision D32).
+    // The four schema lanes below run their CLIs as plain `node`, written to
+    // `node:` builtins (decision D32). Each reaches `schema/dolt-apply.ts`,
+    // which spawns `dolt` through node:child_process and makes its repository
+    // with node:fs.
     {
       label: "Current-schema apply validation",
       checkId: "test.aggregate",
-      // Deno until the schema CLIs port (S3.3d).
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "-A",
-        "schema/validate-schema.ts",
-        "--current-only",
-      ],
+      command: "node",
+      args: ["schema/validate-schema.ts", "--current-only"],
       cwd: root,
     },
     {
       label: "Historical replay plus forward-migration validation",
       checkId: "test.aggregate",
-      // Deno until the schema CLIs port (S3.3d).
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "-A",
-        "schema/validate-schema.ts",
-        "--history-only",
-      ],
+      command: "node",
+      args: ["schema/validate-schema.ts", "--history-only"],
       cwd: root,
     },
     // Schema lanes (specs/02-data-layer.md sections 3 and 4), under the
@@ -907,28 +893,15 @@ export function productionLanes(
     {
       label: "Schema codegen freshness (schema.codegen)",
       checkId: "test.aggregate",
-      // Deno until the schema CLIs port (S3.3d).
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "-A",
-        "schema/codegen.ts",
-        "--check",
-      ],
+      command: "node",
+      args: ["schema/codegen.ts", "--check"],
       cwd: root,
     },
     {
       label: "Schema equivalence (schema.equivalence)",
       checkId: "test.aggregate",
-      // Deno until the schema CLIs port (S3.3d).
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "-A",
-        "schema/equivalence.ts",
-      ],
+      command: "node",
+      args: ["schema/equivalence.ts"],
       cwd: root,
     },
     {
@@ -942,9 +915,9 @@ export function productionLanes(
     {
       label: "Isolated Dolt integration lane",
       checkId: "test.aggregate",
-      // The runner, on Node: its remaining Deno subset runs under the
-      // executable DENO_BIN names, with its own grants, until S3.3d of
-      // decision D32.
+      // The runner, on Node. No integration file is left on the existing
+      // runner; its `deno test` step, under the executable DENO_BIN names,
+      // runs only when one is discovered, until close-out of decision D32.
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,

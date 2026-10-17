@@ -1,3 +1,5 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   canonicalJson,
   computeEvidenceDigest,
@@ -10,11 +12,7 @@ import {
 } from "./assurance-receipt.ts";
 
 function assertEquals<T>(actual: T, expected: T): void {
-  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-    throw new Error(
-      `Expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`,
-    );
-  }
+  assert.deepStrictEqual(actual, expected);
 }
 
 const SUBJECT_SHA = "a".repeat(40);
@@ -109,7 +107,7 @@ async function expectViolation(
   }
 }
 
-Deno.test("a conforming v1 receipt validates", async () => {
+test("a conforming v1 receipt validates", async () => {
   const result = await validateReceipt(await makeReceipt(), {
     verifiedSubjectDigest: SUBJECT_SHA,
     nowMs: NOW_MS,
@@ -118,14 +116,14 @@ Deno.test("a conforming v1 receipt validates", async () => {
   assertEquals(result, { valid: true, violations: [] });
 });
 
-Deno.test("non-object payloads are rejected", async () => {
+test("non-object payloads are rejected", async () => {
   for (const payload of [null, "receipt", 7, ["x"]]) {
     const result = await validateReceipt(payload);
     assertEquals(result.valid, false);
   }
 });
 
-Deno.test("wrong schema and unsupported versions are rejected", async () => {
+test("wrong schema and unsupported versions are rejected", async () => {
   await expectViolation((r) => {
     r.schema = "other.schema";
   }, "receipt.schema/wrong-schema");
@@ -137,7 +135,7 @@ Deno.test("wrong schema and unsupported versions are rejected", async () => {
   }, "receipt.schema/unsupported-version");
 });
 
-Deno.test("every absent required field is rejected", async () => {
+test("every absent required field is rejected", async () => {
   const receipt = await makeReceipt();
   for (const field of Object.keys(receipt)) {
     if (field === "evidence_digest") continue;
@@ -155,7 +153,7 @@ Deno.test("every absent required field is rejected", async () => {
   }
 });
 
-Deno.test("unknown top-level fields are rejected without echo", async () => {
+test("unknown top-level fields are rejected without echo", async () => {
   const hostile = "\x1b[2Jhostile-payload";
   const receipt = await makeReceipt((r) => {
     r[hostile] = "smuggled";
@@ -171,13 +169,13 @@ Deno.test("unknown top-level fields are rejected without echo", async () => {
   }
 });
 
-Deno.test("unknown decision values are rejected", async () => {
+test("unknown decision values are rejected", async () => {
   await expectViolation((r) => {
     r.decision = "approve";
   }, "receipt.schema/unknown-decision");
 });
 
-Deno.test("mutable-only subject references are rejected", async () => {
+test("mutable-only subject references are rejected", async () => {
   for (const ref of ["HEAD", "refs/heads/main", "main-branch-tip"]) {
     await expectViolation((r) => {
       (r.subject as Record<string, unknown>).ref = ref;
@@ -190,7 +188,7 @@ Deno.test("mutable-only subject references are rejected", async () => {
   }, "receipt.schema/mutable-subject-ref");
 });
 
-Deno.test("every subject kind requires a digest-bound immutable ref", async () => {
+test("every subject kind requires a digest-bound immutable ref", async () => {
   const digest64 = "c".repeat(64);
   for (
     const kind of ["diff", "file", "artifact", "command", "deployment"]
@@ -213,7 +211,7 @@ Deno.test("every subject kind requires a digest-bound immutable ref", async () =
   }
 });
 
-Deno.test("unknown policy ids and non-1 policy versions are rejected", async () => {
+test("unknown policy ids and non-1 policy versions are rejected", async () => {
   await expectViolation((r) => {
     r.policy = { id: "future.policy", version: 1 };
   }, "receipt.schema/unknown-policy");
@@ -222,7 +220,7 @@ Deno.test("unknown policy ids and non-1 policy versions are rejected", async () 
   }, "receipt.schema/unsupported-policy-version");
 });
 
-Deno.test("every stable pipeline policy id validates at version 1", async () => {
+test("every stable pipeline policy id validates at version 1", async () => {
   for (const id of POLICY_IDS) {
     const receipt = await makeReceipt((r) => {
       r.policy = { id, version: 1 };
@@ -236,7 +234,7 @@ Deno.test("every stable pipeline policy id validates at version 1", async () => 
   }
 });
 
-Deno.test("the reserved product runtime policy is not accepted", async () => {
+test("the reserved product runtime policy is not accepted", async () => {
   for (
     const id of ["product.runtime", "runtime.authorization", "product.policy"]
   ) {
@@ -246,7 +244,7 @@ Deno.test("the reserved product runtime policy is not accepted", async () => {
   }
 });
 
-Deno.test("a required_checks receipt must account for every mandatory check", async () => {
+test("a required_checks receipt must account for every mandatory check", async () => {
   for (const omitted of MANDATORY_CHECK_IDS) {
     await expectViolation((r) => {
       (r.checks as Record<string, unknown>).executed = floorExecuted()
@@ -263,7 +261,7 @@ Deno.test("a required_checks receipt must account for every mandatory check", as
   assertEquals((await validateReceipt(otherPolicy)).valid, true);
 });
 
-Deno.test("a duplicated check id cannot validate", async () => {
+test("a duplicated check id cannot validate", async () => {
   await expectViolation((r) => {
     (r.checks as Record<string, unknown>).skipped = [
       { id: "test.aggregate", reason_class: "duplicate", required: false },
@@ -271,7 +269,7 @@ Deno.test("a duplicated check id cannot validate", async () => {
   }, "receipt.schema/duplicate-check-id");
 });
 
-Deno.test("a mandatory check not marked required cannot validate", async () => {
+test("a mandatory check not marked required cannot validate", async () => {
   await expectViolation((r) => {
     (r.checks as Record<string, unknown>).executed = floorExecuted(
       () => "pass",
@@ -280,7 +278,7 @@ Deno.test("a mandatory check not marked required cannot validate", async () => {
   }, "receipt.schema/mandatory-check-not-required");
 });
 
-Deno.test("check ids outside the controlled vocabulary are rejected without echo", async () => {
+test("check ids outside the controlled vocabulary are rejected without echo", async () => {
   const hostile = "\x1b[2Jcustom.check";
   const result = await validateReceipt(
     await makeReceipt((r) => {
@@ -298,7 +296,7 @@ Deno.test("check ids outside the controlled vocabulary are rejected without echo
   }
 });
 
-Deno.test("risk classes are a controlled vocabulary", async () => {
+test("risk classes are a controlled vocabulary", async () => {
   const accepted = await makeReceipt((r) => {
     r.risk_classes = [...RISK_CLASSES];
   });
@@ -308,13 +306,13 @@ Deno.test("risk classes are a controlled vocabulary", async () => {
   }, "receipt.schema/unknown-risk-class");
 });
 
-Deno.test("runner identity requires a revision", async () => {
+test("runner identity requires a revision", async () => {
   await expectViolation((r) => {
     r.runner = { id: "gate-fixture" };
   }, "receipt.schema/invalid:runner");
 });
 
-Deno.test("subject digest mismatches are rejected", async () => {
+test("subject digest mismatches are rejected", async () => {
   await expectViolation(
     () => {},
     "receipt.schema/subject-digest-mismatch",
@@ -328,7 +326,7 @@ Deno.test("subject digest mismatches are rejected", async () => {
   }, "receipt.schema/invalid:subject-digest");
 });
 
-Deno.test("stale and future subject timestamps are rejected", async () => {
+test("stale and future subject timestamps are rejected", async () => {
   await expectViolation(
     (r) => {
       r.occurred_at = "2026-08-29T01:00:00Z";
@@ -348,7 +346,7 @@ Deno.test("stale and future subject timestamps are rejected", async () => {
   }, "receipt.schema/invalid:occurred_at");
 });
 
-Deno.test("occurred_at must be an absolute UTC instant", async () => {
+test("occurred_at must be an absolute UTC instant", async () => {
   // Date.parse accepts all of these, but none pins one absolute UTC
   // instant in the canonical `Z` form.
   for (
@@ -370,13 +368,13 @@ Deno.test("occurred_at must be an absolute UTC instant", async () => {
   assertEquals((await validateReceipt(zulu)).valid, true);
 });
 
-Deno.test("negative finding counts are rejected", async () => {
+test("negative finding counts are rejected", async () => {
   await expectViolation((r) => {
     r.findings = [{ class: "secret-shaped", count: -1 }];
   }, "receipt.schema/negative-finding-count");
 });
 
-Deno.test("passing decisions with failed required checks are rejected", async () => {
+test("passing decisions with failed required checks are rejected", async () => {
   const failExecuted = (r: Record<string, unknown>) => {
     (r.checks as Record<string, unknown>).executed = floorExecuted(
       (id) => id === "test.aggregate" ? "fail" : "pass",
@@ -395,7 +393,7 @@ Deno.test("passing decisions with failed required checks are rejected", async ()
   assertEquals((await validateReceipt(blocked)).valid, true);
 });
 
-Deno.test("an all-warn required-check receipt cannot pass", async () => {
+test("an all-warn required-check receipt cannot pass", async () => {
   // The verified failure: every mandatory check ran and returned `warn` —
   // not one of them delivered the assurance it is required for — and the
   // receipt still decided `allow`.
@@ -427,7 +425,7 @@ Deno.test("an all-warn required-check receipt cannot pass", async () => {
   }
 });
 
-Deno.test("a single warned mandatory check blocks a passing decision", async () => {
+test("a single warned mandatory check blocks a passing decision", async () => {
   // Mixed pass/warn: the other ten mandatory checks passing does not cover
   // for the one that only warned.
   for (const warned of MANDATORY_CHECK_IDS) {
@@ -461,7 +459,7 @@ Deno.test("a single warned mandatory check blocks a passing decision", async () 
   }
 });
 
-Deno.test("warn stays valid where nothing mandatory rests on it", async () => {
+test("warn stays valid where nothing mandatory rests on it", async () => {
   // An advisory check that warned is recorded and accepted; the required
   // check beside it passed, so the receipt still carries a clean floor.
   const advisory = await makeReceipt((r) => {
@@ -497,7 +495,7 @@ function moveToGap(
   ];
 }
 
-Deno.test("required skipped or unavailable checks block a pass", async () => {
+test("required skipped or unavailable checks block a pass", async () => {
   for (const bucket of ["skipped", "unavailable", "failed"]) {
     await expectViolation((r) => {
       moveToGap(r, bucket, "tool-missing");
@@ -510,7 +508,7 @@ Deno.test("required skipped or unavailable checks block a pass", async () => {
   assertEquals((await validateReceipt(unknownDecision)).valid, true);
 });
 
-Deno.test("bypass cannot clear a required deterministic failure", async () => {
+test("bypass cannot clear a required deterministic failure", async () => {
   await expectViolation((r) => {
     r.decision = "bypass";
     r.bypass_ref = `exception-${"d".repeat(40)}`;
@@ -521,7 +519,7 @@ Deno.test("bypass cannot clear a required deterministic failure", async () => {
   }, "receipt.schema/missing-bypass-ref");
 });
 
-Deno.test("approval and bypass refs must be bounded immutable references", async () => {
+test("approval and bypass refs must be bounded immutable references", async () => {
   await expectViolation((r) => {
     r.approval_ref = "team-lead-approval";
   }, "receipt.schema/invalid:approval_ref");
@@ -535,7 +533,7 @@ Deno.test("approval and bypass refs must be bounded immutable references", async
   assertEquals((await validateReceipt(anchored)).valid, true);
 });
 
-Deno.test("required independence needs supporting observation", async () => {
+test("required independence needs supporting observation", async () => {
   const claim = (
     overrides: Record<string, unknown>,
   ): Record<string, unknown> => ({
@@ -570,7 +568,7 @@ Deno.test("required independence needs supporting observation", async () => {
   }, "receipt.schema/invalid:independence");
 });
 
-Deno.test("an independent status always needs supporting observation", async () => {
+test("an independent status always needs supporting observation", async () => {
   // Even when independence is not required, claiming the achieved status
   // with a self-asserted observer, a sentinel family, or matching families
   // is rejected.
@@ -603,7 +601,7 @@ Deno.test("an independent status always needs supporting observation", async () 
   assertEquals((await validateReceipt(supported)).valid, true);
 });
 
-Deno.test("independence fields are required even when not required to be independent", async () => {
+test("independence fields are required even when not required to be independent", async () => {
   for (
     const field of [
       "required",
@@ -619,7 +617,7 @@ Deno.test("independence fields are required even when not required to be indepen
   }
 });
 
-Deno.test("condition entries require their bounded companion fields", async () => {
+test("condition entries require their bounded companion fields", async () => {
   await expectViolation((r) => {
     r.known_unknowns = [{ class: "coverage-gap" }];
   }, "receipt.schema/invalid:known_unknowns");
@@ -637,13 +635,13 @@ Deno.test("condition entries require their bounded companion fields", async () =
   assertEquals((await validateReceipt(complete)).valid, true);
 });
 
-Deno.test("unconfirmed redaction is rejected", async () => {
+test("unconfirmed redaction is rejected", async () => {
   await expectViolation((r) => {
     (r.redaction as Record<string, unknown>).matched_values_recorded = true;
   }, "receipt.schema/redaction-not-confirmed");
 });
 
-Deno.test("unbounded reference lists are rejected", async () => {
+test("unbounded reference lists are rejected", async () => {
   await expectViolation((r) => {
     r.trace_refs = Array.from({ length: 65 }, (_, i) => `trace-${i}`);
   }, "receipt.schema/invalid:trace_refs");
@@ -652,7 +650,7 @@ Deno.test("unbounded reference lists are rejected", async () => {
   }, "receipt.schema/invalid:trace_refs");
 });
 
-Deno.test("a tampered payload fails the evidence digest", async () => {
+test("a tampered payload fails the evidence digest", async () => {
   const receipt = await makeReceipt();
   receipt.work_unit = "tampered-after-sealing";
   const result = await validateReceipt(receipt);
@@ -677,7 +675,7 @@ function independenceClaim(
   };
 }
 
-Deno.test("family identifiers outside the canonical form are rejected", async () => {
+test("family identifiers outside the canonical form are rejected", async () => {
   for (
     const family of [
       "Anthropic",
@@ -702,7 +700,7 @@ Deno.test("family identifiers outside the canonical form are rejected", async ()
   }
 });
 
-Deno.test("case-differing spellings never satisfy different-family independence", async () => {
+test("case-differing spellings never satisfy different-family independence", async () => {
   // The verified failure: `Anthropic` versus `anthropic` is one family
   // wearing two spellings, and must never validate as independent.
   for (
@@ -730,7 +728,7 @@ Deno.test("case-differing spellings never satisfy different-family independence"
   assertEquals((await validateReceipt(genuine)).valid, true);
 });
 
-Deno.test("separator aliases of one family are not two families", async () => {
+test("separator aliases of one family are not two families", async () => {
   for (
     const pair of [
       { implementer_family: "openai", verifier_family: "open-ai" },
@@ -747,7 +745,7 @@ Deno.test("separator aliases of one family are not two families", async () => {
   }, "receipt.schema/unsupported-independence");
 });
 
-Deno.test("semantic aliases of one family are not two families", async () => {
+test("semantic aliases of one family are not two families", async () => {
   // The verified failure: `openai` and `gpt` are both canonical in form and
   // both name one family, so an independence claim resting on the pair is a
   // single family reviewing itself and must never validate.
@@ -783,7 +781,7 @@ Deno.test("semantic aliases of one family are not two families", async () => {
   }
 });
 
-Deno.test("families outside the closed vocabulary cannot be forged", async () => {
+test("families outside the closed vocabulary cannot be forged", async () => {
   // Canonical in form, but a name this version does not carry: admitting it
   // as a family would let any invented pair of spellings claim independence.
   const invented = "smuggled-family-x";
@@ -837,7 +835,7 @@ Deno.test("families outside the closed vocabulary cannot be forged", async () =>
   assertEquals((await validateReceipt(aliased)).valid, true);
 });
 
-Deno.test("a rejected family spelling is never echoed", async () => {
+test("a rejected family spelling is never echoed", async () => {
   const hostile = "\x1b[2JFamily-Smuggled";
   const receipt = await makeReceipt((r) => {
     r.independence = independenceClaim({ implementer_family: hostile });
@@ -849,7 +847,7 @@ Deno.test("a rejected family spelling is never echoed", async () => {
   }
 });
 
-Deno.test("the model family is a canonical identifier", async () => {
+test("the model family is a canonical identifier", async () => {
   const model = (family: string): Record<string, unknown> => ({
     provider: "provider-fixture",
     model: "model-fixture",
@@ -865,7 +863,7 @@ Deno.test("the model family is a canonical identifier", async () => {
   assertEquals((await validateReceipt(canonical)).valid, true);
 });
 
-Deno.test("placeholder family identifiers are not production families", async () => {
+test("placeholder family identifiers are not production families", async () => {
   // The verified failure: the vocabulary carried stand-in family names, so a
   // receipt could claim two-family independent review — `family-a` reviewed
   // by `family-b` — without either name identifying a real model family.
@@ -911,7 +909,7 @@ Deno.test("placeholder family identifiers are not production families", async ()
   }
 });
 
-Deno.test("unknown keys in nested objects are rejected without echo", async () => {
+test("unknown keys in nested objects are rejected without echo", async () => {
   const hostile = "\x1b[2Jsmuggled-member";
   const nested: Record<string, string> = {
     policy: "policy",
@@ -961,7 +959,7 @@ Deno.test("unknown keys in nested objects are rejected without echo", async () =
   }, "receipt.schema/unknown-nested-field:model");
 });
 
-Deno.test("unknown keys in nested list entries are rejected", async () => {
+test("unknown keys in nested list entries are rejected", async () => {
   await expectViolation((r) => {
     (r.checks as Record<string, unknown>).executed = floorExecuted().map((
       entry,
@@ -994,7 +992,7 @@ Deno.test("unknown keys in nested list entries are rejected", async () => {
   }, "receipt.schema/unknown-nested-field:degraded_conditions");
 });
 
-Deno.test("the sealed evidence digest object is closed", async () => {
+test("the sealed evidence digest object is closed", async () => {
   const receipt = await makeReceipt();
   (receipt.evidence_digest as Record<string, unknown>).extra = "payload";
   const result = await validateReceipt(receipt);
@@ -1008,7 +1006,7 @@ Deno.test("the sealed evidence digest object is closed", async () => {
   }
 });
 
-Deno.test("an oversized nested member is rejected before digest work", async () => {
+test("an oversized nested member is rejected before digest work", async () => {
   // The verified failure: a sealed receipt carrying a 1 MB nested member.
   const receipt = await makeReceipt((r) => {
     (r.policy as Record<string, unknown>).extra = "P".repeat(1024 * 1024);
@@ -1034,7 +1032,7 @@ Deno.test("an oversized nested member is rejected before digest work", async () 
   });
 });
 
-Deno.test("JSON escaping cannot hide an oversized receipt", async () => {
+test("JSON escaping cannot hide an oversized receipt", async () => {
   // The verified failure: every string is inside its own 512-character bound
   // and the structural estimate lands well under 64 KiB, but each `"` costs
   // two bytes once serialized, so the canonical form the digest is computed
@@ -1078,7 +1076,7 @@ Deno.test("JSON escaping cannot hide an oversized receipt", async () => {
   assertEquals((await validateReceipt(within)).valid, true);
 });
 
-Deno.test("excessive nesting depth is rejected before canonicalization", async () => {
+test("excessive nesting depth is rejected before canonicalization", async () => {
   const receipt = await makeReceipt((r) => {
     r.trace_refs = [[[[["deep"]]]]];
   });
@@ -1089,7 +1087,7 @@ Deno.test("excessive nesting depth is rejected before canonicalization", async (
   });
 });
 
-Deno.test("canonical JSON is key-order independent", () => {
+test("canonical JSON is key-order independent", () => {
   assertEquals(
     canonicalJson({ b: 1, a: [{ d: 2, c: 3 }] }),
     canonicalJson({ a: [{ c: 3, d: 2 }], b: 1 }),

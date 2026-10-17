@@ -484,6 +484,22 @@ test("the ratchet.base lane runs on node with the range binding", () => {
   assertEquals(REQUIRED_CHECK_IDS.includes("ratchet.base"), false);
 });
 
+test("the receipt.schema lane runs its tests on node through the shared runner", () => {
+  const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
+    candidate,
+  ) => candidate.checkId === "receipt.schema");
+  if (!lane) throw new Error("receipt.schema lane is missing");
+  assertEquals(lane.label, "Receipt schema validation");
+  assertEquals(lane.command, "node");
+  assertEquals(lane.args, [
+    "scripts/run-node-test-files.ts",
+    "--lane",
+    "receipt.schema",
+    "scripts/assurance-receipt.test.ts",
+  ]);
+  assertEquals(lane.cwd, "/repo");
+});
+
 test("the arch.imports lane runs the checker read-only", () => {
   const lane = productionLanes("/repo", "/fixtures/runtime/deno").find((
     candidate,
@@ -854,10 +870,10 @@ test("aggregate lanes include schema catalog, codegen, and equivalence checks", 
   for (const lane of [codegen, equivalence, ...applyLanes]) {
     assertEquals(lane.checkId, "test.aggregate");
     assertEquals(lane.cwd, "/repo");
-    // The schema CLIs stay on Deno until their port (S3.3d), with no grant
-    // list: the gate's lanes have no per-lane sandbox.
-    assertEquals(lane.command, "/fixtures/runtime/deno");
-    assertEquals(lane.args.slice(0, 2), ["run", "-A"]);
+    // The schema CLIs run as plain node, with no permission flag: the gate's
+    // lanes have no per-lane sandbox.
+    assertEquals(lane.command, "node");
+    assertEquals(lane.args[0]?.startsWith("schema/"), true);
   }
 });
 
@@ -916,19 +932,14 @@ test("Deno lanes use the one selected Deno and no lane carries a grant", () => {
   const selected = "/fixtures/runtime/deno";
   const lanes = productionLanes("/repo", selected);
   // Lanes run as plain node, cargo and dolt; the Deno lanes left are the
-  // typechecks (until close-out) and the receipt and schema CLIs (S3.3d).
+  // typechecks, until close-out.
   assertEquals(
     lanes.filter((lane) => lane.commandLabel === "deno").map((lane) =>
       lane.label
     ),
     [
-      "Receipt schema validation",
       "Prototype source typecheck",
       "Prototype test-file typecheck",
-      "Current-schema apply validation",
-      "Historical replay plus forward-migration validation",
-      "Schema codegen freshness (schema.codegen)",
-      "Schema equivalence (schema.equivalence)",
     ],
   );
   for (const lane of lanes) {

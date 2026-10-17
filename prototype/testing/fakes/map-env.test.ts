@@ -20,7 +20,7 @@ test("MapEnv set and delete change only the map", () => {
   assert.deepStrictEqual(initial, { A: "1" });
 });
 
-test("MapEnv satisfies the Deno.env get subset", () => {
+test("MapEnv satisfies the get-only env reader shape", () => {
   const read = (source: { get(name: string): string | undefined }) =>
     source.get("X");
   assert.deepStrictEqual(read(new MapEnv({ X: "y" })), "y");

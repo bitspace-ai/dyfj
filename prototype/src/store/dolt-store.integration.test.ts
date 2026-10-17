@@ -32,12 +32,11 @@ interface AdminPool {
 }
 
 function adminPool(database: string): AdminPool {
-  // Deno's npm declaration bridge drops mysql2's mixed-in promise methods.
   return mysql.createPool({
     ...connection,
     database,
     connectionLimit: 1,
-  }) as unknown as AdminPool;
+  });
 }
 
 async function seedRows(pool: AdminPool, seed: MemoryStoreSeed): Promise<void> {

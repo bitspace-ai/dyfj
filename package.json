@@ -7,7 +7,11 @@
   ],
   "scripts": {
     "test": "node scripts/aggregate-test-gate.ts",
-    "test:fast": "node scripts/aggregate-test-gate.ts --fast"
+    "test:fast": "node scripts/aggregate-test-gate.ts --fast",
+    "test:schema": "node scripts/run-node-test-files.ts --lane schema schema/validate-schema.test.ts schema/codegen.test.ts schema/equivalence.test.ts schema/model-catalog.test.ts",
+    "validate-schema": "node schema/validate-schema.ts",
+    "schema:codegen": "node schema/codegen.ts",
+    "schema:equivalence": "node schema/equivalence.ts"
   },
   "engines": {
     "node": ">=26"

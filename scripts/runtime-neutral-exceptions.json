@@ -1,15 +1,5 @@
 [
   {
-    "path": "prototype/examples/uds-jsonrpc-spike.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/add-import-extensions.ts",
-    "count": 7,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
     "path": "prototype/scripts/deno-executable.test.ts",
     "count": 1,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
@@ -23,11 +13,6 @@
     "path": "prototype/scripts/integration-child-environment.ts",
     "count": 1,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/isolated-dolt-fixture.integration.test.ts",
-    "count": 8,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "prototype/scripts/isolated-dolt-integration.ts",
@@ -50,44 +35,14 @@
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
-    "path": "prototype/src/cli/launcher/grants.test.ts",
-    "count": 1,
-    "reason": "Launcher assertions: two expected error messages and one test name describe the launcher's own grant rules; they change with the launcher under S4 of decision D32."
-  },
-  {
-    "path": "prototype/src/store/dolt-store.integration.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/testing/fakes/map-env.test.ts",
-    "count": 1,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "schema/codegen.ts",
-    "count": 8,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "schema/equivalence.ts",
-    "count": 1,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
-    "path": "schema/validate-schema.ts",
-    "count": 6,
-    "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
-  },
-  {
     "path": "scripts/aggregate-test-gate.test.ts",
-    "count": 11,
-    "reason": "On node:test since the gate-tooling port of decision D32. Names the Deno lanes the gate still runs: the two deno check lanes until close-out of decision D32, and the receipt-schema and schema CLI lanes until S3.3d."
+    "count": 10,
+    "reason": "On node:test since the gate-tooling port of decision D32. Names the Deno processes the gate still starts, the two deno check lanes and the runners' remaining Deno subsets, until close-out of decision D32."
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 15,
-    "reason": "On node: builtins since the gate-tooling port of decision D32. Names the Deno lanes the gate still runs: the two deno check lanes until close-out of decision D32, and the receipt-schema and schema CLI lanes until S3.3d."
+    "count": 8,
+    "reason": "On node: builtins since the gate-tooling port of decision D32. Names the Deno processes the gate still starts, the two deno check lanes and the runners' remaining Deno subsets, until close-out of decision D32."
   },
   {
     "path": "scripts/arch-imports-graph.ts",
@@ -108,11 +63,6 @@
     "path": "scripts/arch-imports.ts",
     "count": 2,
     "reason": "These references name the runtime's env object, which the arch.imports env rule forbids reading; they go when that rule stops naming it under decision D32."
-  },
-  {
-    "path": "scripts/assurance-receipt.test.ts",
-    "count": 50,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "scripts/ci-workflow.test.ts",
