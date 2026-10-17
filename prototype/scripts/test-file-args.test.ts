@@ -28,7 +28,7 @@ test("test:file rejects an integration file and names the lane to use", () => {
     message,
     /^src\/a\.integration\.test\.ts is an integration test/,
   );
-  assert.match(message, /`deno task test` from the repository root/);
+  assert.match(message, /`npm test` from the repository root/);
 });
 
 test("test:file still takes unit files and one filter", () => {

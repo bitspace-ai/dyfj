@@ -130,10 +130,13 @@ jobs:
           node-version: "26.11.1"
       - name: Install npm dependencies (npm ci from the committed lockfile)
         run: npm ci
-      # The single repository green bar. Lane definitions live in
-      # `scripts/` and root `deno.json`; this file does not restate them.
+      # The single repository green bar: the root package.json's `test`
+      # script runs the gate on Node. Lane definitions live in `scripts/`;
+      # this file does not restate them. Deno stays installed for the
+      # `deno check` lanes and the remaining Deno subsets until close-out of
+      # decision D32.
       - name: Run the full deterministic gate
-        run: deno task test
+        run: npm test
 
   # Independent macOS execution makes process, filesystem, and runtime
   # portability observable without changing the stable Linux required-check
@@ -184,4 +187,4 @@ jobs:
       - name: Install npm dependencies (npm ci from the committed lockfile)
         run: npm ci
       - name: Run the full deterministic gate
-        run: deno task test
+        run: npm test

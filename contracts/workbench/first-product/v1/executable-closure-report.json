@@ -8,9 +8,9 @@
   },
   "candidate_identity": {
     "contract_source_manifest": {
-      "sha256": "794785fcccaeb94e00c688f2d8bb2987a80ddfd5d418448549cab78ac8989b12",
+      "sha256": "e9dab10961f67b852184187e78ebcbcc985b0aeefdda831e2fdbf3ae3d5efb5d",
       "file_count": 126,
-      "line_count": 26493,
+      "line_count": 26492,
       "formula": "Sort package files by package-relative path; exclude executable-closure-report.json; for each file append lowercase SHA-256(file bytes), two ASCII spaces, the package-relative path, and one LF; SHA-256 the concatenated rows.",
       "excludes": [
         "executable-closure-report.json (generated output)"

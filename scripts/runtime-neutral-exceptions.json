@@ -46,8 +46,8 @@
   },
   {
     "path": "prototype/scripts/test-files.test.ts",
-    "count": 14,
-    "reason": "Gate-tooling test on Deno.test and host APIs; converted to node:test with the gate-tooling port under decision D32."
+    "count": 1,
+    "reason": "On node:test since the gate-tooling port of decision D32; one comment names the pinned Deno, whose remaining subset the unit lane still runs until S3.3d."
   },
   {
     "path": "prototype/scripts/typecheck.ts",
@@ -86,13 +86,13 @@
   },
   {
     "path": "scripts/aggregate-test-gate.test.ts",
-    "count": 180,
-    "reason": "Gate-tooling test on Deno.test and host APIs; converted to node:test with the gate-tooling port under decision D32."
+    "count": 11,
+    "reason": "On node:test since the gate-tooling port of decision D32. Names the Deno lanes the gate still runs: the two deno check lanes until close-out of decision D32, and the receipt-schema and schema CLI lanes until S3.3d."
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 45,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
+    "count": 15,
+    "reason": "On node: builtins since the gate-tooling port of decision D32. Names the Deno lanes the gate still runs: the two deno check lanes until close-out of decision D32, and the receipt-schema and schema CLI lanes until S3.3d."
   },
   {
     "path": "scripts/arch-imports-graph.ts",
@@ -121,22 +121,12 @@
   },
   {
     "path": "scripts/ci-workflow.test.ts",
-    "count": 21,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
+    "count": 2,
+    "reason": "On node:test since the gate-tooling port of decision D32; two messages name the Deno archive CI still installs until close-out."
   },
   {
     "path": "scripts/dependency-policy.ts",
     "count": 1,
     "reason": "One doc-comment mention of the Deno release archive the CI workflow pins by checksum; it goes when the workflow stops installing Deno under decision D32."
-  },
-  {
-    "path": "scripts/gate-driver.fixture.ts",
-    "count": 2,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/git-hooks.test.ts",
-    "count": 13,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   }
 ]

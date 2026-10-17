@@ -6,8 +6,8 @@
     "prototype"
   ],
   "scripts": {
-    "test": "deno task test",
-    "test:fast": "deno task test:fast"
+    "test": "node scripts/aggregate-test-gate.ts",
+    "test:fast": "node scripts/aggregate-test-gate.ts --fast"
   },
   "engines": {
     "node": ">=26"

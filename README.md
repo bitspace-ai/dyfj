@@ -46,8 +46,8 @@ Section 5.
   an event through Dolt. Also holds `dyfj-repl`, an interactive REPL front-end
   that owns the terminal and is a second client of the prototype's UDS protocol;
   the agent loop stays in `prototype/`. Where stabilized components live.
-- `prototype/` - TypeScript; the runtime and the `dyfj` CLI run on Node 26,
-  and the gate and test tooling still run on Deno. Real working code and the active
+- `prototype/` - TypeScript; the runtime, the `dyfj` CLI and the gate run on
+  Node 26, and some test and schema tooling still runs on Deno. Real working code and the active
   prototyping surface. Components either move down into `core/` as they
   stabilize or stay here as fast-moving prototype code. `prototype/src/` is
   organized by layer (`specs/01-architecture.md` §3); a module imports only
@@ -89,7 +89,7 @@ Section 5.
   `prototype/README.md` describes each directory in full.
 - `specs/` - the phase-1 restructuring specifications: architecture, data
   layer, testing, PRDs, work orders, extension recipes, and the bug log.
-- `scripts/` - the repository-owned aggregate gate (`deno task test`) and its
+- `scripts/` - the repository-owned aggregate gate (`npm test`) and its
   policy checks.
 - `schema/` - Dolt DDL. Canonical data model. Language-agnostic source of truth.
 - `contracts/` - versioned semantic contract packages: JSON Schema plus
@@ -296,10 +296,9 @@ How the work actually happens, separate from what gets built.
   Shared fakes live in `prototype/testing/fakes/`. Product tests run on
   `node:test` only (decision D32), under `node --test` with the per-file handle
   check, with assertions and mocks from `node:assert/strict` and `node:test`.
-  The gate and lane tooling tests under `scripts/` and `prototype/scripts/`
-  may still use `Deno.test` until the gate-tooling port; the ported static
-  checks' tests already register with `node:test`. The end state is
-  `node:test` only.
+  The gate's own tests under `scripts/` register with `node:test`; the rest
+  of the `prototype/scripts/` tests and the receipt-schema tests may still use
+  `Deno.test` until S3.3d of decision D32. The end state is `node:test` only.
 - **Behavior is pinned by golden tests.** Throughout the phase-1 restructuring,
   a black-box golden suite (`prototype/testing/golden/`, gate lane
   `test.golden`) snapshots the engine server and CLI at process level. A
@@ -331,8 +330,9 @@ How the work actually happens, separate from what gets built.
   `dyfj` CLI run on it, `npm ci` at the repository root installs the
   dependencies, and the launcher
   refuses any other major version (CI uses Node 26.11.1)
-- [Deno](https://deno.com) 2.9+, for the gate, the test lanes and the
-  remaining `deno task` tooling, until their own move to Node
+- [Deno](https://deno.com) 2.9+, for the gate's `deno check` lanes, its
+  remaining Deno test and schema lanes and the remaining `deno task` tooling,
+  until their own move to Node
 - [Dolt](https://docs.dolthub.com/introduction/installation)
 - [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` for the
   local default model; [Ollama](https://ollama.com) and
@@ -383,9 +383,11 @@ to publish commits that still carry either.
 
 `dyfj` (the launcher, below) runs the Workbench. The diagnostics, the event
 check, the smoke example, the Codex login and the memory-recall fixture are npm
-scripts in `prototype/package.json` (`npm run` lists them). The gate, test,
-typecheck and schema entry points are Deno tasks in `deno.json` (`deno task`
-lists them) until the gate tooling moves to Node.
+scripts in `prototype/package.json` (`npm run` lists them). The gate is the
+root `npm test` and `npm run test:fast`; the root `deno.json`'s `test` and
+`test:fast` tasks are one-line shims to them until close-out of decision D32.
+The test, typecheck and schema entry points are still Deno tasks in
+`deno.json` (`deno task` lists them) until they move to Node.
 `prototype/examples/uds-jsonrpc-spike.ts` is a standalone historical example
 with no npm script; it is written for Deno and does not run under Node.
 
@@ -1161,9 +1163,9 @@ stream and suppresses late stream errors.
 Useful validation tasks:
 
 ```sh
-npm test                  # repository aggregate gate (full green bar); runs deno task test
-npm run test:fast         # policy checks, typechecks, unit lane; runs deno task test:fast
-deno task test            # the same full gate, called directly
+npm test                  # repository aggregate gate (full green bar): node scripts/aggregate-test-gate.ts
+npm run test:fast         # policy checks, typechecks, unit lane: the same with --fast
+deno task test            # shim to npm test, until close-out of decision D32
 deno task check           # strict typecheck of production and test import graphs
 deno task test:schema
 deno task validate-schema
@@ -1191,7 +1193,20 @@ npm run smoke                        # print the Node version
 Arguments after `--` reach the script, for example
 `npm run structured-output -- --model qwen3.6:35b-a3b`.
 
-`deno task test` first checks the npm install precondition: the root
+The gate runs on Node (`node scripts/aggregate-test-gate.ts`, decision D32):
+it starts each lane as a plain `node`, `cargo` or `dolt` process, or as the
+selected Deno for the Deno lanes left, from a cleared environment with only
+the names it forwards, and holds no per-lane permission sandbox. Its lanes run
+unsandboxed as the operator's user, as product tests do. The Deno lanes left
+are the two `deno check` typecheck lanes, until close-out, and the
+receipt-schema test and the four schema CLI lanes (`deno run -A`, with no grant
+list), until S3.3d. The gate finds the selected Deno by running
+`prototype/scripts/deno-executable.ts` with the `deno` on `PATH` and resolving
+symbolic links, so the path it hands the typecheck tasks as `DENO_BIN` is the
+one those tasks run; when that fails, the gate prints the selector's fixed
+diagnostic and exits 64 before any lane runs.
+
+`npm test` first checks the npm install precondition: the root
 `node_modules` that npm installed must match the root `package-lock.json`. The
 lane compares npm's record of the install (`node_modules/.package-lock.json`)
 with the lockfile, package by package and version by version, and checks that
@@ -1266,7 +1281,7 @@ file lists derived by walking the tree in `prototype/scripts/test-files.ts`,
 never hand-listed, over `prototype/src`, `mcp`, `scripts`, `testing`,
 `diagnostics` and `examples`), the prototype unit lane (`test.unit`: every
 non-integration, non-golden test file; product files run unsandboxed under
-`node --test`, and its gate-tooling `deno test` subset runs in parallel with
+`node --test`, and its remaining `deno test` subset runs in parallel with
 the op and resource sanitizers enabled, no run or net grant, and env access
 only to `TMPDIR`, `TMP` and `TEMP` for `node:os` `tmpdir()`), the
 schema unit tests (`schema/validate-schema.test.ts`, `codegen.test.ts` and
@@ -1281,7 +1296,7 @@ committed file) and `schema.equivalence` (`current/` + `catalog/` and
 tests using offline SQLx metadata and
 no inherited `DATABASE_URL`, an isolated-Dolt integration lane (every
 `*.integration.test.ts`, found by file name, product files under `node --test`
-and its gate-tooling `deno test` subset with the op and resource sanitizers
+and its remaining `deno test` subset with the op and resource sanitizers
 enabled; including UDS and MCP round trips), and the golden characterization lane (`test.golden`). The
 golden lane starts its own isolated Dolt fixture, a loopback OpenAI-compatible
 model server and a loopback Linear MCP server, runs the engine server and the
@@ -1297,9 +1312,9 @@ unless that variable is set. A plain run fails on a missing or changed snapshot
 and writes nothing. The golden runner spawns no `deno test`. The harness starts
 the engine server and CLI on the `node` running the suite, as the launcher
 does: the engine as plain `node`, the CLI under the client's permission flags,
-both read from `prototype/src/config/runtime-policy.ts`. The task resolves the Deno executable selected for the
-invocation and uses that same absolute command identity for each nested Deno
-lane and permission grant. Outside Windows, each lane runs in a process group
+both read from `prototype/src/config/runtime-policy.ts`. The gate resolves the
+Deno executable selected for the invocation once and uses that same absolute
+command identity for each Deno lane and as each lane's `DENO_BIN`. Outside Windows, each lane runs in a process group
 of its own, which the gate tears down (TERM, a short grace, then KILL) when the
 lane ends or the gate is interrupted, so a test's same-group child processes do
 not outlive its lane. Windows has no POSIX process groups, so there the gate
@@ -1347,12 +1362,12 @@ toolchain.
 Product tests run on `node:test` only (decision D32, `specs/03-testing.md`
 §1). Each discovered file goes by its path and content
 (`prototype/scripts/test-files.ts`): a test file under `prototype/scripts/`
-that calls `Deno.test` or imports `@std/testing/bdd` is a gate-tooling test
-and runs under `deno test`, before the lane's Node files, until the
-gate-tooling port; every other file runs under `node --test`, one process per
+that calls `Deno.test` or imports `@std/testing/bdd` is a remaining Deno test
+and runs under `deno test`, before the lane's Node files, until S3.3d of
+decision D32; every other file runs under `node --test`, one process per
 file; a file outside `prototype/scripts/` that calls `Deno.test` or imports
 `@std/testing/bdd` fails discovery, naming the file. The golden lane runs no
-`deno test`. Deno's sanitizers on the gate-tooling subset do not see `node:`
+`deno test`. Deno's sanitizers on that subset do not see `node:`
 resources (a `node:net` server or socket, a `node:child_process` child). The
 Node files instead preload a per-file handle check (`prototype/testing/node-handle-check.ts`):
 a file that leaves a server, socket, timer or child process live after its
@@ -1476,7 +1491,7 @@ root npm workspace's `typescript` devDependency (7.0.2) with Node's types
 `erasableSyntaxOnly`. The command is
 `node node_modules/typescript/bin/tsc --project tsconfig.json` from the
 repository root, and it runs in the full gate and in `test:fast`, alongside the
-`deno check` lanes until the gate-tooling port removes them. TypeScript 7 is
+`deno check` lanes until close-out of decision D32 removes them. TypeScript 7 is
 the native compiler: the `typescript` package ships its `tsc` binary through
 per-platform optional packages (`@typescript/typescript-<os>-<arch>@7.0.2`),
 each locked with an integrity hash in the root `package-lock.json`. npm
@@ -1513,7 +1528,7 @@ installs. The golden lane's runner (`prototype/testing/golden/run.ts`) runs
 on Node and does nothing when imported, so it loads like any other module.
 
 The same aggregate command runs remotely: a GitHub Actions workflow
-(`.github/workflows/gate.yml`) executes `deno task test` from a clean checkout
+(`.github/workflows/gate.yml`) executes `npm test` from a clean checkout
 on pull requests and pushes to `main`, with a read-only token, no secrets, and
 the subject/range binding described above. It can also be dispatched manually
 on any branch (`workflow_dispatch`) with the same token and no secrets; a
@@ -1528,7 +1543,7 @@ name does not count), the gate runs only the policy lanes — `subject.resolve`,
 `dependency.policy` and `receipt.schema` — and the two contract lanes, whose
 closure report reads the `closure-claim` markers in the Markdown. The contract
 package tests run under `node --test` through the shared Node runner; the
-closure-report comparison stays a `deno run` with write denied. It names
+closure-report comparison runs as `node` and writes nothing. It names
 every lane it skips before it starts, and its `gate-status` line reads
 `"mode":"docs-only"`. The
 classification (`scripts/change-scope.ts`, keyed on `GITHUB_EVENT_NAME`) runs
@@ -1555,10 +1570,10 @@ archive digest.
 Workflow-hygiene tests inside the gate assert those properties — including that
 every downloaded archive has a committed-digest check between its download and
 its unpack — so a drift in the workflow fails the gate itself.
-`deno task test:fast` (or `npm run test:fast`) runs every deterministic policy check (including
+`npm run test:fast` runs every deterministic policy check (including
 `arch.imports` and `runtime.neutral`) plus the contract package checks, the `typecheck.tsc` lane, the source typecheck, and the
 `test.unit` lane, reusing the production lane definitions verbatim for quick local
-feedback; it is a convenience, not the green bar — `deno task test`, locally or
+feedback; it is a convenience, not the green bar — `npm test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
 public deterministic checks it runs.
 
@@ -2480,3 +2495,10 @@ Document revisions only. Code and behavior changes are tracked in
   value the gate hands each runner, the fail-closed group stop, and the one
   case left uncovered, a carrier killed outright as well. The tsconfig exclusion list
   and the Node load probe paragraphs no longer name the golden lane's runner.
+- 2026-10-17 - The gate runs on Node, and `npm test` is its entry. The gate
+  section says how the gate starts its lanes with no per-lane permission
+  sandbox, which Deno lanes remain and until when, and how it finds the
+  selected Deno; "Run it", the repository layout, the engineering posture and
+  the CI and fast-subset paragraphs name `npm test` and `npm run test:fast`,
+  with `deno task test` a shim until close-out. The contract closure-report
+  comparison is described as a `node` run that writes nothing.

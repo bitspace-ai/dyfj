@@ -1,4 +1,26 @@
-import { selectedDenoExecutable } from "../prototype/scripts/deno-executable.ts";
+import {
+  type ChildProcess,
+  execFile,
+  spawn,
+  spawnSync,
+} from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
+import {
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { constants } from "node:os";
+import process from "node:process";
+import {
+  DENO_EXECUTABLE_DIAGNOSTIC,
+  validateDenoExecutable,
+} from "../prototype/scripts/deno-executable.ts";
 import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
@@ -89,8 +111,9 @@ export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "HOME",
   "CARGO_HOME",
   "RUSTUP_HOME",
-  // A caller's Deno cache, so nested Deno processes in the lanes reuse it
-  // instead of fetching modules again.
+  // A caller's Deno cache, so the Deno processes left in the lanes (the
+  // `deno check` lanes and the remaining Deno subsets) reuse it instead of
+  // fetching modules again.
   "DENO_DIR",
 ];
 
@@ -110,7 +133,7 @@ const laneShutdownTimeoutMs = 10_000;
 // past the shutdown bound, so every lane leader is spawned as its own
 // process-group leader and teardown signals the whole group. Windows has no
 // POSIX process groups, so lanes there keep the leader-only path.
-const laneProcessGroups = Deno.build.os !== "windows";
+const laneProcessGroups = process.platform !== "win32";
 
 // A lane leader exiting on its own does not end the lane: descendants it
 // started stay in the lane group and keep running. Ordinary completion —
@@ -133,7 +156,7 @@ export const LANE_DEADLINES_MS = {
 // The runner's own backstop sits this far past the gate's deadline, so it
 // fires only when the gate is no longer there to enforce the deadline.
 export const LANE_BACKSTOP_MARGIN_MS = 60_000;
-// The largest DYFJ_TEST_BOUND_SEC whose deadline and backstop both fit a Deno
+// The largest DYFJ_TEST_BOUND_SEC whose deadline and backstop both fit a
 // timer (about 24 days). A larger value is ignored, as a malformed one is.
 export const MAX_TEST_BOUND_SEC = Math.floor(
   (MAX_TIMER_DELAY_MS - LANE_BACKSTOP_MARGIN_MS) / 1000,
@@ -189,17 +212,13 @@ function laneCommandLabel(lane: GateLane): string {
 }
 
 function readOptionalEnv(name: string): string | undefined {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined;
-  }
+  return process.env[name];
 }
 
 function safeEnvironment(): Record<string, string> {
   return Object.fromEntries(
     INHERITED_ENVIRONMENT_NAMES.flatMap((name) => {
-      const value = Deno.env.get(name);
+      const value = readOptionalEnv(name);
       return value === undefined ? [] : [[name, value]];
     }),
   );
@@ -218,92 +237,79 @@ function interruptedExitCode(signal: AbortSignal): number {
   return signal.reason === "SIGTERM" ? 143 : 130;
 }
 
-// Signalling a process group needs `Deno.kill`, which requires unscoped run
-// permission the gate deliberately does not hold. The selected Deno — already
-// the one executable the gate is granted to run — carries the group signal in
-// a short-lived child instead. Its argv holds a code-authored program with a
-// validated numeric group id substituted in, and its streams are discarded,
-// so no lane value reaches gate output.
-function groupSignalExecutable(): string | undefined {
-  try {
-    return selectedDenoExecutable(readOptionalEnv);
-  } catch {
-    return undefined;
-  }
-}
-
-// Code-authored group programs. Both take a validated numeric group id and a
-// code-authored grace bound only; no lane value is ever substituted in, and
-// the child's streams are discarded.
-function laneGroupSignalProgram(group: number): string {
-  return `try { Deno.kill(${-group}, "SIGTERM"); } catch { /* gone */ }`;
-}
-
-// Bounded group teardown, run once the leader has been reaped: ask the group
-// to stop, return the moment nothing is left in it, and force-kill whatever
-// is still there when the grace expires. `SIGCONT` is the liveness probe —
-// it is delivered to a live group and raises on an empty one.
-function laneGroupTeardownProgram(group: number, graceMs: number): string {
-  return [
-    `const signal = (name) => {`,
-    `  try { Deno.kill(${-group}, name); return true; } catch { return false; }`,
-    `};`,
-    `if (!signal("SIGTERM")) Deno.exit(0);`,
-    `const deadline = Date.now() + ${Math.max(0, Math.round(graceMs))};`,
-    `for (;;) {`,
-    `  if (!signal("SIGCONT")) Deno.exit(0);`,
-    `  if (Date.now() >= deadline) break;`,
-    `  await new Promise((resolve) => setTimeout(resolve, 20));`,
-    `}`,
-    `signal("SIGKILL");`,
-  ].join("\n");
-}
-
-async function runLaneGroupProgram(
+// Signals a lane's process group. A group id is validated before use, so a
+// bad id can never reach `kill(-1)` or the gate's own group.
+function signalGroup(
   group: number | undefined,
-  program: (group: number) => string,
-): Promise<void> {
-  if (group === undefined || !Number.isSafeInteger(group) || group <= 1) return;
-  const executable = groupSignalExecutable();
-  if (executable === undefined) return;
+  signal: NodeJS.Signals | 0,
+): boolean {
+  if (group === undefined || !Number.isSafeInteger(group) || group <= 1) {
+    return false;
+  }
   try {
-    await new Deno.Command(executable, {
-      args: ["eval", "--allow-run", program(group)],
-      env: safeEnvironment(),
-      clearEnv: true,
-      stdout: "null",
-      stderr: "null",
-    }).output();
+    process.kill(-group, signal);
+    return true;
   } catch {
-    // Best effort: teardown mechanics never change a lane's own result.
+    return false; // The group is empty or gone.
   }
 }
 
 // Windows lanes have no process group, so `group` is undefined there and this
 // is a no-op: the leader-only path stays explicit.
-function signalLaneGroup(group: number | undefined): Promise<void> {
-  return runLaneGroupProgram(group, laneGroupSignalProgram);
+function signalLaneGroup(group: number | undefined): void {
+  signalGroup(group, "SIGTERM");
 }
 
-function tearDownLaneGroup(
+// Bounded group teardown, run once the leader has been reaped: ask the group
+// to stop, return the moment nothing is left in it, and force-kill whatever
+// is still there when the grace expires. Signal 0 is the liveness probe: it
+// succeeds on a live group and fails on an empty one.
+async function tearDownLaneGroup(
   group: number | undefined,
   graceMs: number,
 ): Promise<void> {
-  return runLaneGroupProgram(
-    group,
-    (id) => laneGroupTeardownProgram(id, graceMs),
-  );
+  if (!signalGroup(group, "SIGTERM")) return;
+  const deadline = Date.now() + Math.max(0, Math.round(graceMs));
+  for (;;) {
+    if (!signalGroup(group, 0)) return;
+    if (Date.now() >= deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  signalGroup(group, "SIGKILL");
 }
 
-function killLane(
-  child: ReturnType<Deno.Command["spawn"]>,
-  signal: "SIGTERM" | "SIGKILL",
-): void {
+function killLane(child: ChildProcess, signal: NodeJS.Signals): void {
   try {
     child.kill(signal);
   } catch {
     // The lane leader already exited.
   }
+}
+
+interface LaneStatus {
+  code: number;
+}
+
+// The leader's exit as a status. A leader killed by a signal reads as
+// 128 + the signal number, as a shell reports it.
+function exitStatus(child: ChildProcess): Promise<LaneStatus> {
+  return new Promise((resolve) => {
+    child.once("exit", (code, signal) => {
+      if (code !== null) return resolve({ code });
+      const number = signal === null ? undefined : constants.signals[signal];
+      resolve({ code: number === undefined ? 1 : 128 + number });
+    });
+  });
+}
+
+// Resolves once the leader has started, and rejects when it cannot start,
+// with no command path or argv in what reaches the gate's output. A later
+// error (a signal the leader is already gone for) changes nothing.
+function started(child: ChildProcess): Promise<void> {
+  return new Promise((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.on("error", () => reject(new Error("command-not-runnable")));
+  });
 }
 
 async function settledWithin(
@@ -328,29 +334,30 @@ async function settledWithin(
 // teardown that follows sees only surviving descendants and returns as soon
 // as they are gone.
 async function stopChild(
-  child: ReturnType<Deno.Command["spawn"]>,
+  child: ChildProcess,
+  status: Promise<LaneStatus>,
   group: number | undefined,
 ): Promise<void> {
   const deadline = performance.now() + laneShutdownTimeoutMs;
-  await signalLaneGroup(group);
+  signalLaneGroup(group);
   killLane(child, "SIGTERM");
-  await settledWithin(child.status, deadline - performance.now());
+  await settledWithin(status, deadline - performance.now());
   killLane(child, "SIGKILL");
-  await child.status.catch(() => undefined);
+  await status;
   await tearDownLaneGroup(group, deadline - performance.now());
 }
 
 async function statusOrAbort(
-  child: ReturnType<Deno.Command["spawn"]>,
+  child: ChildProcess,
+  status: Promise<LaneStatus>,
   group: number | undefined,
   signal: AbortSignal | undefined,
   deadlineMs?: number,
 ): Promise<
-  { status?: Deno.CommandStatus; aborted: boolean; pastDeadline?: boolean }
+  { status?: LaneStatus; aborted: boolean; pastDeadline?: boolean }
 > {
-  const status = child.status;
   if (signal?.aborted) {
-    await stopChild(child, group);
+    await stopChild(child, status, group);
     return { aborted: true };
   }
 
@@ -374,7 +381,7 @@ async function statusOrAbort(
   if (result.type === "status") return { status: result.value, aborted: false };
 
   // Past the deadline or interrupted: the same bounded teardown either way.
-  await stopChild(child, group);
+  await stopChild(child, status, group);
   return result.type === "deadline"
     ? { aborted: false, pastDeadline: true }
     : { aborted: true };
@@ -384,7 +391,7 @@ async function statusOrAbort(
 //
 // Each running test lane has a record naming the gate's pid, the lane's
 // process group and the lane token, which the runner's token carrier (an idle
-// same-group `deno eval`) holds on its command line for the whole run. The
+// same-group `node` child) holds on its command line for the whole run. The
 // gate removes it when the lane ends, so a record left behind means the gate
 // died mid-lane. At its next start the gate reads each such record.
 // If the recording gate is still running (a concurrent gate), the record is
@@ -420,17 +427,9 @@ function parseLaneRecord(text: string): LaneRecord | undefined {
   return undefined;
 }
 
-// Listing processes needs a run grant the gate does not hold, so the selected
-// Deno lists them in a short-lived child, as it signals lane groups. `-ww`
-// asks for unlimited width: the lane token trails the command line, and macOS
-// `ps` otherwise truncates the command column.
-const LIST_PROCESSES_PROGRAM = [
-  `const out = await new Deno.Command("ps", {`,
-  `  args: ["-A", "-ww", "-o", "pid=,pgid=,command="],`,
-  `  stdout: "piped", stderr: "null",`,
-  `}).output();`,
-  `await Deno.stdout.write(out.stdout);`,
-].join("\n");
+// `-ww` asks for unlimited width: the lane token trails the command line, and
+// macOS `ps` otherwise truncates the command column.
+const LIST_PROCESSES_ARGS = ["-A", "-ww", "-o", "pid=,pgid=,command="];
 
 export function parseProcessList(text: string): ProcessEntry[] {
   const entries: ProcessEntry[] = [];
@@ -447,22 +446,17 @@ export function parseProcessList(text: string): ProcessEntry[] {
   return entries;
 }
 
-async function listProcesses(): Promise<ProcessEntry[] | undefined> {
-  const executable = groupSignalExecutable();
-  if (executable === undefined) return undefined;
-  try {
-    const output = await new Deno.Command(executable, {
-      args: ["eval", "--allow-run", LIST_PROCESSES_PROGRAM],
-      env: safeEnvironment(),
-      clearEnv: true,
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    if (!output.success) return undefined;
-    return parseProcessList(new TextDecoder().decode(output.stdout));
-  } catch {
-    return undefined;
-  }
+function listProcesses(): Promise<ProcessEntry[] | undefined> {
+  return new Promise((resolve) => {
+    execFile(
+      "ps",
+      LIST_PROCESSES_ARGS,
+      { env: safeEnvironment(), maxBuffer: 64 * 1024 * 1024 },
+      (error, stdout) => {
+        resolve(error ? undefined : parseProcessList(stdout));
+      },
+    );
+  });
 }
 
 /** Whether `record` still names a live lane group this gate may stop. */
@@ -489,15 +483,12 @@ export async function recoverOrphanedLaneGroups(
   if (!laneProcessGroups) return;
   let names: string[];
   try {
-    names = [];
-    for await (const entry of Deno.readDir(dir)) {
-      if (
-        entry.isFile &&
+    names = (await readdir(dir, { withFileTypes: true }))
+      .filter((entry) =>
+        entry.isFile() &&
         (entry.name.endsWith(".json") || entry.name.endsWith(".json.partial"))
-      ) {
-        names.push(entry.name);
-      }
-    }
+      )
+      .map((entry) => entry.name);
   } catch {
     return; // No records, or no access: nothing to recover.
   }
@@ -508,7 +499,7 @@ export async function recoverOrphanedLaneGroups(
     const path = `${dir}/${name}`;
     let record: LaneRecord | undefined;
     try {
-      record = parseLaneRecord(await Deno.readTextFile(path));
+      record = parseLaneRecord(await readFile(path, "utf8"));
     } catch {
       continue;
     }
@@ -530,7 +521,7 @@ export async function recoverOrphanedLaneGroups(
       );
       await tearDownLaneGroup(record!.group, laneGroupGraceMs);
     }
-    await Deno.remove(path).catch(() => undefined);
+    await rm(path, { force: true }).catch(() => undefined);
   }
 }
 
@@ -540,8 +531,7 @@ const PARTIAL_RECORD_MAX_AGE_MS = 60_000;
 
 async function olderThan(path: string, ageMs: number): Promise<boolean> {
   try {
-    const mtime = (await Deno.stat(path)).mtime;
-    return mtime !== null && Date.now() - mtime.getTime() > ageMs;
+    return Date.now() - (await stat(path)).mtimeMs > ageMs;
   } catch {
     return false;
   }
@@ -559,18 +549,44 @@ async function writeLaneRecord(
   // rename, is recovered like any other.
   const partial = `${path}.partial`;
   try {
-    await Deno.mkdir(dir, { recursive: true });
-    await Deno.writeTextFile(partial, JSON.stringify(record));
-    await Deno.rename(partial, path);
+    await mkdir(dir, { recursive: true });
+    await writeFile(partial, JSON.stringify(record));
+    await rename(partial, path);
     return path;
   } catch {
     return undefined; // Best effort: recovery is lost, the lane still runs.
   }
 }
 
+// The Deno executable the `deno check` lanes and the remaining Deno subsets
+// run, as an absolute path: the one `prototype/scripts/deno-executable.ts`
+// reports when the `deno` on PATH runs it, with symbolic links resolved. Inside
+// a `deno task`, `deno` is the running executable's real path, and the
+// typecheck tasks refuse a DENO_BIN that differs from it. Anything else fails
+// closed with the selector's fixed diagnostic. Deno leaves the gate at
+// close-out of decision D32.
+export function gateDenoExecutable(
+  root = process.cwd(),
+  env: Record<string, string> = safeEnvironment(),
+): string {
+  const result = spawnSync(
+    "deno",
+    ["run", "--no-prompt", "prototype/scripts/deno-executable.ts"],
+    { cwd: root, env, encoding: "utf8", stdio: "pipe" },
+  );
+  if (result.status !== 0 || typeof result.stdout !== "string") {
+    throw new Error(DENO_EXECUTABLE_DIAGNOSTIC);
+  }
+  try {
+    return validateDenoExecutable(realpathSync(result.stdout.trim()));
+  } catch {
+    throw new Error(DENO_EXECUTABLE_DIAGNOSTIC);
+  }
+}
+
 export function productionLanes(
-  root = Deno.cwd(),
-  denoExecutable = selectedDenoExecutable(),
+  root = process.cwd(),
+  denoExecutable = gateDenoExecutable(root),
 ): GateLane[] {
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
@@ -608,18 +624,11 @@ export function productionLanes(
       // the remedy. Under the aggregate check id because it judges this
       // checkout's installed state, not the committed tree that
       // dependency.policy validates from a clean checkout. It only reads: the
-      // gate never runs npm and holds no network grant for it.
+      // gate never runs npm.
       label: "npm install precondition (node_modules)",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--no-prompt",
-        `--allow-read=${root}`,
-        "scripts/node-modules-check.ts",
-        root,
-      ],
+      command: "node",
+      args: ["scripts/node-modules-check.ts", root],
       cwd: root,
     },
     subjectLane("subject.resolve"),
@@ -663,14 +672,8 @@ export function productionLanes(
       // rules.
       label: "Architecture import rules tests",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      command: "node",
       args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=.",
-        "--allow-run=node",
         "scripts/run-node-test-files.ts",
         "--lane",
         "arch.imports",
@@ -681,22 +684,12 @@ export function productionLanes(
     {
       // Runtime-neutrality ratchet (decision D32): counts references to the
       // host runtime's global object in tracked TypeScript against a
-      // committed, shrink-only list. Also under the aggregate check id. The lane names `git`
-      // (tracked-file listing) and `NODE_V8_COVERAGE`, the one variable the
-      // runtime's node:child_process shim reads on spawn (the grant goes away
-      // with the runtime); it needs no write, net or run grant beyond that.
+      // committed, shrink-only list. Also under the aggregate check id. It
+      // lists the tracked files with `git` and only reads.
       label: "Runtime-neutral ratchet (runtime.neutral)",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=NODE_V8_COVERAGE",
-        `--allow-read=${root}`,
-        "--allow-run=git",
-        "scripts/runtime-neutral.ts",
-      ],
+      command: "node",
+      args: ["scripts/runtime-neutral.ts"],
       cwd: root,
     },
     {
@@ -714,6 +707,8 @@ export function productionLanes(
       env: binding,
     },
     {
+      // Deno until the schema CLIs port (S3.3d): the validator's tests are
+      // still on Deno.test. `deno test` gets no grant.
       label: "Receipt schema validation",
       checkId: "receipt.schema",
       command: denoExecutable,
@@ -724,17 +719,15 @@ export function productionLanes(
     {
       label: "Aggregate gate orchestration tests",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      // These files register with node:test, so they run under `node --test`
+      // with the per-file handle check, through the shared Node runner
+      // (decision D32). DENO_BIN reaches the tests that drive the selected
+      // Deno: the executable selector's own CLI and the `deno check` lane.
+      command: "node",
       args: [
-        "test",
-        // NODE_V8_COVERAGE: read by the runtime's node:child_process shim on
-        // every spawn; it goes away with the runtime (decision D32).
-        "--allow-env=NODE_V8_COVERAGE,PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_DIR,DYFJ_AGGREGATE_SENTINEL,DYFJ_GATE_SUBJECT,DYFJ_GATE_RANGE_BASE,GITHUB_ACTIONS",
-        "--allow-read=.,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        // node: the Node-subset supervision case runs `node --test`.
-        `--allow-run=${denoExecutable},ln,git,/bin/bash,node`,
+        "scripts/run-node-test-files.ts",
+        "--lane",
+        "gate.orchestration",
         "scripts/aggregate-test-gate.test.ts",
         "scripts/ci-workflow.test.ts",
         "scripts/public-safety-scan.test.ts",
@@ -743,7 +736,6 @@ export function productionLanes(
         "scripts/dependency-policy.test.ts",
         "scripts/node-modules-check.test.ts",
         "scripts/runtime-neutral.test.ts",
-        // node: it runs tsc over a fixture with a parameter property.
         "scripts/typecheck-tsc.test.ts",
         "scripts/node-load-probe.test.ts",
         "scripts/git-hooks.test.ts",
@@ -759,16 +751,13 @@ export function productionLanes(
         "scripts/codemod/deno-test-registrations.test.ts",
       ],
       cwd: root,
-      // Lane children run with a cleared environment, so the temp root the
-      // write grant covers must be forwarded explicitly or makeTempDir in
-      // the orchestration tests resolves outside the sandbox and is denied.
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
     },
     {
       // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
       // workspace's devDependencies, over the root tsconfig.json. It runs
-      // alongside the `deno check` lanes below until the gate-tooling port
-      // removes them. `erasableSyntaxOnly` rejects syntax Node cannot strip,
+      // alongside the `deno check` lanes below until close-out of decision
+      // D32 removes them. `erasableSyntaxOnly` rejects syntax Node cannot strip,
       // such as a constructor parameter property. Under the aggregate check
       // id; it only reads.
       label: "TypeScript typecheck (typecheck.tsc)",
@@ -782,8 +771,9 @@ export function productionLanes(
       command: denoExecutable,
       checkId: "test.aggregate",
       commandLabel: "deno",
-      // The file list is derived by globbing in `scripts/test-files.ts`, the
-      // same source the `check` task uses; nothing is hand-listed here.
+      // `deno check` until close-out of decision D32. The file list is
+      // derived by globbing in `scripts/test-files.ts`, the same source the
+      // `check` task uses; nothing is hand-listed here.
       args: ["task", "check:sources"],
       cwd: prototype,
       env: { DENO_BIN: denoExecutable },
@@ -802,9 +792,9 @@ export function productionLanes(
       checkId: "test.aggregate",
       // The runner itself, on Node, not `deno task test:unit`: it has to lead
       // the lane group so its end-of-run group stop reaches the group and
-      // nothing else. It runs the gate-tooling tests under
-      // `prototype/scripts/` with the executable DENO_BIN names until the
-      // gate-tooling port, then the product tests under `node --test`.
+      // nothing else. It runs the remaining Deno tests under
+      // `prototype/scripts/` with the executable DENO_BIN names until S3.3d
+      // of decision D32, then the product tests under `node --test`.
       command: "node",
       args: ["scripts/run-unit-tests.ts"],
       cwd: prototype,
@@ -814,13 +804,10 @@ export function productionLanes(
     {
       label: "Contract closure report generation",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      // Compares the regenerated report with the committed one; with
+      // `--compare-path` it writes nothing.
+      command: "node",
       args: [
-        "run",
-        "--no-prompt",
-        "--deny-write",
-        "--allow-read=.",
         "contracts/workbench/first-product/v1/executable-closure-report.ts",
         "--compare-path",
         "contracts/workbench/first-product/v1/executable-closure-report.json",
@@ -835,14 +822,8 @@ export function productionLanes(
       // sandbox.
       label: "Contract package tests",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      command: "node",
       args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=.",
-        "--allow-run=node",
         "scripts/run-node-test-files.ts",
         "--lane",
         "contracts",
@@ -856,18 +837,11 @@ export function productionLanes(
       // These files register with node:test, so they run under `node --test`
       // with the per-file handle check, through the shared Node runner
       // (decision D32). The runner reads the repository and spawns `node`;
-      // NODE_V8_COVERAGE is read by the runtime's node:child_process shim on
-      // every spawn. The tests themselves run with no permission sandbox.
+      // the tests run with no permission sandbox.
       label: "Schema unit tests",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      command: "node",
       args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=.",
-        "--allow-run=node",
         "scripts/run-node-test-files.ts",
         "--lane",
         "schema.unit",
@@ -884,14 +858,8 @@ export function productionLanes(
       // and run unsandboxed; `dolt` gets the variables the runner forwards.
       label: "Local model catalog data validation",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
+      command: "node",
       args: [
-        "run",
-        "--no-prompt",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=.",
-        "--allow-run=node",
         "scripts/run-node-test-files.ts",
         "--lane",
         "schema.catalog",
@@ -899,24 +867,19 @@ export function productionLanes(
       ],
       cwd: root,
     },
-    // The four schema lanes below reach `schema/dolt-apply.ts` on this
-    // runtime. It spawns `dolt` through node:child_process and makes its
-    // repository with node:fs (decision D32), which needs the variables the
-    // child is given and the temp directory's name (PATH, HOME, TMPDIR, TEMP,
-    // TMP), NODE_V8_COVERAGE, which the node:child_process shim reads on
-    // every spawn, and read on the temp roots, which node:fs's recursive
-    // remove lists.
+    // The four schema lanes below run their CLIs under `deno run -A`, with no
+    // grant list, until the schema CLIs port (S3.3d). Each reaches
+    // `schema/dolt-apply.ts`, which spawns `dolt` through node:child_process
+    // and makes its repository with node:fs (decision D32).
     {
       label: "Current-schema apply validation",
       checkId: "test.aggregate",
+      // Deno until the schema CLIs port (S3.3d).
       command: denoExecutable,
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=dolt",
+        "-A",
         "schema/validate-schema.ts",
         "--current-only",
       ],
@@ -925,14 +888,12 @@ export function productionLanes(
     {
       label: "Historical replay plus forward-migration validation",
       checkId: "test.aggregate",
+      // Deno until the schema CLIs port (S3.3d).
       command: denoExecutable,
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=dolt",
+        "-A",
         "schema/validate-schema.ts",
         "--history-only",
       ],
@@ -946,14 +907,12 @@ export function productionLanes(
     {
       label: "Schema codegen freshness (schema.codegen)",
       checkId: "test.aggregate",
+      // Deno until the schema CLIs port (S3.3d).
       command: denoExecutable,
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=schema,prototype/src/store/generated,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=dolt",
+        "-A",
         "schema/codegen.ts",
         "--check",
       ],
@@ -962,14 +921,12 @@ export function productionLanes(
     {
       label: "Schema equivalence (schema.equivalence)",
       checkId: "test.aggregate",
+      // Deno until the schema CLIs port (S3.3d).
       command: denoExecutable,
       commandLabel: "deno",
       args: [
         "run",
-        "--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,NODE_V8_COVERAGE",
-        "--allow-read=schema,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-run=dolt",
+        "-A",
         "schema/equivalence.ts",
       ],
       cwd: root,
@@ -985,9 +942,9 @@ export function productionLanes(
     {
       label: "Isolated Dolt integration lane",
       checkId: "test.aggregate",
-      // The runner, on Node: the gate-tooling subset runs under the
-      // executable DENO_BIN names, with its own grants, until the
-      // gate-tooling port.
+      // The runner, on Node: its remaining Deno subset runs under the
+      // executable DENO_BIN names, with its own grants, until S3.3d of
+      // decision D32.
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
@@ -1054,8 +1011,8 @@ function laneSubset(
 }
 
 export function fastLanes(
-  root = Deno.cwd(),
-  denoExecutable = selectedDenoExecutable(),
+  root = process.cwd(),
+  denoExecutable = gateDenoExecutable(root),
 ): GateLane[] {
   return laneSubset(FAST_LANE_LABELS, root, denoExecutable);
 }
@@ -1086,8 +1043,8 @@ export const DOCS_ONLY_LANE_LABELS: readonly string[] = [
 ];
 
 export function docsOnlyLanes(
-  root = Deno.cwd(),
-  denoExecutable = selectedDenoExecutable(),
+  root = process.cwd(),
+  denoExecutable = gateDenoExecutable(root),
 ): GateLane[] {
   return laneSubset(DOCS_ONLY_LANE_LABELS, root, denoExecutable);
 }
@@ -1101,29 +1058,24 @@ export function docsOnlyEligible(
     env("GITHUB_EVENT_NAME") === "pull_request";
 }
 
-// Classification runs in a short-lived `node` child, which runs git; the gate
-// itself holds no git grant. Its only output is one code-authored word;
-// anything else, a failure included, reads as `other` and keeps the full gate.
-export async function releaseChangeScope(root: string): Promise<ChangeScope> {
-  try {
-    const output = await new Deno.Command("node", {
-      args: ["scripts/change-scope.ts"],
-      cwd: root,
-      env: { ...safeEnvironment(), ...bindingEnvironment() },
-      clearEnv: true,
-      stdout: "piped",
-      stderr: "null",
-    }).output();
-    if (
-      output.success &&
-      new TextDecoder().decode(output.stdout).trim() === "markdown-only"
-    ) {
-      return "markdown-only";
-    }
-  } catch {
-    // Not runnable: keep the full gate.
-  }
-  return "other";
+// Classification runs in a short-lived `node` child, which runs git. Its only
+// output is one code-authored word; anything else, a failure included, reads
+// as `other` and keeps the full gate.
+export function releaseChangeScope(root: string): Promise<ChangeScope> {
+  return new Promise((resolve) => {
+    execFile(
+      "node",
+      ["scripts/change-scope.ts"],
+      { cwd: root, env: { ...safeEnvironment(), ...bindingEnvironment() } },
+      (error, stdout) => {
+        resolve(
+          !error && stdout.trim() === "markdown-only"
+            ? "markdown-only"
+            : "other",
+        );
+      },
+    );
+  });
 }
 
 export interface GatePlan {
@@ -1144,14 +1096,14 @@ export interface PlanGateOptions {
 }
 
 export async function planGate(options: PlanGateOptions): Promise<GatePlan> {
-  const root = options.root ?? Deno.cwd();
-  const denoExecutable = options.denoExecutable ?? selectedDenoExecutable();
+  const root = options.root ?? process.cwd();
+  const denoExecutable = options.denoExecutable ?? gateDenoExecutable(root);
   if (options.fast) {
     return {
       lanes: fastLanes(root, denoExecutable),
       mode: "fast",
       successMessage:
-        "✓ fast gate subset passed (not the full green bar; run `deno task test`)",
+        "✓ fast gate subset passed (not the full green bar; run `npm test`)",
     };
   }
   const production = productionLanes(root, denoExecutable);
@@ -1258,7 +1210,7 @@ export function composeGateStatus(
 
 export async function runGate(options: RunGateOptions = {}): Promise<number> {
   const out = options.out ?? console;
-  const lanes = options.lanes ?? productionLanes(options.root ?? Deno.cwd());
+  const lanes = options.lanes ?? productionLanes(options.root ?? process.cwd());
   const mode = options.mode ?? "full";
   const required = options.requiredCheckIds ??
     [
@@ -1323,38 +1275,40 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
     out.log(`▶ ${lane.label} (${commandLabel})`);
     const token = lane.deadlineMs === undefined
       ? undefined
-      : crypto.randomUUID();
+      : randomUUID();
     const supervision: Record<string, string> = token === undefined ? {} : {
       [LANE_DEADLINE_ENV]: String(lane.deadlineMs),
       [LANE_BACKSTOP_ENV]: String(lane.deadlineMs! + LANE_BACKSTOP_MARGIN_MS),
       [LANE_TOKEN_ENV]: token,
       // The runner's expected parent: it stops its lane once its parent is
       // anything else.
-      [LANE_PARENT_ENV]: String(Deno.pid),
+      [LANE_PARENT_ENV]: String(process.pid),
     };
     let recordPath: string | undefined;
     try {
-      const child = new Deno.Command(lane.command, {
-        args: lane.args,
+      // The child gets only the environment built here: the inherited
+      // names, the lane's own and the supervision values.
+      const child = spawn(lane.command, lane.args, {
         cwd: lane.cwd,
         env: { ...safeEnvironment(), ...(lane.env ?? {}), ...supervision },
-        clearEnv: true,
-        stdout: "inherit",
-        stderr: "inherit",
+        stdio: ["ignore", "inherit", "inherit"],
         // Own process group per lane: the leader is the group leader, so its
         // pid is the group id interruption signals.
         detached: laneProcessGroups,
-      }).spawn();
+      });
+      const exited = exitStatus(child);
+      await started(child);
       const group = laneProcessGroups ? child.pid : undefined;
       if (token !== undefined && group !== undefined) {
         recordPath = await writeLaneRecord(options.laneRecordDir, {
-          gatePid: Deno.pid,
+          gatePid: process.pid,
           group,
           token,
         });
       }
       const result = await statusOrAbort(
         child,
+        exited,
         group,
         options.signal,
         lane.deadlineMs,
@@ -1402,7 +1356,7 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
       laneFailed(lane.label, 127);
     } finally {
       if (recordPath !== undefined) {
-        await Deno.remove(recordPath).catch(() => undefined);
+        await rm(recordPath, { force: true }).catch(() => undefined);
       }
     }
   }
@@ -1419,21 +1373,27 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
 }
 
 if (import.meta.main) {
-  let fast: boolean;
+  let fast = false;
   try {
-    fast = parseGateArguments(Deno.args).fast;
+    fast = parseGateArguments(process.argv.slice(2)).fast;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
-    Deno.exit(64);
+    process.exit(64);
+  }
+  let plan: GatePlan | undefined;
+  try {
+    plan = await planGate({ fast, env: readOptionalEnv });
+  } catch {
+    console.error(DENO_EXECUTABLE_DIAGNOSTIC);
+    process.exit(64);
   }
   const abortController = new AbortController();
   const onSigint = () => abortController.abort("SIGINT");
   const onSigterm = () => abortController.abort("SIGTERM");
-  Deno.addSignalListener("SIGINT", onSigint);
-  Deno.addSignalListener("SIGTERM", onSigterm);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   let exitCode: number;
   try {
-    const plan = await planGate({ fast, env: readOptionalEnv });
     exitCode = await runGate({
       signal: abortController.signal,
       lanes: plan.lanes,
@@ -1444,8 +1404,8 @@ if (import.meta.main) {
       laneRecordDir: defaultLaneRecordDir(readOptionalEnv("HOME")),
     });
   } finally {
-    Deno.removeSignalListener("SIGINT", onSigint);
-    Deno.removeSignalListener("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
   }
-  Deno.exit(exitCode);
+  process.exit(exitCode);
 }

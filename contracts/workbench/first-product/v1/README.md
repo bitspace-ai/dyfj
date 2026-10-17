@@ -472,13 +472,12 @@ deno test --allow-read=. \
   contracts/workbench/first-product/v1/executable-closure-report.test.ts
 ```
 
-The report generator uses no network permission. The same lane and deterministic
-report generator run inside the repository-owned aggregate gate
-(`deno task
-test` and `deno task test:fast`) under the existing `test.aggregate`
-check id. The lane compares an in-memory regeneration with the checked-in
-report using `--compare-path`, with write permission denied. Different bytes
-fail the lane without creating an output file. Comparison and `--output-path`
+The report generator uses no network. The same lane and deterministic report
+generator run inside the repository-owned aggregate gate (`npm test` and
+`npm run test:fast`) under the existing `test.aggregate` check id, on Node. The
+lane compares an in-memory regeneration with the checked-in report using
+`--compare-path`, which writes nothing. Different bytes fail the lane without
+creating an output file. Comparison and `--output-path`
 are mutually exclusive; bare invocation still regenerates the tracked report.
 
 ## Known limits

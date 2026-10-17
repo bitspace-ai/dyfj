@@ -3,6 +3,13 @@
 // with `git commit --author`; pre-push refuses to publish commits that carry
 // either, including commits made with --no-verify.
 
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
+import { test } from "node:test";
+
 const hooksPath = new URL("../.githooks", import.meta.url).pathname;
 
 const human = { name: "Dana Human", email: "dana@example.invalid" };
@@ -31,26 +38,21 @@ async function git(
   args: string[],
   who: Ident = human,
 ): Promise<{ success: boolean; stdout: string; stderr: string }> {
-  const result = await new Deno.Command("git", {
-    args: ["-C", dir, ...args],
-    env: {
-      PATH: Deno.env.get("PATH") ?? "/usr/bin:/bin",
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_CONFIG_GLOBAL: "/dev/null",
-      GIT_AUTHOR_NAME: who.name,
-      GIT_AUTHOR_EMAIL: who.email,
-      GIT_COMMITTER_NAME: who.name,
-      GIT_COMMITTER_EMAIL: who.email,
-    },
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
-  return {
-    success: result.success,
-    stdout: decode(result.stdout),
-    stderr: decode(result.stderr),
-  };
+  return await new Promise((resolve) => {
+    execFile("git", ["-C", dir, ...args], {
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_AUTHOR_NAME: who.name,
+        GIT_AUTHOR_EMAIL: who.email,
+        GIT_COMMITTER_NAME: who.name,
+        GIT_COMMITTER_EMAIL: who.email,
+      },
+    }, (error, stdout, stderr) => {
+      resolve({ success: !error, stdout, stderr });
+    });
+  });
 }
 
 async function gitOk(
@@ -68,11 +70,11 @@ async function gitOk(
 // Runs body in a clone with the hooks enabled, pushing to a local bare remote
 // that already holds one base commit on main, and removes both afterwards.
 async function withFixture(body: (dir: string) => Promise<void>) {
-  const root = await Deno.makeTempDir({ prefix: "dyfj-git-hooks-" });
+  const root = await mkdtemp(join(tmpdir(), "dyfj-git-hooks-"));
   try {
     await body(await makeClone(root));
   } finally {
-    await Deno.remove(root, { recursive: true });
+    await rm(root, { recursive: true });
   }
 }
 
@@ -96,7 +98,7 @@ async function commitWithMessage(
   extra: string[] = [],
 ) {
   const file = `${dir}/../message.txt`;
-  await Deno.writeTextFile(file, message);
+  await writeFile(file, message);
   return await git(
     dir,
     ["commit", "-q", "--allow-empty", "-F", file, ...extra],
@@ -104,7 +106,7 @@ async function commitWithMessage(
   );
 }
 
-Deno.test("commit-msg strips tool attribution and keeps human co-authors", () =>
+test("commit-msg strips tool attribution and keeps human co-authors", () =>
   withFixture(async (dir) => {
     const result = await commitWithMessage(
       dir,
@@ -139,7 +141,7 @@ Deno.test("commit-msg strips tool attribution and keeps human co-authors", () =>
     );
   }));
 
-Deno.test("commit-msg refuses a tool author and accepts a human named like one", () =>
+test("commit-msg refuses a tool author and accepts a human named like one", () =>
   withFixture(async (dir) => {
     for (
       const who of [tool, { name: "Composer", email: "c@example.invalid" }]
@@ -156,7 +158,7 @@ Deno.test("commit-msg refuses a tool author and accepts a human named like one",
     assertEquals(accepted.success, true);
   }));
 
-Deno.test("commit-msg refuses a merge committed by a tool", () =>
+test("commit-msg refuses a merge committed by a tool", () =>
   withFixture(async (dir) => {
     await gitOk(dir, ["checkout", "-q", "-b", "side"]);
     await gitOk(dir, ["commit", "-q", "--allow-empty", "-m", "side"]);
@@ -170,7 +172,7 @@ Deno.test("commit-msg refuses a merge committed by a tool", () =>
     assertStringIncludes(merge.stderr, "refusing a commit attributed to");
   }));
 
-Deno.test("commit-msg refuses a tool author given with --author", () =>
+test("commit-msg refuses a tool author given with --author", () =>
   withFixture(async (dir) => {
     const commit = await commitWithMessage(dir, "clean message\n", human, [
       `--author=${tool.name} <${tool.email}>`,
@@ -179,7 +181,7 @@ Deno.test("commit-msg refuses a tool author given with --author", () =>
     assertStringIncludes(commit.stderr, "refusing a commit attributed to");
   }));
 
-Deno.test("pre-push refuses a tool author that bypassed commit-msg", () =>
+test("pre-push refuses a tool author that bypassed commit-msg", () =>
   withFixture(async (dir) => {
     const commit = await commitWithMessage(dir, "clean message\n", human, [
       `--author=${tool.name} <${tool.email}>`,
@@ -194,7 +196,7 @@ Deno.test("pre-push refuses a tool author that bypassed commit-msg", () =>
     );
   }));
 
-Deno.test("pre-push refuses a tool trailer committed with --no-verify", () =>
+test("pre-push refuses a tool trailer committed with --no-verify", () =>
   withFixture(async (dir) => {
     const commit = await commitWithMessage(
       dir,
@@ -211,7 +213,7 @@ Deno.test("pre-push refuses a tool trailer committed with --no-verify", () =>
     );
   }));
 
-Deno.test("pre-push ignores history merged in from an already-pushed branch", () =>
+test("pre-push ignores history merged in from an already-pushed branch", () =>
   withFixture(async (dir) => {
     await commitWithMessage(dir, "topic work\n");
     assertEquals(
@@ -234,7 +236,7 @@ Deno.test("pre-push ignores history merged in from an already-pushed branch", ()
     assertEquals(push.success, true);
   }));
 
-Deno.test("pre-push publishes clean commits, new branch and update alike", () =>
+test("pre-push publishes clean commits, new branch and update alike", () =>
   withFixture(async (dir) => {
     await commitWithMessage(dir, "first\n");
     assertEquals(

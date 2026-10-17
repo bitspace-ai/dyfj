@@ -282,19 +282,12 @@ describe("the gate wiring", () => {
   const lanes = productionLanes("/repo", "/fixtures/runtime/deno");
   const lane = lanes.find((candidate) => candidate.label.includes(LABEL));
 
-  it("runs the lane under test.aggregate with a read-only git grant", () => {
+  it("runs the lane under test.aggregate on node, with no grant", () => {
     assert.ok(lane, "runtime.neutral lane is missing");
     assert.equal(lane.checkId, "test.aggregate");
     assert.equal(lane.cwd, "/repo");
-    const args = lane.args.join(" ");
-    assert.match(args, /scripts\/runtime-neutral\.ts/);
-    assert.ok(lane.args.includes("--allow-read=/repo"));
-    assert.ok(lane.args.includes("--allow-run=git"));
-    assert.equal(
-      lane.args.some((arg) => arg.startsWith("--allow-write")),
-      false,
-    );
-    assert.equal(lane.args.some((arg) => arg.startsWith("--allow-net")), false);
+    assert.equal(lane.command, "node");
+    assert.deepEqual(lane.args, ["scripts/runtime-neutral.ts"]);
   });
 
   it("adds no required check id", () => {
