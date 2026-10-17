@@ -91,7 +91,7 @@
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 44,
+    "count": 45,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {

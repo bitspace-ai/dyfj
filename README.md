@@ -1317,13 +1317,20 @@ token, which an idle same-group token carrier, a `node` child of the runner,
 holds on its command line for the whole run. When all of its work is done, the
 runner stops its own process group (TERM, then KILL to whatever is left after
 2 s), so a same-group descendant does not outlive the lane even if the gate was
-killed. The lane helpers exit when their parent dies: the runner checks its
-parent, the gate, every 200 ms, and once the gate is gone it ends the step it
-is waiting on and stops its group, as when a test hangs past its backstop; a
+killed. The lane helpers exit when their parent dies. The gate hands each
+runner its own pid (`DYFJ_LANE_PARENT_PID`), and the runner checks as it
+starts, then every 200 ms, that its parent is still that pid; once it is not,
+even if the gate died before the runner started, the runner ends the step it
+is waiting on and stops its group, as when a test hangs past its backstop. A
 runner still running 30 s after either stops its group and exits regardless.
-The carrier checks its own parent, the runner, the same way, and once the
-runner is gone it stops the group itself and exits, so a gate or runner killed
-outright leaves no lane process behind. The
+The carrier checks the same way that its parent is still the runner whose pid
+names the group, and once it is not, it stops the group itself and exits. If
+the group stop cannot list processes (`ps` fails), it does not take the group
+for empty: it says so on the lane's output and KILLs the whole group, which
+fails the lane. So a gate, or a gate and its runner, killed outright leaves no
+lane process behind. The one case this does not cover is a carrier killed
+outright as well: its group then holds no token, and a later gate run cannot
+recognise it. The
 gate records each running test lane's group and token under
 `$HOME/.dyfj/run/gate-lanes/`; at its next start it stops a group left behind
 by a gate that is no longer running, but only when a live member of that group
@@ -2469,5 +2476,7 @@ Document revisions only. Code and behavior changes are tracked in
   supervision helpers run on Node, and describes the guarantee that lane
   helpers exit when their parent dies: a runner whose gate is gone, or a
   token carrier whose runner is gone, stops the lane's group within a bounded
-  time instead of waiting for a later gate run. The tsconfig exclusion list
+  time instead of waiting for a later gate run. It names the expected-parent
+  value the gate hands each runner, the fail-closed group stop, and the one
+  case left uncovered, a carrier killed outright as well. The tsconfig exclusion list
   and the Node load probe paragraphs no longer name the golden lane's runner.

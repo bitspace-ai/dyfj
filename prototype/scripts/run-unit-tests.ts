@@ -156,8 +156,9 @@ if (import.meta.main) {
   const backstop = startBackstop(supervision, () => stopCurrent());
   let code = 0;
   // The gate-tooling subset, until the gate-tooling port; empty when
-  // `test:file` names product files only.
-  if (partition.deno.length > 0) {
+  // `test:file` names product files only. Neither subset starts once the
+  // backstop has fired, which it can as it starts, when the gate is gone.
+  if (partition.deno.length > 0 && !backstop.expired) {
     const child = spawn(deno, unitTestArgs(partition.deno, selection.filter), {
       cwd: root,
       env,

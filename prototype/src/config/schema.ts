@@ -437,7 +437,8 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
   },
   // ── tooling: read only by prototype/scripts (lane-supervision.ts) ──
   // Set by the aggregate gate on each test-lane runner it starts: the lane's
-  // deadline and the runner's backstop, in milliseconds, and the lane token.
+  // deadline and the runner's backstop, in milliseconds, the lane token, and
+  // the gate's pid, the parent the runner must have.
   {
     key: "laneDeadlineMs",
     envVar: "DYFJ_LANE_DEADLINE_MS",
@@ -457,6 +458,13 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     envVar: "DYFJ_LANE_TOKEN",
     domain: "tooling",
     type: "string",
+    kind: "value",
+  },
+  {
+    key: "laneParentPid",
+    envVar: "DYFJ_LANE_PARENT_PID",
+    domain: "tooling",
+    type: "number",
     kind: "value",
   },
 ];

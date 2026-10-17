@@ -4,6 +4,7 @@ import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
+  LANE_PARENT_ENV,
   LANE_TOKEN_ENV,
   laneSupervision,
   laneTokenArgument,
@@ -24,20 +25,22 @@ test("a run the gate did not start is unsupervised", () => {
   );
 });
 
-test("a gate lane reads its deadline, backstop and token", () => {
+test("a gate lane reads its deadline, backstop, token and expected parent", () => {
   assert.deepEqual(
     laneSupervision(reader({
       [LANE_DEADLINE_ENV]: "120000",
       [LANE_BACKSTOP_ENV]: "180000",
       [LANE_TOKEN_ENV]: TOKEN,
+      [LANE_PARENT_ENV]: "4242",
     })),
-    { deadlineMs: 120000, backstopMs: 180000, token: TOKEN },
+    { deadlineMs: 120000, backstopMs: 180000, token: TOKEN, parentPid: 4242 },
   );
   assert.deepEqual(
     laneSupervision(reader({
       [LANE_DEADLINE_ENV]: "1",
       [LANE_BACKSTOP_ENV]: String(MAX_TIMER_DELAY_MS),
       [LANE_TOKEN_ENV]: TOKEN,
+      [LANE_PARENT_ENV]: "4242",
     }))?.backstopMs,
     MAX_TIMER_DELAY_MS,
   );
@@ -53,6 +56,12 @@ test("malformed supervision values leave the run unsupervised", () => {
       { deadline: "1", backstop: "2147483648", token: TOKEN },
       { deadline: "1", backstop: "1", token: "not-a-token" },
       { deadline: "1", backstop: "1", token: `${TOKEN} extra` },
+      // No expected parent, or one no gate can be: the runner would have
+      // nothing to compare its parent with.
+      { deadline: "1", backstop: "1", token: TOKEN, parent: undefined },
+      { deadline: "1", backstop: "1", token: TOKEN, parent: "1" },
+      { deadline: "1", backstop: "1", token: TOKEN, parent: "0" },
+      { deadline: "1", backstop: "1", token: TOKEN, parent: "-7" },
     ]
   ) {
     assert.equal(
@@ -60,6 +69,11 @@ test("malformed supervision values leave the run unsupervised", () => {
         [LANE_DEADLINE_ENV]: values.deadline,
         [LANE_BACKSTOP_ENV]: values.backstop,
         [LANE_TOKEN_ENV]: values.token,
+        ...("parent" in values
+          ? values.parent === undefined
+            ? {}
+            : { [LANE_PARENT_ENV]: values.parent }
+          : { [LANE_PARENT_ENV]: "4242" }),
       })),
       undefined,
       JSON.stringify(values),

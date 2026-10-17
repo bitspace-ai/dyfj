@@ -3,6 +3,7 @@ import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
+  LANE_PARENT_ENV,
   LANE_TOKEN_ENV,
   laneTokenArgument,
   MAX_TIMER_DELAY_MS,
@@ -1327,6 +1328,9 @@ export async function runGate(options: RunGateOptions = {}): Promise<number> {
       [LANE_DEADLINE_ENV]: String(lane.deadlineMs),
       [LANE_BACKSTOP_ENV]: String(lane.deadlineMs! + LANE_BACKSTOP_MARGIN_MS),
       [LANE_TOKEN_ENV]: token,
+      // The runner's expected parent: it stops its lane once its parent is
+      // anything else.
+      [LANE_PARENT_ENV]: String(Deno.pid),
     };
     let recordPath: string | undefined;
     try {

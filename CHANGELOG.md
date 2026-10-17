@@ -143,9 +143,15 @@ README are tracked separately in its Revision history section.
   every 200 ms that its gate is still there and, once it is gone, ends its
   current step, stops its group and exits; the carrier checks its runner the
   same way and stops the group itself if the runner is killed; and the group
-  stop is bounded on its own. A new test SIGKILLs a gate driver mid-lane, and
-  the gate and its runner together, and checks by pid that no helper or lane
-  process survives.
+  stop is bounded on its own. Each compares its parent with the one it must
+  have (the gate passes its pid to the runner as `DYFJ_LANE_PARENT_PID`), so a
+  parent that died before the helper started is caught too, and each checks
+  once as it starts. The group stop fails closed: when `ps` cannot list the
+  lane's processes it says so and KILLs the whole group, which fails the
+  lane, instead of taking the group for empty. New tests SIGKILL a gate driver
+  mid-lane, and the gate and its runner together, start a runner and a
+  carrier whose parent has already exited, and stop a group with `ps`
+  failing, and check by pid that no helper or lane process survives.
 - **`dyfj --socket <path> start` listens on that path.** The runtime took its
   socket from the environment, so a socket given only by `--socket` was not
   the one it bound. The launcher now passes the resolved socket to the

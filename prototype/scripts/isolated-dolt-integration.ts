@@ -164,6 +164,8 @@ let mcpTestTempDir: string | undefined;
 let udsTestSocketDir: string | undefined;
 let denoTestTempDir: string | undefined;
 try {
+  // The backstop can fire as it starts, when the gate is already gone.
+  throwIfAborted(abortController.signal);
   // Product integration files run under `node --test`; the gate-tooling
   // files under `scripts/` that register with the existing runner run under
   // `deno test` until the gate-tooling port (`test-files.ts`). A product file

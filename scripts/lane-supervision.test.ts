@@ -27,6 +27,7 @@ import { fileURLToPath } from "node:url";
 import {
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
+  LANE_PARENT_ENV,
   LANE_TOKEN_ENV,
   laneTokenArgument,
 } from "../prototype/scripts/lane-supervision.ts";
@@ -43,6 +44,10 @@ const DRIVER = fileURLToPath(
   new URL("./gate-driver.fixture.ts", import.meta.url),
 );
 const quiet = { log: () => {}, error: () => {} };
+const SUPERVISION_URL = new URL(
+  "../prototype/scripts/lane-supervision.ts",
+  import.meta.url,
+).href;
 const skip = process.platform === "win32";
 // The runtime running these tests, which runs the gate driver: the gate
 // stays on it until the gate-tooling port.
@@ -250,21 +255,31 @@ function runnerArgs(mode: RunnerMode, dir: string): string[] {
   return [RUNNER, mode, dir];
 }
 
+// The supervision a gate hands its lane runner, with this process as the
+// runner's expected parent, as the gate is for a real lane.
+function supervisionEnv(
+  supervision: { deadlineMs: number; backstopMs: number; token: string },
+  parentPid = process.pid,
+): Record<string, string> {
+  return {
+    [LANE_DEADLINE_ENV]: String(supervision.deadlineMs),
+    [LANE_BACKSTOP_ENV]: String(supervision.backstopMs),
+    [LANE_TOKEN_ENV]: supervision.token,
+    [LANE_PARENT_ENV]: String(parentPid),
+  };
+}
+
 function startRunner(
   mode: RunnerMode,
   dir: string,
   supervision: { deadlineMs: number; backstopMs: number; token: string },
+  { path = process.env.PATH ?? "" } = {},
 ): ChildProcess {
   return spawn("node", runnerArgs(mode, dir), {
-    env: {
-      ...childEnv(),
-      [LANE_DEADLINE_ENV]: String(supervision.deadlineMs),
-      [LANE_BACKSTOP_ENV]: String(supervision.backstopMs),
-      [LANE_TOKEN_ENV]: supervision.token,
-    },
+    env: { ...childEnv(), PATH: path, ...supervisionEnv(supervision) },
     // Its own group, as the gate starts a lane.
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
 }
 
@@ -575,6 +590,143 @@ test(
 
       assert.equal(readText(partial), undefined);
       assert.ok(statSync(partial).isFile(), "the partial record was removed");
+    });
+  },
+);
+
+// Waits until the group has no live member, then checks it stays empty: a
+// helper that is about to start a step must not repopulate it.
+async function groupEmpties(group: number, timeoutMs: number) {
+  await waitFor(
+    () => liveGroupMembers(group).length === 0 ? true : undefined,
+    timeoutMs,
+    `lane group ${group} to empty`,
+  ).catch(() => {
+    assert.fail(
+      `lane group ${group} still has live members after ${timeoutMs} ms:\n` +
+        live().filter((row) => row.group === group)
+          .map((row) => `  ${row.pid} ${row.command.slice(0, 160)}`)
+          .join("\n"),
+    );
+  });
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  assert.deepEqual(liveGroupMembers(group), [], "the group was repopulated");
+}
+
+test("a runner whose gate exited before the runner started stops its lane", {
+  skip,
+}, async () => {
+  await withDir(async (dir, tokens) => {
+    const token = randomUUID();
+    tokens.add(token);
+    // A stand-in gate that starts the lane runner in a group of its own and
+    // exits at once, before the runner has loaded anything.
+    const launcher = `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const [runner, dir, env] = process.argv.slice(1);
+const child = spawn("node", [runner, "hang", dir], {
+  detached: true,
+  stdio: "ignore",
+  env: { ...JSON.parse(env), ${
+      JSON.stringify(LANE_PARENT_ENV)
+    }: String(process.pid) },
+});
+writeFileSync(dir + "/runner.pid", String(child.pid));
+process.exit(0);
+`;
+    const gate = spawn("node", [
+      "--input-type=module",
+      "-e",
+      launcher,
+      RUNNER,
+      dir,
+      JSON.stringify({
+        ...childEnv(),
+        ...supervisionEnv({ deadlineMs: 120_000, backstopMs: 180_000, token }),
+      }),
+    ], { env: childEnv(), stdio: "ignore" });
+    await exited(gate);
+    const runner = Number(
+      await waitFor(() => readText(`${dir}/runner.pid`), 5_000, "the runner"),
+    );
+    await groupEmpties(runner, 10_000);
+    assert.deepEqual(tokenCarriers(token), [], "the carrier survived");
+  });
+});
+
+test(
+  "a carrier whose runner exited before the carrier started stops the lane group",
+  {
+    skip,
+  },
+  async () => {
+    await withDir(async (dir, tokens) => {
+      const token = randomUUID();
+      tokens.add(token);
+      // A stand-in runner, leading a group of its own, that leaves a
+      // TERM-ignoring member in it, starts its carrier and exits at once,
+      // before the carrier has loaded anything.
+      const runnerProgram = `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { startTokenCarrier } from ${JSON.stringify(SUPERVISION_URL)};
+const [dir, token] = process.argv.slice(1);
+const sleeper = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
+  stdio: "ignore",
+});
+writeFileSync(dir + "/second-step.pid", String(sleeper.pid));
+startTokenCarrier({
+  deadlineMs: 120000, backstopMs: 180000, token, parentPid: process.ppid,
+});
+process.exit(0);
+`;
+      const runner = spawn(
+        "node",
+        ["--input-type=module", "-e", runnerProgram, dir, token],
+        { detached: true, env: childEnv(), stdio: "ignore" },
+      );
+      await exited(runner);
+      await groupEmpties(runner.pid!, 10_000);
+      assert.deepEqual(tokenCarriers(token), [], "the carrier survived");
+    });
+  },
+);
+
+test(
+  "a group stop that cannot list processes kills the whole group and says so",
+  {
+    skip,
+  },
+  async () => {
+    await withDir(async (dir, tokens) => {
+      const token = randomUUID();
+      tokens.add(token);
+      // A `ps` that always fails, first on the runner's PATH, which its
+      // helpers inherit.
+      mkdirSync(`${dir}/bin`);
+      writeFileSync(`${dir}/bin/ps`, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const runner = startRunner("exit", dir, {
+        deadlineMs: 120_000,
+        backstopMs: 180_000,
+        token,
+      }, { path: `${dir}/bin:${process.env.PATH ?? ""}` });
+      let stderr = "";
+      runner.stderr!.setEncoding("utf8");
+      runner.stderr!.on("data", (chunk: string) => (stderr += chunk));
+      const grandchild = await grandchildPid(dir);
+      await waitFor(
+        () => tokenCarriers(token).length === 1 ? true : undefined,
+        5_000,
+        "the token carrier",
+      );
+      // The lane's work ends; the runner stops its group with no `ps`.
+      writeFileSync(`${dir}/release`, "");
+      await exited(runner);
+      await groupEmpties(runner.pid!, 10_000);
+      assert.ok(!alive(grandchild), "the grandchild survived");
+      assert.deepEqual(tokenCarriers(token), [], "the carrier survived");
+      assert.match(stderr, /could not list the lane's processes/);
     });
   },
 );

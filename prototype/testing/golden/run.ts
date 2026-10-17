@@ -74,16 +74,20 @@ async function main(suiteArgs: readonly string[]): Promise<number> {
     // The backstop ends the run when it expires.
     let stopCurrent = () => {};
     backstop = startBackstop(supervision, () => stopCurrent());
-    const node = startNodeTests({
-      lane: "test.golden",
-      files: goldenFiles,
-      cwd: prototypeRoot,
-      env: update ? { ...env, [GOLDEN_UPDATE_ENV]: "1" } : env,
-      // The files run one at a time.
-      jobs: 1,
-    });
-    stopCurrent = node.kill;
-    code = await node.code;
+    // Not started once the backstop has fired, which it can as it starts,
+    // when the gate is gone.
+    if (!backstop.expired) {
+      const node = startNodeTests({
+        lane: "test.golden",
+        files: goldenFiles,
+        cwd: prototypeRoot,
+        env: update ? { ...env, [GOLDEN_UPDATE_ENV]: "1" } : env,
+        // The files run one at a time.
+        jobs: 1,
+      });
+      stopCurrent = node.kill;
+      code = await node.code;
+    }
   } finally {
     await rm(root, { recursive: true }).catch(() => undefined);
     // Cleared only after the cleanup above, which the backstop also bounds.

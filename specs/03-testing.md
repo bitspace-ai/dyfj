@@ -103,14 +103,23 @@ in the same change that lands this spec's first work order.
     and their helpers (the lane token carrier and the group stop, `node`
     children of the runner) run on Node and use `node:` builtins only. The
     gate driver stays on Deno until the gate-tooling port. Decision D32.
-  - **Lane helpers exit when their parent dies.** A gate lane's runner checks
-    its parent, the gate, every 200 ms; once the gate is gone it ends its
-    current step and stops its group, and exits. The token carrier checks its
-    parent, the runner, the same way; once the runner is gone it stops the
+  - **Lane helpers exit when their parent dies.** Each helper compares its
+    parent with the parent it must have, never with one it observed itself,
+    as it starts and then every 200 ms. A gate lane's runner gets the gate's
+    pid from the gate (`DYFJ_LANE_PARENT_PID`); once its parent is anything
+    else, even when the gate died before the runner started, it ends its
+    current step, stops its group and exits. The token carrier's parent must
+    be the runner, whose pid names the group; once it is not, it stops the
     group itself (TERM, the 2 s grace, then KILL to what is left) and exits.
-    The group stop is bounded on its own. So a gate, or a gate and its runner,
-    killed outright leave no helper or lane process running, which
-    `scripts/lane-supervision.test.ts` pins by pid. Recovery of an orphaned
+    The group stop is bounded on its own and fails closed: when `ps` cannot
+    list the group, it reports that on the lane's output and KILLs the whole
+    group, the runner included, so the lane fails rather than leaving
+    members behind. So a gate, or a gate and its runner, killed outright
+    leave no helper or lane process running, which
+    `scripts/lane-supervision.test.ts` pins by pid, including a parent that
+    exits before its helper starts and a `ps` that fails. The one case left
+    is a carrier killed outright too: the group then carries no token, so
+    the next gate start cannot recognise it either. Recovery of an orphaned
     group at the next gate start stays as the fallback for a group whose
     carrier still holds its token.
   - Descendant (grandchild) processes are not covered by the per-file handle
