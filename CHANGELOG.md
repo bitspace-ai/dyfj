@@ -19,11 +19,19 @@ README are tracked separately in its Revision history section.
   session back with `sessions/inspect`, prints `runtime reloaded` with the
   session it resumed and a posture line from the new runtime, and the next
   turn names the same session id. A turn in flight at the drop is reported
-  as interrupted and is not retried. An approval question open at the drop is
+  as interrupted and is not retried; if it was the session's first turn, the
+  REPL keeps the id from the runtime's `sessionStart` event, so the next turn
+  resumes that session instead of opening a second one. An approval question open at the drop is
   cancelled and never answered: the client writes nothing on a closed
   connection, and an answer typed into the question afterwards is reported
   as not sent. A request made on a closed connection now fails at once
   instead of waiting for a reader that has gone.
+- **The Rust REPL drains the runtime's messages between turns.** Stream
+  frames that arrive while it waits at the prompt (from a turn abandoned
+  with a second Ctrl-C) are discarded instead of rendering under the next
+  prompt, and an approval request that arrives then is denied on the
+  connection that raised it. Left queued, they could fill the client's
+  channel and stall its reader, which would then miss a disconnect.
 - **The launcher passes the Rust REPL its runtime log as
   `DYFJ_RUNTIME_LOG`.** It is this socket's autostart log
   (`~/.dyfj/log/runtime-<socket>-<hash>.log`). While the REPL waits for the

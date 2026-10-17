@@ -8,6 +8,28 @@ use crate::approval::visible;
 use crate::session::{ModelOrigin, Session};
 use serde_json::Value;
 
+/// Print the posture line for a `runtime/status` answer, with any warnings
+/// it carries, or say the posture is unavailable. Shown at startup and again
+/// when the REPL re-attaches to a restarted runtime.
+pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str) {
+    match status {
+        Ok(status) => {
+            println!("{}", line(status, session, socket));
+            for warning in unresolved_pointer_warnings(status) {
+                eprintln!("{warning}");
+            }
+        }
+        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), socket)),
+    }
+}
+
+/// A line about the runtime that also carries local context, such as the
+/// socket path. The runtime's message is sanitised; the local context is ours
+/// and is not.
+pub fn runtime_line(context: &str, message: &str, local: &str) -> String {
+    format!("{context} ({}) · {local}", visible(message))
+}
+
 /// Render the posture from a `runtime/status` result and the choices the
 /// command line made for this session, which override the runtime's defaults
 /// on the first turn. Every status field is optional: a runtime that stops

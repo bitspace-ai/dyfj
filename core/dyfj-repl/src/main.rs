@@ -14,54 +14,19 @@ mod link;
 mod posture;
 mod receipt;
 mod session;
+mod submission;
 mod terminal;
 
 use anyhow::{Context, Result};
 use client::{Client, Incoming, StreamFrame, Verdict};
 use serde_json::{Value, json};
 use session::Session;
+use submission::{MAX_INPUT_CHARACTERS, Submission, classify};
 use std::io::Write;
 use terminal::{Ask, ReadOutcome};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{mpsc, oneshot};
 
-/// The runtime's input ceiling. Mirrors MAX_INPUT_LENGTH in the TypeScript
-/// CLI; a longer prompt is rejected there, so rejecting it here costs the
-/// operator a round trip less.
-const MAX_INPUT_CHARACTERS: usize = 32_768;
-
-/// What the operator's input turns out to be.
-#[derive(Debug, PartialEq, Eq)]
-enum Submission {
-    Empty,
-    Quit,
-    TooLong { characters: usize },
-    Prompt,
-}
-
-/// Classify one completed input.
-///
-/// A slash command counts only when the WHOLE input is that command. This is
-/// what keeps a pasted block whose first line reads `/exit` from quitting the
-/// session: the paste arrives as one string, so it is a prompt, not a command.
-fn classify(input: &str) -> Submission {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Submission::Empty;
-    }
-    if trimmed == "/exit" || trimmed == "/quit" {
-        return Submission::Quit;
-    }
-    // Count as the TypeScript CLI does: its ceiling is JavaScript's
-    // `line.length`, which is UTF-16 code units. A byte count would reject
-    // valid multi-byte input; a scalar count would accept an astral paste
-    // (emoji, some CJK) of up to twice what the peer allows.
-    let characters = input.encode_utf16().count();
-    if characters > MAX_INPUT_CHARACTERS {
-        return Submission::TooLong { characters };
-    }
-    Submission::Prompt
-}
 
 fn socket_path() -> Result<String> {
     resolve_socket_path(|key| std::env::var(key).ok())
@@ -194,15 +159,7 @@ async fn main() -> Result<()> {
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
-    match client.request("runtime/status", json!({})).await {
-        Ok(status) => {
-            println!("{}", posture::line(&status, &session, &socket));
-            for warning in posture::unresolved_pointer_warnings(&status) {
-                eprintln!("{warning}");
-            }
-        }
-        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
-    }
+    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket);
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
     }
@@ -264,16 +221,11 @@ async fn main() -> Result<()> {
             pending = Some(answer);
         }
         let Some(read) = pending.as_mut() else { continue };
-        let outcome = tokio::select! {
-            biased;
+        let outcome = match link::await_prompt(&client, &mut incoming, read, &mut orphans).await {
+            link::Prompted::Read(outcome) => outcome,
             // Back to the top, where the disconnect is announced; the prompt
             // read stays open.
-            () = client.closed() => continue,
-            Some(orphan) = orphans.recv() => {
-                link::note_orphan(&orphan);
-                continue;
-            }
-            outcome = read => outcome,
+            link::Prompted::Disconnected => continue,
         };
         pending = None;
         let line = match outcome {
@@ -391,7 +343,7 @@ async fn run_turn(
                 // fallback below keys on whether anything was written — decide
                 // that after draining, or a streamed answer prints once from
                 // the receipt and again from the queue.
-                flush_queued_frames(incoming, &mut wrote_any);
+                flush_queued_frames(incoming, &mut wrote_any, session);
 
                 match outcome {
                     Ok(result) => {
@@ -431,6 +383,7 @@ async fn run_turn(
             message = incoming.recv() => {
                 match message {
                     Some(Incoming::Stream(frame)) => {
+                        adopt_announced_session(&frame, session);
                         render(frame, &mut wrote_any);
                     }
                     Some(Incoming::Approval { params, respond }) => {
@@ -455,12 +408,12 @@ async fn run_turn(
                         // ends as interrupted. The question stays on screen
                         // until answered, because the read cannot be
                         // abandoned; that answer goes nowhere.
-                        match link::ask_while_connected(client, input, &params).await {
-                            link::Asked::Disconnected => return interrupted(wrote_any),
-                            link::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
+                        match approval::ask_while_connected(client, input, &params).await {
+                            approval::Asked::Disconnected => return interrupted(wrote_any),
+                            approval::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                                 let _ = respond.send(verdict);
                             }
-                            link::Asked::Answered(approval::Outcome::Cancelled) => {
+                            approval::Asked::Answered(approval::Outcome::Cancelled) => {
                                 let _ = respond.send(Verdict::abort());
                                 if give_up_or_cancel(
                                     &mut cancelling,
@@ -489,6 +442,27 @@ async fn run_turn(
                 }
             }
         }
+    }
+}
+
+/// Take the session id the runtime announces when it opens a session, if this
+/// REPL has none yet.
+///
+/// The receipt carries the id too, but only when the turn settles. A first
+/// turn cut short by a disconnect has no receipt, and without this the next
+/// turn would open a second session instead of resuming the one the runtime
+/// already created. Only frames read while this turn runs reach here (the
+/// idle prompt discards the rest), and a known id is never replaced.
+fn adopt_announced_session(frame: &StreamFrame, session: &mut Session) {
+    if session.id.is_some() {
+        return;
+    }
+    let StreamFrame::Event { event } = frame else { return };
+    if event.get("type").and_then(Value::as_str) != Some("sessionStart") {
+        return;
+    }
+    if let Some(id) = event.get("sessionId").and_then(Value::as_str) {
+        session.id = Some(id.to_string());
     }
 }
 
@@ -541,10 +515,19 @@ fn give_up_or_cancel(
 /// them drops the end of the reply. Nothing establishes that, though — frames
 /// carry no turn id, so a delayed frame from an abandoned earlier turn would
 /// be rendered here too.
-fn flush_queued_frames(incoming: &mut mpsc::Receiver<Incoming>, wrote_any: &mut bool) {
+fn flush_queued_frames(
+    incoming: &mut mpsc::Receiver<Incoming>,
+    wrote_any: &mut bool,
+    session: &mut Session,
+) {
     while let Ok(message) = incoming.try_recv() {
         match message {
-            Incoming::Stream(frame) => render(frame, wrote_any),
+            Incoming::Stream(frame) => {
+                // The turn may have failed with the disconnect before its
+                // `sessionStart` was taken from the queue.
+                adopt_announced_session(&frame, session);
+                render(frame, wrote_any);
+            }
             // An approval arriving as the turn ends has no operator watching
             // for it, and the runtime is blocked on an answer. Deny.
             Incoming::Approval { respond, .. } => {
@@ -564,18 +547,15 @@ fn runtime_error(context: &str, message: &str) -> String {
     format!("{context}: {}", approval::visible(message))
 }
 
-/// The same, for a line that also carries local context such as the socket
-/// path, which is ours and not sanitised away.
-fn runtime_line(context: &str, message: &str, local: &str) -> String {
-    format!("{context} ({}) · {local}", approval::visible(message))
-}
 
 /// Discard frames queued for a turn the operator abandoned.
 ///
-/// Only what is already queued is dropped. Frames are not tagged with a turn,
-/// so a frame the abandoned turn emits AFTER this returns will still arrive on
-/// the shared channel and render under the next prompt. Closing that gap needs
-/// a turn identifier on the frame, which the protocol does not carry.
+/// Only what is already queued is dropped. A frame the abandoned turn emits
+/// later, while the REPL waits at the prompt, is discarded there
+/// (`link::await_prompt`). Frames are not tagged with a turn, though, so one
+/// that arrives after the next turn has started still renders in that turn.
+/// Closing that gap needs a turn identifier on the frame, which the protocol
+/// does not carry.
 fn discard_abandoned_frames(incoming: &mut mpsc::Receiver<Incoming>) {
     while let Ok(message) = incoming.try_recv() {
         if let Incoming::Approval { respond, .. } = message {
@@ -740,7 +720,7 @@ mod tests {
         assert!(rendered.contains("wiped"), "text must not be dropped: {rendered:?}");
         assert!(rendered.starts_with("turn failed: "), "{rendered:?}");
 
-        let line = super::runtime_line("posture: unavailable", hostile, "/tmp/s.sock");
+        let line = crate::posture::runtime_line("posture: unavailable", hostile, "/tmp/s.sock");
         assert!(!line.contains('\u{1b}'), "escape survived: {line:?}");
         assert!(line.contains("/tmp/s.sock"), "local context must survive: {line:?}");
     }

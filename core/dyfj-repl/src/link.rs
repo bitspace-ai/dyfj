@@ -6,12 +6,13 @@
 //! resumes the session it was in. The session lives in the runtime's store, not
 //! in the connection, so the next turn names the same id and carries on.
 
-use crate::approval::{self, visible};
-use crate::client::{Client, Incoming};
+use crate::approval::visible;
+use crate::client::{Client, Incoming, Verdict};
 use crate::session::Session;
 use crate::terminal::{Ask, ReadOutcome};
-use crate::{Submission, classify, commands, posture, runtime_line};
-use serde_json::{Value, json};
+use crate::submission::{Submission, classify};
+use crate::{commands, posture};
+use serde_json::json;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
@@ -120,6 +121,46 @@ async fn connect_after(socket: &str, delay: Duration) -> anyhow::Result<(Client,
     Client::connect(socket).await
 }
 
+/// What ended a wait at the prompt while the runtime is up.
+pub enum Prompted {
+    Read(Result<ReadOutcome, oneshot::error::RecvError>),
+    Disconnected,
+}
+
+/// Wait for the operator's next line while the runtime is up, or for the
+/// runtime to go away.
+///
+/// The runtime's messages are drained here too, not left queued. Nothing it
+/// sends between turns belongs to a turn: stream frames are from one the
+/// operator abandoned, and are discarded rather than shown under the next
+/// prompt; an approval has no operator watching for it, and is denied, on the
+/// connection that raised it. Left queued, they would fill the channel, the
+/// reader would stall on it, and a stalled reader never sees the connection
+/// end, so the disconnect would go unnoticed.
+pub async fn await_prompt(
+    client: &Client,
+    incoming: &mut mpsc::Receiver<Incoming>,
+    read: &mut oneshot::Receiver<ReadOutcome>,
+    orphans: &mut mpsc::Receiver<ReadOutcome>,
+) -> Prompted {
+    loop {
+        tokio::select! {
+            biased;
+            () = client.closed() => return Prompted::Disconnected,
+            Some(orphan) = orphans.recv() => note_orphan(&orphan),
+            message = incoming.recv() => match message {
+                Some(Incoming::Stream(_)) => {}
+                Some(Incoming::Approval { respond, .. }) => {
+                    let _ = respond.send(Verdict::deny("turn is no longer active"));
+                }
+                // The reader ends only when the connection does.
+                None => return Prompted::Disconnected,
+            },
+            outcome = &mut *read => return Prompted::Read(outcome),
+        }
+    }
+}
+
 /// Whether an orphaned read is the operator asking to leave. Only consulted
 /// while the runtime is down; with it up, the next prompt follows anyway.
 pub fn orphan_quits(outcome: &ReadOutcome) -> bool {
@@ -162,41 +203,7 @@ pub async fn resume(client: &Client, session: &Session, socket: &str) {
         None => String::new(),
     };
     println!("\nruntime reloaded{resumed}");
-    match status {
-        Ok(status) => {
-            println!("{}", posture::line(&status, session, socket));
-            for warning in posture::unresolved_pointer_warnings(&status) {
-                eprintln!("{warning}");
-            }
-        }
-        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), socket)),
-    }
-}
-
-/// An approval question that the runtime's disconnection can cancel.
-pub enum Asked {
-    Answered(approval::Outcome),
-    /// The runtime went away while the question was open. It has not been
-    /// answered and will not be: the caller drops the responder, and nothing
-    /// is written to a closed connection.
-    Disconnected,
-}
-
-/// Ask an approval question, giving up on it if the runtime disconnects
-/// first. The read itself cannot be abandoned (see `terminal::spawn`), so the
-/// question stays on screen; this only stops waiting for it.
-pub async fn ask_while_connected(client: &Client, input: &mpsc::Sender<Ask>, params: &Value) -> Asked {
-    tokio::select! {
-        biased;
-        () = client.closed() => {
-            eprintln!(
-                "\napproval cancelled: the runtime disconnected before it was answered. \
-                 Nothing was sent; any answer typed there is discarded."
-            );
-            Asked::Disconnected
-        }
-        outcome = approval::ask(input, params) => Asked::Answered(outcome),
-    }
+    posture::show(&status, session, socket);
 }
 
 /// The longest log line shown, in characters. The log is the runtime's output
@@ -273,7 +280,8 @@ fn cap(line: &str) -> String {
     if line.chars().count() <= MAX_LOG_LINE {
         return line.to_string();
     }
-    let mut capped: String = line.chars().take(MAX_LOG_LINE).collect();
+    // The ellipsis is one of the characters the cap allows.
+    let mut capped: String = line.chars().take(MAX_LOG_LINE - 1).collect();
     capped.push('…');
     capped
 }
@@ -550,6 +558,137 @@ mod tests {
         }
     }
 
+    /// Frames that arrive while the REPL sits at the prompt (a turn abandoned
+    /// with a second Ctrl-C keeps streaming) must not fill the channel and
+    /// stall the reader: a stalled reader never sees the connection end, and
+    /// the REPL would never notice the runtime going away.
+    #[tokio::test]
+    async fn an_idle_prompt_notices_a_drop_behind_a_flood_of_frames() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, mut incoming) = Client::connect(&path).await.unwrap();
+        let (mut repl, _terminal) = harness();
+        let (_respond, mut read) = oneshot::channel();
+
+        let mut conn = runtime.accept().await;
+        for _ in 0..300 {
+            conn.send(json!({"jsonrpc":"2.0","method":"stream","params":{"t":"delta","text":"late"}}))
+                .await;
+        }
+        drop(conn);
+
+        let prompted = timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans))
+            .await
+            .expect("the drop must be noticed behind the flood");
+        assert!(matches!(prompted, Prompted::Disconnected));
+    }
+
+    /// An approval request that arrives while the REPL sits at the prompt has
+    /// no turn and no operator watching for it. It is denied, on the
+    /// connection that raised it: never left unanswered, never approved.
+    #[tokio::test]
+    async fn a_stray_approval_at_the_idle_prompt_is_denied() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, mut incoming) = Client::connect(&path).await.unwrap();
+        let (mut repl, _terminal) = harness();
+        let (_respond, mut read) = oneshot::channel();
+        let mut conn = runtime.accept().await;
+
+        let runtime_side = async {
+            conn.send(json!({
+                "jsonrpc":"2.0","id":"p9","method":"approval",
+                "params":{"commandId":"bash","title":"Run Bash Command"}
+            }))
+            .await;
+            let answer = conn.next_frame().await.expect("the stray approval must be answered");
+            assert_eq!(answer["id"], "p9", "{answer}");
+            assert_eq!(answer["result"]["decision"], "deny", "never approved: {answer}");
+            drop(conn);
+        };
+        let (prompted, ()) = tokio::join!(
+            timeout(PATIENCE, await_prompt(&client, &mut incoming, &mut read, &mut repl.orphans)),
+            runtime_side
+        );
+        assert!(matches!(prompted.expect("the drop must end the wait"), Prompted::Disconnected));
+    }
+
+    /// Once the session is known, a `sessionStart` naming another one (a
+    /// stray frame, say) does not move this REPL to it.
+    #[tokio::test]
+    async fn a_session_start_does_not_replace_a_known_session() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, mut incoming) = Client::connect(&path).await.unwrap();
+        let (mut repl, _terminal) = harness();
+        let mut session = resumed_session(SESSION);
+
+        let mut conn = runtime.accept().await;
+        let runtime_dies = async move {
+            conn.expect_request("turn").await;
+            conn.send(json!({"jsonrpc":"2.0","method":"stream","params":{
+                "t":"event","event":{"type":"sessionStart","sessionId":"01J0000000000000000000000B"}
+            }}))
+            .await;
+            drop(conn);
+        };
+        let (end, ()) = tokio::join!(
+            run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "hi", &mut session),
+            runtime_dies
+        );
+        assert!(matches!(end, TurnEnd::Disconnected));
+        assert_eq!(session.id.as_deref(), Some(SESSION));
+    }
+
+    /// A first turn interrupted before it settles has no receipt to take the
+    /// session id from, but the runtime announced the session when it opened
+    /// it. That id is kept, so the next turn resumes the session the runtime
+    /// created rather than opening a second one.
+    #[tokio::test]
+    async fn an_interrupted_first_turn_keeps_the_session_it_opened() {
+        let path = socket_path();
+        let first = FakeRuntime::bind(&path);
+        let (client, mut incoming) = Client::connect(&path).await.unwrap();
+        let (mut repl, _terminal) = harness();
+        let mut session = Session::default();
+
+        let mut conn = first.accept().await;
+        let runtime_dies = async move {
+            let frame = conn.expect_request("turn").await;
+            assert!(frame["params"].get("sessionId").is_none(), "a first turn names no session");
+            conn.send(json!({"jsonrpc":"2.0","method":"stream","params":{
+                "t":"event","event":{"type":"sessionStart","sessionId":SESSION,"traceId":"t","mode":"turn"}
+            }}))
+            .await;
+            drop(conn);
+        };
+        let (end, ()) = tokio::join!(
+            run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "hi", &mut session),
+            runtime_dies
+        );
+        assert!(matches!(end, TurnEnd::Disconnected));
+        assert_eq!(session.id.as_deref(), Some(SESSION), "the announced session is kept");
+        drop(first);
+
+        let second = FakeRuntime::bind(&path);
+        let Waited::Reconnected(client, mut incoming) = repl.wait(&path).await else {
+            panic!("must reconnect");
+        };
+        let mut conn = second.accept().await;
+        let next = async {
+            conn.answer_attach(Some(SESSION)).await;
+            let frame = conn.expect_request("turn").await;
+            assert_eq!(frame["params"]["sessionId"], SESSION, "{frame}");
+            conn.answer(&frame, json!({"sessionId": SESSION, "text": "ok"})).await;
+        };
+        let run = async {
+            resume(&client, &session, &path).await;
+            run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "again", &mut session).await
+        };
+        let (end, ()) = tokio::join!(run, next);
+        assert!(matches!(end, TurnEnd::Settled));
+    }
+
     /// While the runtime is down, Ctrl-C, Ctrl-D and `/quit` at the prompt
     /// quit at once, as does a SIGINT between reads.
     #[tokio::test]
@@ -681,7 +820,7 @@ mod tests {
         let line = tail.new_error_line().expect("an error line");
         assert!(!line.contains('\u{1b}'), "{line:?}");
         assert!(line.contains("wiped"), "{line:?}");
-        assert!(line.chars().count() <= 201, "{} chars", line.chars().count());
+        assert!(line.chars().count() <= 200, "{} chars", line.chars().count());
         let _ = std::fs::remove_file(&path);
     }
 

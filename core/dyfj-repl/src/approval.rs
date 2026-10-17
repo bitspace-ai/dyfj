@@ -10,7 +10,7 @@
 //! `client::answer_approval`, which reports a write it cannot complete rather
 //! than swallowing it.
 
-use crate::client::Verdict;
+use crate::client::{Client, Verdict};
 use crate::terminal::{Ask, ReadOutcome};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -212,6 +212,32 @@ pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Outcome {
 
     let preamble = format!("\n⚠  {}\n", describe(params));
     decide(input, params, preamble).await
+}
+
+/// An approval question that the runtime's disconnection can cancel.
+pub enum Asked {
+    Answered(Outcome),
+    /// The runtime went away while the question was open. It has not been
+    /// answered and will not be: the caller drops the responder, and nothing
+    /// is written to a closed connection.
+    Disconnected,
+}
+
+/// Ask an approval question, giving up on it if the runtime disconnects
+/// first. The read itself cannot be abandoned (see `terminal::spawn`), so the
+/// question stays on screen; this only stops waiting for it.
+pub async fn ask_while_connected(client: &Client, input: &mpsc::Sender<Ask>, params: &Value) -> Asked {
+    tokio::select! {
+        biased;
+        () = client.closed() => {
+            eprintln!(
+                "\napproval cancelled: the runtime disconnected before it was answered. \
+                 Nothing was sent; any answer typed there is discarded."
+            );
+            Asked::Disconnected
+        }
+        outcome = ask(input, params) => Asked::Answered(outcome),
+    }
 }
 
 /// Turn the operator's answer into a verdict: an option number when the request
