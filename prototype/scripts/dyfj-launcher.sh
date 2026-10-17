@@ -714,8 +714,11 @@ rust_repl_route() {
 # dev.sock beside where the daily socket would be by default. DYFJ_SOCKET is
 # not read: it names the daily runtime, which `dyfj dev` must never replace.
 
+# An invocation the client would refuse (a value flag without its value, an
+# empty --socket) is not routed: the client's usage error is what it gets.
 dev_route_applies() {
-  [[ "$LAUNCHER_SUBCOMMAND" == "dev" && "$LAUNCHER_SAW_PROMPT" == "0" ]]
+  [[ "$LAUNCHER_SUBCOMMAND" == "dev" && "$LAUNCHER_SAW_PROMPT" == "0" &&
+    "$LAUNCHER_ARGS_INVALID" == "0" ]]
 }
 
 dev_socket_path() {

@@ -200,6 +200,11 @@ describe("dyfj launcher routing", () => {
       await dryRun({ HOME: FAKE_HOME }, ["dev", "--socket", "/tmp/mine.sock"]),
       { route: "dev", sock: "/tmp/mine.sock" },
     );
+    // An invalid invocation is the client's to refuse, not dev's to start.
+    for (const args of [["dev", "--socket"], ["dev", "--socket", ""]]) {
+      const { route } = await dryRun({ HOME: FAKE_HOME }, args);
+      assert.notEqual(route, "dev", JSON.stringify(args));
+    }
     // `dev` in a value slot, or as a prompt, is not the subcommand.
     for (const args of [["--model", "dev"], ["-p", "dev"]]) {
       const { route } = await dryRun({ HOME: FAKE_HOME }, args);

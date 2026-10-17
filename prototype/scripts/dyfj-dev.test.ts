@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import process from "node:process";
 import { test } from "node:test";
-import { openOwnerOnlyLog, parseDevArgs, parseReplMessage, replArgs } from "./dyfj-dev.ts";
+import { inFlightTurnsFrom, openOwnerOnlyLog, parseDevArgs, parseReplMessage, replArgs } from "./dyfj-dev.ts";
 
 const ID = "01J0000000000000000000000A";
 
@@ -87,4 +87,29 @@ test("the runtime log is made owner-only even when it and its directory already 
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("in-flight turns are read from the server's own runtime/status response", async () => {
+  const { buildRuntimeHandlers } = await import("../src/server/rpc/runtime.ts");
+  const status = (activity?: { clients: number; inFlightTurns: number }) =>
+    buildRuntimeHandlers({
+      loadModels: async () => [],
+      ...(activity === undefined ? {} : { activity: () => activity }),
+    })["runtime/status"]!(undefined, undefined as never);
+  assert.deepStrictEqual(inFlightTurnsFrom(await status({ clients: 2, inFlightTurns: 3 })), 3);
+  assert.deepStrictEqual(inFlightTurnsFrom(await status({ clients: 1, inFlightTurns: 0 })), 0);
+  // A runtime that does not count its turns says nothing to wait for.
+  assert.deepStrictEqual(inFlightTurnsFrom(await status()), null);
+  for (const odd of [undefined, null, 3, {}, { runtime: null }, { runtime: { inFlightTurns: "1" } }]) {
+    assert.deepStrictEqual(inFlightTurnsFrom(odd), null, JSON.stringify(odd));
+  }
+});
+
+test("the session message parses exactly as the Rust REPL writes it", () => {
+  // The bytes `dev_control.rs` sends for a session (its test pins them).
+  assert.deepStrictEqual(
+    parseReplMessage('{"id":"01J0000000000000000000000A","type":"session"}'),
+    { type: "session", id: "01J0000000000000000000000A" },
+  );
+  assert.deepStrictEqual(parseReplMessage('{"type":"reload"}'), { type: "reload" });
 });

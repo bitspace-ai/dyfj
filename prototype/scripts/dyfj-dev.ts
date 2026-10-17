@@ -39,6 +39,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { resolveRuntimeLaunch } from "../src/cli/launcher/runtime.ts";
 import { guardedSpawn, type RuntimePolicy } from "../src/config/mod.ts";
+import type { WorkbenchRuntimeStatus } from "../src/server/rpc/runtime.ts";
 import { connectUnixClient, type UnixClient } from "../src/transport/mod.ts";
 import {
   type ClassifyContext,
@@ -150,6 +151,20 @@ export function parseReplMessage(line: string): ReplMessage | null {
     return { type: "session", id: message.id };
   }
   return null;
+}
+
+/**
+ * Turns in flight from a `runtime/status` response, which the server shapes
+ * as `{ runtime: WorkbenchRuntimeStatus }`; null when the response does not
+ * say (a runtime that does not count its turns, or anything malformed).
+ */
+export function inFlightTurnsFrom(response: unknown): number | null {
+  const runtime = (response as { runtime?: Partial<WorkbenchRuntimeStatus> } | null)
+    ?.runtime;
+  const count = typeof runtime === "object" && runtime !== null
+    ? runtime.inFlightTurns
+    : undefined;
+  return typeof count === "number" ? count : null;
 }
 
 function report(line: string): void {
@@ -399,9 +414,9 @@ class DevRuntime implements DevRuntimePort {
 
   async inFlightTurns(): Promise<number | null> {
     try {
-      const status = await this.#anchor?.request("runtime/status", {}, AbortSignal.timeout(2000));
-      const count = (status as { inFlightTurns?: unknown } | undefined)?.inFlightTurns;
-      return typeof count === "number" ? count : null;
+      return inFlightTurnsFrom(
+        await this.#anchor?.request("runtime/status", {}, AbortSignal.timeout(2000)),
+      );
     } catch {
       return null;
     }

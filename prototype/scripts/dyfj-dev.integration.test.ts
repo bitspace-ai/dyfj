@@ -1,16 +1,19 @@
 // `dyfj dev` end to end, through the real launcher, the real supervisor, the
 // real runtime and the real Rust REPL (built by the supervisor, as it is for
-// the operator). The REPL reads piped input here, so each case types its
+// the operator). The runtime uses the lane's isolated Dolt, from the
+// environment, so a fixture-runner turn can run against it. The REPL reads piped input here, so each case types its
 // commands into the launcher's stdin. Each case runs under its own HOME and
 // socket, so it never meets the operator's runtime.
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, realpath, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { connectUnixClient } from "../src/transport/mod.ts";
 import {
   type ProcessNode,
   processTreeContaining,
@@ -18,6 +21,8 @@ import {
 } from "../testing/processes.ts";
 
 const LAUNCHER = fileURLToPath(new URL("./dyfj-launcher.sh", import.meta.url));
+/** A module the server reaches; the test only touches its timestamps. */
+const RUNTIME_MODULE = fileURLToPath(new URL("../src/engine/agent-loop.ts", import.meta.url));
 const BASH = process.platform === "darwin" ? "/bin/bash" : "bash";
 /** The first case may build the REPL from cold. */
 const BOOT_MS = 240_000;
@@ -112,6 +117,56 @@ describe("dyfj dev", () => {
           `no orphans (${elapsed} ms after quit)\n${dev.output()}`,
         );
         assert.equal(await exists(sock), false, "the socket is removed");
+      } finally {
+        dev.child.kill("SIGKILL");
+        await reapPidsAndCommandsContaining(tree.map((node) => node.pid), sock);
+        await rm(home, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it(
+    "a save during a turn restarts the runtime only after the turn ends",
+    { timeout: BOOT_MS + 60_000 },
+    async () => {
+      const { home, sock } = await workspace();
+      const dev = dyfjDev(home, sock);
+      let tree: ProcessNode[] = [];
+      try {
+        await dev.waitFor(/^posture: /m, BOOT_MS);
+        tree = await processTreeContaining(sock);
+
+        // A turn the fixture agent holds open until it is cancelled.
+        let streamed = "";
+        const client = await connectUnixClient(sock, {
+          onStream: (frame) => (streamed += JSON.stringify(frame)),
+        });
+        const turnId = randomUUID();
+        const turn = client.request("turn", {
+          prompt: "FIXTURE_CANCEL",
+          mode: "turn",
+          runner: "fixture",
+          workspace: home,
+          turnId,
+        }).catch((error: unknown) => error);
+        const deadline = Date.now() + 30_000;
+        while (!streamed.includes("partial") && Date.now() < deadline) await delay(100);
+        assert.match(streamed, /partial/, `the fixture turn is running: ${streamed.slice(-900)}`);
+
+        // A save mid-turn: touching the timestamps is a save to the watcher,
+        // and the module's contents stay as they are.
+        const now = new Date();
+        await utimes(RUNTIME_MODULE, now, now);
+        await delay(3_000);
+        assert.doesNotMatch(dev.output(), /runtime disconnected/, "no restart while the turn runs");
+
+        await client.request("turn/cancel", { turnId });
+        await turn;
+        client.close();
+        await dev.waitFor(/runtime reloaded \(1 file changed\)/, 30_000);
+
+        dev.child.stdin!.write("/quit\n");
+        assert.equal(await dev.closed, 0, dev.output());
       } finally {
         dev.child.kill("SIGKILL");
         await reapPidsAndCommandsContaining(tree.map((node) => node.pid), sock);
