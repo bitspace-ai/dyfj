@@ -36,7 +36,6 @@
     "prototype/scripts/add-import-extensions.ts",
     "prototype/scripts/deno-executable.test.ts",
     "prototype/scripts/deno-executable.ts",
-    "prototype/scripts/dyfj-launcher.integration.test.ts",
     "prototype/scripts/isolated-dolt-fixture.integration.test.ts",
     "prototype/scripts/isolated-dolt-integration.ts",
     "prototype/scripts/run-unit-tests.ts",
