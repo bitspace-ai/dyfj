@@ -1317,13 +1317,13 @@ describe("interactive REPL front-end selection", () => {
     includes(out, "only the TypeScript REPL takes");
   });
 
-  it("execs the Rust REPL with its flags and --socket as DYFJ_SOCKET", async () => {
+  it("execs the Rust REPL with its flags, --socket as DYFJ_SOCKET and the runtime log as DYFJ_RUNTIME_LOG", async () => {
     const dir = await tempDir("dyfj-repl-");
     const bin = `${dir}/dyfj-repl`;
     const record = `${dir}/record`;
     await writeFile(
       bin,
-      `#!/bin/sh\nprintf '%s\\n' "sock=$DYFJ_SOCKET" "$@" > '${record}'\n`,
+      `#!/bin/sh\nprintf '%s\\n' "sock=$DYFJ_SOCKET" "log=$DYFJ_RUNTIME_LOG" "$@" > '${record}'\n`,
     );
     await chmod(bin, 0o755);
     const { code } = await launch(
@@ -1343,10 +1343,11 @@ describe("interactive REPL front-end selection", () => {
       { terminal: true },
     );
     assert.equal(code, 0);
-    assert.equal(
-      await readFile(record, "utf8"),
-      "sock=/tmp/r.sock\n--model\nz-ai/glm-5.2\n--approve-paid\n",
-    );
+    const [sock, log, ...flags] = (await readFile(record, "utf8")).split("\n");
+    assert.equal(sock, "sock=/tmp/r.sock");
+    // The autostart log for that socket: basename plus a hash of the path.
+    assert.match(log, new RegExp(`^log=${FAKE_HOME}/\\.dyfj/log/runtime-r-\\d+\\.log$`));
+    assert.deepEqual(flags, ["--model", "z-ai/glm-5.2", "--approve-paid", ""]);
   });
 
   it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {

@@ -8,6 +8,9 @@ mod activity;
 mod approval;
 mod client;
 mod commands;
+#[cfg(test)]
+mod fake_runtime;
+mod link;
 mod posture;
 mod receipt;
 mod session;
@@ -163,8 +166,13 @@ async fn main() -> Result<()> {
     // Before the terminal is taken, not after: a panic during startup would
     // otherwise leave it in whatever state it had reached.
     terminal::install_panic_restore();
-    let input = terminal::spawn()?;
-    let (client, mut incoming) = Client::connect(&socket)
+    let (input, mut orphans) = terminal::spawn()?;
+    // Where the launcher writes this runtime's output, when it knows. Read only
+    // while the runtime is down, to show why a restart failed.
+    let runtime_log = std::env::var("DYFJ_RUNTIME_LOG").ok().filter(|path| !path.is_empty());
+    // A runtime has to be there at startup; the launcher starts one when it
+    // is not. Only an established connection is waited for when it drops.
+    let (mut client, mut incoming) = Client::connect(&socket)
         .await
         .with_context(|| format!("no runtime at {socket}; start it with `dyfj start`"))?;
 
@@ -218,12 +226,57 @@ async fn main() -> Result<()> {
         }
     });
 
+    // The open prompt read. It outlives a disconnect: a prompt still open when
+    // the runtime returns is answered against the restarted runtime.
+    let mut pending: Option<oneshot::Receiver<ReadOutcome>> = None;
     loop {
-        let (respond, answer) = oneshot::channel();
-        if input.send(Ask::Prompt { respond }).await.is_err() {
-            break;
+        if client.is_closed() {
+            eprintln!("\nruntime disconnected; waiting… (Ctrl-C or /quit to leave)");
+            // A Ctrl-C pressed before the disconnect was for the work it cut
+            // short, not a request to stop waiting.
+            while interrupts.try_recv().is_ok() {}
+            let mut log = runtime_log.as_deref().map(link::LogTail::from_end);
+            let waited = link::wait_for_runtime(
+                &socket,
+                &input,
+                &mut pending,
+                &mut orphans,
+                &mut interrupts,
+                &mut log,
+                &mut link::backoff(),
+            )
+            .await;
+            match waited {
+                link::Waited::Quit => break,
+                link::Waited::Reconnected(restarted, restarted_incoming) => {
+                    client = restarted;
+                    incoming = restarted_incoming;
+                    link::resume(&client, &session, &socket).await;
+                    continue;
+                }
+            }
         }
-        let line = match answer.await {
+        if pending.is_none() {
+            let (respond, answer) = oneshot::channel();
+            if input.send(Ask::Prompt { respond }).await.is_err() {
+                break;
+            }
+            pending = Some(answer);
+        }
+        let Some(read) = pending.as_mut() else { continue };
+        let outcome = tokio::select! {
+            biased;
+            // Back to the top, where the disconnect is announced; the prompt
+            // read stays open.
+            () = client.closed() => continue,
+            Some(orphan) = orphans.recv() => {
+                link::note_orphan(&orphan);
+                continue;
+            }
+            outcome = read => outcome,
+        };
+        pending = None;
+        let line = match outcome {
             Ok(ReadOutcome::Line(line)) => line,
             // Ctrl-C at the prompt clears the line; it does not exit.
             Ok(ReadOutcome::Interrupted) => continue,
@@ -279,22 +332,33 @@ async fn main() -> Result<()> {
             &mut session,
         )
         .await;
+        // A turn the disconnect interrupted needs nothing more here: the top
+        // of the loop sees the closed client and waits for the runtime.
         // `/friction` names only a slash command typed just before it, as the
         // TypeScript REPL does; a turn in between ends that attribution.
         session.last_command = None;
     }
 
-    // Ordinary exit (Ctrl-D, /quit, or a closed connection): put the terminal
-    // back the way it was before rustyline took it. The panic hook covers the
-    // abnormal paths.
+    // Ordinary exit (Ctrl-D or /quit, including while waiting for the runtime):
+    // put the terminal back the way it was before rustyline took it. The panic
+    // hook covers the abnormal paths.
     terminal::restore();
     Ok(())
+}
+
+/// How a turn ended, for the loop that issued it.
+pub(crate) enum TurnEnd {
+    /// The runtime settled it, or the operator stopped waiting for it.
+    Settled,
+    /// The runtime went away before it settled.
+    Disconnected,
 }
 
 /// Issue one turn and render it, answering approvals and honouring Ctrl-C.
 ///
 /// Completion is the `turn` response, not a stream frame: a `done` frame is
-/// ignored and an `error` frame is printed, but neither ends the wait.
+/// ignored and an `error` frame is printed, but neither ends the wait. A
+/// disconnect also ends it, reported as interrupted.
 async fn run_turn(
     client: &Client,
     input: &mpsc::Sender<Ask>,
@@ -302,7 +366,7 @@ async fn run_turn(
     interrupts: &mut mpsc::Receiver<()>,
     prompt: &str,
     session: &mut Session,
-) {
+) -> TurnEnd {
     let turn_id = new_turn_id();
     let body = session.turn_body(prompt, &turn_id);
 
@@ -353,6 +417,7 @@ async fn run_turn(
                         }
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
+                    Err(_) if client.is_closed() => return interrupted(wrote_any),
                     Err(err) => {
                         eprintln!("\n{}", runtime_error("turn failed", &err.to_string()));
                         if wrote_any {
@@ -360,7 +425,7 @@ async fn run_turn(
                         }
                     }
                 }
-                return;
+                return TurnEnd::Settled;
             }
             // Something arrived from the runtime while the turn runs.
             message = incoming.recv() => {
@@ -378,20 +443,24 @@ async fn run_turn(
                         // was not the one being answered.
                         //
                         // One terminal, one reader, one approval at a time.
-                        // The cost is that a runtime disconnecting mid-
-                        // approval is not surfaced until the operator answers
-                        // — the prompt stays up either way, so spawning bought
-                        // no earlier warning, only the lifetime problems.
                         //
                         // Ctrl-C here is readline's Interrupted, not the
                         // SIGINT branch below: rustyline has cleared ISIG for
                         // the read. Cancel this turn and answer `abort`, so
                         // the runtime does not record a denial.
-                        match approval::ask(input, &params).await {
-                            approval::Outcome::Verdict(verdict) => {
+                        //
+                        // A disconnect while the question is open cancels it:
+                        // the responder is dropped unanswered, the client
+                        // writes nothing to a closed connection, and the turn
+                        // ends as interrupted. The question stays on screen
+                        // until answered, because the read cannot be
+                        // abandoned; that answer goes nowhere.
+                        match link::ask_while_connected(client, input, &params).await {
+                            link::Asked::Disconnected => return interrupted(wrote_any),
+                            link::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                                 let _ = respond.send(verdict);
                             }
-                            approval::Outcome::Cancelled => {
+                            link::Asked::Answered(approval::Outcome::Cancelled) => {
                                 let _ = respond.send(Verdict::abort());
                                 if give_up_or_cancel(
                                     &mut cancelling,
@@ -400,12 +469,13 @@ async fn run_turn(
                                     incoming,
                                     wrote_any,
                                 ) {
-                                    return;
+                                    return TurnEnd::Settled;
                                 }
                             }
                         }
                     }
-                    None => return,
+                    // The reader ends only when the connection does.
+                    None => return interrupted(wrote_any),
                 }
             }
             // Ctrl-C during a turn. Cancellation is cooperative: ask the
@@ -415,11 +485,22 @@ async fn run_turn(
             // that ignores a cancel should not hold the prompt.
             _ = interrupts.recv() => {
                 if give_up_or_cancel(&mut cancelling, client, &turn_id, incoming, wrote_any) {
-                    return;
+                    return TurnEnd::Settled;
                 }
             }
         }
     }
+}
+
+/// Report a turn the runtime's disconnection cut short. It is not retried:
+/// the runtime may have acted on part of it, and only the operator can judge
+/// whether to ask again.
+fn interrupted(wrote_any: bool) -> TurnEnd {
+    if wrote_any {
+        println!();
+    }
+    eprintln!("turn interrupted: the runtime disconnected before it finished; it was not retried");
+    TurnEnd::Disconnected
 }
 
 /// First Ctrl-C asks the runtime to stop and keeps waiting for the turn to

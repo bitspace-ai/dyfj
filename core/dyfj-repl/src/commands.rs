@@ -10,6 +10,7 @@
 
 use crate::approval::{self, visible};
 use crate::client::{Client, Incoming, Verdict};
+use crate::link;
 use crate::session::{ModelOrigin, Session};
 use crate::terminal::Ask;
 use serde_json::{Value, json};
@@ -495,14 +496,22 @@ async fn request_answering_approvals(
                     let _ = respond.send(Verdict::deny("operator interrupted the command"));
                 }
                 Some(Incoming::Approval { params, respond }) => {
-                    match approval::ask(prompter.input, &params).await {
-                        approval::Outcome::Verdict(verdict) => {
+                    match link::ask_while_connected(client, prompter.input, &params).await {
+                        // The runtime went away with the question open. It is
+                        // not answered (the responder is dropped, and nothing
+                        // is written to a closed connection); the request
+                        // fails with the connection.
+                        link::Asked::Disconnected => {
+                            drop(respond);
+                            return (&mut pending).await;
+                        }
+                        link::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                             let _ = respond.send(verdict);
                         }
                         // No turn is running, so Ctrl-C cannot cancel one. Deny
                         // this approval and the ones that follow, as a SIGINT
                         // while the command waits does.
-                        approval::Outcome::Cancelled => {
+                        link::Asked::Answered(approval::Outcome::Cancelled) => {
                             if !abandoned {
                                 abandoned = true;
                                 note_approvals_abandoned();

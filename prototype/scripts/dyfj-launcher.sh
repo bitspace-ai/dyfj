@@ -746,10 +746,16 @@ main() {
 
   case "$route" in
     rust_repl)
+      # The REPL reads this log while the runtime is down, to show why a
+      # restart failed. It is the autostart log for this socket; empty when
+      # HOME cannot place one, and the REPL then waits without it.
+      local runtime_log
+      runtime_log="$(runtime_log_path)" || runtime_log=""
       if [[ -n "$RUST_REPL_SOCKET" ]]; then
-        DYFJ_SOCKET="$RUST_REPL_SOCKET" exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
+        DYFJ_SOCKET="$RUST_REPL_SOCKET" DYFJ_RUNTIME_LOG="$runtime_log" \
+          exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
       fi
-      exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
+      DYFJ_RUNTIME_LOG="$runtime_log" exec "$repl_bin" ${RUST_REPL_ARGS[@]+"${RUST_REPL_ARGS[@]}"}
       ;;
     node)
       local proto

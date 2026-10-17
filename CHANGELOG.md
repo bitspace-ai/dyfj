@@ -11,6 +11,27 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The Rust REPL survives a runtime restart.** When the socket drops,
+  `dyfj-repl` prints `runtime disconnected; waiting…` and retries with a
+  backoff that doubles from 100 ms to a 2 s cap, without a limit. The prompt
+  stays open while it waits, so Ctrl-C, Ctrl-D or `/quit` quits at once; any
+  other line is refused rather than queued. On reconnecting it reads the
+  session back with `sessions/inspect`, prints `runtime reloaded` with the
+  session it resumed and a posture line from the new runtime, and the next
+  turn names the same session id. A turn in flight at the drop is reported
+  as interrupted and is not retried. An approval question open at the drop is
+  cancelled and never answered: the client writes nothing on a closed
+  connection, and an answer typed into the question afterwards is reported
+  as not sent. A request made on a closed connection now fails at once
+  instead of waiting for a reader that has gone.
+- **The launcher passes the Rust REPL its runtime log as
+  `DYFJ_RUNTIME_LOG`.** It is this socket's autostart log
+  (`~/.dyfj/log/runtime-<socket>-<hash>.log`). While the REPL waits for the
+  runtime, it reads only what the log gained since the drop and prints the
+  last new line containing `error`, with control characters replaced and
+  capped at 200 characters, so a runtime that crashes while starting says
+  why. A missing, unreadable or replaced log is skipped silently.
+
 - **`.node-version` is the single Node pin.** It holds `26.11.1`, and both
   CI jobs install Node through `actions/setup-node` with
   `node-version-file: .node-version` instead of two hard-coded copies of the

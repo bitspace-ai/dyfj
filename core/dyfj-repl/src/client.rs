@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 /// A frame the server streams during a turn. `t` discriminates the union;
 /// unknown variants are tolerated rather than fatal, because the server may
@@ -78,7 +78,8 @@ pub enum Incoming {
     Stream(StreamFrame),
     /// A server request we must answer. Dropping the responder without a
     /// verdict schedules an attempt to send a denial — delivery still depends
-    /// on the socket, which the writer cannot guarantee. Answering
+    /// on the socket, which the writer cannot guarantee, and nothing is sent
+    /// once the connection has closed. Answering
     /// deliberately is preferable anyway: a denial the operator never saw is a
     /// refused tool call they must repeat.
     Approval { params: Value, respond: oneshot::Sender<Verdict> },
@@ -112,6 +113,9 @@ pub struct Client {
     write: Arc<Mutex<OwnedWriteHalf>>,
     pending: Pending,
     next_id: Arc<Mutex<i64>>,
+    /// Becomes true once, when the reader task sees the connection end. The
+    /// reader is its only writer.
+    closed: watch::Receiver<bool>,
 }
 
 impl Client {
@@ -130,10 +134,31 @@ impl Client {
         let write = Arc::new(Mutex::new(write));
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
         let (tx, rx) = mpsc::channel(256);
+        let (closed_tx, closed) = watch::channel(false);
 
-        tokio::spawn(read_loop(read, Arc::clone(&pending), Arc::clone(&write), tx));
+        tokio::spawn(read_loop(
+            read,
+            Arc::clone(&pending),
+            Arc::clone(&write),
+            tx,
+            closed_tx,
+        ));
 
-        (Self { write, pending, next_id: Arc::new(Mutex::new(1)) }, rx)
+        (Self { write, pending, next_id: Arc::new(Mutex::new(1)), closed }, rx)
+    }
+
+    /// Whether the connection to the runtime has ended. A reader task that
+    /// went away without saying so (it panicked) counts as closed, as it does
+    /// for `closed`, so the two never disagree.
+    pub fn is_closed(&self) -> bool {
+        *self.closed.borrow() || self.closed.has_changed().is_err()
+    }
+
+    /// Resolves once the connection to the runtime has ended, at once if it
+    /// already has.
+    pub async fn closed(&self) {
+        let mut closed = self.closed.clone();
+        let _ = closed.wait_for(|closed| *closed).await;
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value> {
@@ -145,6 +170,15 @@ impl Client {
         };
         let (tx, rx) = oneshot::channel();
         self.pending.lock().await.insert(id, tx);
+        // Checked after the waiter is in the map, not before. The reader marks
+        // the connection closed and only then drains the map, so a waiter
+        // inserted after the drain sees the flag here, and one inserted before
+        // it is failed by the drain. Either way the request cannot wait on a
+        // reader that is gone.
+        if self.is_closed() {
+            self.pending.lock().await.remove(&id);
+            return Err(anyhow!("{CLOSED}"));
+        }
         // This future is dropped before it resolves when the operator abandons
         // a turn or a command with Ctrl-C; the guard then removes the waiter so
         // an abandoned request does not stay in the map until the connection
@@ -170,6 +204,9 @@ impl Client {
     /// reach the caller; a socket write that fails afterwards is reported on
     /// stderr from the sending task.
     pub fn send_without_waiting(&self, method: &str, params: Value) -> Result<()> {
+        if self.is_closed() {
+            return Err(anyhow!("{CLOSED}"));
+        }
         let id = {
             let mut next = self
                 .next_id
@@ -219,6 +256,9 @@ impl Client {
     }
 }
 
+/// Why a request made after the connection ended fails.
+const CLOSED: &str = "the runtime connection is closed";
+
 /// The largest frame this client accepts, matching the TypeScript peer's
 /// DEFAULT_MAX_FRAME_BYTES in `prototype/src/transport/jsonrpc-peer.ts`.
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -265,8 +305,10 @@ async fn read_loop<R: AsyncRead + Unpin>(
     pending: Pending,
     write: Arc<Mutex<OwnedWriteHalf>>,
     tx: mpsc::Sender<Incoming>,
+    closed: watch::Sender<bool>,
 ) {
     let mut reader = BufReader::new(read);
+    let closed_rx = closed.subscribe();
     let closed_because = loop {
         let bytes = match next_frame(&mut reader, MAX_FRAME_BYTES).await {
             Ok(Frame::Line(bytes)) => bytes,
@@ -295,14 +337,11 @@ async fn read_loop<R: AsyncRead + Unpin>(
             eprintln!("the runtime sent a frame that is not valid JSON; closing the connection");
             break "runtime sent a malformed frame";
         };
-        dispatch(msg, &pending, &write, &tx).await;
+        dispatch(msg, &pending, &write, &tx, &closed_rx).await;
     };
-    // Known limit: no closed state is recorded. A request issued after this
-    // point still writes to the retained write half and then waits for a
-    // reader that no longer exists. A failed turn ends that invocation of
-    // `run_turn`, and the loop then offers another prompt against the same
-    // client — so this is reachable, and a longer-lived client needs an
-    // explicit closed flag.
+    // Closed first, then drained: `request` relies on this order to fail a
+    // waiter it inserts while the drain runs (see the note there).
+    closed.send_replace(true);
     let mut map = pending.lock().await;
     for (_, sender) in map.drain() {
         let _ = sender.send(Err(closed_because.into()));
@@ -363,7 +402,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         let oversized = vec![b'x'; MAX_FRAME_BYTES + 1];
-        read_loop(oversized.as_slice(), pending, write, tx).await;
+        read_loop(oversized.as_slice(), pending, write, tx, watch::channel(false).0).await;
 
         let outcome = receiver.await.expect("the waiter must be settled");
         assert_eq!(outcome.unwrap_err(), "runtime sent an oversized frame");
@@ -382,7 +421,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(4);
 
         let input: &[u8] = b"\n{\"jsonrpc\":\"2.0\",\"id\":1,\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n";
-        read_loop(input, pending, write, tx).await;
+        read_loop(input, pending, write, tx, watch::channel(false).0).await;
 
         let outcome = receiver.await.expect("the waiter must be settled");
         assert_eq!(outcome.unwrap_err(), "runtime sent a malformed frame");
@@ -394,14 +433,39 @@ mod tests {
         let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
         let (_read, mut write) = client_side.into_split();
         write.shutdown().await.unwrap();
+        // The connection is open as far as the client knows, so the request
+        // fails at the write, not at the closed check.
+        let (_reader_alive, closed) = watch::channel(false);
         let client = Client {
             write: Arc::new(Mutex::new(write)),
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(Mutex::new(1)),
+            closed,
         };
+        assert!(!client.is_closed());
 
         assert!(client.request("runtime/status", json!({})).await.is_err());
         assert!(client.pending.lock().await.is_empty(), "the waiter must be removed");
+    }
+
+    /// A reader task that ends without marking the connection closed (it
+    /// panicked) still counts as closed, so `is_closed` and `closed` agree and
+    /// the main loop cannot spin between them.
+    #[tokio::test]
+    async fn a_vanished_reader_counts_as_closed() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, write) = client_side.into_split();
+        let (reader, closed) = watch::channel(false);
+        let client = Client {
+            write: Arc::new(Mutex::new(write)),
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(Mutex::new(1)),
+            closed,
+        };
+        assert!(!client.is_closed());
+        drop(reader);
+        assert!(client.is_closed());
+        client.closed().await;
     }
 
     /// A request abandoned before the runtime answers (Ctrl-C during a turn or
@@ -438,7 +502,7 @@ mod tests {
             "jsonrpc": "2.0", "id": "p1", "method": "approval",
             "params": {"commandId": "bash", "title": "Run Bash Command"}
         });
-        dispatch(msg, &pending, &write, &tx).await;
+        dispatch(msg, &pending, &write, &tx, &watch::channel(false).1).await;
 
         match rx.try_recv() {
             Ok(Incoming::Approval { params, respond }) => {
@@ -462,7 +526,14 @@ mod tests {
         let (sender, receiver) = oneshot::channel();
         pending.lock().await.insert(7, sender);
 
-        dispatch(json!({"jsonrpc":"2.0","id":7,"result":{"ok":true}}), &pending, &write, &tx).await;
+        dispatch(
+            json!({"jsonrpc":"2.0","id":7,"result":{"ok":true}}),
+            &pending,
+            &write,
+            &tx,
+            &watch::channel(false).1,
+        )
+        .await;
 
         let resolved = receiver.await.expect("the waiter must be resolved");
         assert_eq!(resolved.unwrap().get("ok").and_then(Value::as_bool), Some(true));
@@ -478,7 +549,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
 
         let msg = json!({"jsonrpc":"2.0","method":"stream","params":{"t":"delta","text":"hi"}});
-        dispatch(msg, &pending, &write, &tx).await;
+        dispatch(msg, &pending, &write, &tx, &watch::channel(false).1).await;
 
         match rx.try_recv() {
             Ok(Incoming::Stream(StreamFrame::Delta { text })) => assert_eq!(text, "hi"),
@@ -491,7 +562,20 @@ mod tests {
 /// swallowed: an unanswered approval leaves the runtime blocked with no
 /// diagnostic at either end, which is the hardest failure of this protocol to
 /// diagnose from the outside.
-async fn answer_approval(write: &Arc<Mutex<OwnedWriteHalf>>, id: Value, verdict: Verdict) {
+///
+/// Nothing is written once the connection has ended. An approval is answered
+/// only on the connection that raised it, and a closed one has no runtime
+/// left to answer; the REPL then reconnects on a new connection, which never
+/// sees this answer.
+async fn answer_approval(
+    write: &Arc<Mutex<OwnedWriteHalf>>,
+    closed: &watch::Receiver<bool>,
+    id: Value,
+    verdict: Verdict,
+) {
+    if *closed.borrow() {
+        return;
+    }
     let frame = json!({"jsonrpc":"2.0","id":id,"result":verdict});
     let Ok(mut line) = serde_json::to_vec(&frame) else {
         eprintln!("approval answer could not be encoded; the runtime is still waiting");
@@ -513,6 +597,7 @@ async fn dispatch(
     pending: &Pending,
     write: &Arc<Mutex<OwnedWriteHalf>>,
     tx: &mpsc::Sender<Incoming>,
+    closed: &watch::Receiver<bool>,
 ) {
     let method = msg.get("method").and_then(Value::as_str);
     // JSON-RPC ids may be strings or numbers. Ours are numbers, but the
@@ -559,15 +644,18 @@ async fn dispatch(
             if tx.send(Incoming::Approval { params, respond }).await.is_err() {
                 // No one is listening for approvals. The runtime is still
                 // blocked on an answer, so send a denial rather than nothing.
-                answer_approval(&write, id, Verdict::deny("client has no approver")).await;
+                answer_approval(&write, closed, id, Verdict::deny("client has no approver")).await;
                 return;
             }
+            let closed = closed.clone();
             tokio::spawn(async move {
-                // Fail closed: a dropped responder is not consent.
+                // Fail closed: a dropped responder is not consent. A responder
+                // dropped because the runtime disconnected is not answered at
+                // all; `answer_approval` writes nothing on a closed connection.
                 let verdict = answer
                     .await
                     .unwrap_or_else(|_| Verdict::deny("client did not answer"));
-                answer_approval(&write, id, verdict).await;
+                answer_approval(&write, &closed, id, verdict).await;
             });
         }
         _ => {}

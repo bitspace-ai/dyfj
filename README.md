@@ -1654,7 +1654,11 @@ and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
 prompt. `--session` and `/session switch` resume a session on the model it last
 ran on (an explicit `--model` still wins at startup), name it on the posture
 line, and refuse a recorded model that is no longer routable; a session with no
-recorded model resumes on the configured default, and the posture line says so. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
+recorded model resumes on the configured default, and the posture line says so.
+It survives a runtime restart: when the socket drops it says so, reconnects
+with a backoff capped at 2 s until the runtime returns or the operator quits,
+resumes the same session, and reports a turn the drop cut short as interrupted
+and an open approval as cancelled, never answered. A bare interactive `dyfj` opens the Rust REPL when a `dyfj-repl` binary is
 available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
 prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
@@ -1666,7 +1670,9 @@ Otherwise, and with `DYFJ_REPL=ts`,
 the TypeScript REPL opens as before. `DYFJ_REPL=rust` requires the Rust REPL
 for an interactive session on a terminal and fails if it cannot run there;
 piped or redirected input, subcommands, `-p` prompts and `--help` are
-unaffected by `DYFJ_REPL`.
+unaffected by `DYFJ_REPL`. The launcher passes the Rust REPL this socket's
+autostart log path as `DYFJ_RUNTIME_LOG`, so it can show why a runtime it is
+waiting for failed to start.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration
@@ -2488,3 +2494,6 @@ Document revisions only. Code and behavior changes are tracked in
   dependency-update paragraphs drop the retired runtime's archive and update
   lane. The MCP integration section launches the memory server on Node under
   its permission model.
+- 2026-10-17 - "Build the core" says the Rust REPL survives a runtime restart
+  (reconnect, session resume, interrupted turns, cancelled approvals) and that
+  the launcher passes it the runtime log as `DYFJ_RUNTIME_LOG`.
