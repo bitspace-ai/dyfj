@@ -10,6 +10,7 @@ import {
   declaredSurfacePaths,
   dependencyPolicyHits,
   isDependencySurface,
+  retiredRuntimeHits,
   loadManifest,
   manifestDigest,
   manifestViolations,
@@ -23,7 +24,11 @@ import {
   SOURCE_CLASSES,
   type SourceClass,
 } from "./dependency-policy.ts";
-import { repoRootFromMeta, trackedFiles } from "./scan-lib.ts";
+import {
+  MAX_COLLECTED_HITS,
+  repoRootFromMeta,
+  trackedFiles,
+} from "./scan-lib.ts";
 import { formatHits } from "./public-safety-scan.ts";
 import { headCommit } from "./subject-check.ts";
 
@@ -1479,4 +1484,19 @@ test("a deno update lane fails", () => {
     line: 12,
     rule: "dependency.policy/retired-runtime-ecosystem",
   }]);
+});
+
+test("the retired-runtime scan stops at the hit cap, within a file", async () => {
+  const line = `import "${JSR}@std/x";\n`;
+  const fixture = await trackedFixture({
+    "a.ts": line.repeat(MAX_COLLECTED_HITS + 5),
+    "b.ts": line,
+  });
+  try {
+    const hits = await retiredRuntimeHits(fixture.dir, ["a.ts", "b.ts"]);
+    assert.deepStrictEqual(hits.length, MAX_COLLECTED_HITS);
+    assert.ok(hits.every((hit) => hit.path === "a.ts"));
+  } finally {
+    await rm(fixture.dir, { recursive: true });
+  }
 });

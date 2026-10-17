@@ -1583,7 +1583,10 @@ const RETIRED_RUNTIME_ECOSYSTEM = "deno";
 const SPECIFIER_SOURCE = /\.(?:[cm]?[jt]sx?|jsonc?)$/;
 const JSR_SPECIFIER = /["'`]jsr:@/;
 
-/** A hit for each tracked deno manifest or lock file and `jsr:` specifier. */
+/**
+ * A hit for each tracked deno manifest or lock file and `jsr:` specifier, at
+ * most `MAX_COLLECTED_HITS` of them: the scan stops at the cap.
+ */
 export async function retiredRuntimeHits(
   root: string,
   tracked: readonly string[],
@@ -1592,19 +1595,19 @@ export async function retiredRuntimeHits(
   for (const path of tracked.map((each) => posixPath(each)).sort()) {
     if (RETIRED_RUNTIME_FILE.test(path)) {
       hits.push({ path, line: 1, rule: "dependency.policy/retired-runtime-file" });
-      continue;
-    }
-    if (!SPECIFIER_SOURCE.test(path)) continue;
-    const text = new TextDecoder().decode(
-      await readTrackedFile(root, path, LABEL),
-    );
-    if (!JSR_SPECIFIER.test(text)) continue;
-    text.split("\n").forEach((line, index) => {
-      if (JSR_SPECIFIER.test(line)) {
+    } else if (SPECIFIER_SOURCE.test(path)) {
+      const text = new TextDecoder().decode(
+        await readTrackedFile(root, path, LABEL),
+      );
+      if (!JSR_SPECIFIER.test(text)) continue;
+      const lines = text.split("\n");
+      for (let index = 0; index < lines.length; index++) {
+        if (!JSR_SPECIFIER.test(lines[index] ?? "")) continue;
         hits.push({ path, line: index + 1, rule: "dependency.policy/jsr-import" });
+        if (hits.length >= MAX_COLLECTED_HITS) return hits;
       }
-    });
-    if (hits.length >= MAX_COLLECTED_HITS) break;
+    }
+    if (hits.length >= MAX_COLLECTED_HITS) return hits;
   }
   return hits;
 }
