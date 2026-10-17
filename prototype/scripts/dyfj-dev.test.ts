@@ -166,9 +166,9 @@ test("a failed boot's detail is its own log output, without the dev header", () 
 test("host paths in a boot failure become repo-relative, and the home directory ~", () => {
   assert.strictEqual(
     localizePaths(
-      "at file:///home/op/dyfj/prototype/src/a.ts:3 and /home/op/dyfj/core/x.rs, /home/op/.npm",
-      "/home/op/dyfj",
-      "/home/op",
+      "at file:///srv/op/dyfj/prototype/src/a.ts:3 and /srv/op/dyfj/core/x.rs, /srv/op/.npm",
+      "/srv/op/dyfj",
+      "/srv/op",
     ),
     "at prototype/src/a.ts:3 and core/x.rs, ~/.npm",
   );

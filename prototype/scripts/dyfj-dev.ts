@@ -45,7 +45,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { resolveRuntimeLaunch } from "../src/cli/launcher/runtime.ts";
 import { guardedSpawn, type RuntimePolicy } from "../src/config/mod.ts";
-import { DEV_BOOT_FAILURE_ENV, sanitizeDevBootFailure } from "../src/context/dev-boot-failure.ts";
+import { DEV_BOOT_FAILURE_ENV, sanitizeDevBootFailure } from "../src/context/mod.ts";
 import type { WorkbenchRuntimeStatus } from "../src/server/rpc/runtime.ts";
 import { connectUnixClient, type UnixClient } from "../src/transport/mod.ts";
 import {

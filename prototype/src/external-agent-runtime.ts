@@ -7,7 +7,6 @@ import {
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
 import { processEnv, type RuntimePolicy } from "./config/mod.ts";
-import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -32,7 +31,7 @@ import {
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
-import { codexAcpPackageRoot } from "./acp-adapter-package.ts";
+import { codexAcpPackageRoot, ownPrototypeRoot } from "./acp-adapter-package.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import type {
   AcpPermissionPrompt,
@@ -390,16 +389,6 @@ export async function bundledCodexExecutable(
     }
   }
   throw new DomainError("Pinned Codex executable is unavailable");
-}
-
-/**
- * The prototype root, as the directory above this module's source directory:
- * where the pinned Codex ACP package is looked up. `dyfj dev` runs its last
- * good code from a copy of `src` beside `src` (`prototype/.dyfj-dev-last-good`),
- * so from there this is still the prototype root.
- */
-export function ownPrototypeRoot(): string {
-  return fileURLToPath(new URL("..", import.meta.url));
 }
 
 export async function codexChatGptProfile(

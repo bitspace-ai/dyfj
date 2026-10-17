@@ -13,7 +13,6 @@ import { join } from "node:path";
 import process from "node:process";
 import { describe, it } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { codexAcpPackageRoot } from "../src/acp-adapter-package.ts";
 import { sourceTreeHash } from "../src/config/mod.ts";
 import { connectUnixClient } from "../src/transport/mod.ts";
 import { checkSnapshot, snapshotPaths } from "./dev-snapshot.ts";
@@ -172,11 +171,11 @@ describe("dyfj dev", () => {
 
         // From the snapshot, the Codex ACP package resolves as it does from src.
         const fromSnapshot = await import(
-          pathToFileURL(join(SNAPSHOT.snapshot, "external-agent-runtime.ts")).href
-        ) as { ownPrototypeRoot(): string };
+          pathToFileURL(join(SNAPSHOT.snapshot, "acp-adapter-package.ts")).href
+        ) as typeof import("../src/acp-adapter-package.ts");
         assert.equal(fromSnapshot.ownPrototypeRoot(), `${SNAPSHOT.prototype}/`);
         assert.equal(
-          await codexAcpPackageRoot(fromSnapshot.ownPrototypeRoot()),
+          await fromSnapshot.codexAcpPackageRoot(fromSnapshot.ownPrototypeRoot()),
           join(REPO, "node_modules", "@agentclientprotocol", "codex-acp"),
         );
 
