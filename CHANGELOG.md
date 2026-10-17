@@ -30,7 +30,8 @@ README are tracked separately in its Revision history section.
   runtime, it reads only what the log gained since the drop and prints the
   last new line containing `error`, with control characters replaced and
   capped at 200 characters, so a runtime that crashes while starting says
-  why. A missing, unreadable or replaced log is skipped silently.
+  why. A missing or unreadable log is skipped silently; a replaced or
+  truncated one is read from its start.
 
 - **`.node-version` is the single Node pin.** It holds `26.11.1`, and both
   CI jobs install Node through `actions/setup-node` with
