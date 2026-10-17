@@ -159,6 +159,19 @@ describe("runFreshnessProbe", () => {
     assert.ok(!methods(localUnknown.calls).includes("runtime/stop"));
   });
 
+  it("never warns about or stops a runtime whose reported hash is malformed", async () => {
+    const result = await probe(
+      status({
+        autostarted: true,
+        clients: 1,
+        fingerprint: { head: "x", contentHash: "sha256:not-a-hash" },
+      }),
+    );
+    assert.equal(result.code, 0);
+    assert.equal(result.stderr, "");
+    assert.ok(!methods(result.calls).includes("runtime/stop"));
+  });
+
   it("keeps the runtime and warns when the conditional stop fails", async () => {
     const result = await probe({
       ...status({

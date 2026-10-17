@@ -70,6 +70,20 @@ function launcher(
   });
 }
 
+/**
+ * Signals `pids`, every process whose command line names `sock`, and their
+ * descendants as one process-list scan finds them. The runtime reads its
+ * socket from the environment, so its command line does not name it, and a
+ * failing case must not leave it running.
+ */
+async function reapTree(sock: string, pids: number[] = []): Promise<void> {
+  const tree = await processTreeContaining(sock);
+  await reapPidsAndCommandsContaining(
+    [...pids, ...tree.map((node) => node.pid)],
+    sock,
+  );
+}
+
 function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -150,7 +164,7 @@ describe("an autostarted runtime's lifetime", () => {
         assert.equal(await exists(sock), false, "the socket is removed");
         assert.match(await logText(home), /no client for 10 s; stopping/);
       } finally {
-        await reapPidsAndCommandsContaining([], sock);
+        await reapTree(sock);
         await rm(home, { recursive: true, force: true });
       }
     },
@@ -197,7 +211,7 @@ describe("a runtime started with dyfj start", () => {
         if (runtime.exitCode === null && runtime.signalCode === null) {
           runtime.kill("SIGTERM");
         }
-        await reapPidsAndCommandsContaining([runtime.pid ?? 0], sock);
+        await reapTree(sock, [runtime.pid ?? 0]);
         await rm(home, { recursive: true, force: true });
       }
     },
@@ -282,7 +296,7 @@ describe("a stale autostarted runtime", () => {
         await run(["stop"]);
       } finally {
         held?.destroy();
-        await reapPidsAndCommandsContaining([], sock);
+        await reapTree(sock);
         await rm(home, { recursive: true, force: true });
       }
     },

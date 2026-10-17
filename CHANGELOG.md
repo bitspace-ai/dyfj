@@ -57,8 +57,9 @@ README are tracked separately in its Revision history section.
   HEAD, read from the `.git` files without running git (worktrees, packed refs
   and a detached HEAD included), and a SHA-256 content hash of the files under
   `prototype/src` (dotfiles and symlinks skipped). Either is `unknown` when it
-  cannot be read, and an unknown hash is never compared. `runtime/status`
-  reports it as `fingerprint` (`{ head, contentHash }`), along with the open
+  cannot be read, and a hash that is unknown or not well formed (on either
+  side) is never compared, so it never causes a warning or a restart.
+  `runtime/status` reports it as `fingerprint` (`{ head, contentHash }`), along with the open
   `clients` and the `inFlightTurns`; clients that predate these fields ignore
   them. `dyfj status` shows the code version, whether it matches the working
   tree, and the client and turn counts. The TypeScript and Rust REPLs print

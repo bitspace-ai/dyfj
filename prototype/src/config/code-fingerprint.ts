@@ -170,10 +170,15 @@ export async function codeFingerprint(
 /**
  * Whether a runtime runs the code in this checkout: `current` when the
  * hashes match, `behind` when they differ, `unknown` when either side is
- * unknown or the runtime reported no fingerprint (an older runtime). Only
- * `behind` warrants a warning or a restart.
+ * unknown or not a well-formed hash, or the runtime reported no fingerprint
+ * (an older runtime). Only `behind` warrants a warning or a restart.
  */
 export type Freshness = "current" | "behind" | "unknown";
+
+// A content hash as `sourceTreeHash` writes it. The runtime's comes from
+// unvalidated JSON, and `behind` can stop a runtime, so any other shape on
+// either side means no comparison.
+const CONTENT_HASH = /^sha256:[0-9a-f]{64}$/;
 
 export function compareFreshness(
   runtimeFingerprint: unknown,
@@ -186,8 +191,8 @@ export function compareFreshness(
     .contentHash;
   if (
     typeof runtimeHash !== "string" ||
-    !runtimeHash.startsWith("sha256:") ||
-    !localHash.startsWith("sha256:")
+    !CONTENT_HASH.test(runtimeHash) ||
+    !CONTENT_HASH.test(localHash)
   ) {
     return "unknown";
   }

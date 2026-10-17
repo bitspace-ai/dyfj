@@ -233,3 +233,43 @@ describe("compareFreshness", () => {
     assert.equal(compareFreshness("sha256:x", hash), "unknown");
   });
 });
+
+describe("compareFreshness with malformed hashes", () => {
+  const valid = `sha256:${"a".repeat(64)}`;
+  const malformed = [
+    "sha256:not-a-hash",
+    "sha256:",
+    `sha256:${"a".repeat(63)}`,
+    `sha256:${"a".repeat(65)}`,
+    `sha256:${"A".repeat(64)}`,
+    `sha256:${"a".repeat(64)}\n`,
+    `SHA256:${"a".repeat(64)}`,
+  ];
+
+  it("makes no comparison when the runtime's hash is malformed", () => {
+    for (const hash of malformed) {
+      assert.equal(
+        compareFreshness({ contentHash: hash }, valid),
+        "unknown",
+        JSON.stringify(hash),
+      );
+    }
+  });
+
+  it("makes no comparison when this checkout's hash is malformed", () => {
+    for (const hash of malformed) {
+      assert.equal(
+        compareFreshness({ contentHash: valid }, hash),
+        "unknown",
+        JSON.stringify(hash),
+      );
+    }
+  });
+
+  it("makes no comparison between two identical malformed hashes", () => {
+    assert.equal(
+      compareFreshness({ contentHash: "sha256:x" }, "sha256:x"),
+      "unknown",
+    );
+  });
+});

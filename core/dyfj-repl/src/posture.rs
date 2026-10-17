@@ -60,13 +60,13 @@ pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, loc
 
 /// The line after the posture line when the runtime's code differs from this
 /// checkout's, saying how it will catch up. `None` when they match, when
-/// either hash is unknown, or when the runtime reports no fingerprint (an
-/// older runtime). The TypeScript REPL prints the same text
-/// (`formatFreshnessWarning` in `prototype/src/cli.ts`).
+/// either hash is unknown or not a well-formed hash, or when the runtime
+/// reports no fingerprint (an older runtime). The TypeScript REPL prints the
+/// same text (`formatFreshnessWarning` in `prototype/src/cli/posture.ts`).
 pub fn freshness_warning(status: &Value, local_hash: &str) -> Option<String> {
     let runtime = status.get("runtime").unwrap_or(status);
     let runtime_hash = runtime.get("fingerprint")?.get("contentHash")?.as_str()?;
-    if !runtime_hash.starts_with("sha256:") || !local_hash.starts_with("sha256:") || runtime_hash == local_hash {
+    if !is_content_hash(runtime_hash) || !is_content_hash(local_hash) || runtime_hash == local_hash {
         return None;
     }
     Some(if runtime.get("autostarted").and_then(Value::as_bool) == Some(true) {
@@ -80,6 +80,14 @@ pub fn freshness_warning(status: &Value, local_hash: &str) -> Option<String> {
          then `dyfj start`"
             .into()
     })
+}
+
+/// Whether `hash` is a content hash as `source_tree_hash` writes it:
+/// `sha256:` and 64 lowercase hex digits. The runtime's comes from
+/// unvalidated JSON, so any other shape means no comparison.
+fn is_content_hash(hash: &str) -> bool {
+    hash.strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
 /// The content hash of the source tree at `root`, as the runtime records it
@@ -458,6 +466,29 @@ mod tests {
             assert_eq!(freshness_warning(&unknown, LOCAL), None);
             assert_eq!(freshness_warning(&json!({"runtime": {}}), LOCAL), None);
             assert_eq!(freshness_warning(&json!({"runtime": {"fingerprint": {"contentHash": 7}}}), LOCAL), None);
+        }
+
+        /// "Behind" can restart a runtime, so a hash that is not a full
+        /// lowercase SHA-256 on either side means no comparison at all.
+        #[test]
+        fn a_malformed_hash_on_either_side_means_no_comparison() {
+            let malformed = [
+                "sha256:not-a-hash".to_string(),
+                "sha256:".to_string(),
+                format!("sha256:{}", "a".repeat(63)),
+                format!("sha256:{}", "a".repeat(65)),
+                format!("sha256:{}", "A".repeat(64)),
+                format!("sha256:{}\n", "a".repeat(64)),
+                format!("SHA256:{}", "a".repeat(64)),
+            ];
+            for hash in &malformed {
+                let runtime = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": hash}}});
+                assert_eq!(freshness_warning(&runtime, LOCAL), None, "runtime {hash:?}");
+                let valid = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": OLD}}});
+                assert_eq!(freshness_warning(&valid, hash), None, "local {hash:?}");
+            }
+            let same = json!({"runtime": {"fingerprint": {"contentHash": "sha256:x"}}});
+            assert_eq!(freshness_warning(&same, "sha256:y"), None);
         }
 
         /// An older client ignores the new fields: the posture line it
