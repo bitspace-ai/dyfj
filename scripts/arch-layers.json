@@ -113,6 +113,18 @@
         {
           "path": "prototype/scripts/node-test-lane.ts",
           "justification": "The unit, integration and golden lane runners start their node:test files under `node --test` here, and read `node --version` to require Node 26. It is test tooling that runs in the lane runner's own process, outside the runtime graph, which no runtime module may import."
+        },
+        {
+          "path": "prototype/scripts/lane-supervision.ts",
+          "justification": "Test-lane supervision starts the lane token carrier and the group stop as `node` children of a lane runner, which list processes with `ps` and signal the lane's process group. It is test tooling that runs in the lane runner's own process, outside the runtime graph, which no runtime module may import."
+        },
+        {
+          "path": "prototype/scripts/run-unit-tests.ts",
+          "justification": "The test.unit lane runner starts its gate-tooling `deno test` subset here, until the gate-tooling port. It runs as its own process, outside the runtime graph, which no runtime module may import."
+        },
+        {
+          "path": "prototype/scripts/isolated-dolt-integration.ts",
+          "justification": "The isolated-Dolt integration lane runner starts its gate-tooling `deno test` subset, until the gate-tooling port, and the Rust schema round trip under `cargo test`. It runs as its own process, outside the runtime graph, which no runtime module may import."
         }
       ]
     }

@@ -49,6 +49,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The test-lane runners and their supervision run on Node.** The unit,
+  isolated-Dolt integration and golden runners
+  (`prototype/scripts/run-unit-tests.ts`,
+  `prototype/scripts/isolated-dolt-integration.ts`,
+  `prototype/testing/golden/run.ts`) and `prototype/scripts/lane-supervision.ts`
+  are written to `node:` builtins. The gate starts the three lanes as
+  `node <runner>` in place of `deno run` with per-lane grants, and
+  `deno task test:unit`, `test:file` and `test:golden` in `prototype/` do the
+  same. The lane token carrier and the group stop are `node` children of the
+  runner in place of `deno eval`, with the same token, grace and KILL rules.
+  The unit and integration runners still run their gate-tooling `deno test`
+  subset, with the executable `DENO_BIN` names, which they now require; the
+  golden runner needs no Deno at all and does nothing when imported, so the
+  Node load probe no longer reports it. The gate driver itself stays on Deno
+  for now. Decision D32.
 - **The static checks run on Node.** `subject-check.ts`,
   `public-safety-scan.ts`, `range-checks.ts`, `retired-surface-scan.ts`,
   `dependency-policy.ts`, `change-scope.ts` and their shared `scan-lib.ts` are
@@ -120,6 +135,17 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Gate-lane helpers no longer outlive an interrupted gate run.** A test-lane
+  token carrier waited only for its lane's group to empty, so a gate killed
+  mid-lane, or killed between its teardown's TERM and KILL, left the runner,
+  the carrier and any process that ignored TERM running indefinitely, holding
+  a lane token, unless a later gate run recovered them. Now a runner checks
+  every 200 ms that its gate is still there and, once it is gone, ends its
+  current step, stops its group and exits; the carrier checks its runner the
+  same way and stops the group itself if the runner is killed; and the group
+  stop is bounded on its own. A new test SIGKILLs a gate driver mid-lane, and
+  the gate and its runner together, and checks by pid that no helper or lane
+  process survives.
 - **`dyfj --socket <path> start` listens on that path.** The runtime took its
   socket from the environment, so a socket given only by `--socket` was not
   the one it bound. The launcher now passes the resolved socket to the

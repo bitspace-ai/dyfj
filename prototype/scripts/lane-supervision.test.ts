@@ -1,4 +1,5 @@
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
@@ -15,16 +16,16 @@ function reader(values: Record<string, string>) {
   return (name: string) => values[name];
 }
 
-Deno.test("a run the gate did not start is unsupervised", () => {
-  assertStrictEquals(laneSupervision(reader({})), undefined);
-  assertStrictEquals(
+test("a run the gate did not start is unsupervised", () => {
+  assert.equal(laneSupervision(reader({})), undefined);
+  assert.equal(
     laneSupervision(reader({ [LANE_TOKEN_ENV]: TOKEN })),
     undefined,
   );
 });
 
-Deno.test("a gate lane reads its deadline, backstop and token", () => {
-  assertEquals(
+test("a gate lane reads its deadline, backstop and token", () => {
+  assert.deepEqual(
     laneSupervision(reader({
       [LANE_DEADLINE_ENV]: "120000",
       [LANE_BACKSTOP_ENV]: "180000",
@@ -32,7 +33,7 @@ Deno.test("a gate lane reads its deadline, backstop and token", () => {
     })),
     { deadlineMs: 120000, backstopMs: 180000, token: TOKEN },
   );
-  assertEquals(
+  assert.deepEqual(
     laneSupervision(reader({
       [LANE_DEADLINE_ENV]: "1",
       [LANE_BACKSTOP_ENV]: String(MAX_TIMER_DELAY_MS),
@@ -42,19 +43,19 @@ Deno.test("a gate lane reads its deadline, backstop and token", () => {
   );
 });
 
-Deno.test("malformed supervision values leave the run unsupervised", () => {
+test("malformed supervision values leave the run unsupervised", () => {
   for (
     const values of [
       { deadline: "0", backstop: "1", token: TOKEN },
       { deadline: "1", backstop: "-5", token: TOKEN },
       { deadline: "1", backstop: "1.5", token: TOKEN },
-      // Past the longest delay a Deno timer honours.
+      // Past the longest delay a timer honours.
       { deadline: "1", backstop: "2147483648", token: TOKEN },
       { deadline: "1", backstop: "1", token: "not-a-token" },
       { deadline: "1", backstop: "1", token: `${TOKEN} extra` },
     ]
   ) {
-    assertStrictEquals(
+    assert.equal(
       laneSupervision(reader({
         [LANE_DEADLINE_ENV]: values.deadline,
         [LANE_BACKSTOP_ENV]: values.backstop,
@@ -66,8 +67,8 @@ Deno.test("malformed supervision values leave the run unsupervised", () => {
   }
 });
 
-Deno.test("a lane token is a lowercase UUID carried as --dyfj-lane", () => {
-  assertEquals(laneTokenArgument(TOKEN), `--dyfj-lane=${TOKEN}`);
-  assertStrictEquals(isLaneToken(TOKEN), true);
-  assertStrictEquals(isLaneToken(TOKEN.toUpperCase()), false);
+test("a lane token is a lowercase UUID carried as --dyfj-lane", () => {
+  assert.deepEqual(laneTokenArgument(TOKEN), `--dyfj-lane=${TOKEN}`);
+  assert.equal(isLaneToken(TOKEN), true);
+  assert.equal(isLaneToken(TOKEN.toUpperCase()), false);
 });

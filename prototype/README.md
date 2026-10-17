@@ -379,14 +379,16 @@ file; and, until the gate-tooling port, its `scripts/` files on `Deno.test` unde
 that leaks a timer, but they do not see `node:` resources. A test may opt out of a
 sanitizer only with a comment naming the leak and why it is unavoidable. Under the gate,
 the unit, integration and golden runners are supervised test lanes
-(`scripts/lane-supervision.ts`): each has a deadline, a backstop for when the gate itself
-is gone, and stops its own process group when its work is done; the root README describes
-it. A direct `deno task` run is unsupervised. The lane owns
+(`scripts/lane-supervision.ts`): each runs on Node, has a deadline, a backstop for when
+the gate itself is gone, and stops its own process group when its work is done or its gate
+dies; the root README describes it. A direct `deno task` run is unsupervised. The lane owns
 a temporary Dolt repository and SQL server, with cleanup on normal completion and handled
 failure. SIGINT and SIGTERM request cooperative cancellation; the direct lane process
 receives SIGTERM followed by a bounded wait and possible SIGKILL. The prototype and root
 test tasks resolve the selected Deno executable once per entrypoint and reuse that
-absolute command identity in nested run grants. The Rust tracer test retains
+absolute command identity in nested run grants; the `node` runners of `test:unit`,
+`test:file` and the integration lane take it as `DENO_BIN` for their gate-tooling
+`deno test` subset, and `test:golden` (`node testing/golden/run.ts`) needs none. The Rust tracer test retains
 its manual-run `.env` loader, but the fixture's explicit `DATABASE_URL` takes
 precedence, so the lane does not use an operator database.
 

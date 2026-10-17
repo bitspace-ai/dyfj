@@ -1,3 +1,5 @@
+import process from "node:process";
+
 const inheritedEnvironmentNames = [
   "PATH",
   "HOME",
@@ -12,7 +14,7 @@ const inheritedEnvironmentNames = [
 
 export function integrationChildEnvironment(
   explicit: Record<string, string>,
-  read: (name: string) => string | undefined = Deno.env.get,
+  read: (name: string) => string | undefined = (name) => process.env[name],
 ): Record<string, string> {
   return {
     ...Object.fromEntries(

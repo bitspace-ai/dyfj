@@ -4,7 +4,7 @@
 // as the real runners start it (`prototype/scripts/node-test-lane.ts`), over
 // `<dir>/hang.test.mjs`, a file whose test never ends.
 //
-// Usage: node-lane-runner.fixture.ts <dir>
+// Usage: node node-lane-runner.fixture.ts <dir>
 import process from "node:process";
 import {
   laneSupervision,
@@ -19,10 +19,8 @@ if (dir === undefined) {
   console.error("usage: node-lane-runner.fixture.ts <dir>");
   process.exit(64);
 }
-// The runtime running this script, which the supervision helpers re-run.
-const runtime = process.execPath;
 const supervision = laneSupervision();
-startTokenCarrier(supervision, runtime);
+startTokenCarrier(supervision);
 const run = startNodeTests({
   lane: "stand-in",
   files: ["hang.test.mjs"],
@@ -30,8 +28,8 @@ const run = startNodeTests({
   env: { PATH: process.env.PATH ?? "", DYFJ_FIXTURE_DIR: dir },
   jobs: 1,
 });
-const backstop = startBackstop(supervision, runtime, () => run.kill());
+const backstop = startBackstop(supervision, () => run.kill());
 const code = await run.code;
 backstop.clear();
-await stopOwnGroup(supervision, runtime);
+await stopOwnGroup(supervision);
 process.exit(backstop.expired ? 1 : code);

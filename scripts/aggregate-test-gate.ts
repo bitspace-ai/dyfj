@@ -3,7 +3,6 @@ import {
   isLaneToken,
   LANE_BACKSTOP_ENV,
   LANE_DEADLINE_ENV,
-  LANE_ENV_NAMES,
   LANE_TOKEN_ENV,
   laneTokenArgument,
   MAX_TIMER_DELAY_MS,
@@ -575,7 +574,6 @@ export function productionLanes(
   const prototype = `${root}/prototype`;
   const core = `${root}/core`;
   const binding = bindingEnvironment();
-  const laneEnv = LANE_ENV_NAMES.join(",");
   const bound = readOptionalEnv(TEST_BOUND_ENV);
   const subjectLane = (check: string): GateLane => ({
     label: check === "subject.resolve"
@@ -801,21 +799,13 @@ export function productionLanes(
     {
       label: "Prototype unit test suite (test.unit)",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      // The runner itself, not `deno task test:unit`: it has to lead the lane
-      // group so its end-of-run group stop reaches the group and nothing else.
-      args: [
-        "run",
-        // NODE_V8_COVERAGE: read by node:child_process on every spawn; node:
-        // the product tests run under `node --test`; the selected Deno: the
-        // gate-tooling tests under `prototype/scripts/` still run under
-        // `deno test` until the gate-tooling port, and lane supervision.
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,DENO_JOBS,NODE_V8_COVERAGE,${laneEnv}`,
-        "--allow-read=.",
-        `--allow-run=${denoExecutable},node`,
-        "scripts/run-unit-tests.ts",
-      ],
+      // The runner itself, on Node, not `deno task test:unit`: it has to lead
+      // the lane group so its end-of-run group stop reaches the group and
+      // nothing else. It runs the gate-tooling tests under
+      // `prototype/scripts/` with the executable DENO_BIN names until the
+      // gate-tooling port, then the product tests under `node --test`.
+      command: "node",
+      args: ["scripts/run-unit-tests.ts"],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.unit, bound),
@@ -994,39 +984,23 @@ export function productionLanes(
     {
       label: "Isolated Dolt integration lane",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,CARGO_HOME,RUSTUP_HOME,DENO_BIN,DENO_DIR,DYFJ_ROOT,NODE_V8_COVERAGE,${laneEnv}`,
-        // Read on the temp roots lets the lane resolve the real path of the
-        // temp directory it hands the tests (macOS /tmp is a symlink).
-        "--allow-read=.,..,/tmp,/private/tmp,/var/folders,/private/var/folders",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders,.",
-        `--allow-run=${denoExecutable},dolt,cargo,node`,
-        "--allow-net=127.0.0.1",
-        "scripts/isolated-dolt-integration.ts",
-      ],
+      // The runner, on Node: the gate-tooling subset runs under the
+      // executable DENO_BIN names, with its own grants, until the
+      // gate-tooling port.
+      command: "node",
+      args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
-    // the engine server and CLI over an isolated Dolt fixture. The runner
-    // itself needs no network; its tests run under `node --test`, unsandboxed.
+    // the engine server and CLI over an isolated Dolt fixture. The runner and
+    // its tests run on Node, under `node --test`, unsandboxed.
     {
       label: "Golden characterization suite (test.golden)",
       checkId: "test.aggregate",
-      command: denoExecutable,
-      commandLabel: "deno",
-      args: [
-        "run",
-        `--allow-env=PATH,HOME,TMPDIR,TEMP,TMP,DENO_BIN,NODE_V8_COVERAGE,${laneEnv}`,
-        "--allow-read=.",
-        "--allow-write=/tmp,/private/tmp,/var/folders,/private/var/folders",
-        `--allow-run=${denoExecutable},node`,
-        "testing/golden/run.ts",
-      ],
+      command: "node",
+      args: ["testing/golden/run.ts"],
       cwd: prototype,
       env: { TMPDIR: "/tmp", DENO_BIN: denoExecutable },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.golden, bound),

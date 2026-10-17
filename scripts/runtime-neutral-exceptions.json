@@ -26,7 +26,7 @@
   },
   {
     "path": "prototype/scripts/integration-child-environment.ts",
-    "count": 2,
+    "count": 1,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -36,22 +36,12 @@
   },
   {
     "path": "prototype/scripts/isolated-dolt-integration.ts",
-    "count": 20,
-    "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/lane-supervision.test.ts",
-    "count": 5,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "prototype/scripts/lane-supervision.ts",
-    "count": 30,
+    "count": 4,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
     "path": "prototype/scripts/run-unit-tests.ts",
-    "count": 9,
+    "count": 2,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -80,11 +70,6 @@
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
-    "path": "prototype/testing/golden/run.ts",
-    "count": 5,
-    "reason": "The golden lane runner, a Deno orchestration script that spawns the node --test lane; ported to node: builtins with the gate-tooling port under decision D32."
-  },
-  {
     "path": "schema/codegen.ts",
     "count": 8,
     "reason": "Host API in runtime source; ported to node: builtins under S1 of decision D32."
@@ -106,7 +91,7 @@
   },
   {
     "path": "scripts/aggregate-test-gate.ts",
-    "count": 45,
+    "count": 44,
     "reason": "Gate and tooling script; ported to node: builtins under S3 of decision D32."
   },
   {
@@ -146,22 +131,12 @@
   },
   {
     "path": "scripts/gate-driver.fixture.ts",
-    "count": 3,
+    "count": 2,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   },
   {
     "path": "scripts/git-hooks.test.ts",
     "count": 13,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/lane-runner.fixture.ts",
-    "count": 10,
-    "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
-  },
-  {
-    "path": "scripts/lane-supervision.test.ts",
-    "count": 47,
     "reason": "Test dialect and host API in a test; converted to node:test under S2 of decision D32."
   }
 ]
