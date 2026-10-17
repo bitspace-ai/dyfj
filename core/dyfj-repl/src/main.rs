@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
-    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket);
+    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket, control.is_some());
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
     }
@@ -218,7 +218,7 @@ async fn main() -> Result<()> {
                     client = restarted;
                     incoming = restarted_incoming;
                     let reason = control.as_ref().and_then(|c| c.take_reason());
-                    link::resume(&client, &session, &socket, reason).await;
+                    link::resume(&client, &session, &socket, reason, control.is_some()).await;
                     continue;
                 }
             }
@@ -270,14 +270,22 @@ async fn main() -> Result<()> {
             Submission::Prompt => {}
         }
 
-        // `/reload` is a command only under `dyfj dev`; elsewhere it stays a
-        // prompt, as any unknown `/word` does.
-        if let Some(control) = control.as_ref()
-            && line.trim() == "/reload"
-        {
-            control.request_reload();
-            eprintln!("reload requested");
-            continue;
+        // `/reload` and `/rollback` are commands only under `dyfj dev`;
+        // elsewhere they stay prompts, as any unknown `/word` does.
+        if let Some(control) = control.as_ref() {
+            match line.trim() {
+                "/reload" => {
+                    control.request_reload();
+                    eprintln!("reload requested");
+                    continue;
+                }
+                "/rollback" => {
+                    control.request_rollback();
+                    eprintln!("rollback requested");
+                    continue;
+                }
+                _ => {}
+            }
         }
 
         if let Some(command) = commands::parse(&line) {
@@ -297,6 +305,7 @@ async fn main() -> Result<()> {
             if let Some(control) = control.as_mut() {
                 if help {
                     eprintln!("  /reload                                              restart the dev runtime now (dyfj dev)");
+                    eprintln!("  /rollback                                            run the last good code instead (dyfj dev)");
                 }
                 control.note_session(session.id.as_deref());
             }

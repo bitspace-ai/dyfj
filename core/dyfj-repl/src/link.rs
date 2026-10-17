@@ -202,7 +202,7 @@ pub fn note_orphan(outcome: &ReadOutcome) {
 /// it in its store, and the next turn names its id. Nothing about the session
 /// changes here, and nothing that was in flight is resent. `reason` is why the
 /// runtime restarted, when `dyfj dev` said.
-pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Option<String>) {
+pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Option<String>, dev: bool) {
     let status = client.request("runtime/status", json!({})).await;
     let resumed = match &session.id {
         Some(id) => match commands::recorded_model(client, id).await {
@@ -215,7 +215,7 @@ pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Op
         None => String::new(),
     };
     println!("\n{}", reloaded_notice(reason.as_deref(), &resumed));
-    posture::show(&status, session, socket);
+    posture::show(&status, session, socket, dev);
 }
 
 /// `runtime reloaded`, with the restart's reason when there is one.
@@ -441,7 +441,7 @@ mod tests {
 
         let mut session = resumed_session(SESSION);
         let attach = async { conn.answer_attach(Some(SESSION)).await };
-        tokio::join!(resume(&client, &session, &path, None), attach);
+        tokio::join!(resume(&client, &session, &path, None, false), attach);
 
         let turn = async {
             let frame = conn.expect_request("turn").await;
@@ -497,7 +497,7 @@ mod tests {
             conn.answer(&frame, json!({"sessionId": SESSION, "text": "ok"})).await;
         };
         let run = async {
-            resume(&client, &session, &path, None).await;
+            resume(&client, &session, &path, None, false).await;
             run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "again", &mut session)
                 .await
         };
@@ -556,7 +556,7 @@ mod tests {
             panic!("must reconnect");
         };
         let mut conn = second.accept().await;
-        tokio::join!(resume(&client, &session, &path, None), conn.answer_attach(Some(SESSION)));
+        tokio::join!(resume(&client, &session, &path, None, false), conn.answer_attach(Some(SESSION)));
 
         // The operator answers the cancelled question only now.
         let _ = open_read.send(ReadOutcome::Line("y".into()));
@@ -705,7 +705,7 @@ mod tests {
             conn.answer(&frame, json!({"sessionId": SESSION, "text": "ok"})).await;
         };
         let run = async {
-            resume(&client, &session, &path, None).await;
+            resume(&client, &session, &path, None, false).await;
             run_turn(&client, &repl.input, &mut incoming, &mut repl.interrupts, "again", &mut session).await
         };
         let (end, ()) = tokio::join!(run, next);

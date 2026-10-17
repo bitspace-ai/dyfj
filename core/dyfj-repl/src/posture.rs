@@ -15,9 +15,11 @@ pub const FINGERPRINT_UNKNOWN: &str = "unknown";
 
 /// Print the posture line for a `runtime/status` answer, with any warnings
 /// it carries, or say the posture is unavailable. Shown at startup and again
-/// when the REPL re-attaches to a restarted runtime.
-pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str) {
-    let (out, err) = render(status, session, socket, &local_source_hash());
+/// when the REPL re-attaches to a restarted runtime. `dev` is whether
+/// `dyfj dev` supervises this REPL, which changes how a runtime behind the
+/// working tree catches up.
+pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str, dev: bool) {
+    let (out, err) = render(status, session, socket, &local_source_hash(), dev);
     for line in out {
         println!("{line}");
     }
@@ -28,10 +30,16 @@ pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str) {
 
 /// What `show` prints, to stdout and to stderr, given this checkout's source
 /// hash.
-fn render(status: &anyhow::Result<Value>, session: &Session, socket: &str, local_hash: &str) -> (Vec<String>, Vec<String>) {
+fn render(
+    status: &anyhow::Result<Value>,
+    session: &Session,
+    socket: &str,
+    local_hash: &str,
+    dev: bool,
+) -> (Vec<String>, Vec<String>) {
     match status {
         Ok(status) => (
-            vec![line_with_local_hash(status, session, socket, local_hash)],
+            vec![line_with_local_hash(status, session, socket, local_hash, dev)],
             unresolved_pointer_warnings(status),
         ),
         Err(err) => (vec![runtime_line("posture: unavailable", &err.to_string(), socket)], Vec::new()),
@@ -49,7 +57,7 @@ pub fn runtime_line(context: &str, message: &str, local: &str) -> String {
 /// itself; `show` renders through `render`.
 #[cfg(test)]
 pub fn line(status: &Value, session: &Session, socket: &str) -> String {
-    line_with_local_hash(status, session, socket, &local_source_hash())
+    line_with_local_hash(status, session, socket, &local_source_hash(), false)
 }
 
 /// The source hash of the checkout the launcher names in
@@ -67,9 +75,9 @@ fn local_source_hash() -> String {
 /// reporting one should cost a narrower line, not a failed startup. When the
 /// runtime's code differs from this checkout's (`local_hash`), a warning line
 /// follows.
-pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, local_hash: &str) -> String {
+pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, local_hash: &str, dev: bool) -> String {
     let posture = posture_line(status, session, socket);
-    match freshness_warning(status, local_hash) {
+    match freshness_warning(status, local_hash, dev) {
         Some(warning) => format!("{posture}\n{warning}"),
         None => posture,
     }
@@ -79,14 +87,21 @@ pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, loc
 /// checkout's, saying how it will catch up. `None` when they match, when
 /// either hash is unknown or not a well-formed hash, or when the runtime
 /// reports no fingerprint (an older runtime). The TypeScript REPL prints the
-/// same text (`formatFreshnessWarning` in `prototype/src/cli/posture.ts`).
-pub fn freshness_warning(status: &Value, local_hash: &str) -> Option<String> {
+/// same text (`formatFreshnessWarning` in `prototype/src/cli/posture.ts`),
+/// except under `dyfj dev` (`dev`), which the TypeScript REPL never runs
+/// under: there a runtime behind the tree is the last good code, running
+/// because the tree's runtime did not start or `/rollback` chose it.
+pub fn freshness_warning(status: &Value, local_hash: &str, dev: bool) -> Option<String> {
     let runtime = status.get("runtime").unwrap_or(status);
     let runtime_hash = runtime.get("fingerprint")?.get("contentHash")?.as_str()?;
     if !is_content_hash(runtime_hash) || !is_content_hash(local_hash) || runtime_hash == local_hash {
         return None;
     }
-    Some(if runtime.get("autostarted").and_then(Value::as_bool) == Some(true) {
+    Some(if dev {
+        "warning: runtime is behind the working tree; dyfj dev is running the last \
+         good code, and saving a file retries the working tree's runtime"
+            .into()
+    } else if runtime.get("autostarted").and_then(Value::as_bool) == Some(true) {
         "warning: runtime is behind the working tree; dyfj started it, so it \
          stops 10 s after its last client disconnects and the next dyfj loads \
          the current code"
@@ -459,30 +474,46 @@ mod tests {
         #[test]
         fn warns_when_the_runtime_is_behind_and_says_how_it_recovers() {
             let manual = json!({"runtime": {"autostarted": false, "fingerprint": {"head": "x", "contentHash": OLD}}});
-            let warning = freshness_warning(&manual, LOCAL).expect("behind");
+            let warning = freshness_warning(&manual, LOCAL, false).expect("behind");
             assert!(warning.starts_with("warning: runtime is behind the working tree; "), "{warning}");
             assert!(warning.contains("`dyfj stop`, then `dyfj start`"), "{warning}");
 
             let auto = json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": OLD}}});
-            let warning = freshness_warning(&auto, LOCAL).expect("behind");
+            let warning = freshness_warning(&auto, LOCAL, false).expect("behind");
             assert!(warning.contains("10 s after its last client"), "{warning}");
 
-            let rendered = line_with_local_hash(&manual, &Session::default(), "/tmp/s.sock", LOCAL);
+            let rendered = line_with_local_hash(&manual, &Session::default(), "/tmp/s.sock", LOCAL, false);
             let mut lines = rendered.lines();
             assert_eq!(lines.next(), Some("posture: /tmp/s.sock"));
             assert!(lines.next().unwrap().starts_with("warning: runtime is behind the working tree"));
         }
 
         #[test]
+        fn under_dyfj_dev_says_the_last_good_code_is_running_and_a_save_retries() {
+            for autostarted in [true, false] {
+                let behind = json!({"runtime": {"autostarted": autostarted, "fingerprint": {"head": "x", "contentHash": OLD}}});
+                let warning = freshness_warning(&behind, LOCAL, true).expect("behind");
+                assert_eq!(
+                    warning,
+                    "warning: runtime is behind the working tree; dyfj dev is running the last \
+                     good code, and saving a file retries the working tree's runtime"
+                );
+                assert!(!warning.contains("10 s"), "{warning}");
+            }
+            let current = json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": LOCAL}}});
+            assert_eq!(freshness_warning(&current, LOCAL, true), None);
+        }
+
+        #[test]
         fn says_nothing_when_current_or_either_side_is_unknown() {
             let current = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": LOCAL}}});
-            assert_eq!(freshness_warning(&current, LOCAL), None);
+            assert_eq!(freshness_warning(&current, LOCAL, false), None);
             let stale = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": OLD}}});
-            assert_eq!(freshness_warning(&stale, FINGERPRINT_UNKNOWN), None);
+            assert_eq!(freshness_warning(&stale, FINGERPRINT_UNKNOWN, false), None);
             let unknown = json!({"runtime": {"fingerprint": {"head": "unknown", "contentHash": "unknown"}}});
-            assert_eq!(freshness_warning(&unknown, LOCAL), None);
-            assert_eq!(freshness_warning(&json!({"runtime": {}}), LOCAL), None);
-            assert_eq!(freshness_warning(&json!({"runtime": {"fingerprint": {"contentHash": 7}}}), LOCAL), None);
+            assert_eq!(freshness_warning(&unknown, LOCAL, false), None);
+            assert_eq!(freshness_warning(&json!({"runtime": {}}), LOCAL, false), None);
+            assert_eq!(freshness_warning(&json!({"runtime": {"fingerprint": {"contentHash": 7}}}), LOCAL, false), None);
         }
 
         /// "Behind" can restart a runtime, so a hash that is not a full
@@ -500,12 +531,12 @@ mod tests {
             ];
             for hash in &malformed {
                 let runtime = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": hash}}});
-                assert_eq!(freshness_warning(&runtime, LOCAL), None, "runtime {hash:?}");
+                assert_eq!(freshness_warning(&runtime, LOCAL, false), None, "runtime {hash:?}");
                 let valid = json!({"runtime": {"fingerprint": {"head": "x", "contentHash": OLD}}});
-                assert_eq!(freshness_warning(&valid, hash), None, "local {hash:?}");
+                assert_eq!(freshness_warning(&valid, hash, false), None, "local {hash:?}");
             }
             let same = json!({"runtime": {"fingerprint": {"contentHash": "sha256:x"}}});
-            assert_eq!(freshness_warning(&same, "sha256:y"), None);
+            assert_eq!(freshness_warning(&same, "sha256:y", false), None);
         }
 
         /// `render` is what `show` prints; startup (`main.rs`) and a
@@ -514,14 +545,14 @@ mod tests {
         fn render_puts_the_warning_after_the_posture_line() {
             use super::super::render;
             let behind = Ok(json!({"runtime": {"autostarted": true, "fingerprint": {"head": "x", "contentHash": OLD}}}));
-            let (out, _) = render(&behind, &Session::default(), "/tmp/s.sock", LOCAL);
+            let (out, _) = render(&behind, &Session::default(), "/tmp/s.sock", LOCAL, false);
             assert_eq!(out.len(), 1, "{out:?}");
             let mut lines = out[0].lines();
             assert_eq!(lines.next(), Some("posture: /tmp/s.sock"));
             assert!(lines.next().unwrap().starts_with("warning: runtime is behind the working tree"), "{out:?}");
 
             let current = Ok(json!({"runtime": {"fingerprint": {"head": "x", "contentHash": LOCAL}}}));
-            let (out, _) = render(&current, &Session::default(), "/tmp/s.sock", LOCAL);
+            let (out, _) = render(&current, &Session::default(), "/tmp/s.sock", LOCAL, false);
             assert_eq!(out, ["posture: /tmp/s.sock"]);
         }
 
@@ -538,7 +569,7 @@ mod tests {
             after["runtime"]["clients"] = json!(2);
             after["runtime"]["inFlightTurns"] = json!(1);
             assert_eq!(
-                line_with_local_hash(&after, &Session::default(), "/tmp/s.sock", LOCAL),
+                line_with_local_hash(&after, &Session::default(), "/tmp/s.sock", LOCAL, false),
                 line(&before, &Session::default(), "/tmp/s.sock"),
             );
         }
