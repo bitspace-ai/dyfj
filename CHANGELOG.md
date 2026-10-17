@@ -49,6 +49,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The launcher integration test runs under `node --test`.**
+  `prototype/scripts/dyfj-launcher.integration.test.ts` registers with
+  `node:test` and takes its assertions from `node:assert/strict`. It runs the
+  bash launcher with `node:child_process`, and builds its temp roots, symlink
+  fixtures and stand-in executables with `node:fs`. It therefore leaves the
+  integration lane's `deno test` subset for the lane's Node subset, which
+  runs it with the per-file handle check. It keeps all 73 cases, with the same
+  names in the same 13 groups. The file is now under `tsc` (it is off the root
+  `tsconfig.json` exclude list) and off the `runtime.neutral` exception list.
+  The `deno test` subset's grants lose what only this file used: `bash`,
+  `/bin/bash`, `ln`, `python3`, `/bin/kill` and `/bin/ps` to run, and
+  `DENO_DIR`, `DYFJ_NODE_PATH`, `DYFJ_CODEX_TOOLCHAIN_PATH` and
+  `DYFJ_CODEX_RUSTUP_HOME` to read. What remains in that subset is
+  `isolated-dolt-fixture.integration.test.ts`. The launcher itself is
+  unchanged.
 - **The gate runs on Node, and `npm test` is its entry.** The aggregate gate
   (`scripts/aggregate-test-gate.ts`) is written to `node:` builtins: it starts
   each lane with `node:child_process` as the leader of its own process group,
