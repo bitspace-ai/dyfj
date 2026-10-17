@@ -1,3 +1,4 @@
+import process from "node:process";
 import {
   assertSchemaApplyPlan,
   readSchemaApplyPlan,
@@ -104,12 +105,12 @@ if (import.meta.main) {
   };
   const onSigint = () => interrupt(130);
   const onSigterm = () => interrupt(143);
-  Deno.addSignalListener("SIGINT", onSigint);
-  Deno.addSignalListener("SIGTERM", onSigterm);
+  process.on("SIGINT", onSigint);
+  process.on("SIGTERM", onSigterm);
   let exitCode = 0;
   try {
     await validateSchema(
-      parseSchemaValidationScope(Deno.args),
+      parseSchemaValidationScope(process.argv.slice(2)),
       abortController.signal,
     );
     if (interruptedExitCode !== undefined) exitCode = interruptedExitCode;
@@ -121,8 +122,8 @@ if (import.meta.main) {
       exitCode = 1;
     }
   } finally {
-    Deno.removeSignalListener("SIGINT", onSigint);
-    Deno.removeSignalListener("SIGTERM", onSigterm);
+    process.off("SIGINT", onSigint);
+    process.off("SIGTERM", onSigterm);
   }
-  if (exitCode !== 0) Deno.exit(exitCode);
+  process.exitCode = exitCode;
 }

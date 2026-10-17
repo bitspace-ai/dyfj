@@ -5,10 +5,12 @@
  * `prototype/src/store/generated/rows.ts`. Output is deterministic: tables
  * sorted by name, columns in declaration order.
  *
- *   deno task schema:codegen          write the file
- *   deno task schema:codegen --check  fail if the committed file is stale
+ *   npm run schema:codegen              write the file
+ *   npm run schema:codegen -- --check   fail if the committed file is stale
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import process from "node:process";
 import {
   assertSchemaApplyPlan,
   readSchemaApplyPlan,
@@ -339,31 +341,33 @@ export async function generateRows(signal?: AbortSignal): Promise<string> {
 }
 
 if (import.meta.main) {
-  const check = Deno.args.includes("--check");
-  if (Deno.args.some((arg) => arg !== "--check")) {
+  const args = process.argv.slice(2);
+  const check = args.includes("--check");
+  if (args.some((arg) => arg !== "--check")) {
     console.error("usage: codegen.ts [--check]");
-    Deno.exit(2);
+    process.exit(2);
   }
   const target = new URL(`../${GENERATED_ROWS_PATH}`, import.meta.url);
   const generated = await generateRows();
   if (check) {
     let committed: string | null = null;
     try {
-      committed = await Deno.readTextFile(target);
+      committed = await readFile(target, "utf8");
     } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      if ((error as { code?: unknown }).code !== "ENOENT") throw error;
     }
     if (committed !== generated) {
       console.error(
         `schema.codegen: ${GENERATED_ROWS_PATH} is stale against schema/. ` +
           "Regenerate it with `deno task schema:codegen` and commit the result.",
       );
-      Deno.exit(1);
+      process.exitCode = 1;
+    } else {
+      console.log(`schema.codegen: ${GENERATED_ROWS_PATH} is current.`);
     }
-    console.log(`schema.codegen: ${GENERATED_ROWS_PATH} is current.`);
   } else {
-    await Deno.mkdir(new URL("./", target), { recursive: true });
-    await Deno.writeTextFile(target, generated);
+    await mkdir(new URL("./", target), { recursive: true });
+    await writeFile(target, generated);
     console.log(`schema.codegen: wrote ${GENERATED_ROWS_PATH}.`);
   }
 }
