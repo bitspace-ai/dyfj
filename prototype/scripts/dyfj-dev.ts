@@ -16,6 +16,11 @@
  *   stopping it, the runtime stops itself 10 s after its last client leaves.
  * - Quitting the REPL stops the runtime (`runtime/stop`, then SIGTERM and
  *   SIGKILL to its process group if it lingers) and ends `dyfj dev`.
+ * - A runtime that boots on the working tree becomes the last good code
+ *   (`dev-snapshot.ts`). When one fails to start, the last good code runs
+ *   instead, on the same socket with the same args and env, plus the failed
+ *   start's log output, sanitized, in `DYFJ_DEV_BOOT_FAILURE`: native turns
+ *   carry it to the model (`src/context/dev-boot-failure.ts`).
  *
  * The REPL gets a control channel on descriptor 3 (`DYFJ_DEV_CONTROL_FD`):
  * see `core/dyfj-repl/src/dev_control.rs`.
@@ -33,12 +38,14 @@ import {
   writeSync,
 } from "node:fs";
 import { constants as osConstants } from "node:os";
+import { homedir } from "node:os";
 import { dirname } from "node:path";
 import process from "node:process";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { resolveRuntimeLaunch } from "../src/cli/launcher/runtime.ts";
 import { guardedSpawn, type RuntimePolicy } from "../src/config/mod.ts";
+import { DEV_BOOT_FAILURE_ENV, sanitizeDevBootFailure } from "../src/context/dev-boot-failure.ts";
 import type { WorkbenchRuntimeStatus } from "../src/server/rpc/runtime.ts";
 import { connectUnixClient, type UnixClient } from "../src/transport/mod.ts";
 import {
@@ -56,13 +63,16 @@ import {
   DevSupervisor,
   type Outcome,
   type ReplMessage,
+  type StartOutcome,
 } from "./dev-supervisor.ts";
-import { coreTrees, watchTrees } from "./dev-watch.ts";
+import { checkSnapshot, promoteSnapshot, snapshotPaths } from "./dev-snapshot.ts";
+import { devTrees, watchTrees } from "./dev-watch.ts";
 
 const REPO = fileURLToPath(new URL("../..", import.meta.url)).replace(/\/$/, "");
 const PROTOTYPE = `${REPO}/prototype`;
 const CORE = `${REPO}/core`;
 const REPL_BIN = `${CORE}/target/debug/dyfj-repl`;
+const SNAPSHOT = snapshotPaths(REPO);
 
 /** How long a starting runtime has to answer. */
 const READY_TIMEOUT_MS = 60_000;
@@ -144,6 +154,7 @@ export function parseReplMessage(line: string): ReplMessage | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const message = value as Record<string, unknown>;
   if (message.type === "reload") return { type: "reload" };
+  if (message.type === "rollback") return { type: "rollback" };
   if (
     message.type === "session" && typeof message.id === "string" &&
     SESSION_ID.test(message.id)
@@ -165,6 +176,47 @@ export function inFlightTurnsFrom(response: unknown): number | null {
     ? runtime.inFlightTurns
     : undefined;
   return typeof count === "number" ? count : null;
+}
+
+/**
+ * The code a runtime loaded, from its `runtime/status` response
+ * (`{ runtime: WorkbenchRuntimeStatus }`); null when it does not say.
+ */
+export function contentHashFrom(response: unknown): string | null {
+  const runtime = (response as { runtime?: Partial<WorkbenchRuntimeStatus> } | null)
+    ?.runtime;
+  const hash = typeof runtime === "object" && runtime !== null
+    ? runtime.fingerprint?.contentHash
+    : undefined;
+  return typeof hash === "string" ? hash : null;
+}
+
+const SERVER_ENTRY = "src/server/main.ts";
+
+/** The runtime's args with its server entry swapped for the snapshot's. */
+export function lastGoodArgs(args: readonly string[], entry: string): string[] {
+  const at = args.indexOf(SERVER_ENTRY);
+  if (at < 0) throw new Error(`the runtime's args name no server entry (${SERVER_ENTRY})`);
+  return args.map((arg, i) => (i === at ? entry : arg));
+}
+
+const LOG_HEADER = "── dyfj dev runtime at ";
+
+/** A failed start's own output: the log after `offset`, its header line dropped. */
+export function bootFailureDetail(log: string, offset: number): string {
+  const text = log.slice(offset);
+  return text.startsWith(LOG_HEADER) ? text.slice(text.indexOf("\n") + 1) : text;
+}
+
+/**
+ * Paths in a boot failure as the model's file tools name them: the
+ * repository's prefix dropped, with or without `file://`, and the home
+ * directory as `~`, so no host path reaches a hosted provider.
+ */
+export function localizePaths(text: string, repo: string, home: string): string {
+  let out = text.replaceAll(`file://${repo}/`, "").replaceAll(`${repo}/`, "");
+  if (home !== "" && home !== "/") out = out.replaceAll(home, "~");
+  return out;
 }
 
 function report(line: string): void {
@@ -329,6 +381,15 @@ function logReason(log: string, offset: number): string {
   return lines.findLast((l) => /error/i.test(l)) ?? lines.at(-1) ?? `see ${log}`;
 }
 
+/** The failed start's whole output, for the last good code to show the model. */
+function logDetail(log: string, offset: number): string {
+  try {
+    return bootFailureDetail(readFileSync(log).subarray(offset).toString("utf8"), 0);
+  } catch {
+    return "";
+  }
+}
+
 /** The dev runtime: one child process at a time, in its own process group. */
 class DevRuntime implements DevRuntimePort {
   #child: ChildProcess | undefined;
@@ -343,7 +404,23 @@ class DevRuntime implements DevRuntimePort {
     this.log = log;
   }
 
-  async start(): Promise<Outcome> {
+  start(): Promise<StartOutcome> {
+    return this.#launch((args) => args, {});
+  }
+
+  startLastGood(failure: string): Promise<StartOutcome> {
+    const text = sanitizeDevBootFailure(localizePaths(failure, REPO, homedir()));
+    return this.#launch(
+      (args) => lastGoodArgs(args, SNAPSHOT.entry),
+      { [DEV_BOOT_FAILURE_ENV]: text },
+    );
+  }
+
+  /** Start a runtime and wait until it answers, or until it exits. */
+  async #launch(
+    argsFor: (args: string[]) => string[],
+    extraEnv: Record<string, string>,
+  ): Promise<StartOutcome> {
     const launch = await resolveRuntimeLaunch(PROTOTYPE, this.socket, true);
     let fd: number;
     try {
@@ -352,15 +429,17 @@ class DevRuntime implements DevRuntimePort {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
     const offset = fstatSync(fd).size;
-    writeSync(fd, `── dyfj dev runtime at ${new Date().toISOString()}, socket ${this.socket} ──\n`);
+    writeSync(fd, `${LOG_HEADER}${new Date().toISOString()}, socket ${this.socket} ──\n`);
     let child: ChildProcess;
     try {
-      child = spawn(process.execPath, launch.args, {
+      child = spawn(process.execPath, argsFor(launch.args), {
         cwd: PROTOTYPE,
-        env: launch.env,
+        env: { ...launch.env, ...extraEnv },
         stdio: ["ignore", fd, fd],
         detached: true,
       });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     } finally {
       closeSync(fd);
     }
@@ -379,13 +458,13 @@ class DevRuntime implements DevRuntimePort {
     while (!gone && Date.now() < deadline) {
       try {
         const client = await connectUnixClient(this.socket, {}, AbortSignal.timeout(500));
-        await client.request("runtime/status", {}, AbortSignal.timeout(2000));
+        const status = await client.request("runtime/status", {}, AbortSignal.timeout(2000));
         if (gone) {
           client.close();
           break;
         }
         this.#anchor = client;
-        return { ok: true };
+        return { ok: true, contentHash: contentHashFrom(status) };
       } catch {
         await delay(200);
       }
@@ -394,7 +473,11 @@ class DevRuntime implements DevRuntimePort {
       await this.#terminate(child);
       return { ok: false, error: `the runtime did not answer within ${READY_TIMEOUT_MS / 1000} s` };
     }
-    return { ok: false, error: logReason(this.log, offset) };
+    return {
+      ok: false,
+      error: logReason(this.log, offset),
+      detail: logDetail(this.log, offset),
+    };
   }
 
   async stop(): Promise<void> {
@@ -554,13 +637,6 @@ export async function main(argv: readonly string[]): Promise<number> {
   });
 
   const runtime = new DevRuntime(args.socket, args.log);
-  report(`starting the runtime at ${args.socket} (log: ${args.log})`);
-  const started = await runtime.start();
-  if (!started.ok) {
-    report(`the runtime did not start: ${started.error}`);
-    return 1;
-  }
-
   const repl = new DevRepl(args.socket, args.log, args.repl);
   const supervisor = new DevSupervisor({
     clock: {
@@ -583,13 +659,20 @@ export async function main(argv: readonly string[]): Promise<number> {
     repl,
     build: () => buildRepl(),
     report,
+    snapshot: {
+      check: () => checkSnapshot(SNAPSHOT),
+      promote: (contentHash) => promoteSnapshot(SNAPSHOT, contentHash, new Date()),
+    },
   });
   runtime.onExit = (code) => supervisor.runtimeExited(code);
   repl.onMessage = (message) => supervisor.replMessage(message);
   repl.onExit = (code) => supervisor.replExited(code);
 
+  report(`starting the runtime at ${args.socket} (log: ${args.log})`);
+  if (!(await supervisor.boot())) return 1;
+
   const watcher = watchTrees(
-    [{ dir: `${PROTOTYPE}/src`, prefix: "prototype/src" }, ...coreTrees(CORE, "core")],
+    devTrees(REPO),
     (path) => {
       if (path.endsWith("/Cargo.toml")) void readCrates().then((next) => (crates = next));
       supervisor.changed(path);

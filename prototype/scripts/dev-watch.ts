@@ -79,3 +79,11 @@ export function coreTrees(dir: string, prefix: string): WatchedTree[] {
     ...subdirectories.map((name) => ({ dir: `${dir}/${name}`, prefix: `${prefix}/${name}` })),
   ];
 }
+
+/** What `dyfj dev` watches in the repository at `repo`: `prototype/src` and `core/`. */
+export function devTrees(repo: string): WatchedTree[] {
+  return [
+    { dir: `${repo}/prototype/src`, prefix: "prototype/src" },
+    ...coreTrees(`${repo}/core`, "core"),
+  ];
+}
