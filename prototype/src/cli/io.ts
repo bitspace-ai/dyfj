@@ -160,9 +160,38 @@ export function writeLine(
   writeAll(fd, lineEncoder.encode(`${line}\n`), write, pause);
 }
 
+/**
+ * A readline interface created on first use. On a terminal, creating one puts
+ * the TTY in raw mode (no signals from Ctrl-C) until it closes, so a command
+ * that never reads must never create one. `dyfj start` did, and the runtime it
+ * spawned with inherited stdio recorded the raw mode as its startup state and
+ * restored it on exit, leaving the terminal unable to send SIGINT (BIT-686).
+ */
+export function lazyReadline<
+  T extends SigintReadline & { close(): void },
+>(create: () => T): {
+  open(): T;
+  /** SIGINT listeners; adding one opens the interface, removing one never does. */
+  sigint: SigintReadline;
+  close(): void;
+} {
+  let rl: T | undefined;
+  const open = () => rl ??= create();
+  return {
+    open,
+    sigint: {
+      on: (event, listener) => open().on(event, listener),
+      off: (event, listener) => rl?.off(event, listener),
+    },
+    close: () => rl?.close(),
+  };
+}
+
 export function realIo(): Io {
   const encoder = new TextEncoder();
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const terminal = lazyReadline(() =>
+    createInterface({ input: process.stdin, output: process.stdout })
+  );
   const inputIsTerminal = process.stdin.isTTY === true;
   const outputIsTerminal = process.stdout.isTTY === true;
   return {
@@ -174,13 +203,14 @@ export function realIo(): Io {
       writeAll(process.stderr.fd, encoder.encode(text));
     },
     errIsTerminal: process.stderr.isTTY === true,
-    readLine: (prompt, signal) => readLineOrNull(rl, prompt, signal),
+    readLine: (prompt, signal) =>
+      readLineOrNull(terminal.open(), prompt, signal),
     turnInterrupts: selectTurnInterruptSource(
       inputIsTerminal,
       outputIsTerminal,
-      readlineTurnInterruptSource(rl),
+      readlineTurnInterruptSource(terminal.sigint),
       processSigintSource,
     ),
-    close: () => rl.close(),
+    close: () => terminal.close(),
   };
 }

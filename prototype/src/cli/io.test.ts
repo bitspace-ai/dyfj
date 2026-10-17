@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import {
+  lazyReadline,
   readLineOrNull,
   readlineTurnInterruptSource,
   selectTurnInterruptSource,
@@ -121,6 +122,50 @@ describe("readlineTurnInterruptSource", () => {
       selectTurnInterruptSource(false, true, readlineSource, signalSource),
       undefined,
     );
+  });
+});
+
+describe("lazyReadline", () => {
+  function fakeReadline() {
+    const listeners: Array<() => void> = [];
+    return {
+      closed: 0,
+      listeners,
+      on(_event: "SIGINT", handler: () => void) {
+        listeners.push(handler);
+      },
+      off(_event: "SIGINT", handler: () => void) {
+        listeners.splice(listeners.indexOf(handler), 1);
+      },
+      close() {
+        this.closed++;
+      },
+    };
+  }
+
+  it("never creates the interface when nothing reads or listens", () => {
+    // A terminal readline puts the TTY in raw mode, so a command that only
+    // writes (dyfj start, status, stop) must not create one.
+    const create = mock.fn(fakeReadline);
+    const terminal = lazyReadline(create);
+    terminal.sigint.off("SIGINT", () => {});
+    terminal.close();
+    assert.equal(create.mock.callCount(), 0);
+  });
+
+  it("creates it once, on first use, and closes that one", () => {
+    const rl = fakeReadline();
+    const create = mock.fn(() => rl);
+    const terminal = lazyReadline(create);
+    const handler = () => {};
+    terminal.sigint.on("SIGINT", handler);
+    assert.strictEqual(terminal.open(), rl);
+    assert.equal(create.mock.callCount(), 1);
+    assert.deepStrictEqual(rl.listeners, [handler]);
+    terminal.sigint.off("SIGINT", handler);
+    assert.deepStrictEqual(rl.listeners, []);
+    terminal.close();
+    assert.equal(rl.closed, 1);
   });
 });
 

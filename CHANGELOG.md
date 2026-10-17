@@ -350,6 +350,26 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Ctrl-C stops a `dyfj start` runtime again, including the next one in the
+  same terminal.** The `dyfj` client created a readline interface on the
+  terminal at startup, even for commands that never read a line. On a
+  terminal that switches it to raw mode, so in `dyfj start` the first Ctrl-C
+  was a byte the unused readline consumed, not a signal. Worse, the runtime,
+  spawned with the terminal as its stdio while it was raw, recorded raw mode
+  as its startup state and restored it on exit. In zsh that left the
+  terminal with signals off, so in the next `dyfj start` in that pane Ctrl-C
+  only echoed `^C` and the runtime could not be stopped from its terminal.
+  The client now creates its readline only when it first reads a line or
+  listens for a turn's Ctrl-C, so `start`, `status`, `stop`, `models` and
+  `sessions` never change the terminal's modes.
+- **A foreground runtime can always be stopped from its terminal.**
+  `dyfj start` now ignores Ctrl-C itself and holds the terminal until its
+  runtime exits; before, the client died on the first Ctrl-C and gave the
+  terminal back to the shell while the runtime was still shutting down. In
+  the runtime, a second Ctrl-C while the shutdown is pending prints what it
+  is waiting on (the server's connections and warm ACP sessions, or the
+  store's connection pool), and a third exits at once with status 130,
+  without finishing the cleanup.
 - **Gate-lane helpers no longer outlive an interrupted gate run.** A test-lane
   token carrier waited only for its lane's group to empty, so a gate killed
   mid-lane, or killed between its teardown's TERM and KILL, left the runner,

@@ -127,12 +127,14 @@ test("foreground SIGINT closes the server and reaps warm ACP sessions", async ()
   });
   let handler: () => void | Promise<void> = () => {};
   const exitCodes: number[] = [];
-  installRuntimeSigintHandler(
-    false,
-    () => started.server.close(),
-    { add: (next) => handler = next },
-    (code) => exitCodes.push(code),
-  );
+  installRuntimeSigintHandler({
+    autostarted: false,
+    close: () => started.server.close(),
+    signals: { add: (next) => handler = next },
+    exit: (code) => exitCodes.push(code),
+    say: () => {},
+    waitingOn: () => "the server to close",
+  });
   await handler();
   assert.deepStrictEqual(exitCodes, [0]);
   assert.deepStrictEqual(state.closed, true);

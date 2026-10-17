@@ -543,16 +543,21 @@ async function main(): Promise<void> {
   const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
     resolveCloseServer = resolve;
   });
-  installRuntimeSigintHandler(
+  // What a pending shutdown waits on, for a repeated Ctrl-C to report. Only
+  // the shutdown below advances it.
+  let shutdownStage = "the runtime to finish starting";
+  installRuntimeSigintHandler({
     autostarted,
-    async () => await (await closeServerReady)(),
-    {
+    close: async () => await (await closeServerReady)(),
+    signals: {
       add: (handler) => {
         process.on("SIGINT", handler);
       },
     },
-    (code) => process.exit(code),
-  );
+    exit: (code) => process.exit(code),
+    say: (line) => console.error(line),
+    waitingOn: () => shutdownStage,
+  });
 
   let serverInstance:
     | { close(options?: { disconnectPeers?: boolean }): Promise<void> }
@@ -573,6 +578,8 @@ async function main(): Promise<void> {
     options?: { disconnectPeers?: boolean },
   ) => {
     try {
+      shutdownStage =
+        "the server to close its client connections and warm ACP sessions";
       await closeRuntime(options);
     } catch (error) {
       // A closed-resource error from the runtime's own handles is tolerated.
@@ -585,6 +592,7 @@ async function main(): Promise<void> {
         throw error;
       }
     }
+    shutdownStage = "the Dolt store's connection pool to close";
     await closeStore();
   };
 
