@@ -8,57 +8,25 @@ mod activity;
 mod approval;
 mod client;
 mod commands;
+#[cfg(test)]
+mod fake_runtime;
+mod link;
 mod posture;
 mod receipt;
 mod session;
+mod submission;
 mod terminal;
 
 use anyhow::{Context, Result};
 use client::{Client, Incoming, StreamFrame, Verdict};
 use serde_json::{Value, json};
 use session::Session;
+use submission::{MAX_INPUT_CHARACTERS, Submission, classify};
 use std::io::Write;
 use terminal::{Ask, ReadOutcome};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{mpsc, oneshot};
 
-/// The runtime's input ceiling. Mirrors MAX_INPUT_LENGTH in the TypeScript
-/// CLI; a longer prompt is rejected there, so rejecting it here costs the
-/// operator a round trip less.
-const MAX_INPUT_CHARACTERS: usize = 32_768;
-
-/// What the operator's input turns out to be.
-#[derive(Debug, PartialEq, Eq)]
-enum Submission {
-    Empty,
-    Quit,
-    TooLong { characters: usize },
-    Prompt,
-}
-
-/// Classify one completed input.
-///
-/// A slash command counts only when the WHOLE input is that command. This is
-/// what keeps a pasted block whose first line reads `/exit` from quitting the
-/// session: the paste arrives as one string, so it is a prompt, not a command.
-fn classify(input: &str) -> Submission {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Submission::Empty;
-    }
-    if trimmed == "/exit" || trimmed == "/quit" {
-        return Submission::Quit;
-    }
-    // Count as the TypeScript CLI does: its ceiling is JavaScript's
-    // `line.length`, which is UTF-16 code units. A byte count would reject
-    // valid multi-byte input; a scalar count would accept an astral paste
-    // (emoji, some CJK) of up to twice what the peer allows.
-    let characters = input.encode_utf16().count();
-    if characters > MAX_INPUT_CHARACTERS {
-        return Submission::TooLong { characters };
-    }
-    Submission::Prompt
-}
 
 fn socket_path() -> Result<String> {
     resolve_socket_path(|key| std::env::var(key).ok())
@@ -163,8 +131,13 @@ async fn main() -> Result<()> {
     // Before the terminal is taken, not after: a panic during startup would
     // otherwise leave it in whatever state it had reached.
     terminal::install_panic_restore();
-    let input = terminal::spawn()?;
-    let (client, mut incoming) = Client::connect(&socket)
+    let (input, mut orphans) = terminal::spawn()?;
+    // Where the launcher writes this runtime's output, when it knows. Read only
+    // while the runtime is down, to show why a restart failed.
+    let runtime_log = std::env::var("DYFJ_RUNTIME_LOG").ok().filter(|path| !path.is_empty());
+    // A runtime has to be there at startup; the launcher starts one when it
+    // is not. Only an established connection is waited for when it drops.
+    let (mut client, mut incoming) = Client::connect(&socket)
         .await
         .with_context(|| format!("no runtime at {socket}; start it with `dyfj start`"))?;
 
@@ -186,15 +159,7 @@ async fn main() -> Result<()> {
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
-    match client.request("runtime/status", json!({})).await {
-        Ok(status) => {
-            println!("{}", posture::line(&status, &session, &socket));
-            for warning in posture::unresolved_pointer_warnings(&status) {
-                eprintln!("{warning}");
-            }
-        }
-        Err(err) => println!("{}", runtime_line("posture: unavailable", &err.to_string(), &socket)),
-    }
+    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket);
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
     }
@@ -218,12 +183,52 @@ async fn main() -> Result<()> {
         }
     });
 
+    // The open prompt read. It outlives a disconnect: a prompt still open when
+    // the runtime returns is answered against the restarted runtime.
+    let mut pending: Option<oneshot::Receiver<ReadOutcome>> = None;
     loop {
-        let (respond, answer) = oneshot::channel();
-        if input.send(Ask::Prompt { respond }).await.is_err() {
-            break;
+        if client.is_closed() {
+            eprintln!("\nruntime disconnected; waiting… (Ctrl-C or /quit to leave)");
+            // A Ctrl-C pressed before the disconnect was for the work it cut
+            // short, not a request to stop waiting.
+            while interrupts.try_recv().is_ok() {}
+            let mut log = runtime_log.as_deref().map(link::LogTail::from_end);
+            let waited = link::wait_for_runtime(
+                &socket,
+                &input,
+                &mut pending,
+                &mut orphans,
+                &mut interrupts,
+                &mut log,
+                &mut link::backoff(),
+            )
+            .await;
+            match waited {
+                link::Waited::Quit => break,
+                link::Waited::Reconnected(restarted, restarted_incoming) => {
+                    client = restarted;
+                    incoming = restarted_incoming;
+                    link::resume(&client, &session, &socket).await;
+                    continue;
+                }
+            }
         }
-        let line = match answer.await {
+        if pending.is_none() {
+            let (respond, answer) = oneshot::channel();
+            if input.send(Ask::Prompt { respond }).await.is_err() {
+                break;
+            }
+            pending = Some(answer);
+        }
+        let Some(read) = pending.as_mut() else { continue };
+        let outcome = match link::await_prompt(&client, &mut incoming, read, &mut orphans).await {
+            link::Prompted::Read(outcome) => outcome,
+            // Back to the top, where the disconnect is announced; the prompt
+            // read stays open.
+            link::Prompted::Disconnected => continue,
+        };
+        pending = None;
+        let line = match outcome {
             Ok(ReadOutcome::Line(line)) => line,
             // Ctrl-C at the prompt clears the line; it does not exit.
             Ok(ReadOutcome::Interrupted) => continue,
@@ -279,22 +284,33 @@ async fn main() -> Result<()> {
             &mut session,
         )
         .await;
+        // A turn the disconnect interrupted needs nothing more here: the top
+        // of the loop sees the closed client and waits for the runtime.
         // `/friction` names only a slash command typed just before it, as the
         // TypeScript REPL does; a turn in between ends that attribution.
         session.last_command = None;
     }
 
-    // Ordinary exit (Ctrl-D, /quit, or a closed connection): put the terminal
-    // back the way it was before rustyline took it. The panic hook covers the
-    // abnormal paths.
+    // Ordinary exit (Ctrl-D or /quit, including while waiting for the runtime):
+    // put the terminal back the way it was before rustyline took it. The panic
+    // hook covers the abnormal paths.
     terminal::restore();
     Ok(())
+}
+
+/// How a turn ended, for the loop that issued it.
+pub(crate) enum TurnEnd {
+    /// The runtime settled it, or the operator stopped waiting for it.
+    Settled,
+    /// The runtime went away before it settled.
+    Disconnected,
 }
 
 /// Issue one turn and render it, answering approvals and honouring Ctrl-C.
 ///
 /// Completion is the `turn` response, not a stream frame: a `done` frame is
-/// ignored and an `error` frame is printed, but neither ends the wait.
+/// ignored and an `error` frame is printed, but neither ends the wait. A
+/// disconnect also ends it, reported as interrupted.
 async fn run_turn(
     client: &Client,
     input: &mpsc::Sender<Ask>,
@@ -302,7 +318,7 @@ async fn run_turn(
     interrupts: &mut mpsc::Receiver<()>,
     prompt: &str,
     session: &mut Session,
-) {
+) -> TurnEnd {
     let turn_id = new_turn_id();
     let body = session.turn_body(prompt, &turn_id);
 
@@ -327,7 +343,7 @@ async fn run_turn(
                 // fallback below keys on whether anything was written — decide
                 // that after draining, or a streamed answer prints once from
                 // the receipt and again from the queue.
-                flush_queued_frames(incoming, &mut wrote_any);
+                flush_queued_frames(incoming, &mut wrote_any, session);
 
                 match outcome {
                     Ok(result) => {
@@ -353,6 +369,7 @@ async fn run_turn(
                         }
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
+                    Err(_) if client.is_closed() => return interrupted(wrote_any),
                     Err(err) => {
                         eprintln!("\n{}", runtime_error("turn failed", &err.to_string()));
                         if wrote_any {
@@ -360,12 +377,13 @@ async fn run_turn(
                         }
                     }
                 }
-                return;
+                return TurnEnd::Settled;
             }
             // Something arrived from the runtime while the turn runs.
             message = incoming.recv() => {
                 match message {
                     Some(Incoming::Stream(frame)) => {
+                        adopt_announced_session(&frame, session);
                         render(frame, &mut wrote_any);
                     }
                     Some(Incoming::Approval { params, respond }) => {
@@ -378,20 +396,24 @@ async fn run_turn(
                         // was not the one being answered.
                         //
                         // One terminal, one reader, one approval at a time.
-                        // The cost is that a runtime disconnecting mid-
-                        // approval is not surfaced until the operator answers
-                        // — the prompt stays up either way, so spawning bought
-                        // no earlier warning, only the lifetime problems.
                         //
                         // Ctrl-C here is readline's Interrupted, not the
                         // SIGINT branch below: rustyline has cleared ISIG for
                         // the read. Cancel this turn and answer `abort`, so
                         // the runtime does not record a denial.
-                        match approval::ask(input, &params).await {
-                            approval::Outcome::Verdict(verdict) => {
+                        //
+                        // A disconnect while the question is open cancels it:
+                        // the responder is dropped unanswered, the client
+                        // writes nothing to a closed connection, and the turn
+                        // ends as interrupted. The question stays on screen
+                        // until answered, because the read cannot be
+                        // abandoned; that answer goes nowhere.
+                        match approval::ask_while_connected(client, input, &params).await {
+                            approval::Asked::Disconnected => return interrupted(wrote_any),
+                            approval::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                                 let _ = respond.send(verdict);
                             }
-                            approval::Outcome::Cancelled => {
+                            approval::Asked::Answered(approval::Outcome::Cancelled) => {
                                 let _ = respond.send(Verdict::abort());
                                 if give_up_or_cancel(
                                     &mut cancelling,
@@ -400,12 +422,13 @@ async fn run_turn(
                                     incoming,
                                     wrote_any,
                                 ) {
-                                    return;
+                                    return TurnEnd::Settled;
                                 }
                             }
                         }
                     }
-                    None => return,
+                    // The reader ends only when the connection does.
+                    None => return interrupted(wrote_any),
                 }
             }
             // Ctrl-C during a turn. Cancellation is cooperative: ask the
@@ -415,11 +438,43 @@ async fn run_turn(
             // that ignores a cancel should not hold the prompt.
             _ = interrupts.recv() => {
                 if give_up_or_cancel(&mut cancelling, client, &turn_id, incoming, wrote_any) {
-                    return;
+                    return TurnEnd::Settled;
                 }
             }
         }
     }
+}
+
+/// Take the session id the runtime announces when it opens a session, if this
+/// REPL has none yet.
+///
+/// The receipt carries the id too, but only when the turn settles. A first
+/// turn cut short by a disconnect has no receipt, and without this the next
+/// turn would open a second session instead of resuming the one the runtime
+/// already created. Only frames read while this turn runs reach here (the
+/// idle prompt discards the rest), and a known id is never replaced.
+fn adopt_announced_session(frame: &StreamFrame, session: &mut Session) {
+    if session.id.is_some() {
+        return;
+    }
+    let StreamFrame::Event { event } = frame else { return };
+    if event.get("type").and_then(Value::as_str) != Some("sessionStart") {
+        return;
+    }
+    if let Some(id) = event.get("sessionId").and_then(Value::as_str) {
+        session.id = Some(id.to_string());
+    }
+}
+
+/// Report a turn the runtime's disconnection cut short. It is not retried:
+/// the runtime may have acted on part of it, and only the operator can judge
+/// whether to ask again.
+fn interrupted(wrote_any: bool) -> TurnEnd {
+    if wrote_any {
+        println!();
+    }
+    eprintln!("turn interrupted: the runtime disconnected before it finished; it was not retried");
+    TurnEnd::Disconnected
 }
 
 /// First Ctrl-C asks the runtime to stop and keeps waiting for the turn to
@@ -460,10 +515,19 @@ fn give_up_or_cancel(
 /// them drops the end of the reply. Nothing establishes that, though — frames
 /// carry no turn id, so a delayed frame from an abandoned earlier turn would
 /// be rendered here too.
-fn flush_queued_frames(incoming: &mut mpsc::Receiver<Incoming>, wrote_any: &mut bool) {
+fn flush_queued_frames(
+    incoming: &mut mpsc::Receiver<Incoming>,
+    wrote_any: &mut bool,
+    session: &mut Session,
+) {
     while let Ok(message) = incoming.try_recv() {
         match message {
-            Incoming::Stream(frame) => render(frame, wrote_any),
+            Incoming::Stream(frame) => {
+                // The turn may have failed with the disconnect before its
+                // `sessionStart` was taken from the queue.
+                adopt_announced_session(&frame, session);
+                render(frame, wrote_any);
+            }
             // An approval arriving as the turn ends has no operator watching
             // for it, and the runtime is blocked on an answer. Deny.
             Incoming::Approval { respond, .. } => {
@@ -483,18 +547,15 @@ fn runtime_error(context: &str, message: &str) -> String {
     format!("{context}: {}", approval::visible(message))
 }
 
-/// The same, for a line that also carries local context such as the socket
-/// path, which is ours and not sanitised away.
-fn runtime_line(context: &str, message: &str, local: &str) -> String {
-    format!("{context} ({}) · {local}", approval::visible(message))
-}
 
 /// Discard frames queued for a turn the operator abandoned.
 ///
-/// Only what is already queued is dropped. Frames are not tagged with a turn,
-/// so a frame the abandoned turn emits AFTER this returns will still arrive on
-/// the shared channel and render under the next prompt. Closing that gap needs
-/// a turn identifier on the frame, which the protocol does not carry.
+/// Only what is already queued is dropped. A frame the abandoned turn emits
+/// later, while the REPL waits at the prompt, is discarded there
+/// (`link::await_prompt`). Frames are not tagged with a turn, though, so one
+/// that arrives after the next turn has started still renders in that turn.
+/// Closing that gap needs a turn identifier on the frame, which the protocol
+/// does not carry.
 fn discard_abandoned_frames(incoming: &mut mpsc::Receiver<Incoming>) {
     while let Ok(message) = incoming.try_recv() {
         if let Incoming::Approval { respond, .. } = message {
@@ -659,7 +720,7 @@ mod tests {
         assert!(rendered.contains("wiped"), "text must not be dropped: {rendered:?}");
         assert!(rendered.starts_with("turn failed: "), "{rendered:?}");
 
-        let line = super::runtime_line("posture: unavailable", hostile, "/tmp/s.sock");
+        let line = crate::posture::runtime_line("posture: unavailable", hostile, "/tmp/s.sock");
         assert!(!line.contains('\u{1b}'), "escape survived: {line:?}");
         assert!(line.contains("/tmp/s.sock"), "local context must survive: {line:?}");
     }

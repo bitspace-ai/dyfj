@@ -216,9 +216,26 @@ pub fn restore() {
     }
 }
 
-/// Spawn the terminal thread. Returns the channel to ask it for input.
-pub fn spawn() -> Result<mpsc::Sender<Ask>> {
+/// Spawn the terminal thread. Returns the channel to ask it for input, and the
+/// channel of orphaned reads.
+///
+/// A read is orphaned when whoever asked for it stopped waiting before the
+/// operator answered. rustyline cannot abandon a read in progress, so the read
+/// finishes anyway, and its outcome comes back here instead of being dropped.
+/// In practice that is an approval question cancelled because the runtime
+/// disconnected: the question stays on screen until the operator answers it,
+/// and the main loop reports that the answer was not sent (and, while the
+/// runtime is down, takes a Ctrl-C there as quitting).
+pub fn spawn() -> Result<(mpsc::Sender<Ask>, mpsc::Receiver<ReadOutcome>)> {
     let (tx, mut rx) = mpsc::channel::<Ask>(8);
+    let (orphan_tx, orphans) = mpsc::channel::<ReadOutcome>(8);
+    // `try_send`, so a main loop that is not draining orphans can never block
+    // the terminal thread; an orphan that does not fit is dropped.
+    let hand_back = move |respond: oneshot::Sender<ReadOutcome>, outcome: ReadOutcome| {
+        if let Err(outcome) = respond.send(outcome) {
+            let _ = orphan_tx.try_send(outcome);
+        }
+    };
     let (ready_tx, ready_rx) = std_mpsc::channel::<Result<(), String>>();
 
     std::thread::spawn(move || {
@@ -237,7 +254,7 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
             match ask {
                 Ask::Prompt { respond } => {
                     let outcome = read(&mut editor, "dyfj> ", true);
-                    let _ = respond.send(outcome);
+                    hand_back(respond, outcome);
                 }
                 Ask::Approval { preamble, question, respond } => {
                     // Consent requires an operator who can see the request.
@@ -285,14 +302,14 @@ pub fn spawn() -> Result<mpsc::Sender<Ask>> {
                         continue;
                     }
                     let outcome = read(&mut editor, &question, false);
-                    let _ = respond.send(outcome);
+                    hand_back(respond, outcome);
                 }
             }
         }
     });
 
     match ready_rx.recv() {
-        Ok(Ok(())) => Ok(tx),
+        Ok(Ok(())) => Ok((tx, orphans)),
         Ok(Err(err)) => Err(anyhow::anyhow!("terminal unavailable: {err}")),
         Err(_) => Err(anyhow::anyhow!("terminal thread died during startup")),
     }

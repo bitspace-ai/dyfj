@@ -495,14 +495,22 @@ async fn request_answering_approvals(
                     let _ = respond.send(Verdict::deny("operator interrupted the command"));
                 }
                 Some(Incoming::Approval { params, respond }) => {
-                    match approval::ask(prompter.input, &params).await {
-                        approval::Outcome::Verdict(verdict) => {
+                    match approval::ask_while_connected(client, prompter.input, &params).await {
+                        // The runtime went away with the question open. It is
+                        // not answered (the responder is dropped, and nothing
+                        // is written to a closed connection); the request
+                        // fails with the connection.
+                        approval::Asked::Disconnected => {
+                            drop(respond);
+                            return (&mut pending).await;
+                        }
+                        approval::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                             let _ = respond.send(verdict);
                         }
                         // No turn is running, so Ctrl-C cannot cancel one. Deny
                         // this approval and the ones that follow, as a SIGINT
                         // while the command waits does.
-                        approval::Outcome::Cancelled => {
+                        approval::Asked::Answered(approval::Outcome::Cancelled) => {
                             if !abandoned {
                                 abandoned = true;
                                 note_approvals_abandoned();
