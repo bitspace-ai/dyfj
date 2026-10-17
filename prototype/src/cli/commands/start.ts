@@ -28,7 +28,7 @@ export async function runStart(
   io.err(
     autostarted
       ? `dyfj: autostarted process; after its signal handler is ready, client Ctrl-C leaves the runtime running`
-      : `dyfj: foreground process; Ctrl-C signals runtime shutdown; the shell may return before cleanup settles`,
+      : `dyfj: foreground process; Ctrl-C stops the runtime (again: shows what shutdown waits on; a third time: forces exit)`,
   );
   try {
     return await startRuntime(config, { autostarted });
