@@ -284,7 +284,7 @@ async fn main() -> Result<()> {
         }
 
         // `/reload` and `/rollback` are commands only under `dyfj dev`;
-        // elsewhere they stay prompts, as any unknown `/word` does.
+        // elsewhere they are refused as unknown commands, as any `/word` is.
         if let Some(control) = control.as_ref() {
             match line.trim() {
                 "/reload" => {
@@ -330,7 +330,7 @@ async fn main() -> Result<()> {
             &input,
             &mut incoming,
             &mut interrupts,
-            &line,
+            &commands::prompt_text(&line),
             &mut session,
         )
         .await;
