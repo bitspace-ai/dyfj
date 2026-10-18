@@ -100,7 +100,7 @@ function harness(options: {
         log.push("repl.exit");
       },
       notify: (message) => {
-        log.push(`repl.notify ${message.reason}`);
+        log.push(`repl.notify ${message.reason}${message.replaced === true ? " (replaced)" : ""}`);
       },
     },
     build: async () => {
@@ -214,7 +214,7 @@ test("a wire change restarts the runtime first, then the REPL", async () => {
   await h.clock.advance(DEBOUNCE_MS);
   assert.deepStrictEqual(h.log, [
     "build",
-    "repl.notify 1 file changed",
+    "repl.notify 1 file changed (replaced)",
     "runtime.stop",
     "runtime.start",
     "repl.exit",
@@ -228,7 +228,19 @@ test("a reload of both halves is one notice, shown by the REPL that replaces the
   h.supervisor.changed("prototype/src/contract/turn.ts");
   await h.clock.advance(DEBOUNCE_MS);
   assert.strictEqual(h.log.at(-1), "repl.launch 01HZZZZZZZZZZZZZZZZZZZZZZZ [1 file changed]");
+  assert.ok(
+    h.log.includes("repl.notify 1 file changed (replaced)"),
+    "the REPL being replaced is told, so it does not announce the reload as well",
+  );
   assert.deepStrictEqual(h.lines, [], "the new REPL says it; the supervisor adds no second line");
+});
+
+test("a runtime-only reload does not mark the REPL as replaced", async () => {
+  const h = harness({ classify: (p) => ({ runtime: true, repl: false, files: p.length }) });
+  h.supervisor.changed("prototype/src/contract/turn.ts");
+  await h.clock.advance(DEBOUNCE_MS);
+  assert.ok(h.log.includes("repl.notify 1 file changed"));
+  assert.ok(!h.log.some((entry) => entry.includes("(replaced)")));
 });
 
 test("a REPL-only change launches the REPL with no reload notice of its own", async () => {

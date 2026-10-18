@@ -469,11 +469,13 @@ README are tracked separately in its Revision history section.
 ### Fixed
 
 - **`dyfj dev` says it once when a change reloads the runtime and the REPL.**
-  A change that touched both halves restarted the runtime and replaced the
-  REPL before the old REPL could reconnect, so no `runtime reloaded` notice
-  ever appeared; only the supervisor's `REPL rebuilt` line did. The supervisor
-  now starts the new REPL with the reason in `DYFJ_DEV_RELOADED`, and that REPL
-  prints one line before its posture line: `runtime and REPL reloaded (1 file
+  A change that touched both halves restarted the runtime and then replaced
+  the REPL, and the operator got only the supervisor's `REPL rebuilt` line,
+  or, when the old REPL reconnected first, a `runtime reloaded` notice that
+  the replacement then repeated. The supervisor now marks the
+  `reloading` message to the old REPL `replaced`, so it stays quiet, and starts
+  the new REPL with the reason in `DYFJ_DEV_RELOADED`. That REPL prints one
+  line before its posture line: `runtime and REPL reloaded (1 file
   changed); resumed session <id>`. A REPL-only change still prints `REPL
   rebuilt (...)`, and a runtime-only change still prints `runtime reloaded
   (...)`.

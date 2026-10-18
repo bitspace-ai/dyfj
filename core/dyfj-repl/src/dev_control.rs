@@ -6,16 +6,18 @@
 //!
 //! - supervisor to REPL: `reloading` (with a `reason`, such as
 //!   `3 files changed`), sent before it restarts the runtime, so the
-//!   `runtime reloaded` notice can say why; and `exit`, which asks the REPL to
+//!   `runtime reloaded` notice can say why, and with `replaced: true` when it
+//!   is going to replace this REPL too, which then leaves the notice to its
+//!   replacement; and `exit`, which asks the REPL to
 //!   leave as `/quit` does, before a rebuilt REPL takes its place;
 //! - REPL to supervisor: `session` (with the `id` the REPL is in), so the
 //!   rebuilt REPL resumes it; `reload`, for `/reload`; and `rollback`, for
 //!   `/rollback`, which switches the runtime to the last good code.
 //!
 //! One thing travels outside the channel: when a change reloads the runtime
-//! and the REPL together, the old REPL is replaced before it can reconnect, so
-//! the supervisor starts the new one with the reason in `DYFJ_DEV_RELOADED`,
-//! and the new REPL tells the operator (`reloaded_reason`).
+//! and the REPL together, the supervisor starts the new REPL with the reason in
+//! `DYFJ_DEV_RELOADED`, and the new REPL tells the operator
+//! (`reloaded_reason`); the old one was marked `replaced`, so it does not.
 //!
 //! Anything else is dropped without a word: a line that is not JSON, an
 //! unknown type, a line longer than `MAX_LINE`. A channel that closes means
@@ -42,10 +44,18 @@ pub const MAX_LINE: usize = 4096;
 /// The longest reload reason shown, in characters.
 const MAX_REASON: usize = 120;
 
+/// A runtime restart the supervisor announced.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Reload {
+    pub reason: String,
+    /// This REPL is about to be replaced; its replacement announces the reload.
+    pub replaced: bool,
+}
+
 /// A message from the supervisor.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Control {
-    Reloading(String),
+    Reloading(Reload),
     Exit,
 }
 
@@ -66,7 +76,10 @@ pub fn parse_line(line: &[u8]) -> Option<Control> {
     let value: Value = serde_json::from_slice(line).ok()?;
     let object = value.as_object()?;
     match object.get("type")?.as_str()? {
-        "reloading" => Some(Control::Reloading(clean_reason(object.get("reason")?.as_str()?))),
+        "reloading" => Some(Control::Reloading(Reload {
+            reason: clean_reason(object.get("reason")?.as_str()?),
+            replaced: object.get("replaced").and_then(Value::as_bool).unwrap_or(false),
+        })),
         "exit" => Some(Control::Exit),
         _ => None,
     }
@@ -109,7 +122,7 @@ async fn next_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Option<Option<Vec
 /// The REPL's end of the channel.
 pub struct DevControl {
     outgoing: mpsc::Sender<String>,
-    reason: Arc<Mutex<Option<String>>>,
+    reload: Arc<Mutex<Option<Reload>>>,
     exit: watch::Receiver<bool>,
     last_session: Option<String>,
 }
@@ -138,17 +151,17 @@ impl DevControl {
     /// The channel over an already-connected stream.
     pub fn over(stream: UnixStream) -> Self {
         let (read_half, mut write_half) = stream.into_split();
-        let reason = Arc::new(Mutex::new(None));
+        let reload = Arc::new(Mutex::new(None));
         let (exit_tx, exit) = watch::channel(false);
         let (outgoing, mut queue) = mpsc::channel::<String>(16);
-        let stored = Arc::clone(&reason);
+        let stored = Arc::clone(&reload);
         tokio::spawn(async move {
             let mut reader = BufReader::new(read_half);
             while let Some(line) = next_line(&mut reader).await {
                 match line.as_deref().and_then(parse_line) {
-                    Some(Control::Reloading(text)) => {
+                    Some(Control::Reloading(announced)) => {
                         if let Ok(mut slot) = stored.lock() {
-                            *slot = Some(text);
+                            *slot = Some(announced);
                         }
                     }
                     Some(Control::Exit) => {
@@ -167,7 +180,7 @@ impl DevControl {
                 }
             }
         });
-        Self { outgoing, reason, exit, last_session: None }
+        Self { outgoing, reload, exit, last_session: None }
     }
 
     /// Ask the supervisor to reload now.
@@ -190,9 +203,9 @@ impl DevControl {
         self.send(json!({"type": "session", "id": id}));
     }
 
-    /// The reason the supervisor gave for the latest restart, once.
-    pub fn take_reason(&self) -> Option<String> {
-        self.reason.lock().ok().and_then(|mut slot| slot.take())
+    /// The latest restart the supervisor announced, once.
+    pub fn take_reload(&self) -> Option<Reload> {
+        self.reload.lock().ok().and_then(|mut slot| slot.take())
     }
 
     /// Resolves once the supervisor asks the REPL to exit; never otherwise,
@@ -244,7 +257,17 @@ mod tests {
     fn parses_the_two_supervisor_messages() {
         assert_eq!(
             parse_line(br#"{"type":"reloading","reason":"3 files changed"}"#),
-            Some(Control::Reloading("3 files changed".into()))
+            Some(Control::Reloading(Reload { reason: "3 files changed".into(), replaced: false }))
+        );
+        assert_eq!(
+            parse_line(br#"{"type":"reloading","reason":"1 file changed","replaced":true}"#),
+            Some(Control::Reloading(Reload { reason: "1 file changed".into(), replaced: true })),
+            "a REPL told it is being replaced leaves the notice to its replacement"
+        );
+        assert_eq!(
+            parse_line(br#"{"type":"reloading","reason":"x","replaced":"yes"}"#),
+            Some(Control::Reloading(Reload { reason: "x".into(), replaced: false })),
+            "only a true boolean counts"
         );
         assert_eq!(parse_line(br#"{"type":"exit"}"#), Some(Control::Exit));
     }
@@ -268,7 +291,7 @@ mod tests {
     #[test]
     fn a_reason_is_sanitised_and_capped() {
         let long = format!(r#"{{"type":"reloading","reason":"a\u001b[2Jb{}"}}"#, "x".repeat(500));
-        let Some(Control::Reloading(reason)) = parse_line(long.as_bytes()) else {
+        let Some(Control::Reloading(Reload { reason, .. })) = parse_line(long.as_bytes()) else {
             panic!("not parsed")
         };
         assert!(!reason.contains('\u{1b}'));
@@ -322,9 +345,11 @@ mod tests {
             .write_all(b"{\"type\":\"reloading\",\"reason\":\"2 files changed\"}\n")
             .await
             .unwrap();
-        assert!(eventually(|| control.reason.lock().unwrap().is_some()).await);
-        assert_eq!(control.take_reason().as_deref(), Some("2 files changed"));
-        assert_eq!(control.take_reason(), None, "a reason is shown once");
+        assert!(eventually(|| control.reload.lock().unwrap().is_some()).await);
+        let reload = control.take_reload().unwrap();
+        assert_eq!(reload.reason, "2 files changed");
+        assert!(!reload.replaced);
+        assert!(control.take_reload().is_none(), "a reason is shown once");
         // The oversized line was an exit; dropped, it must not have exited.
         let mut exit = control.exit_watch();
         let early = tokio::time::timeout(Duration::from_millis(50), exit.requested()).await;
@@ -371,7 +396,7 @@ mod tests {
         control.request_reload();
         let mut control = control;
         control.note_session(Some("01J0000000000000000000000A"));
-        assert_eq!(control.take_reason(), None);
+        assert!(control.take_reload().is_none());
         let mut exit = control.exit_watch();
         let waited = tokio::time::timeout(Duration::from_millis(50), exit.requested()).await;
         assert!(waited.is_err(), "a closed channel is not an exit request");

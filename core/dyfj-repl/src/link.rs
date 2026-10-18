@@ -227,8 +227,8 @@ pub fn reloaded_notice(reason: Option<&str>, resumed: &str) -> String {
 }
 
 /// The one notice for a change that reloaded the runtime and the REPL
-/// together, printed by the REPL that took over: the old one was replaced
-/// before it could reconnect, so it never said anything.
+/// together, printed by the REPL that took over. The old REPL was told it is
+/// being replaced (`replaced`) and stays quiet on reconnecting.
 pub fn both_reloaded_notice(reason: Option<&str>, session: Option<&str>) -> String {
     let resumed = session.map_or_else(String::new, |id| format!("; resumed session {}", visible(id)));
     match reason {

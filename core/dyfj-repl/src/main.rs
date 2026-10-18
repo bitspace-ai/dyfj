@@ -224,7 +224,13 @@ async fn main() -> Result<()> {
                 link::Waited::Reconnected(restarted, restarted_incoming) => {
                     client = restarted;
                     incoming = restarted_incoming;
-                    let reason = control.as_ref().and_then(|c| c.take_reason());
+                    let reload = control.as_ref().and_then(|c| c.take_reload());
+                    // Told it is being replaced: the REPL that takes over
+                    // announces the reload, once.
+                    if reload.as_ref().is_some_and(|r| r.replaced) {
+                        continue;
+                    }
+                    let reason = reload.map(|r| r.reason);
                     link::resume(&client, &session, &socket, reason, control.is_some()).await;
                     continue;
                 }
