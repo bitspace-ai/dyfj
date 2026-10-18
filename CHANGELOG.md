@@ -11,6 +11,28 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Claude Sonnet 5.5 and Kimi K3 in the model catalog.** `claude-sonnet-5-5`
+  reaches Anthropic directly and `moonshotai/kimi-k3` reaches OpenRouter, on
+  the fresh-install path and through migration
+  `015_models_claude_sonnet_5_5_and_kimi_k3.sql` alike. The older
+  `claude-sonnet-5` and `moonshotai/kimi-k2-0905` rows stay active.
+
+  `schema/catalog/VERIFICATION-2026-10-18.md` records the source, capture date
+  and figure for each price and limit, and names the fields copied from the
+  sibling rows rather than sourced. Two caveats matter for cost estimates.
+  Kimi K3 reasons at `max` effort by default, its reasoning tokens bill as
+  output, and this software does not lower that effort. The row also records
+  OpenRouter's model-level price, which matched one upstream (InferenceNet) at
+  capture time. OpenRouter may route a turn to another upstream at a different
+  rate, and some charge much more: Moonshot AI's own charges $3 / $15 per
+  million. Sonnet 5.5's cache-write price is
+  the 5-minute rate; 1-hour caches cost more.
+
+  Sonnet 5.5 has adaptive thinking on by default, and the Anthropic adapter
+  drops thinking blocks. A turn with two or more tool steps may fail on
+  replay, and text the model writes between tool calls is lost. The adapter
+  is unchanged here; the verification note records the risk.
+
 - **The runtime names each configured external MCP tool that a reachable
   server leaves out.** At boot, a configured tool the server does not offer prints
   `external MCP <server>: configured tool "<name>" not offered by the server`,
