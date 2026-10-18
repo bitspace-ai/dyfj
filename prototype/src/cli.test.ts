@@ -74,7 +74,7 @@ describe("runRepl", () => {
     );
   });
 
-  it("does not treat an unhandled slash-prefixed prompt as friction command context", async () => {
+  it("does not treat a slash-prefixed prompt that is not a command as friction command context", async () => {
     const calls: Array<{ method: string; params: unknown }> = [];
     const connect: ConnectFn = () =>
       Promise.resolve({
@@ -92,7 +92,7 @@ describe("runRepl", () => {
         },
         close: () => {},
       });
-    const prompt = "/unhandled free-text prompt";
+    const prompt = "/usr/bin/env is what?";
     const { io } = fakeIo([
       prompt,
       "/friction minor A concrete failure.",
@@ -187,6 +187,67 @@ describe("runRepl", () => {
     await runRepl(cfg(), io, connect, true);
     assert.deepStrictEqual(openWhileReading, [1, 1, 1]);
     assert.strictEqual(open, 0, "closed when the REPL exits");
+  });
+
+  it("refuses an unknown slash command locally, with no turn", async () => {
+    const { connect, params } = sequentialTurnConnect([
+      { result: result() },
+    ]);
+    const { io, stderr } = fakeIo(["/status", "/status now please", "real"]);
+    await runRepl(cfg(), io, connect, false);
+    assert.deepStrictEqual(
+      params.map((body) => (body as { prompt: string }).prompt),
+      ["real"],
+    );
+    assert.deepStrictEqual(
+      stderr.filter((line) => line.startsWith("unknown command")),
+      [
+        "unknown command /status; /help lists commands",
+        "unknown command /status; /help lists commands",
+      ],
+    );
+  });
+
+  it("sends a slash line that is not a single command word as text", async () => {
+    const { connect, params } = sequentialTurnConnect([
+      { result: result() },
+      { result: result() },
+    ]);
+    const { io, stderr } = fakeIo([
+      "/usr/bin/env is what?",
+      "/status!",
+    ]);
+    await runRepl(cfg(), io, connect, false);
+    assert.deepStrictEqual(
+      params.map((body) => (body as { prompt: string }).prompt),
+      ["/usr/bin/env is what?", "/status!"],
+    );
+    assert.ok(!stderr.some((line) => line.startsWith("unknown command")));
+  });
+
+  it("//word sends /word as the prompt text", async () => {
+    const { connect, params } = sequentialTurnConnect([
+      { result: result() },
+      { result: result() },
+    ]);
+    const { io, stderr } = fakeIo(["//status", "//status of the build"]);
+    await runRepl(cfg(), io, connect, false);
+    assert.deepStrictEqual(
+      params.map((body) => (body as { prompt: string }).prompt),
+      ["/status", "/status of the build"],
+    );
+    assert.ok(!stderr.some((line) => line.startsWith("unknown command")));
+  });
+
+  it("/help lists the REPL commands without a turn", async () => {
+    const { connect, params } = sequentialTurnConnect([]);
+    const { io, stderr } = fakeIo(["/help"]);
+    await runRepl(cfg(), io, connect, false);
+    assert.deepStrictEqual(params, []);
+    const text = stderr.join("\n");
+    for (const word of ["/model", "/fast", "/session", "/friction", "/idea"]) {
+      assert.ok(text.includes(word), `expected help to list ${word}`);
+    }
   });
 
   it("skips blank lines and exits on /exit", async () => {
@@ -1374,6 +1435,30 @@ describe("REPL /friction command", () => {
     assert.ok(!("lastFriction" in (state as object)));
   });
 
+  it("prints the friction text back for retry when the call fails", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplFrictionCommand(
+      "/friction major --escaped Linear was slow and I lost this.",
+      cfg(),
+      io,
+      { sessionId: "01ACTIVE_SESS", turnCount: 0, sessionSpendUsd: 0 },
+      () =>
+        Promise.resolve({
+          request: () =>
+            Promise.reject(
+              new DomainError(
+                "get_issue failed: External MCP tool call failed: timed out after 30 s waiting for the server.",
+              ),
+            ),
+          close: () => {},
+        }),
+    );
+    assert.deepStrictEqual(stderr, [
+      "friction capture failed: get_issue failed: External MCP tool call failed: timed out after 30 s waiting for the server.",
+      "retry with: /friction major --escaped Linear was slow and I lost this.",
+    ]);
+  });
+
   it("prints the configuration stage without an unposted number", async () => {
     const { io, stderr } = fakeIo();
     const state = {
@@ -1399,6 +1484,7 @@ describe("REPL /friction command", () => {
     );
     assert.deepStrictEqual(stderr, [
       "friction capture failed: configuration failed: DYFJ_FRICTION_ISSUE_ID must be set to the operator's friction-checkpoint issue",
+      "retry with: /friction minor A concrete failure.",
     ]);
     assert.doesNotMatch(stderr.join("\n"), /F\d{3}/);
     assert.ok(!("lastFriction" in (state as object)));

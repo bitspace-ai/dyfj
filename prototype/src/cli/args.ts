@@ -331,7 +331,10 @@ REPL commands:
   /session                  show the current session id (for --session resume)
   /friction <sev> [--escaped] <text...>
                             post a daily-driver friction entry
+  /help                     list the REPL commands
   /exit, /quit              exit the REPL
+  //word                    send "/word" as text; any other unknown /word is
+                            refused locally, at no cost
 
 Options:
   --mode <m>       context mode: turn (companion+memory, default) | ask | next-work (repo)
