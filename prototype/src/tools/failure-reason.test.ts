@@ -139,3 +139,35 @@ test("argument walking never invokes a getter and survives a hostile object", ()
   );
   assert.equal(read.count, 0);
 });
+
+test("enumeration stops at the visit budget, for keys, inherited keys and late arrays", () => {
+  // Per-key reads on a huge object stop at the budget instead of covering
+  // every key. (for…in still asks a Proxy's ownKeys trap once: that is how
+  // the language enumerates.)
+  let descriptorReads = 0;
+  const target = Object.fromEntries(
+    Array.from({ length: 100_000 }, (_, i) => [`k${i}`, i]),
+  );
+  const counting = new Proxy(target, {
+    getOwnPropertyDescriptor(t, key) {
+      descriptorReads++;
+      return Reflect.getOwnPropertyDescriptor(t, key);
+    },
+  });
+  assert.equal(maskArgumentEchoes("anything", { counting }), undefined);
+  // About three reads per key yielded (the engine's enumerability check,
+  // `Object.hasOwn`, the descriptor read): proportional to the 1,024 budget,
+  // not to the 100,000 keys.
+  assert.ok(descriptorReads <= 3 * 1_100, `${descriptorReads} descriptor reads`);
+  // Inherited enumerable keys count too, so a long prototype chain is bounded.
+  const inherited = Object.create(
+    Object.fromEntries(Array.from({ length: 5_000 }, (_, i) => [`p${i}`, i])),
+  );
+  inherited.own = "an-own-string-value";
+  assert.equal(maskArgumentEchoes("an-own-string-value", { inherited }), undefined);
+  // An array met late in the walk is refused against the remaining budget,
+  // not the full one.
+  const early = Array.from({ length: 900 }, (_, i) => i);
+  const late = Array.from({ length: 200 }, (_, i) => i);
+  assert.equal(maskArgumentEchoes("x", { early, late }), undefined);
+});

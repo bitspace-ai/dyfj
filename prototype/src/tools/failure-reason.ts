@@ -8,7 +8,8 @@
  * values, so an echo must not carry one back into the store, the log or the
  * screen: an exact echo of an argument string of eight or more characters is
  * replaced by `<arg:PATH>`. The walk over the arguments is bounded (depth,
- * strings collected, nodes visited); when it cannot finish, the text is
+ * strings collected, and one budget for every node visited and every key or
+ * index enumerated); when it cannot finish, the text is
  * withheld rather than masked part-way. Credential-shaped text is then
  * scrubbed, and the line is made single-line and capped. A server that
  * reformats an argument before quoting it is not masked. The model's copy of
@@ -46,16 +47,19 @@ function safePathSegment(key: string): string {
  * The own data properties of `value`, read through their descriptors: an
  * accessor is skipped, never invoked, because arguments can carry getters
  * (validation proves it rejects some calls before reading their items, and
- * masking must not read them either). More entries than the walk may visit
- * means it cannot finish.
+ * masking must not read them either). Enumeration itself is bounded by the
+ * walk's remaining budget: an array longer than it is refused before any
+ * element is read, and an object's keys are counted as `for…in` yields them,
+ * inherited ones included, so neither a wide object nor a long prototype
+ * chain costs more than the budget. Symbol keys are not enumerated;
+ * arguments are JSON and carry none.
  */
-function dataEntries(value: object): [string, unknown][] {
+function dataEntries(value: object, remaining: number): [string, unknown][] {
   const entries: [string, unknown][] = [];
   if (Array.isArray(value)) {
-    // By index, so a huge array costs no more than the visit budget.
     const length = Reflect.getOwnPropertyDescriptor(value, "length")?.value;
     const count = typeof length === "number" ? length : 0;
-    if (count > MAX_WALK_VISITS) throw new WalkIncomplete();
+    if (count > remaining) throw new WalkIncomplete();
     for (let index = 0; index < count; index++) {
       const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
       if (descriptor !== undefined && "value" in descriptor) {
@@ -64,10 +68,10 @@ function dataEntries(value: object): [string, unknown][] {
     }
     return entries;
   }
-  const keys = Reflect.ownKeys(value);
-  if (keys.length > MAX_WALK_VISITS) throw new WalkIncomplete();
-  for (const key of keys) {
-    if (typeof key !== "string") continue;
+  let yielded = 0;
+  for (const key in value) {
+    if (++yielded > remaining) throw new WalkIncomplete();
+    if (!Object.hasOwn(value, key)) continue;
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
     if (descriptor !== undefined && "value" in descriptor) {
       entries.push([key, descriptor.value]);
@@ -97,7 +101,7 @@ function argumentLeaves(
     if (typeof value !== "object" || value === null) return;
     if (depth >= MAX_WALK_DEPTH) throw new WalkIncomplete();
     const isArray = Array.isArray(value);
-    for (const [key, item] of dataEntries(value)) {
+    for (const [key, item] of dataEntries(value, MAX_WALK_VISITS - visits)) {
       walk(
         item,
         isArray
@@ -108,7 +112,7 @@ function argumentLeaves(
     }
   };
   try {
-    for (const [key, value] of dataEntries(args)) {
+    for (const [key, value] of dataEntries(args, MAX_WALK_VISITS - visits)) {
       walk(value, safePathSegment(key), 0);
     }
   } catch {
