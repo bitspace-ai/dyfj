@@ -939,7 +939,7 @@ describe("external MCP failure reasons", () => {
     content: [{ type: "text", text }],
   });
 
-  it("an upstream error reaches the model as untrusted text and the operator masked", async () => {
+  it("an upstream error reaches the model as untrusted text and is withheld from the operator when it echoes an argument", async () => {
     const body = "## Figures\n\nSonnet 5.5 input is $3 per million tokens.";
     const invoke = await failingSaveComment(
       upstreamError(`Error: body rejected: ${body}`),
@@ -957,13 +957,13 @@ describe("external MCP failure reasons", () => {
     assert.ok(!modelReason.includes("\n"), modelReason);
     assert.equal(
       operatorReason,
-      "upstream error: Error: body rejected: <arg:body>",
+      "upstream error (text withheld: it echoes argument body)",
     );
     assert.equal(event.tool_result, operatorReason);
     assert.ok(!JSON.stringify(event).includes("Sonnet 5.5"));
   });
 
-  it("a nested argument echoed by the server is masked for the operator", async () => {
+  it("a nested argument echoed by the server withholds the operator line, naming it", async () => {
     const invoke = await failingSaveComment(
       upstreamError('Error: unknown title "a confidential title"'),
     );
@@ -974,12 +974,12 @@ describe("external MCP failure reasons", () => {
     assert.ok(modelReason.includes("a confidential title"), modelReason);
     assert.equal(
       operatorReason,
-      'upstream error: Error: unknown title "<arg:meta.title>"',
+      "upstream error (text withheld: it echoes argument meta.title)",
     );
     assert.ok(!JSON.stringify(event).includes("confidential"));
   });
 
-  it("arguments too large to mask withhold the server's text from the operator", async () => {
+  it("arguments too large to check withhold the server's text from the operator", async () => {
     let meta: Record<string, unknown> = { title: "a deeply nested value" };
     for (let i = 0; i < 20; i++) meta = { title: "outer", next: meta };
     const invoke = await failingSaveComment(
@@ -992,7 +992,7 @@ describe("external MCP failure reasons", () => {
     assert.ok(modelReason.includes("a deeply nested value"), modelReason);
     assert.equal(
       operatorReason,
-      "upstream error (text withheld: arguments too large to mask)",
+      "upstream error (text withheld: arguments too large to check)",
     );
     assert.ok(!JSON.stringify(event).includes("deeply nested"));
   });

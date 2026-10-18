@@ -151,9 +151,10 @@ export type CommandInvocationResult<TResult = unknown> =
     isError: true;
     reason: string;
     /**
-     * The executor's operator-facing reason, with the call's argument values
-     * masked out, scrubbed and capped (`tools/failure-reason.ts`). Absent
-     * when the executor gave none; the reason is then derived from `reason`.
+     * The executor's operator-facing reason, scrubbed and capped, and
+     * withheld when it echoes an argument value (`tools/failure-reason.ts`).
+     * Absent when the executor gave none; the reason is then derived from
+     * `reason`.
      */
     operatorReason?: string;
   }
@@ -200,22 +201,24 @@ export class CommandExecutionError extends Error {
   /**
    * A compact form of the reason for the operator's ✗ line, the runtime log
    * and the durable event, when it should differ from `publicReason`.
-   * `invokeCommand` masks the call's argument values out of it.
+   * `invokeCommand` withholds it when it echoes an argument value.
    */
   declare public readonly operatorReason?: string;
   /**
-   * The operator line to use instead when the call's arguments are too large
-   * to mask out of `operatorReason` safely.
+   * Set when `operatorReason` quotes text this code did not compose (an
+   * upstream server's error): it then gets the echo check, and leads the
+   * withheld line (`upstream error (text withheld: …)`). Absent, the operator
+   * reason is fixed text and is only scrubbed and capped.
    */
-  declare public readonly operatorReasonWithheld?: string;
+  declare public readonly operatorReasonLabel?: string;
   constructor(
     publicReason: string,
-    options: { operatorReason?: string; operatorReasonWithheld?: string } = {},
+    options: { operatorReason?: string; operatorReasonLabel?: string } = {},
   ) {
     super(publicReason);
     this.publicReason = publicReason;
     this.name = "CommandExecutionError";
-    for (const key of ["operatorReason", "operatorReasonWithheld"] as const) {
+    for (const key of ["operatorReason", "operatorReasonLabel"] as const) {
       if (options[key] !== undefined) {
         Object.defineProperty(this, key, {
           value: options[key],

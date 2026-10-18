@@ -811,21 +811,23 @@ call that throws gets a class line instead of its message: `timed out after
 (<SDK code>)`, `MCP protocol error (<code>)`, `network egress refused`, or
 `response exceeded the 256 KiB limit`. The operator sees a shorter line: on the
 REPL's `✗` line, in the runtime log as `[tool-failed] <tool> (<ms> ms):
-<reason>`, and as the failed call's durable event result. That line replaces
-an exact echo of an argument value with `<arg:NAME>` (`<arg:meta.title>` for a
-nested one): a string of eight or more characters wherever it occurs, a shorter
-string or a number wherever it stands as a whole token (bounded by characters
-that are not letters or digits; a value of `1` masks every standalone `1`,
-which costs readability, never privacy, and is not masked inside `10`).
-Overlapping echoes are masked as one run. It scrubs credential-shaped
-text, and is capped at 160 bytes. The walk over the arguments is bounded (8
-levels, 256 string or number values, and one 1,024-step budget for nodes visited and keys taken
-from `for…in`; per-key work in our code stops at the budget, the engine's own
-key enumeration for `for…in` is not bounded by it); past those limits the
-server's text is withheld from that line (`upstream error (text withheld: arguments too large
-to mask)`). Masking matches exact echoes only; a server that reformats an
-argument before quoting it is not masked. No argument or result payload is
-logged.
+<reason>`, and as the failed call's durable event result. When the server's
+text echoes any argument value, that line is withheld and names the arguments,
+never their values: `upstream error (text withheld: it echoes argument
+issueId)`, so Linear's `Could not find issue "BIT-99999"` reaches the model but
+not the log. Otherwise the line is the text with credential-shaped text
+scrubbed, single-lined and capped at 160 bytes. The check reads the first 640
+characters, more than the line can show. It counts a string of eight or more
+characters anywhere, a shorter string or a number where it stands as a whole
+token (bounded by characters that are not letters or digits), and a cut-off
+start of a value at the end of those 640 characters; booleans and null never
+count. A server that reformats an argument before quoting it is not detected.
+The walk over the arguments is bounded (8 levels, 256 string or number values,
+and one 1,024-step budget for nodes visited and keys taken from `for…in`;
+per-key work in our code stops at the budget, the engine's own key enumeration
+for `for…in` is not bounded by it); past those limits the line is withheld
+(`upstream error (text withheld: arguments too large to check)`). No argument
+or result payload is logged.
 
 A configured server can also back the native runner's `web_search` and
 `web_fetch` tools. Name the upstream tools under `capabilities`; each named tool

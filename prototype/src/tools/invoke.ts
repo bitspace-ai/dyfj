@@ -16,7 +16,10 @@ import {
   type ConfirmToolApproval,
 } from "./definition.ts";
 import { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
-import { operatorFailureReason } from "./failure-reason.ts";
+import {
+  fixedOperatorReason,
+  operatorFailureReason,
+} from "./failure-reason.ts";
 import { redactToolCall } from "./redaction.ts";
 import type { CommandRegistry } from "./registry.ts";
 
@@ -126,11 +129,13 @@ export async function invokeCommand<TResult = unknown>(
         isError: true,
         reason: error.publicReason,
         ...(error.operatorReason === undefined ? {} : {
-          operatorReason: operatorFailureReason(
-            error.operatorReason,
-            call.arguments,
-            error.operatorReasonWithheld,
-          ),
+          operatorReason: error.operatorReasonLabel === undefined
+            ? fixedOperatorReason(error.operatorReason)
+            : operatorFailureReason(
+              error.operatorReason,
+              call.arguments,
+              error.operatorReasonLabel,
+            ),
         }),
       };
     }

@@ -450,24 +450,25 @@ README are tracked separately in its Revision history section.
   The `✗` line was a mark and a duration. Now it carries a one-line reason, and
   the runtime log gets `[tool-failed] <tool> (<ms> ms): <reason>` for each
   failure, with no arguments and no result. The reason travels on the
-  `toolCallCompleted` frame as `failureReason`. It is masked first: an exact
-  echo of an argument value is replaced by `<arg:NAME>`, a string of eight or
-  more characters wherever it occurs, a shorter string or a number wherever it
-  stands as a whole token (so `Alice` and `12345` are masked, and a value of
-  `1` masks every standalone `1` but not the `1` inside `10`), so a value the
-  event log redacts does not come back through the error text. Overlapping
-  echoes are masked as one run. Booleans and null are not masked. The
-  walk over the arguments is bounded: 8 levels, 256 string or number values,
-  and one 1,024-step budget for nodes visited and keys taken from `for…in`.
-  Per-key work in our code stops at the budget; the engine's own key
-  enumeration for `for…in` is not bounded by it. Past those limits the reason
-  text is withheld: `upstream error (text withheld: arguments too large to
-  mask)`. A server that reformats an
-  argument before quoting it is not masked. Credential-shaped text is then
+  `toolCallCompleted` frame as `failureReason`. A reason can quote the call's
+  own arguments back, and the event log redacts those, so when the reason
+  echoes any argument value the line is withheld and names the arguments,
+  never their values: `upstream error (text withheld: it echoes argument
+  issueId)`. The check reads the first 640 characters of the reason. It counts
+  a string of eight or more characters anywhere, a shorter string or a number
+  where it stands as a whole token, and a value cut off at the end of the 640;
+  booleans and null never count, and a server that reformats an argument
+  before quoting it is not detected. The walk over the arguments is bounded: 8
+  levels, 256 string or number values, and one 1,024-step budget for nodes
+  visited and keys taken from `for…in`. Per-key work in our code stops at the
+  budget; the engine's own key enumeration for `for…in` is not bounded by it.
+  Past those limits the line is withheld: `upstream error (text withheld:
+  arguments too large to check)`. Otherwise credential-shaped text is
   scrubbed and the line capped at 160 bytes. An external MCP command's failed
-  `tool_call` event stores that same line. For any other command, the event's
-  error text has its redacted argument values masked and credential-shaped text
-  scrubbed. Both REPLs render the reason.
+  `tool_call` event stores that same line. For any other command that redacts
+  an argument, the event's error text gets the same check against the
+  redacted values; other commands' error text is stored in full with
+  credential-shaped text scrubbed. Both REPLs render the reason.
 
 - **A turn that ends with no reply after a failed tool call says so.** When
   the latest tool step had a failed call and the model then gave no text, the

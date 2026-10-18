@@ -358,7 +358,7 @@ async function invokeTool(
 
 /**
  * One runtime-log line per failed tool call: the command, how long it took
- * and the operator reason, which is already masked, scrubbed and capped. No
+ * and the operator reason, which is already echo-checked, scrubbed and capped. No
  * arguments and no result.
  */
 function logToolFailure(

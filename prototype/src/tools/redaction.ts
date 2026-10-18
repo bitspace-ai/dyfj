@@ -19,10 +19,7 @@ import type {
   CommandDefinition,
   CommandInvocationResult,
 } from "./definition.ts";
-import {
-  MASKING_WITHHELD_REASON,
-  maskArgumentEchoes,
-} from "./failure-reason.ts";
+import { operatorFailureReason } from "./failure-reason.ts";
 
 // Constant redaction sentinel — no length or content-derived hash, so a
 // sensitive value's size and a guess-confirming fingerprint never reach the log.
@@ -92,10 +89,11 @@ export function redactCommandArguments(
  * output, which for `redactResult` tools (bash) is replaced with the sentinel
  * so secrets never reach the durable log (CWE-532). An error reason is ours,
  * but it can quote what an upstream server said, and a server can echo the
- * arguments back: the executor's operator reason, already masked, is
- * persisted when there is one; otherwise each redacted argument value is
- * masked out of the reason, and the reason is withheld when the arguments
- * are too large to mask. Credential-shaped text is scrubbed either way.
+ * arguments back: the executor's operator reason, already checked, is
+ * persisted when there is one; otherwise, for a command that redacts any
+ * argument, the reason is checked for echoes of those values and withheld,
+ * naming them, when it echoes one. Credential-shaped text is scrubbed either
+ * way.
  */
 export function redactCommandResult(
   command: CommandDefinition | undefined,
@@ -106,12 +104,11 @@ export function redactCommandResult(
     if ("operatorReason" in result && result.operatorReason !== undefined) {
       return result.operatorReason;
     }
-    return scrubSensitiveShapes(
-      maskArgumentEchoes(
-        result.reason,
-        redactedArgumentValues(command, args),
-      ) ?? MASKING_WITHHELD_REASON,
-    );
+    const redacted = redactedArgumentValues(command, args);
+    if (Object.keys(redacted).length > 0) {
+      return operatorFailureReason(result.reason, redacted);
+    }
+    return scrubSensitiveShapes(result.reason);
   }
   return command?.redactResult
     ? REDACTED

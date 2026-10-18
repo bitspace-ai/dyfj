@@ -6,15 +6,22 @@
  * A failure reason can quote the call's own arguments back (an upstream
  * server echoing the body it rejected). The event store redacts argument
  * values, so an echo must not carry one back into the store, the log or the
- * screen: an exact echo of an argument value is replaced by `<arg:PATH>` (a
- * string of eight or more characters anywhere; a shorter string or a number
- * as a whole token; see `maskArgumentEchoes`). The walk over the arguments is bounded (depth,
- * values collected, and one budget for every node visited and every key our
- * code takes from `for…in`); when it cannot finish, the text is
- * withheld rather than masked part-way. Credential-shaped text is then
- * scrubbed, and the line is made single-line and capped. A server that
- * reformats an argument before quoting it is not masked. The model's copy of
- * the reason is not this: it sent those values itself.
+ * screen. Nothing is rewritten: when the text echoes any argument value, the
+ * line is withheld and names the arguments it echoes, never their values
+ * (`upstream error (text withheld: it echoes argument issueId)`). Otherwise
+ * the text is shown with credential-shaped text scrubbed, single-lined and
+ * capped. The model's copy of the reason is not this: it sent those values
+ * itself.
+ *
+ * What counts as an echo, within the first `ECHO_WINDOW_CHARS` characters of
+ * the text (more than the capped line can show): a string of eight or more
+ * characters anywhere; a shorter string or a number where it stands as a
+ * whole token, bounded by characters that are not letters or digits (so `BIT`
+ * is found in `BIT-697` but not in `BITS`, and `1` not in `10`); and, when the
+ * text runs past the window, a window tail of three or more characters that
+ * begins some value. Booleans and null never count. A server that reformats
+ * an argument before quoting it is not detected. The work is bounded by the
+ * window and by the argument walk below, never by the size of the text.
  */
 
 import { sanitizeBoundaryText, scrubSensitiveShapes } from "../kernel/mod.ts";
@@ -22,14 +29,15 @@ import { sanitizeBoundaryText, scrubSensitiveShapes } from "../kernel/mod.ts";
 /** The operator line's cap, in UTF-8 bytes. */
 export const OPERATOR_REASON_MAX_BYTES = 160;
 
-/** The operator line when the arguments are too large to mask safely. */
-export const MASKING_WITHHELD_REASON =
-  "reason withheld: arguments too large to mask";
+/** How much of a reason the echo check reads: more than the line can show. */
+export const ECHO_WINDOW_CHARS = 640;
 
-const MASK_MIN_LENGTH = 8;
+const SUBSTRING_MIN_LENGTH = 8;
+const TAIL_PREFIX_MIN_LENGTH = 3;
+const MAX_NAMED_ARGUMENTS = 3;
 const MAX_WALK_DEPTH = 8;
 const MAX_WALK_LEAVES = 256;
-// Every node counts, so branches with no eligible string still cost.
+// Every node counts, so branches with no eligible value still cost.
 const MAX_WALK_VISITS = 1_024;
 
 /** The walk stopped before it saw every argument value. */
@@ -65,7 +73,7 @@ class WalkBudget {
  * The own data properties of `value`, read through their descriptors: an
  * accessor is skipped, never invoked, because arguments can carry getters
  * (validation proves it rejects some calls before reading their items, and
- * masking must not read them either). An array longer than the remaining
+ * the echo check must not read them either). An array longer than the remaining
  * budget is refused before any element is read, and each index read, a hole
  * included, draws on the budget; an object's keys draw on it as `for…in`
  * yields them, inherited ones included. Per-key work in our
@@ -103,9 +111,9 @@ function dataEntries(value: object, budget: WalkBudget): [string, unknown][] {
 }
 
 /**
- * Every string leaf of `args` worth masking, or undefined when the walk
+ * Every string and number leaf of `args` worth checking, or undefined when the walk
  * could not finish: too deep, too many strings, the budget spent, or a
- * hostile object's trap threw. A partial set would mask some echoes and leak
+ * hostile object's trap threw. A partial set would catch some echoes and miss
  * others.
  */
 function argumentLeaves(
@@ -122,7 +130,7 @@ function argumentLeaves(
       leaves.push({
         path,
         value: text,
-        match: typeof value === "string" && text.length >= MASK_MIN_LENGTH
+        match: typeof value === "string" && text.length >= SUBSTRING_MIN_LENGTH
           ? "substring"
           : "token",
       });
@@ -157,95 +165,86 @@ function isWordCharacter(character: string | undefined): boolean {
   return character !== undefined && WORD_CHARACTER.test(character);
 }
 
-/** Calls `found` for each place `leaf` occurs: anywhere, or only as a whole token. */
-function forEachOccurrence(
-  text: string,
-  leaf: ArgumentLeaf,
-  found: (start: number, end: number) => void,
-): void {
+/** Whether `leaf` occurs in `window`: anywhere, or only as a whole token. */
+function occursIn(window: string, leaf: ArgumentLeaf): boolean {
+  if (leaf.match === "substring") return window.includes(leaf.value);
   let from = 0;
   for (;;) {
-    const start = text.indexOf(leaf.value, from);
-    if (start === -1) return;
+    const start = window.indexOf(leaf.value, from);
+    if (start === -1) return false;
     const end = start + leaf.value.length;
-    const isToken = !isWordCharacter(text[start - 1]) &&
-      !isWordCharacter(text[end]);
-    if (leaf.match === "substring" || isToken) found(start, end);
+    if (!isWordCharacter(window[start - 1]) && !isWordCharacter(window[end])) {
+      return true;
+    }
     from = start + 1;
   }
 }
 
-/**
- * `text` with every echoed argument value replaced by `<arg:PATH>`, or
- * undefined when the arguments are too large or too strange to mask safely.
- * A string of eight or more characters is masked wherever it occurs; a
- * shorter string or a number only where it stands as a whole token, bounded
- * by characters that are not letters or digits, so `BIT` masks the `BIT` of
- * `BIT-697` but not of `BITS`, and an argument `1` is not masked inside `10`
- * (the token rule, deliberately). Booleans and null are not masked. A short
- * value over-masks: an argument of `1` masks every standalone `1`. That costs
- * the operator readability, never privacy, and is the intended direction.
- *
- * Every occurrence of every value marks the characters it covers, and each
- * maximal covered run becomes one placeholder, named after the longest value
- * that touches it: overlapping echoes leave no part of either value visible,
- * and a short value can never match inside a placeholder. The marking uses
- * two typed arrays the size of the text, with nothing allocated per
- * occurrence. `maxOutputLength` stops building the result once it is that
- * long; everything emitted before the stop has been masked.
- */
-export function maskArgumentEchoes(
-  text: string,
-  args: Record<string, unknown>,
-  maxOutputLength: number = Number.POSITIVE_INFINITY,
-): string | undefined {
-  const leaves = argumentLeaves(args);
-  if (leaves === undefined) return undefined;
-  // Longest first, so the lowest owner index on a run is its longest value.
-  leaves.sort((a, b) => b.value.length - a.value.length);
-  const covered = new Uint8Array(text.length);
-  const owner = new Int16Array(text.length).fill(-1);
-  leaves.forEach((leaf, index) => {
-    forEachOccurrence(text, leaf, (start, end) => {
-      for (let at = start; at < end; at++) {
-        covered[at] = 1;
-        if (owner[at] === -1) owner[at] = index;
-      }
-    });
-  });
-  let masked = "";
-  let at = 0;
-  while (at < text.length && masked.length < maxOutputLength) {
-    if (covered[at] === 0) {
-      let end = at;
-      while (end < text.length && covered[end] === 0) end++;
-      masked += text.slice(at, Math.min(end, at + (maxOutputLength - masked.length)));
-      at = end;
-      continue;
-    }
-    let longest = owner[at]!;
-    let end = at;
-    while (end < text.length && covered[end] === 1) {
-      const runOwner = owner[end]!;
-      if (runOwner !== -1 && runOwner < longest) longest = runOwner;
-      end++;
-    }
-    masked += `<arg:${leaves[longest]!.path}>`;
-    at = end;
+/** Whether the window's last characters begin `value`: an echo cut at the edge. */
+function tailBeginsValue(window: string, value: string): boolean {
+  const longest = Math.min(window.length, value.length - 1);
+  for (let length = TAIL_PREFIX_MIN_LENGTH; length <= longest; length++) {
+    if (value.startsWith(window.slice(window.length - length))) return true;
   }
-  return masked;
+  return false;
 }
 
-/** The masked, scrubbed, single-line, capped reason an operator sees. */
+/**
+ * The paths of the arguments whose values `text` echoes within the window,
+ * in walk order; empty when it echoes none; undefined when the arguments are
+ * too large or too strange to check, which the caller treats as an echo.
+ */
+export function findArgumentEchoes(
+  text: string,
+  args: Record<string, unknown>,
+): string[] | undefined {
+  const leaves = argumentLeaves(args);
+  if (leaves === undefined) return undefined;
+  const window = text.slice(0, ECHO_WINDOW_CHARS);
+  const continues = text.length > ECHO_WINDOW_CHARS;
+  const paths: string[] = [];
+  for (const leaf of leaves) {
+    if (paths.includes(leaf.path)) continue;
+    if (occursIn(window, leaf) || (continues && tailBeginsValue(window, leaf.value))) {
+      paths.push(leaf.path);
+    }
+  }
+  return paths;
+}
+
+function namedArguments(paths: string[]): string {
+  const named = paths.slice(0, MAX_NAMED_ARGUMENTS).join(", ");
+  const more = paths.length - MAX_NAMED_ARGUMENTS;
+  return more > 0 ? `${named} and ${more} more` : named;
+}
+
+/** A reason this code composed itself, quoting nothing: scrubbed and capped. */
+export function fixedOperatorReason(reason: string): string {
+  return sanitizeBoundaryText(
+    scrubSensitiveShapes(reason.slice(0, 4 * OPERATOR_REASON_MAX_BYTES)),
+    OPERATOR_REASON_MAX_BYTES,
+  );
+}
+
+/**
+ * The line an operator sees for `reason`: withheld, naming the arguments,
+ * when it echoes any argument value; otherwise scrubbed, single-lined and
+ * capped. `label` leads a withheld line (`upstream error`, `error`).
+ */
 export function operatorFailureReason(
   reason: string,
   args: Record<string, unknown>,
-  withheld: string = MASKING_WITHHELD_REASON,
+  label: string = "error",
 ): string {
-  // Four times the cap is ample for the line, and bounds the work.
-  const masked = maskArgumentEchoes(reason, args, 4 * OPERATOR_REASON_MAX_BYTES);
-  return sanitizeBoundaryText(
-    scrubSensitiveShapes(masked ?? withheld),
-    OPERATOR_REASON_MAX_BYTES,
-  );
+  const echoes = findArgumentEchoes(reason, args);
+  if (echoes === undefined) {
+    return `${label} (text withheld: arguments too large to check)`;
+  }
+  if (echoes.length > 0) {
+    return sanitizeBoundaryText(
+      `${label} (text withheld: it echoes argument ${namedArguments(echoes)})`,
+      OPERATOR_REASON_MAX_BYTES,
+    );
+  }
+  return fixedOperatorReason(reason);
 }
