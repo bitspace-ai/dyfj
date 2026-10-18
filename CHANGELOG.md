@@ -476,7 +476,9 @@ README are tracked separately in its Revision history section.
 - **A turn that ends with no reply after a failed tool call says so.** When
   the latest tool step had a failed call and the model then gave no text, the
   operator used to get nothing at all. Now the turn ends with `turn ended after
-  a failed tool call (<tool>: <reason>); the model gave no reply`. It shows in
+  a failed tool call (<tool>: <reason>); the model gave no reply`, or `a refused
+  tool call` when the call never ran (refused by policy, invalid arguments or
+  not approved). It shows in
   the output, as a `WARNING:` line in the receipt (which both REPLs show), as
   the turn result's `notice`, and in the runtime log as `[turn-notice] …`.
 

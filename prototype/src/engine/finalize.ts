@@ -166,8 +166,8 @@ export async function completeTurn(
 }
 
 /**
- * The notice for a turn whose latest tool step had a failed call and whose
- * model then gave no reply. Without it the operator gets nothing at all: no
+ * The notice for a turn whose latest tool step had a failed or refused call
+ * and whose model then gave no reply. Without it the operator gets nothing at all: no
  * answer and no reason. Not for a cancelled turn, which ended on purpose.
  */
 function turnEndNotice(
@@ -177,7 +177,9 @@ function turnEndNotice(
   const failure = state.lastStepFailure;
   if (failure === undefined || turn.stopReason === "aborted") return undefined;
   if (turn.text.trim() !== "") return undefined;
-  return `turn ended after a failed tool call (${
+  // A refused call never ran, so it did not fail; say which it was.
+  const outcome = failure.refused ? "refused" : "failed";
+  return `turn ended after a ${outcome} tool call (${
     sanitizeBoundaryText(failure.commandId, 128)
   }: ${failure.reason}); the model gave no reply`;
 }

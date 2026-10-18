@@ -319,6 +319,7 @@ async function invokeTool(
       state.lastStepFailure ??= {
         commandId: toolCall.name,
         reason: failureReason ?? "not approved",
+        refused: commandResult.decision !== "allow",
       };
     }
     if (failureReason !== undefined) {

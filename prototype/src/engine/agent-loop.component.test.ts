@@ -26,7 +26,11 @@ import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transpo
 import { AGENT_DEFAULTS } from "../config/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
-import type { ConfirmToolApproval } from "../tools/mod.ts";
+import {
+  type CommandDefinition,
+  CommandExecutionError,
+  type ConfirmToolApproval,
+} from "../tools/mod.ts";
 import type {
   NativeWorkbenchRuntimeResult,
   WorkbenchRuntimeInput,
@@ -949,7 +953,59 @@ test("a successful tool call writes no failure line and carries no reason", asyn
   assert.ok(!errors.some((entry) => entry.startsWith("[tool-failed]")));
 });
 
-test("a turn that ends with no reply after a failed tool step says so, on the receipt", async () => {
+/** A configured external command whose executor always fails, as a server's error would. */
+const FAILING_COMMAND: CommandDefinition<string> = {
+  id: "mcp.fake.save_note",
+  title: "Fake failing command",
+  description: "Always fails.",
+  inputSchema: {
+    type: "object",
+    properties: { note: { type: "string" } },
+    additionalProperties: false,
+  },
+  permission: {
+    effects: ["read.external"],
+    defaultDecision: "allow",
+    resources: ["mcp:fake/save_note"],
+    network: "configured-external",
+    filesystem: "none",
+    cost: "none",
+  },
+  minimumClearance: "loopback",
+  executor: () => {
+    throw new CommandExecutionError("External MCP tool call failed.", {
+      operatorReason: "upstream error: Error: the server said no",
+      operatorReasonLabel: "upstream error",
+    });
+  },
+};
+const SAVE_NOTE = (id: string): ToolCall => ({
+  id,
+  name: "mcp.fake.save_note",
+  arguments: { note: "hi" },
+});
+
+test("a turn that ends with no reply after a tool call that ran and failed says so, on the receipt", async () => {
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([toolReply([SAVE_NOTE("x1")]), chatReply({ content: "" })], {
+      externalMcpCommands: [FAILING_COMMAND],
+    })
+  );
+  assert.equal(loop.error, null);
+  const notice = loop.result?.notice;
+  assert.equal(
+    notice,
+    "turn ended after a failed tool call (mcp.fake.save_note: upstream error: Error: the server said no); the model gave no reply",
+  );
+  assert.ok(
+    loop.result!.receipt.split("\n").includes(`WARNING: ${notice}`),
+    loop.result!.receipt,
+  );
+  assert.ok(errors.includes(`[turn-notice] ${notice}`), JSON.stringify(errors));
+});
+
+test("a turn that ends with no reply after a refused tool call says refused, not failed", async () => {
+  // Invalid arguments: the call is refused before it runs.
   const { value: loop, errors } = await capturingErrors(() =>
     loopTurn([toolReply([READ_MISSING("f2")]), chatReply({ content: "" })])
   );
@@ -958,7 +1014,7 @@ test("a turn that ends with no reply after a failed tool step says so, on the re
   assert.ok(notice !== undefined, "expected a notice");
   assert.match(
     notice,
-    /^turn ended after a failed tool call \(read_file: .+\); the model gave no reply$/,
+    /^turn ended after a refused tool call \(read_file: invalid arguments for read_file: .+\); the model gave no reply$/,
   );
   assert.ok(
     loop.result!.receipt.split("\n").includes(`WARNING: ${notice}`),
