@@ -50,7 +50,10 @@ export type ExternalMcpDiagnostic =
     serverId: string;
     status: "dropped";
     tool: string;
-    reason: "not offered by the server" | `schema rejected: ${string}`;
+    reason:
+      | "not offered by the server"
+      | `schema rejected: ${string}`
+      | `not used: ${"web_search" | "web_fetch"} comes from ${string}`;
   }
   | {
     serverId: string;
@@ -727,6 +730,39 @@ function webCapabilityCommands(
   return { commands: added, suppliers };
 }
 
+/**
+ * A configured, offered web capability tool that another server's earlier
+ * entry outranks: `web_search` and `web_fetch` each come from one server.
+ */
+function shadowedWebTools(
+  readyWebServers: readonly ReadyWebServer[],
+  suppliers: ReadonlyMap<string, readonly ("web_search" | "web_fetch")[]>,
+): ExternalMcpDiagnostic[] {
+  const supplierOf = (id: "web_search" | "web_fetch") =>
+    [...suppliers].find(([, ids]) => ids.includes(id))?.[0];
+  const diagnostics: ExternalMcpDiagnostic[] = [];
+  for (const { server, discoveredByName } of readyWebServers) {
+    const mapped = [
+      ["web_search", server.capabilities?.searchTool],
+      ["web_fetch", server.capabilities?.fetchTool],
+    ] as const;
+    for (const [id, tool] of mapped) {
+      const supplier = supplierOf(id);
+      if (
+        tool === undefined || !discoveredByName.has(tool) ||
+        supplier === undefined || supplier === server.id
+      ) continue;
+      diagnostics.push({
+        serverId: server.id,
+        status: "dropped",
+        tool,
+        reason: `not used: ${id} comes from ${supplier}`,
+      });
+    }
+  }
+  return diagnostics;
+}
+
 export async function buildExternalMcpCommands(
   servers: readonly McpHttpServerConfig[],
   credentials: Readonly<Record<string, string>>,
@@ -787,6 +823,7 @@ export async function buildExternalMcpCommands(
     commands,
   );
   commands.push(...web.commands);
+  diagnostics.push(...shadowedWebTools(readyWebServers, web.suppliers));
   return {
     commands,
     diagnostics: diagnostics.map((diagnostic) => {

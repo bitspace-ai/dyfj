@@ -776,7 +776,9 @@ external MCP tavily: ready (0 tools + web_search + web_fetch, 2025-11-25)
 ```
 
 The tool count covers pass-through `mcp.<server>.<tool>` commands; a server
-that backs `web_search` or `web_fetch` lists those after it. A schema
+that backs `web_search` or `web_fetch` lists those after it. Each web command
+comes from the first server that offers its mapped tool, so a later server's
+mapped tool is named as `not used: web_search comes from <server>`. A schema
 rejection names the limit or rule it broke, with counts and JSON Schema type
 names only, never other upstream schema content. The sanitizer's limits are
 64,000 bytes for the whole schema, 12 levels of nesting, 64 properties per

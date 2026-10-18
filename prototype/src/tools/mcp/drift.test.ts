@@ -151,6 +151,25 @@ describe("external MCP configured-tool drift", () => {
     ]);
   });
 
+  it("names a web tool another server's earlier entry outranks", async () => {
+    const [first] = tavilyTable().mcp.servers;
+    const second = { ...first!, id: "backup", auth: { type: "bearer", secret: "tavily_mcp" } };
+    const diagnostics = await diagnose(
+      { mcp: { servers: [first, second] } },
+      [
+        { name: "tavily_search", inputSchema: OK_SCHEMA },
+        { name: "tavily_extract", inputSchema: OK_SCHEMA },
+      ],
+      { tavily_mcp: "secret-value" },
+    );
+    assert.deepStrictEqual(diagnostics.map(formatExternalMcpDiagnostic), [
+      "external MCP tavily: ready (0 tools + web_search + web_fetch, 2026-07-28)",
+      "external MCP backup: ready (0 tools, 2026-07-28)",
+      'external MCP backup: configured tool "tavily_search" not used: web_search comes from tavily',
+      'external MCP backup: configured tool "tavily_extract" not used: web_fetch comes from tavily',
+    ]);
+  });
+
   it("names the limit a rejected schema hit", async () => {
     const diagnostics = await diagnose(
       linearTable(["get_issue"]),
