@@ -51,8 +51,9 @@ export function classifySlashLine(line: string): SlashLine {
 
 /**
  * The text the command handlers may claim: the trimmed line, or "" for a
- * multi-line paste, which no handler matches. A paste is prompt text, so it
- * reaches the turn path before any command handler, whatever its first line.
+ * multi-line paste, which no handler matches. A paste is prompt text: every
+ * handler declines the empty candidate, so it falls through to the turn path
+ * whatever its first line says.
  */
 export function commandCandidate(line: string): string {
   return line.includes("\n") ? "" : line.trim();
