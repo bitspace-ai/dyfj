@@ -73,6 +73,27 @@ export class FrictionStageError extends Error {
   }
 }
 
+// How the MCP adapter words a call that outlived its bound
+// (`describeMcpCallError`). A read that times out is retried once; the message
+// is the only signal the invoker's rejection carries.
+const MCP_TIMEOUT_MESSAGE = /timed out after \d+ s waiting for the server/;
+
+/**
+ * Run a read, and run it once more if it timed out. Only the reads before the
+ * write use this: a timed-out write may still have landed, so retrying it
+ * could post the entry twice.
+ */
+async function retryReadOnceOnTimeout<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof Error && MCP_TIMEOUT_MESSAGE.test(error.message)) {
+      return await run();
+    }
+    throw error;
+  }
+}
+
 export interface FrictionLinearInvoker {
   getIssue(arguments_: Record<string, unknown>): Promise<unknown>;
   listComments(arguments_: Record<string, unknown>): Promise<unknown>;
@@ -342,8 +363,13 @@ export async function readAllComments(input: {
   for (let page = 0; page < MAX_COMMENT_PAGES; page += 1) {
     let raw: unknown;
     try {
-      raw = await input.invoke.listComments(
-        listCommentsArguments(input.command, input.issueIdentifier, cursor),
+      const arguments_ = listCommentsArguments(
+        input.command,
+        input.issueIdentifier,
+        cursor,
+      );
+      raw = await retryReadOnceOnTimeout(() =>
+        input.invoke.listComments(arguments_)
       );
     } catch (error) {
       if (error instanceof FrictionStageError) throw error;
@@ -436,8 +462,12 @@ export async function postFriction(input: {
   );
   let rawIssue: unknown;
   try {
-    rawIssue = await input.invoke.getIssue(
-      getIssueArguments(input.getIssueCommand, issueIdentifier),
+    const arguments_ = getIssueArguments(
+      input.getIssueCommand,
+      issueIdentifier,
+    );
+    rawIssue = await retryReadOnceOnTimeout(() =>
+      input.invoke.getIssue(arguments_)
     );
   } catch (error) {
     if (error instanceof FrictionStageError) throw error;

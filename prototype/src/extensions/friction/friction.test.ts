@@ -282,6 +282,132 @@ describe("postFriction", () => {
     assert.equal(createComment.mock.callCount(), 0);
   });
 
+  describe("a timed-out read", () => {
+    const timeout = () =>
+      new Error(
+        "External MCP tool call failed: timed out after 30 s waiting for the server.",
+      );
+    const request = {
+      severity: "minor" as const,
+      escaped: false,
+      text: "moment",
+    };
+
+    it("retries get_issue once and posts one comment", async () => {
+      let issueCalls = 0;
+      const createComment = mock.fn(async () => framed({ id: "comment-1" }));
+      const result = await postFriction({
+        issueIdentifier: "EX-100",
+        request,
+        getIssueCommand,
+        listCommentsCommand,
+        createCommentCommand,
+        invoke: {
+          getIssue: async () => {
+            issueCalls += 1;
+            if (issueCalls === 1) throw timeout();
+            return framed({ id: "issue-uuid" });
+          },
+          listComments: commentsPage(["F001 · earlier"]),
+          createComment,
+        },
+      });
+      assert.equal(issueCalls, 2);
+      assert.equal(createComment.mock.callCount(), 1);
+      assert.equal(result.number, "F002");
+    });
+
+    it("retries a list_comments page once", async () => {
+      let listCalls = 0;
+      const createComment = mock.fn(async () => framed({ id: "comment-1" }));
+      await postFriction({
+        issueIdentifier: "EX-100",
+        request,
+        getIssueCommand,
+        listCommentsCommand,
+        createCommentCommand,
+        invoke: {
+          getIssue: async () => framed({ id: "issue-uuid" }),
+          listComments: async () => {
+            listCalls += 1;
+            if (listCalls === 1) throw timeout();
+            return framed({ comments: [], hasNextPage: false });
+          },
+          createComment,
+        },
+      });
+      assert.equal(listCalls, 2);
+      assert.equal(createComment.mock.callCount(), 1);
+    });
+
+    it("gives up after the one retry and writes nothing", async () => {
+      let issueCalls = 0;
+      const createComment = invokerSpy();
+      const error = await captureRejection(() =>
+        postFriction({
+          issueIdentifier: "EX-100",
+          request,
+          getIssueCommand,
+          listCommentsCommand,
+          createCommentCommand,
+          invoke: {
+            getIssue: async () => {
+              issueCalls += 1;
+              throw timeout();
+            },
+            listComments: commentsPage(),
+            createComment,
+          },
+        }), FrictionStageError);
+      assert.equal(error.stage, "get_issue");
+      assert.equal(issueCalls, 2);
+      assert.equal(createComment.mock.callCount(), 0);
+    });
+
+    it("does not retry a failure that is not a timeout", async () => {
+      let issueCalls = 0;
+      const error = await captureRejection(() =>
+        postFriction({
+          issueIdentifier: "EX-100",
+          request,
+          getIssueCommand,
+          listCommentsCommand,
+          createCommentCommand,
+          invoke: {
+            getIssue: async () => {
+              issueCalls += 1;
+              throw new Error("MCP client error (CONNECTION_CLOSED)");
+            },
+            listComments: commentsPage(),
+            createComment: invokerSpy(),
+          },
+        }), FrictionStageError);
+      assert.equal(error.stage, "get_issue");
+      assert.equal(issueCalls, 1);
+    });
+
+    it("never retries the comment write, so a slow write cannot post twice", async () => {
+      const createComment = mock.fn(async (): Promise<unknown> => {
+        throw timeout();
+      });
+      const error = await captureRejection(() =>
+        postFriction({
+          issueIdentifier: "EX-100",
+          request,
+          getIssueCommand,
+          listCommentsCommand,
+          createCommentCommand,
+          invoke: {
+            getIssue: async () => framed({ id: "issue-uuid" }),
+            listComments: commentsPage(),
+            createComment,
+          },
+        }), FrictionStageError);
+      assert.equal(error.stage, "comment write");
+      assert.equal(createComment.mock.callCount(), 1);
+    });
+  });
+
   // The unwrap helper serves three callers, so an unreadable issue response must
   // report the stage that was running rather than the comment read that follows.
   for (
