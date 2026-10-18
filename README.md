@@ -803,6 +803,21 @@ server, tool, revision, and outcome metadata. Use a dedicated, minimally scoped
 server credential; the bearer token grants whatever authority the MCP server
 assigns to it.
 
+A failed call says why. When the server reports the call failed, the model
+gets the server's error text, single-lined, capped at 300 bytes and framed as
+untrusted data (for example Linear's `Could not find issue "BIT-99999"`). A
+call that throws gets a class line instead of its message: `timed out after
+30 s waiting for the server`, `transport error (ECONNRESET)`, `MCP client error
+(<SDK code>)`, `MCP protocol error (<code>)`, `network egress refused`, or
+`response exceeded the 256 KiB limit`. The operator sees a shorter line: on the
+REPL's `✗` line, in the runtime log as `[tool-failed] <tool> (<ms> ms):
+<reason>`, and as the failed call's durable event result. That line replaces
+every argument string of eight or more characters that the server echoed back
+with `<arg:NAME>` (`<arg:meta.title>` for a nested one), scrubs
+credential-shaped text, and is capped at 160 bytes. Masking matches exact
+echoes only; a server that reformats an argument before quoting it is not
+masked. No argument or result payload is logged.
+
 A configured server can also back the native runner's `web_search` and
 `web_fetch` tools. Name the upstream tools under `capabilities`; each named tool
 must also appear in the server's `tools` allowlist, and at least one of the two
@@ -1735,7 +1750,9 @@ cargo run -p dyfj-repl
 It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
 `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`). A multi-line paste arrives as one
 prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
-Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
+Ctrl-C cancellation, a per-turn receipt line with the turn's cost, the session's
+spend as the runtime's envelope counts it, and prompt-cache tokens, a reason on
+each failed tool call's `✗` line,
 and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
 `/idea`, and it refuses an unknown or unroutable `--model` before the first
 prompt. `--session` and `/session switch` resume a session on the model it last

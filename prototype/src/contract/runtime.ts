@@ -227,6 +227,13 @@ export type WorkbenchRuntimeEvent =
     callId: string;
     isError: boolean;
     durationMs: number;
+    /**
+     * Why a failed call failed, for the operator: one line, at most 160
+     * bytes, with the call's argument values masked out and credential-shaped
+     * text scrubbed. Present on a failed call that ran; absent on success
+     * and on a call that was not approved.
+     */
+    failureReason?: string;
     errorName?: string;
     errorMessage?: string;
     /**

@@ -187,6 +187,26 @@ describe("handleTurnRuntimeEvent", () => {
     assert.deepStrictEqual(stderr, ["tool: bash failed (40ms)"]);
   });
 
+  it("renders a failed call with its one-line reason", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    handleTurnRuntimeEvent(
+      {
+        type: "toolCallCompleted",
+        commandId: "mcp.linear.save_comment",
+        callId: "c1",
+        isError: true,
+        durationMs: 1700,
+        failureReason: "timed out after 30 s\u001b[2J waiting\nfor the server",
+      },
+      output,
+      io,
+    );
+    assert.deepStrictEqual(stderr, [
+      "tool: mcp.linear.save_comment failed (1700ms): timed out after 30 s[2J waiting for the server",
+    ]);
+  });
+
   it("flushes preserved partial text before the interrupted marker", () => {
     const writes: string[] = [];
     const io: Io = {

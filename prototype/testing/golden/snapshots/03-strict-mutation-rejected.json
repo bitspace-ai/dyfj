@@ -15,7 +15,7 @@
         "traceId": "<TRACE:1>",
         "stopReason": "stop",
         "text": "Write result:\napproval_denied: this write_file call was not approved, so it did not run; this is not its output. Do not retry it or a variant of it. Ask the operator or take a different approach. Reason given: approval needs an interactive terminal.",
-        "receipt": "Workbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  20 in, 10 out\nCache:   0 read, 0 written\nCalls:   2\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
+        "receipt": "Workbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  20 in, 10 out\nCache:   0 read, 0 written\nCalls:   2\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
         "model": {
           "displayName": "Golden Local",
           "slug": "golden-local",
@@ -29,6 +29,7 @@
         "cost": {
           "estimatedUsd": 0,
           "totalUsd": 0,
+          "sessionUsd": 0,
           "paidInferenceUsed": false
         },
         "tokens": {
@@ -68,7 +69,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s3] Write golden-out.txt.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  20 in, 10 out\nCache:   0 read, 0 written\nCalls:   2\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s3] Write golden-out.txt.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Local (golden-local, tier 0)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  20 in, 10 out\nCache:   0 read, 0 written\nCalls:   2\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, TTFT <DURATION>, generation <DURATION>, TPOT <DURATION>/token, total <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }

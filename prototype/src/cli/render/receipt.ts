@@ -12,15 +12,16 @@ function formatTokenCount(count: number): string {
 }
 
 /**
- * The per-turn receipt line. `sessionTotalUsd` (the REPL's running sum of
- * per-turn costs) adds a `session $…` figure so spend is visible as it
- * accumulates, not just per turn; one-shot exec passes none. Reasoning tokens
+ * The per-turn receipt line. In a REPL, which passes `replTotalUsd` (its
+ * running sum of per-turn costs), the line adds the session's spend so it is
+ * visible as it accumulates: the runtime's `cost.sessionUsd` when sent,
+ * otherwise `repl total $…`. One-shot exec passes none. Reasoning tokens
  * appear only when the provider reported some — most report none.
  */
 export function formatReceipt(
   result: TurnResult,
   color: boolean,
-  sessionTotalUsd?: number,
+  replTotalUsd?: number,
 ): string {
   const dim = (s: string) => (color ? `\x1b[2m${s}\x1b[0m` : s);
   if ("runner" in result) {
@@ -89,9 +90,15 @@ export function formatReceipt(
     );
   }
   const cost = formatUsdShort(result.cost.totalUsd);
-  const session = sessionTotalUsd !== undefined
-    ? ` · session ${formatUsdShort(sessionTotalUsd)}`
-    : "";
+  // In a REPL: the runtime's session figure, the one its spending envelope
+  // checks, which counts turns this REPL never saw complete. A runtime that
+  // sends none gets this REPL's own sum, labelled as such.
+  const runtimeSession = result.cost.sessionUsd;
+  const session = replTotalUsd === undefined
+    ? ""
+    : typeof runtimeSession === "number" && Number.isFinite(runtimeSession)
+    ? ` · session ${formatUsdShort(runtimeSession)}`
+    : ` · repl total ${formatUsdShort(replTotalUsd)}`;
   const reasoning = (result.tokens.reasoning ?? 0) > 0
     ? ` (+${result.tokens.reasoning} reasoning)`
     : "";

@@ -11,3 +11,16 @@ it("CommandExecutionError keeps its own properties and message", () => {
   assert.strictEqual(err.message, "why");
   assert.strictEqual(err.cause, undefined);
 });
+
+it("CommandExecutionError carries an operator reason only when given one", () => {
+  const err = new CommandExecutionError("model-facing", {
+    operatorReason: "operator line",
+  });
+  assert.deepStrictEqual(Object.keys(err), [
+    "publicReason",
+    "name",
+    "operatorReason",
+  ]);
+  assert.strictEqual(err.operatorReason, "operator line");
+  assert.strictEqual(new CommandExecutionError("why").operatorReason, undefined);
+});

@@ -150,6 +150,12 @@ export type CommandInvocationResult<TResult = unknown> =
     authzBasis: string;
     isError: true;
     reason: string;
+    /**
+     * The executor's operator-facing reason, with the call's argument values
+     * masked out, scrubbed and capped (`tools/failure-reason.ts`). Absent
+     * when the executor gave none; the reason is then derived from `reason`.
+     */
+    operatorReason?: string;
   }
   | {
     decision: "ask" | "deny";
@@ -189,10 +195,23 @@ export type ConfirmToolApproval = (
 ) => Promise<ToolApprovalVerdict>;
 
 export class CommandExecutionError extends Error {
+  /** What the model reads in place of a result. */
   public readonly publicReason: string;
-  constructor(publicReason: string) {
+  /**
+   * A compact form of the reason for the operator's ✗ line, the runtime log
+   * and the durable event, when it should differ from `publicReason`.
+   * `invokeCommand` masks the call's argument values out of it.
+   */
+  declare public readonly operatorReason?: string;
+  constructor(publicReason: string, options: { operatorReason?: string } = {}) {
     super(publicReason);
     this.publicReason = publicReason;
     this.name = "CommandExecutionError";
+    if (options.operatorReason !== undefined) {
+      Object.defineProperty(this, "operatorReason", {
+        value: options.operatorReason,
+        enumerable: true,
+      });
+    }
   }
 }

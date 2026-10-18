@@ -2,7 +2,7 @@
  * Component test for budget/: the real tracker, spend baselines, confirmation
  * store, envelope gate and anomaly gate wired together over a `MemoryStore`
  * and a `ManualClock`. Prior spend is committed to the store as
- * `model_response` events; the store stamps them with the clock's time, and
+ * `provider_call` events; the store stamps them with the clock's time, and
  * the spend reader rolls them up against the clock's local day.
  *
  * Each test builds its own `CeilingConfirmationStore` on the test's clock.
@@ -45,18 +45,18 @@ const ANOMALY: AnomalyConfig = { turnMultiple: 3, scopeMultiple: 2 };
 
 let eventSeq = 0;
 
-/** One priced `model_response` row, stamped by the store with the clock. */
-function modelResponse(sessionId: string, costTotal: number): EventInsert {
+/** One priced `provider_call` row, stamped by the store with the clock. */
+function paidCall(sessionId: string, costTotal: number): EventInsert {
   eventSeq += 1;
   return {
     event_id: `01COMPONENTEVENT${String(eventSeq).padStart(10, "0")}`,
     session_id: sessionId,
-    event_type: "model_response",
+    event_type: "provider_call",
     trace_id: TRACE_ID,
     span_id: `span${eventSeq}`,
     principal_id: "operator",
     principal_type: "human",
-    action: "respond",
+    action: "invoke",
     resource: "model",
     authz_basis: "test",
     cost_total: costTotal,
@@ -102,9 +102,9 @@ async function nearLimit(sessionId: string) {
   const { clock, store } = setup();
   await store.journal.commit({
     events: [
-      modelResponse(sessionId, 0.45),
-      modelResponse(sessionId, 0.50),
-      modelResponse(`${sessionId}-OTHER`, 4.00),
+      paidCall(sessionId, 0.45),
+      paidCall(sessionId, 0.50),
+      paidCall(`${sessionId}-OTHER`, 4.00),
     ],
   });
   const tracker = await trackerFor(store, clock, sessionId);
@@ -196,8 +196,8 @@ test("envelope: the daily confirmation and spend window roll over with the local
   const config = { ...CONFIG, perCallLimitUsd: 0.50 };
   await store.journal.commit({
     events: [
-      modelResponse("COMP-B-MAIN", 0.30),
-      modelResponse("COMP-B-OTHER", 4.95),
+      paidCall("COMP-B-MAIN", 0.30),
+      paidCall("COMP-B-OTHER", 4.95),
     ],
   });
   assert.strictEqual(localDayKey(clock.date()), "2026-07-06");
@@ -239,7 +239,7 @@ test("envelope: the daily confirmation and spend window roll over with the local
 
   // Fresh spend today crosses the daily envelope again, and yesterday's
   // confirmation no longer covers it.
-  await store.journal.commit({ events: [modelResponse("COMP-B-OTHER", 4.97)] });
+  await store.journal.commit({ events: [paidCall("COMP-B-OTHER", 4.97)] });
   const day2 = await trackerFor(store, clock, "COMP-B-MAIN", config);
   const day2Call = day2.checkPreCall(2, 3.0, 20_000);
   assert.strictEqual(day2Call.reason, "daily_limit");
@@ -295,8 +295,8 @@ test("anomaly: store-seeded session spend past 2× the session envelope halts", 
   const { clock, store } = setup();
   await store.journal.commit({
     events: [
-      modelResponse("COMP-C-SCOPE", 1.00),
-      modelResponse("COMP-C-SCOPE", 0.95),
+      paidCall("COMP-C-SCOPE", 1.00),
+      paidCall("COMP-C-SCOPE", 0.95),
     ],
   });
   const tracker = await trackerFor(store, clock, "COMP-C-SCOPE");
@@ -332,7 +332,7 @@ test("anomaly: store-seeded session spend past 2× the session envelope halts", 
 test("anomaly: tier 0 never halts, even past every threshold", async () => {
   const { clock, store } = setup();
   await store.journal.commit({
-    events: [modelResponse("COMP-C-TIER0", 3.00)],
+    events: [paidCall("COMP-C-TIER0", 3.00)],
   });
   const tracker = await trackerFor(store, clock, "COMP-C-TIER0");
   tracker.record(usage(0.50), 2);

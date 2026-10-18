@@ -3,7 +3,8 @@
  *
  * Responsibility: UTF-8 byte bounding, code-point prefixes, terminal escape
  * stripping, boundary-text sanitizing, the shared file-stat shape, ULID/trace/span IDs, canonical JSON,
- * the time-bounded regex matcher, lexical path checks, and the `Clock` port
+ * the time-bounded regex matcher, lexical path checks, credential-shape
+ * detection and scrubbing, and the `Clock` port
  * with its system adapter. Helpers here hold no runtime policy: callers choose
  * limits, markers, and error types.
  *
@@ -31,6 +32,11 @@ export { type FileStat, fileStat, hasVerifiableIdentity } from "./file-stat.ts";
 export { takeCodePointPrefix } from "./code-points.ts";
 export { generateSpanId, generateTraceId, generateULID } from "./ids.ts";
 export { hasDotPathComponent } from "./lexical-path.ts";
+export {
+  containsSensitiveShape,
+  SENSITIVE_PLACEHOLDER,
+  scrubSensitiveShapes,
+} from "./sensitive-shapes.ts";
 export {
   clipToUtf8Bytes,
   utf8ByteLengthWithinLimit,

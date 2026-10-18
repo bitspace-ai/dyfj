@@ -232,7 +232,7 @@ export class BudgetTracker {
     costInputPerMTok: number,
     estimatedInputTokens: number,
   ): PreCallCheck {
-    const sessionCostSoFar = this.baselines.sessionSpentUsd + this._totalCost;
+    const sessionCostSoFar = this.sessionSpentUsd;
     // Only today's share of this session counts toward the daily envelope —
     // a resumed session may span days; the live turn's spend is all today.
     const dailyCostSoFar = this.baselines.dailyOtherSessionsUsd +
@@ -283,7 +283,7 @@ export class BudgetTracker {
    */
   checkAnomaly(tier: 0 | 1 | 2, anomaly: AnomalyConfig): AnomalyCheck {
     const turnSpentUsd = this._totalCost;
-    const sessionSpentUsd = this.baselines.sessionSpentUsd + this._totalCost;
+    const sessionSpentUsd = this.sessionSpentUsd;
     const dailySpentUsd = this.baselines.dailyOtherSessionsUsd +
       this.baselines.sessionSpentTodayUsd + this._totalCost;
     const turnHaltUsd = anomaly.turnMultiple * this.config.perCallLimitUsd;
@@ -317,6 +317,14 @@ export class BudgetTracker {
 
   get totalCost(): number {
     return this._totalCost;
+  }
+  /**
+   * The session's spend so far: every paid call of its earlier turns, from
+   * the event log, plus this turn's. The session envelope and the anomaly
+   * halt check this figure, and the receipt reports it.
+   */
+  get sessionSpentUsd(): number {
+    return this.baselines.sessionSpentUsd + this._totalCost;
   }
   get totalTokensInput(): number {
     return this._totalTokensInput;

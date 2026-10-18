@@ -245,21 +245,35 @@ describe("presentation", () => {
       ) to include "tools 2/2 (limit reached)"`,
     );
   });
-  it("formatReceipt appends the running session total when given", () => {
+  it("formatReceipt shows the runtime's session figure in a REPL", () => {
+    // The runtime's figure is the one its spending envelope checks; it counts
+    // turns this REPL never saw complete, so it wins over the running sum.
+    const paid = result({
+      cost: {
+        estimatedUsd: 0,
+        totalUsd: 0.0123,
+        sessionUsd: 4.381,
+        paidInferenceUsed: true,
+      },
+    });
+    assert.ok(
+      formatReceipt(paid, false, 1.1969).includes("$0.0123 · session $4.3810"),
+      formatReceipt(paid, false, 1.1969),
+    );
+    // One-shot receipts (no REPL total passed) stay unchanged.
+    assert.ok(!(formatReceipt(paid, false)).includes("session"));
+  });
+  it("formatReceipt labels the REPL's own sum when the runtime sends no session figure", () => {
     const paid = result({
       cost: { estimatedUsd: 0, totalUsd: 0.0123, paidInferenceUsed: true },
     });
     assert.ok(
-      formatReceipt(paid, false, 0.0456).includes("$0.0123 · session $0.0456"),
-      `expected formatReceipt(paid, false, 0.0456) to include "$0.0123 · session $0.0456"`,
+      formatReceipt(paid, false, 0.0456).includes(
+        "$0.0123 · repl total $0.0456",
+      ),
+      formatReceipt(paid, false, 0.0456),
     );
-    // A free session shows an explicit $0 total, and one-shot receipts
-    // (no session figure passed) stay unchanged.
-    assert.ok(
-      formatReceipt(result(), false, 0).includes("session $0"),
-      `expected formatReceipt(result(), false, 0) to include "session $0"`,
-    );
-    assert.ok(!(formatReceipt(result(), false)).includes("session"));
+    assert.ok(formatReceipt(result(), false, 0).includes("repl total $0"));
   });
   it("formatReceipt shows reasoning tokens only when reported", () => {
     const withReasoning = result({

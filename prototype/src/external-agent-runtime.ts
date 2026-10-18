@@ -1,4 +1,5 @@
 import {
+  containsSensitiveShape,
   generateSpanId,
   generateTraceId,
   generateULID,
@@ -545,27 +546,14 @@ const RECONSTRUCTION_FOOTER = "[end of reconstructed transcript]";
  */
 const HISTORY_QUOTE = "  | ";
 
-/**
- * Fixed shapes for values that must not be replayed into a prompt. Each is a
- * literal prefix or keyword followed by a bounded character class, so matching
- * is linear and cannot backtrack on hostile input.
- */
-const SECRET_SHAPES: readonly RegExp[] = [
-  /sk-[A-Za-z0-9_-]{16,256}/,
-  /gh[pousr]_[A-Za-z0-9]{20,255}/,
-  /github_pat_[A-Za-z0-9_]{20,255}/i,
-  /xox[abposr]-[A-Za-z0-9-]{10,256}/,
-  /AKIA[0-9A-Z]{16}/,
-  /-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----/i,
-  /\bbearer[\t \r\n]+[A-Za-z0-9._~+/-]{20,512}/i,
-  /(?:^|[\s{,;:\[])["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?(?:key|token)|aws[_-]?secret[_-]?access[_-]?key|secret|token|password|passwd|credential)["']?[\t \r\n]{0,8}[:=][\t \r\n]{0,8}["']?[^\s"']{8,512}/im,
-];
-
 const SAFE_HISTORY_METADATA = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
 
-/** Whether `value` carries something shaped like a live credential. */
+/**
+ * Whether `value` carries something shaped like a live credential: values of
+ * that shape must not be replayed into a prompt.
+ */
 export function historyContainsSecretShape(value: string): boolean {
-  return SECRET_SHAPES.some((shape) => shape.test(value));
+  return containsSensitiveShape(value);
 }
 
 /**

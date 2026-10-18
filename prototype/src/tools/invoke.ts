@@ -16,6 +16,7 @@ import {
   type ConfirmToolApproval,
 } from "./definition.ts";
 import { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
+import { operatorFailureReason } from "./failure-reason.ts";
 import { redactToolCall } from "./redaction.ts";
 import type { CommandRegistry } from "./registry.ts";
 
@@ -124,6 +125,12 @@ export async function invokeCommand<TResult = unknown>(
         authzBasis,
         isError: true,
         reason: error.publicReason,
+        ...(error.operatorReason === undefined ? {} : {
+          operatorReason: operatorFailureReason(
+            error.operatorReason,
+            call.arguments,
+          ),
+        }),
       };
     }
     throw error;

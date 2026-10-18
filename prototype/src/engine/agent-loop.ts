@@ -22,7 +22,11 @@ import {
   type WorkbenchToolCall,
   type WorkbenchTurnParams,
 } from "../providers/mod.ts";
-import { invokeCommandWithEvent } from "../tools/mod.ts";
+import { sanitizeBoundaryText } from "../kernel/mod.ts";
+import {
+  invokeCommandWithEvent,
+  operatorFailureReason,
+} from "../tools/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
 import { classifyErrorKind, ToolStepLimitConclusionError } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
@@ -205,6 +209,7 @@ async function runToolStep(
   const { state, input } = turn;
   const requestedToolCalls = result.toolCalls ?? [];
   state.toolSteps++;
+  state.lastStepFailure = undefined;
   state.session.log(
     `Step ${state.toolSteps}: running ${requestedToolCalls.length} tool call(s)...`,
   );
@@ -298,10 +303,27 @@ async function invokeTool(
     const commandResult = outcome.value;
     const approvalDenied = "verdict" in commandResult &&
       commandResult.verdict === "approval_denied";
+    const durationMs = ports.clock.now() - toolStartedAt;
+    const failureReason = commandResult.isError && !approvalDenied
+      ? ("operatorReason" in commandResult
+        ? commandResult.operatorReason
+        : undefined) ??
+        operatorFailureReason(commandResult.reason, toolCall.arguments)
+      : undefined;
+    if (commandResult.isError) {
+      state.lastStepFailure ??= {
+        commandId: toolCall.name,
+        reason: failureReason ?? "not approved",
+      };
+    }
+    if (failureReason !== undefined) {
+      logToolFailure(toolCall.name, durationMs, failureReason);
+    }
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,
       isError: commandResult.isError,
-      durationMs: ports.clock.now() - toolStartedAt,
+      durationMs,
+      ...(failureReason === undefined ? {} : { failureReason }),
       ...(approvalDenied ? { verdict: "approval_denied" as const } : {}),
     });
     return {
@@ -332,6 +354,23 @@ async function invokeTool(
     });
     throw err;
   }
+}
+
+/**
+ * One runtime-log line per failed tool call: the command, how long it took
+ * and the operator reason, which is already masked, scrubbed and capped. No
+ * arguments and no result.
+ */
+function logToolFailure(
+  commandId: string,
+  durationMs: number,
+  reason: string,
+): void {
+  console.error(
+    `[tool-failed] ${sanitizeBoundaryText(commandId, 128)} (${
+      Math.max(0, Math.round(durationMs))
+    } ms): ${reason}`,
+  );
 }
 
 /** Start the command; its approval comes through the `Approver` port. */

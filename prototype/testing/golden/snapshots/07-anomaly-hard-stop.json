@@ -31,7 +31,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s7] Read notes.txt twice.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Metered (golden-metered, tier 1)\nRoute:   explicit_model_id\nPaid inference used: yes\nEstimated cost: $0.000163\nActual cost:    $0.200500\nTokens:  400000 in, 1000 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, total <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s7] Read notes.txt twice.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Metered (golden-metered, tier 1)\nRoute:   explicit_model_id\nPaid inference used: yes\nEstimated cost: $0.000163\nActual cost:    $0.200500\nSession cost:   $0.200500\nTokens:  400000 in, 1000 out\nCache:   0 read, 0 written\nCalls:   1\nTool steps: 1/32\nTotal elapsed: <DURATION>\nTimings: headers <DURATION>, total <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }

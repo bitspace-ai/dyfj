@@ -412,6 +412,57 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A failed external MCP call says why.** Every failure of a configured
+  `mcp.<server>.<tool>` command used to reach the model, the REPL, the event
+  log and the runtime log as the fixed `External MCP tool call failed`. When
+  the server reported the failure, its own text (Linear's `Could not find
+  issue "…"`, `Provide exactly one of issueId, …`) was discarded. Now the model
+  gets that text, single-lined, capped at 300 bytes and framed as untrusted
+  data. A call that throws gets a class line, never the error's message: a
+  timeout is named (`timed out after 30 s waiting for the server`), and so are a
+  transport error code, an SDK or protocol error code, an egress refusal and the
+  256 KiB response limit. Body size was ruled out as a cause: 3 KB and 60 KB
+  `save_comment` bodies post through the runtime's own client path.
+
+- **A failed tool call shows its reason in the REPL and in the runtime log.**
+  The `✗` line was a mark and a duration. Now it carries a one-line reason, and
+  the runtime log gets `[tool-failed] <tool> (<ms> ms): <reason>` for each
+  failure, with no arguments and no result. The reason travels on the
+  `toolCallCompleted` frame as `failureReason`. It is masked first: any
+  argument string of eight or more characters, at any depth, that the reason
+  echoes back is replaced by `<arg:NAME>`, so an argument value that the event
+  log redacts cannot return through an error. Credential-shaped text is then
+  scrubbed and the line capped at 160 bytes. An external MCP command's failed
+  `tool_call` event stores that same line. For any other command, the event's
+  error text has its redacted argument values masked and credential-shaped text
+  scrubbed. Both REPLs render the reason.
+
+- **A turn that ends with no reply after a failed tool call says so.** When
+  the latest tool step had a failed call and the model then gave no text, the
+  operator used to get nothing at all. Now the turn ends with `turn ended after
+  a failed tool call (<tool>: <reason>); the model gave no reply`. It shows in
+  the output, as a `WARNING:` line in the receipt (which both REPLs show), as
+  the turn result's `notice`, and in the runtime log as `[turn-notice] …`.
+
+- **The session and daily spend envelopes count every paid call, failed and
+  halted turns included, and the receipt shows the same figure.** The
+  envelopes' baseline summed `model_response` costs, but a turn that fails or
+  halts writes no `model_response`, so its paid calls dropped out of every
+  later envelope and anomaly check. The REPL's `session $…` was its own sum of
+  the receipts of completed turns, a third figure. In one session the
+  runaway-spend prompt showed `Session spent: $4.125105` while the receipt
+  showed `session $1.1969`. The provider calls had cost $4.38, and $3.18 of it
+  came from the turn that halted. Across the local event log since
+  2026-09-01, `provider_call` costs total $14.85 against $9.82 in
+  `model_response`. The baseline now sums `provider_call` costs, one row per
+  paid call. The turn result carries `cost.sessionUsd`, the tracker's figure
+  that the envelope checks, and the receipt adds a `Session cost:` line. The
+  REPLs show it as `session $…`; with an older runtime that sends none, they
+  label their own sum `repl total $…`. **Behaviour change:** a session or day
+  that had failed or halted paid turns now reaches its envelope sooner,
+  because that spend was real. The budget tally's session part no longer
+  shows token counts, which only ever covered the current turn.
+
 - **Ctrl-C stops a `dyfj start` runtime again, including the next one in the
   same terminal.** The `dyfj` client created a readline interface on the
   terminal at startup, even for commands that never read a line. On a

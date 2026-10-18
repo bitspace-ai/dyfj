@@ -13,11 +13,13 @@
  * module applies the declarations, it does not decide them.
  */
 
+import { scrubSensitiveShapes } from "../kernel/mod.ts";
 import type {
   CommandCall,
   CommandDefinition,
   CommandInvocationResult,
 } from "./definition.ts";
+import { maskArgumentEchoes } from "./failure-reason.ts";
 
 // Constant redaction sentinel — no length or content-derived hash, so a
 // sensitive value's size and a guess-confirming fingerprint never reach the log.
@@ -41,7 +43,7 @@ export function redactToolCall(
 ): RedactedToolCall {
   return {
     arguments: redactCommandArguments(command, call.arguments),
-    result: redactCommandResult(command, result),
+    result: redactCommandResult(command, result, call.arguments),
   };
 }
 
@@ -83,20 +85,42 @@ export function redactCommandArguments(
 }
 
 /**
- * The persisted result text. An error reason is our own message (safe); a
- * success result may carry the command's raw output, which for `redactResult`
- * tools (bash) is replaced with the sentinel so secrets never reach the
- * durable log (CWE-532).
+ * The persisted result text. A success result may carry the command's raw
+ * output, which for `redactResult` tools (bash) is replaced with the sentinel
+ * so secrets never reach the durable log (CWE-532). An error reason is ours,
+ * but it can quote what an upstream server said, and a server can echo the
+ * arguments back: the executor's operator reason, already masked, is
+ * persisted when there is one; otherwise every redacted argument value is
+ * masked out of the reason. Credential-shaped text is scrubbed either way.
  */
 export function redactCommandResult(
   command: CommandDefinition | undefined,
   result: CommandInvocationResult,
+  args: Record<string, unknown> = {},
 ): string {
-  return result.isError
-    ? result.reason
-    : command?.redactResult
+  if (result.isError) {
+    if ("operatorReason" in result && result.operatorReason !== undefined) {
+      return result.operatorReason;
+    }
+    return scrubSensitiveShapes(
+      maskArgumentEchoes(result.reason, redactedArgumentValues(command, args)),
+    );
+  }
+  return command?.redactResult
     ? REDACTED
     : formatCommandResult(result.result);
+}
+
+/** The arguments whose values the event redacts, by name. */
+function redactedArgumentValues(
+  command: CommandDefinition | undefined,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (command?.redactArguments === true) return args;
+  const properties = command?.inputSchema.properties ?? {};
+  return Object.fromEntries(
+    Object.entries(args).filter(([key]) => properties[key]?.redact === true),
+  );
 }
 
 function formatCommandResult(value: unknown): string {

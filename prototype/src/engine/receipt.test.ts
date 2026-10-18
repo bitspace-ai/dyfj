@@ -58,8 +58,6 @@ const BASE_TALLY: BudgetTallyInput = {
   },
   session: {
     totalCostUsd: 0.0345678,
-    totalTokensInput: 1300,
-    totalTokensOutput: 620,
     paidCalls: 2,
     sessionLimitUsd: 1,
   },
@@ -272,13 +270,13 @@ test("buildWorkbenchReceipt: includes next-work experiment routing and validatio
   );
 });
 
-test("buildBudgetTallyLine: shows turn and session cost and token totals", () => {
+test("buildBudgetTallyLine: shows the turn's cost and tokens and the session's cost", () => {
   const tally = buildBudgetTallyLine(BASE_TALLY);
 
   assert.deepStrictEqual(
     tally,
     "Budget tally: $0.012346 this turn (300 in, 120 out) · " +
-      "$0.034568 session (1300 in, 620 out, 3.5% of $1.000000)",
+      "$0.034568 session (3.5% of $1.000000)",
   );
 });
 

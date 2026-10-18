@@ -433,7 +433,7 @@ export class MemoryStore implements Store {
         let others = 0;
         for (const { row } of this.#tables.events) {
           const cost = row.cost_total as number | null;
-          if (row.event_type !== "model_response") continue;
+          if (row.event_type !== "provider_call") continue;
           if (cost === null || !(cost > 0)) continue;
           const recent = (row.created_at as Date).getTime() >= boundary;
           if (row.session_id === sessionId) {

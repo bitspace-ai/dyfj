@@ -315,7 +315,7 @@ export function doltSpendReader(pool: DoltSelect): SpendReader {
           "COALESCE(SUM(CASE WHEN session_id = ? THEN cost_total ELSE 0 END), 0) AS session_spent, " +
           "COALESCE(SUM(CASE WHEN session_id = ? AND created_at >= ? THEN cost_total ELSE 0 END), 0) AS session_today, " +
           "COALESCE(SUM(CASE WHEN created_at >= ? AND session_id <> ? THEN cost_total ELSE 0 END), 0) AS daily_others " +
-          "FROM events WHERE event_type = 'model_response' AND cost_total IS NOT NULL AND cost_total > 0",
+          "FROM events WHERE event_type = 'provider_call' AND cost_total IS NOT NULL AND cost_total > 0",
         [sessionId, sessionId, dayStart, dayStart, sessionId],
       );
       return {

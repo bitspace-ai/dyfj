@@ -206,3 +206,75 @@ test("an approval admits one call only — the next anomalous call prompts again
   assert.deepStrictEqual(first.trigger, "turn_spend");
   assertAlmostEqual(first.turnSpentUsd, 0.36);
 });
+
+// ─── one spend truth ─────────────────────────────────────────────────────────
+
+test("spend: every paid call counts once toward the session and the day, halted turns included", async () => {
+  await using root = await tempWorkspace({ "notes.md": "notes" });
+  const run = engineServices([
+    // Turn 1 completes: two calls at $0.12.
+    toolReply("a1", TWELVE_CENTS),
+    chatReply({ content: "first", usage: TWELVE_CENTS }),
+    // Turn 2 halts on turn spend after three calls ($0.36 > 3 × $0.10).
+    toolReply("b1", TWELVE_CENTS),
+    toolReply("b2", TWELVE_CENTS),
+    toolReply("b3", TWELVE_CENTS),
+    // Turn 3 completes: one call.
+    chatReply({ content: "third", usage: TWELVE_CENTS }),
+  ], { models: [PER_TOKEN] });
+  const turn = (sessionId?: string) =>
+    runTurn(run, {
+      prompt: "explore",
+      rootOverride: root.root,
+      defaultCompanionModel: PER_TOKEN.slug,
+      ...ANOMALY,
+      ...(sessionId === undefined ? {} : { sessionId }),
+    });
+
+  const first = await turn();
+  const sessionId = first.sessionId;
+  assertAlmostEqual(first.cost.totalUsd, 0.24);
+  // A completed multi-call turn: its provider calls sum to what its
+  // model_response recorded, and the baseline counts that once.
+  const firstRows = (await eventRows(run, sessionId)).filter((row) =>
+    row.trace_id === first.traceId
+  );
+  const costOf = (type: string) =>
+    firstRows.filter((row) => row.event_type === type)
+      .reduce((sum, row) => sum + Number(row.cost_total ?? 0), 0);
+  assertAlmostEqual(costOf("provider_call"), 0.24);
+  assertAlmostEqual(costOf("model_response"), 0.24);
+  // The engine fakes run on a manual clock that starts in 1970.
+  const DAY_ZERO = "1969-01-01 00:00:00";
+  assertAlmostEqual(
+    (await run.store.spend.baselines(sessionId, DAY_ZERO)).sessionSpentUsd,
+    0.24,
+  );
+
+  await assert.rejects(
+    () => turn(sessionId),
+    (error: unknown) =>
+      error instanceof Error && error.message.includes("Runaway spend anomaly"),
+  );
+  // The halted turn wrote no model_response, but its three calls were paid
+  // for: they count, once.
+  const afterHalt = await run.store.spend.baselines(sessionId, DAY_ZERO);
+  assertAlmostEqual(afterHalt.sessionSpentUsd, 0.60);
+  assertAlmostEqual(afterHalt.sessionSpentTodayUsd, 0.60);
+  // The daily envelope reads the same source.
+  assertAlmostEqual(
+    (await run.store.spend.baselines("another-session", DAY_ZERO))
+      .dailyOtherSessionsUsd,
+    0.60,
+  );
+
+  // The receipt's session figure is the one the envelope checks.
+  assertAlmostEqual(first.cost.sessionUsd ?? Number.NaN, 0.24);
+  const third = await turn(sessionId);
+  assertAlmostEqual(third.cost.totalUsd, 0.12);
+  assertAlmostEqual(third.cost.sessionUsd ?? Number.NaN, 0.72);
+  assert.ok(
+    third.receipt.includes("Session cost:   $0.720000"),
+    third.receipt,
+  );
+});

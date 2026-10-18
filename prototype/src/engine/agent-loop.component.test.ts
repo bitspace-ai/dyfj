@@ -885,3 +885,98 @@ test("each step replays the assistant's tool-call turn and its linked results", 
   assert.deepStrictEqual(tools.map((m) => m.tool_call_id), ["c1", "r1"]);
   assert.match(tools[1].content, /# readme/);
 });
+
+// ─── visible tool failures ───────────────────────────────────────────────────
+
+const READ_MISSING = (id: string): ToolCall => ({
+  id,
+  name: "read_file",
+  arguments: { unexpected: "no-such-file-anywhere.txt" },
+});
+
+/** Run with console.error captured; returns the error lines too. */
+async function capturingErrors<T>(
+  run: () => Promise<T>,
+): Promise<{ value: T; errors: string[] }> {
+  const errors: string[] = [];
+  const log = mock.method(console, "log", () => {});
+  const warn = mock.method(console, "warn", () => {});
+  const error = mock.method(console, "error", (...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  });
+  try {
+    return { value: await run(), errors };
+  } finally {
+    log.mock.restore();
+    warn.mock.restore();
+    error.mock.restore();
+  }
+}
+
+test("a failed tool call carries a one-line reason on its frame and in the runtime log", async () => {
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([
+      toolReply([READ_MISSING("f1")]),
+      chatReply({ content: "the file is missing" }),
+    ])
+  );
+  const completed = loop.frames.find((f) =>
+    f.type === "toolCallCompleted" && f.callId === "f1"
+  );
+  assert.ok(completed?.type === "toolCallCompleted");
+  assert.equal(completed.isError, true);
+  const reason = String(completed.failureReason);
+  assert.equal(typeof completed.failureReason, "string");
+  assert.ok(reason.length > 0 && !reason.includes("\n"), reason);
+  // The argument value is masked out of what the operator sees.
+  assert.ok(!reason.includes("no-such-file-anywhere.txt"), reason);
+  const line = errors.find((entry) => entry.startsWith("[tool-failed]"));
+  assert.ok(line !== undefined, JSON.stringify(errors));
+  assert.match(line, /^\[tool-failed\] read_file \(\d+ ms\): /);
+  assert.ok(line.endsWith(reason), line);
+  assert.ok(!line.includes("no-such-file-anywhere.txt"), line);
+});
+
+test("a successful tool call writes no failure line and carries no reason", async () => {
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([toolReply([LIST("ok1")]), chatReply({ content: "listed" })])
+  );
+  const completed = loop.frames.find((f) =>
+    f.type === "toolCallCompleted" && f.callId === "ok1"
+  );
+  assert.ok(completed?.type === "toolCallCompleted");
+  assert.equal(completed.failureReason, undefined);
+  assert.ok(!errors.some((entry) => entry.startsWith("[tool-failed]")));
+});
+
+test("a turn that ends with no reply after a failed tool step says so, on the receipt", async () => {
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([toolReply([READ_MISSING("f2")]), chatReply({ content: "" })])
+  );
+  assert.equal(loop.error, null);
+  const notice = loop.result?.notice;
+  assert.ok(notice !== undefined, "expected a notice");
+  assert.match(
+    notice,
+    /^turn ended after a failed tool call \(read_file: .+\); the model gave no reply$/,
+  );
+  assert.ok(
+    loop.result!.receipt.split("\n").includes(`WARNING: ${notice}`),
+    loop.result!.receipt,
+  );
+  assert.ok(errors.includes(`[turn-notice] ${notice}`), JSON.stringify(errors));
+});
+
+test("a reply after a failed tool step, or no reply after a good one, gets no notice", async () => {
+  const replied = await capturingErrors(() =>
+    loopTurn([
+      toolReply([READ_MISSING("f3")]),
+      chatReply({ content: "it is missing" }),
+    ])
+  );
+  assert.equal(replied.value.result?.notice, undefined);
+  const silentAfterSuccess = await capturingErrors(() =>
+    loopTurn([toolReply([LIST("ok2")]), chatReply({ content: "" })])
+  );
+  assert.equal(silentAfterSuccess.value.result?.notice, undefined);
+});

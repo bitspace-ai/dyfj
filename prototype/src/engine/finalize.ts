@@ -4,7 +4,11 @@
  * the session (session_end, budget summary, receipt, session content) and
  * returns the result — or rethrows the turn's error after the receipt.
  */
-import { generateSpanId, generateULID } from "../kernel/mod.ts";
+import {
+  generateSpanId,
+  generateULID,
+  sanitizeBoundaryText,
+} from "../kernel/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
 import {
   buildWorkbenchSessionContent,
@@ -82,6 +86,12 @@ export async function completeTurn(
   }
   state.finalText = turn.text;
   state.finalStopReason = turn.stopReason;
+  const notice = turnEndNotice(state, turn);
+  if (notice !== undefined) {
+    state.turnEndNotice = notice;
+    log(notice);
+    console.error(`[turn-notice] ${notice}`);
+  }
 
   state.selectedForReceipt = {
     displayName: turn.model.displayName,
@@ -155,14 +165,31 @@ export async function completeTurn(
   );
 }
 
+/**
+ * The notice for a turn whose latest tool step had a failed call and whose
+ * model then gave no reply. Without it the operator gets nothing at all: no
+ * answer and no reason. Not for a cancelled turn, which ended on purpose.
+ */
+function turnEndNotice(
+  state: TurnState,
+  turn: LoopTurnResult,
+): string | undefined {
+  const failure = state.lastStepFailure;
+  if (failure === undefined || turn.stopReason === "aborted") return undefined;
+  if (turn.text.trim() !== "") return undefined;
+  return `turn ended after a failed tool call (${
+    sanitizeBoundaryText(failure.commandId, 128)
+  }: ${failure.reason}); the model gave no reply`;
+}
+
 /** The running budget tally line, when the tally mode asks for it. */
 function printBudgetTally(
   state: TurnState,
   input: WorkbenchRuntimeInput,
   tier: LoopTurnResult["model"]["tier"],
 ): void {
-  // Per-call budget.record() happens inside the observed call, so the
-  // session summary already aggregates every call in this (and prior) turns.
+  // The tracker lives for one turn: its summary is this turn's calls, and
+  // its session figure adds the session's earlier paid calls from the log.
   const summary = state.session.budget.getSummary();
   const paidCalls = (summary.byTier["1"]?.calls ?? 0) +
     (summary.byTier["2"]?.calls ?? 0);
@@ -180,9 +207,7 @@ function printBudgetTally(
       tier,
     },
     session: {
-      totalCostUsd: summary.totalCostUsd,
-      totalTokensInput: summary.totalTokensInput,
-      totalTokensOutput: summary.totalTokensOutput,
+      totalCostUsd: state.session.budget.sessionSpentUsd,
       paidCalls,
       sessionLimitUsd: summary.config.sessionLimitUsd,
     },
@@ -489,6 +514,7 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
     tier: state.selectedForReceipt?.tier ?? 0,
     routingReason: state.routingReason,
     totalCostUsd: summary.totalCostUsd,
+    sessionCostUsd: session.budget.sessionSpentUsd,
     totalTokensInput: summary.totalTokensInput,
     totalTokensOutput: summary.totalTokensOutput,
     totalCacheReadTokens: state.cacheReadTokens,
@@ -511,6 +537,7 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
     },
     skippedEventWrites: state.audit.skippedEventWrites,
     historyOmission: state.historyOmission,
+    turnEndNotice: state.turnEndNotice,
   });
 }
 
@@ -539,6 +566,7 @@ function turnResult(
     cost: {
       estimatedUsd: state.estimatedCostUsd,
       totalUsd: summary.totalCostUsd,
+      sessionUsd: session.budget.sessionSpentUsd,
       paidInferenceUsed: paidInferenceUsed(state),
     },
     tokens: {
@@ -563,5 +591,8 @@ function turnResult(
       limitReached: state.toolStepLimitReached,
     },
     validation: state.validation,
+    ...(state.turnEndNotice === undefined
+      ? {}
+      : { notice: state.turnEndNotice }),
   };
 }

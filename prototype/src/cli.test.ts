@@ -266,14 +266,15 @@ describe("runRepl", () => {
     const { io, stderr } = fakeIo(["one", "two"]);
     await runRepl(cfg(), io, connect, false);
     const rendered = stderr.join("\n");
-    // Each receipt shows the sum of every per-turn cost so far.
+    // With no runtime session figure, each receipt shows this REPL's sum of
+    // every per-turn cost so far, labelled as that.
     assert.ok(
-      rendered.includes("session $0.0100"),
-      `expected ${JSON.stringify(rendered)} to include "session $0.0100"`,
+      rendered.includes("repl total $0.0100"),
+      `expected ${JSON.stringify(rendered)} to include "repl total $0.0100"`,
     );
     assert.ok(
-      rendered.includes("session $0.0300"),
-      `expected ${JSON.stringify(rendered)} to include "session $0.0300"`,
+      rendered.includes("repl total $0.0300"),
+      `expected ${JSON.stringify(rendered)} to include "repl total $0.0300"`,
     );
   });
 
