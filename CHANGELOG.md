@@ -11,13 +11,16 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
-- **The runtime names every configured external MCP tool that will not reach
-  the model.** At boot, a configured tool the server does not offer prints
+- **The runtime names each configured external MCP tool that a reachable
+  server leaves out.** At boot, a configured tool the server does not offer prints
   `external MCP <server>: configured tool "<name>" not offered by the server`,
   and one whose schema the sanitizer rejects prints `... schema rejected:
   <reason>`, naming the limit or rule it broke (for example `enum of 65 values
-  exceeds 64`). Before, both were dropped silently and only the tool count
-  changed. `dyfj status` shows the same lines, which `runtime/status` reports
+  exceeds 64`), and a web capability tool that an earlier server outranks
+  prints `... not used: web_search comes from <server>`. Before, all three
+  were dropped silently and only the tool count changed. A server that is
+  unavailable (no credential, failed discovery) is still reported as one
+  line for the whole server. `dyfj status` shows the same lines, which `runtime/status` reports
   as `externalMcp`. The ready line now names the `web_search`/`web_fetch`
   commands a server backs, so a web-only server such as Tavily no longer reads
   as `ready (0 tools, ...)`.

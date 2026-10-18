@@ -1,5 +1,5 @@
-// A configured external MCP tool that does not reach the model is named at
-// boot with the reason, never dropped silently (BIT-666).
+// A configured tool that a reachable external MCP server leaves out is named
+// at boot with the reason, never dropped silently (BIT-666).
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";

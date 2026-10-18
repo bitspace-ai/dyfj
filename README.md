@@ -764,8 +764,9 @@ resolver uses its first pending credential as a session probe; if that probe
 fails, later credentials are marked unavailable without spawning, so multiple
 configured servers may be withheld. Invalid configuration fails boot.
 
-Boot prints one line per server and one warning per configured tool that will
-not reach the model, naming the tool and the reason. `dyfj status` shows the
+Boot prints one line per server. For a server it reached, it also prints one
+warning per configured tool that will not reach the model, naming the tool and
+the reason; an unavailable server's line covers all of its tools. `dyfj status` shows the
 same lines (`runtime/status` reports them as `externalMcp`):
 
 ```text
