@@ -812,10 +812,13 @@ call that throws gets a class line instead of its message: `timed out after
 `response exceeded the 256 KiB limit`. The operator sees a shorter line: on the
 REPL's `✗` line, in the runtime log as `[tool-failed] <tool> (<ms> ms):
 <reason>`, and as the failed call's durable event result. That line replaces
-an exact echo of an argument string of eight or more characters with
-`<arg:NAME>` (`<arg:meta.title>` for a nested one), scrubs credential-shaped
+an exact echo of an argument value with `<arg:NAME>` (`<arg:meta.title>` for a
+nested one): a string of eight or more characters wherever it occurs, a shorter
+string or a number wherever it stands as a whole token (bounded by characters
+that are not letters or digits; a value of `1` masks every standalone `1`,
+which costs readability, never privacy). It scrubs credential-shaped
 text, and is capped at 160 bytes. The walk over the arguments is bounded (8
-levels, 256 strings, and one 1,024-step budget for nodes visited and keys taken
+levels, 256 string or number values, and one 1,024-step budget for nodes visited and keys taken
 from `for…in`; per-key work in our code stops at the budget, the engine's own
 key enumeration for `for…in` is not bounded by it); past those limits the
 server's text is withheld from that line (`upstream error (text withheld: arguments too large

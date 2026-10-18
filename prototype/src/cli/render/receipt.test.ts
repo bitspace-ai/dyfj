@@ -252,13 +252,13 @@ describe("presentation", () => {
       cost: {
         estimatedUsd: 0,
         totalUsd: 0.0123,
-        sessionUsd: 4.381,
+        sessionUsd: 3.21,
         paidInferenceUsed: true,
       },
     });
     assert.ok(
-      formatReceipt(paid, false, 1.1969).includes("$0.0123 · session $4.3810"),
-      formatReceipt(paid, false, 1.1969),
+      formatReceipt(paid, false, 1.0404).includes("$0.0123 · session $3.2100"),
+      formatReceipt(paid, false, 1.0404),
     );
     // One-shot receipts (no REPL total passed) stay unchanged.
     assert.ok(!(formatReceipt(paid, false)).includes("session"));

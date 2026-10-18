@@ -34,10 +34,43 @@ test("a nested argument value is masked by its path", () => {
   );
 });
 
-test("values shorter than eight characters are left alone", () => {
+test("a short string or a number is masked where it stands as a whole token", () => {
+  assert.equal(
+    maskArgumentEchoes("Unknown person Alice", { name: "Alice" }),
+    "Unknown person <arg:name>",
+  );
+  assert.equal(
+    maskArgumentEchoes("record 12345 not found (12345)", { id: 12345 }),
+    "record <arg:id> not found (<arg:id>)",
+  );
   assert.equal(
     maskArgumentEchoes('Could not find issue "BIT-1"', { issueId: "BIT-1" }),
-    'Could not find issue "BIT-1"',
+    'Could not find issue "<arg:issueId>"',
+  );
+});
+
+test("token masking never cuts into a longer word", () => {
+  // "BIT" is a token of "BIT-697" only up to the hyphen, a non-alphanumeric
+  // boundary, so it is masked there; inside "BITS" or "XBIT" it is not.
+  assert.equal(
+    maskArgumentEchoes("BITS and XBIT stay; BIT-697 does not", { team: "BIT" }),
+    "BITS and XBIT stay; <arg:team>-697 does not",
+  );
+  assert.equal(
+    maskArgumentEchoes("Alicea and Alice", { name: "Alice" }),
+    "Alicea and <arg:name>",
+  );
+});
+
+test("a one-character value over-masks standalone tokens, never under-masks", () => {
+  assert.equal(
+    maskArgumentEchoes("page 1 of 10, item 1", { page: 1 }),
+    "page <arg:page> of 10, item <arg:page>",
+  );
+  // Booleans and null are not masked.
+  assert.equal(
+    maskArgumentEchoes("flag true is null", { flag: true, other: null }),
+    "flag true is null",
   );
 });
 
@@ -200,4 +233,12 @@ test("every array index read spends the budget, holes included", () => {
   const siblings = Array.from({ length: 500 }, sparse);
   assert.equal(maskArgumentEchoes("anything", { siblings }), undefined);
   assert.ok(reads <= 1_100, `${reads} descriptor reads`);
+});
+
+test("masking a short value in a large text stays fast", () => {
+  const text = "e ".repeat(100_000);
+  const started = performance.now();
+  const masked = maskArgumentEchoes(text, { letter: "e", other: "f" });
+  assert.ok(masked?.startsWith("<arg:letter> <arg:letter>"));
+  assert.ok(performance.now() - started < 2_000, "masking took too long");
 });

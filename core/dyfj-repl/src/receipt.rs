@@ -173,11 +173,11 @@ mod tests {
     #[test]
     fn the_session_figure_is_the_runtimes_not_the_repls() {
         let mut r = receipt();
-        r["cost"]["sessionUsd"] = json!(4.381);
+        r["cost"]["sessionUsd"] = json!(3.21);
         assert!(
-            line(&r, 1.1969).contains("$0.0123 · session $4.3810 ·"),
+            line(&r, 1.0404).contains("$0.0123 · session $3.2100 ·"),
             "{}",
-            line(&r, 1.1969)
+            line(&r, 1.0404)
         );
     }
 
@@ -191,9 +191,9 @@ mod tests {
             .expect("cost")
             .remove("sessionUsd");
         assert!(
-            line(&r, 1.1969).contains("$0.0123 · repl total $1.1969 ·"),
+            line(&r, 1.0404).contains("$0.0123 · repl total $1.0404 ·"),
             "{}",
-            line(&r, 1.1969)
+            line(&r, 1.0404)
         );
     }
 

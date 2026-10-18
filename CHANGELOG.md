@@ -429,9 +429,12 @@ README are tracked separately in its Revision history section.
   the runtime log gets `[tool-failed] <tool> (<ms> ms): <reason>` for each
   failure, with no arguments and no result. The reason travels on the
   `toolCallCompleted` frame as `failureReason`. It is masked first: an exact
-  echo of an argument string of eight or more characters is replaced by
-  `<arg:NAME>`, so a value the event log redacts does not come back through the
-  error text. The walk over the arguments is bounded: 8 levels, 256 strings,
+  echo of an argument value is replaced by `<arg:NAME>`, a string of eight or
+  more characters wherever it occurs, a shorter string or a number wherever it
+  stands as a whole token (so `Alice` and `12345` are masked, and a value of
+  `1` masks every standalone `1`), so a value the event log redacts does not
+  come back through the error text. Booleans and null are not masked. The
+  walk over the arguments is bounded: 8 levels, 256 string or number values,
   and one 1,024-step budget for nodes visited and keys taken from `for…in`.
   Per-key work in our code stops at the budget; the engine's own key
   enumeration for `for…in` is not bounded by it. Past those limits the reason
@@ -455,12 +458,11 @@ README are tracked separately in its Revision history section.
   envelopes' baseline summed `model_response` costs, but a turn that fails or
   halts writes no `model_response`, so its paid calls dropped out of every
   later envelope and anomaly check. The REPL's `session $…` was its own sum of
-  the receipts of completed turns, a third figure. In one session the
-  runaway-spend prompt showed `Session spent: $4.125105` while the receipt
-  showed `session $1.1969`. The provider calls had cost $4.38, and $3.18 of it
-  came from the turn that halted. Across the local event log since
-  2026-09-01, `provider_call` costs total $14.85 against $9.82 in
-  `model_response`. The baseline now sums `provider_call` costs, one row per
+  the receipts of completed turns, a third figure. For example, a session
+  whose third turn halted after $3 of paid calls kept showing the first two
+  turns' $1 on its receipt, and its envelope forgot the $3 from the next turn
+  on, while the runaway-spend prompt during the halted turn had shown all $4.
+  The baseline now sums `provider_call` costs, one row per
   paid call. That row is written best-effort; a skipped write already shows on
   the receipt as an audit-log gap. The turn result carries `cost.sessionUsd`, the tracker's figure
   that the envelope checks, and the receipt adds a `Session cost:` line. The

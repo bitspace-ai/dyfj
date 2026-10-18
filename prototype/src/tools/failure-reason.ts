@@ -6,9 +6,10 @@
  * A failure reason can quote the call's own arguments back (an upstream
  * server echoing the body it rejected). The event store redacts argument
  * values, so an echo must not carry one back into the store, the log or the
- * screen: an exact echo of an argument string of eight or more characters is
- * replaced by `<arg:PATH>`. The walk over the arguments is bounded (depth,
- * strings collected, and one budget for every node visited and every key our
+ * screen: an exact echo of an argument value is replaced by `<arg:PATH>` (a
+ * string of eight or more characters anywhere; a shorter string or a number
+ * as a whole token; see `maskArgumentEchoes`). The walk over the arguments is bounded (depth,
+ * values collected, and one budget for every node visited and every key our
  * code takes from `for…in`); when it cannot finish, the text is
  * withheld rather than masked part-way. Credential-shaped text is then
  * scrubbed, and the line is made single-line and capped. A server that
@@ -37,6 +38,8 @@ class WalkIncomplete extends Error {}
 interface ArgumentLeaf {
   path: string;
   value: string;
+  /** Strings of 8+ characters match anywhere; shorter ones and numbers only as whole tokens. */
+  match: "substring" | "token";
 }
 
 function safePathSegment(key: string): string {
@@ -112,10 +115,17 @@ function argumentLeaves(
   const budget = new WalkBudget();
   const walk = (value: unknown, path: string, depth: number): void => {
     budget.spend();
-    if (typeof value === "string") {
-      if (value.length < MASK_MIN_LENGTH) return;
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value);
+      if (text === "") return;
       if (leaves.length >= MAX_WALK_LEAVES) throw new WalkIncomplete();
-      leaves.push({ path, value });
+      leaves.push({
+        path,
+        value: text,
+        match: typeof value === "string" && text.length >= MASK_MIN_LENGTH
+          ? "substring"
+          : "token",
+      });
       return;
     }
     if (typeof value !== "object" || value === null) return;
@@ -141,9 +151,42 @@ function argumentLeaves(
   return leaves;
 }
 
+const WORD_CHARACTER = /[\p{L}\p{N}]/u;
+
+function isWordCharacter(character: string | undefined): boolean {
+  return character !== undefined && WORD_CHARACTER.test(character);
+}
+
+/** Where `leaf` occurs in `text`: anywhere, or only as a whole token. */
+function occurrences(text: string, leaf: ArgumentLeaf): [number, number][] {
+  const found: [number, number][] = [];
+  let from = 0;
+  for (;;) {
+    const start = text.indexOf(leaf.value, from);
+    if (start === -1) return found;
+    const end = start + leaf.value.length;
+    const isToken = !isWordCharacter(text[start - 1]) &&
+      !isWordCharacter(text[end]);
+    if (leaf.match === "substring" || isToken) {
+      found.push([start, end]);
+      from = end;
+    } else {
+      from = start + 1;
+    }
+  }
+}
+
 /**
  * `text` with every echoed argument value replaced by `<arg:PATH>`, or
  * undefined when the arguments are too large or too strange to mask safely.
+ * A string of eight or more characters is masked wherever it occurs; a
+ * shorter string or a number only where it stands as a whole token, bounded
+ * by characters that are not letters or digits, so `BIT` masks the `BIT` of
+ * `BIT-697` but not of `BITS`. Booleans and null are not masked. A short value
+ * over-masks: an argument of `1` masks every standalone `1`. That costs the
+ * operator readability, never privacy, and is the intended direction. Matches
+ * are found in the original text, longest value first, and replaced in one
+ * pass, so a short value can never match inside an earlier placeholder.
  */
 export function maskArgumentEchoes(
   text: string,
@@ -151,15 +194,26 @@ export function maskArgumentEchoes(
 ): string | undefined {
   const leaves = argumentLeaves(args);
   if (leaves === undefined) return undefined;
-  // Longest first, so a value that contains another is masked whole.
   leaves.sort((a, b) => b.value.length - a.value.length);
-  let masked = text;
+  // One flag per character already covered by a longer match: linear per
+  // value, however many occurrences a short value has.
+  const covered = new Uint8Array(text.length);
+  const ranges: { start: number; end: number; path: string }[] = [];
   for (const leaf of leaves) {
-    if (masked.includes(leaf.value)) {
-      masked = masked.split(leaf.value).join(`<arg:${leaf.path}>`);
+    for (const [start, end] of occurrences(text, leaf)) {
+      if (covered.subarray(start, end).includes(1)) continue;
+      covered.fill(1, start, end);
+      ranges.push({ start, end, path: leaf.path });
     }
   }
-  return masked;
+  ranges.sort((a, b) => a.start - b.start);
+  let masked = "";
+  let cursor = 0;
+  for (const range of ranges) {
+    masked += `${text.slice(cursor, range.start)}<arg:${range.path}>`;
+    cursor = range.end;
+  }
+  return masked + text.slice(cursor);
 }
 
 /** The masked, scrubbed, single-line, capped reason an operator sees. */
