@@ -13,6 +13,7 @@ import type {
 import type { UnparsedToolCallMarkupDetectedEvent } from "../contract/mod.ts";
 import { observedProviderCall } from "./observed-call.ts";
 import type { RoutedTurn } from "./routed-turn.ts";
+import { foldCostBasis } from "./turn-state.ts";
 import {
   deliverUnparsedToolCallMarkupSignal,
   emitRuntimeEvent,
@@ -62,13 +63,10 @@ export async function observedTurn(
     state.turnInputTokens += result.usage.input;
     state.turnOutputTokens += result.usage.output;
     state.turnCostUsd += result.usage.cost.total;
-    // One estimated call makes the turn's total an estimate.
-    const callBasis = result.usage.cost.basis ?? "catalog_estimate";
-    state.turnCostBasis =
-      (state.turnCostBasis ?? callBasis) === "provider_billed" &&
-        callBasis === "provider_billed"
-        ? "provider_billed"
-        : "catalog_estimate";
+    state.turnCostBasis = foldCostBasis(
+      state.turnCostBasis,
+      result.usage.cost.basis,
+    );
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "afterProviderResponse",
       sessionId: state.session.sessionId,

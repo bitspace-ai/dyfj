@@ -240,3 +240,18 @@ export function newTurnState(
     turnError: null,
   };
 }
+
+/**
+ * The turn's cost basis after one more recorded provider call. The turn is
+ * `provider_billed` only while every call in it was; one estimated call, an
+ * agent-loop or a compression call alike, makes the whole total an estimate.
+ */
+export function foldCostBasis(
+  turn: CostBasis | null,
+  call: CostBasis | undefined,
+): CostBasis {
+  const next = call ?? "catalog_estimate";
+  return (turn ?? next) === "provider_billed" && next === "provider_billed"
+    ? "provider_billed"
+    : "catalog_estimate";
+}

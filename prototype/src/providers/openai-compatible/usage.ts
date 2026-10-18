@@ -149,8 +149,10 @@ export function openAIChatUsage(
   }
   // OpenRouter reports what it billed. It is used only when the usage it rode
   // on covers everything received: an abort, or output after the frame that
-  // carried the cost, falls back to the catalog estimate, which the request's
-  // `max_price` (the same row) bounds from above.
+  // carried the cost, falls back to the catalog estimate. That fallback stays
+  // an estimate, not a bound on the bill: the request's `max_price` caps only
+  // the upstream's prompt and completion rates (cache reads are uncapped), and
+  // the token counts behind it may themselves be estimated.
   const billed = model.provider === "openrouter"
     ? finiteNonnegativeTokenCount(result.usage?.cost)
     : undefined;

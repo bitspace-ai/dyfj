@@ -699,3 +699,50 @@ test("compression routes to a local tier-0 row even when a hosted tier-0 row is 
   );
   assert.ok(compressed(frames) !== undefined);
 });
+
+test("a compression call counts toward the turn's cost basis", async () => {
+  // The session call is billed by OpenRouter; the local compression call is
+  // a catalog estimate, so the turn's total is an estimate too.
+  const routed: ModelSeed = {
+    slug: "routed-small",
+    display_name: "Routed Small",
+    provider: "openrouter",
+    api: "openai-completions",
+    base_url: "https://openrouter.ai/api/v1",
+    tier: 0,
+    context_window: UNCOMPRESSED_FITS_WINDOW,
+    max_output_tokens: 4_096,
+    cost_input: 0.3,
+    cost_output: 1.2,
+    capabilities: ["text", "code"],
+  };
+  const { run, frames } = await compressionTurn(
+    [
+      summaryReply(),
+      chatReply({
+        content: "runtime response",
+        usage: { prompt_tokens: 10, completion_tokens: 2, cost: 0.000004 },
+      }),
+    ],
+    { defaultCompanionModel: routed.slug },
+    {
+      models: [routed, LOCAL_FALLBACK],
+      env: { OPENROUTER_API_KEY: "test-key-not-real" },
+    },
+  );
+  assert.ok(compressed(frames) !== undefined);
+  const sessionId = frames.find((f) => f.type === "sessionStart")?.sessionId;
+  const rows = await eventRows(run, sessionId!);
+  assert.deepStrictEqual(
+    rows.filter((row) => row.event_type === "provider_call").map((row) => [
+      row.provider_call_purpose,
+      row.cost_basis,
+    ]),
+    [["context_compression", "catalog_estimate"], [
+      "initial",
+      "provider_billed",
+    ]],
+  );
+  const response = rows.find((row) => row.event_type === "model_response");
+  assert.deepStrictEqual(response?.cost_basis, "catalog_estimate");
+});
