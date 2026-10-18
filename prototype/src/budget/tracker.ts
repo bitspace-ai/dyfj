@@ -319,7 +319,7 @@ export class BudgetTracker {
     return this._totalCost;
   }
   /**
-   * The session's spend so far: every paid call of its earlier turns, from
+   * The session's spend so far: every paid call its earlier turns recorded in
    * the event log, plus this turn's. The session envelope and the anomaly
    * halt check this figure, and the receipt reports it.
    */

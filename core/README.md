@@ -43,7 +43,7 @@ Commands are recognised only when typed alone on one line, so a pasted block tha
 
 During a turn, `n` at `approve? [y/N]` denies that call. Ctrl-C at that prompt cancels the turn through `turn/cancel` and returns to the prompt. Ctrl-D or a lost terminal denies the call and does not describe it as the operator's decline. A call the runtime reports as `approval_denied` is shown as `⊘ <tool> not approved`. A failed call is shown as `✗ <tool> (<ms>ms): <reason>`, with the one-line reason the runtime sends (masked, scrubbed and capped there, made terminal-safe and cut at 160 characters here). A turn that ends with no reply after a failed tool step prints the runtime's `WARNING: turn ended after a failed tool call (<tool>: <reason>); the model gave no reply`, which the receipt also records.
 
-The receipt line's `session $…` is the runtime's figure (`cost.sessionUsd`): every paid call the session has made, failed and halted turns included, the same figure the session envelope and the runaway-spend halt check. A runtime that sends none gets this REPL's own sum of its completed turns, shown as `repl total $…`.
+The receipt line's `session $…` is the runtime's figure (`cost.sessionUsd`): every paid call the session has recorded, failed and halted turns included, the same figure the session envelope and the runaway-spend halt check. A runtime that sends none gets this REPL's own sum of its completed turns, shown as `repl total $…`.
 
 External-runner (ACP) receipts are named rather than rendered; that route is deferred for daily use and stays in the TypeScript client.
 

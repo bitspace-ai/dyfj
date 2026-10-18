@@ -203,15 +203,25 @@ export class CommandExecutionError extends Error {
    * `invokeCommand` masks the call's argument values out of it.
    */
   declare public readonly operatorReason?: string;
-  constructor(publicReason: string, options: { operatorReason?: string } = {}) {
+  /**
+   * The operator line to use instead when the call's arguments are too large
+   * to mask out of `operatorReason` safely.
+   */
+  declare public readonly operatorReasonWithheld?: string;
+  constructor(
+    publicReason: string,
+    options: { operatorReason?: string; operatorReasonWithheld?: string } = {},
+  ) {
     super(publicReason);
     this.publicReason = publicReason;
     this.name = "CommandExecutionError";
-    if (options.operatorReason !== undefined) {
-      Object.defineProperty(this, "operatorReason", {
-        value: options.operatorReason,
-        enumerable: true,
-      });
+    for (const key of ["operatorReason", "operatorReasonWithheld"] as const) {
+      if (options[key] !== undefined) {
+        Object.defineProperty(this, key, {
+          value: options[key],
+          enumerable: true,
+        });
+      }
     }
   }
 }

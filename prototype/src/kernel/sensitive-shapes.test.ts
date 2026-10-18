@@ -33,3 +33,11 @@ test("scrubSensitiveShapes leaves text with no credential shape unchanged", () =
   const text = "Error: Provide exactly one of issueId, projectId";
   assert.equal(scrubSensitiveShapes(text), text);
 });
+
+test("both password spellings are recognised and scrubbed", () => {
+  for (const key of ["passwd", "password"]) {
+    const text = `login failed: ${key}=abcdefgh12345678`;
+    assert.equal(containsSensitiveShape(text), true, key);
+    assert.ok(!scrubSensitiveShapes(text).includes("abcdefgh12345678"), key);
+  }
+});

@@ -11,7 +11,7 @@ const SENSITIVE_SHAPES: readonly RegExp[] = [
   /AKIA[0-9A-Z]{16}/,
   /-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----/i,
   /\bbearer[\t \r\n]+[A-Za-z0-9._~+/-]{20,512}/i,
-  /(?:^|[\s{,;:\[])["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?(?:key|token)|aws[_-]?secret[_-]?access[_-]?key|secret|token|pass(?:wor)?d|credential)["']?[\t \r\n]{0,8}[:=][\t \r\n]{0,8}["']?[^\s"']{8,512}/im,
+  /(?:^|[\s{,;:\[])["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|secret[_-]?(?:key|token)|aws[_-]?secret[_-]?access[_-]?key|secret|token|passw(?:or)?d|credential)["']?[\t \r\n]{0,8}[:=][\t \r\n]{0,8}["']?[^\s"']{8,512}/im,
 ];
 
 export const SENSITIVE_PLACEHOLDER = "[scrubbed]";

@@ -129,6 +129,7 @@ export async function invokeCommand<TResult = unknown>(
           operatorReason: operatorFailureReason(
             error.operatorReason,
             call.arguments,
+            error.operatorReasonWithheld,
           ),
         }),
       };

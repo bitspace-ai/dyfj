@@ -45,7 +45,7 @@ export interface NativeTurnReceipt {
     totalUsd: number;
     /**
      * The session's actual spend including this turn: every paid call it has
-     * made, failed and halted turns included. The same figure the session
+     * recorded (`provider_call` events), failed and halted turns included. The same figure the session
      * envelope and the runaway-spend halt check. A runtime older than this
      * field sends none; clients then label their own running sum.
      */

@@ -44,6 +44,7 @@ export {
 } from "./validate.ts";
 export { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
 export {
+  MASKING_WITHHELD_REASON,
   maskArgumentEchoes,
   OPERATOR_REASON_MAX_BYTES,
   operatorFailureReason,

@@ -428,10 +428,13 @@ README are tracked separately in its Revision history section.
   The `✗` line was a mark and a duration. Now it carries a one-line reason, and
   the runtime log gets `[tool-failed] <tool> (<ms> ms): <reason>` for each
   failure, with no arguments and no result. The reason travels on the
-  `toolCallCompleted` frame as `failureReason`. It is masked first: any
-  argument string of eight or more characters, at any depth, that the reason
-  echoes back is replaced by `<arg:NAME>`, so an argument value that the event
-  log redacts cannot return through an error. Credential-shaped text is then
+  `toolCallCompleted` frame as `failureReason`. It is masked first: an exact
+  echo of an argument string of eight or more characters is replaced by
+  `<arg:NAME>`, so a value the event log redacts does not come back through the
+  error text. The walk over the arguments is bounded (8 levels, 256 strings,
+  1,024 nodes). Past those limits the reason text is withheld: `upstream error
+  (text withheld: arguments too large to mask)`. A server that reformats an
+  argument before quoting it is not masked. Credential-shaped text is then
   scrubbed and the line capped at 160 bytes. An external MCP command's failed
   `tool_call` event stores that same line. For any other command, the event's
   error text has its redacted argument values masked and credential-shaped text
@@ -444,8 +447,8 @@ README are tracked separately in its Revision history section.
   the output, as a `WARNING:` line in the receipt (which both REPLs show), as
   the turn result's `notice`, and in the runtime log as `[turn-notice] …`.
 
-- **The session and daily spend envelopes count every paid call, failed and
-  halted turns included, and the receipt shows the same figure.** The
+- **The session and daily spend envelopes count every recorded paid call,
+  failed and halted turns included, and the receipt shows the same figure.** The
   envelopes' baseline summed `model_response` costs, but a turn that fails or
   halts writes no `model_response`, so its paid calls dropped out of every
   later envelope and anomaly check. The REPL's `session $…` was its own sum of
@@ -455,7 +458,8 @@ README are tracked separately in its Revision history section.
   came from the turn that halted. Across the local event log since
   2026-09-01, `provider_call` costs total $14.85 against $9.82 in
   `model_response`. The baseline now sums `provider_call` costs, one row per
-  paid call. The turn result carries `cost.sessionUsd`, the tracker's figure
+  paid call. That row is written best-effort; a skipped write already shows on
+  the receipt as an audit-log gap. The turn result carries `cost.sessionUsd`, the tracker's figure
   that the envelope checks, and the receipt adds a `Session cost:` line. The
   REPLs show it as `session $…`; with an older runtime that sends none, they
   label their own sum `repl total $…`. **Behaviour change:** a session or day

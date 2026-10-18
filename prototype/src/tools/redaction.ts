@@ -19,7 +19,10 @@ import type {
   CommandDefinition,
   CommandInvocationResult,
 } from "./definition.ts";
-import { maskArgumentEchoes } from "./failure-reason.ts";
+import {
+  MASKING_WITHHELD_REASON,
+  maskArgumentEchoes,
+} from "./failure-reason.ts";
 
 // Constant redaction sentinel — no length or content-derived hash, so a
 // sensitive value's size and a guess-confirming fingerprint never reach the log.
@@ -90,8 +93,9 @@ export function redactCommandArguments(
  * so secrets never reach the durable log (CWE-532). An error reason is ours,
  * but it can quote what an upstream server said, and a server can echo the
  * arguments back: the executor's operator reason, already masked, is
- * persisted when there is one; otherwise every redacted argument value is
- * masked out of the reason. Credential-shaped text is scrubbed either way.
+ * persisted when there is one; otherwise each redacted argument value is
+ * masked out of the reason, and the reason is withheld when the arguments
+ * are too large to mask. Credential-shaped text is scrubbed either way.
  */
 export function redactCommandResult(
   command: CommandDefinition | undefined,
@@ -103,7 +107,10 @@ export function redactCommandResult(
       return result.operatorReason;
     }
     return scrubSensitiveShapes(
-      maskArgumentEchoes(result.reason, redactedArgumentValues(command, args)),
+      maskArgumentEchoes(
+        result.reason,
+        redactedArgumentValues(command, args),
+      ) ?? MASKING_WITHHELD_REASON,
     );
   }
   return command?.redactResult

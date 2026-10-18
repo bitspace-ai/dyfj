@@ -812,11 +812,14 @@ call that throws gets a class line instead of its message: `timed out after
 `response exceeded the 256 KiB limit`. The operator sees a shorter line: on the
 REPL's `✗` line, in the runtime log as `[tool-failed] <tool> (<ms> ms):
 <reason>`, and as the failed call's durable event result. That line replaces
-every argument string of eight or more characters that the server echoed back
-with `<arg:NAME>` (`<arg:meta.title>` for a nested one), scrubs
-credential-shaped text, and is capped at 160 bytes. Masking matches exact
-echoes only; a server that reformats an argument before quoting it is not
-masked. No argument or result payload is logged.
+an exact echo of an argument string of eight or more characters with
+`<arg:NAME>` (`<arg:meta.title>` for a nested one), scrubs credential-shaped
+text, and is capped at 160 bytes. The walk over the arguments is bounded (8
+levels, 256 strings, 1,024 nodes); past those limits the server's text is
+withheld from that line (`upstream error (text withheld: arguments too large
+to mask)`). Masking matches exact echoes only; a server that reformats an
+argument before quoting it is not masked. No argument or result payload is
+logged.
 
 A configured server can also back the native runner's `web_search` and
 `web_fetch` tools. Name the upstream tools under `capabilities`; each named tool

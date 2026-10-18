@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  MASKING_WITHHELD_REASON,
   maskArgumentEchoes,
   OPERATOR_REASON_MAX_BYTES,
   operatorFailureReason,
@@ -69,15 +70,33 @@ test("the operator reason is masked, scrubbed, single-lined and capped", () => {
   );
 });
 
-test("argument walking is bounded on hostile shapes", () => {
+test("a walk that cannot finish fails closed instead of masking part-way", () => {
   let deep: Record<string, unknown> = { leaf: "deeply-nested-value" };
   for (let i = 0; i < 100; i++) deep = { next: deep };
+  // Past the depth limit, the leaf is never visited: unmasked, it would leak.
+  assert.equal(maskArgumentEchoes("saw deeply-nested-value", { deep }), undefined);
+  // Wide with leaves, and wide with no eligible leaves at all: both cost
+  // visits, and both stop at the visit budget.
   const wide = Object.fromEntries(
     Array.from({ length: 10_000 }, (_, i) => [`k${i}`, `value-number-${i}`]),
   );
+  assert.equal(maskArgumentEchoes("value-number-9999", { wide }), undefined);
+  const empties = Array.from({ length: 5_000 }, () => ({}));
+  assert.equal(maskArgumentEchoes("anything at all", { empties }), undefined);
+  // The operator line then withholds the text, with the default line or the
+  // one the caller supplies.
   assert.equal(
-    typeof maskArgumentEchoes("deeply-nested-value", { deep, wide }),
-    "string",
+    operatorFailureReason("saw deeply-nested-value", { deep }),
+    MASKING_WITHHELD_REASON,
+  );
+  assert.equal(
+    operatorFailureReason("saw deeply-nested-value", { deep }, "upstream error (withheld)"),
+    "upstream error (withheld)",
+  );
+  // Within the limits, nothing is withheld.
+  assert.equal(
+    maskArgumentEchoes("saw shallow-value-here", { a: { b: "shallow-value-here" } }),
+    "saw <arg:a.b>",
   );
 });
 
@@ -104,13 +123,19 @@ test("argument walking never invokes a getter and survives a hostile object", ()
       throw new Error("trap");
     },
   });
+  // Accessors are skipped, never invoked; model arguments come from JSON and
+  // carry none.
   assert.equal(
     maskArgumentEchoes("saw a-plain-array-value and an-accessor-value", {
       items,
       object,
-      hostile,
     }),
     "saw <arg:items[0]> and an-accessor-value",
+  );
+  // A trap that throws means the walk did not finish: fail closed.
+  assert.equal(
+    maskArgumentEchoes("saw a-plain-array-value", { items, hostile }),
+    undefined,
   );
   assert.equal(read.count, 0);
 });

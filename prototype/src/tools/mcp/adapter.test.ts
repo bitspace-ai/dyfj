@@ -979,6 +979,24 @@ describe("external MCP failure reasons", () => {
     assert.ok(!JSON.stringify(event).includes("confidential"));
   });
 
+  it("arguments too large to mask withhold the server's text from the operator", async () => {
+    let meta: Record<string, unknown> = { title: "a deeply nested value" };
+    for (let i = 0; i < 20; i++) meta = { title: "outer", next: meta };
+    const invoke = await failingSaveComment(
+      upstreamError('Error: rejected "a deeply nested value"'),
+    );
+    const { modelReason, operatorReason, event } = await invoke({
+      body: "body text",
+      meta,
+    });
+    assert.ok(modelReason.includes("a deeply nested value"), modelReason);
+    assert.equal(
+      operatorReason,
+      "upstream error (text withheld: arguments too large to mask)",
+    );
+    assert.ok(!JSON.stringify(event).includes("deeply nested"));
+  });
+
   it("a secret-shaped string in the server's error is scrubbed for the operator", async () => {
     const token = `sk-${"q".repeat(32)}`;
     const invoke = await failingSaveComment(
