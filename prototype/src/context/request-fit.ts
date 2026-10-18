@@ -115,7 +115,8 @@ export function requestEstimateText(
  * reply to replay counts as that reply's blocks, which is what goes out while
  * it is still valid (thinking signatures are sent back and billed as input).
  * The same rule as `messageEstimateText` in `providers/shared/tokens.ts`,
- * which this layer may not import.
+ * which this layer may not import, and the same caveat: it counts a kept
+ * reply the request may leave out, so it can run high.
  */
 function messageEstimateText(message: WorkbenchMessage): string {
   if (message.role !== "assistant") return message.content;

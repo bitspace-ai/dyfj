@@ -114,6 +114,7 @@ function replayContent(
   replay: ProviderReplay,
   content: string,
   toolCalls: readonly WorkbenchToolCall[],
+  wireName: (name: string) => string,
 ): AnthropicContentBlock[] | undefined {
   const blocks = replay.content as AnthropicContentBlock[];
   let text = "";
@@ -125,6 +126,7 @@ function replayContent(
   const sameCalls = toolUses.length === toolCalls.length &&
     toolUses.every((use, i) =>
       use.id === toolCalls[i].id &&
+      use.name === wireName(toolCalls[i].name) &&
       JSON.stringify(use.input) === JSON.stringify(toolCalls[i].arguments ?? {})
     );
   return text === content && sameCalls ? blocks : undefined;
@@ -143,17 +145,21 @@ function replayContent(
  * turn that fails that check, and every later one, is rebuilt from its text
  * and tool calls without thinking: a block after a changed prefix is invalid,
  * and so is every block after it.
+ *
+ * Past tool calls are named by `historyTools` when the caller passes them: a
+ * forced conclusion offers no tools, and its history must still carry the
+ * wire names the calls were made under.
  */
 function toAnthropicWireMessages(
   prompt: string,
   messages: WorkbenchMessage[] | undefined,
-  tools: WorkbenchToolDefinition[] | undefined,
+  historyTools: WorkbenchToolDefinition[] | undefined,
   prefix: PrefixDigest,
 ): AnthropicWireMessage[] {
   if (!messages || messages.length === 0) {
     return [{ role: "user", content: prompt }];
   }
-  const wireName = wireNameLookup(tools);
+  const wireName = wireNameLookup(historyTools);
   const wire: AnthropicWireMessage[] = [];
   let replaying = true;
   for (const m of messages) {
@@ -162,7 +168,7 @@ function toAnthropicWireMessages(
     } else if (m.role === "assistant") {
       const replayed = replaying && m.replay?.api === ANTHROPIC_REPLAY_API &&
           m.replay.prefixDigest === prefix.after(wire)
-        ? replayContent(m.replay, m.content, m.toolCalls ?? [])
+        ? replayContent(m.replay, m.content, m.toolCalls ?? [], wireName)
         : undefined;
       if (m.replay !== undefined && replayed === undefined) replaying = false;
       if (replayed !== undefined) {
@@ -211,6 +217,8 @@ export function buildAnthropicMessagesRequest(
   options: {
     jsonObject?: boolean;
     tools?: WorkbenchToolDefinition[];
+    /** Definitions used only to name past tool calls; `tools` otherwise. */
+    historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxTokens?: number;
     /** Ask for progress updates (`ANTHROPIC_PROGRESS_UPDATES_CAPABILITY`). */
@@ -259,7 +267,7 @@ export function buildAnthropicMessagesRequest(
     messages: toAnthropicWireMessages(
       prompt,
       options.messages,
-      options.tools,
+      options.historyTools ?? options.tools,
       new PrefixDigest(system, tools),
     ),
   };

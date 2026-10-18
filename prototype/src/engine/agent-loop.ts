@@ -262,17 +262,18 @@ async function runToolStep(
   let approvalDenied = false;
   const requestSoFar = () => {
     const next = nextRequestShape(state, allRepeats, approvalDenied);
+    const sent = [
+      ...messages,
+      ...toolStepToMessages(
+        result.text,
+        requestedToolCalls,
+        stepResults,
+        result.replay,
+      ),
+    ];
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
-      messages: [
-        ...messages,
-        ...toolStepToMessages(
-          result.text,
-          requestedToolCalls,
-          stepResults,
-          result.replay,
-        ),
-      ],
+      messages: next.forceConclude ? withoutReplay(sent) : sent,
       tools: next.tools,
     });
   };
@@ -462,6 +463,7 @@ async function followUp(
       result.replay,
     ),
   );
+  if (forceConclude) messages.splice(0, messages.length, ...withoutReplay(messages));
   if (atCap) state.toolStepLimitReached = true;
   await fitRequest(turn, { systemPrompt, messages, tools }, "before_send");
   const estimatedInputCount = estimateRuntimeInputCount(
@@ -490,6 +492,22 @@ async function followUp(
           ? err
           : new ToolStepLimitConclusionError()
       : undefined,
+  );
+}
+
+/**
+ * The transcript with every kept reply dropped. A forced conclusion changes
+ * the system prompt and offers no tools, so no reply produced under the old
+ * prefix may be replayed and the adapter would send none; sizing the
+ * conclusion by those blocks (thinking signatures can be large) would trim or
+ * refuse a request that fits. The conclusion ends the turn, so nothing later
+ * needs them.
+ */
+function withoutReplay(messages: WorkbenchMessage[]): WorkbenchMessage[] {
+  return messages.map((m) =>
+    m.role === "assistant" && m.replay !== undefined
+      ? { role: "assistant", content: m.content, toolCalls: m.toolCalls }
+      : m
   );
 }
 

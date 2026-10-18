@@ -1000,6 +1000,40 @@ describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
     );
   });
 
+  it("does not size a forced conclusion by blocks it will not send", async () => {
+    // The step-limit conclusion changes the system prompt and drops the
+    // tools, so the adapter sends no thinking; a reply whose signature alone
+    // would overflow the window must not make the conclusion fail to fit.
+    const huge = {
+      ...SONNET_55_STEP_1,
+      content: [
+        { type: "thinking", thinking: "", signature: "s".repeat(400_000) },
+        ...SONNET_55_STEP_1.content.slice(1),
+      ],
+    };
+    const loop = await quietly(() =>
+      loopTurn(
+        [anthropicJson(huge), anthropicJson(SONNET_55_FINAL)],
+        {
+          prompt: "first heading?",
+          defaultCompanionModel: SONNET_55.slug,
+          maxToolSteps: 1,
+          approver: {
+            confirmPaidEscalation: () =>
+              Promise.resolve({ decision: "approve" as const }),
+          },
+        },
+        (run) => run.env.set("ANTHROPIC_API_KEY", "test-key-not-real"),
+        [{ ...SONNET_55, context_window: 64_000, max_output_tokens: 4_096 }],
+      )
+    ).then((r) => r.value);
+    assert.equal(loop.error, null);
+    assert.equal(loop.result?.text, "The first heading is readme.");
+    const last = JSON.parse(loop.run.transport.requests[1].body);
+    assert.equal(last.tools, undefined);
+    assert.ok(!JSON.stringify(last.messages).includes('"thinking"'));
+  });
+
   it("records thinking in each provider call's output tokens and cost", async () => {
     const { loop } = await sonnetTurn();
     const calls = (await rows(loop)).filter((row) =>

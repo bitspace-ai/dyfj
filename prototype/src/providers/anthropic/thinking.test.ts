@@ -223,6 +223,65 @@ describe("anthropic thinking replay", () => {
   });
 });
 
+describe("anthropic history without replay", () => {
+  it("rebuilds a turn whose tool name no longer matches the reply", async () => {
+    const first = await call(sonnet55, [prompt], SONNET_55_STEP_1);
+    const [assistant, ...results] = step(first.result, "README.md");
+    const renamed = {
+      ...assistant,
+      toolCalls: [{ id: "toolu_list", name: "read_file", arguments: { path: "." } }],
+    } as WorkbenchMessage;
+    const next = await call(
+      sonnet55,
+      [prompt, renamed, ...results],
+      SONNET_55_FINAL,
+    );
+    assert.deepStrictEqual(body(next.request).messages[1].content, [
+      { type: "text", text: "I'll start with the directory." },
+      {
+        type: "tool_use",
+        id: "toolu_list",
+        name: "read_file",
+        input: { path: "." },
+      },
+    ]);
+  });
+
+  it("names past tool calls by their wire names when no tools are offered", async () => {
+    // A forced conclusion offers no tools but passes the turn's tools as
+    // historyTools, so a dotted registry name still goes out wire-safe.
+    const memoryRead: WorkbenchToolDefinition = {
+      name: "memory.read",
+      description: "Read a memory",
+      parameters: { type: "object", properties: {} },
+    };
+    const transport = new ScriptedHttpTransport([{
+      respond: { body: JSON.stringify(SONNET_55_FINAL) },
+    }]);
+    await runWorkbenchTurn({
+      systemPrompt: "sys",
+      prompt: "seed",
+      messages: [
+        prompt,
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "t1", name: "memory.read", arguments: {} }],
+        },
+        { role: "tool", toolCallId: "t1", name: "memory.read", content: "A" },
+      ],
+      historyTools: [memoryRead],
+      routing: { modelId: sonnet55.slug },
+      models: [sonnet55],
+      fetchFn: transport.fetch,
+      getEnv: (name) => env.get(name),
+    });
+    const sent = body(transport.requests[0]);
+    assert.equal(sent.tools, undefined);
+    assert.equal(sent.messages[1].content[0].name, "memory_read");
+  });
+});
+
 describe("anthropic progress updates", () => {
   it("asks a progress-update model for its updates", async () => {
     const { request } = await call(sonnet55, [prompt], SONNET_55_STEP_1);

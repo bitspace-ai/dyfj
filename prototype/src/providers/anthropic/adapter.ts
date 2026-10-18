@@ -101,6 +101,7 @@ export const anthropicAdapter: ProviderAdapter = {
       {
         jsonObject: request.jsonObject,
         tools: request.tools,
+        historyTools: request.historyTools,
         messages: request.messages,
         maxTokens: outputCap(
           model,

@@ -449,12 +449,16 @@ README are tracked separately in its Revision history section.
   blocks stay in memory for the turn only: nothing new is written to the
   event log, and a resumed session continues without them, which Anthropic
   allows across turns. Size estimates count a kept reply at the size of the
-  blocks it sends.
+  blocks it sends; a forced conclusion clears kept replies before it is
+  sized, since it sends none. A forced conclusion on an Anthropic model also
+  names the turn's earlier tool calls by their wire names again (a dotted
+  command id such as `memory.read` went out with its dot, which Anthropic
+  rejects), as the OpenAI-compatible adapter already did.
 
   Claude Sonnet 5.5 returns the notes it writes between tool calls as
   thinking blocks, and empties them by default. The catalog now marks it
   `thinking-progress-updates`, on the fresh-install path and through migration
-  `016_models_claude_sonnet_5_5_progress_updates.sql`. A model with that
+  `017_models_claude_sonnet_5_5_progress_updates.sql`. A model with that
   capability is sent `thinking: {"type": "adaptive", "display": "updates"}`
   with the `thinking-display-updates-2026-08-18` beta header. That returns the
   notes as text and keeps the reasoning hidden. The operator sees each

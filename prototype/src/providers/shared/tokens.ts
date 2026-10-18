@@ -38,6 +38,11 @@ export function estimateParamsInputText(
  * assistant turn with a reply to replay counts as that reply's blocks, which
  * is what goes out while it is still valid: its thinking signatures are sent
  * back and billed as input, and they can far outweigh the visible text.
+ * A kept reply is counted even when the request will leave it out, after a
+ * context fit or a compression has changed what precedes it: whether it is
+ * still valid is the adapter's decision, made when the request is built. The
+ * estimate then runs high and may trim or compress early. A forced
+ * conclusion clears kept replies before it is sized (agent-loop.ts).
  */
 export function messageEstimateText(message: WorkbenchMessage): string {
   if (message.role !== "assistant") return message.content;

@@ -177,7 +177,7 @@ test("historical replay plus migrations adds Sonnet 5.5 and Kimi K3 and preserve
 });
 
 const progressMigration =
-  "migrations/016_models_claude_sonnet_5_5_progress_updates.sql";
+  "migrations/017_models_claude_sonnet_5_5_progress_updates.sql";
 
 async function assertSonnet55Capabilities(repository: string): Promise<void> {
   const rows = await queryRows(
