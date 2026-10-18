@@ -67,6 +67,22 @@ test("requestEstimateText: tool definitions count toward the request", () => {
   assert.strictEqual(requestEstimateText("sys", messages, []), without);
 });
 
+test("requestEstimateText: a reply to replay counts as the blocks it sends", () => {
+  const content = [
+    { type: "thinking", thinking: "", signature: "s".repeat(4000) },
+    { type: "text", text: "hi" },
+  ];
+  const messages: WorkbenchMessage[] = [{
+    role: "assistant",
+    content: "hi",
+    replay: { api: "anthropic-messages", prefixDigest: "d", content },
+  }];
+  assert.strictEqual(
+    requestEstimateText("sys", messages, undefined),
+    `sys\n${JSON.stringify(content)}`,
+  );
+});
+
 // --- trimToolResult ---
 
 test("trimToolResult: a result within the allowance is untouched", () => {

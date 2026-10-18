@@ -23,6 +23,11 @@ import {
   systemMessage,
 } from "../../testing/builders/engine.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
+import {
+  SONNET_55_FINAL,
+  SONNET_55_STEP_1,
+  SONNET_55_STEP_2,
+} from "../../testing/fixtures/anthropic-thinking.ts";
 import { AGENT_DEFAULTS } from "../config/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
@@ -884,4 +889,163 @@ test("each step replays the assistant's tool-call turn and its linked results", 
   const tools = followUp.filter((m) => m.role === "tool");
   assert.deepStrictEqual(tools.map((m) => m.tool_call_id), ["c1", "r1"]);
   assert.match(tools[1].content, /# readme/);
+});
+
+// ─── thinking replay (Anthropic) ─────────────────────────────────────────────
+
+const SONNET_55: ModelSeed = {
+  slug: "claude-sonnet-5-5",
+  display_name: "Claude Sonnet 5.5",
+  provider: "anthropic",
+  api: "anthropic-messages",
+  base_url: "https://api.anthropic.com",
+  tier: 1,
+  context_window: 1_000_000,
+  max_output_tokens: 128_000,
+  cost_input: 2,
+  cost_output: 10,
+  capabilities: ["text", "tools", "thinking", "thinking-progress-updates"],
+};
+
+const anthropicJson = (body: unknown): ScriptedExchange => ({
+  respond: { body: JSON.stringify(body) },
+});
+
+describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
+  async function sonnetTurn() {
+    const deltas: string[] = [];
+    const loop = await loopTurn(
+      [
+        anthropicJson(SONNET_55_STEP_1),
+        anthropicJson(SONNET_55_STEP_2),
+        anthropicJson(SONNET_55_FINAL),
+      ],
+      {
+        prompt: "first heading?",
+        defaultCompanionModel: SONNET_55.slug,
+        approver: {
+          confirmPaidEscalation: () =>
+            Promise.resolve({ decision: "approve" as const }),
+        },
+        frames: { onTextDelta: (delta) => void deltas.push(delta) },
+      },
+      (run) => run.env.set("ANTHROPIC_API_KEY", "test-key-not-real"),
+      [SONNET_55],
+    );
+    assert.equal(loop.error, null);
+    return { loop, deltas };
+  }
+
+  it("replays each step's thinking blocks unchanged on the next request", async () => {
+    const { loop } = await sonnetTurn();
+    const requests = loop.run.transport.requests.map((r) =>
+      JSON.parse(r.body)
+    );
+    assert.equal(requests.length, 3);
+    const assistant = (body: { messages: { role: string }[] }) =>
+      body.messages.filter((m) => m.role === "assistant");
+    assert.deepStrictEqual(assistant(requests[1]), [
+      { role: "assistant", content: SONNET_55_STEP_1.content },
+    ]);
+    assert.deepStrictEqual(assistant(requests[2]), [
+      { role: "assistant", content: SONNET_55_STEP_1.content },
+      { role: "assistant", content: SONNET_55_STEP_2.content },
+    ]);
+    assert.equal(loop.result?.text, "The first heading is readme.");
+  });
+
+  it("shows the operator the narration between tool calls, then the reply", async () => {
+    // A client that saw text frames does not print the buffered reply from
+    // the result, so once narration has gone out the reply goes out too.
+    const { deltas } = await sonnetTurn();
+    assert.equal(
+      deltas.join(""),
+      "I'll start with the directory.\n\n" +
+        "Listing the budget directory to find its modules.\n\n" +
+        "Found README.md. Reading it for the first heading.\n\n" +
+        "The first heading is readme.",
+    );
+  });
+
+  it("does not repeat the narration when the turn is cancelled before its tools run", async () => {
+    const abortController = new AbortController();
+    const deltas: string[] = [];
+    const loop = await quietly(() =>
+      loopTurn(
+        [anthropicJson(SONNET_55_STEP_1)],
+        {
+          prompt: "first heading?",
+          defaultCompanionModel: SONNET_55.slug,
+          abortSignal: abortController.signal,
+          approver: {
+            confirmPaidEscalation: () =>
+              Promise.resolve({ decision: "approve" as const }),
+          },
+          frames: {
+            onTextDelta: (delta) => void deltas.push(delta),
+            onRuntimeEvent: (event) => {
+              if (event.type === "toolStepStarted") abortController.abort();
+            },
+          },
+        },
+        (run) => run.env.set("ANTHROPIC_API_KEY", "test-key-not-real"),
+        [SONNET_55],
+      )
+    ).then((r) => r.value);
+    assert.equal(loop.result?.stopReason, "aborted");
+    assert.equal(
+      deltas.join(""),
+      "I'll start with the directory.\n\n" +
+        "Listing the budget directory to find its modules.\n\n",
+    );
+  });
+
+  it("does not size a forced conclusion by blocks it will not send", async () => {
+    // The step-limit conclusion changes the system prompt and drops the
+    // tools, so the adapter sends no thinking; a reply whose signature alone
+    // would overflow the window must not make the conclusion fail to fit.
+    const huge = {
+      ...SONNET_55_STEP_1,
+      content: [
+        { type: "thinking", thinking: "", signature: "s".repeat(400_000) },
+        ...SONNET_55_STEP_1.content.slice(1),
+      ],
+    };
+    const loop = await quietly(() =>
+      loopTurn(
+        [anthropicJson(huge), anthropicJson(SONNET_55_FINAL)],
+        {
+          prompt: "first heading?",
+          defaultCompanionModel: SONNET_55.slug,
+          maxToolSteps: 1,
+          approver: {
+            confirmPaidEscalation: () =>
+              Promise.resolve({ decision: "approve" as const }),
+          },
+        },
+        (run) => run.env.set("ANTHROPIC_API_KEY", "test-key-not-real"),
+        [{ ...SONNET_55, context_window: 64_000, max_output_tokens: 4_096 }],
+      )
+    ).then((r) => r.value);
+    assert.equal(loop.error, null);
+    assert.equal(loop.result?.text, "The first heading is readme.");
+    const last = JSON.parse(loop.run.transport.requests[1].body);
+    assert.equal(last.tools, undefined);
+    assert.ok(!JSON.stringify(last.messages).includes('"thinking"'));
+  });
+
+  it("records thinking in each provider call's output tokens and cost", async () => {
+    const { loop } = await sonnetTurn();
+    const calls = (await rows(loop)).filter((row) =>
+      row.event_type === "provider_call"
+    );
+    assert.deepStrictEqual(
+      calls.map((row) => [row.tokens_output, Number(row.cost_total)]),
+      [
+        ["410", (120 * 2 + 410 * 10) / 1_000_000],
+        ["520", (180 * 2 + 520 * 10) / 1_000_000],
+        ["300", (240 * 2 + 300 * 10) / 1_000_000],
+      ],
+    );
+  });
 });

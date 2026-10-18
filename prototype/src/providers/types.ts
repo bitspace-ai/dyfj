@@ -70,6 +70,19 @@ export interface WorkbenchTurnResult {
   model: WorkbenchModel;
   selection: WorkbenchSelection;
   toolCalls?: WorkbenchToolCall[];
+  /**
+   * What the next request of this tool turn must send back verbatim in place
+   * of this reply, when the provider requires it (Anthropic thinking blocks).
+   * Absent when the reply carries nothing to replay.
+   */
+  replay?: ProviderReplay;
+  /**
+   * The operator-facing narration a tool-calling reply wrote before its tool
+   * calls, in order, when the provider returns it apart from the streamed
+   * text: on Anthropic models with progress updates, the reply's text and
+   * its progress-update thinking text. Display only: never sent back.
+   */
+  progressText?: string;
   usage: {
     input: number;
     output: number;
@@ -113,6 +126,22 @@ export interface WorkbenchTurnResult {
   };
 }
 
+/**
+ * A provider reply kept for verbatim replay within one tool turn. Opaque to
+ * the engine, which only carries it on the assistant message the reply
+ * became; the adapter that produced it decides whether it may still be sent.
+ * `content` is model-provided data (Anthropic thinking signatures among it):
+ * it is never logged, journaled, or shown.
+ */
+export interface ProviderReplay {
+  /** The wire API that produced it; another adapter ignores it. */
+  api: string;
+  /** Digest of the request that produced the reply, up to the reply. */
+  prefixDigest: string;
+  /** The reply's content blocks, in order, as the provider returned them. */
+  content: readonly unknown[];
+}
+
 export interface WorkbenchToolDefinition {
   name: string;
   description: string;
@@ -140,7 +169,13 @@ export interface WorkbenchToolCall {
  */
 export type WorkbenchMessage =
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string; toolCalls?: WorkbenchToolCall[] }
+  | {
+    role: "assistant";
+    content: string;
+    toolCalls?: WorkbenchToolCall[];
+    /** The reply this message came from, for verbatim replay in its turn. */
+    replay?: ProviderReplay;
+  }
   | {
     role: "tool";
     toolCallId: string;

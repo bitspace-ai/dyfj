@@ -18,6 +18,7 @@
 import {
   modelStreamsToolCalls,
   ProviderContextExceededError,
+  type ProviderReplay,
   type WorkbenchMessage,
   type WorkbenchToolCall,
   type WorkbenchTurnParams,
@@ -50,6 +51,8 @@ interface Streaming {
   streamedText: boolean;
   streamsToolCalls: boolean;
   liveDelta: ((delta: string) => void) | undefined;
+  /** Narration of a buffered tool step has gone out as text frames. */
+  shownProgress: boolean;
 }
 
 /** Run the stage over the seeded transcript, which it extends in place. */
@@ -67,6 +70,7 @@ export async function agentLoop(
     // buffered for them.
     streamsToolCalls: modelStreamsToolCalls(route.selected),
     liveDelta: undefined,
+    shownProgress: false,
   };
   if (input.frames?.onTextDelta !== undefined) {
     streaming.liveDelta = (delta) => {
@@ -110,6 +114,7 @@ export async function agentLoop(
     result.toolCalls.length > 0 &&
     state.toolSteps < session.maxToolSteps
   ) {
+    showProgress(turn, result, streaming);
     const step = await runToolStep(turn, result, messages, seenToolCalls);
     if (step === "aborted") {
       result = { ...result, stopReason: "aborted", toolCalls: undefined };
@@ -124,6 +129,16 @@ export async function agentLoop(
     result = abortedIfCancelled(turn, result);
   }
   result = abortedIfCancelled(turn, result);
+  // A client that saw text frames takes the reply from them, not from the
+  // result, so a buffered reply after shown narration goes out as frames too.
+  // A step cancelled before its tools ran ends on a reply whose narration
+  // (its text included) has already gone out.
+  if (
+    streaming.shownProgress && !streaming.streamedText &&
+    result.progressText === undefined && result.text.length > 0
+  ) {
+    streaming.liveDelta?.(result.text);
+  }
   return { result, streamedText: streaming.streamedText };
 }
 
@@ -142,6 +157,24 @@ function withoutToolCalls(
     `Dropped ${dropped} tool call(s) requested after a tool call was not approved.`,
   );
   return { ...result, toolCalls: undefined, stopReason: "stop" };
+}
+
+/**
+ * Hand the operator what a buffered tool-calling reply narrated before its
+ * tool calls run (progress updates the provider returns apart from streamed
+ * text). It goes out as text frames but is not the step's reply, so it does
+ * not mark the next call's text as streamed; the loop sends the turn's reply
+ * as frames at the end instead, when this has run.
+ */
+function showProgress(
+  turn: RoutedTurn,
+  result: LoopTurnResult,
+  streaming: Streaming,
+): void {
+  const onTextDelta = turn.input.frames?.onTextDelta;
+  if (result.progressText === undefined || onTextDelta === undefined) return;
+  onTextDelta(`${result.progressText}\n\n`);
+  streaming.shownProgress = true;
 }
 
 /** The call parameters every loop call shares. */
@@ -229,12 +262,18 @@ async function runToolStep(
   let approvalDenied = false;
   const requestSoFar = () => {
     const next = nextRequestShape(state, allRepeats, approvalDenied);
+    const sent = [
+      ...messages,
+      ...toolStepToMessages(
+        result.text,
+        requestedToolCalls,
+        stepResults,
+        result.replay,
+      ),
+    ];
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
-      messages: [
-        ...messages,
-        ...toolStepToMessages(result.text, requestedToolCalls, stepResults),
-      ],
+      messages: next.forceConclude ? withoutReplay(sent) : sent,
       tools: next.tools,
     });
   };
@@ -421,8 +460,10 @@ async function followUp(
       result.text,
       step.requestedToolCalls,
       step.stepResults,
+      result.replay,
     ),
   );
+  if (forceConclude) messages.splice(0, messages.length, ...withoutReplay(messages));
   if (atCap) state.toolStepLimitReached = true;
   await fitRequest(turn, { systemPrompt, messages, tools }, "before_send");
   const estimatedInputCount = estimateRuntimeInputCount(
@@ -451,6 +492,22 @@ async function followUp(
           ? err
           : new ToolStepLimitConclusionError()
       : undefined,
+  );
+}
+
+/**
+ * The transcript with every kept reply dropped. A forced conclusion changes
+ * the system prompt and offers no tools, so no reply produced under the old
+ * prefix may be replayed and the adapter would send none; sizing the
+ * conclusion by those blocks (thinking signatures can be large) would trim or
+ * refuse a request that fits. The conclusion ends the turn, so nothing later
+ * needs them.
+ */
+function withoutReplay(messages: WorkbenchMessage[]): WorkbenchMessage[] {
+  return messages.map((m) =>
+    m.role === "assistant" && m.replay !== undefined
+      ? { role: "assistant", content: m.content, toolCalls: m.toolCalls }
+      : m
   );
 }
 
@@ -511,15 +568,24 @@ function forcedConclusionSystemPrompt(
  * `tool` message per result, each linked back to its call by id. Appending
  * these to the running history is what lets the next step see the model's own
  * prior reasoning and the matching results — instead of a flattened summary
- * string that drops the trail and invites confabulation.
+ * string that drops the trail and invites confabulation. The reply's
+ * `replay`, when it has one, rides on the assistant turn so the adapter can
+ * send the reply back as the model produced it (Anthropic thinking blocks);
+ * it lives only in this in-memory transcript, never in the event log.
  */
 export function toolStepToMessages(
   assistantText: string,
   toolCalls: WorkbenchToolCall[] | undefined,
   stepResults: ToolResultSummary[],
+  replay?: ProviderReplay,
 ): WorkbenchMessage[] {
   const messages: WorkbenchMessage[] = [
-    { role: "assistant", content: assistantText, toolCalls },
+    {
+      role: "assistant",
+      content: assistantText,
+      toolCalls,
+      ...(replay === undefined ? {} : { replay }),
+    },
   ];
   for (const result of stepResults) {
     messages.push({

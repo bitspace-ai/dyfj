@@ -1,7 +1,11 @@
 /**
  * Token estimates and per-token timing, shared by the adapters.
  */
-import type { WorkbenchCallTimings, WorkbenchTurnParams } from "../types.ts";
+import type {
+  WorkbenchCallTimings,
+  WorkbenchMessage,
+  WorkbenchTurnParams,
+} from "../types.ts";
 
 export function estimateTextTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -24,15 +28,29 @@ export function estimateParamsInputText(
   params: Pick<WorkbenchTurnParams, "systemPrompt" | "prompt" | "messages">,
 ): string {
   const history = params.messages && params.messages.length > 0
-    ? params.messages
-      .map((m) =>
-        m.role === "assistant"
-          ? m.content + (m.toolCalls ? JSON.stringify(m.toolCalls) : "")
-          : m.content
-      )
-      .join("\n")
+    ? params.messages.map(messageEstimateText).join("\n")
     : params.prompt;
   return `${params.systemPrompt}\n${history}`;
+}
+
+/**
+ * The text one transcript message contributes to a size estimate. An
+ * assistant turn with a reply to replay counts as that reply's blocks, which
+ * is what goes out while it is still valid: its thinking signatures are sent
+ * back and billed as input, and they can far outweigh the visible text.
+ * A kept reply is counted even when the request will leave it out, after a
+ * context fit or a compression has changed what precedes it: whether it is
+ * still valid is the adapter's decision, made when the request is built. The
+ * estimate then runs high and may trim or compress early. A forced
+ * conclusion clears kept replies before it is sized (agent-loop.ts).
+ */
+export function messageEstimateText(message: WorkbenchMessage): string {
+  if (message.role !== "assistant") return message.content;
+  if (message.replay !== undefined) {
+    return JSON.stringify(message.replay.content);
+  }
+  return message.content +
+    (message.toolCalls ? JSON.stringify(message.toolCalls) : "");
 }
 
 export function withTimePerOutputToken(

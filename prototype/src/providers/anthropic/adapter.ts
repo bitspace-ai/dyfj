@@ -25,6 +25,10 @@ import { abortedWorkbenchTurnResult } from "../shared/turn-result.ts";
 import {
   ANTHROPIC_API_VERSION,
   ANTHROPIC_DEFAULT_MAX_TOKENS,
+  ANTHROPIC_PROGRESS_UPDATES_BETA,
+  ANTHROPIC_PROGRESS_UPDATES_CAPABILITY,
+  ANTHROPIC_REPLAY_API,
+  anthropicReplyPrefixDigest,
   buildAnthropicMessagesRequest,
 } from "./request.ts";
 import { normaliseAnthropicStopReason } from "./stop-reason.ts";
@@ -86,6 +90,27 @@ export const anthropicAdapter: ProviderAdapter = {
     const now = () => io.clock.now();
     const onFrame = io.onFrame;
     const stream = onFrame !== undefined;
+    const progressUpdates = model.capabilities.includes(
+      ANTHROPIC_PROGRESS_UPDATES_CAPABILITY,
+    );
+    const body = buildAnthropicMessagesRequest(
+      model.slug,
+      request.systemPrompt,
+      request.prompt,
+      stream,
+      {
+        jsonObject: request.jsonObject,
+        tools: request.tools,
+        historyTools: request.historyTools,
+        messages: request.messages,
+        maxTokens: outputCap(
+          model,
+          request.maxOutputTokens,
+          ANTHROPIC_DEFAULT_MAX_TOKENS,
+        ),
+        progressUpdates,
+      },
+    );
     const requestStarted = now();
     const response = await fetchWithHeaderTimeout(
       io.fetch,
@@ -100,25 +125,11 @@ export const anthropicAdapter: ProviderAdapter = {
           "content-type": "application/json",
           "x-api-key": apiKey,
           "anthropic-version": ANTHROPIC_API_VERSION,
+          ...(progressUpdates
+            ? { "anthropic-beta": ANTHROPIC_PROGRESS_UPDATES_BETA }
+            : {}),
         },
-        body: JSON.stringify(
-          buildAnthropicMessagesRequest(
-            model.slug,
-            request.systemPrompt,
-            request.prompt,
-            stream,
-            {
-              jsonObject: request.jsonObject,
-              tools: request.tools,
-              messages: request.messages,
-              maxTokens: outputCap(
-                model,
-                request.maxOutputTokens,
-                ANTHROPIC_DEFAULT_MAX_TOKENS,
-              ),
-            },
-          ),
-        ),
+        body: JSON.stringify(body),
       },
       model,
       ...providerFetchDeadline(stream),
@@ -187,10 +198,29 @@ export const anthropicAdapter: ProviderAdapter = {
       cacheWrite,
     });
 
+    // The reply goes back verbatim on the next call of this tool turn, which
+    // Anthropic requires of thinking blocks; the narration is shown to the
+    // operator before the tools run (buffered tool calls stream nothing).
+    const toolCalled = !result.aborted && (toolCalls?.length ?? 0) > 0;
+    const replayContent = "replayContent" in result
+      ? result.replayContent
+      : undefined;
+    const narration = "narration" in result ? result.narration : [];
+
     return {
       text: result.text,
       model,
       selection,
+      ...(replayContent === undefined || result.aborted ? {} : {
+        replay: {
+          api: ANTHROPIC_REPLAY_API,
+          prefixDigest: anthropicReplyPrefixDigest(body),
+          content: replayContent,
+        },
+      }),
+      ...(progressUpdates && toolCalled && narration.length > 0
+        ? { progressText: narration.join("\n\n") }
+        : {}),
       usage: {
         input,
         output,

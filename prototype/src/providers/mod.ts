@@ -20,6 +20,7 @@
 export type {
   FetchLike,
   ModelAccessModality,
+  ProviderReplay,
   WorkbenchCallTimings,
   WorkbenchMessage,
   WorkbenchModel,
@@ -96,7 +97,7 @@ export {
   type ProviderRegistry,
   runWorkbenchTurn,
 } from "./registry/registry.ts";
-export { estimateTextTokens } from "./shared/tokens.ts";
+export { estimateTextTokens, messageEstimateText } from "./shared/tokens.ts";
 export {
   classifyContextExceeded,
   type ContextExceededReport,
