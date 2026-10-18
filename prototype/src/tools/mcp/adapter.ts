@@ -170,6 +170,10 @@ async function withClient<T>(
   server: McpHttpServerConfig,
   token: string,
   responseMaxBytes: number,
+  // How long the version probe and the connect may take. Discovery runs at
+  // startup and fails fast; a tool call is a round trip the operator is
+  // waiting on, so it gets the call bound.
+  connectTimeoutMs: number,
   run: (client: {
     listTools: (
       params: Record<string, never>,
@@ -188,10 +192,10 @@ async function withClient<T>(
     clientName: "dyfj-workbench-tools",
     requestInit: requestInit(token),
     fetch: boundedMcpFetch(responseMaxBytes, guardedFetch(policy)),
-    probeTimeoutMs: DISCOVERY_TIMEOUT_MS,
+    probeTimeoutMs: connectTimeoutMs,
   });
   try {
-    await client.connect(transport, { timeout: DISCOVERY_TIMEOUT_MS });
+    await client.connect(transport, { timeout: connectTimeoutMs });
     const revision = requireNegotiatedMcpRevision(client);
     return await run(client as never, revision);
   } finally {
@@ -210,6 +214,7 @@ export async function discoverMcpTools(
     input.server,
     input.token,
     DISCOVERY_RESPONSE_MAX_BYTES,
+    DISCOVERY_TIMEOUT_MS,
     async (client, revision) => {
       const result = await client.listTools({}, {
         timeout: DISCOVERY_TIMEOUT_MS,
@@ -238,6 +243,7 @@ export async function callMcpTool(
     input.server,
     input.token,
     CALL_RESPONSE_MAX_BYTES,
+    CALL_TIMEOUT_MS,
     async (client) =>
       await client.callTool(
         {
