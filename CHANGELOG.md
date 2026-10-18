@@ -24,9 +24,11 @@ README are tracked separately in its Revision history section.
   on `model_response`. A turn's basis is `provider_billed` only when every call
   in it was. Rows written before the column read as `catalog_estimate`, which
   they were; `events/query` and `sessions/inspect` report it as `costBasis`,
-  and the turn result as `cost.basis`. The receipt marks an estimated cost with
-  `~` (`~$0.0123`, and `Actual cost: ~$… (catalog estimate)` in the stored
-  receipt); a billed or zero cost is plain.
+  and the turn result as `cost.basis`. The terminal receipt line marks an
+  estimated cost with `~` (`~$0.0123`) and leaves a billed or zero cost plain.
+  The stored receipt labels both bases explicitly: `Actual cost: ~$…
+  (catalog estimate)` or `Actual cost: $… (billed)`; a zero cost carries no
+  label.
 
 - **Claude Sonnet 5.5 and Kimi K3 in the model catalog.** `claude-sonnet-5-5`
   reaches Anthropic directly and `moonshotai/kimi-k3` reaches OpenRouter, on

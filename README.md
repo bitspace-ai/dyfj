@@ -454,8 +454,10 @@ says which. OpenRouter is the one provider that reports its charge per call
 usage that carried it covers everything received. Every other cost, and an
 OpenRouter call that was aborted or whose usage does not cover its output, is a
 catalog estimate. The budget envelopes count whichever was recorded. The
-receipt marks an estimate with `~` (`~$0.0123`) and leaves a billed or zero
-cost plain.
+terminal receipt line marks an estimate with `~` (`~$0.0123`) and leaves a
+billed or zero cost plain. The stored receipt labels both bases explicitly:
+`Actual cost: ~$0.012346 (catalog estimate)` or `Actual cost: $0.012346
+(billed)`; a zero cost carries no label.
 
 OpenRouter serves a model from several upstreams at different prices, so each
 OpenRouter request carries the row's input and output prices as
