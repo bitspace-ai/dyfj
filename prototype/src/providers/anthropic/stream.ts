@@ -1,7 +1,9 @@
 /**
  * Anthropic Messages response reading: SSE line parsing, the buffered JSON
  * reader, and the streaming reader. The streaming reader carries text only:
- * tool-offering turns are buffered.
+ * tool-offering turns are buffered, and the buffered reader alone keeps the
+ * reply's blocks for replay. A streamed reply offers no tools, so it never
+ * becomes a tool step whose blocks a later request needs.
  */
 import { DomainError } from "../../contract/mod.ts";
 import type { WorkbenchCallTimings, WorkbenchToolCall } from "../types.ts";
@@ -79,12 +81,20 @@ export async function readAnthropicMessagesJson(
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
   toolCalls?: WorkbenchToolCall[];
+  /**
+   * The reply's blocks in order, when it carries thinking to replay and
+   * every block is one the request builder can send back.
+   */
+  replayContent?: unknown[];
+  /** Progress-update thinking text and the reply's text, in order. */
+  narration: string[];
   timings: WorkbenchCallTimings;
 }> {
   const json = await response.json() as {
     content?: Array<{
       type?: string;
       text?: string;
+      thinking?: string;
       id?: string;
       name?: string;
       input?: Record<string, unknown>;
@@ -101,8 +111,29 @@ export async function readAnthropicMessagesJson(
 
   let text = "";
   const toolCalls: WorkbenchToolCall[] = [];
+  const narration: string[] = [];
+  let thinking = false;
+  let replayable = true;
   for (const block of json.content ?? []) {
-    if (block.type === "text" && block.text) text += block.text;
+    if (block.type === "text" && block.text) {
+      text += block.text;
+      narration.push(block.text);
+    }
+    if (block.type === "thinking" || block.type === "redacted_thinking") {
+      thinking = true;
+    }
+    // Under `display: "updates"` only a progress update carries text; under
+    // the default `omitted` every thinking block is empty.
+    if (block.type === "thinking" && block.thinking) {
+      narration.push(block.thinking);
+    }
+    if (
+      !["text", "tool_use", "thinking", "redacted_thinking"].includes(
+        block.type ?? "",
+      )
+    ) {
+      replayable = false;
+    }
     if (block.type === "tool_use") {
       toolCalls.push({
         id: block.id ?? `tool-call-${toolCalls.length + 1}`,
@@ -120,6 +151,8 @@ export async function readAnthropicMessagesJson(
     cacheReadTokens: json.usage?.cache_read_input_tokens,
     cacheWriteTokens: json.usage?.cache_creation_input_tokens,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+    replayContent: thinking && replayable ? json.content : undefined,
+    narration,
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       totalMs: Math.round(completed - requestStarted),

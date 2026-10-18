@@ -175,3 +175,71 @@ test("historical replay plus migrations adds Sonnet 5.5 and Kimi K3 and preserve
     },
   );
 });
+
+const progressMigration =
+  "migrations/016_models_claude_sonnet_5_5_progress_updates.sql";
+
+async function assertSonnet55Capabilities(repository: string): Promise<void> {
+  const rows = await queryRows(
+    repository,
+    `SELECT capabilities FROM models WHERE slug = '${sonnet55}'`,
+    undefined,
+  );
+  const capabilities = rows.map((row) =>
+    typeof row.capabilities === "string"
+      ? JSON.parse(row.capabilities)
+      : row.capabilities
+  );
+  const expected = [[
+    "text",
+    "code",
+    "reasoning",
+    "vision",
+    "tools",
+    "thinking",
+    "thinking-progress-updates",
+    "long-context",
+  ]];
+  if (JSON.stringify(capabilities) !== JSON.stringify(expected)) {
+    throw new Error(
+      `Expected Sonnet 5.5 capabilities ${JSON.stringify(expected)}, got ${
+        JSON.stringify(capabilities)
+      }`,
+    );
+  }
+}
+
+test("fresh catalog marks Sonnet 5.5 for progress updates", async () => {
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+  await withSchemaRepository(
+    schemaDir,
+    [...plan.current, ...plan.catalog],
+    "fresh progress-update catalog",
+    undefined,
+    assertSonnet55Capabilities,
+  );
+});
+
+test("historical replay plus migrations marks Sonnet 5.5 for progress updates, idempotently", async () => {
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+  if (!plan.migrations.includes(progressMigration)) {
+    throw new Error(`Missing ${progressMigration}`);
+  }
+  await withSchemaRepository(
+    schemaDir,
+    [...plan.history, ...plan.migrations],
+    "migrated progress-update catalog",
+    undefined,
+    async (repository) => {
+      await assertSonnet55Capabilities(repository);
+      await runChecked("dolt", ["sql"], {
+        cwd: repository,
+        input: await readFile(new URL(progressMigration, schemaDir), "utf8"),
+        label: `reapply schema/${progressMigration}`,
+      });
+      await assertSonnet55Capabilities(repository);
+    },
+  );
+});
