@@ -33,6 +33,9 @@ const CALL_RESPONSE_MAX_BYTES = 256 * 1024;
 const MAX_SCHEMA_BYTES = 64_000;
 const MAX_SCHEMA_DEPTH = 12;
 const MAX_SCHEMA_PROPERTIES = 64;
+// Linear's get_issue offers a 45-value `fields` enum; the byte limit above
+// still bounds the schema as a whole.
+const MAX_SCHEMA_ENUM_VALUES = 64;
 const TOOL_ARGUMENT_NAME = /^[A-Za-z_][A-Za-z0-9_.-]{0,63}$/;
 
 export type ExternalMcpDiagnostic =
@@ -43,10 +46,19 @@ export type ExternalMcpDiagnostic =
     reason: "binding missing" | "tool not discovered" | "unsupported schema";
   }
   | {
+    /** A configured tool that will not reach the model, and why. */
+    serverId: string;
+    status: "dropped";
+    tool: string;
+    reason: "not offered by the server" | `schema rejected: ${string}`;
+  }
+  | {
     serverId: string;
     status: "ready";
     revision: string;
     toolCount: number;
+    /** The web capability commands this server supplies, when any. */
+    webTools?: ("web_search" | "web_fetch")[];
   }
   | {
     serverId: string;
@@ -57,6 +69,64 @@ export type ExternalMcpDiagnostic =
       | "discovery failed"
       | `network egress ${string}`;
   };
+
+/** The boot line for one diagnostic; `runtime/status` reports the same lines. */
+export function formatExternalMcpDiagnostic(
+  diagnostic: ExternalMcpDiagnostic,
+): string {
+  const prefix = `external MCP ${diagnostic.serverId}:`;
+  switch (diagnostic.status) {
+    case "ready": {
+      const web = (diagnostic.webTools ?? []).map((tool) => ` + ${tool}`)
+        .join("");
+      return `${prefix} ready (${diagnostic.toolCount} tools${web}, ${diagnostic.revision})`;
+    }
+    case "dropped":
+      return `${prefix} configured tool ${
+        JSON.stringify(diagnostic.tool)
+      } ${diagnostic.reason}`;
+    case "withheld":
+      return `${prefix} ${diagnostic.tool} withheld (${diagnostic.reason})`;
+    case "unavailable":
+      return `${prefix} unavailable (${diagnostic.reason})`;
+  }
+}
+
+/**
+ * A schema the sanitizer refuses. `reason` names the rule or limit it broke;
+ * it carries counts and JSON Schema type names, never other schema content.
+ */
+export class McpSchemaRejectedError extends Error {
+  readonly reason: string;
+  constructor(reason: string) {
+    super(`external MCP tool schema rejected: ${reason}`);
+    this.name = "McpSchemaRejectedError";
+    this.reason = reason;
+  }
+}
+
+function rejectSchema(reason: string): never {
+  throw new McpSchemaRejectedError(reason);
+}
+
+const JSON_SCHEMA_TYPES = new Set([
+  "object",
+  "string",
+  "number",
+  "integer",
+  "boolean",
+  "array",
+  "null",
+]);
+
+/** Names an unsupported type only from JSON Schema's own vocabulary. */
+function describeType(type: unknown): string {
+  const names = Array.isArray(type) ? type : [type];
+  return names.length > 0 && names.length <= 7 &&
+      names.every((name) => JSON_SCHEMA_TYPES.has(name as string))
+    ? JSON.stringify(type)
+    : "of an unrecognized form";
+}
 
 export interface ExternalMcpCommands {
   commands: CommandDefinition<string>[];
@@ -186,14 +256,14 @@ function sanitizeSchemaNode(
   depth: number,
 ): Record<string, unknown> {
   if (depth > MAX_SCHEMA_DEPTH) {
-    throw new Error("external MCP tool schema exceeds the depth limit");
+    rejectSchema(`nesting deeper than ${MAX_SCHEMA_DEPTH} levels`);
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error("external MCP tool schema node must be an object");
+    rejectSchema("a schema node is not an object");
   }
   const input = value as Record<string, unknown>;
   if (Object.hasOwn(input, "$ref")) {
-    throw new Error("external MCP tool schema refs are not supported");
+    rejectSchema("$ref is not supported");
   }
   let type = input.type;
   if (
@@ -202,8 +272,10 @@ function sanitizeSchemaNode(
   ) {
     if (Array.isArray(input.anyOf)) {
       type = "string";
+    } else if (type === undefined) {
+      rejectSchema("a schema node has no type");
     } else {
-      throw new Error("external MCP tool schema contains an unsupported type");
+      rejectSchema(`type ${describeType(type)} is not supported`);
     }
   }
   const output: Record<string, unknown> = { type };
@@ -213,18 +285,18 @@ function sanitizeSchemaNode(
       typeof rawProperties !== "object" || rawProperties === null ||
       Array.isArray(rawProperties)
     ) {
-      throw new Error("external MCP tool schema properties must be an object");
+      rejectSchema("properties is not an object");
     }
     const entries = Object.entries(rawProperties as Record<string, unknown>);
     if (entries.length > MAX_SCHEMA_PROPERTIES) {
-      throw new Error("external MCP tool schema has too many properties");
+      rejectSchema(
+        `${entries.length} properties exceeds ${MAX_SCHEMA_PROPERTIES}`,
+      );
     }
     const properties: Record<string, unknown> = Object.create(null);
     for (const [name, property] of entries) {
       if (!TOOL_ARGUMENT_NAME.test(name)) {
-        throw new Error(
-          "external MCP tool schema has an invalid property name",
-        );
+        rejectSchema("a property name is not a valid argument name");
       }
       properties[name] = sanitizeSchemaNode(property, depth + 1);
     }
@@ -236,34 +308,36 @@ function sanitizeSchemaNode(
           typeof name === "string" && Object.hasOwn(properties, name)
         )
       ) {
-        throw new Error("external MCP tool schema required list is invalid");
+        rejectSchema("required names an undeclared property");
       }
       output.required = [...new Set(input.required)];
     }
     if (input.additionalProperties !== undefined) {
       if (typeof input.additionalProperties !== "boolean") {
-        throw new Error(
-          "external MCP schema-valued additionalProperties are not supported",
-        );
+        rejectSchema("schema-valued additionalProperties are not supported");
       }
       output.additionalProperties = input.additionalProperties;
     }
   }
   if (type === "array") {
     if (input.items === undefined) {
-      throw new Error("external MCP array schema requires items");
+      rejectSchema("array schema has no items");
     }
     output.items = sanitizeSchemaNode(input.items, depth + 1);
   }
   if (Array.isArray(input.enum)) {
+    if (input.enum.length > MAX_SCHEMA_ENUM_VALUES) {
+      rejectSchema(
+        `enum of ${input.enum.length} values exceeds ${MAX_SCHEMA_ENUM_VALUES}`,
+      );
+    }
     if (
-      input.enum.length > 32 ||
       !input.enum.every((entry) =>
         typeof entry === "string" || typeof entry === "number" ||
         typeof entry === "boolean" || entry === null
       )
     ) {
-      throw new Error("external MCP tool schema enum is invalid");
+      rejectSchema("enum value is not a string, number, boolean or null");
     }
     output.enum = input.enum;
   }
@@ -273,11 +347,11 @@ function sanitizeSchemaNode(
 export function sanitizeMcpInputSchema(value: unknown): JsonSchemaObject {
   const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength;
   if (bytes > MAX_SCHEMA_BYTES) {
-    throw new Error("external MCP tool schema exceeds the byte limit");
+    rejectSchema(`${bytes} bytes exceeds ${MAX_SCHEMA_BYTES}`);
   }
   const schema = sanitizeSchemaNode(value, 0);
   if (schema.type !== "object") {
-    throw new Error("external MCP tool input schema must have an object root");
+    rejectSchema("input schema root is not an object");
   }
   return schema as JsonSchemaObject;
 }
@@ -457,11 +531,12 @@ function defineExternalMcpToolCommand(input: {
 }
 
 /**
- * Builds the commands for one discovered server's configured tools, skipping
- * the ones mapped to web capabilities. Issue-creation tools go through the
+ * Builds the commands for one discovered server's configured tools. A tool
+ * mapped to a web capability becomes `web_search` or `web_fetch` later, so it
+ * is only checked for being offered here. Issue-creation tools go through the
  * injected builder and are withheld, with a diagnostic, when it can't bind
- * them; any other tool is skipped silently if undiscovered or its schema is
- * unsupported.
+ * them; any other tool that is not offered, or whose schema is rejected, is
+ * dropped with a diagnostic naming it and the reason.
  */
 function configuredToolCommands(input: {
   server: McpHttpServerConfig;
@@ -481,10 +556,21 @@ function configuredToolCommands(input: {
     const isCapabilityMapped =
       configured.name === server.capabilities?.searchTool ||
       configured.name === server.capabilities?.fetchTool;
-    if (isCapabilityMapped) continue;
-
     const upstreamTool = configured.name;
     const discovered = discoveredByName.get(upstreamTool);
+    const isIssueCreation = upstreamTool === "create_issue" ||
+      upstreamTool === "save_issue";
+    if (!discovered && !isIssueCreation) {
+      diagnostics.push({
+        serverId: server.id,
+        status: "dropped",
+        tool: upstreamTool,
+        reason: "not offered by the server",
+      });
+      continue;
+    }
+    if (isCapabilityMapped) continue;
+
     if (upstreamTool === "create_issue" || upstreamTool === "save_issue") {
       const binding = server.linearIssueCreation;
       const command = binding && discovered
@@ -518,7 +604,17 @@ function configuredToolCommands(input: {
     let inputSchema: JsonSchemaObject;
     try {
       inputSchema = sanitizeMcpInputSchema(discovered.inputSchema);
-    } catch {
+    } catch (error) {
+      diagnostics.push({
+        serverId: server.id,
+        status: "dropped",
+        tool: upstreamTool,
+        reason: `schema rejected: ${
+          error instanceof McpSchemaRejectedError
+            ? error.reason
+            : "the schema could not be read"
+        }`,
+      });
       continue;
     }
     commands.push(
@@ -562,9 +658,16 @@ function webCapabilityCommands(
   deps: ExternalMcpDeps,
   sharedWebState: ReturnType<typeof createWebToolsSessionState>,
   registered: readonly CommandDefinition<string>[],
-): CommandDefinition<string>[] {
+): {
+  commands: CommandDefinition<string>[];
+  /** Server id to the web commands it supplied. */
+  suppliers: Map<string, ("web_search" | "web_fetch")[]>;
+} {
   const added: CommandDefinition<string>[] = [];
-  if (readyWebServers.length === 0) return added;
+  const suppliers = new Map<string, ("web_search" | "web_fetch")[]>();
+  if (readyWebServers.length === 0) return { commands: added, suppliers };
+  const supplied = (serverId: string, id: "web_search" | "web_fetch") =>
+    suppliers.set(serverId, [...(suppliers.get(serverId) ?? []), id]);
   const searchEntry = readyWebServers.find(
     (entry) =>
       entry.server.capabilities?.searchTool !== undefined &&
@@ -597,7 +700,10 @@ function webCapabilityCommands(
       false,
       { searchSchema },
     ).find((c) => c.id === "web_search");
-    if (searchCmd && !isRegistered("web_search")) added.push(searchCmd);
+    if (searchCmd && !isRegistered("web_search")) {
+      added.push(searchCmd);
+      supplied(searchEntry.server.id, "web_search");
+    }
   }
 
   if (fetchEntry) {
@@ -613,9 +719,12 @@ function webCapabilityCommands(
       false,
       { fetchSchema },
     ).find((c) => c.id === "web_fetch");
-    if (fetchCmd && !isRegistered("web_fetch")) added.push(fetchCmd);
+    if (fetchCmd && !isRegistered("web_fetch")) {
+      added.push(fetchCmd);
+      supplied(fetchEntry.server.id, "web_fetch");
+    }
   }
-  return added;
+  return { commands: added, suppliers };
 }
 
 export async function buildExternalMcpCommands(
@@ -671,10 +780,22 @@ export async function buildExternalMcpCommands(
     });
   }
 
-  commands.push(
-    ...webCapabilityCommands(readyWebServers, deps, sharedWebState, commands),
+  const web = webCapabilityCommands(
+    readyWebServers,
+    deps,
+    sharedWebState,
+    commands,
   );
-  return { commands, diagnostics };
+  commands.push(...web.commands);
+  return {
+    commands,
+    diagnostics: diagnostics.map((diagnostic) => {
+      const webTools = diagnostic.status === "ready"
+        ? web.suppliers.get(diagnostic.serverId)
+        : undefined;
+      return webTools === undefined ? diagnostic : { ...diagnostic, webTools };
+    }),
+  };
 }
 
 export function externalMcpCommandsForTransport(

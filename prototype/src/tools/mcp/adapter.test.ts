@@ -491,6 +491,11 @@ describe("external MCP command projection", () => {
 
     assert.deepStrictEqual(result.diagnostics, [{
       serverId: "linear",
+      status: "dropped",
+      tool: "create_comment",
+      reason: "not offered by the server",
+    }, {
+      serverId: "linear",
       status: "ready",
       revision: "2026-07-28",
       toolCount: 1,

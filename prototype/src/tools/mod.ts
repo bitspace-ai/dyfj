@@ -78,6 +78,7 @@ export {
 export {
   buildExternalMcpCommands,
   externalMcpCommandsForTransport,
+  formatExternalMcpDiagnostic,
 } from "./mcp/adapter.ts";
 export {
   buildMemorySearch,

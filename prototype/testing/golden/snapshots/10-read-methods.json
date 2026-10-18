@@ -145,6 +145,9 @@
             "hosted": 0
           },
           "autostarted": false,
+          "externalMcp": [
+            "external MCP linear: ready (3 tools, <DATE>)"
+          ],
           "fingerprint": {
             "head": "<GIT-HEAD>",
             "contentHash": "sha256:<CONTENT-HASH>"
@@ -306,6 +309,9 @@
             "hosted": 0
           },
           "autostarted": false,
+          "externalMcp": [
+            "external MCP linear: ready (3 tools, <DATE>)"
+          ],
           "fingerprint": {
             "head": "<GIT-HEAD>",
             "contentHash": "sha256:<CONTENT-HASH>"

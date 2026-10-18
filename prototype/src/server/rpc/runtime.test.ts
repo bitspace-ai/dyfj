@@ -150,6 +150,23 @@ test("runtime/status names secret pointers that failed at start", async () => {
   assert.ok(!("unavailableSecrets" in clean.runtime));
 });
 
+test("runtime/status reports the boot's external MCP lines", async () => {
+  const lines = [
+    'external MCP linear: configured tool "get_issue" not offered by the server',
+    "external MCP linear: ready (2 tools, 2026-07-28)",
+  ];
+  const { runtime } = await callRpc(
+    handlers({ externalMcp: lines }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert.deepStrictEqual(runtime.externalMcp, lines);
+
+  const none = await callRpc(handlers(), "runtime/status") as {
+    runtime: Record<string, unknown>;
+  };
+  assert.ok(!("externalMcp" in none.runtime));
+});
+
 test("runtime/liveness returns immediately without loading models", async () => {
   let loadModelsCalled = false;
   const result = await callRpc(

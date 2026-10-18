@@ -77,6 +77,7 @@ import {
 import {
   buildExternalMcpCommands,
   type CommandDefinition,
+  formatExternalMcpDiagnostic,
   RootAnchors,
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
@@ -167,6 +168,8 @@ export interface WorkbenchUnixServerOptions {
   fingerprint?: CodeFingerprint;
   /** Secret pointers that failed to resolve at start, for `runtime/status`. */
   unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
+  /** The boot's external MCP lines, for `runtime/status`. */
+  externalMcp?: readonly string[];
   /** Boot-discovered external MCP commands available to this runtime. */
   externalMcpCommands?: readonly CommandDefinition[];
   /** Configured operator friction-checkpoint issue identifier. */
@@ -513,15 +516,11 @@ async function main(): Promise<void> {
     // The Linear extension builds the bounded issue-creation command.
     { buildIssueCreationCommand: buildLinearIssueCreationCommand, policy },
   );
-  for (const diagnostic of externalMcp.diagnostics) {
-    console.error(
-      diagnostic.status === "ready"
-        ? `external MCP ${diagnostic.serverId}: ready (${diagnostic.toolCount} tools, ${diagnostic.revision})`
-        : diagnostic.status === "withheld"
-        ? `external MCP ${diagnostic.serverId}: ${diagnostic.tool} withheld (${diagnostic.reason})`
-        : `external MCP ${diagnostic.serverId}: unavailable (${diagnostic.reason})`,
-    );
-  }
+  // The same lines go to `runtime/status`, so `dyfj status` shows them too.
+  const externalMcpLines = externalMcp.diagnostics.map(
+    formatExternalMcpDiagnostic,
+  );
+  for (const line of externalMcpLines) console.error(line);
 
   // The runtime's one store over one Dolt pool. Connections open on first use,
   // so the boot does not wait for (or require) a running sql-server.
@@ -608,6 +607,7 @@ async function main(): Promise<void> {
       autostarted,
       fingerprint,
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
+      externalMcp: externalMcpLines,
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.

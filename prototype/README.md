@@ -209,7 +209,9 @@ between subprocesses. Named credentials remain in memory and are not projected
 into environment variables. `[[mcp.servers]]` currently accepts only strict MCP
 `2026-07-28` Streamable HTTP servers with bearer authentication. Each registered
 tool must be both discovered and named in the server's configured `tools`
-allowlist. Read tools may be configured with `approval = "allow"`; every
+allowlist; boot names each configured tool that is not offered or whose schema
+is rejected, with the reason, and `dyfj status` repeats those lines. Read tools
+may be configured with `approval = "allow"`; every
 `write_external` tool requires `approval = "ask"`. Set
 `minimum_clearance = "loopback"` to withhold a server's tools from remote-clearance turns,
 or `"remote"` to declare eligibility on both transport clearances. The current

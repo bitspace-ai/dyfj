@@ -764,6 +764,25 @@ resolver uses its first pending credential as a session probe; if that probe
 fails, later credentials are marked unavailable without spawning, so multiple
 configured servers may be withheld. Invalid configuration fails boot.
 
+Boot prints one line per server and one warning per configured tool that will
+not reach the model, naming the tool and the reason. `dyfj status` shows the
+same lines (`runtime/status` reports them as `externalMcp`):
+
+```text
+external MCP linear: configured tool "create_comment" not offered by the server
+external MCP linear: configured tool "get_issue" schema rejected: enum of 65 values exceeds 64
+external MCP linear: ready (2 tools, 2026-07-28)
+external MCP tavily: ready (0 tools + web_search + web_fetch, 2025-11-25)
+```
+
+The tool count covers pass-through `mcp.<server>.<tool>` commands; a server
+that backs `web_search` or `web_fetch` lists those after it. A schema
+rejection names the limit or rule it broke, with counts and JSON Schema type
+names only, never other upstream schema content. The sanitizer's limits are
+64,000 bytes for the whole schema, 12 levels of nesting, 64 properties per
+object and 64 values per enum. There is no separate per-string length limit;
+the byte limit bounds every string in the schema.
+
 `minimum_clearance = "loopback"` withholds the tools from remote-clearance
 turns. `minimum_clearance = "remote"` declares eligibility for both remote and
 loopback turns. The current boot integration is the UDS daily-driver runtime. A
