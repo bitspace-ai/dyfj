@@ -46,9 +46,21 @@ The same page lists adaptive thinking, on by default, with default effort
 The page lists five breaking changes from Sonnet 5, and states that a
 non-default `temperature`, `top_p` or `top_k` returns a 400 error. The
 Anthropic adapter in `prototype/src/providers/anthropic/` sends none of
-`temperature`, `top_p`, `top_k`, `tool_choice` or a thinking configuration,
-so none of these is expected to fail a turn here. Nothing in this change
-invokes the model; the UAT turn is the evidence.
+`temperature`, `top_p`, `top_k` or `tool_choice`, so those are not expected
+to fail a turn here.
+
+Thinking is the open risk. The page says adaptive thinking is on by default,
+that thinking blocks are tied to the model and the conversation, and that text
+between tool calls comes back in thinking blocks. The adapter keeps only
+`text` and `tool_use` blocks from a response (`stream.ts`) and sends no
+thinking configuration. A turn that takes two or more tool steps may
+therefore fail when the conversation is replayed, and text the model writes
+between tool calls is dropped. A single turn with no tool call is not
+affected. Preserving and replaying thinking blocks, or turning off up-front
+thinking with `between_tools`, is a follow-up; this change does not alter the
+adapter.
+
+Nothing in this change invokes the model; the UAT turns are the evidence.
 
 ## Kimi K3
 

@@ -28,6 +28,11 @@ README are tracked separately in its Revision history section.
   million. Sonnet 5.5's cache-write price is
   the 5-minute rate; 1-hour caches cost more.
 
+  Sonnet 5.5 has adaptive thinking on by default, and the Anthropic adapter
+  drops thinking blocks. A turn with two or more tool steps may fail on
+  replay, and text the model writes between tool calls is lost. The adapter
+  is unchanged here; the verification note records the risk.
+
 - **The runtime names each configured external MCP tool that a reachable
   server leaves out.** At boot, a configured tool the server does not offer prints
   `external MCP <server>: configured tool "<name>" not offered by the server`,
