@@ -247,7 +247,12 @@ describe("presentation", () => {
   });
   it("formatReceipt appends the running session total when given", () => {
     const paid = result({
-      cost: { estimatedUsd: 0, totalUsd: 0.0123, paidInferenceUsed: true },
+      cost: {
+        estimatedUsd: 0,
+        totalUsd: 0.0123,
+        basis: "provider_billed",
+        paidInferenceUsed: true,
+      },
     });
     assert.ok(
       formatReceipt(paid, false, 0.0456).includes("$0.0123 · session $0.0456"),
@@ -260,6 +265,29 @@ describe("presentation", () => {
       `expected formatReceipt(result(), false, 0) to include "session $0"`,
     );
     assert.ok(!(formatReceipt(result(), false)).includes("session"));
+  });
+  it("formatReceipt marks a catalog-estimated cost and leaves a billed one plain", () => {
+    const cost = (basis: "provider_billed" | "catalog_estimate", totalUsd = 0.0123) =>
+      result({
+        cost: { estimatedUsd: 0, totalUsd, basis, paidInferenceUsed: true },
+      });
+    assert.ok(
+      formatReceipt(cost("catalog_estimate"), false, 0.0456).includes(
+        " ~$0.0123 · session $0.0456",
+      ),
+    );
+    assert.ok(
+      formatReceipt(cost("provider_billed"), false, 0.0456).includes(
+        " $0.0123 · session $0.0456",
+      ),
+    );
+    assert.ok(
+      !formatReceipt(cost("provider_billed"), false, 0.0456).includes("~"),
+    );
+    // A free turn costs exactly nothing, estimated or not.
+    assert.ok(
+      !formatReceipt(cost("catalog_estimate", 0), false, 0).includes("~"),
+    );
   });
   it("formatReceipt shows reasoning tokens only when reported", () => {
     const withReasoning = result({

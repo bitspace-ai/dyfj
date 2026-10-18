@@ -61,7 +61,19 @@ const HOSTED: WorkbenchModel = {
   capabilities: ["text", "code"],
 };
 
-const MODELS = [LOCAL, HOSTED];
+const ROUTED: WorkbenchModel = {
+  slug: "deepseek/deepseek-v4.1-flash",
+  displayName: "DeepSeek V4.1 Flash",
+  provider: "openrouter",
+  api: "openai-completions",
+  baseUrl: "https://openrouter.ai/api/v1",
+  tier: 1,
+  costInput: 0.3,
+  costOutput: 1.2,
+  capabilities: ["text", "code"],
+};
+
+const MODELS = [LOCAL, HOSTED, ROUTED];
 
 function openAIReply(content: string): ScriptedExchange {
   return {
@@ -139,7 +151,10 @@ function callRequest(
       },
     })),
   );
-  const env = new MapEnv({ ANTHROPIC_API_KEY: "test-key-not-real" });
+  const env = new MapEnv({
+    ANTHROPIC_API_KEY: "test-key-not-real",
+    OPENROUTER_API_KEY: "test-key-not-real",
+  });
   return {
     transport,
     request: {
@@ -195,6 +210,7 @@ test("observedProviderCall writes one provider_call row and records a local call
     tokens_cache_read: 0,
     tokens_cache_write: 0,
     cost_total: 0,
+    cost_basis: "catalog_estimate",
     stop_reason: "stop",
     provider_call_order: 3,
     provider_call_purpose: "initial",
@@ -251,6 +267,28 @@ test("observedProviderCall records a paid call's cost with the tracker", async (
   });
   assert.deepStrictEqual(h.budget.totalCost, cost);
   assert.deepStrictEqual(h.budget.getSummary().byTier["1"]?.calls, 1);
+});
+
+test("observedProviderCall records the cost OpenRouter billed, labelled as billed", async () => {
+  const h = harness();
+  const { request, transport } = callRequest(h, ROUTED, [{
+    respond: {
+      body: JSON.stringify({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 37, completion_tokens: 13, cost: 0.0000260667 },
+      }),
+    },
+  }]);
+
+  await observedProviderCall(h.context, request);
+
+  transport.assertDone();
+  assert.partialDeepStrictEqual(h.written[0], {
+    provider: "openrouter",
+    cost_total: 0.0000260667,
+    cost_basis: "provider_billed",
+  });
+  assert.deepStrictEqual(h.budget.totalCost, 0.0000260667);
 });
 
 test("observedProviderCall writes the unparsed tool-call markup counts only when asked", async () => {

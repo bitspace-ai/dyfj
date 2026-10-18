@@ -134,6 +134,7 @@ export type ProviderFailureKind =
   | "redirected"
   | "egress_refused"
   | "request_too_large"
+  | "price_cap_refused"
   | "unclassified";
 
 /**
@@ -391,6 +392,42 @@ export class ProviderRequestTooLargeError extends ProviderFailureError {
         `session.`,
     );
     this.name = "ProviderRequestTooLargeError";
+  }
+}
+
+/** The per-million input and output prices a request was capped at. */
+export interface ProviderPriceCap {
+  prompt: number;
+  completion: number;
+}
+
+/**
+ * OpenRouter found no upstream at or below the request's `max_price`, so the
+ * request never ran. The cap is the model's catalog row, so this is the
+ * "runs at the expected price or fails" outcome, not a fault: a model served
+ * by one upstream at the row's price fails here while that upstream is down.
+ */
+export class ProviderPriceCapRefusedError extends ProviderFailureError {
+  public readonly cap: ProviderPriceCap | undefined;
+  constructor(
+    target: ProviderTarget,
+    status: number,
+    cap: ProviderPriceCap | undefined,
+  ) {
+    const price = cap === undefined
+      ? "the catalog price"
+      : `$${cap.prompt} / $${cap.completion} per M`;
+    super(
+      "price_cap_refused",
+      target,
+      status,
+      `${errorField(target.provider)}: no upstream at or below ${price} for ` +
+        `${errorField(target.slug)} (HTTP ${status}). The request did not ` +
+        `run. Retry later, or pick another model with /model; the cap is ` +
+        `the model's catalog price.`,
+    );
+    this.cap = cap;
+    this.name = "ProviderPriceCapRefusedError";
   }
 }
 

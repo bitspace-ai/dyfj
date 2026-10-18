@@ -29,7 +29,12 @@ export function turnResult(overrides: Partial<TurnResult> = {}): TurnResult {
       tier: 0,
     },
     route: { reason: "default" },
-    cost: { estimatedUsd: 0, totalUsd: 0, paidInferenceUsed: false },
+    cost: {
+      estimatedUsd: 0,
+      totalUsd: 0,
+      basis: "catalog_estimate",
+      paidInferenceUsed: false,
+    },
     tokens: {
       input: 12,
       output: 5,

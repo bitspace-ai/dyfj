@@ -364,6 +364,26 @@ export const OPENROUTER_NO_ENDPOINTS: FailureFixture = {
   foreignText: "No endpoints found",
 };
 
+/**
+ * OpenRouter's refusal when no upstream meets a request's
+ * `provider.max_price`, recorded 2026-10-18 (the routing funnel trimmed).
+ * The request never ran. It shares the 404 and the "No endpoints found"
+ * prefix with an unserved model, so the price marker must be read first.
+ */
+export const OPENROUTER_MAX_PRICE_REFUSED: FailureFixture = {
+  family: "openai-compatible",
+  source: "openrouter",
+  status: 404,
+  body: json({
+    error: {
+      message: "No endpoints found that satisfy the max price for this request",
+      code: 404,
+      metadata: { failed_routing_step: "Filter by Max Price" },
+    },
+  }),
+  foreignText: "satisfy the max price",
+};
+
 export const ANTHROPIC_MODEL_NOT_FOUND: FailureFixture = {
   family: "anthropic",
   source: "anthropic",

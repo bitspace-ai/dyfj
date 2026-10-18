@@ -61,6 +61,16 @@ function toOpenAIWireMessages(
   return wire;
 }
 
+/**
+ * The `provider` object OpenRouter reads to choose an upstream. Only
+ * `max_price` is sent: USD per million tokens, the catalog's own unit. When no
+ * upstream is at or below it, OpenRouter refuses the request instead of
+ * running it.
+ */
+export interface OpenRouterProviderRouting {
+  max_price: { prompt: number; completion: number };
+}
+
 export function buildOpenAIChatRequest(
   model: string,
   systemPrompt: string,
@@ -79,6 +89,11 @@ export function buildOpenAIChatRequest(
      * usage on a stream without it; local servers are not sent it.
      */
     includeStreamUsage?: boolean;
+    /**
+     * OpenRouter's provider-routing preferences. Sent only to OpenRouter;
+     * other servers are not sent the field.
+     */
+    providerRouting?: OpenRouterProviderRouting;
   } = {},
 ) {
   const body: {
@@ -94,6 +109,7 @@ export function buildOpenAIChatRequest(
       function: WorkbenchToolDefinition;
     }>;
     tool_choice?: "auto";
+    provider?: OpenRouterProviderRouting;
   } = {
     model,
     stream,
@@ -106,6 +122,9 @@ export function buildOpenAIChatRequest(
   };
   if (stream && options.includeStreamUsage) {
     body.stream_options = { include_usage: true };
+  }
+  if (options.providerRouting !== undefined) {
+    body.provider = options.providerRouting;
   }
   if (options.jsonObject) {
     body.response_format = { type: "json_object" };

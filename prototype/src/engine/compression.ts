@@ -47,7 +47,7 @@ import {
   estimateRuntimeInputCount,
   transcriptEstimateText,
 } from "./transcript.ts";
-import { commitEvent } from "./turn-state.ts";
+import { commitEvent, foldCostBasis } from "./turn-state.ts";
 
 export type CompressionTrigger = ContextCompressionTrigger;
 
@@ -281,6 +281,10 @@ function compressionCompletion(
     );
     if (recorded) {
       state.reasoningTokens += result.usage.reasoning ?? 0;
+      state.turnCostBasis = foldCostBasis(
+        state.turnCostBasis,
+        result.usage.cost.basis,
+      );
     }
     return {
       text: result.text,

@@ -51,6 +51,7 @@ const event = (
   tokensCacheRead: null,
   tokensCacheWrite: null,
   costTotal: null,
+  costBasis: null,
   durationMs: null,
   providerCallOrder: null,
   providerCallPurpose: null,

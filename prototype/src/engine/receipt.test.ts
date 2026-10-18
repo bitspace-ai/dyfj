@@ -97,6 +97,27 @@ test("buildWorkbenchReceipt: includes model, tier, and routing reason", () => {
   );
 });
 
+test("buildWorkbenchReceipt: marks a catalog-estimated cost, not a billed one", () => {
+  const estimated = buildWorkbenchReceipt({
+    ...BASE_RECEIPT,
+    totalCostUsd: 0.0123456,
+    costBasis: "catalog_estimate",
+  });
+  assert.ok(estimated.includes("Actual cost:    ~$0.012346 (catalog estimate)"));
+  const billed = buildWorkbenchReceipt({
+    ...BASE_RECEIPT,
+    totalCostUsd: 0.0123456,
+    costBasis: "provider_billed",
+  });
+  assert.ok(billed.includes("Actual cost:    $0.012346 (billed)"));
+  const free = buildWorkbenchReceipt({
+    ...BASE_RECEIPT,
+    totalCostUsd: 0,
+    costBasis: "catalog_estimate",
+  });
+  assert.ok(free.includes("Actual cost:    $0.000000\n"));
+});
+
 test("buildWorkbenchReceipt: includes token and cost totals", () => {
   const receipt = buildWorkbenchReceipt({
     ...BASE_RECEIPT,
