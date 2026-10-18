@@ -182,3 +182,22 @@ test("every yielded key draws on one shared budget, across sibling objects", () 
   const siblings = Array.from({ length: 100 }, () => Object.create(prototype));
   assert.equal(maskArgumentEchoes("anything", { siblings }), undefined);
 });
+
+test("every array index read spends the budget, holes included", () => {
+  // 500 sparse arrays of length 1,000: each passes the length check alone,
+  // and holes are not elements, so only charging each read bounds the work.
+  let reads = 0;
+  const sparse = () => {
+    const array: unknown[] = [];
+    array.length = 1_000;
+    return new Proxy(array, {
+      getOwnPropertyDescriptor(target, key) {
+        reads++;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+  };
+  const siblings = Array.from({ length: 500 }, sparse);
+  assert.equal(maskArgumentEchoes("anything", { siblings }), undefined);
+  assert.ok(reads <= 1_100, `${reads} descriptor reads`);
+});

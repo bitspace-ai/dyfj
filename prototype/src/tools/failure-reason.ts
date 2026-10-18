@@ -63,11 +63,13 @@ class WalkBudget {
  * accessor is skipped, never invoked, because arguments can carry getters
  * (validation proves it rejects some calls before reading their items, and
  * masking must not read them either). An array longer than the remaining
- * budget is refused before any element is read; an object's keys draw on the
- * budget as `for…in` yields them, inherited ones included. Per-key work in our
+ * budget is refused before any element is read, and each index read, a hole
+ * included, draws on the budget; an object's keys draw on it as `for…in`
+ * yields them, inherited ones included. Per-key work in our
  * code stops at the budget; the engine's own key enumeration for `for…in` is
- * not bounded by it. Arguments are JSON: they carry no symbol keys and no
- * non-enumerable properties, and neither is enumerated here.
+ * not bounded by it. Arguments are JSON, which encodes no symbol keys and no
+ * other non-enumerable properties (an array's intrinsic `length` aside, which
+ * is read as a data property); the walk enumerates neither.
  */
 function dataEntries(value: object, budget: WalkBudget): [string, unknown][] {
   const entries: [string, unknown][] = [];
@@ -76,6 +78,9 @@ function dataEntries(value: object, budget: WalkBudget): [string, unknown][] {
     const count = typeof length === "number" ? length : 0;
     if (count > budget.remaining) throw new WalkIncomplete();
     for (let index = 0; index < count; index++) {
+      // Every read is charged, a hole included: holes are not elements, so
+      // charging only elements would leave a sparse array's reads free.
+      budget.spend();
       const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
       if (descriptor !== undefined && "value" in descriptor) {
         entries.push([String(index), descriptor.value]);
