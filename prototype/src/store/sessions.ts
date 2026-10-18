@@ -1,9 +1,10 @@
-import type { WorkbenchSessionEvent } from "../contract/mod.ts";
+import type { CostBasis, WorkbenchSessionEvent } from "../contract/mod.ts";
 import type {
   EventReader,
   Journal,
   SessionLastRun,
   SessionReader,
+  TextRow,
 } from "./port.ts";
 
 export interface WorkbenchSessionContentInput {
@@ -343,6 +344,7 @@ export async function fetchWorkbenchSessionEvents(input: {
       tokensCacheRead: nullableNumber(row.tokens_cache_read),
       tokensCacheWrite: nullableNumber(row.tokens_cache_write),
       costTotal: nullableString(row.cost_total),
+      costBasis: costBasisOf(row),
       durationMs: nullableNumber(row.duration_ms),
       providerCallOrder: nullableNumber(row.provider_call_order),
       providerCallPurpose: nullableString(row.provider_call_purpose),
@@ -397,6 +399,17 @@ function normalizeStringArray(raw: unknown): string[] | null {
   return Array.isArray(value) && value.every((item) => typeof item === "string")
     ? [...value]
     : null;
+}
+
+/**
+ * A row's cost basis. A cost written before the column existed has no basis
+ * and was a catalog estimate; a row with no cost has no basis.
+ */
+function costBasisOf(row: TextRow): CostBasis | null {
+  if (nullableString(row.cost_total) === null) return null;
+  return row.cost_basis === "provider_billed"
+    ? "provider_billed"
+    : "catalog_estimate";
 }
 
 function nullableString(raw: unknown): string | null {

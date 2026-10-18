@@ -12,6 +12,7 @@
  *   first failed integrity write, so neither is ever silent.
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
+import type { CostBasis } from "../contract/mod.ts";
 import type { CommandRegistry, RootAnchors } from "../tools/mod.ts";
 import type {
   HistoryOmissionReceipt,
@@ -184,6 +185,8 @@ export interface TurnState {
   turnInputTokens: number;
   turnOutputTokens: number;
   turnCostUsd: number;
+  /** The basis of `turnCostUsd`; null until a call is recorded. */
+  turnCostBasis: CostBasis | null;
   providerCallOrder: number;
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
@@ -226,6 +229,7 @@ export function newTurnState(
     turnInputTokens: 0,
     turnOutputTokens: 0,
     turnCostUsd: 0,
+    turnCostBasis: null,
     providerCallOrder: 0,
     callTimings: undefined,
     toolSteps: 0,

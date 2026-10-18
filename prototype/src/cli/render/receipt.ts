@@ -88,7 +88,12 @@ export function formatReceipt(
       } · ${cost}${usage}${context} · ${continuityEvidence} · ${nativeSession} · ${tools}${history} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
-  const cost = formatUsdShort(result.cost.totalUsd);
+  // A catalog estimate is marked `~`; a billed cost, a free turn and a
+  // runtime that reports no basis are not.
+  const cost = (result.cost.basis === "catalog_estimate" &&
+      result.cost.totalUsd > 0
+    ? "~"
+    : "") + formatUsdShort(result.cost.totalUsd);
   const session = sessionTotalUsd !== undefined
     ? ` · session ${formatUsdShort(sessionTotalUsd)}`
     : "";

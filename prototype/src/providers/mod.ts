@@ -39,6 +39,8 @@ export {
   ProviderFailureError,
   type ProviderFailureKind,
   ProviderModelNotFoundError,
+  type ProviderPriceCap,
+  ProviderPriceCapRefusedError,
   ProviderRateLimitedError,
   type ProviderRateLimitReason,
   ProviderRedirectedError,

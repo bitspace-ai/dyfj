@@ -246,7 +246,7 @@ providerAdapterConformance({
           usage: {
             input: 1_000_000,
             output: 1_000_000,
-            cost: { total: 35 },
+            cost: { total: 35, basis: "catalog_estimate" },
             cacheRead: 0,
             cacheWrite: 0,
             reasoning: 0,

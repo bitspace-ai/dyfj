@@ -81,6 +81,10 @@ CREATE TABLE events (
     tokens_cache_read         INT UNSIGNED,
     tokens_cache_write        INT UNSIGNED,
     cost_total                DECIMAL(10, 6),
+    -- Where cost_total came from: the provider's billed amount, or the
+    -- catalog rates times the metered tokens. NULL beside a cost (rows written
+    -- before the column existed) reads as 'catalog_estimate'.
+    cost_basis                ENUM('provider_billed', 'catalog_estimate'),
 
     content                   TEXT,
     stop_reason               ENUM('stop', 'length', 'tool_use', 'error', 'aborted'),

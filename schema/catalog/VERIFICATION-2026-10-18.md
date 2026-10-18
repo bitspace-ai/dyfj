@@ -127,6 +127,13 @@ recorded input price and about 1.26 times the recorded output price.
 OpenRouter may route a request to any of these upstreams, so the actual
 charge can differ from this row; see the follow-up on provider pinning.
 
+Later the same day, the runtime began sending every OpenRouter request the
+row's prices as `provider.max_price`, so a request runs only on an upstream
+at or below $0.304 / $11.936, which at capture time was InferenceNet (fp4)
+alone, or fails. It also records the cost OpenRouter reports billing in
+place of this row's estimate. The paragraph above describes the routing
+before that change.
+
 The row records the model-level listing, as the `kimi-k2-0905` row does.
 Whether the catalog should record the model-level listing, the highest
 upstream rate, or the rate of a pinned upstream is open; this file records the

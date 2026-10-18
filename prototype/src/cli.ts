@@ -329,6 +329,7 @@ function createCliSessionEvent(input: {
     tokensCacheRead: null,
     tokensCacheWrite: null,
     costTotal: null,
+    costBasis: null,
     durationMs: null,
     providerCallOrder: null,
     providerCallPurpose: null,
@@ -619,12 +620,7 @@ function isOptionLike(token: string): boolean {
   return token.startsWith("-") && token.length > 1;
 }
 
-const FRICTION_SEVERITY_SET = new Set([
-  "blocker",
-  "major",
-  "minor",
-  "paper-cut",
-]);
+const FRICTION_SEVERITY_SET = new Set(["blocker", "major", "minor", "paper-cut"]);
 
 export async function handleReplFrictionCommand(
   line: string,

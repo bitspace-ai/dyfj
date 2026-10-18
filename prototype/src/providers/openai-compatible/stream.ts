@@ -135,6 +135,11 @@ export async function readOpenAIChatStream(
   usageGeneratedCharacters?: number;
   usageReasoningCharacters?: number;
   usageCompletionReasoningCharacters?: number;
+  /**
+   * The completion count reported in the frame that carried the largest
+   * billed cost, so the cost is trusted only when it covers the final count.
+   */
+  usageCostCompletionTokens?: number;
   aborted: boolean;
   finishReason?: string;
   usage?: OpenAIChatUsage;
@@ -246,6 +251,7 @@ export async function readOpenAIChatStream(
     usageReasoningCharacters: usageState.usageReasoningCharacters,
     usageCompletionReasoningCharacters:
       usageState.usageCompletionReasoningCharacters,
+    usageCostCompletionTokens: usageState.usageCostCompletionTokens,
     aborted,
     finishReason,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
@@ -479,6 +485,7 @@ interface StreamUsageState {
   usageGeneratedCharacters?: number;
   usageReasoningCharacters?: number;
   usageCompletionReasoningCharacters?: number;
+  usageCostCompletionTokens?: number;
 }
 
 /**
@@ -515,8 +522,15 @@ function applyStreamUsage(
       incoming.completion_tokens_details?.reasoning_tokens,
     ),
   );
+  const costAdvanced = advanced(
+    finiteNonnegativeTokenCount(state.usage?.cost),
+    finiteNonnegativeTokenCount(incoming.cost),
+  );
   return {
     usage: mergeStreamUsage(state.usage, incoming),
+    usageCostCompletionTokens: costAdvanced
+      ? finiteNonnegativeTokenCount(incoming.completion_tokens)
+      : state.usageCostCompletionTokens,
     usageGeneratedCharacters: completionAdvanced
       ? at.generatedCharacters
       : state.usageGeneratedCharacters,
@@ -562,7 +576,9 @@ export function mergeStreamUsage(
     previous?.prompt_tokens_details?.cache_write_tokens,
     incoming.prompt_tokens_details?.cache_write_tokens,
   );
+  const cost = max(previous?.cost, incoming.cost);
   return {
+    ...(cost !== undefined ? { cost } : {}),
     ...(prompt !== undefined ? { prompt_tokens: prompt } : {}),
     ...(completion !== undefined ? { completion_tokens: completion } : {}),
     ...(reasoning !== undefined

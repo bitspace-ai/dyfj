@@ -5,7 +5,11 @@
  * character estimate, so the metered output is a lower bound, never an
  * undercount of what was received.
  */
-import type { WorkbenchModel, WorkbenchTurnParams } from "../types.ts";
+import type {
+  CostBasis,
+  WorkbenchModel,
+  WorkbenchTurnParams,
+} from "../types.ts";
 import {
   estimateParamsInputText,
   estimateTextTokens,
@@ -27,6 +31,7 @@ export interface OpenAIChatUsageSummary {
   output: number;
   reasoning: number;
   costTotal: number;
+  costBasis: CostBasis;
 }
 
 /**
@@ -142,10 +147,40 @@ export function openAIChatUsage(
     );
     output = billableOutput - reasoning;
   }
+  // OpenRouter reports what it billed. It is used only when the usage it rode
+  // on covers everything received: an abort, or output after the frame that
+  // carried the cost, falls back to the catalog estimate, which the request's
+  // `max_price` (the same row) bounds from above.
+  const billed = model.provider === "openrouter"
+    ? finiteNonnegativeTokenCount(result.usage?.cost)
+    : undefined;
+  const billedCoversCall = billed !== undefined &&
+    reportedCompletion !== undefined && usageCoversCompletionTotal &&
+    (!("usageCostCompletionTokens" in result) ||
+      result.usageCostCompletionTokens === reportedCompletion);
+  if (billedCoversCall) {
+    return {
+      input,
+      cacheRead,
+      cacheWrite,
+      output,
+      reasoning,
+      costTotal: billed,
+      costBasis: "provider_billed",
+    };
+  }
   // An unpriced cache rate falls back to the input rate: never understate.
   const costTotal = (input / 1_000_000) * model.costInput +
     (cacheRead / 1_000_000) * (model.costCacheRead ?? model.costInput) +
     (cacheWrite / 1_000_000) * (model.costCacheWrite ?? model.costInput) +
     (billableOutput / 1_000_000) * model.costOutput;
-  return { input, cacheRead, cacheWrite, output, reasoning, costTotal };
+  return {
+    input,
+    cacheRead,
+    cacheWrite,
+    output,
+    reasoning,
+    costTotal,
+    costBasis: "catalog_estimate",
+  };
 }

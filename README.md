@@ -447,6 +447,24 @@ receipted with cost and prompt-cache telemetry; crossing a ceiling requires
 explicit confirmation, and the runaway-anomaly hard stops remain separate.
 Non-loopback callers cannot inherit or assert paid approval and fail closed.
 
+A recorded cost is either what the provider billed or a catalog estimate (the
+model row's rates times the metered tokens), and the `events.cost_basis` column
+says which. OpenRouter is the one provider that reports its charge per call
+(`usage.cost`), so an OpenRouter call records the billed amount whenever the
+usage that carried it covers everything received. Every other cost, and an
+OpenRouter call that was aborted or whose usage does not cover its output, is a
+catalog estimate. The budget envelopes count whichever was recorded. The
+receipt marks an estimate with `~` (`~$0.0123`) and leaves a billed or zero
+cost plain.
+
+OpenRouter serves a model from several upstreams at different prices, so each
+OpenRouter request carries the row's input and output prices as
+`provider.max_price`. A request runs on an upstream at or below the catalog
+price, or not at all: when no upstream qualifies, the turn fails with
+`openrouter: no upstream at or below $<in> / $<out> per M for <model>`. A model
+that only one upstream serves at its row's price fails while that upstream is
+unavailable. `max_price` has no cache-read field, so cache reads are not capped.
+
 Each hosted provider reads its key from the process environment and fails closed
 when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`),
 OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`), and xAI

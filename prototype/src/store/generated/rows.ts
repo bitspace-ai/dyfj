@@ -149,6 +149,13 @@ export const EVENT_PERMISSION_VERDICT_VALUES = [
 export type EventPermissionVerdict =
   (typeof EVENT_PERMISSION_VERDICT_VALUES)[number];
 
+/** `events.cost_basis`, in declaration order. */
+export const EVENT_COST_BASIS_VALUES = [
+  "provider_billed",
+  "catalog_estimate",
+] as const;
+export type EventCostBasis = (typeof EVENT_COST_BASIS_VALUES)[number];
+
 /** `events.stop_reason`, in declaration order. */
 export const EVENT_STOP_REASON_VALUES = [
   "stop",
@@ -220,6 +227,7 @@ export const EVENT_COLUMNS = [
   "tokens_cache_read",
   "tokens_cache_write",
   "cost_total",
+  "cost_basis",
   "content",
   "stop_reason",
   "provider_call_order",
@@ -294,6 +302,7 @@ export const EVENT_COLUMN_SPECS: Readonly<
   tokens_cache_read: { kind: "int", nullable: true },
   tokens_cache_write: { kind: "int", nullable: true },
   cost_total: { kind: "decimal", nullable: true, scale: 6 },
+  cost_basis: { kind: "enum", nullable: true },
   content: { kind: "text", nullable: true },
   stop_reason: { kind: "enum", nullable: true },
   provider_call_order: { kind: "int", nullable: true },
@@ -360,6 +369,7 @@ export interface EventRow {
   tokens_cache_read: number | null;
   tokens_cache_write: number | null;
   cost_total: string | null;
+  cost_basis: EventCostBasis | null;
   content: string | null;
   stop_reason: EventStopReason | null;
   provider_call_order: number | null;
@@ -429,6 +439,7 @@ export interface EventInsert {
   tokens_cache_read?: number | null;
   tokens_cache_write?: number | null;
   cost_total?: number | null;
+  cost_basis?: EventCostBasis | null;
   content?: string | null;
   stop_reason?: EventStopReason | null;
   provider_call_order?: number | null;

@@ -125,6 +125,7 @@ export async function completeTurn(
         tokens_cache_read: state.cacheReadTokens,
         tokens_cache_write: state.cacheWriteTokens,
         cost_total: state.turnCostUsd,
+        cost_basis: state.turnCostBasis ?? "catalog_estimate",
         ...session.authnEventFields,
         content: isNextWork
           ? JSON.stringify({
@@ -337,6 +338,7 @@ async function recordCancelledTurn(
         tokens_cache_read: state.cacheReadTokens,
         tokens_cache_write: state.cacheWriteTokens,
         cost_total: state.turnCostUsd,
+        cost_basis: state.turnCostBasis ?? "catalog_estimate",
         ...session.authnEventFields,
         content: state.finalText,
         stop_reason: "aborted",
@@ -489,6 +491,7 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
     tier: state.selectedForReceipt?.tier ?? 0,
     routingReason: state.routingReason,
     totalCostUsd: summary.totalCostUsd,
+    costBasis: state.turnCostBasis ?? "catalog_estimate",
     totalTokensInput: summary.totalTokensInput,
     totalTokensOutput: summary.totalTokensOutput,
     totalCacheReadTokens: state.cacheReadTokens,
@@ -539,6 +542,7 @@ function turnResult(
     cost: {
       estimatedUsd: state.estimatedCostUsd,
       totalUsd: summary.totalCostUsd,
+      basis: state.turnCostBasis ?? "catalog_estimate",
       paidInferenceUsed: paidInferenceUsed(state),
     },
     tokens: {
