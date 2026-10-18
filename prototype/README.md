@@ -162,7 +162,9 @@ The supervisor talks to the REPL over a socket pair on the REPL's descriptor 3
 session id, `/reload` and `/rollback` come up. Under the channel, the REPL's
 freshness warning says the runtime is the last good code or a reload still
 pending, and that a save retries the working tree, instead of naming the
-autostarted lifetime. `scripts/dev-supervisor.ts` holds the reload
+autostarted lifetime. When one change reloads the runtime and the REPL, the
+new REPL is started with the reason in `DYFJ_DEV_RELOADED` and prints a single
+`runtime and REPL reloaded (...)` notice. `scripts/dev-supervisor.ts` holds the reload
 state machine over ports, so its timing is tested on a fake clock.
 
 The local default is Qwen3.6 35B-A3B served by llama.cpp's `llama-server` (catalog slug `llama-cpp/qwen3.6-35b-a3b`), reached through its OpenAI-compatible endpoint on `http://localhost:8080/v1`:

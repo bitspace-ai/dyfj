@@ -161,6 +161,13 @@ async fn main() -> Result<()> {
             }
         }
     }
+    // Replacing a REPL that reloaded together with the runtime: this is the
+    // only place the operator hears of it, one notice before the posture line.
+    if control.is_some()
+        && let Some(reason) = dev_control::reloaded_reason(|key| std::env::var(key).ok())
+    {
+        println!("\n{}", link::both_reloaded_notice(Some(&reason), session.id.as_deref()));
+    }
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
@@ -217,7 +224,13 @@ async fn main() -> Result<()> {
                 link::Waited::Reconnected(restarted, restarted_incoming) => {
                     client = restarted;
                     incoming = restarted_incoming;
-                    let reason = control.as_ref().and_then(|c| c.take_reason());
+                    let reload = control.as_ref().and_then(|c| c.take_reload());
+                    // Told it is being replaced: the REPL that takes over
+                    // announces the reload, once.
+                    if reload.as_ref().is_some_and(|r| r.replaced) {
+                        continue;
+                    }
+                    let reason = reload.map(|r| r.reason);
                     link::resume(&client, &session, &socket, reason, control.is_some()).await;
                     continue;
                 }

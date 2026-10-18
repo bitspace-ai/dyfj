@@ -226,6 +226,17 @@ pub fn reloaded_notice(reason: Option<&str>, resumed: &str) -> String {
     }
 }
 
+/// The one notice for a change that reloaded the runtime and the REPL
+/// together, printed by the REPL that took over. The old REPL was told it is
+/// being replaced (`replaced`) and stays quiet on reconnecting.
+pub fn both_reloaded_notice(reason: Option<&str>, session: Option<&str>) -> String {
+    let resumed = session.map_or_else(String::new, |id| format!("; resumed session {}", visible(id)));
+    match reason {
+        Some(reason) => format!("runtime and REPL reloaded ({reason}){resumed}"),
+        None => format!("runtime and REPL reloaded{resumed}"),
+    }
+}
+
 /// The longest log line shown, in characters. The log is the runtime's output
 /// and untrusted; one line is enough to say why a start failed.
 const MAX_LOG_LINE: usize = 200;
@@ -871,6 +882,29 @@ mod tests {
             "runtime reloaded (3 files changed); resumed session X"
         );
         assert_eq!(reloaded_notice(None, ""), "runtime reloaded");
+    }
+
+    /// A reload of both halves is told once, by the REPL that replaced the old
+    /// one, and says which session it resumed.
+    #[test]
+    fn the_both_halves_notice_covers_the_runtime_and_the_repl_in_one_line() {
+        assert_eq!(
+            both_reloaded_notice(Some("1 file changed"), Some("01J0000000000000000000000A")),
+            "runtime and REPL reloaded (1 file changed); resumed session 01J0000000000000000000000A"
+        );
+        assert_eq!(both_reloaded_notice(None, None), "runtime and REPL reloaded");
+        assert_eq!(
+            both_reloaded_notice(Some("2 files changed"), None),
+            "runtime and REPL reloaded (2 files changed)"
+        );
+    }
+
+    /// The session id came from the command line; it is shown as text, not as
+    /// terminal control.
+    #[test]
+    fn the_both_halves_notice_shows_a_session_id_as_plain_text() {
+        let notice = both_reloaded_notice(None, Some("a\u{1b}[2Jb"));
+        assert!(!notice.contains('\u{1b}'));
     }
 
     /// `dyfj dev` asks the REPL to leave before a rebuilt one takes over; at
