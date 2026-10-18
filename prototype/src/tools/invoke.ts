@@ -135,7 +135,9 @@ export async function invokeCommand<TResult = unknown>(
               label: error.operatorReasonLabel,
               declared: Object.keys(command.inputSchema.properties ?? {}),
             }),
-          // Durable surfaces never keep text the executor did not compose.
+          // Durable surfaces keep the executor's recorded reason; a labelled
+          // (upstream-quoting) reason without one records a fixed line. An
+          // unlabelled operator reason is the executor's own text, kept.
           recordedReason: fixedOperatorReason(
             error.recordedReason ??
               (error.operatorReasonLabel === undefined
@@ -229,9 +231,14 @@ export function buildCommandToolCallEventPayload(
     tool_arguments: JSON.stringify(redacted.arguments),
     tool_result: truncateForEventColumn(redacted.result),
     tool_is_error: isError,
+    // A failure's content takes the recorded reason, which never quotes
+    // upstream text; the model-facing `reason` may.
     content: isError
       ? result.decision === "allow"
-        ? `${call.commandId} failed: ${result.reason}`
+        ? `${call.commandId} failed: ${
+          ("recordedReason" in result ? result.recordedReason : undefined) ??
+            result.reason
+        }`
         : `${call.commandId} denied: ${result.reason}`
       : `${call.commandId} allowed`,
     duration_ms: context.durationMs ?? null,
