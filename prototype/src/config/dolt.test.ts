@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
-import { resolveDoltConnection } from "./dolt.ts";
+import { resolveDoltConnection, resolveDoltEndpoint } from "./dolt.ts";
 
 test("resolveDoltConnection reads Dolt connection settings from the env", () => {
   assert.deepStrictEqual(
@@ -32,4 +32,17 @@ test("resolveDoltConnection defaults the password to empty, never a dev password
     password: "",
     database: "dolt",
   });
+});
+
+test("resolveDoltEndpoint reads only the host and port", () => {
+  assert.deepStrictEqual(
+    resolveDoltEndpoint(
+      new MapEnv({
+        DOLT_HOST: "localhost",
+        DOLT_PORT: "3316",
+        DOLT_PASSWORD: "fake-password",
+      }),
+    ),
+    { host: "localhost", port: 3316 },
+  );
 });

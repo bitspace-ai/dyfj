@@ -51,7 +51,6 @@ import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
 import {
   type CodeFingerprint,
   codeFingerprint,
-  composeRuntimePolicy,
   type Env,
   loadConfig,
   loadMcpServersConfig,
@@ -61,8 +60,6 @@ import {
   processEnv,
   prototypeSourceDir,
   readNameserverNetGrants,
-  resolveDoltConnection,
-  resolveSecrets,
   type RuntimePolicy,
   unavailableSecretPointers,
   type WorkbenchConfig,
@@ -81,6 +78,7 @@ import {
   RootAnchors,
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
+import { composeBoot } from "./boot.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
@@ -498,18 +496,13 @@ async function main(): Promise<void> {
   // its grants from, and enforced at every seam below: the secrets resolver,
   // MCP discovery and calls, the Dolt pool, provider calls, memory recall and
   // the ACP runner. An insecure memory endpoint fails the boot here.
-  const doltConnection = resolveDoltConnection(processEnv);
-  const nodePath = processEnv.get("DYFJ_NODE_PATH");
-  const policy = composeRuntimePolicy({
+  const { policy, resolvedSecrets, doltConnection } = await composeBoot({
+    env: processEnv,
     mcpServers,
-    memoryMcpUrl: processEnv.get("DYFJ_MEMORY_MCP_URL"),
+    secrets: secretsConfig,
     networkAllow: await loadNetworkAllow(),
     nameserverGrants: await readNameserverNetGrants(),
-    secrets: secretsConfig,
-    nodePath: nodePath?.startsWith("/") === true ? nodePath : null,
-    dolt: doltConnection,
   });
-  const resolvedSecrets = await resolveSecrets(secretsConfig, { policy });
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
