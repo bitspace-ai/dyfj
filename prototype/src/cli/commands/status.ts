@@ -40,6 +40,8 @@ export interface RuntimeStatusPayload {
     autostarted?: boolean;
     /** Secret pointers that failed to resolve when the runtime started. */
     unavailableSecrets?: UnavailableSecretEntry[];
+    /** The external MCP lines the runtime printed at boot; absent on older servers. */
+    externalMcp?: unknown[];
     /** The code the runtime loaded at boot; absent on older servers. */
     fingerprint?: { head?: unknown; contentHash?: unknown };
     /** Open client connections, this one included; absent on older servers. */
@@ -112,6 +114,17 @@ function secretLabel(secret: UnavailableSecretEntry): string {
   if (secret.envVar) return secret.envVar;
   if (secret.name) return `[secrets.named] ${secret.name}`;
   return "(unnamed)";
+}
+
+/**
+ * The runtime's external MCP boot lines, as it printed them: one per server
+ * and one per configured tool that did not reach the model. Control
+ * characters are stripped; a non-string entry is skipped.
+ */
+export function formatExternalMcpLines(lines: unknown): string[] {
+  if (!Array.isArray(lines)) return [];
+  return lines.filter((line): line is string => typeof line === "string")
+    .map((line) => line.replace(/[\u0000-\u001f\u007f-\u009f]/g, ""));
 }
 
 export const LIVENESS_PROBE_TIMEOUT_MS = 5000;
@@ -220,6 +233,7 @@ export function formatRuntimeStatus(
       ]
       : []),
     ...formatUnavailableSecrets(runtime.unavailableSecrets),
+    ...formatExternalMcpLines(runtime.externalMcp),
     `methods: ${methods.length}`,
   ].join("\n");
 }

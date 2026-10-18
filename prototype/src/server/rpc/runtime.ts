@@ -72,6 +72,12 @@ export interface WorkbenchRuntimeStatus {
   autostarted?: boolean;
   /** Present only when a declared secret pointer failed to resolve at start. */
   unavailableSecrets?: WorkbenchUnavailableSecret[];
+  /**
+   * The external MCP lines the runtime printed at boot: one per server, and
+   * one per configured tool that did not reach the model. Present only when
+   * external MCP servers are configured.
+   */
+  externalMcp?: string[];
   /** The code this runtime loaded at boot. */
   fingerprint?: CodeFingerprint;
   /** Open client connections, the asking one included. */
@@ -106,6 +112,8 @@ export interface RuntimePosture {
   autostarted?: boolean;
   /** Secret pointers that failed to resolve when the runtime started. */
   unavailableSecrets?: readonly WorkbenchUnavailableSecret[];
+  /** The boot's external MCP lines. */
+  externalMcp?: readonly string[];
   /** The code this runtime loaded at boot. */
   fingerprint?: CodeFingerprint;
   /** Open clients and in-flight turns; absent where nothing counts them. */
@@ -219,6 +227,9 @@ export function runtimeStatus(
           ...secret,
         })),
       }
+      : {}),
+    ...(options.externalMcp?.length
+      ? { externalMcp: [...options.externalMcp] }
       : {}),
     ...(options.fingerprint !== undefined
       ? { fingerprint: { ...options.fingerprint } }

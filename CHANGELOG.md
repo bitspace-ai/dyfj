@@ -11,6 +11,20 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The runtime names each configured external MCP tool that a reachable
+  server leaves out.** At boot, a configured tool the server does not offer prints
+  `external MCP <server>: configured tool "<name>" not offered by the server`,
+  and one whose schema the sanitizer rejects prints `... schema rejected:
+  <reason>`, naming the limit or rule it broke (for example `enum of 65 values
+  exceeds 64`), and a web capability tool that an earlier server outranks
+  prints `... not used: web_search comes from <server>`. Before, all three
+  were dropped silently and only the tool count changed. A server that is
+  unavailable (no credential, failed discovery) is still reported as one
+  line for the whole server. `dyfj status` shows the same lines, which `runtime/status` reports
+  as `externalMcp`. The ready line now names the `web_search`/`web_fetch`
+  commands a server backs, so a web-only server such as Tavily no longer reads
+  as `ready (0 tools, ...)`.
+
 - **`dyfj dev` falls back to the last good runtime, so the model can repair
   an edit that breaks it.** A runtime that boots on the working tree is copied
   to `prototype/.dyfj-dev-last-good/` (gitignored). When a reload's runtime
@@ -212,6 +226,13 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **External MCP tool schemas may carry enums of up to 64 values (was 32).**
+  Linear's `get_issue` advertises a 45-value `fields` enum, so it was dropped
+  at boot and sessions could not read an issue. The 64,000-byte limit on the
+  whole schema is unchanged. The operator config should drop Linear's
+  `create_comment`, which the server no longer offers: `save_comment`
+  creates a comment, and updates one given its `id`.
 
 - **The memory MCP README says `--allow-fs-read` needs the resolved path.**
   `prototype/mcp/README.md` now says that the grant must name the checkout's

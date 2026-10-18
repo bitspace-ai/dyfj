@@ -491,6 +491,11 @@ describe("external MCP command projection", () => {
 
     assert.deepStrictEqual(result.diagnostics, [{
       serverId: "linear",
+      status: "dropped",
+      tool: "create_comment",
+      reason: "not offered by the server",
+    }, {
+      serverId: "linear",
       status: "ready",
       revision: "2026-07-28",
       toolCount: 1,
@@ -717,9 +722,7 @@ describe("MCP HTTP containment", () => {
         }),
       (error: unknown) =>
         error instanceof Error &&
-        error.message.includes(
-          "schema-valued additionalProperties are not supported",
-        ),
+        error.message.includes("additionalProperties is not a boolean"),
     );
   });
 

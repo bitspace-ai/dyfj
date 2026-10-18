@@ -439,3 +439,35 @@ describe("dyfj status code fingerprint", () => {
     assert.doesNotMatch(text, /^clients:/m);
   });
 });
+
+describe("dyfj status external MCP lines", () => {
+  const lines = [
+    'external MCP linear: configured tool "create_comment" not offered by the server',
+    "external MCP linear: ready (3 tools, 2026-07-28)",
+  ];
+
+  it("shows the boot's external MCP lines, warnings by name", () => {
+    const rendered = formatRuntimeStatus(cfg(), {
+      runtime: { externalMcp: lines },
+    }).split("\n");
+    for (const line of lines) {
+      assert.ok(rendered.includes(line), `expected status to show ${line}`);
+    }
+  });
+
+  it("prints no external MCP line for an older runtime or no servers", () => {
+    for (const runtime of [{}, { externalMcp: [] }]) {
+      assert.ok(
+        !formatRuntimeStatus(cfg(), { runtime }).includes("external MCP"),
+      );
+    }
+  });
+
+  it("strips control characters a runtime might send", () => {
+    const rendered = formatRuntimeStatus(cfg(), {
+      runtime: { externalMcp: ["external MCP x\u001b[2J: ready", 7 as never] },
+    });
+    assert.ok(rendered.includes("external MCP x[2J: ready"));
+    assert.ok(!rendered.includes("\u001b"));
+  });
+});
