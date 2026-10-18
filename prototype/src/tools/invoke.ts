@@ -131,11 +131,10 @@ export async function invokeCommand<TResult = unknown>(
         ...(error.operatorReason === undefined ? {} : {
           operatorReason: error.operatorReasonLabel === undefined
             ? fixedOperatorReason(error.operatorReason)
-            : operatorFailureReason(
-              error.operatorReason,
-              call.arguments,
-              error.operatorReasonLabel,
-            ),
+            : operatorFailureReason(error.operatorReason, call.arguments, {
+              label: error.operatorReasonLabel,
+              declared: Object.keys(command.inputSchema.properties ?? {}),
+            }),
         }),
       };
     }

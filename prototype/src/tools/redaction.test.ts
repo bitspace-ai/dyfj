@@ -363,6 +363,18 @@ describe("a failed call's stored reason for a command with redacted arguments", 
     );
   });
 
+  it("never stores a value's first characters cut at the window edge", () => {
+    // A value starting at character 638 would have only 2 characters inside
+    // the 640-character window, below the 3-character tail rule; the stored
+    // text stops before it.
+    const reason = `${"r".repeat(638)}${content}`;
+    const stored = redactCommandResult(command, failed(reason), {
+      path: "notes.md",
+      content,
+    });
+    assert.equal(stored, "r".repeat(638));
+  });
+
   it("keeps the checked window, not the operator line, when it echoes none", () => {
     const reason = `refused: ${"r".repeat(300)}`;
     assert.equal(

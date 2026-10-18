@@ -116,9 +116,17 @@ export function redactCommandResult(
     // keeps what the check covered (an approval refusal stays whole).
     const echoes = findArgumentEchoes(result.reason, redacted);
     if (echoes === undefined || echoes.length > 0) {
-      return operatorFailureReason(result.reason, redacted);
+      return operatorFailureReason(result.reason, redacted, {
+        declared: Object.keys(command?.inputSchema.properties ?? {}),
+      });
     }
-    return scrubSensitiveShapes(result.reason.slice(0, ECHO_WINDOW_CHARS));
+    // When the text runs past the window, stop short of its edge: a value
+    // starting in the last two characters would be under the tail rule's
+    // three, so it is never stored.
+    const stored = result.reason.length > ECHO_WINDOW_CHARS
+      ? result.reason.slice(0, ECHO_WINDOW_CHARS - 2)
+      : result.reason;
+    return scrubSensitiveShapes(stored);
   }
   return command?.redactResult
     ? REDACTED

@@ -201,7 +201,8 @@ export class CommandExecutionError extends Error {
   /**
    * A compact form of the reason for the operator's ✗ line, the runtime log
    * and the durable event, when it should differ from `publicReason`.
-   * `invokeCommand` withholds it when it echoes an argument value.
+   * When `operatorReasonLabel` is set too, `invokeCommand` withholds it if it
+   * echoes an argument value; otherwise it is only scrubbed and capped.
    */
   declare public readonly operatorReason?: string;
   /**

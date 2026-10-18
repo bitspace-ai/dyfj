@@ -974,7 +974,7 @@ describe("external MCP failure reasons", () => {
     assert.ok(modelReason.includes("a confidential title"), modelReason);
     assert.equal(
       operatorReason,
-      "upstream error (text withheld: it echoes argument meta.title)",
+      "upstream error (text withheld: it echoes argument meta)",
     );
     assert.ok(!JSON.stringify(event).includes("confidential"));
   });

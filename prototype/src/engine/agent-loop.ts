@@ -308,7 +308,12 @@ async function invokeTool(
       ? ("operatorReason" in commandResult
         ? commandResult.operatorReason
         : undefined) ??
-        operatorFailureReason(commandResult.reason, toolCall.arguments)
+        operatorFailureReason(commandResult.reason, toolCall.arguments, {
+          declared: Object.keys(
+            state.commandRegistry.lookup(toolCall.name)?.inputSchema
+              .properties ?? {},
+          ),
+        })
       : undefined;
     if (commandResult.isError) {
       state.lastStepFailure ??= {

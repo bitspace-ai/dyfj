@@ -7,8 +7,9 @@
  * server echoing the body it rejected). The event store redacts argument
  * values, so an echo must not carry one back into the store, the log or the
  * screen. Nothing is rewritten: when the text echoes any argument value, the
- * line is withheld and names the arguments it echoes, never their values
- * (`upstream error (text withheld: it echoes argument issueId)`). Otherwise
+ * line is withheld and names only the declared top-level arguments it echoes
+ * (`upstream error (text withheld: it echoes argument issueId)`), or says
+ * "an argument" when none is declared. Otherwise
  * the text is shown with credential-shaped text scrubbed, single-lined and
  * capped. The model's copy of the reason is not this: it sent those values
  * itself.
@@ -19,7 +20,8 @@
  * whole token, bounded by characters that are not letters or digits (so `BIT`
  * is found in `BIT-697` but not in `BITS`, and `1` not in `10`); and, when the
  * text runs past the window, a window tail of three or more characters that
- * begins some value. Booleans and null never count. A server that reformats
+ * begins some value (a cut-off start shorter than three is not detected; the
+ * stored event copy stops short of the edge for that reason). Booleans and null never count. A server that reformats
  * an argument before quoting it is not detected. The work is bounded by the
  * window and by the argument walk below, never by the size of the text.
  */
@@ -212,10 +214,30 @@ export function findArgumentEchoes(
   return paths;
 }
 
-function namedArguments(paths: string[]): string {
-  const named = paths.slice(0, MAX_NAMED_ARGUMENTS).join(", ");
-  const more = paths.length - MAX_NAMED_ARGUMENTS;
-  return more > 0 ? `${named} and ${more} more` : named;
+/**
+ * What a withheld line says it echoes. Only a top-level key the command's
+ * schema declares is named: deeper path segments, and undeclared keys, can
+ * be data (a dictionary keyed by a token), so they are never printed.
+ */
+function echoedArguments(
+  paths: string[],
+  declared: readonly string[],
+): string {
+  const names: string[] = [];
+  let undeclared = false;
+  for (const path of paths) {
+    const topLevel = path.split(/[.[]/, 1)[0] ?? "";
+    if (!declared.includes(topLevel)) {
+      undeclared = true;
+    } else if (!names.includes(topLevel)) {
+      names.push(topLevel);
+    }
+  }
+  if (names.length === 0) return "an argument";
+  const more = names.length - MAX_NAMED_ARGUMENTS;
+  const listed = names.slice(0, MAX_NAMED_ARGUMENTS).join(", ") +
+    (more > 0 ? ` and ${more} more` : "");
+  return `argument ${listed}${undeclared ? " and another argument" : ""}`;
 }
 
 /** A reason this code composed itself, quoting nothing: scrubbed and capped. */
@@ -227,23 +249,29 @@ export function fixedOperatorReason(reason: string): string {
 }
 
 /**
- * The line an operator sees for `reason`: withheld, naming the arguments,
- * when it echoes any argument value; otherwise scrubbed, single-lined and
- * capped. `label` leads a withheld line (`upstream error`, `error`).
+ * The line an operator sees for `reason`: withheld when it echoes any
+ * argument value, naming the declared top-level arguments it echoes;
+ * otherwise scrubbed, single-lined and capped. `label` leads a withheld line
+ * (`upstream error`, `error`); `declared` is the command's input-schema
+ * property names, the only names a withheld line prints.
  */
 export function operatorFailureReason(
   reason: string,
   args: Record<string, unknown>,
-  label: string = "error",
+  options: { label?: string; declared?: readonly string[] } = {},
 ): string {
+  const label = options.label ?? "error";
   const echoes = findArgumentEchoes(reason, args);
   if (echoes === undefined) {
-    return `${label} (text withheld: arguments too large to check)`;
+    return fixedOperatorReason(
+      `${label} (text withheld: arguments too large to check)`,
+    );
   }
   if (echoes.length > 0) {
-    return sanitizeBoundaryText(
-      `${label} (text withheld: it echoes argument ${namedArguments(echoes)})`,
-      OPERATOR_REASON_MAX_BYTES,
+    return fixedOperatorReason(
+      `${label} (text withheld: it echoes ${
+        echoedArguments(echoes, options.declared ?? [])
+      })`,
     );
   }
   return fixedOperatorReason(reason);
