@@ -159,7 +159,8 @@ test("enumeration stops at the visit budget, for keys, inherited keys and late a
   // `Object.hasOwn`, the descriptor read): proportional to the 1,024 budget,
   // not to the 100,000 keys.
   assert.ok(descriptorReads <= 3 * 1_100, `${descriptorReads} descriptor reads`);
-  // Inherited enumerable keys count too, so a long prototype chain is bounded.
+  // Inherited enumerable keys count too: this fixture checks that many
+  // inherited keys on one prototype are rejected.
   const inherited = Object.create(
     Object.fromEntries(Array.from({ length: 5_000 }, (_, i) => [`p${i}`, i])),
   );
@@ -170,4 +171,14 @@ test("enumeration stops at the visit budget, for keys, inherited keys and late a
   const early = Array.from({ length: 900 }, (_, i) => i);
   const late = Array.from({ length: 200 }, (_, i) => i);
   assert.equal(maskArgumentEchoes("x", { early, late }), undefined);
+});
+
+test("every yielded key draws on one shared budget, across sibling objects", () => {
+  // 100 siblings sharing a 500-key prototype: each alone is under the
+  // budget, together they yield 50,000 keys.
+  const prototype = Object.fromEntries(
+    Array.from({ length: 500 }, (_, i) => [`p${i}`, i]),
+  );
+  const siblings = Array.from({ length: 100 }, () => Object.create(prototype));
+  assert.equal(maskArgumentEchoes("anything", { siblings }), undefined);
 });

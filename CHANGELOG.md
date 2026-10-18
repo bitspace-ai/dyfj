@@ -431,9 +431,12 @@ README are tracked separately in its Revision history section.
   `toolCallCompleted` frame as `failureReason`. It is masked first: an exact
   echo of an argument string of eight or more characters is replaced by
   `<arg:NAME>`, so a value the event log redacts does not come back through the
-  error text. The walk over the arguments is bounded (8 levels, 256 strings,
-  1,024 nodes). Past those limits the reason text is withheld: `upstream error
-  (text withheld: arguments too large to mask)`. A server that reformats an
+  error text. The walk over the arguments is bounded: 8 levels, 256 strings,
+  and one 1,024-step budget for nodes visited and keys taken from `for…in`.
+  Per-key work in our code stops at the budget; the engine's own key
+  enumeration for `for…in` is not bounded by it. Past those limits the reason
+  text is withheld: `upstream error (text withheld: arguments too large to
+  mask)`. A server that reformats an
   argument before quoting it is not masked. Credential-shaped text is then
   scrubbed and the line capped at 160 bytes. An external MCP command's failed
   `tool_call` event stores that same line. For any other command, the event's

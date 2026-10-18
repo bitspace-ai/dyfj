@@ -8,8 +8,8 @@
  * values, so an echo must not carry one back into the store, the log or the
  * screen: an exact echo of an argument string of eight or more characters is
  * replaced by `<arg:PATH>`. The walk over the arguments is bounded (depth,
- * strings collected, and one budget for every node visited and every key or
- * index enumerated); when it cannot finish, the text is
+ * strings collected, and one budget for every node visited and every key our
+ * code takes from `for…in`); when it cannot finish, the text is
  * withheld rather than masked part-way. Credential-shaped text is then
  * scrubbed, and the line is made single-line and capped. A server that
  * reformats an argument before quoting it is not masked. The model's copy of
@@ -44,22 +44,37 @@ function safePathSegment(key: string): string {
 }
 
 /**
+ * One budget for the whole walk: every node visited and every key `for…in`
+ * yields, own or inherited, draws on it, so sibling objects cannot each
+ * spend a fresh allowance.
+ */
+class WalkBudget {
+  #used = 0;
+  get remaining(): number {
+    return MAX_WALK_VISITS - this.#used;
+  }
+  spend(): void {
+    if (++this.#used > MAX_WALK_VISITS) throw new WalkIncomplete();
+  }
+}
+
+/**
  * The own data properties of `value`, read through their descriptors: an
  * accessor is skipped, never invoked, because arguments can carry getters
  * (validation proves it rejects some calls before reading their items, and
- * masking must not read them either). Enumeration itself is bounded by the
- * walk's remaining budget: an array longer than it is refused before any
- * element is read, and an object's keys are counted as `for…in` yields them,
- * inherited ones included, so neither a wide object nor a long prototype
- * chain costs more than the budget. Symbol keys are not enumerated;
- * arguments are JSON and carry none.
+ * masking must not read them either). An array longer than the remaining
+ * budget is refused before any element is read; an object's keys draw on the
+ * budget as `for…in` yields them, inherited ones included. Per-key work in our
+ * code stops at the budget; the engine's own key enumeration for `for…in` is
+ * not bounded by it. Arguments are JSON: they carry no symbol keys and no
+ * non-enumerable properties, and neither is enumerated here.
  */
-function dataEntries(value: object, remaining: number): [string, unknown][] {
+function dataEntries(value: object, budget: WalkBudget): [string, unknown][] {
   const entries: [string, unknown][] = [];
   if (Array.isArray(value)) {
     const length = Reflect.getOwnPropertyDescriptor(value, "length")?.value;
     const count = typeof length === "number" ? length : 0;
-    if (count > remaining) throw new WalkIncomplete();
+    if (count > budget.remaining) throw new WalkIncomplete();
     for (let index = 0; index < count; index++) {
       const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
       if (descriptor !== undefined && "value" in descriptor) {
@@ -68,9 +83,8 @@ function dataEntries(value: object, remaining: number): [string, unknown][] {
     }
     return entries;
   }
-  let yielded = 0;
   for (const key in value) {
-    if (++yielded > remaining) throw new WalkIncomplete();
+    budget.spend();
     if (!Object.hasOwn(value, key)) continue;
     const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
     if (descriptor !== undefined && "value" in descriptor) {
@@ -82,16 +96,17 @@ function dataEntries(value: object, remaining: number): [string, unknown][] {
 
 /**
  * Every string leaf of `args` worth masking, or undefined when the walk
- * could not finish: too deep, too many strings or nodes, or a hostile
- * object's trap threw. A partial set would mask some echoes and leak others.
+ * could not finish: too deep, too many strings, the budget spent, or a
+ * hostile object's trap threw. A partial set would mask some echoes and leak
+ * others.
  */
 function argumentLeaves(
   args: Record<string, unknown>,
 ): ArgumentLeaf[] | undefined {
   const leaves: ArgumentLeaf[] = [];
-  let visits = 0;
+  const budget = new WalkBudget();
   const walk = (value: unknown, path: string, depth: number): void => {
-    if (++visits > MAX_WALK_VISITS) throw new WalkIncomplete();
+    budget.spend();
     if (typeof value === "string") {
       if (value.length < MASK_MIN_LENGTH) return;
       if (leaves.length >= MAX_WALK_LEAVES) throw new WalkIncomplete();
@@ -101,7 +116,7 @@ function argumentLeaves(
     if (typeof value !== "object" || value === null) return;
     if (depth >= MAX_WALK_DEPTH) throw new WalkIncomplete();
     const isArray = Array.isArray(value);
-    for (const [key, item] of dataEntries(value, MAX_WALK_VISITS - visits)) {
+    for (const [key, item] of dataEntries(value, budget)) {
       walk(
         item,
         isArray
@@ -112,7 +127,7 @@ function argumentLeaves(
     }
   };
   try {
-    for (const [key, value] of dataEntries(args, MAX_WALK_VISITS - visits)) {
+    for (const [key, value] of dataEntries(args, budget)) {
       walk(value, safePathSegment(key), 0);
     }
   } catch {

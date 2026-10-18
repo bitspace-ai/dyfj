@@ -815,8 +815,10 @@ REPL's `✗` line, in the runtime log as `[tool-failed] <tool> (<ms> ms):
 an exact echo of an argument string of eight or more characters with
 `<arg:NAME>` (`<arg:meta.title>` for a nested one), scrubs credential-shaped
 text, and is capped at 160 bytes. The walk over the arguments is bounded (8
-levels, 256 strings, 1,024 nodes); past those limits the server's text is
-withheld from that line (`upstream error (text withheld: arguments too large
+levels, 256 strings, and one 1,024-step budget for nodes visited and keys taken
+from `for…in`; per-key work in our code stops at the budget, the engine's own
+key enumeration for `for…in` is not bounded by it); past those limits the
+server's text is withheld from that line (`upstream error (text withheld: arguments too large
 to mask)`). Masking matches exact echoes only; a server that reformats an
 argument before quoting it is not masked. No argument or result payload is
 logged.
