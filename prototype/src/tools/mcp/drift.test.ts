@@ -285,11 +285,20 @@ describe("external MCP schema limits", () => {
       type: "object",
       properties: { a: { type: "string" } },
       required: ["b"],
-    }, "schema rejected: required names an undeclared property"],
+    }, "schema rejected: required is not a list of declared property names"],
+    ["required not a list", {
+      type: "object",
+      properties: { a: { type: "string" } },
+      required: "a",
+    }, "schema rejected: required is not a list of declared property names"],
+    ["null additionalProperties", {
+      type: "object",
+      additionalProperties: null,
+    }, "schema rejected: additionalProperties is not a boolean"],
     ["schema-valued additionalProperties", {
       type: "object",
       additionalProperties: { type: "string" },
-    }, "schema rejected: schema-valued additionalProperties are not supported"],
+    }, "schema rejected: additionalProperties is not a boolean"],
     ["array without items", {
       type: "object",
       properties: { a: { type: "array" } },

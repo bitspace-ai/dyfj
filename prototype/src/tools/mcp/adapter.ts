@@ -311,13 +311,13 @@ function sanitizeSchemaNode(
           typeof name === "string" && Object.hasOwn(properties, name)
         )
       ) {
-        rejectSchema("required names an undeclared property");
+        rejectSchema("required is not a list of declared property names");
       }
       output.required = [...new Set(input.required)];
     }
     if (input.additionalProperties !== undefined) {
       if (typeof input.additionalProperties !== "boolean") {
-        rejectSchema("schema-valued additionalProperties are not supported");
+        rejectSchema("additionalProperties is not a boolean");
       }
       output.additionalProperties = input.additionalProperties;
     }

@@ -722,9 +722,7 @@ describe("MCP HTTP containment", () => {
         }),
       (error: unknown) =>
         error instanceof Error &&
-        error.message.includes(
-          "schema-valued additionalProperties are not supported",
-        ),
+        error.message.includes("additionalProperties is not a boolean"),
     );
   });
 
