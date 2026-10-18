@@ -45,6 +45,7 @@ import {
   type TurnResult,
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
+import { printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -69,63 +70,6 @@ export function replPrompt(color: boolean): string {
   return color ? "\n\x1b[1m\x1b[32mdyfj ❯\x1b[0m " : "\ndyfj> ";
 }
 
-/** The REPL's own commands, by word. `/exit` and `/quit` are handled first. */
-const REPL_COMMAND_WORDS: ReadonlySet<string> = new Set([
-  "exit",
-  "quit",
-  "help",
-  "model",
-  "fast",
-  "session",
-  "friction",
-  "idea",
-  "packet",
-]);
-
-const SLASH_WORD = /^\/([A-Za-z0-9-]+)(?:\s|$)/;
-const ESCAPED_SLASH_WORD = /^\/\/[A-Za-z0-9-]+(?:\s|$)/;
-
-type SlashLine =
-  | { kind: "text" }
-  | { kind: "help" }
-  | { kind: "unknown"; word: string }
-  | { kind: "escaped"; text: string };
-
-/**
- * What a line no command handler claimed is. Only a line that opens with one
- * `/word` token (letters, digits, hyphens, then a space or the end) can be an
- * unknown command: it is refused locally instead of becoming a paid turn.
- * `//word` is that escape, sent as the text `/word`. Any other slash line, a
- * path like `/usr/bin/env is what?`, is prompt text.
- */
-export function classifySlashLine(line: string): SlashLine {
-  const escaped = ESCAPED_SLASH_WORD.test(line);
-  if (escaped) return { kind: "escaped", text: line.slice(1) };
-  const word = SLASH_WORD.exec(line)?.[1];
-  if (word === undefined) return { kind: "text" };
-  if (word === "help") return { kind: "help" };
-  return REPL_COMMAND_WORDS.has(word) ? { kind: "text" } : {
-    kind: "unknown",
-    word,
-  };
-}
-
-function printReplHelp(io: Io): void {
-  for (
-    const line of [
-      "commands (type them alone on a line):",
-      "  /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model",
-      "  /fast [on|off]                                       toggle the fast speed tier",
-      "  /session | /session list | /session switch <id>     show, list or resume sessions",
-      "  /friction <sev> [--escaped] <text...>                post a daily-driver friction",
-      "  /idea mark <label...> | /idea list                   mark or list ideas",
-      "  /packet draft|list|show ...                          work packets (/packet help)",
-      "  /exit, /quit, Ctrl-D                                 leave",
-      "  //word                                               send /word as text",
-    ]
-  ) io.err(line);
-}
-
 export async function runRepl(
   config: CliConfig,
   io: Io,
@@ -133,9 +77,7 @@ export async function runRepl(
   interactive = true,
   interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
-  io.err(
-    `dyfj — ${config.socket} · Ctrl-D or /exit to quit`,
-  );
+  io.err(`dyfj — ${config.socket} · Ctrl-D or /exit to quit`);
   const releaseSession = await openReplSession(config, io, connect, interactive);
   const sessionState: ReplSessionState = {
     sessionId: config.sessionId,
@@ -204,16 +146,8 @@ export async function runRepl(
         sessionState.lastReplCommand = prompt;
         continue;
       }
-      const slash = classifySlashLine(prompt);
-      if (slash.kind === "help") {
-        printReplHelp(io);
-        continue;
-      }
-      if (slash.kind === "unknown") {
-        io.err(`unknown command /${slash.word}; /help lists commands`);
-        continue;
-      }
-      const turnPrompt = slash.kind === "escaped" ? slash.text : prompt;
+      const turnPrompt = routeSlashLine(prompt, io);
+      if (turnPrompt === undefined) continue;
       try {
         const body = buildTurnBody(turnPrompt, config, sessionState.sessionId);
         const spinner = createTurnSpinner(config, io);
@@ -793,12 +727,7 @@ export async function handleReplFrictionCommand(
     io.err(`comment id: ${receipt.commentId}`);
   } catch (error) {
     io.err(`friction capture failed: ${summarizeError(error)}`);
-    // The text was typed once; print it back so one paste retries it.
-    io.err(
-      `retry with: /friction ${severity}${
-        escaped ? " --escaped" : ""
-      } ${remainder}`,
-    );
+    printFrictionRetry(io, severity, escaped, remainder);
   } finally {
     client?.close();
   }
