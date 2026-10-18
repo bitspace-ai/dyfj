@@ -469,6 +469,16 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A `DOLT_PASSWORD` secret pointer now reaches the Dolt connection.** The
+  runtime read the Dolt connection settings, password included, before it
+  resolved the `[secrets.pointers]` entries. When `DOLT_PASSWORD` came only from a
+  pointer, the boot log said `secret DOLT_PASSWORD: resolved`, but the pool
+  logged in with an empty password and every Dolt query failed. The runtime
+  policy still takes the Dolt host and port before pointers resolve, as it
+  needs them to compose the egress grant. The user, password and database are
+  now read after resolution. A `DOLT_PASSWORD` already in the environment still
+  wins over its pointer.
+
 - **Ctrl-C stops a `dyfj start` runtime again, including the next one in the
   same terminal.** The `dyfj` client created a readline interface on the
   terminal at startup, even for commands that never read a line. On a
