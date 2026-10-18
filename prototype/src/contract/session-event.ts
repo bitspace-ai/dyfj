@@ -3,6 +3,8 @@
 // `events/query` and `sessions/inspect`, and the input to the conversation
 // projection (context/conversation.ts).
 
+import type { CostBasis } from "./turn.ts";
+
 export interface WorkbenchSessionEvent {
   sessionId?: string;
   eventId: string;
@@ -25,6 +27,12 @@ export interface WorkbenchSessionEvent {
   tokensCacheRead: number | null;
   tokensCacheWrite: number | null;
   costTotal: string | null;
+  /**
+   * Where `costTotal` came from. A cost recorded before the basis was (NULL
+   * in the row) reads as `catalog_estimate`, which every earlier cost was;
+   * null only when there is no cost.
+   */
+  costBasis: CostBasis | null;
   durationMs: number | null;
   providerCallOrder: number | null;
   providerCallPurpose: string | null;

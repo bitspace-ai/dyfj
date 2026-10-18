@@ -3,6 +3,7 @@
  * selection, the turn parameters and result, the agent-loop message shape and
  * tool definitions. Plain data; no behavior.
  */
+import type { CostBasis } from "../contract/mod.ts";
 import type { HttpTransport } from "./http.ts";
 
 export type ModelAccessModality =
@@ -62,6 +63,8 @@ export interface WorkbenchSelection {
   reason: string;
 }
 
+export type { CostBasis };
+
 export interface WorkbenchTurnResult {
   text: string;
   model: WorkbenchModel;
@@ -83,7 +86,13 @@ export interface WorkbenchTurnResult {
   usage: {
     input: number;
     output: number;
-    cost: { total: number };
+    /**
+     * `basis` says where `total` came from: the amount the provider reported
+     * billing for this call, or the catalog rates times the metered tokens.
+     * Absent means a catalog estimate; only adapters that read a billed cost
+     * set it.
+     */
+    cost: { total: number; basis?: CostBasis };
     cacheRead: number;
     cacheWrite: number;
     /**

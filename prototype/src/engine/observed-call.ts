@@ -146,6 +146,7 @@ export async function observedProviderCall(
         tokens_cache_read: turn.usage.cacheRead,
         tokens_cache_write: turn.usage.cacheWrite,
         cost_total: turn.usage.cost.total,
+        cost_basis: turn.usage.cost.basis ?? "catalog_estimate",
         stop_reason: turn.stopReason,
         provider_call_order: request.order,
         provider_call_purpose: request.purpose,

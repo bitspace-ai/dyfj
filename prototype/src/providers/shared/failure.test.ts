@@ -44,6 +44,7 @@ describe("classifyProviderResponse", () => {
     [F.OPENAI_MODEL_NOT_FOUND, { kind: "model_not_found" }],
     [F.OPENROUTER_INVALID_MODEL, { kind: "model_not_found" }],
     [F.OPENROUTER_NO_ENDPOINTS, { kind: "model_not_found" }],
+    [F.OPENROUTER_MAX_PRICE_REFUSED, { kind: "price_cap_refused" }],
     [F.ANTHROPIC_MODEL_NOT_FOUND, { kind: "model_not_found" }],
     [F.GEMINI_MODEL_NOT_FOUND, { kind: "model_not_found" }],
     [F.PROXY_REQUEST_TOO_LARGE, { kind: "request_too_large" }],

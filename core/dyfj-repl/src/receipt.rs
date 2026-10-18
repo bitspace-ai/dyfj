@@ -67,7 +67,16 @@ pub fn line(receipt: &Value, session_total: f64) -> String {
         .pointer("/cost/totalUsd")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
-    parts.push(format!("{} · session {}", usd(cost), usd(session_total)));
+    // A catalog estimate is marked `~`; a billed cost, a free turn and a
+    // runtime that reports no basis are not.
+    let estimated = cost > 0.0
+        && receipt.pointer("/cost/basis").and_then(Value::as_str) == Some("catalog_estimate");
+    parts.push(format!(
+        "{}{} · session {}",
+        if estimated { "~" } else { "" },
+        usd(cost),
+        usd(session_total)
+    ));
 
     let mut token_line = format!(
         "{}→{} tok",
@@ -176,6 +185,18 @@ mod tests {
         let mut r = receipt();
         r["cost"]["totalUsd"] = json!(0);
         assert!(line(&r, 0.0).contains("$0 · session $0"));
+    }
+
+    #[test]
+    fn an_estimated_cost_is_marked_and_a_billed_one_is_not() {
+        let mut r = receipt();
+        r["cost"]["basis"] = json!("catalog_estimate");
+        assert!(line(&r, 0.0456).contains("~$0.0123 · session $0.0456"));
+        r["cost"]["basis"] = json!("provider_billed");
+        assert!(line(&r, 0.0456).contains("— GLM 5.2 · $0.0123 · session"));
+        r["cost"]["basis"] = json!("catalog_estimate");
+        r["cost"]["totalUsd"] = json!(0);
+        assert!(line(&r, 0.0).contains("· $0 · session $0"));
     }
 
     #[test]

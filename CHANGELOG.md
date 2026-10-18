@@ -11,6 +11,25 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Recorded costs say whether they were billed or estimated.** OpenRouter
+  reports what it charged for each call (`usage.cost`), and an OpenRouter call
+  now records that amount as its cost in place of the catalog estimate, when
+  the usage that carried it covers everything received. An aborted call, or one
+  whose output arrived after its last usage report, keeps the catalog estimate.
+  Other providers report no charge, so their costs stay catalog estimates. The
+  budget envelopes count whichever was recorded.
+
+  A new `events.cost_basis` column (`provider_billed` or `catalog_estimate`;
+  migration `016_events_cost_basis.sql`) records which, on `provider_call` and
+  on `model_response`. A turn's basis is `provider_billed` only when every call
+  in it was. Rows written before the column read as `catalog_estimate`, which
+  they were; `events/query` and `sessions/inspect` report it as `costBasis`,
+  and the turn result as `cost.basis`. The terminal receipt line marks an
+  estimated cost with `~` (`~$0.0123`) and leaves a billed or zero cost plain.
+  The stored receipt labels both bases explicitly: `Actual cost: ~$…
+  (catalog estimate)` or `Actual cost: $… (billed)`; a zero cost carries no
+  label.
+
 - **Claude Sonnet 5.5 and Kimi K3 in the model catalog.** `claude-sonnet-5-5`
   reaches Anthropic directly and `moonshotai/kimi-k3` reaches OpenRouter, on
   the fresh-install path and through migration
@@ -247,6 +266,22 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **OpenRouter requests run at the catalog price or not at all.** OpenRouter
+  routes a request to one of several upstreams, each at its own price, and
+  could bill a turn far above the model row's price: Kimi K3's row records
+  InferenceNet's $0.304 / $11.936 per million, while Moonshot AI's own upstream
+  charges $3 / $15. Every OpenRouter request now carries the row's input and
+  output prices as `provider.max_price`, so OpenRouter routes it only to an
+  upstream at or below them. When none qualifies, OpenRouter refuses the
+  request before it runs, and the turn fails with a named error that states the
+  cap, for example `openrouter: no upstream at or below $0.304 / $11.936 per M
+  for moonshotai/kimi-k3`, instead of reading as an unknown model.
+
+  This trades availability for a predictable price. Kimi K3 is served at its
+  row's price by one upstream today, so Kimi K3 turns fail while that upstream
+  is unavailable. `max_price` has no cache-read field, so cache reads are not
+  capped; they normally cost less than uncached input.
 
 - **External MCP tool schemas may carry enums of up to 64 values (was 32).**
   Linear's `get_issue` advertises a 45-value `fields` enum, so it was dropped

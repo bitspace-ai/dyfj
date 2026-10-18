@@ -21,6 +21,7 @@
         "cost": {
           "estimatedUsd": 0,
           "totalUsd": 0,
+          "basis": "catalog_estimate",
           "paidInferenceUsed": false
         },
         "tokens": {
@@ -245,6 +246,7 @@
           "cost": {
             "estimatedUsd": 0,
             "totalUsd": 0,
+            "basis": "catalog_estimate",
             "paidInferenceUsed": false
           },
           "tokens": {
@@ -353,6 +355,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
+        "cost_basis": null,
         "content": "[golden:s4] Run the golden command.",
         "stop_reason": null,
         "provider_call_order": null,
@@ -417,6 +420,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
+        "cost_basis": null,
         "content": "{\"selected\":\"golden-local\",\"considered\":[],\"reason\":\"explicit_model_id\"}",
         "stop_reason": null,
         "provider_call_order": null,
@@ -481,6 +485,7 @@
         "tokens_cache_read": 0,
         "tokens_cache_write": 0,
         "cost_total": "0.000000",
+        "cost_basis": "catalog_estimate",
         "content": null,
         "stop_reason": "tool_use",
         "provider_call_order": 1,
@@ -545,6 +550,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
+        "cost_basis": null,
         "content": "bash allowed",
         "stop_reason": null,
         "provider_call_order": null,
@@ -611,6 +617,7 @@
         "tokens_cache_read": 0,
         "tokens_cache_write": 0,
         "cost_total": "0.000000",
+        "cost_basis": "catalog_estimate",
         "content": null,
         "stop_reason": "stop",
         "provider_call_order": 2,
@@ -675,6 +682,7 @@
         "tokens_cache_read": 0,
         "tokens_cache_write": 0,
         "cost_total": "0.000000",
+        "cost_basis": "catalog_estimate",
         "content": "Bash result:\nexit 0\ngolden-bash-output",
         "stop_reason": "stop",
         "provider_call_order": null,
@@ -739,6 +747,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
+        "cost_basis": null,
         "content": null,
         "stop_reason": null,
         "provider_call_order": null,
@@ -803,6 +812,7 @@
         "tokens_cache_read": null,
         "tokens_cache_write": null,
         "cost_total": null,
+        "cost_basis": null,
         "content": "{\"totalCostUsd\":0,\"totalTokensInput\":20,\"totalTokensOutput\":10,\"totalCalls\":2,\"config\":{\"sessionLimitUsd\":1,\"perCallLimitUsd\":0.1,\"dailyLimitUsd\":25},\"byTier\":{\"0\":{\"calls\":2,\"tokensInput\":20,\"tokensOutput\":10,\"costUsd\":0}},\"skippedEventWrites\":0}",
         "stop_reason": null,
         "provider_call_order": null,

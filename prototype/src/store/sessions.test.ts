@@ -359,6 +359,37 @@ test("fetchWorkbenchSessionEvents: maps row fields and nulls empty strings", asy
   });
 });
 
+test("fetchWorkbenchSessionEvents: reads a cost's basis, an unlabelled cost as an estimate", async () => {
+  const row = (event_id: string, cost_total: string, cost_basis?: string) => ({
+    event_id,
+    event_type: "provider_call",
+    trace_id: "0123",
+    principal_id: "chris",
+    cost_total,
+    ...(cost_basis === undefined ? {} : { cost_basis }),
+    created_at: "2026-10-18 10:00:00",
+  });
+  const events = await fetchWorkbenchSessionEvents({
+    sessionId: "01ABCDEF0123456789ABCDEF01",
+    events: eventsReturning([
+      row("01BILLED", "0.000026", "provider_billed"),
+      row("01ESTIMATE", "0.000027", "catalog_estimate"),
+      row("01LEGACY", "0.000027"),
+      row("01NOCOST", ""),
+    ]),
+    order: "asc",
+  });
+  assert.deepStrictEqual(
+    events.map((event) => [event.eventId, event.costBasis]),
+    [
+      ["01BILLED", "provider_billed"],
+      ["01ESTIMATE", "catalog_estimate"],
+      ["01LEGACY", "catalog_estimate"],
+      ["01NOCOST", null],
+    ],
+  );
+});
+
 test("fetchWorkbenchSessionEvents: round-trips typed external-runner metadata", async () => {
   const [event] = await fetchWorkbenchSessionEvents({
     sessionId: "01ABCDEF0123456789ABCDEF01",

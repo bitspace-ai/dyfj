@@ -165,6 +165,8 @@ export interface ChatReply {
     completion_tokens: number;
     completion_tokens_details?: { reasoning_tokens: number };
     prompt_tokens_details?: { cached_tokens: number };
+    /** OpenRouter's billed amount for the call, in USD. */
+    cost?: number;
   };
 }
 
