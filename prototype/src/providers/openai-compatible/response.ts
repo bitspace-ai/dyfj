@@ -28,6 +28,11 @@ export interface OpenAIChatStreamEvent {
 }
 
 export interface OpenAIChatUsage {
+  /**
+   * OpenRouter's amount charged for the call, in USD (its credits). Read only
+   * for provider `openrouter`; other servers' fields of this name are ignored.
+   */
+  cost?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
   completion_tokens_details?: { reasoning_tokens?: number };

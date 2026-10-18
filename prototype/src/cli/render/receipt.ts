@@ -89,7 +89,12 @@ export function formatReceipt(
       } · ${cost}${usage}${context} · ${continuityEvidence} · ${nativeSession} · ${tools}${history} · ${result.runner.elapsedMs}ms · ${result.route.reason}`,
     );
   }
-  const cost = formatUsdShort(result.cost.totalUsd);
+  // A catalog estimate is marked `~`; a billed cost, a free turn and a
+  // runtime that reports no basis are not.
+  const cost = (result.cost.basis === "catalog_estimate" &&
+      result.cost.totalUsd > 0
+    ? "~"
+    : "") + formatUsdShort(result.cost.totalUsd);
   // In a REPL: the runtime's session figure, the one its spending envelope
   // checks, which counts turns this REPL never saw complete. A runtime that
   // sends none gets this REPL's own sum, labelled as such.

@@ -88,6 +88,7 @@ export const SESSION_EVENT_COLUMNS = [
   "tokens_cache_read",
   "tokens_cache_write",
   "cost_total",
+  "cost_basis",
   "duration_ms",
   "provider_call_order",
   "provider_call_purpose",

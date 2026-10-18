@@ -18,6 +18,8 @@ import {
   ProviderEgressRefusedError,
   type ProviderFailureError,
   ProviderModelNotFoundError,
+  type ProviderPriceCap,
+  ProviderPriceCapRefusedError,
   ProviderRateLimitedError,
   type ProviderRateLimitReason,
   ProviderRedirectedError,
@@ -40,7 +42,8 @@ export type ProviderResponseVerdict =
   | { kind: "authentication" }
   | { kind: "rate_limited"; cause: ProviderRateLimitReason }
   | { kind: "model_not_found" }
-  | { kind: "request_too_large" };
+  | { kind: "request_too_large" }
+  | { kind: "price_cap_refused" };
 
 /** The regex work is bounded regardless of the caller's reader. */
 const MAX_MATCHED_BYTES = 4_096;
@@ -84,6 +87,13 @@ const MODEL_NOT_FOUND_MARKERS =
 const REQUEST_TOO_LARGE_MARKERS =
   /request_too_large|entity too large|payload (?:size )?(?:too large|exceeds)|request too large/i;
 
+// OpenRouter's 404 when no upstream meets the request's `provider.max_price`:
+// "No endpoints found that satisfy the max price for this request", with
+// `failed_routing_step` "Filter by Max Price". It shares the 404 and the "No
+// endpoints found" prefix with an unserved model, so it is read first.
+// Consulted on 404.
+const PRICE_CAP_MARKERS = /satisfy the max price|filter by max price/i;
+
 /**
  * The verdict for a non-2xx response, or null when the status and body say
  * nothing the classifier recognises. A context-size rejection wins over
@@ -111,6 +121,7 @@ export function classifyProviderResponse(
     };
   }
   if (status === 404) {
+    if (PRICE_CAP_MARKERS.test(text)) return { kind: "price_cap_refused" };
     return MODEL_NOT_FOUND_MARKERS.test(text)
       ? { kind: "model_not_found" }
       : null;
@@ -130,12 +141,14 @@ export function classifyProviderResponse(
  * The error to throw for a non-2xx response, read through
  * `readBoundedErrorBody`: the classified failure when the verdict names
  * one, else the unclassified failure carrying the provider, the status and
- * the body's size as counted during the read.
+ * the body's size as counted during the read. `priceCap` is the cap the
+ * request carried, if any, for a price-cap refusal to state.
  */
 export function providerResponseError(
   target: ProviderTarget,
   status: number,
   body: ErrorBody,
+  priceCap?: ProviderPriceCap,
 ): ProviderFailureError {
   const verdict = classifyProviderResponse(status, body.text);
   switch (verdict?.kind) {
@@ -149,6 +162,8 @@ export function providerResponseError(
       return new ProviderModelNotFoundError(target, status);
     case "request_too_large":
       return new ProviderRequestTooLargeError(target, status);
+    case "price_cap_refused":
+      return new ProviderPriceCapRefusedError(target, status, priceCap);
     default:
       return new ProviderRequestFailedError(target, {
         status,

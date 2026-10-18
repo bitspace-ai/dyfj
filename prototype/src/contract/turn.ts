@@ -25,6 +25,13 @@ import { utf8SafePrefix } from "../kernel/mod.ts";
  * usage signals are optional and this foundation does not ingest or map them
  * into Workbench-native model, token, tool-step, or USD accounting.
  */
+/**
+ * Where a recorded cost came from. `provider_billed` is the amount the
+ * provider reported charging for the call (OpenRouter's `usage.cost`);
+ * `catalog_estimate` is the model row's rates times the metered tokens.
+ */
+export type CostBasis = "provider_billed" | "catalog_estimate";
+
 export interface NativeTurnReceipt {
   sessionId: string;
   traceId: string;
@@ -45,11 +52,18 @@ export interface NativeTurnReceipt {
     totalUsd: number;
     /**
      * The session's actual spend including this turn: every paid call it has
-     * recorded (`provider_call` events), failed and halted turns included. The same figure the session
-     * envelope and the runaway-spend halt check. A runtime older than this
-     * field sends none; clients then label their own running sum.
+     * recorded (`provider_call` events), failed and halted turns included. The
+     * same figure the session envelope and the runaway-spend halt check. A
+     * runtime older than this field sends none; clients then label their own
+     * running sum.
      */
     sessionUsd?: number;
+    /**
+     * `provider_billed` only when every provider call in the turn reported
+     * what it was billed; any estimated call makes the whole total an
+     * estimate.
+     */
+    basis: CostBasis;
     paidInferenceUsed: boolean;
   };
   tokens: {

@@ -29,7 +29,7 @@ import type {
 /** A reply requesting one `list_files` call. */
 function toolReply(
   id: string,
-  usage: { prompt_tokens: number; completion_tokens: number },
+  usage: { prompt_tokens: number; completion_tokens: number; cost?: number },
 ): ScriptedExchange {
   return chatReply({
     toolCalls: [{ id, name: "list_files", arguments: { path: "." } }],
@@ -92,6 +92,68 @@ test("budgets and records every provider call so the receipt aggregates the whol
   assert.partialDeepStrictEqual(response ?? {}, {
     tokens_input: "30",
     tokens_output: "6",
+  });
+});
+
+/** A tier-1 OpenRouter row; the catalog estimate for 10 in / 2 out is $0.0000054. */
+const ROUTED: ModelSeed = {
+  slug: "deepseek/deepseek-v4.1-flash",
+  display_name: "DeepSeek V4.1 Flash",
+  provider: "openrouter",
+  api: "openai-completions",
+  base_url: "https://openrouter.ai/api/v1",
+  tier: 1,
+  context_window: 32_768,
+  max_output_tokens: 4_096,
+  cost_input: 0.3,
+  cost_output: 1.2,
+  capabilities: ["text", "code"],
+};
+
+async function routedTurn(exchanges: ScriptedExchange[]) {
+  await using root = await tempWorkspace({ "notes.md": "notes" });
+  const run = engineServices(exchanges, {
+    models: [ROUTED],
+    env: { OPENROUTER_API_KEY: "test-key-not-real" },
+  });
+  const result = await runTurn(run, {
+    prompt: "explore",
+    rootOverride: root.root,
+    defaultCompanionModel: ROUTED.slug,
+    approver: { confirmPaidEscalation: APPROVE_PAID },
+  });
+  const rows = await eventRows(run, result.sessionId);
+  return {
+    result,
+    response: rows.find((row) => row.event_type === "model_response"),
+  };
+}
+
+test("a turn whose every call OpenRouter billed records the billed total as billed", async () => {
+  const usage = { prompt_tokens: 10, completion_tokens: 2, cost: 0.000004 };
+  const { result, response } = await routedTurn([
+    toolReply("c1", usage),
+    chatReply({ content: "done", usage }),
+  ]);
+  assertAlmostEqual(result.cost.totalUsd, 0.000008, 1e-12);
+  assert.strictEqual(result.cost.basis, "provider_billed");
+  assert.partialDeepStrictEqual(response ?? {}, {
+    cost_total: "0.000008",
+    cost_basis: "provider_billed",
+  });
+});
+
+test("a turn with any estimated call records its total as an estimate", async () => {
+  const { result, response } = await routedTurn([
+    toolReply("c1", { prompt_tokens: 10, completion_tokens: 2, cost: 0.000004 }),
+    chatReply({
+      content: "done",
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    }),
+  ]);
+  assert.strictEqual(result.cost.basis, "catalog_estimate");
+  assert.partialDeepStrictEqual(response ?? {}, {
+    cost_basis: "catalog_estimate",
   });
 });
 

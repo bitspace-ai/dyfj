@@ -1079,7 +1079,14 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         // A completed two-call turn: its model_response repeats the calls'
         // total and its budget_summary repeats it again; neither counts.
         cost("S1", 0.5),
-        cost("S1", 0.25),
+        // A call OpenRouter billed (BIT-698's provider_billed basis) counts
+        // like an estimated one: the baseline sums cost_total.
+        event({
+          session_id: "S1",
+          event_type: "provider_call",
+          cost_total: 0.25,
+          cost_basis: "provider_billed",
+        }),
         cost("S1", 0.75, "model_response"),
         cost("S1", 0.75, "budget_summary"),
         // A halted turn: paid calls, a budget_summary, no model_response.

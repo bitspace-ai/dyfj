@@ -44,7 +44,10 @@ import {
   openAIHostedProviderContracts,
   openAIHostedProviders,
 } from "./providers.ts";
-import { buildOpenAIChatRequest } from "./request.ts";
+import {
+  buildOpenAIChatRequest,
+  type OpenRouterProviderRouting,
+} from "./request.ts";
 import { readOpenAIChatJson } from "./response.ts";
 import { normaliseFinishReason } from "./stop-reason.ts";
 import { readOpenAIChatStream } from "./stream.ts";
@@ -130,12 +133,31 @@ function requestOutputCap(
 async function httpFailure(
   model: WorkbenchModel,
   response: Response,
+  routing: OpenRouterProviderRouting | undefined,
 ): Promise<Error> {
   return providerResponseError(
     model,
     response.status,
     await readBoundedErrorBody(response),
+    routing?.max_price,
   );
+}
+
+/**
+ * OpenRouter routes a request to one of several upstreams, each at its own
+ * price. Capping the price at the model's catalog row makes the request run
+ * at or below the price the row records, or not at all: a refusal is a
+ * `ProviderPriceCapRefusedError`. Cache reads have no cap field and stay
+ * uncapped.
+ */
+function openRouterRouting(
+  model: WorkbenchModel,
+): OpenRouterProviderRouting | undefined {
+  return model.provider === "openrouter"
+    ? {
+      max_price: { prompt: model.costInput, completion: model.costOutput },
+    }
+    : undefined;
 }
 
 /**
@@ -156,6 +178,7 @@ async function executeOpenAICompatibleTurn(
   const onFrame = io.onFrame;
   const stream = onFrame !== undefined;
   const requestStarted = now();
+  const providerRouting = openRouterRouting(model);
   const response = await fetchWithHeaderTimeout(
     io.fetch,
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
@@ -188,6 +211,7 @@ async function executeOpenAICompatibleTurn(
               ? requestOutputCap(model, request.maxOutputTokens)
               : request.maxOutputTokens,
             includeStreamUsage: openAIHostedProviders.has(model.provider),
+            providerRouting,
             reasoningEffort: (model.provider === "openai" &&
                 model.reasoningEffortControl &&
                 request.tools &&
@@ -211,7 +235,9 @@ async function executeOpenAICompatibleTurn(
   );
   const headersReceived = now();
 
-  if (!response.ok) throw await httpFailure(model, response);
+  if (!response.ok) {
+    throw await httpFailure(model, response, providerRouting);
+  }
 
   const result = onFrame !== undefined
     ? await readOpenAIChatStream(
@@ -315,7 +341,7 @@ async function executeOpenAICompatibleTurn(
     usage: {
       input: metered.input,
       output: metered.output,
-      cost: { total: metered.costTotal },
+      cost: { total: metered.costTotal, basis: metered.costBasis },
       cacheRead: metered.cacheRead,
       cacheWrite: metered.cacheWrite,
       reasoning: metered.reasoning,

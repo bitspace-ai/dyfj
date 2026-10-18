@@ -258,7 +258,14 @@ describe("runRepl", () => {
 
   it("receipts carry the running session total across turns", async () => {
     const paid = (totalUsd: number) =>
-      result({ cost: { estimatedUsd: 0, totalUsd, paidInferenceUsed: true } });
+      result({
+        cost: {
+          estimatedUsd: 0,
+          totalUsd,
+          basis: "catalog_estimate",
+          paidInferenceUsed: true,
+        },
+      });
     const { connect } = sequentialTurnConnect([
       { result: paid(0.01) },
       { result: paid(0.02) },

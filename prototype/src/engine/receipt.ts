@@ -10,6 +10,7 @@ import type {
 } from "../context/mod.ts";
 import type { BudgetTallyMode } from "../config/mod.ts";
 import {
+  type CostBasis,
   formatHistoryOmissionSummary,
   type HistoryOmissionReceipt,
 } from "../contract/mod.ts";
@@ -32,6 +33,8 @@ export interface WorkbenchReceiptInput {
    * counts it. Absent where no session figure applies.
    */
   sessionCostUsd?: number;
+  /** Where `totalCostUsd` came from; a priced estimate is marked `~`. */
+  costBasis?: CostBasis;
   totalTokensInput: number;
   totalTokensOutput: number;
   totalCacheReadTokens?: number;
@@ -83,6 +86,18 @@ export interface BudgetTallyInput {
   };
 }
 
+/**
+ * The actual cost, labelled by where it came from once it is above zero: a
+ * catalog estimate gets `~` and says so, a billed amount says so. A free turn
+ * costs exactly nothing either way.
+ */
+function actualCost(usd: number, basis: CostBasis | undefined): string {
+  if (!(usd > 0) || basis === undefined) return formatMoney(usd);
+  return basis === "provider_billed"
+    ? `${formatMoney(usd)} (billed)`
+    : `~${formatMoney(usd)} (catalog estimate)`;
+}
+
 export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
   const lines = [
     "Workbench receipt",
@@ -102,7 +117,7 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Route:   ${input.routingReason}`,
     `Paid inference used: ${input.paidInferenceUsed ? "yes" : "no"}`,
     `Estimated cost: ${formatMoney(input.estimatedCostUsd ?? 0)}`,
-    `Actual cost:    ${formatMoney(input.totalCostUsd)}`,
+    `Actual cost:    ${actualCost(input.totalCostUsd, input.costBasis)}`,
     ...(input.sessionCostUsd === undefined
       ? []
       : [`Session cost:   ${formatMoney(input.sessionCostUsd)}`]),

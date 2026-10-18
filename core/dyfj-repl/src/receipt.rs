@@ -68,6 +68,11 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
         .pointer("/cost/totalUsd")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
+    // A catalog estimate is marked `~`; a billed cost, a free turn and a
+    // runtime that reports no basis are not.
+    let estimated = cost > 0.0
+        && receipt.pointer("/cost/basis").and_then(Value::as_str) == Some("catalog_estimate");
+    let mark = if estimated { "~" } else { "" };
     // The runtime's session figure is the one its spending envelope checks,
     // and it counts turns this REPL never saw complete. Only a runtime that
     // sends none falls back to this REPL's own sum, labelled as such.
@@ -76,8 +81,8 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
         .and_then(Value::as_f64)
         .filter(|usd| usd.is_finite())
     {
-        Some(session) => parts.push(format!("{} · session {}", usd(cost), usd(session))),
-        None => parts.push(format!("{} · repl total {}", usd(cost), usd(repl_total))),
+        Some(session) => parts.push(format!("{mark}{} · session {}", usd(cost), usd(session))),
+        None => parts.push(format!("{mark}{} · repl total {}", usd(cost), usd(repl_total))),
     }
 
     let mut token_line = format!(
@@ -181,6 +186,19 @@ mod tests {
         );
     }
 
+    /// BIT-698's estimate mark and the runtime's session figure render together.
+    #[test]
+    fn an_estimated_turn_marks_its_cost_beside_the_session_figure() {
+        let mut r = receipt();
+        r["cost"]["basis"] = json!("catalog_estimate");
+        r["cost"]["sessionUsd"] = json!(3.21);
+        assert!(
+            line(&r, 1.0404).contains("~$0.0123 · session $3.2100 ·"),
+            "{}",
+            line(&r, 1.0404)
+        );
+    }
+
     /// A runtime that sends no session figure gets the REPL's own sum, and
     /// the line says that is what it is.
     #[test]
@@ -218,6 +236,18 @@ mod tests {
         r["cost"]["totalUsd"] = json!(0);
         r["cost"]["sessionUsd"] = json!(0);
         assert!(line(&r, 0.0).contains("$0 · session $0"));
+    }
+
+    #[test]
+    fn an_estimated_cost_is_marked_and_a_billed_one_is_not() {
+        let mut r = receipt();
+        r["cost"]["basis"] = json!("catalog_estimate");
+        assert!(line(&r, 0.0456).contains("~$0.0123 · session $0.0456"));
+        r["cost"]["basis"] = json!("provider_billed");
+        assert!(line(&r, 0.0456).contains("— GLM 5.2 · $0.0123 · session"));
+        r["cost"]["basis"] = json!("catalog_estimate");
+        r["cost"]["totalUsd"] = json!(0);
+        assert!(line(&r, 0.0).contains("· $0 · session $0"));
     }
 
     #[test]
