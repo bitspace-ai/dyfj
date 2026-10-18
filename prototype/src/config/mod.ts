@@ -31,7 +31,12 @@ export {
   readLauncherEnv,
   readLauncherEnvVar,
 } from "./env-file.ts";
-export { type DoltConnectionConfig, resolveDoltConnection } from "./dolt.ts";
+export {
+  type DoltConnectionConfig,
+  type DoltEndpoint,
+  resolveDoltConnection,
+  resolveDoltEndpoint,
+} from "./dolt.ts";
 export {
   nameserverNetGrants,
   readNameserverNetGrants,
@@ -128,7 +133,9 @@ export {
   SpawnRefusedError,
 } from "./spawn-guard.ts";
 export {
+  type ResolvedSecrets,
   resolveSecrets,
+  type RunSecretCommand,
   secretsRunGrant,
   unavailableSecretPointers,
 } from "./secrets.ts";

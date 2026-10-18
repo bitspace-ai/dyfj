@@ -225,7 +225,7 @@ INSERT INTO models (
         0.100000,
         2.500000,
         TRUE,
-        '["text","code","reasoning","vision","tools","thinking","long-context"]',
+        '["text","code","reasoning","vision","tools","thinking","thinking-progress-updates","long-context"]',
         NULL,
         NULL,
         NULL,

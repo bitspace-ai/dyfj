@@ -47,10 +47,9 @@ README are tracked separately in its Revision history section.
   million. Sonnet 5.5's cache-write price is
   the 5-minute rate; 1-hour caches cost more.
 
-  Sonnet 5.5 has adaptive thinking on by default, and the Anthropic adapter
-  drops thinking blocks. A turn with two or more tool steps may fail on
-  replay, and text the model writes between tool calls is lost. The adapter
-  is unchanged here; the verification note records the risk.
+  Sonnet 5.5 has adaptive thinking on by default. The Anthropic adapter
+  dropped thinking blocks when this row landed; see the Fixed entry on
+  replaying them.
 
 - **The runtime names each configured external MCP tool that a reachable
   server leaves out.** At boot, a configured tool the server does not offer prints
@@ -543,6 +542,51 @@ README are tracked separately in its Revision history section.
   that had failed or halted paid turns now reaches its envelope sooner,
   because that spend was real. The budget tally's session part no longer
   shows token counts, which only ever covered the current turn.
+
+- **Anthropic tool turns send thinking blocks back, and Claude Sonnet 5.5
+  shows what it writes between tool calls.** The Anthropic adapter kept only
+  a reply's `text` and `tool_use` blocks, so every later request in a tool
+  turn left out the `thinking` and `redacted_thinking` blocks that Anthropic
+  requires back unchanged within a tool turn
+  ([Thinking](https://platform.claude.com/docs/en/build-with-claude/thinking#preserving-thinking-blocks)).
+  This affected every Anthropic model with thinking on, Claude Sonnet 5 and
+  Sonnet 5.5 among them. Now the adapter keeps a reply's blocks in order,
+  signatures included, and the next request in the turn sends them back
+  unchanged. They are sent only while the system prompt, the tools and the
+  earlier messages are the ones the reply was produced under. A forced
+  conclusion, a context fit or a compression changes that prefix, and from
+  that point the request leaves the blocks out instead of drawing a 400. The
+  blocks stay in memory for the turn only: nothing new is written to the
+  event log, and a resumed session continues without them, which Anthropic
+  allows across turns. Size estimates count a kept reply at the size of the
+  blocks it sends; a forced conclusion clears kept replies before it is
+  sized, since it sends none. A forced conclusion on an Anthropic model also
+  names the turn's earlier tool calls by their wire names again (a dotted
+  command id such as `memory.read` went out with its dot, which Anthropic
+  rejects), as the OpenAI-compatible adapter already did.
+
+  Claude Sonnet 5.5 returns the notes it writes between tool calls as
+  thinking blocks, and empties them by default. The catalog now marks it
+  `thinking-progress-updates`, on the fresh-install path and through migration
+  `017_models_claude_sonnet_5_5_progress_updates.sql`. A model with that
+  capability is sent `thinking: {"type": "adaptive", "display": "updates"}`
+  with the `thinking-display-updates-2026-08-18` beta header. That returns the
+  notes as text and keeps the reasoning hidden. The operator sees each
+  tool-calling reply's text and notes before its tools run, then the reply.
+  Other Anthropic models are sent no thinking configuration, as before.
+  Thinking tokens were already counted: Anthropic includes them in
+  `output_tokens`, which feed each `provider_call` event's tokens and
+  `cost_total`, and tests now pin that.
+
+- **A `DOLT_PASSWORD` secret pointer now reaches the Dolt connection.** The
+  runtime read the Dolt connection settings, password included, before it
+  resolved the `[secrets.pointers]` entries. When `DOLT_PASSWORD` came only from a
+  pointer, the boot log said `secret DOLT_PASSWORD: resolved`, but the pool
+  logged in with an empty password and every Dolt query failed. The runtime
+  policy still takes the Dolt host and port before pointers resolve, as it
+  needs them to compose the egress grant. The user, password and database are
+  now read after resolution. A `DOLT_PASSWORD` already in the environment still
+  wins over its pointer.
 
 - **Ctrl-C stops a `dyfj start` runtime again, including the next one in the
   same terminal.** The `dyfj` client created a readline interface on the

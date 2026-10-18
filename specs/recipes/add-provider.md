@@ -102,6 +102,13 @@ Rules that hold for every adapter:
   `errors.ts`.
 - Bound what you read from the provider; follow the OpenAI-compatible adapter's
   response ceilings.
+- When the provider requires part of a reply to come back unchanged on the
+  next call of a tool turn (Anthropic thinking blocks), return it as the
+  result's `replay`. The engine carries it on that step's assistant message,
+  in memory only, and your request builder decides whether it may still be
+  sent. It is model-provided data: never log or journal it. Narration that a
+  buffered tool-calling reply returns apart from its text goes in
+  `progressText`, which the engine shows the operator before the tools run.
 
 ### 2. One registry line
 

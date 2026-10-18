@@ -14,7 +14,7 @@ import {
   readLauncherEnv,
   readNameserverNetGrants,
   readTextFile,
-  resolveDoltConnection,
+  resolveDoltEndpoint,
   runtimeChildEnv,
   type RuntimePolicy,
 } from "../../config/mod.ts";
@@ -138,7 +138,7 @@ export async function resolveRuntimeLaunch(
     nameserverGrants,
     secrets: resolverConfig,
     nodePath: nodeGrant,
-    dolt: resolveDoltConnection(env),
+    dolt: resolveDoltEndpoint(env),
   });
   return {
     policy,
