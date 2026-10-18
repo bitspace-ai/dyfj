@@ -45,7 +45,7 @@ import {
   type TurnResult,
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
-import { printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
+import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -97,40 +97,29 @@ export async function runRepl(
       }
       const prompt = line.trim();
       if (prompt.length === 0) continue;
-      if (prompt === "/exit" || prompt === "/quit") break;
+      const cmd = commandCandidate(line);
+      if (cmd === "/exit" || cmd === "/quit") break;
       if (
-        await handleReplSessionCommand(
-          prompt,
-          config,
-          io,
-          sessionState,
-          connect,
-        )
+        await handleReplSessionCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
-        await handleReplIdeaCommand(prompt, config, io, sessionState, connect)
+        await handleReplIdeaCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
-        await handleReplPacketCommand(
-          prompt,
-          config,
-          io,
-          sessionState,
-          connect,
-        )
+        await handleReplPacketCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
         await handleReplFrictionCommand(
-          prompt,
+          cmd,
           config,
           io,
           sessionState,
@@ -138,15 +127,15 @@ export async function runRepl(
           interactive,
         )
       ) continue;
-      if (await handleReplModelCommand(prompt, config, io, connect)) {
-        sessionState.lastReplCommand = prompt;
+      if (await handleReplModelCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
         continue;
       }
-      if (await handleReplFastCommand(prompt, config, io, connect)) {
-        sessionState.lastReplCommand = prompt;
+      if (await handleReplFastCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
         continue;
       }
-      const turnPrompt = routeSlashLine(prompt, io);
+      const turnPrompt = cmd === "" ? prompt : routeSlashLine(prompt, io);
       if (turnPrompt === undefined) continue;
       try {
         const body = buildTurnBody(turnPrompt, config, sessionState.sessionId);

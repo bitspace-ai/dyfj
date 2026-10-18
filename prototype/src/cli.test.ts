@@ -244,6 +244,37 @@ describe("runRepl", () => {
     assert.ok(!stderr.some((line) => line.startsWith("unknown command")));
   });
 
+  it("multi-line /friction paste sends no friction/post and becomes a turn", async () => {
+    const calls: Array<{ method: string; params: unknown }> = [];
+    const { connect } = sequentialTurnConnect([
+      { result: result() },
+    ]);
+    const origConnect = connect;
+    const testConnect: ConnectFn = async (socket, opts) => {
+      const client = await origConnect(socket, opts);
+      const origRequest = client.request;
+      client.request = (method: string, params?: unknown) => {
+        calls.push({ method, params });
+        return origRequest.call(client, method, params);
+      };
+      return client;
+    };
+    const { io } = fakeIo([
+      "/friction major\nThis is a multi-line\nfriction entry",
+    ]);
+    await runRepl(cfg(), io, testConnect, false);
+    const frictionCall = calls.find((call) => call.method === "friction/post");
+    assert.strictEqual(
+      frictionCall,
+      undefined,
+      "multi-line /friction should not call friction/post",
+    );
+    assert.ok(
+      calls.some((call) => call.method === "turn"),
+      "multi-line /friction should become a turn request",
+    );
+  });
+
   it("//word sends /word as the prompt text", async () => {
     const { connect, params } = sequentialTurnConnect([
       { result: result() },

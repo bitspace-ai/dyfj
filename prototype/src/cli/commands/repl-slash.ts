@@ -49,6 +49,15 @@ export function classifySlashLine(line: string): SlashLine {
   };
 }
 
+/**
+ * The text the command handlers may claim: the trimmed line, or "" for a
+ * multi-line paste, which no handler matches. A paste is prompt text, so it
+ * reaches the turn path before any command handler, whatever its first line.
+ */
+export function commandCandidate(line: string): string {
+  return line.includes("\n") ? "" : line.trim();
+}
+
 function printReplHelp(io: Io): void {
   for (
     const line of [
