@@ -96,6 +96,9 @@ export type McpFetch = (
  * platform fetch guarded by the base runtime policy, so an MCP request whose
  * caller passes no policy-guarded delegate is refused the operator's hosts.
  */
+export const MCP_RESPONSE_BYTE_LIMIT_MESSAGE =
+  "external MCP response exceeds the byte limit";
+
 export function boundedMcpFetch(
   maxBytes: number,
   delegate: McpFetch = guardedFetch(baseRuntimePolicy()),
@@ -111,7 +114,7 @@ export function boundedMcpFetch(
       Number(declaredLength) > maxBytes - received
     ) {
       await body.cancel().catch(() => {});
-      throw new Error("external MCP response exceeds the byte limit");
+      throw new Error(MCP_RESPONSE_BYTE_LIMIT_MESSAGE);
     }
     const boundedBody = body.pipeThrough(
       new TransformStream<Uint8Array, Uint8Array>({
@@ -119,7 +122,7 @@ export function boundedMcpFetch(
           received += chunk.byteLength;
           if (received > maxBytes) {
             controller.error(
-              new Error("external MCP response exceeds the byte limit"),
+              new Error(MCP_RESPONSE_BYTE_LIMIT_MESSAGE),
             );
             return;
           }

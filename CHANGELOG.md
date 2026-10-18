@@ -468,6 +468,81 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A failed external MCP call says why.** Every failure of a configured
+  `mcp.<server>.<tool>` command used to reach the model, the REPL, the event
+  log and the runtime log as the fixed `External MCP tool call failed`. When
+  the server reported the failure, its own text (Linear's `Could not find
+  issue "…"`, `Provide exactly one of issueId, …`) was discarded. Now the model
+  gets that text, single-lined, capped at 300 bytes and framed as untrusted
+  data. A call that throws gets a class line, never the error's message: a
+  timeout is named (`timed out after 30 s waiting for the server`), and so are a
+  transport error code, an SDK or protocol error code, an egress refusal and the
+  256 KiB response limit. Body size was ruled out as a cause: 3 KB and 60 KB
+  `save_comment` bodies post through the runtime's own client path.
+
+- **A failed tool call shows its reason in the REPL, and the runtime log
+  records it.** The `✗` line was a mark and a duration. Now it carries a
+  one-line reason, which travels on the `toolCallCompleted` frame as
+  `failureReason`, and the runtime log gets `[tool-failed] <tool> (<ms> ms):
+  <reason>` for each failure, with no arguments and no result. A server's
+  error text is shown only on the live line, never recorded: the runtime log,
+  the failed call's `tool_call` event and the stored receipt record `upstream
+  error (server text not recorded)`, because a server can quote an excerpt of
+  an argument that no check would recognise. A class line for a call that
+  threw (a timeout, a transport error) quotes nothing and is recorded as
+  shown. On the live line, a reason that echoes any argument value is withheld
+  as well, naming only the top-level arguments the tool's schema declares (`an
+  argument` otherwise): `upstream error (text withheld: it echoes argument
+  issueId)`. The check reads the first 640 characters of the reason. It counts
+  a string of eight or more characters anywhere, a shorter string or a number
+  where it stands as a whole token, and a cut-off start of a value, three or
+  more characters long, at the end of the 640; booleans and null never count,
+  and an excerpt or a reformatted argument is not detected. The walk over the
+  arguments is bounded: 8 levels, 256 string or number values, and one
+  1,024-step budget for nodes visited and keys taken from `for…in`. Per-key
+  work in our code stops at the budget; the engine's own key enumeration for
+  `for…in` is not bounded by it. Past those limits the line is withheld:
+  `upstream error (text withheld: arguments too large to check)`. Otherwise
+  credential-shaped text is scrubbed and the line capped at 160 bytes. For a
+  command other than an external MCP one that redacts an argument, the event
+  keeps the error text (its first 638 characters when it runs past the
+  640-character window) after the same check against the redacted values, or
+  the withheld line; other commands' error text is stored in full.
+  Credential-shaped text is scrubbed in both. Every durable sink records the
+  same redacted text: the event's `tool_result` and `content` (whose default
+  form, `<tool> failed: …` or `<tool> denied: …`, used to embed the raw
+  reason), the runtime log line, and the turn-end notice in the stored
+  receipt. Only the model and the live frame see more. Both REPLs render the
+  live reason, and neither writes it to disk.
+
+- **A turn that ends with no reply after a failed tool call says so.** When
+  the latest tool step had a failed call and the model then gave no text, the
+  operator used to get nothing at all. Now the turn ends with `turn ended after
+  a failed tool call (<tool>: <reason>); the model gave no reply`, or `a refused
+  tool call` when the call never ran (refused by policy, invalid arguments or
+  not approved). It shows in
+  the output, as a `WARNING:` line in the receipt (which both REPLs show), as
+  the turn result's `notice`, and in the runtime log as `[turn-notice] …`.
+
+- **The session and daily spend envelopes count every recorded paid call,
+  failed and halted turns included, and the receipt shows the same figure.** The
+  envelopes' baseline summed `model_response` costs, but a turn that fails or
+  halts writes no `model_response`, so its paid calls dropped out of every
+  later envelope and anomaly check. The REPL's `session $…` was its own sum of
+  the receipts of completed turns, a third figure. For example, a session
+  whose third turn halted after $3 of paid calls kept showing the first two
+  turns' $1 on its receipt, and its envelope forgot the $3 from the next turn
+  on, while the runaway-spend prompt during the halted turn had shown all $4.
+  The baseline now sums `provider_call` costs, one row per
+  paid call. That row is written best-effort; a skipped write already shows on
+  the receipt as an audit-log gap. The turn result carries `cost.sessionUsd`, the tracker's figure
+  that the envelope checks, and the receipt adds a `Session cost:` line. The
+  REPLs show it as `session $…`; with an older runtime that sends none, they
+  label their own sum `repl total $…`. **Behaviour change:** a session or day
+  that had failed or halted paid turns now reaches its envelope sooner,
+  because that spend was real. The budget tally's session part no longer
+  shows token counts, which only ever covered the current turn.
+
 - **Anthropic tool turns send thinking blocks back, and Claude Sonnet 5.5
   shows what it writes between tool calls.** The Anthropic adapter kept only
   a reply's `text` and `tool_use` blocks, so every later request in a tool

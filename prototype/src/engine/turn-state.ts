@@ -191,6 +191,21 @@ export interface TurnState {
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
   toolStepLimitReached: boolean;
+  /**
+   * The first failed call of the latest tool step, with its operator reason;
+   * undefined when that step had none. A turn that then ends with no reply
+   * says so (`turnEndNotice`).
+   */
+  lastStepFailure:
+    | {
+      commandId: string;
+      reason: string;
+      /** The call was refused (policy, validation or approval) and never ran. */
+      refused: boolean;
+    }
+    | undefined;
+  /** Set when the turn ended with no reply after a failed tool step. */
+  turnEndNotice: string | undefined;
   finalText: string;
   finalStopReason: WorkbenchTurnResult["stopReason"];
   validation: WorkbenchValidationSummary | undefined;
@@ -234,6 +249,8 @@ export function newTurnState(
     callTimings: undefined,
     toolSteps: 0,
     toolStepLimitReached: false,
+    lastStepFailure: undefined,
+    turnEndNotice: undefined,
     finalText: "",
     finalStopReason: "error",
     validation: undefined,

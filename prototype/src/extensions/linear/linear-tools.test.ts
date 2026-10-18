@@ -586,6 +586,8 @@ for (const upstreamTool of ["create_issue", "save_issue"] as const) {
           isError: true,
           reason:
             "Linear issue creation is indeterminate; reconcile in Linear before retrying.",
+          recordedReason:
+            "Linear issue creation is indeterminate; reconcile in Linear before retrying.",
         });
         assert.equal(call.mock.callCount(), 1);
         assert.ok(

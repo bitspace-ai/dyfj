@@ -217,7 +217,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:3>\n\n## Prompt\n\n[golden:s6] This must not reach the model.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:3>\nTrace:   <TRACE:3>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:3>\n\n## Prompt\n\n[golden:s6] This must not reach the model.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:3>\nTrace:   <TRACE:3>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       },
@@ -235,7 +235,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s6] Session envelope only.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s6] Session envelope only.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:1>\nTrace:   <TRACE:1>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $0.000000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       },
@@ -253,7 +253,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:2>\n\n## Prompt\n\n[golden:s6] Paid consent not given.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:2>\nTrace:   <TRACE:2>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $1.640000\nActual cost:    $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:2>\n\n## Prompt\n\n[golden:s6] Paid consent not given.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nWorkbench receipt\nSession: <ULID:2>\nTrace:   <TRACE:2>\nProvider: mlx-lm / openai-completions\nModel:   Golden Priced (golden-priced, tier 1)\nRoute:   explicit_model_id\nPaid inference used: no\nEstimated cost: $1.640000\nActual cost:    $0.000000\nSession cost:   $0.000000\nTokens:  0 in, 0 out\nCache:   0 read, 0 written\nCalls:   0\nTool steps: 0/32\nTotal elapsed: <DURATION>",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }

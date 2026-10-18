@@ -209,7 +209,12 @@ export interface SpendBaselineSums {
   dailyOtherSessionsUsd: number;
 }
 
-/** Spend rolled up from `model_response` events. */
+/**
+ * Spend rolled up from `provider_call` events: one row per paid call, written
+ * on a turn that fails or halts as well as on one that completes.
+ * `model_response` and `budget_summary` repeat per-turn totals and are not
+ * counted.
+ */
 export interface SpendReader {
   /** `dayStart` is a `YYYY-MM-DD HH:MM:SS` local-clock boundary. */
   baselines(sessionId: string, dayStart: string): Promise<SpendBaselineSums>;

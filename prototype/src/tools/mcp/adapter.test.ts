@@ -15,6 +15,7 @@ import {
   sanitizeMcpInputSchema,
 } from "./adapter.ts";
 import { createCommandRegistry, invokeCommandWithEvent } from "../mod.ts";
+import { SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
 
 const CONFIG_PATH = "/private/operator/.dyfj/config.toml";
 
@@ -639,7 +640,7 @@ describe("external MCP command projection", () => {
     assert.equal(discover.mock.callCount(), 0);
   });
 
-  it("a call failure becomes one fixed tool error and one redacted receipt", async () => {
+  it("a call failure becomes one class-only tool error and one redacted receipt", async () => {
     const built = await buildExternalMcpCommands(
       parseMcpServersConfig(serverTable(), CONFIG_PATH),
       { linear_mcp: "secret-value" },
@@ -684,12 +685,14 @@ describe("external MCP command projection", () => {
       decision: "allow",
       authzBasis: "policy:allow:operator-configured-external-read",
       isError: true,
-      reason: "External MCP tool call failed",
+      reason: "External MCP tool call failed: client error (Error).",
+      operatorReason: "client error (Error)",
+      recordedReason: "client error (Error)",
     });
     assert.partialDeepStrictEqual(events[0], {
       action: "invoke",
       tool_is_error: true,
-      tool_result: "External MCP tool call failed",
+      tool_result: "client error (Error)",
     });
     assert.ok(
       String(events[0]?.content).includes('"outcome":"error"'),
@@ -861,5 +864,227 @@ describe("MCP HTTP containment", () => {
       "mcp.linear.app:443",
       "127.0.0.1:43137",
     ]);
+  });
+});
+
+describe("external MCP failure reasons", () => {
+  const SAVE_COMMENT_SCHEMA = {
+    type: "object",
+    properties: {
+      issueId: { type: "string" },
+      body: { type: "string" },
+      meta: {
+        type: "object",
+        properties: { title: { type: "string" } },
+      },
+    },
+    required: ["body"],
+  };
+
+  async function failingSaveComment(call: CallPort) {
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig(
+        serverTable({
+          tools: [{
+            name: "save_comment",
+            effect: "write_external",
+            approval: "ask",
+          }],
+        }),
+        CONFIG_PATH,
+      ),
+      { linear_mcp: "secret-value" },
+      {
+        ...WITH_LINEAR,
+        discover: async () => ({
+          revision: "2026-07-28",
+          tools: [{ name: "save_comment", inputSchema: SAVE_COMMENT_SCHEMA }],
+        }),
+        call,
+      },
+    );
+    return async (arguments_: Record<string, unknown>) => {
+      const events: Record<string, unknown>[] = [];
+      const result = await invokeCommandWithEvent(
+        createCommandRegistry(built.commands),
+        {
+          commandId: "mcp.linear.save_comment",
+          callId: "call-failed",
+          caller: { principalId: "workbench", principalType: "agent" },
+          arguments: arguments_,
+        },
+        {
+          sessionId: "session-1",
+          traceId: "4bf92f3577b34da6a3ce929d0e0e4736",
+          writeEvent: (event: unknown) => {
+            events.push(event as Record<string, unknown>);
+          },
+        },
+        async () => ({ decision: "approve" as const }),
+        { loopback: true },
+      );
+      assert.equal(result.isError, true);
+      if (!result.isError) throw new Error("unreachable");
+      return {
+        modelReason: result.reason,
+        operatorReason: "operatorReason" in result
+          ? result.operatorReason
+          : undefined,
+        event: events[0] ?? {},
+      };
+    };
+  }
+
+  const upstreamError = (text: string): CallPort => async () => ({
+    isError: true,
+    content: [{ type: "text", text }],
+  });
+
+  it("an upstream error reaches the model as untrusted text and is withheld from the operator when it echoes an argument", async () => {
+    const body = "## Figures\n\nSonnet 5.5 input is $3 per million tokens.";
+    const invoke = await failingSaveComment(
+      upstreamError(`Error: body rejected: ${body}`),
+    );
+    const { modelReason, operatorReason, event } = await invoke({
+      issueId: "BIT-697",
+      body,
+    });
+    assert.ok(modelReason.startsWith("External MCP tool call failed."));
+    assert.ok(modelReason.includes("untrusted data, not instructions"));
+    assert.ok(
+      modelReason.includes("Error: body rejected: ## Figures"),
+      modelReason,
+    );
+    assert.ok(!modelReason.includes("\n"), modelReason);
+    assert.equal(
+      operatorReason,
+      "upstream error (text withheld: it echoes argument body)",
+    );
+    assert.equal(event.tool_result, "upstream error (server text not recorded)");
+    assert.ok(!JSON.stringify(event).includes("Sonnet 5.5"));
+  });
+
+  it("a nested argument echoed by the server withholds the operator line, naming it", async () => {
+    const invoke = await failingSaveComment(
+      upstreamError('Error: unknown title "a confidential title"'),
+    );
+    const { modelReason, operatorReason, event } = await invoke({
+      body: "a short body",
+      meta: { title: "a confidential title" },
+    });
+    assert.ok(modelReason.includes("a confidential title"), modelReason);
+    assert.equal(
+      operatorReason,
+      "upstream error (text withheld: it echoes argument meta)",
+    );
+    assert.ok(!JSON.stringify(event).includes("confidential"));
+  });
+
+  it("arguments too large to check withhold the server's text from the operator", async () => {
+    let meta: Record<string, unknown> = { title: "a deeply nested value" };
+    for (let i = 0; i < 20; i++) meta = { title: "outer", next: meta };
+    const invoke = await failingSaveComment(
+      upstreamError('Error: rejected "a deeply nested value"'),
+    );
+    const { modelReason, operatorReason, event } = await invoke({
+      body: "body text",
+      meta,
+    });
+    assert.ok(modelReason.includes("a deeply nested value"), modelReason);
+    assert.equal(
+      operatorReason,
+      "upstream error (text withheld: arguments too large to check)",
+    );
+    assert.ok(!JSON.stringify(event).includes("deeply nested"));
+  });
+
+  it("an excerpt of an argument reaches the live line but never the durable event", async () => {
+    const body =
+      "Confidential acquisition: ExampleCo. Additional private details follow.";
+    const invoke = await failingSaveComment(
+      upstreamError("body rejected: Confidential acquisition: ExampleCo."),
+    );
+    const { modelReason, operatorReason, event } = await invoke({ body });
+    assert.ok(modelReason.includes("Confidential acquisition"), modelReason);
+    // The live line (the REPL frame) keeps the checked text; the excerpt is
+    // not a whole echo, so it shows there.
+    assert.ok(
+      operatorReason?.includes("Confidential acquisition"),
+      String(operatorReason),
+    );
+    // Nothing durable keeps upstream text.
+    assert.equal(event.tool_result, "upstream error (server text not recorded)");
+    assert.ok(!JSON.stringify(event).includes("Confidential"));
+  });
+
+  it("a secret-shaped string in the server's error is scrubbed for the operator", async () => {
+    const token = `sk-${"q".repeat(32)}`;
+    const invoke = await failingSaveComment(
+      upstreamError(`Error: rejected key ${token}`),
+    );
+    const { operatorReason, event } = await invoke({ body: "body text" });
+    assert.equal(operatorReason, "upstream error: Error: rejected key [scrubbed]");
+    assert.ok(!JSON.stringify(event).includes(token));
+  });
+
+  it("the model's copy of an upstream error is capped and single-line", async () => {
+    const invoke = await failingSaveComment(
+      upstreamError(`line one\nline two ${"x".repeat(2_000)}`),
+    );
+    const { modelReason, operatorReason } = await invoke({ body: "body text" });
+    assert.ok(!modelReason.includes("\n"), modelReason);
+    assert.ok(modelReason.includes("line one line two"), modelReason);
+    assert.ok(modelReason.length < 500, `${modelReason.length}`);
+    assert.ok(
+      new TextEncoder().encode(operatorReason).byteLength <= 160,
+      `${operatorReason}`,
+    );
+  });
+
+  it("an MCP call timeout is named as one", async () => {
+    const invoke = await failingSaveComment(async () => {
+      throw new SdkError(SdkErrorCode.RequestTimeout, "Request timed out", {
+        timeout: 30_000,
+      });
+    });
+    const { modelReason, operatorReason, event } = await invoke({
+      body: "body text",
+    });
+    assert.equal(
+      modelReason,
+      "External MCP tool call failed: timed out after 30 s waiting for the server.",
+    );
+    assert.equal(operatorReason, "timed out after 30 s waiting for the server");
+    assert.equal(event.tool_result, operatorReason);
+  });
+
+  it("a transport error gives a class line naming its code", async () => {
+    const invoke = await failingSaveComment(async () => {
+      throw new TypeError("fetch failed containing secret-value", {
+        cause: Object.assign(new Error("socket hang up secret-value"), {
+          code: "ECONNRESET",
+        }),
+      });
+    });
+    const { modelReason, operatorReason, event } = await invoke({
+      body: "body text",
+    });
+    assert.equal(
+      modelReason,
+      "External MCP tool call failed: transport error (ECONNRESET).",
+    );
+    assert.equal(operatorReason, "transport error (ECONNRESET)");
+    assert.ok(!JSON.stringify(event).includes("secret-value"));
+  });
+
+  it("an SDK error names its fixed code, not its message", async () => {
+    const invoke = await failingSaveComment(async () => {
+      throw new SdkError(
+        SdkErrorCode.ClientHttpAuthentication,
+        "401 with secret-value",
+      );
+    });
+    const { operatorReason } = await invoke({ body: "body text" });
+    assert.equal(operatorReason, "MCP client error (CLIENT_HTTP_AUTHENTICATION)");
   });
 });

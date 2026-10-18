@@ -13,11 +13,17 @@
  * module applies the declarations, it does not decide them.
  */
 
+import { scrubSensitiveShapes } from "../kernel/mod.ts";
 import type {
   CommandCall,
   CommandDefinition,
   CommandInvocationResult,
 } from "./definition.ts";
+import {
+  ECHO_WINDOW_CHARS,
+  findArgumentEchoes,
+  operatorFailureReason,
+} from "./failure-reason.ts";
 
 // Constant redaction sentinel — no length or content-derived hash, so a
 // sensitive value's size and a guess-confirming fingerprint never reach the log.
@@ -41,7 +47,7 @@ export function redactToolCall(
 ): RedactedToolCall {
   return {
     arguments: redactCommandArguments(command, call.arguments),
-    result: redactCommandResult(command, result),
+    result: redactCommandResult(command, result, call.arguments),
   };
 }
 
@@ -83,20 +89,75 @@ export function redactCommandArguments(
 }
 
 /**
- * The persisted result text. An error reason is our own message (safe); a
- * success result may carry the command's raw output, which for `redactResult`
- * tools (bash) is replaced with the sentinel so secrets never reach the
- * durable log (CWE-532).
+ * The persisted result text. A success result may carry the command's raw
+ * output, which for `redactResult` tools (bash) is replaced with the sentinel
+ * so secrets never reach the durable log (CWE-532). An error reason is ours,
+ * but it can quote what an upstream server said, and a server can echo the
+ * arguments back: the executor's recorded reason, which never quotes upstream
+ * text, is persisted when there is one; otherwise, for a command that redacts any
+ * argument, the reason's first `ECHO_WINDOW_CHARS` characters are checked
+ * for echoes of those values and kept, or withheld naming the arguments when
+ * they echo one. Credential-shaped text is scrubbed either way.
  */
 export function redactCommandResult(
   command: CommandDefinition | undefined,
   result: CommandInvocationResult,
+  args: Record<string, unknown> = {},
 ): string {
-  return result.isError
-    ? result.reason
-    : command?.redactResult
+  if (result.isError) {
+    if ("recordedReason" in result && result.recordedReason !== undefined) {
+      return result.recordedReason;
+    }
+    return durableFailureReason(command, args, result.reason);
+  }
+  return command?.redactResult
     ? REDACTED
     : formatCommandResult(result.result);
+}
+
+/**
+ * The one durable form of a failure reason, which every durable sink records.
+ * For a command that redacts any argument, the reason's checked window, or
+ * the withheld line when that window echoes a redacted value; otherwise the
+ * reason in full. Credential-shaped text is scrubbed either way.
+ */
+export function durableFailureReason(
+  command: CommandDefinition | undefined,
+  args: Record<string, unknown>,
+  reason: string,
+): string {
+  const redacted = redactedArgumentValues(command, args);
+  if (Object.keys(redacted).length === 0) {
+    return scrubSensitiveShapes(reason);
+  }
+  // The checked window, not the 160-byte operator line: an audit copy
+  // keeps what the check covered (an approval refusal stays whole).
+  const echoes = findArgumentEchoes(reason, redacted);
+  if (echoes === undefined || echoes.length > 0) {
+    return operatorFailureReason(reason, redacted, {
+      declared: Object.keys(command?.inputSchema.properties ?? {}),
+    });
+  }
+  // When the text runs past the window, stop short of its edge: a value
+  // starting in the last two characters would be under the tail rule's
+  // three, so it is never stored.
+  return scrubSensitiveShapes(
+    reason.length > ECHO_WINDOW_CHARS
+      ? reason.slice(0, ECHO_WINDOW_CHARS - 2)
+      : reason,
+  );
+}
+
+/** The arguments whose values the event redacts, by name. */
+function redactedArgumentValues(
+  command: CommandDefinition | undefined,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (command?.redactArguments === true) return args;
+  const properties = command?.inputSchema.properties ?? {};
+  return Object.fromEntries(
+    Object.entries(args).filter(([key]) => properties[key]?.redact === true),
+  );
 }
 
 function formatCommandResult(value: unknown): string {

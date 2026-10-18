@@ -16,7 +16,11 @@ import {
   type ConfirmToolApproval,
 } from "./definition.ts";
 import { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
-import { redactToolCall } from "./redaction.ts";
+import {
+  fixedOperatorReason,
+  operatorFailureReason,
+} from "./failure-reason.ts";
+import { durableFailureReason, redactToolCall } from "./redaction.ts";
 import type { CommandRegistry } from "./registry.ts";
 
 export interface CommandEventContext {
@@ -54,12 +58,43 @@ const denyToolApproval: ConfirmToolApproval = () =>
     reason: "tool approval is unavailable on this transport",
   });
 
+/**
+ * Invoke a command. Every error result carries `recordedReason`, the one
+ * durable form of its reason (`durableFailureReason`), so the event, the
+ * runtime log and the stored receipt all record the same redacted text;
+ * `reason` is for the model only.
+ */
 export async function invokeCommand<TResult = unknown>(
   registry: CommandRegistry,
   call: CommandCall,
   confirmApproval: ConfirmToolApproval = denyToolApproval,
   policyContext: CommandPolicyContext = {},
   executionContext: Omit<CommandExecutionContext, "authzBasis"> = {},
+): Promise<CommandInvocationResult<TResult>> {
+  const result = await runCommand<TResult>(
+    registry,
+    call,
+    confirmApproval,
+    policyContext,
+    executionContext,
+  );
+  if (!result.isError || result.recordedReason !== undefined) return result;
+  return {
+    ...result,
+    recordedReason: durableFailureReason(
+      registry.lookup(call.commandId),
+      call.arguments,
+      result.reason,
+    ),
+  };
+}
+
+async function runCommand<TResult>(
+  registry: CommandRegistry,
+  call: CommandCall,
+  confirmApproval: ConfirmToolApproval,
+  policyContext: CommandPolicyContext,
+  executionContext: Omit<CommandExecutionContext, "authzBasis">,
 ): Promise<CommandInvocationResult<TResult>> {
   const command = registry.lookup(call.commandId) as
     | CommandDefinition<TResult>
@@ -124,6 +159,23 @@ export async function invokeCommand<TResult = unknown>(
         authzBasis,
         isError: true,
         reason: error.publicReason,
+        ...(error.operatorReason === undefined ? {} : {
+          operatorReason: error.operatorReasonLabel === undefined
+            ? fixedOperatorReason(error.operatorReason)
+            : operatorFailureReason(error.operatorReason, call.arguments, {
+              label: error.operatorReasonLabel,
+              declared: Object.keys(command.inputSchema.properties ?? {}),
+            }),
+          // Durable surfaces keep the executor's recorded reason; a labelled
+          // (upstream-quoting) reason without one records a fixed line. An
+          // unlabelled operator reason is the executor's own text, kept.
+          recordedReason: fixedOperatorReason(
+            error.recordedReason ??
+              (error.operatorReasonLabel === undefined
+                ? error.operatorReason
+                : `${error.operatorReasonLabel} (server text not recorded)`),
+          ),
+        }),
       };
     }
     throw error;
@@ -210,10 +262,12 @@ export function buildCommandToolCallEventPayload(
     tool_arguments: JSON.stringify(redacted.arguments),
     tool_result: truncateForEventColumn(redacted.result),
     tool_is_error: isError,
+    // Built from the same redacted text as tool_result, never from the
+    // model-facing `reason`.
     content: isError
       ? result.decision === "allow"
-        ? `${call.commandId} failed: ${result.reason}`
-        : `${call.commandId} denied: ${result.reason}`
+        ? `${call.commandId} failed: ${redacted.result}`
+        : `${call.commandId} denied: ${redacted.result}`
       : `${call.commandId} allowed`,
     duration_ms: context.durationMs ?? null,
   });

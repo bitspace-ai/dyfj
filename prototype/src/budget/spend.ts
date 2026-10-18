@@ -22,10 +22,13 @@ export function localDayKey(now: Date): string {
  * Roll up prior spend from the events table: this session's earlier turns,
  * and today's spend across OTHER sessions (this session's contribution is the
  * session baseline plus the live turn tracker, so the two never double
- * count). Only atomic `model_response` costs are summed — `budget_summary`
- * rows carry the session AGGREGATE and would double count every session that
- * already ended. `created_at` is stamped by the Dolt server's clock (local
- * time), so the day boundary is computed in local time.
+ * count). Only atomic `provider_call` costs are summed: one row per paid
+ * call, written whether the turn then completes, fails or halts.
+ * `model_response` and `budget_summary` rows repeat per-turn totals and would
+ * double count, and a turn that fails or halts writes no `model_response`, so
+ * summing those left its paid calls out of every later envelope check.
+ * `created_at` is stamped by the Dolt server's clock (local time), so the day
+ * boundary is computed in local time.
  *
  * Enforcement freshness: the daily figure is re-fetched before EVERY paid
  * call, so concurrent sessions see each other's completed calls; calls still

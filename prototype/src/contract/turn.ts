@@ -48,7 +48,16 @@ export interface NativeTurnReceipt {
   route: { reason: string };
   cost: {
     estimatedUsd: number;
+    /** This turn's actual spend. */
     totalUsd: number;
+    /**
+     * The session's actual spend including this turn: every paid call it has
+     * recorded (`provider_call` events), failed and halted turns included. The
+     * same figure the session envelope and the runaway-spend halt check. A
+     * runtime older than this field sends none; clients then label their own
+     * running sum.
+     */
+    sessionUsd?: number;
     /**
      * `provider_billed` only when every provider call in the turn reported
      * what it was billed; any estimated call makes the whole total an
@@ -83,6 +92,12 @@ export interface NativeTurnReceipt {
   context: { sources: string[] };
   /** Persisted tool evidence withheld while reconstructing this turn. */
   historyOmission?: HistoryOmissionReceipt;
+  /**
+   * Present when the turn ended with no reply after a failed tool step:
+   * names the failed call and its reason. The receipt carries it too, as a
+   * `WARNING:` line.
+   */
+  notice?: string;
 }
 
 export type ExternalAgentCostBasis =

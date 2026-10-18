@@ -1,8 +1,8 @@
 //! The per-turn receipt line.
 //!
 //! Cost visibility is part of the product's done-line, so every turn ends
-//! with what it cost, what the session has cost so far, and how many tokens
-//! it used. The layout follows `formatReceipt` in the TypeScript CLI
+//! with what it cost, what the session has cost so far (the runtime's figure,
+//! the one its spending envelope checks), and how many tokens it used. The layout follows `formatReceipt` in the TypeScript CLI
 //! (`prototype/src/cli/render/receipt.ts`) so the two front-ends read alike.
 //! Every field is optional: a receipt missing one costs a narrower line.
 //!
@@ -41,9 +41,10 @@ fn tokens(receipt: &Value, key: &str) -> u64 {
         .unwrap_or(0)
 }
 
-/// Render the receipt line for a completed turn. `session_total` is the
-/// REPL's running spend including this turn.
-pub fn line(receipt: &Value, session_total: f64) -> String {
+/// Render the receipt line for a completed turn. `repl_total` is the REPL's
+/// running spend including this turn, shown only when the runtime sends no
+/// session figure of its own.
+pub fn line(receipt: &Value, repl_total: f64) -> String {
     if receipt.get("runner").is_some() {
         // External-agent receipts carry their own cost semantics. That route
         // is deferred for the daily driver, so this front-end names it rather
@@ -71,12 +72,18 @@ pub fn line(receipt: &Value, session_total: f64) -> String {
     // runtime that reports no basis are not.
     let estimated = cost > 0.0
         && receipt.pointer("/cost/basis").and_then(Value::as_str) == Some("catalog_estimate");
-    parts.push(format!(
-        "{}{} · session {}",
-        if estimated { "~" } else { "" },
-        usd(cost),
-        usd(session_total)
-    ));
+    let mark = if estimated { "~" } else { "" };
+    // The runtime's session figure is the one its spending envelope checks,
+    // and it counts turns this REPL never saw complete. Only a runtime that
+    // sends none falls back to this REPL's own sum, labelled as such.
+    match receipt
+        .pointer("/cost/sessionUsd")
+        .and_then(Value::as_f64)
+        .filter(|usd| usd.is_finite())
+    {
+        Some(session) => parts.push(format!("{mark}{} · session {}", usd(cost), usd(session))),
+        None => parts.push(format!("{mark}{} · repl total {}", usd(cost), usd(repl_total))),
+    }
 
     let mut token_line = format!(
         "{}→{} tok",
@@ -150,7 +157,7 @@ mod tests {
     fn receipt() -> serde_json::Value {
         json!({
             "model": {"slug": "z-ai/glm-5.2", "displayName": "GLM 5.2"},
-            "cost": {"totalUsd": 0.0123},
+            "cost": {"totalUsd": 0.0123, "sessionUsd": 0.0456},
             "tokens": {"input": 1200, "output": 50, "cacheRead": 0, "cacheWrite": 0, "totalCalls": 1},
             "agent": {"toolStepsUsed": 2, "maxToolSteps": 32, "limitReached": false},
             "route": {"reason": "explicit_model_id"}
@@ -162,6 +169,49 @@ mod tests {
         assert_eq!(
             line(&receipt(), 0.0456),
             "— GLM 5.2 · $0.0123 · session $0.0456 · 1,200→50 tok · tools 2/32 · explicit_model_id"
+        );
+    }
+
+    /// The session figure is the runtime's, the one its spending envelope
+    /// checks: it counts turns this REPL never saw complete (a halted turn,
+    /// a turn before a resume). The REPL's own running sum does not.
+    #[test]
+    fn the_session_figure_is_the_runtimes_not_the_repls() {
+        let mut r = receipt();
+        r["cost"]["sessionUsd"] = json!(3.21);
+        assert!(
+            line(&r, 1.0404).contains("$0.0123 · session $3.2100 ·"),
+            "{}",
+            line(&r, 1.0404)
+        );
+    }
+
+    /// BIT-698's estimate mark and the runtime's session figure render together.
+    #[test]
+    fn an_estimated_turn_marks_its_cost_beside_the_session_figure() {
+        let mut r = receipt();
+        r["cost"]["basis"] = json!("catalog_estimate");
+        r["cost"]["sessionUsd"] = json!(3.21);
+        assert!(
+            line(&r, 1.0404).contains("~$0.0123 · session $3.2100 ·"),
+            "{}",
+            line(&r, 1.0404)
+        );
+    }
+
+    /// A runtime that sends no session figure gets the REPL's own sum, and
+    /// the line says that is what it is.
+    #[test]
+    fn without_a_runtime_figure_the_repl_total_is_labelled() {
+        let mut r = receipt();
+        r["cost"]
+            .as_object_mut()
+            .expect("cost")
+            .remove("sessionUsd");
+        assert!(
+            line(&r, 1.0404).contains("$0.0123 · repl total $1.0404 ·"),
+            "{}",
+            line(&r, 1.0404)
         );
     }
 
@@ -184,6 +234,7 @@ mod tests {
     fn a_free_turn_reads_zero_dollars() {
         let mut r = receipt();
         r["cost"]["totalUsd"] = json!(0);
+        r["cost"]["sessionUsd"] = json!(0);
         assert!(line(&r, 0.0).contains("$0 · session $0"));
     }
 
@@ -217,7 +268,7 @@ mod tests {
     fn a_sparse_receipt_still_renders() {
         assert_eq!(
             line(&json!({}), 0.0),
-            "— unknown model · $0 · session $0 · 0→0 tok"
+            "— unknown model · $0 · repl total $0 · 0→0 tok"
         );
     }
 

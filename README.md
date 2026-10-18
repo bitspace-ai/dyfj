@@ -823,6 +823,36 @@ server, tool, revision, and outcome metadata. Use a dedicated, minimally scoped
 server credential; the bearer token grants whatever authority the MCP server
 assigns to it.
 
+A failed call says why. When the server reports the call failed, the model
+gets the server's error text, single-lined, capped at 300 bytes and framed as
+untrusted data (for example Linear's `Could not find issue "BIT-99999"`). A
+call that throws gets a class line instead of its message: `timed out after
+30 s waiting for the server`, `transport error (ECONNRESET)`, `MCP client error
+(<SDK code>)`, `MCP protocol error (<code>)`, `network egress refused`, or
+`response exceeded the 256 KiB limit`. The operator sees a shorter line, live,
+on the REPL's `✗` line. A server's error text is shown there and never
+recorded: the runtime log (`[tool-failed] <tool> (<ms> ms): <reason>`), the
+failed call's durable event and the stored receipt record `upstream error
+(server text not recorded)` instead, because a server can quote an excerpt of
+an argument that no check would recognise. A class line for a call that threw
+quotes nothing, and is shown and recorded alike. On the live line, when the
+server's text echoes any argument value it is withheld too, naming only the
+top-level arguments the tool's schema declares (`an argument` otherwise):
+`upstream error (text withheld: it echoes argument issueId)`. Otherwise the
+line is the text with credential-shaped text scrubbed, single-lined and capped
+at 160 bytes. The check reads the first 640 characters, more than the line can
+show. It counts a string of eight or more characters anywhere, a shorter
+string or a number where it stands as a whole token (bounded by characters
+that are not letters or digits), and a cut-off start of a value, three or more
+characters long, at the end of those 640 characters; booleans and null never
+count. An excerpt or a reformatted argument is not detected, which is why the
+live line is all that shows the text. The walk over the arguments is bounded (8
+levels, 256 string or number values, and one 1,024-step budget for nodes
+visited and keys taken from `for…in`; per-key work in our code stops at the
+budget, the engine's own key enumeration for `for…in` is not bounded by it);
+past those limits the live line is withheld (`upstream error (text withheld:
+arguments too large to check)`). No argument or result payload is logged.
+
 A configured server can also back the native runner's `web_search` and
 `web_fetch` tools. Name the upstream tools under `capabilities`; each named tool
 must also appear in the server's `tools` allowlist, and at least one of the two
@@ -1755,7 +1785,9 @@ cargo run -p dyfj-repl
 It resolves the socket as the runtime does (`DYFJ_SOCKET`, else
 `$XDG_RUNTIME_DIR/dyfj`, else `~/.dyfj/run`). A multi-line paste arrives as one
 prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
-Ctrl-C cancellation, a per-turn receipt line with cost and prompt-cache tokens,
+Ctrl-C cancellation, a per-turn receipt line with the turn's cost, the session's
+spend as the runtime's envelope counts it, and prompt-cache tokens, a reason on
+each failed tool call's `✗` line,
 and the daily-driver commands `/model`, `/fast`, `/session`, `/friction` and
 `/idea`, and it refuses an unknown or unroutable `--model` before the first
 prompt. `--session` and `/session switch` resume a session on the model it last

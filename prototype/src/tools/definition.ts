@@ -150,12 +150,29 @@ export type CommandInvocationResult<TResult = unknown> =
     authzBasis: string;
     isError: true;
     reason: string;
+    /**
+     * The executor's operator-facing reason, scrubbed and capped, and
+     * withheld when it echoes an argument value (`tools/failure-reason.ts`).
+     * Absent when the executor gave none; the reason is then derived from
+     * `reason`.
+     */
+    operatorReason?: string;
+    /**
+     * What every durable surface records for this failure: the event's
+     * `tool_result` and `content`, the runtime log, the turn-end notice and
+     * so the stored receipt. `invokeCommand` sets it on every error result,
+     * from the redactor (`durableFailureReason`); `reason` stays on the model
+     * path only. Upstream text is shown live, never recorded.
+     */
+    recordedReason?: string;
   }
   | {
     decision: "ask" | "deny";
     authzBasis: string;
     isError: true;
     reason: string;
+    /** What durable surfaces record for this refusal (see the allow branch). */
+    recordedReason?: string;
     /**
      * Set when a call that needed approval was not approved: the verdict
      * the runtime frame carries, so a client can render a refusal as one and
@@ -189,10 +206,52 @@ export type ConfirmToolApproval = (
 ) => Promise<ToolApprovalVerdict>;
 
 export class CommandExecutionError extends Error {
+  /** What the model reads in place of a result. */
   public readonly publicReason: string;
-  constructor(publicReason: string) {
+  /**
+   * A compact form of the reason for the operator's ✗ line, the runtime log
+   * and the durable event, when it should differ from `publicReason`.
+   * When `operatorReasonLabel` is set too, `invokeCommand` withholds it if it
+   * echoes an argument value; otherwise it is only scrubbed and capped.
+   */
+  declare public readonly operatorReason?: string;
+  /**
+   * Set when `operatorReason` quotes text this code did not compose (an
+   * upstream server's error): it then gets the echo check, and leads the
+   * withheld line (`upstream error (text withheld: …)`). Absent, the operator
+   * reason is fixed text and is only scrubbed and capped.
+   */
+  declare public readonly operatorReasonLabel?: string;
+  /**
+   * What durable surfaces (the runtime log, the event log, the stored
+   * receipt) record instead of `operatorReason`, which is shown live only.
+   * A reason quoting upstream text records a fixed line here.
+   */
+  declare public readonly recordedReason?: string;
+  constructor(
+    publicReason: string,
+    options: {
+      operatorReason?: string;
+      operatorReasonLabel?: string;
+      recordedReason?: string;
+    } = {},
+  ) {
     super(publicReason);
     this.publicReason = publicReason;
     this.name = "CommandExecutionError";
+    for (
+      const key of [
+        "operatorReason",
+        "operatorReasonLabel",
+        "recordedReason",
+      ] as const
+    ) {
+      if (options[key] !== undefined) {
+        Object.defineProperty(this, key, {
+          value: options[key],
+          enumerable: true,
+        });
+      }
+    }
   }
 }

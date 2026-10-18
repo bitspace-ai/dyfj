@@ -389,10 +389,11 @@ test("spend.baselines scopes by session and day and maps the rollup row", async 
     calls[0]!.sql.includes("session_id <> ?"),
     `expected calls[0]!.sql to include "session_id <> ?"`,
   );
-  // budget_summary rows aggregate the session and would double count.
+  // One row per paid call: model_response and budget_summary repeat
+  // per-turn totals and would double count.
   assert.ok(
-    calls[0]!.sql.includes("event_type = 'model_response'"),
-    `expected calls[0]!.sql to include "event_type = 'model_response'"`,
+    calls[0]!.sql.includes("event_type = 'provider_call'"),
+    `expected calls[0]!.sql to include "event_type = 'provider_call'"`,
   );
 });
 

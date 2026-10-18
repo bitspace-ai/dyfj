@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  historyContainsSecretShape,
   MAX_HISTORY_MESSAGE_BYTES,
   MAX_HISTORY_TOOL_RESULT_BYTES,
   reconstructAcpContinuityPrompt,
@@ -289,5 +290,13 @@ describe("reconstructed tool history", () => {
       String(aggregateFailure).includes("exceeded the prompt limit"),
       `expected String(aggregateFailure) to include "exceeded the prompt limit"`,
     );
+  });
+});
+
+describe("historyContainsSecretShape", () => {
+  it("recognises both password spellings as a key=value credential", () => {
+    assert.equal(historyContainsSecretShape("passwd=abcdefgh12345678"), true);
+    assert.equal(historyContainsSecretShape("password=abcdefgh12345678"), true);
+    assert.equal(historyContainsSecretShape("passd=abcdefgh12345678"), false);
   });
 });

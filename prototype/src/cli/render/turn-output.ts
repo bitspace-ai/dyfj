@@ -5,6 +5,7 @@
 
 import process from "node:process";
 import { isSupersedingRetryStarted } from "../../contract/mod.ts";
+import { sanitizeBoundaryText } from "../../kernel/mod.ts";
 import type { CliConfig } from "../args.ts";
 import type { Io } from "../io.ts";
 import { createStreamingMarkdownRenderer } from "./streaming-markdown.ts";
@@ -146,9 +147,14 @@ export function formatRuntimeEvent(
         /^mcp\.[A-Za-z0-9_-]+\.create_issue$/.test(commandId)
       ? "\nCreation not confirmed. If you approved this call, reconcile in Linear before retrying; the issue may already exist."
       : "";
+    // Why it failed, when the runtime says: one line, terminal-safe, bounded.
+    const reason = event.isError === true &&
+        typeof event.failureReason === "string" && event.failureReason !== ""
+      ? `: ${sanitizeBoundaryText(event.failureReason, 160)}`
+      : "";
     return `tool: ${commandId} ${
       event.isError === true ? "failed" : "finished"
-    }${duration}${reconciliation}`;
+    }${duration}${reason}${reconciliation}`;
   }
   if (event.type === "memoryRecallNegotiated") {
     const era = event.era === "modern" || event.era === "legacy"

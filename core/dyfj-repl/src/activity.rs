@@ -61,9 +61,17 @@ pub fn describe(event: &Value) -> Option<String> {
                 "✓"
             };
             let name = crate::approval::visible(name);
-            match event.get("durationMs").and_then(Value::as_i64) {
-                Some(ms) => Some(format!("  {mark} {name} ({ms}ms)")),
-                None => Some(format!("  {mark} {name}")),
+            let line = match event.get("durationMs").and_then(Value::as_i64) {
+                Some(ms) => format!("  {mark} {name} ({ms}ms)"),
+                None => format!("  {mark} {name}"),
+            };
+            // Why it failed, when the runtime says: a ✗ with only a duration
+            // left the operator guessing.
+            match event.get("failureReason").and_then(Value::as_str) {
+                Some(reason) if mark == "✗" && !reason.is_empty() => {
+                    Some(format!("{line}: {}", bounded_reason(reason)))
+                }
+                _ => Some(line),
             }
         }
         "toolStepLimitReached" => {
@@ -126,6 +134,21 @@ pub fn describe(event: &Value) -> Option<String> {
         // beforeProviderRequest, afterProviderResponse, turnCompleted.
         _ => None,
     }
+}
+
+/// The longest failure reason a ✗ line shows, in characters. The runtime
+/// already caps it at 160 bytes; this holds for any runtime.
+const MAX_REASON_CHARS: usize = 160;
+
+/// A runtime-supplied reason, made terminal-safe and cut to one short line.
+fn bounded_reason(reason: &str) -> String {
+    let visible = crate::approval::visible(reason);
+    if visible.chars().count() <= MAX_REASON_CHARS {
+        return visible;
+    }
+    let mut cut: String = visible.chars().take(MAX_REASON_CHARS).collect();
+    cut.push('…');
+    cut
 }
 
 #[cfg(test)]
@@ -225,6 +248,51 @@ mod tests {
             }))
             .as_deref(),
             Some("· context fitted to the 32768-token window after the provider rejected the request: elder turns compressed")
+        );
+    }
+
+    /// The runtime sends why a call failed; the ✗ line carries it, on one
+    /// line, so the operator is not left with a mark and a duration.
+    #[test]
+    fn a_failed_tool_call_shows_its_reason() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "mcp.linear.save_comment",
+                "isError": true, "durationMs": 1700,
+                "failureReason": "upstream error: Error: Could not find issue \"BIT-99999\""
+            }))
+            .as_deref(),
+            Some("  ✗ mcp.linear.save_comment (1700ms): upstream error: Error: Could not find issue \"BIT-99999\"")
+        );
+    }
+
+    /// The reason is runtime-supplied text: control characters cannot reach
+    /// the terminal, and an oversized one is cut rather than flooding it.
+    #[test]
+    fn a_failure_reason_is_made_safe_and_bounded() {
+        let long = format!("timed out\n\u{1b}[2J{}", "x".repeat(500));
+        let rendered = describe(&json!({
+            "type": "toolCallCompleted", "commandId": "web_fetch",
+            "isError": true, "durationMs": 30000, "failureReason": long
+        }))
+        .expect("a line");
+        assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
+        assert!(!rendered.contains('\n'), "{rendered:?}");
+        assert!(rendered.starts_with("  ✗ web_fetch (30000ms): timed out "), "{rendered:?}");
+        assert!(rendered.chars().count() <= "  ✗ web_fetch (30000ms): ".chars().count() + 161, "{rendered:?}");
+        assert!(rendered.ends_with('…'), "{rendered:?}");
+    }
+
+    /// A successful call never shows a reason, even if one were sent.
+    #[test]
+    fn a_successful_call_shows_no_reason() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash",
+                "isError": false, "durationMs": 4, "failureReason": "stale"
+            }))
+            .as_deref(),
+            Some("  ✓ bash (4ms)")
         );
     }
 

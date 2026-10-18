@@ -11,6 +11,7 @@ import {
   invokeCommandWithEvent,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { redactCommandResult } from "./redaction.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function readCommand(
@@ -334,5 +335,51 @@ describe("buildCommandToolCallEventPayload", () => {
     // …but the durable event never persists it.
     assert.strictEqual(events[0].tool_result, "[redacted]");
     assert.ok(!(events[0].tool_result as string).includes("ANTHROPIC_API_KEY"));
+  });
+});
+
+describe("a failed call's stored reason for a command with redacted arguments", () => {
+  const command = {
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string", redact: true } },
+    },
+  } as unknown as CommandDefinition;
+  const failed = (reason: string) => ({
+    decision: "allow" as const,
+    authzBasis: "test",
+    isError: true as const,
+    reason,
+  });
+  const content = "a private document body";
+
+  it("is withheld, naming the argument, when it echoes a redacted value", () => {
+    assert.equal(
+      redactCommandResult(command, failed(`rejected: ${content}`), {
+        path: "notes.md",
+        content,
+      }),
+      "error (text withheld: it echoes argument content)",
+    );
+  });
+
+  it("never stores a value's first characters cut at the window edge", () => {
+    // A value starting at character 638 would have only 2 characters inside
+    // the 640-character window, below the 3-character tail rule; the stored
+    // text stops before it.
+    const reason = `${"r".repeat(638)}${content}`;
+    const stored = redactCommandResult(command, failed(reason), {
+      path: "notes.md",
+      content,
+    });
+    assert.equal(stored, "r".repeat(638));
+  });
+
+  it("keeps the checked window, not the operator line, when it echoes none", () => {
+    const reason = `refused: ${"r".repeat(300)}`;
+    assert.equal(
+      redactCommandResult(command, failed(reason), { path: "notes.md", content }),
+      reason,
+    );
   });
 });

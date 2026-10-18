@@ -1067,29 +1067,43 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   }, { seed: { prompts: PROMPT_FIXTURE } });
 
   run(
-    "spend baselines sum model_response costs by session and day",
+    "spend baselines sum provider_call costs by session and day",
     async (store) => {
       const cost = (
         sessionId: string,
         cost_total: number | null,
-        event_type: EventType = "model_response",
+        event_type: EventType = "provider_call",
       ) => event({ session_id: sessionId, event_type, cost_total });
       await commitEvents(
         store,
+        // A completed two-call turn: its model_response repeats the calls'
+        // total and its budget_summary repeats it again; neither counts.
         cost("S1", 0.5),
-        cost("S1", 0.25),
+        // A call OpenRouter billed (BIT-698's provider_billed basis) counts
+        // like an estimated one: the baseline sums cost_total.
+        event({
+          session_id: "S1",
+          event_type: "provider_call",
+          cost_total: 0.25,
+          cost_basis: "provider_billed",
+        }),
+        cost("S1", 0.75, "model_response"),
+        cost("S1", 0.75, "budget_summary"),
+        // A halted turn: paid calls, a budget_summary, no model_response.
+        cost("S1", 1, "provider_call"),
+        cost("S1", 1, "budget_summary"),
         cost("S2", 1.125),
+        cost("S2", 1.125, "model_response"),
         cost("S3", 2),
         cost("S1", 0),
         cost("S1", null),
-        cost("S1", 9, "budget_summary"),
       );
       // Every write is after a day that started in the past.
       assert.deepStrictEqual(
         await store.spend.baselines("S1", "2000-01-01 00:00:00"),
         {
-          sessionSpentUsd: 0.75,
-          sessionSpentTodayUsd: 0.75,
+          sessionSpentUsd: 1.75,
+          sessionSpentTodayUsd: 1.75,
           dailyOtherSessionsUsd: 3.125,
         },
       );
@@ -1097,7 +1111,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
       assert.deepStrictEqual(
         await store.spend.baselines("S1", "2999-01-01 00:00:00"),
         {
-          sessionSpentUsd: 0.75,
+          sessionSpentUsd: 1.75,
           sessionSpentTodayUsd: 0,
           dailyOtherSessionsUsd: 0,
         },
@@ -1107,7 +1121,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
         {
           sessionSpentUsd: 0,
           sessionSpentTodayUsd: 0,
-          dailyOtherSessionsUsd: 3.875,
+          dailyOtherSessionsUsd: 4.875,
         },
       );
     },

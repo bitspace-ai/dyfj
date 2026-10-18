@@ -23,7 +23,12 @@ import {
   type WorkbenchToolCall,
   type WorkbenchTurnParams,
 } from "../providers/mod.ts";
-import { invokeCommandWithEvent } from "../tools/mod.ts";
+import { sanitizeBoundaryText } from "../kernel/mod.ts";
+import {
+  fixedOperatorReason,
+  invokeCommandWithEvent,
+  operatorFailureReason,
+} from "../tools/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
 import { classifyErrorKind, ToolStepLimitConclusionError } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
@@ -238,6 +243,7 @@ async function runToolStep(
   const { state, input } = turn;
   const requestedToolCalls = result.toolCalls ?? [];
   state.toolSteps++;
+  state.lastStepFailure = undefined;
   state.session.log(
     `Step ${state.toolSteps}: running ${requestedToolCalls.length} tool call(s)...`,
   );
@@ -337,10 +343,41 @@ async function invokeTool(
     const commandResult = outcome.value;
     const approvalDenied = "verdict" in commandResult &&
       commandResult.verdict === "approval_denied";
+    const durationMs = ports.clock.now() - toolStartedAt;
+    const failureReason = commandResult.isError && !approvalDenied
+      ? ("operatorReason" in commandResult
+        ? commandResult.operatorReason
+        : undefined) ??
+        operatorFailureReason(commandResult.reason, toolCall.arguments, {
+          declared: Object.keys(
+            state.commandRegistry.lookup(toolCall.name)?.inputSchema
+              .properties ?? {},
+          ),
+        })
+      : undefined;
+    // The frame is live; the log and the notice (which the stored receipt
+    // carries) take the recorded reason: the one durable, redacted form
+    // `invokeCommand` puts on every error result.
+    // One line, capped, of that same durable text.
+    const recordedReason = commandResult.isError &&
+        commandResult.recordedReason !== undefined
+      ? fixedOperatorReason(commandResult.recordedReason)
+      : undefined;
+    if (commandResult.isError) {
+      state.lastStepFailure ??= {
+        commandId: toolCall.name,
+        reason: recordedReason ?? "not approved",
+        refused: commandResult.decision !== "allow",
+      };
+    }
+    if (recordedReason !== undefined) {
+      logToolFailure(toolCall.name, durationMs, recordedReason);
+    }
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,
       isError: commandResult.isError,
-      durationMs: ports.clock.now() - toolStartedAt,
+      durationMs,
+      ...(failureReason === undefined ? {} : { failureReason }),
       ...(approvalDenied ? { verdict: "approval_denied" as const } : {}),
     });
     return {
@@ -371,6 +408,23 @@ async function invokeTool(
     });
     throw err;
   }
+}
+
+/**
+ * One runtime-log line per failed tool call: the command, how long it took
+ * and the operator reason, which is already echo-checked, scrubbed and capped. No
+ * arguments and no result.
+ */
+function logToolFailure(
+  commandId: string,
+  durationMs: number,
+  reason: string,
+): void {
+  console.error(
+    `[tool-failed] ${sanitizeBoundaryText(commandId, 128)} (${
+      Math.max(0, Math.round(durationMs))
+    } ms): ${reason}`,
+  );
 }
 
 /** Start the command; its approval comes through the `Approver` port. */

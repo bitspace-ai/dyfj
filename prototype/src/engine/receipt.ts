@@ -26,7 +26,13 @@ export interface WorkbenchReceiptInput {
   api?: string;
   tier: 0 | 1 | 2;
   routingReason: string;
+  /** This turn's actual spend. */
   totalCostUsd: number;
+  /**
+   * The session's actual spend including this turn, as the session envelope
+   * counts it. Absent where no session figure applies.
+   */
+  sessionCostUsd?: number;
   /** Where `totalCostUsd` came from; a priced estimate is marked `~`. */
   costBasis?: CostBasis;
   totalTokensInput: number;
@@ -58,6 +64,11 @@ export interface WorkbenchReceiptInput {
    */
   skippedEventWrites?: number;
   historyOmission?: HistoryOmissionReceipt;
+  /**
+   * Set when the turn ended with no reply after a failed tool step; renders
+   * as a `WARNING:` line, which every client shows beside the answer.
+   */
+  turnEndNotice?: string;
 }
 
 export interface BudgetTallyInput {
@@ -68,9 +79,8 @@ export interface BudgetTallyInput {
     tier: 0 | 1 | 2;
   };
   session: {
+    /** The session's spend including this turn (`BudgetTracker.sessionSpentUsd`). */
     totalCostUsd: number;
-    totalTokensInput: number;
-    totalTokensOutput: number;
     paidCalls: number;
     sessionLimitUsd: number;
   };
@@ -108,6 +118,9 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Paid inference used: ${input.paidInferenceUsed ? "yes" : "no"}`,
     `Estimated cost: ${formatMoney(input.estimatedCostUsd ?? 0)}`,
     `Actual cost:    ${actualCost(input.totalCostUsd, input.costBasis)}`,
+    ...(input.sessionCostUsd === undefined
+      ? []
+      : [`Session cost:   ${formatMoney(input.sessionCostUsd)}`]),
     `Tokens:  ${input.totalTokensInput} in, ${input.totalTokensOutput} out` +
       ((input.totalReasoningTokens ?? 0) > 0
         ? `, ${input.totalReasoningTokens} reasoning`
@@ -124,6 +137,9 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
       `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +
         `the session's audit log has gaps`,
     );
+  }
+  if (input.turnEndNotice !== undefined) {
+    lines.push(`WARNING: ${input.turnEndNotice}`);
   }
   if (input.historyOmission !== undefined) {
     lines.push(formatHistoryOmissionSummary(input.historyOmission));
@@ -201,8 +217,7 @@ export function buildBudgetTallyLine(input: BudgetTallyInput): string {
     } this turn (${input.turn.tokensInput} in, ${input.turn.tokensOutput} out)`,
     "·",
     `${formatMoney(input.session.totalCostUsd)} session ` +
-    `(${input.session.totalTokensInput} in, ${input.session.totalTokensOutput} out, ` +
-    `${percentUsed.toFixed(1)}% of ${
+    `(${percentUsed.toFixed(1)}% of ${
       formatMoney(input.session.sessionLimitUsd)
     })`,
   ].join(" ");
