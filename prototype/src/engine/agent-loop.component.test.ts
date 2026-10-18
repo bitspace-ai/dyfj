@@ -1090,3 +1090,50 @@ test("upstream text stays on the live frame and never reaches a durable surface"
     JSON.stringify(loop.run.transport.requests.at(-1)).includes("a-private-excerpt"),
   );
 });
+
+test("a redacted argument echoed in a failure reaches no durable sink", async () => {
+  const note = "a confidential note body";
+  const token = `sk-${"w".repeat(32)}`;
+  const redactedCommand: CommandDefinition<string> = {
+    ...FAILING_COMMAND,
+    id: "mcp.fake.write_note",
+    inputSchema: {
+      type: "object",
+      properties: { note: { type: "string", redact: true } },
+      additionalProperties: false,
+    },
+    // The executor's own reason echoes the argument and a credential, with no
+    // operator or recorded reason of its own: every sink must redact it.
+    executor: () => {
+      throw new CommandExecutionError(`rejected: ${note} using ${token}`);
+    },
+  };
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([
+      toolReply([{
+        id: "r1",
+        name: "mcp.fake.write_note",
+        arguments: { note },
+      }]),
+      chatReply({ content: "" }),
+    ], { externalMcpCommands: [redactedCommand] })
+  );
+  assert.equal(loop.error, null);
+  const leaks = (text: string) => text.includes(note) || text.includes("wwww");
+  // Durable sinks: every event column, the runtime log, the receipt (with
+  // its notice) and the stored session.
+  assert.ok(!leaks(JSON.stringify(await rows(loop))), "event rows");
+  assert.ok(!errors.some(leaks), JSON.stringify(errors));
+  assert.ok(!leaks(loop.result!.receipt), loop.result!.receipt);
+  const stored = await loop.run.store.sessions.detail({
+    sessionId: loop.result!.sessionId,
+  });
+  assert.ok(!leaks(JSON.stringify(stored)), "stored session");
+  // The live frame is echo-checked, so it withholds too.
+  const completed = loop.frames.find((f) =>
+    f.type === "toolCallCompleted" && f.callId === "r1"
+  );
+  assert.ok(!leaks(JSON.stringify(completed)), JSON.stringify(completed));
+  // The model alone gets the raw reason.
+  assert.ok(JSON.stringify(loop.run.transport.requests.at(-1)).includes(note));
+});

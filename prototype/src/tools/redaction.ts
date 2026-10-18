@@ -108,29 +108,44 @@ export function redactCommandResult(
     if ("recordedReason" in result && result.recordedReason !== undefined) {
       return result.recordedReason;
     }
-    const redacted = redactedArgumentValues(command, args);
-    if (Object.keys(redacted).length === 0) {
-      return scrubSensitiveShapes(result.reason);
-    }
-    // The checked window, not the 160-byte operator line: an audit copy
-    // keeps what the check covered (an approval refusal stays whole).
-    const echoes = findArgumentEchoes(result.reason, redacted);
-    if (echoes === undefined || echoes.length > 0) {
-      return operatorFailureReason(result.reason, redacted, {
-        declared: Object.keys(command?.inputSchema.properties ?? {}),
-      });
-    }
-    // When the text runs past the window, stop short of its edge: a value
-    // starting in the last two characters would be under the tail rule's
-    // three, so it is never stored.
-    const stored = result.reason.length > ECHO_WINDOW_CHARS
-      ? result.reason.slice(0, ECHO_WINDOW_CHARS - 2)
-      : result.reason;
-    return scrubSensitiveShapes(stored);
+    return durableFailureReason(command, args, result.reason);
   }
   return command?.redactResult
     ? REDACTED
     : formatCommandResult(result.result);
+}
+
+/**
+ * The one durable form of a failure reason, which every durable sink records.
+ * For a command that redacts any argument, the reason's checked window, or
+ * the withheld line when that window echoes a redacted value; otherwise the
+ * reason in full. Credential-shaped text is scrubbed either way.
+ */
+export function durableFailureReason(
+  command: CommandDefinition | undefined,
+  args: Record<string, unknown>,
+  reason: string,
+): string {
+  const redacted = redactedArgumentValues(command, args);
+  if (Object.keys(redacted).length === 0) {
+    return scrubSensitiveShapes(reason);
+  }
+  // The checked window, not the 160-byte operator line: an audit copy
+  // keeps what the check covered (an approval refusal stays whole).
+  const echoes = findArgumentEchoes(reason, redacted);
+  if (echoes === undefined || echoes.length > 0) {
+    return operatorFailureReason(reason, redacted, {
+      declared: Object.keys(command?.inputSchema.properties ?? {}),
+    });
+  }
+  // When the text runs past the window, stop short of its edge: a value
+  // starting in the last two characters would be under the tail rule's
+  // three, so it is never stored.
+  return scrubSensitiveShapes(
+    reason.length > ECHO_WINDOW_CHARS
+      ? reason.slice(0, ECHO_WINDOW_CHARS - 2)
+      : reason,
+  );
 }
 
 /** The arguments whose values the event redacts, by name. */

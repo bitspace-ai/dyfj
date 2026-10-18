@@ -673,3 +673,46 @@ describe("read_file → tool_call event containment", () => {
     );
   });
 });
+
+describe("a failed call's event never carries a redacted argument or a credential", () => {
+  const body = "a private document body";
+  const token = `sk-${"q".repeat(32)}`;
+  const command = {
+    id: "write_note",
+    inputSchema: {
+      type: "object",
+      properties: { content: { type: "string", redact: true } },
+    },
+  } as unknown as CommandDefinition;
+  const call: CommandCall = {
+    commandId: "write_note",
+    callId: "c1",
+    caller: { principalId: "workbench", principalType: "agent" },
+    arguments: { content: body },
+  };
+  const context = { sessionId: "s1", traceId: "4bf92f3577b34da6a3ce929d0e0e4736" };
+  for (
+    const result of [
+      {
+        decision: "allow" as const,
+        authzBasis: "test",
+        isError: true as const,
+        reason: `rejected: ${body} with ${token}`,
+      },
+      {
+        decision: "deny" as const,
+        authzBasis: "test",
+        isError: true as const,
+        reason: `refused: ${body} with ${token}`,
+      },
+    ]
+  ) {
+    it(`on the ${result.decision} branch, in every column`, () => {
+      const event = buildCommandToolCallEventPayload(call, result, context, command);
+      const columns = JSON.stringify(event);
+      assert.ok(!columns.includes(body), columns);
+      assert.ok(!columns.includes("qqqq"), columns);
+      assert.match(String(event.content), /text withheld: it echoes argument content/);
+    });
+  }
+});

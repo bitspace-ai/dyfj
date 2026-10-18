@@ -24,6 +24,7 @@ import {
 } from "../providers/mod.ts";
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import {
+  fixedOperatorReason,
   invokeCommandWithEvent,
   operatorFailureReason,
 } from "../tools/mod.ts";
@@ -316,10 +317,13 @@ async function invokeTool(
         })
       : undefined;
     // The frame is live; the log and the notice (which the stored receipt
-    // carries) take the recorded reason, which never quotes upstream text.
-    const recordedReason = "recordedReason" in commandResult
-      ? commandResult.recordedReason ?? failureReason
-      : failureReason;
+    // carries) take the recorded reason: the one durable, redacted form
+    // `invokeCommand` puts on every error result.
+    // One line, capped, of that same durable text.
+    const recordedReason = commandResult.isError &&
+        commandResult.recordedReason !== undefined
+      ? fixedOperatorReason(commandResult.recordedReason)
+      : undefined;
     if (commandResult.isError) {
       state.lastStepFailure ??= {
         commandId: toolCall.name,

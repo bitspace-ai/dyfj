@@ -509,8 +509,12 @@ README are tracked separately in its Revision history section.
   keeps the error text (its first 638 characters when it runs past the
   640-character window) after the same check against the redacted values, or
   the withheld line; other commands' error text is stored in full.
-  Credential-shaped text is scrubbed in both. Both REPLs render the live
-  reason, and neither writes it to disk.
+  Credential-shaped text is scrubbed in both. Every durable sink records the
+  same redacted text: the event's `tool_result` and `content` (whose default
+  form, `<tool> failed: …` or `<tool> denied: …`, used to embed the raw
+  reason), the runtime log line, and the turn-end notice in the stored
+  receipt. Only the model and the live frame see more. Both REPLs render the
+  live reason, and neither writes it to disk.
 
 - **A turn that ends with no reply after a failed tool call says so.** When
   the latest tool step had a failed call and the model then gave no text, the

@@ -158,8 +158,11 @@ export type CommandInvocationResult<TResult = unknown> =
      */
     operatorReason?: string;
     /**
-     * What durable surfaces record for this failure. Set whenever
-     * `operatorReason` is: upstream text is shown live, never recorded.
+     * What every durable surface records for this failure: the event's
+     * `tool_result` and `content`, the runtime log, the turn-end notice and
+     * so the stored receipt. `invokeCommand` sets it on every error result,
+     * from the redactor (`durableFailureReason`); `reason` stays on the model
+     * path only. Upstream text is shown live, never recorded.
      */
     recordedReason?: string;
   }
@@ -168,6 +171,8 @@ export type CommandInvocationResult<TResult = unknown> =
     authzBasis: string;
     isError: true;
     reason: string;
+    /** What durable surfaces record for this refusal (see the allow branch). */
+    recordedReason?: string;
     /**
      * Set when a call that needed approval was not approved: the verdict
      * the runtime frame carries, so a client can render a refusal as one and
