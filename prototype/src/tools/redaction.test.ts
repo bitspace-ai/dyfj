@@ -11,6 +11,7 @@ import {
   invokeCommandWithEvent,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { redactCommandResult } from "./redaction.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function readCommand(
@@ -334,5 +335,39 @@ describe("buildCommandToolCallEventPayload", () => {
     // …but the durable event never persists it.
     assert.strictEqual(events[0].tool_result, "[redacted]");
     assert.ok(!(events[0].tool_result as string).includes("ANTHROPIC_API_KEY"));
+  });
+});
+
+describe("a failed call's stored reason for a command with redacted arguments", () => {
+  const command = {
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" }, content: { type: "string", redact: true } },
+    },
+  } as unknown as CommandDefinition;
+  const failed = (reason: string) => ({
+    decision: "allow" as const,
+    authzBasis: "test",
+    isError: true as const,
+    reason,
+  });
+  const content = "a private document body";
+
+  it("is withheld, naming the argument, when it echoes a redacted value", () => {
+    assert.equal(
+      redactCommandResult(command, failed(`rejected: ${content}`), {
+        path: "notes.md",
+        content,
+      }),
+      "error (text withheld: it echoes argument content)",
+    );
+  });
+
+  it("keeps the checked window, not the operator line, when it echoes none", () => {
+    const reason = `refused: ${"r".repeat(300)}`;
+    assert.equal(
+      redactCommandResult(command, failed(reason), { path: "notes.md", content }),
+      reason,
+    );
   });
 });

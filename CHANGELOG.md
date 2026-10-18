@@ -466,9 +466,10 @@ README are tracked separately in its Revision history section.
   arguments too large to check)`. Otherwise credential-shaped text is
   scrubbed and the line capped at 160 bytes. An external MCP command's failed
   `tool_call` event stores that same line. For any other command that redacts
-  an argument, the event's error text gets the same check against the
-  redacted values; other commands' error text is stored in full with
-  credential-shaped text scrubbed. Both REPLs render the reason.
+  an argument, the event keeps the error text's first 640 characters after the
+  same check against the redacted values, or the withheld line; other
+  commands' error text is stored in full. Credential-shaped text is scrubbed in
+  both. Both REPLs render the reason.
 
 - **A turn that ends with no reply after a failed tool call says so.** When
   the latest tool step had a failed call and the model then gave no text, the

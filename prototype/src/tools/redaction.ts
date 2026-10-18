@@ -19,7 +19,11 @@ import type {
   CommandDefinition,
   CommandInvocationResult,
 } from "./definition.ts";
-import { operatorFailureReason } from "./failure-reason.ts";
+import {
+  ECHO_WINDOW_CHARS,
+  findArgumentEchoes,
+  operatorFailureReason,
+} from "./failure-reason.ts";
 
 // Constant redaction sentinel — no length or content-derived hash, so a
 // sensitive value's size and a guess-confirming fingerprint never reach the log.
@@ -91,9 +95,9 @@ export function redactCommandArguments(
  * but it can quote what an upstream server said, and a server can echo the
  * arguments back: the executor's operator reason, already checked, is
  * persisted when there is one; otherwise, for a command that redacts any
- * argument, the reason is checked for echoes of those values and withheld,
- * naming them, when it echoes one. Credential-shaped text is scrubbed either
- * way.
+ * argument, the reason's first `ECHO_WINDOW_CHARS` characters are checked
+ * for echoes of those values and kept, or withheld naming the arguments when
+ * they echo one. Credential-shaped text is scrubbed either way.
  */
 export function redactCommandResult(
   command: CommandDefinition | undefined,
@@ -105,10 +109,16 @@ export function redactCommandResult(
       return result.operatorReason;
     }
     const redacted = redactedArgumentValues(command, args);
-    if (Object.keys(redacted).length > 0) {
+    if (Object.keys(redacted).length === 0) {
+      return scrubSensitiveShapes(result.reason);
+    }
+    // The checked window, not the 160-byte operator line: an audit copy
+    // keeps what the check covered (an approval refusal stays whole).
+    const echoes = findArgumentEchoes(result.reason, redacted);
+    if (echoes === undefined || echoes.length > 0) {
       return operatorFailureReason(result.reason, redacted);
     }
-    return scrubSensitiveShapes(result.reason);
+    return scrubSensitiveShapes(result.reason.slice(0, ECHO_WINDOW_CHARS));
   }
   return command?.redactResult
     ? REDACTED
