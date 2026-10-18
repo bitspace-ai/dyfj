@@ -62,7 +62,7 @@ test("token masking never cuts into a longer word", () => {
   );
 });
 
-test("a one-character value over-masks standalone tokens, never under-masks", () => {
+test("a one-character value masks its standalone occurrences and keeps longer numeric tokens", () => {
   assert.equal(
     maskArgumentEchoes("page 1 of 10, item 1", { page: 1 }),
     "page <arg:page> of 10, item <arg:page>",
@@ -241,4 +241,22 @@ test("masking a short value in a large text stays fast", () => {
   const masked = maskArgumentEchoes(text, { letter: "e", other: "f" });
   assert.ok(masked?.startsWith("<arg:letter> <arg:letter>"));
   assert.ok(performance.now() - started < 2_000, "masking took too long");
+});
+
+test("overlapping echoes are masked as one run, leaving no part visible", () => {
+  assert.equal(
+    maskArgumentEchoes("saw abcdefghijklm here", {
+      a: "abcdefgh",
+      b: "fghijklm",
+    }),
+    "saw <arg:a> here",
+  );
+});
+
+test("an output limit stops building the masked text early", () => {
+  const text = "e ".repeat(100_000);
+  const masked = maskArgumentEchoes(text, { letter: "e" }, 640);
+  assert.ok(masked !== undefined);
+  assert.ok(masked.length <= 640 + 64, `${masked.length}`);
+  assert.ok(masked.startsWith("<arg:letter> <arg:letter>"));
 });

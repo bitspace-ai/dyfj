@@ -454,8 +454,9 @@ README are tracked separately in its Revision history section.
   echo of an argument value is replaced by `<arg:NAME>`, a string of eight or
   more characters wherever it occurs, a shorter string or a number wherever it
   stands as a whole token (so `Alice` and `12345` are masked, and a value of
-  `1` masks every standalone `1`), so a value the event log redacts does not
-  come back through the error text. Booleans and null are not masked. The
+  `1` masks every standalone `1` but not the `1` inside `10`), so a value the
+  event log redacts does not come back through the error text. Overlapping
+  echoes are masked as one run. Booleans and null are not masked. The
   walk over the arguments is bounded: 8 levels, 256 string or number values,
   and one 1,024-step budget for nodes visited and keys taken from `for…in`.
   Per-key work in our code stops at the budget; the engine's own key

@@ -816,7 +816,8 @@ an exact echo of an argument value with `<arg:NAME>` (`<arg:meta.title>` for a
 nested one): a string of eight or more characters wherever it occurs, a shorter
 string or a number wherever it stands as a whole token (bounded by characters
 that are not letters or digits; a value of `1` masks every standalone `1`,
-which costs readability, never privacy). It scrubs credential-shaped
+which costs readability, never privacy, and is not masked inside `10`).
+Overlapping echoes are masked as one run. It scrubs credential-shaped
 text, and is capped at 160 bytes. The walk over the arguments is bounded (8
 levels, 256 string or number values, and one 1,024-step budget for nodes visited and keys taken
 from `for…in`; per-key work in our code stops at the budget, the engine's own

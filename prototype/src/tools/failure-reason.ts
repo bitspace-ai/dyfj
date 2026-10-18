@@ -157,22 +157,21 @@ function isWordCharacter(character: string | undefined): boolean {
   return character !== undefined && WORD_CHARACTER.test(character);
 }
 
-/** Where `leaf` occurs in `text`: anywhere, or only as a whole token. */
-function occurrences(text: string, leaf: ArgumentLeaf): [number, number][] {
-  const found: [number, number][] = [];
+/** Calls `found` for each place `leaf` occurs: anywhere, or only as a whole token. */
+function forEachOccurrence(
+  text: string,
+  leaf: ArgumentLeaf,
+  found: (start: number, end: number) => void,
+): void {
   let from = 0;
   for (;;) {
     const start = text.indexOf(leaf.value, from);
-    if (start === -1) return found;
+    if (start === -1) return;
     const end = start + leaf.value.length;
     const isToken = !isWordCharacter(text[start - 1]) &&
       !isWordCharacter(text[end]);
-    if (leaf.match === "substring" || isToken) {
-      found.push([start, end]);
-      from = end;
-    } else {
-      from = start + 1;
-    }
+    if (leaf.match === "substring" || isToken) found(start, end);
+    from = start + 1;
   }
 }
 
@@ -182,38 +181,59 @@ function occurrences(text: string, leaf: ArgumentLeaf): [number, number][] {
  * A string of eight or more characters is masked wherever it occurs; a
  * shorter string or a number only where it stands as a whole token, bounded
  * by characters that are not letters or digits, so `BIT` masks the `BIT` of
- * `BIT-697` but not of `BITS`. Booleans and null are not masked. A short value
- * over-masks: an argument of `1` masks every standalone `1`. That costs the
- * operator readability, never privacy, and is the intended direction. Matches
- * are found in the original text, longest value first, and replaced in one
- * pass, so a short value can never match inside an earlier placeholder.
+ * `BIT-697` but not of `BITS`, and an argument `1` is not masked inside `10`
+ * (the token rule, deliberately). Booleans and null are not masked. A short
+ * value over-masks: an argument of `1` masks every standalone `1`. That costs
+ * the operator readability, never privacy, and is the intended direction.
+ *
+ * Every occurrence of every value marks the characters it covers, and each
+ * maximal covered run becomes one placeholder, named after the longest value
+ * that touches it: overlapping echoes leave no part of either value visible,
+ * and a short value can never match inside a placeholder. The marking uses
+ * two typed arrays the size of the text, with nothing allocated per
+ * occurrence. `maxOutputLength` stops building the result once it is that
+ * long; everything emitted before the stop has been masked.
  */
 export function maskArgumentEchoes(
   text: string,
   args: Record<string, unknown>,
+  maxOutputLength: number = Number.POSITIVE_INFINITY,
 ): string | undefined {
   const leaves = argumentLeaves(args);
   if (leaves === undefined) return undefined;
+  // Longest first, so the lowest owner index on a run is its longest value.
   leaves.sort((a, b) => b.value.length - a.value.length);
-  // One flag per character already covered by a longer match: linear per
-  // value, however many occurrences a short value has.
   const covered = new Uint8Array(text.length);
-  const ranges: { start: number; end: number; path: string }[] = [];
-  for (const leaf of leaves) {
-    for (const [start, end] of occurrences(text, leaf)) {
-      if (covered.subarray(start, end).includes(1)) continue;
-      covered.fill(1, start, end);
-      ranges.push({ start, end, path: leaf.path });
-    }
-  }
-  ranges.sort((a, b) => a.start - b.start);
+  const owner = new Int16Array(text.length).fill(-1);
+  leaves.forEach((leaf, index) => {
+    forEachOccurrence(text, leaf, (start, end) => {
+      for (let at = start; at < end; at++) {
+        covered[at] = 1;
+        if (owner[at] === -1) owner[at] = index;
+      }
+    });
+  });
   let masked = "";
-  let cursor = 0;
-  for (const range of ranges) {
-    masked += `${text.slice(cursor, range.start)}<arg:${range.path}>`;
-    cursor = range.end;
+  let at = 0;
+  while (at < text.length && masked.length < maxOutputLength) {
+    if (covered[at] === 0) {
+      let end = at;
+      while (end < text.length && covered[end] === 0) end++;
+      masked += text.slice(at, Math.min(end, at + (maxOutputLength - masked.length)));
+      at = end;
+      continue;
+    }
+    let longest = owner[at]!;
+    let end = at;
+    while (end < text.length && covered[end] === 1) {
+      const runOwner = owner[end]!;
+      if (runOwner !== -1 && runOwner < longest) longest = runOwner;
+      end++;
+    }
+    masked += `<arg:${leaves[longest]!.path}>`;
+    at = end;
   }
-  return masked + text.slice(cursor);
+  return masked;
 }
 
 /** The masked, scrubbed, single-line, capped reason an operator sees. */
@@ -222,7 +242,8 @@ export function operatorFailureReason(
   args: Record<string, unknown>,
   withheld: string = MASKING_WITHHELD_REASON,
 ): string {
-  const masked = maskArgumentEchoes(reason, args);
+  // Four times the cap is ample for the line, and bounds the work.
+  const masked = maskArgumentEchoes(reason, args, 4 * OPERATOR_REASON_MAX_BYTES);
   return sanitizeBoundaryText(
     scrubSensitiveShapes(masked ?? withheld),
     OPERATOR_REASON_MAX_BYTES,
