@@ -16,7 +16,8 @@ README are tracked separately in its Revision history section.
   the line) and names no command now prints `unknown command /word; /help
   lists commands` and sends nothing, so a mistyped command is no longer a paid
   model turn. Any other slash line, such as a path (`/usr/bin/env is what?`),
-  is still sent as text, and so is a multi-line paste. `//word` sends `/word`
+  is still sent as text, and so is any multi-line input, even one that opens
+  with a command word. `//word` sends `/word`
   as text, and `/help` lists that escape. Under the Rust REPL outside
   `dyfj dev`, `/reload` and `/rollback` are refused the same way.
 - **A failed `/friction` prints its text back.** Both REPLs follow the failure
@@ -484,7 +485,8 @@ README are tracked separately in its Revision history section.
   30 s allowance began. Discovery keeps 5 s.
 - **`/friction` retries a timed-out read once.** A timeout while reading the
   issue or its comments is retried one time; the comment write is never
-  retried, so a retry cannot post twice.
+  retried by that invocation. A failed write still prints a retry command, and
+  following it after an uncertain timeout can post the comment again.
 
 - **`dyfj dev` says it once when a change reloads the runtime and the REPL.**
   A change that touched both halves restarted the runtime and then replaced

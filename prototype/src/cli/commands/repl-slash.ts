@@ -33,9 +33,11 @@ type SlashLine =
  * `/word` token (letters, digits, hyphens, then a space or the end) can be an
  * unknown command: it is refused locally instead of becoming a paid turn.
  * `//word` is that escape, sent as the text `/word`. Any other slash line, a
- * path like `/usr/bin/env is what?`, is prompt text.
+ * path like `/usr/bin/env is what?`, is prompt text, and so is any multi-line
+ * input: a paste is never a command, help request or escape.
  */
 export function classifySlashLine(line: string): SlashLine {
+  if (line.includes("\n")) return { kind: "text" };
   const escaped = ESCAPED_SLASH_WORD.test(line);
   if (escaped) return { kind: "escaped", text: line.slice(1) };
   const word = SLASH_WORD.exec(line)?.[1];

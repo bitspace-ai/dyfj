@@ -225,6 +225,25 @@ describe("runRepl", () => {
     assert.ok(!stderr.some((line) => line.startsWith("unknown command")));
   });
 
+  it("sends multi-line input starting with a slash word as text", async () => {
+    const { connect, params } = sequentialTurnConnect([
+      { result: result() },
+      { result: result() },
+      { result: result() },
+    ]);
+    const { io, stderr } = fakeIo([
+      "/status\nmore prose",
+      "/help\nmore prose",
+      "//status\nmore prose",
+    ]);
+    await runRepl(cfg(), io, connect, false);
+    assert.deepStrictEqual(
+      params.map((body) => (body as { prompt: string }).prompt),
+      ["/status\nmore prose", "/help\nmore prose", "//status\nmore prose"],
+    );
+    assert.ok(!stderr.some((line) => line.startsWith("unknown command")));
+  });
+
   it("//word sends /word as the prompt text", async () => {
     const { connect, params } = sequentialTurnConnect([
       { result: result() },
