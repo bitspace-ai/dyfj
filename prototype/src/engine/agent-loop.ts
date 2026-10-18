@@ -315,15 +315,20 @@ async function invokeTool(
           ),
         })
       : undefined;
+    // The frame is live; the log and the notice (which the stored receipt
+    // carries) take the recorded reason, which never quotes upstream text.
+    const recordedReason = "recordedReason" in commandResult
+      ? commandResult.recordedReason ?? failureReason
+      : failureReason;
     if (commandResult.isError) {
       state.lastStepFailure ??= {
         commandId: toolCall.name,
-        reason: failureReason ?? "not approved",
+        reason: recordedReason ?? "not approved",
         refused: commandResult.decision !== "allow",
       };
     }
-    if (failureReason !== undefined) {
-      logToolFailure(toolCall.name, durationMs, failureReason);
+    if (recordedReason !== undefined) {
+      logToolFailure(toolCall.name, durationMs, recordedReason);
     }
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       ...completed,

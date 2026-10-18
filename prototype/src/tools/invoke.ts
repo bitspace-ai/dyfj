@@ -135,6 +135,13 @@ export async function invokeCommand<TResult = unknown>(
               label: error.operatorReasonLabel,
               declared: Object.keys(command.inputSchema.properties ?? {}),
             }),
+          // Durable surfaces never keep text the executor did not compose.
+          recordedReason: fixedOperatorReason(
+            error.recordedReason ??
+              (error.operatorReasonLabel === undefined
+                ? error.operatorReason
+                : `${error.operatorReasonLabel} (server text not recorded)`),
+          ),
         }),
       };
     }

@@ -612,8 +612,8 @@ function defineExternalMcpToolCommand(input: {
         const failure = describeMcpCallError(error);
         throw new CommandExecutionError(
           `External MCP tool call failed: ${failure}.`,
-          // A class line quotes nothing, so it needs no echo check.
-          { operatorReason: failure },
+          // A class line quotes nothing: shown and recorded alike.
+          { operatorReason: failure, recordedReason: failure },
         );
       }
       if (result.isError === true) {
@@ -628,6 +628,9 @@ function defineExternalMcpToolCommand(input: {
           {
             operatorReason: `upstream error: ${upstream}`,
             operatorReasonLabel: "upstream error",
+            // The server's words are shown live, never recorded: an excerpt
+            // of an argument would pass any echo check.
+            recordedReason: "upstream error (server text not recorded)",
           },
         );
       }

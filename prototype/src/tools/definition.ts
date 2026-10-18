@@ -157,6 +157,11 @@ export type CommandInvocationResult<TResult = unknown> =
      * `reason`.
      */
     operatorReason?: string;
+    /**
+     * What durable surfaces record for this failure. Set whenever
+     * `operatorReason` is: upstream text is shown live, never recorded.
+     */
+    recordedReason?: string;
   }
   | {
     decision: "ask" | "deny";
@@ -212,14 +217,30 @@ export class CommandExecutionError extends Error {
    * reason is fixed text and is only scrubbed and capped.
    */
   declare public readonly operatorReasonLabel?: string;
+  /**
+   * What durable surfaces (the runtime log, the event log, the stored
+   * receipt) record instead of `operatorReason`, which is shown live only.
+   * A reason quoting upstream text records a fixed line here.
+   */
+  declare public readonly recordedReason?: string;
   constructor(
     publicReason: string,
-    options: { operatorReason?: string; operatorReasonLabel?: string } = {},
+    options: {
+      operatorReason?: string;
+      operatorReasonLabel?: string;
+      recordedReason?: string;
+    } = {},
   ) {
     super(publicReason);
     this.publicReason = publicReason;
     this.name = "CommandExecutionError";
-    for (const key of ["operatorReason", "operatorReasonLabel"] as const) {
+    for (
+      const key of [
+        "operatorReason",
+        "operatorReasonLabel",
+        "recordedReason",
+      ] as const
+    ) {
       if (options[key] !== undefined) {
         Object.defineProperty(this, key, {
           value: options[key],

@@ -1,7 +1,10 @@
 /**
- * The one-line reason an operator sees for a failed tool call: on the REPL's
- * ✗ line, in the runtime log, and in the durable `tool_call` event of a
- * command whose arguments are redacted.
+ * The one-line reason an operator sees for a failed tool call, live, on the
+ * REPL's ✗ line; and, for a command whose arguments are redacted and whose
+ * reason is this code's own, in the durable `tool_call` event. Upstream text
+ * is shown live only: an executor that quotes a server gives a fixed
+ * `recordedReason` for the runtime log, the event log and the stored receipt,
+ * because an excerpt of an argument would pass the check below.
  *
  * A failure reason can quote the call's own arguments back (an upstream
  * server echoing the body it rejected). The event store redacts argument

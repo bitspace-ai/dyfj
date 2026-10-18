@@ -974,8 +974,9 @@ const FAILING_COMMAND: CommandDefinition<string> = {
   minimumClearance: "loopback",
   executor: () => {
     throw new CommandExecutionError("External MCP tool call failed.", {
-      operatorReason: "upstream error: Error: the server said no",
+      operatorReason: "upstream error: Error: the server said no to a-private-excerpt",
       operatorReasonLabel: "upstream error",
+      recordedReason: "upstream error (server text not recorded)",
     });
   },
 };
@@ -995,7 +996,7 @@ test("a turn that ends with no reply after a tool call that ran and failed says 
   const notice = loop.result?.notice;
   assert.equal(
     notice,
-    "turn ended after a failed tool call (mcp.fake.save_note: upstream error: Error: the server said no); the model gave no reply",
+    "turn ended after a failed tool call (mcp.fake.save_note: upstream error (server text not recorded)); the model gave no reply",
   );
   assert.ok(
     loop.result!.receipt.split("\n").includes(`WARNING: ${notice}`),
@@ -1035,4 +1036,45 @@ test("a reply after a failed tool step, or no reply after a good one, gets no no
     loopTurn([toolReply([LIST("ok2")]), chatReply({ content: "" })])
   );
   assert.equal(silentAfterSuccess.value.result?.notice, undefined);
+});
+
+test("upstream text stays on the live frame and never reaches a durable surface", async () => {
+  const { value: loop, errors } = await capturingErrors(() =>
+    loopTurn([toolReply([SAVE_NOTE("x2")]), chatReply({ content: "" })], {
+      externalMcpCommands: [FAILING_COMMAND],
+    })
+  );
+  assert.equal(loop.error, null);
+  // The ephemeral frame keeps the server's (echo-checked) text.
+  const completed = loop.frames.find((f) =>
+    f.type === "toolCallCompleted" && f.callId === "x2"
+  );
+  assert.ok(completed?.type === "toolCallCompleted");
+  assert.ok(
+    String(completed.failureReason).includes("a-private-excerpt"),
+    String(completed.failureReason),
+  );
+  // The runtime log, the event rows and the stored session (receipt and
+  // all) hold only the fixed line.
+  const fixed = "upstream error (server text not recorded)";
+  assert.ok(
+    errors.includes(`[tool-failed] mcp.fake.save_note (0 ms): ${fixed}`) ||
+      errors.some((line) =>
+        line.startsWith("[tool-failed] mcp.fake.save_note (") &&
+        line.endsWith(`ms): ${fixed}`)
+      ),
+    JSON.stringify(errors),
+  );
+  assert.ok(!errors.some((line) => line.includes("a-private-excerpt")));
+  const eventRows = await rows(loop);
+  assert.equal(
+    eventRows.find((row) => row.tool_call_id === "x2")?.tool_result,
+    fixed,
+  );
+  assert.ok(!JSON.stringify(eventRows).includes("a-private-excerpt"));
+  assert.ok(!loop.result!.receipt.includes("a-private-excerpt"));
+  const sessionId = loop.result!.sessionId;
+  const stored = await loop.run.store.sessions.detail({ sessionId });
+  assert.ok(stored !== null && stored !== undefined);
+  assert.ok(!JSON.stringify(stored).includes("a-private-excerpt"));
 });

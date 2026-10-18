@@ -687,6 +687,7 @@ describe("external MCP command projection", () => {
       isError: true,
       reason: "External MCP tool call failed: client error (Error).",
       operatorReason: "client error (Error)",
+      recordedReason: "client error (Error)",
     });
     assert.partialDeepStrictEqual(events[0], {
       action: "invoke",
@@ -959,7 +960,7 @@ describe("external MCP failure reasons", () => {
       operatorReason,
       "upstream error (text withheld: it echoes argument body)",
     );
-    assert.equal(event.tool_result, operatorReason);
+    assert.equal(event.tool_result, "upstream error (server text not recorded)");
     assert.ok(!JSON.stringify(event).includes("Sonnet 5.5"));
   });
 
@@ -995,6 +996,25 @@ describe("external MCP failure reasons", () => {
       "upstream error (text withheld: arguments too large to check)",
     );
     assert.ok(!JSON.stringify(event).includes("deeply nested"));
+  });
+
+  it("an excerpt of an argument reaches the live line but never the durable event", async () => {
+    const body =
+      "Confidential acquisition: ExampleCo. Additional private details follow.";
+    const invoke = await failingSaveComment(
+      upstreamError("body rejected: Confidential acquisition: ExampleCo."),
+    );
+    const { modelReason, operatorReason, event } = await invoke({ body });
+    assert.ok(modelReason.includes("Confidential acquisition"), modelReason);
+    // The live line (the REPL frame) keeps the checked text; the excerpt is
+    // not a whole echo, so it shows there.
+    assert.ok(
+      operatorReason?.includes("Confidential acquisition"),
+      String(operatorReason),
+    );
+    // Nothing durable keeps upstream text.
+    assert.equal(event.tool_result, "upstream error (server text not recorded)");
+    assert.ok(!JSON.stringify(event).includes("Confidential"));
   });
 
   it("a secret-shaped string in the server's error is scrubbed for the operator", async () => {

@@ -93,8 +93,8 @@ export function redactCommandArguments(
  * output, which for `redactResult` tools (bash) is replaced with the sentinel
  * so secrets never reach the durable log (CWE-532). An error reason is ours,
  * but it can quote what an upstream server said, and a server can echo the
- * arguments back: the executor's operator reason, already checked, is
- * persisted when there is one; otherwise, for a command that redacts any
+ * arguments back: the executor's recorded reason, which never quotes upstream
+ * text, is persisted when there is one; otherwise, for a command that redacts any
  * argument, the reason's first `ECHO_WINDOW_CHARS` characters are checked
  * for echoes of those values and kept, or withheld naming the arguments when
  * they echo one. Credential-shaped text is scrubbed either way.
@@ -105,8 +105,8 @@ export function redactCommandResult(
   args: Record<string, unknown> = {},
 ): string {
   if (result.isError) {
-    if ("operatorReason" in result && result.operatorReason !== undefined) {
-      return result.operatorReason;
+    if ("recordedReason" in result && result.recordedReason !== undefined) {
+      return result.recordedReason;
     }
     const redacted = redactedArgumentValues(command, args);
     if (Object.keys(redacted).length === 0) {
