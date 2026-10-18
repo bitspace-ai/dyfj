@@ -498,10 +498,20 @@ README are tracked separately in its Revision history section.
   with the `thinking-display-updates-2026-08-18` beta header. That returns the
   notes as text and keeps the reasoning hidden. The operator sees each
   tool-calling reply's text and notes before its tools run, then the reply.
-  Other Anthropic
-  models are sent no thinking configuration, as before. Thinking tokens were
-  already counted: Anthropic includes them in `output_tokens`, which feed each
-  `provider_call` event's tokens and `cost_total`, and tests now pin that.
+  Other Anthropic models are sent no thinking configuration, as before.
+  Thinking tokens were already counted: Anthropic includes them in
+  `output_tokens`, which feed each `provider_call` event's tokens and
+  `cost_total`, and tests now pin that.
+
+- **A `DOLT_PASSWORD` secret pointer now reaches the Dolt connection.** The
+  runtime read the Dolt connection settings, password included, before it
+  resolved the `[secrets.pointers]` entries. When `DOLT_PASSWORD` came only from a
+  pointer, the boot log said `secret DOLT_PASSWORD: resolved`, but the pool
+  logged in with an empty password and every Dolt query failed. The runtime
+  policy still takes the Dolt host and port before pointers resolve, as it
+  needs them to compose the egress grant. The user, password and database are
+  now read after resolution. A `DOLT_PASSWORD` already in the environment still
+  wins over its pointer.
 
 - **Ctrl-C stops a `dyfj start` runtime again, including the next one in the
   same terminal.** The `dyfj` client created a readline interface on the
