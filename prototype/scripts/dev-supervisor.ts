@@ -14,6 +14,9 @@
  * - A REPL change is built first. A build failure applies nothing: the REPL
  *   and the runtime keep running, the error is shown on one line, and the
  *   reload stays pending for the next save.
+ * - A change that reloads both halves is told once: the REPL being replaced
+ *   never reconnects, so the new one is started with the reason and says
+ *   `runtime and REPL reloaded (...)`; the supervisor adds no line of its own.
  * - The runtime restarts before the REPL. A runtime that boots on the working
  *   tree becomes the last good code (`dev-snapshot.ts`). One that fails to
  *   boot is replaced by the last good code, with the failure passed to it for
@@ -70,8 +73,12 @@ export interface DevRuntimePort {
 }
 
 export interface DevReplPort {
-  /** Start the REPL, resuming `session` when there is one. */
-  launch(session: string | null): void;
+  /**
+   * Start the REPL, resuming `session` when there is one. `reloaded` is the
+   * reason when the runtime was reloaded in the same change: the REPL being
+   * replaced never saw that reload, so the new one tells the operator.
+   */
+  launch(session: string | null, reloaded?: string): void;
   /** Ask the REPL to leave as `/quit` does, and wait until it has. */
   exit(): Promise<void>;
   /** Tell the REPL why its runtime is about to restart. */
@@ -356,8 +363,13 @@ export class DevSupervisor {
         this.#replExitExpected = false;
       }
       if (this.#stopping) return;
-      ports.repl.launch(this.#session);
-      ports.report(`REPL rebuilt (${reason}); started it again`);
+      if (job.runtime) {
+        // One notice for both halves, said by the new REPL (`DYFJ_DEV_RELOADED`).
+        ports.repl.launch(this.#session, reason);
+      } else {
+        ports.repl.launch(this.#session);
+        ports.report(`REPL rebuilt (${reason}); started it again`);
+      }
     }
   }
 

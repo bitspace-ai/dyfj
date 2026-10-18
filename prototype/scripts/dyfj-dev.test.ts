@@ -14,6 +14,7 @@ import {
   parseDevArgs,
   parseReplMessage,
   readLogSince,
+  reloadedEnv,
   replArgs,
 } from "./dyfj-dev.ts";
 
@@ -148,6 +149,22 @@ test("the last good code runs from the snapshot with the runtime's own args", ()
     ["--flag", ".dyfj-dev-last-good/server/main.ts", "--autostarted"],
   );
   assert.throws(() => lastGoodArgs(["--autostarted"], "x"), /server entry/);
+});
+
+test("the launcher's missing-entry error is a sentence that says what to look at", () => {
+  assert.throws(
+    () => lastGoodArgs(["--autostarted"], "x"),
+    {
+      message:
+        "dyfj dev cannot run the last good code: the runtime's launch arguments do not " +
+        "include the server entry src/server/main.ts.",
+    },
+  );
+});
+
+test("the REPL learns of a both-halves reload through its environment, and not from the shell", () => {
+  assert.deepStrictEqual(reloadedEnv("1 file changed"), { DYFJ_DEV_RELOADED: "1 file changed" });
+  assert.deepStrictEqual(reloadedEnv(undefined), { DYFJ_DEV_RELOADED: "" }, "an inherited value is overridden");
 });
 
 test("a failed boot's detail is its own log output, without the dev header", () => {

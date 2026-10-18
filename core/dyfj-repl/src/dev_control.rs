@@ -12,6 +12,11 @@
 //!   rebuilt REPL resumes it; `reload`, for `/reload`; and `rollback`, for
 //!   `/rollback`, which switches the runtime to the last good code.
 //!
+//! One thing travels outside the channel: when a change reloads the runtime
+//! and the REPL together, the old REPL is replaced before it can reconnect, so
+//! the supervisor starts the new one with the reason in `DYFJ_DEV_RELOADED`,
+//! and the new REPL tells the operator (`reloaded_reason`).
+//!
 //! Anything else is dropped without a word: a line that is not JSON, an
 //! unknown type, a line longer than `MAX_LINE`. A channel that closes means
 //! the supervisor is gone, and the REPL carries on as a plain REPL. Without the
@@ -27,6 +32,10 @@ use tokio::sync::{mpsc, watch};
 
 pub const CONTROL_FD_ENV: &str = "DYFJ_DEV_CONTROL_FD";
 
+/// Set by the supervisor on a REPL that replaces one, after a change that
+/// reloaded the runtime too; its value is the reason, such as `1 file changed`.
+pub const RELOADED_ENV: &str = "DYFJ_DEV_RELOADED";
+
 /// The longest control line read, in bytes; a longer one is dropped whole.
 pub const MAX_LINE: usize = 4096;
 
@@ -40,19 +49,24 @@ pub enum Control {
     Exit,
 }
 
+/// A reason as shown: no terminal control, at most `MAX_REASON` characters.
+fn clean_reason(raw: &str) -> String {
+    visible(raw).chars().take(MAX_REASON).collect()
+}
+
+/// Why this REPL replaced one that reloaded with the runtime, from the
+/// environment; `None` when the variable is unset or empty.
+pub fn reloaded_reason(env: impl Fn(&str) -> Option<String>) -> Option<String> {
+    env(RELOADED_ENV).filter(|raw| !raw.is_empty()).map(|raw| clean_reason(&raw))
+}
+
 /// One control line as the supervisor sent it, or `None` for anything that is
 /// not a known message.
 pub fn parse_line(line: &[u8]) -> Option<Control> {
     let value: Value = serde_json::from_slice(line).ok()?;
     let object = value.as_object()?;
     match object.get("type")?.as_str()? {
-        "reloading" => {
-            let reason: String = visible(object.get("reason")?.as_str()?)
-                .chars()
-                .take(MAX_REASON)
-                .collect();
-            Some(Control::Reloading(reason))
-        }
+        "reloading" => Some(Control::Reloading(clean_reason(object.get("reason")?.as_str()?))),
         "exit" => Some(Control::Exit),
         _ => None,
     }
@@ -257,6 +271,20 @@ mod tests {
         let Some(Control::Reloading(reason)) = parse_line(long.as_bytes()) else {
             panic!("not parsed")
         };
+        assert!(!reason.contains('\u{1b}'));
+        assert_eq!(reason.chars().count(), MAX_REASON);
+    }
+
+    #[test]
+    fn a_reload_reason_in_the_environment_is_read_sanitised_and_capped() {
+        let env = |value: &'static str| {
+            move |key: &str| (key == RELOADED_ENV).then(|| value.to_string())
+        };
+        assert_eq!(reloaded_reason(env("1 file changed")).as_deref(), Some("1 file changed"));
+        assert_eq!(reloaded_reason(env("")), None, "an empty reason is no reason");
+        assert_eq!(reloaded_reason(|_| None), None);
+        let long = "x".repeat(500);
+        let reason = reloaded_reason(|_| Some(format!("a\u{1b}[2Jb{long}"))).unwrap();
         assert!(!reason.contains('\u{1b}'));
         assert_eq!(reason.chars().count(), MAX_REASON);
     }

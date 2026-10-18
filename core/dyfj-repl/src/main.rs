@@ -161,6 +161,13 @@ async fn main() -> Result<()> {
             }
         }
     }
+    // Replacing a REPL that reloaded together with the runtime: this is the
+    // only place the operator hears of it, one notice before the posture line.
+    if control.is_some()
+        && let Some(reason) = dev_control::reloaded_reason(|key| std::env::var(key).ok())
+    {
+        println!("\n{}", link::both_reloaded_notice(Some(&reason), session.id.as_deref()));
+    }
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.

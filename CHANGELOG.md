@@ -468,6 +468,22 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`dyfj dev` says it once when a change reloads the runtime and the REPL.**
+  A change that touched both halves restarted the runtime and replaced the
+  REPL before the old REPL could reconnect, so no `runtime reloaded` notice
+  ever appeared; only the supervisor's `REPL rebuilt` line did. The supervisor
+  now starts the new REPL with the reason in `DYFJ_DEV_RELOADED`, and that REPL
+  prints one line before its posture line: `runtime and REPL reloaded (1 file
+  changed); resumed session <id>`. A REPL-only change still prints `REPL
+  rebuilt (...)`, and a runtime-only change still prints `runtime reloaded
+  (...)`.
+
+- **`dyfj dev`'s missing-server-entry error is a sentence.** When the runtime's
+  launch arguments lack `src/server/main.ts`, the last good code cannot be
+  started, and the error now says so (`dyfj dev cannot run the last good code:
+  the runtime's launch arguments do not include the server entry
+  src/server/main.ts.`) in place of `the runtime's args name no server entry`.
+
 - **A failed external MCP call says why.** Every failure of a configured
   `mcp.<server>.<tool>` command used to reach the model, the REPL, the event
   log and the runtime log as the fixed `External MCP tool call failed`. When

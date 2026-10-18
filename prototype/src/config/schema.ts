@@ -415,6 +415,15 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "number",
     kind: "value",
   },
+  // Why the runtime reloaded in the same change that replaced this REPL; set
+  // by `dyfj dev`, so the new REPL can say it once.
+  {
+    key: "devReloaded",
+    envVar: "DYFJ_DEV_RELOADED",
+    domain: "client",
+    type: "string",
+    kind: "value",
+  },
   // Launch-time grants the CLI derives for the external-agent runner.
   {
     key: "clientNodePath",

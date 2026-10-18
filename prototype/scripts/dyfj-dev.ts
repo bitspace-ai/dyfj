@@ -142,6 +142,15 @@ export function replArgs(base: readonly string[], session: string | null): strin
   return session === null ? [...base] : [...base, "--session", session];
 }
 
+/**
+ * The environment's `DYFJ_DEV_RELOADED` for a REPL: the reason when the
+ * runtime reloaded in the same change, and otherwise empty, which overrides a
+ * value inherited from the operator's shell.
+ */
+export function reloadedEnv(reloaded: string | undefined): Record<string, string> {
+  return { DYFJ_DEV_RELOADED: reloaded ?? "" };
+}
+
 /** One control line from the REPL, or null for anything else. */
 export function parseReplMessage(line: string): ReplMessage | null {
   if (line.length > MAX_CONTROL_LINE) return null;
@@ -196,7 +205,12 @@ const SERVER_ENTRY = "src/server/main.ts";
 /** The runtime's args with its server entry swapped for the snapshot's. */
 export function lastGoodArgs(args: readonly string[], entry: string): string[] {
   const at = args.indexOf(SERVER_ENTRY);
-  if (at < 0) throw new Error(`the runtime's args name no server entry (${SERVER_ENTRY})`);
+  if (at < 0) {
+    throw new Error(
+      "dyfj dev cannot run the last good code: the runtime's launch arguments do not " +
+        `include the server entry ${SERVER_ENTRY}.`,
+    );
+  }
   return args.map((arg, i) => (i === at ? entry : arg));
 }
 
@@ -565,7 +579,7 @@ class DevRepl implements DevReplPort {
     this.base = base;
   }
 
-  launch(session: string | null): void {
+  launch(session: string | null, reloaded?: string): void {
     const child = spawn(REPL_BIN, replArgs(this.base, session), {
       stdio: ["inherit", "inherit", "inherit", "pipe"],
       env: {
@@ -574,6 +588,7 @@ class DevRepl implements DevReplPort {
         DYFJ_RUNTIME_LOG: this.log,
         DYFJ_PROTOTYPE_ROOT: PROTOTYPE,
         DYFJ_DEV_CONTROL_FD: "3",
+        ...reloadedEnv(reloaded),
       },
     });
     this.#child = child;
