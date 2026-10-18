@@ -104,7 +104,7 @@ fn is_command_word(word: &str) -> bool {
 /// Every other line, a paste included, goes out exactly as typed.
 pub fn prompt_text(line: &str) -> std::borrow::Cow<'_, str> {
     let trimmed = line.trim();
-    if !trimmed.contains('\n') {
+    if !line.contains('\n') {
         if let Some(rest) = trimmed.strip_prefix("//") {
             let word = rest.split_whitespace().next().unwrap_or("");
             if is_command_word(word) && rest.starts_with(word) {
@@ -118,7 +118,7 @@ pub fn prompt_text(line: &str) -> std::borrow::Cow<'_, str> {
 /// Parse one completed input. `None` means it is a prompt, not a command.
 pub fn parse(input: &str) -> Option<Command> {
     let trimmed = input.trim();
-    if !trimmed.starts_with('/') || trimmed.contains('\n') {
+    if !trimmed.starts_with('/') || input.contains('\n') {
         return None;
     }
     let mut words = trimmed.split_whitespace();
@@ -1031,6 +1031,14 @@ mod tests {
         // Anything else goes out exactly as typed.
         for line in ["/status", "//usr/bin/env", "// a comment", "//", "//status\nmore", "plain"] {
             assert_eq!(prompt_text(line), line, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_paste_with_edge_newlines_is_text_not_a_command() {
+        for line in ["\n//status\n", "\n/status\n", "/status\n", "//status\n"] {
+            assert_eq!(parse(line), None, "{line:?}");
+            assert_eq!(prompt_text(line), line, "{line:?}");
         }
     }
 

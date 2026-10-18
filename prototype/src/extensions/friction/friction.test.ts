@@ -386,7 +386,7 @@ describe("postFriction", () => {
       assert.equal(issueCalls, 1);
     });
 
-    it("never retries the comment write, so a slow write cannot post twice", async () => {
+    it("calls the comment write once and does not retry it after a timeout", async () => {
       const createComment = mock.fn(async (): Promise<unknown> => {
         throw timeout();
       });
