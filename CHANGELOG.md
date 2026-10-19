@@ -23,6 +23,24 @@ README are tracked separately in its Revision history section.
 - **A failed `/friction` prints its text back.** Both REPLs follow the failure
   with `retry with: /friction <sev> [--escaped] <text>`, so one paste retries
   a report that was typed once.
+- **Claude Haiku 5.5 in the model catalog.** `claude-haiku-5-5` reaches
+  Anthropic directly, on the fresh-install path and through migration
+  `018_models_claude_haiku_5_5.sql` alike. The older
+  `claude-haiku-4-5-20251001` row stays active.
+
+  Anthropic prices Haiku 5.5 by prompt size, and the row records the tier for
+  prompts over 100,000 tokens: $0.50 in, $2.50 out, $0.05 cache read and
+  $0.625 cache write per million. Prompts up to 100,000 tokens are billed at a
+  fifth of those rates, so a short turn costs less than its catalog estimate.
+  The cache-write price is the 5-minute rate; 1-hour caches cost more.
+  `schema/catalog/VERIFICATION-2026-10-18.md` records the source, the full
+  tiered table and the capture date.
+
+  Haiku 5.5 runs adaptive thinking, but Anthropic does not list it among the
+  models that write progress updates between tool calls, so the row omits
+  `thinking-progress-updates` and the adapter sends it no thinking
+  configuration.
+
 - **Recorded costs say whether they were billed or estimated.** OpenRouter
   reports what it charged for each call (`usage.cost`), and an OpenRouter call
   now records that amount as its cost in place of the catalog estimate, when
