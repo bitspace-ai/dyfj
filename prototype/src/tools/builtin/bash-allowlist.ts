@@ -25,7 +25,7 @@
  */
 
 import { lstatSync, realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isWithinRoot } from "./file-access.ts";
 
 /** Longer commands always ask: an approver should read what runs. */
@@ -210,16 +210,45 @@ function exists(path: string): boolean {
   }
 }
 
-/** Inside the workspace lexically and, when it exists, by its real path. */
-function pathInside(rootReal: string, cwd: string, path: string): boolean {
-  const abs = resolve(cwd, path);
-  if (!isWithinRoot(rootReal, abs)) return false;
-  if (!exists(abs)) return true;
-  try {
-    return isWithinRoot(rootReal, realpathSync(abs));
-  } catch {
-    return false; // a dangling or unreadable link
+/**
+ * Where `path`, taken relative to the real directory `cwd`, resolves as the
+ * kernel resolves it: segment by segment, following each existing symlink
+ * before the next segment, so `link/..` is the parent of the link's target,
+ * not `cwd`. Collapsing `..` lexically first would let `escape/../x` pass as
+ * an in-workspace path while the shell reads outside through `escape`. Past
+ * the first segment that does not exist the rest is taken as written, since
+ * nothing below a missing directory can be a symlink. Null when a link
+ * cannot be resolved or a `..` follows a missing segment: the caller asks.
+ */
+export function resolveFollowingLinks(cwd: string, path: string): string | null {
+  let current = isAbsolute(path) ? "/" : cwd;
+  let resolved = true;
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (!resolved) return null;
+      current = dirname(current);
+      continue;
+    }
+    const next = join(current, segment);
+    if (!resolved || !exists(next)) {
+      current = next;
+      resolved = false;
+      continue;
+    }
+    try {
+      current = realpathSync(next);
+    } catch {
+      return null; // a dangling or unreadable link
+    }
   }
+  return current;
+}
+
+/** Inside the workspace as the kernel resolves it, symlinks followed. */
+function pathInside(rootReal: string, cwd: string, path: string): boolean {
+  const real = resolveFollowingLinks(cwd, path);
+  return real !== null && isWithinRoot(rootReal, real);
 }
 
 function looksLikePath(word: string): boolean {
@@ -662,11 +691,10 @@ function commandAllowed(words: string[], cwd: string, rootReal: string): string 
 }
 
 function directoryInside(rootReal: string, cwd: string, path: string): string | null {
-  const abs = resolve(cwd, path);
-  if (!isWithinRoot(rootReal, abs)) return null;
+  const real = resolveFollowingLinks(cwd, path);
+  if (real === null || !isWithinRoot(rootReal, real)) return null;
   try {
-    const real = realpathSync(abs);
-    return isWithinRoot(rootReal, real) && statSync(real).isDirectory() ? real : null;
+    return statSync(real).isDirectory() ? real : null;
   } catch {
     return null;
   }

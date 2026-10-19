@@ -29,10 +29,13 @@
  */
 
 import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { type Env, processEnv } from "../../config/mod.ts";
 import type { CommandCall, CommandDefinition } from "../definition.ts";
-import { classifyReadOnlyBash } from "./bash-allowlist.ts";
+import {
+  classifyReadOnlyBash,
+  resolveFollowingLinks,
+} from "./bash-allowlist.ts";
 import { isWithinRoot } from "./file-access.ts";
 import {
   type BoundedResult,
@@ -118,6 +121,10 @@ export const BASH_ALLOWLIST_BASIS = "policy:allow:bash-allowlist";
  * - `GIT_CONFIG_NOSYSTEM=1`: no system-wide config.
  * What remains is `$GIT_DIR` itself (`.git/config`, `.git/info/attributes`),
  * which the write tools refuse to touch, and the operator's own global config.
+ * In particular a configured `diff.external` still runs on `git diff`: an
+ * empty override makes git fail rather than skip it, and the model cannot
+ * plant one, so it comes only from the operator's config or a command the
+ * operator approved.
  */
 export const GIT_SAFETY_ENV: Readonly<Record<string, string>> = {
   GIT_CONFIG_NOSYSTEM: "1",
@@ -228,8 +235,8 @@ export function resolveBashTimeoutMs(
 
 /**
  * The directory one call runs in, from its `cwd` argument: the workspace root
- * when absent, otherwise an existing directory, relative to the root or
- * absolute, whose real path is inside the root. Anything else is refused, and
+ * when absent, otherwise an existing directory, relative to the root, that
+ * resolves inside it with symlinks followed segment by segment. Anything else is refused, and
  * the command does not run.
  */
 export function resolveBashCwd(
@@ -240,10 +247,15 @@ export function resolveBashCwd(
   if (typeof cwd !== "string" || cwd === "") {
     return { error: "cwd must be a non-empty path" };
   }
+  // Relative only, as the file tools' paths are: an absolute one would put the
+  // operator's username and layout into the call's durable arguments.
+  if (isAbsolute(cwd)) {
+    return { error: "cwd must be relative to the workspace root" };
+  }
   try {
     const rootReal = realpathSync(root);
-    const real = realpathSync(resolve(rootReal, cwd));
-    if (!isWithinRoot(rootReal, real)) {
+    const real = resolveFollowingLinks(rootReal, cwd);
+    if (real === null || !isWithinRoot(rootReal, real)) {
       return { error: "cwd must be inside the workspace" };
     }
     if (!statSync(real).isDirectory()) {

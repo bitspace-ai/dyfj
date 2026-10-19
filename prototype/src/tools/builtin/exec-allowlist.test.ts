@@ -52,6 +52,9 @@ describe("resolveBashCwd", () => {
   it("defaults to the workspace root", () => {
     assert.deepEqual(resolveBashCwd(root, undefined), { cwd: root });
   });
+  it("refuses an absolute path, even one inside the workspace", () => {
+    assert.ok("error" in resolveBashCwd(root, join(root, "src")));
+  });
   it("resolves a relative directory inside the workspace", () => {
     assert.deepEqual(resolveBashCwd(root, "src"), { cwd: join(root, "src") });
   });
@@ -63,6 +66,7 @@ describe("resolveBashCwd", () => {
       ["a file", "f"],
       ["a missing directory", "nope"],
       ["an empty string", ""],
+      ["a symlink then ..", "out-link/.."],
     ] as const
   ) {
     it(`refuses ${label}`, () => {

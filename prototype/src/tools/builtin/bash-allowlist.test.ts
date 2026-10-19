@@ -21,6 +21,8 @@ before(() => {
   writeFileSync(join(outside, "secret"), "s\n");
   symlinkSync(join(outside, "secret"), join(root, "escape"));
   symlinkSync(outside, join(root, "escape-dir"));
+  // A link to a link to outside.
+  symlinkSync(join(root, "escape-dir"), join(root, "chain"));
 });
 
 after(() => rmSync(base, { recursive: true }));
@@ -194,6 +196,16 @@ describe("classifyReadOnlyBash: anything else asks", () => {
       ["rg ignore file through a symlink", "rg --ignore-file=escape foo"],
       ["rg ignore file as the next word", "rg --ignore-file escape foo"],
       ["rg pattern file through a symlink", "rg -fescape foo"],
+      // The kernel follows a symlink before `..`, so `..` must not be
+      // collapsed lexically first.
+      ["a symlink then .. out of the workspace", "cat escape-dir/../outside/secret"],
+      ["cd through a symlink then ..", "cd escape-dir/.. && cat outside/secret"],
+      ["a symlink chain to outside", "cat chain/secret"],
+      ["a symlink chain then ..", "cat chain/../outside/secret"],
+      [".. past the workspace root", "cat src/../../outside/secret"],
+      ["a missing path under an escaping symlink", "cat escape-dir/missing"],
+      ["a missing path under a symlink chain", "ls chain/missing/deeper"],
+      ["an option value through a symlink then ..", "grep -f escape-dir/../outside/secret f"],
       ["filename indirection", "wc --files0-from=f"],
       ["an option abbreviation", "wc --files0=f"],
       ["an unknown ls option", "ls --dereference"],
