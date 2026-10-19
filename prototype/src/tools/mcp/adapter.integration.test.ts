@@ -8,7 +8,7 @@ import {
   parseMcpServersConfig,
   parseSecretsConfig,
 } from "../../config/mod.ts";
-import { buildExternalMcpCommands } from "./adapter.ts";
+import { buildExternalMcpCommands, callMcpTool } from "./adapter.ts";
 import { composeRuntimePolicy } from "../../config/mod.ts";
 
 import {
@@ -219,6 +219,48 @@ test("external MCP discovery and call stay strict, allowlisted, and framed", asy
     !requests.some((request) => request.method === "initialize"),
     "strict modern client attempted legacy initialize",
   );
+});
+
+test("a tool call waits out a server that takes longer than the 5 s discovery bound to answer", async () => {
+  // Linear can be slow to answer the first request. Discovery keeps its 5 s
+  // bound, but a tool call connects under the 30 s call bound, so a slow
+  // round trip inside that bound succeeds instead of failing with
+  // "timed out after 5 s waiting for the server".
+  const calls: string[] = [];
+  let delayed = false;
+  const http = await startLoopbackMcpServer(
+    () => fixtureServer((id) => calls.push(id)),
+    async (request, mcp) => {
+      if (request.method === "POST" && !delayed) {
+        delayed = true;
+        await new Promise((resolve) => setTimeout(resolve, 5_500));
+      }
+      return mcp.fetch(request);
+    },
+  );
+  try {
+    const server = fixtureConfig(http.url);
+    const result = await callMcpTool(
+      {
+        server,
+        token: "fixture-secret",
+        tool: "get_issue",
+        arguments: { id: "slow-1" },
+        inputSchema: {
+          type: "object",
+          properties: { id: { type: "string" } },
+        },
+      },
+      composeRuntimePolicy({ mcpServers: [server] }),
+    );
+    assert(
+      JSON.stringify(result).includes("remote:slow-1"),
+      "the slow call did not return its result",
+    );
+    assertEquals(calls, ["slow-1"]);
+  } finally {
+    await http.close();
+  }
 });
 
 test("external MCP redirect refusal never reaches the redirect target", async () => {

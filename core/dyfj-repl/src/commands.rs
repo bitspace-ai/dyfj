@@ -59,6 +59,9 @@ pub enum Command {
     IdeaList,
     /// A recognised command used wrongly; the message says how to use it.
     Usage(String),
+    /// A single `/word` that is no command (the word, without the slash). It
+    /// is refused locally: sent on, it would be a paid turn.
+    Unknown(String),
 }
 
 const SEVERITIES: [&str; 4] = ["blocker", "major", "minor", "paper-cut"];
@@ -86,14 +89,36 @@ pub fn normalize_session_ref(value: &str) -> Option<String> {
 /// Return false for any command line whose first word is `/friction`,
 /// whichever command it parses as, so a rejected `/friction` is not recorded
 /// as the last command.
-pub fn records_as_last_command(line: &str, _command: &Command) -> bool {
+pub fn records_as_last_command(line: &str, command: &Command) -> bool {
     line.split_whitespace().next() != Some("/friction")
+        && !matches!(command, Command::Unknown(_))
+}
+
+/// A command word as the REPL reads one: letters, digits and hyphens.
+fn is_command_word(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// The text a line is sent as when [`parse`] says it is a prompt. A single
+/// `//word` line is the escape for a command word: it goes out as `/word`.
+/// Every other line, a paste included, goes out exactly as typed.
+pub fn prompt_text(line: &str) -> std::borrow::Cow<'_, str> {
+    let trimmed = line.trim();
+    if !line.contains('\n') {
+        if let Some(rest) = trimmed.strip_prefix("//") {
+            let word = rest.split_whitespace().next().unwrap_or("");
+            if is_command_word(word) && rest.starts_with(word) {
+                return std::borrow::Cow::Owned(trimmed[1..].to_string());
+            }
+        }
+    }
+    std::borrow::Cow::Borrowed(line)
 }
 
 /// Parse one completed input. `None` means it is a prompt, not a command.
 pub fn parse(input: &str) -> Option<Command> {
     let trimmed = input.trim();
-    if !trimmed.starts_with('/') || trimmed.contains('\n') {
+    if !trimmed.starts_with('/') || input.contains('\n') {
         return None;
     }
     let mut words = trimmed.split_whitespace();
@@ -135,7 +160,12 @@ pub fn parse(input: &str) -> Option<Command> {
             }
             _ => Command::Usage("usage: /idea mark <label...>, /idea list".into()),
         },
-        _ => return None,
+        // One bare `/word` is an unknown command. Any other slash line (a
+        // path, `/status!`, `//word`) is prompt text, as it always was.
+        _ => match head.strip_prefix('/').filter(|word| is_command_word(word)) {
+            Some(word) => Command::Unknown(word.to_string()),
+            None => return None,
+        },
     })
 }
 
@@ -214,6 +244,7 @@ commands (type them alone on a line; inside a paste they are prompt text):
   /session | /session list | /session switch <id>     show, list or resume sessions
   /friction <sev> [--escaped] <text...>                post a daily-driver friction
   /idea mark <label...> | /idea list                   mark or list ideas
+  //word                                               send /word as text
   /quit, /exit, Ctrl-D                                 leave";
 
 /// Run a parsed command against the runtime.
@@ -262,6 +293,9 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
     match command {
         Command::Help => eprintln!("{HELP}"),
         Command::Usage(message) => eprintln!("{message}"),
+        Command::Unknown(word) => {
+            eprintln!("unknown command /{}; /help lists commands", visible(&word))
+        }
         Command::Model {
             slug,
             approve_paid,
@@ -859,8 +893,17 @@ async fn friction(
             eprintln!("{}", visible(str_field(&v, "firstLine")));
             eprintln!("comment id: {}", visible(str_field(&v, "commentId")));
         }
-        Err(err) => error_line("friction capture failed", &err),
+        Err(err) => {
+            error_line("friction capture failed", &err);
+            // The text was typed once; print it back so one paste retries it.
+            eprintln!("{}", visible(&friction_retry_line(severity, escaped, text)));
+        }
     }
+}
+
+fn friction_retry_line(severity: &str, escaped: bool, text: &str) -> String {
+    let flag = if escaped { " --escaped" } else { "" };
+    format!("retry with: /friction {severity}{flag} {text}")
 }
 
 async fn idea_mark(client: &Client, session: &Session, label: &str) {
@@ -915,7 +958,10 @@ async fn idea_list(client: &Client, session: &Session) {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, format_models, friction_context, model_refusal, parse, records_as_last_command};
+    use super::{
+        Command, format_models, friction_context, friction_retry_line, model_refusal, parse,
+        prompt_text, records_as_last_command,
+    };
 
     #[test]
     fn a_model_is_refused_when_absent_or_unpriced() {
@@ -958,6 +1004,61 @@ mod tests {
         assert_eq!(parse("/usr/bin/env is what?"), None);
         // A paste is one string; its first line is content, not a command.
         assert_eq!(parse("/model z-ai/glm-5.2\nand then prose"), None);
+    }
+
+    #[test]
+    fn an_unknown_command_word_is_refused_not_sent() {
+        for line in ["/status", "/status now please", "  /Status-2  ", "/x"] {
+            let word = line.split_whitespace().next().unwrap().trim_start_matches('/');
+            assert_eq!(parse(line), Some(Command::Unknown(word.into())), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_slash_line_that_is_not_one_command_word_stays_a_prompt() {
+        for line in ["/", "/status!", "/usr/bin/env is what?", "/a/b", "/_x", "//status"] {
+            assert_eq!(parse(line), None, "{line}");
+        }
+        // A paste's first line is content, even when it is an unknown word.
+        assert_eq!(parse("/status\nmore prose"), None);
+    }
+
+    #[test]
+    fn a_doubled_slash_sends_the_command_word_as_text() {
+        assert_eq!(prompt_text("//status"), "/status");
+        assert_eq!(prompt_text("//status of the build"), "/status of the build");
+        assert_eq!(prompt_text("  //status  "), "/status");
+        // Anything else goes out exactly as typed.
+        for line in ["/status", "//usr/bin/env", "// a comment", "//", "//status\nmore", "plain"] {
+            assert_eq!(prompt_text(line), line, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_paste_with_edge_newlines_is_text_not_a_command() {
+        for line in ["\n//status\n", "\n/status\n", "/status\n", "//status\n"] {
+            assert_eq!(parse(line), None, "{line:?}");
+            assert_eq!(prompt_text(line), line, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn a_refused_command_is_not_the_last_command() {
+        let unknown = Command::Unknown("status".into());
+        assert!(!records_as_last_command("/status", &unknown));
+        assert!(records_as_last_command("/help", &Command::Help));
+    }
+
+    #[test]
+    fn a_failed_friction_prints_its_text_back_as_one_command() {
+        assert_eq!(
+            friction_retry_line("major", true, "Linear was slow"),
+            "retry with: /friction major --escaped Linear was slow"
+        );
+        assert_eq!(
+            friction_retry_line("minor", false, "no flag"),
+            "retry with: /friction minor no flag"
+        );
     }
 
     #[test]

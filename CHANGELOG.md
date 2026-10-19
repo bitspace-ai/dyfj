@@ -11,6 +11,18 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Both REPLs refuse an unknown slash command instead of sending it.** A line
+  that is one `/word` (letters, digits and hyphens, then a space or the end of
+  the line) and names no command now prints `unknown command /word; /help
+  lists commands` and sends nothing, so a mistyped command is no longer a paid
+  model turn. Any other slash line, such as a path (`/usr/bin/env is what?`),
+  is still sent as text, and so is any multi-line input, even one that opens
+  with a command word. `//word` sends `/word`
+  as text, and `/help` lists that escape. Under the Rust REPL outside
+  `dyfj dev`, `/reload` and `/rollback` are refused the same way.
+- **A failed `/friction` prints its text back.** Both REPLs follow the failure
+  with `retry with: /friction <sev> [--escaped] <text>`, so one paste retries
+  a report that was typed once.
 - **Claude Haiku 5.5 in the model catalog.** `claude-haiku-5-5` reaches
   Anthropic directly, on the fresh-install path and through migration
   `018_models_claude_haiku_5_5.sql` alike. The older
@@ -485,6 +497,14 @@ README are tracked separately in its Revision history section.
   The underlying database driver error is still attached unchanged.
 
 ### Fixed
+
+- **An MCP tool call's connect and version probe use the call bound.** They
+  ran on the 5 s discovery bound, so a slow server failed a call before its
+  30 s allowance began. Discovery keeps 5 s.
+- **`/friction` retries a timed-out read once.** A timeout while reading the
+  issue or its comments is retried one time; the comment write is never
+  retried by that invocation. A failed write still prints a retry command, and
+  following it after an uncertain timeout can post the comment again.
 
 - **`dyfj dev` says it once when a change reloads the runtime and the REPL.**
   A change that touched both halves restarted the runtime and then replaced

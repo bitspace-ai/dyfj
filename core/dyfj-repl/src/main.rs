@@ -284,8 +284,9 @@ async fn main() -> Result<()> {
         }
 
         // `/reload` and `/rollback` are commands only under `dyfj dev`;
-        // elsewhere they stay prompts, as any unknown `/word` does.
-        if let Some(control) = control.as_ref() {
+        // elsewhere they are refused as unknown commands, as any `/word` is.
+        // A multi-line paste is text, so it is never a control command.
+        if let Some(control) = control.as_ref().filter(|_| !line.contains('\n')) {
             match line.trim() {
                 "/reload" => {
                     control.request_reload();
@@ -330,7 +331,7 @@ async fn main() -> Result<()> {
             &input,
             &mut incoming,
             &mut interrupts,
-            &line,
+            &commands::prompt_text(&line),
             &mut session,
         )
         .await;

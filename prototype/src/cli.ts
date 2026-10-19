@@ -45,6 +45,7 @@ import {
   type TurnResult,
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
+import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -76,9 +77,7 @@ export async function runRepl(
   interactive = true,
   interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
-  io.err(
-    `dyfj — ${config.socket} · Ctrl-D or /exit to quit`,
-  );
+  io.err(`dyfj — ${config.socket} · Ctrl-D or /exit to quit`);
   const releaseSession = await openReplSession(config, io, connect, interactive);
   const sessionState: ReplSessionState = {
     sessionId: config.sessionId,
@@ -98,40 +97,29 @@ export async function runRepl(
       }
       const prompt = line.trim();
       if (prompt.length === 0) continue;
-      if (prompt === "/exit" || prompt === "/quit") break;
+      const cmd = commandCandidate(line);
+      if (cmd === "/exit" || cmd === "/quit") break;
       if (
-        await handleReplSessionCommand(
-          prompt,
-          config,
-          io,
-          sessionState,
-          connect,
-        )
+        await handleReplSessionCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
-        await handleReplIdeaCommand(prompt, config, io, sessionState, connect)
+        await handleReplIdeaCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
-        await handleReplPacketCommand(
-          prompt,
-          config,
-          io,
-          sessionState,
-          connect,
-        )
+        await handleReplPacketCommand(cmd, config, io, sessionState, connect)
       ) {
-        sessionState.lastReplCommand = prompt;
+        sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
         await handleReplFrictionCommand(
-          prompt,
+          cmd,
           config,
           io,
           sessionState,
@@ -139,16 +127,18 @@ export async function runRepl(
           interactive,
         )
       ) continue;
-      if (await handleReplModelCommand(prompt, config, io, connect)) {
-        sessionState.lastReplCommand = prompt;
+      if (await handleReplModelCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
         continue;
       }
-      if (await handleReplFastCommand(prompt, config, io, connect)) {
-        sessionState.lastReplCommand = prompt;
+      if (await handleReplFastCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
         continue;
       }
+      const turnPrompt = cmd === "" ? prompt : routeSlashLine(prompt, io);
+      if (turnPrompt === undefined) continue;
       try {
-        const body = buildTurnBody(prompt, config, sessionState.sessionId);
+        const body = buildTurnBody(turnPrompt, config, sessionState.sessionId);
         const spinner = createTurnSpinner(config, io);
         const output = createTurnOutputHandlers(config, io, {
           beforeWrite: () => spinner.pause(),
@@ -259,7 +249,7 @@ export async function runRepl(
           eventId: `evt_u_${eventNum}`,
           sessionId: result.sessionId,
           eventType: "session_start",
-          content: prompt,
+          content: turnPrompt,
           createdAt: new Date().toISOString(),
         }));
         if (result.text) {
@@ -726,6 +716,7 @@ export async function handleReplFrictionCommand(
     io.err(`comment id: ${receipt.commentId}`);
   } catch (error) {
     io.err(`friction capture failed: ${summarizeError(error)}`);
+    printFrictionRetry(io, severity, escaped, remainder);
   } finally {
     client?.close();
   }
