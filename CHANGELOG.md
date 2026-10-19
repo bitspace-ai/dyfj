@@ -16,7 +16,7 @@ README are tracked separately in its Revision history section.
   only reads runs at once: chains of `git status`, `git diff`, `git log`,
   `git show`, `git rev-parse`, `git branch --show-current`, `ls`, `cat`,
   `head`, `tail`, `wc`, `grep`, `rg` and `sed -n` line printing, joined by
-  `&&` or `;`, optionally led by `cd <dir> &&` or `cd "$PWD" &&` and ended by
+  `&&` or `;`, optionally led by the no-op `cd "$PWD" &&` and ended by
   `2>&1` and `| head` or `| tail`. Each command, and each git subcommand,
   accepts only a listed set of options (for example `git log --oneline -n 5`,
   `git diff --cached --name-only`, `grep -rn -A3`), and every path, whether an
@@ -31,10 +31,10 @@ README are tracked separately in its Revision history section.
   `strict` the allowlist does not apply, and every bash call asks unless the
   operator allowed that exact command for the session (below). Paths resolve
   as the kernel resolves them, a symlink followed before any `..` after it, so
-  `link/../x` is checked where it really lands. A `cd` through a symlink asks,
-  because bash's `cd` resolves `..` before following links; and every bash
-  call starts with `PWD` and `OLDPWD` set to its real directory and no
-  `CDPATH`. Such a call is journaled with
+  `link/../x` is checked where it really lands. Any other `cd` asks, since
+  bash's `cd` resolves `..` before following links and reads options, `CDPATH`
+  and `HOME`: pass the `cwd` argument instead. Every bash call starts with
+  `PWD` and `OLDPWD` set to its real directory and no `CDPATH`. Such a call is journaled with
   basis `policy:allow:bash-allowlist` and runs with git's program-running
   sources switched off: no fsmonitor, no worktree or global attributes (so no
   textconv or filter driver), no implicit bare repository, no signature check

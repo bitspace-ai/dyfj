@@ -14,8 +14,9 @@
  * command, optionally `2>&1`, optionally one `| head` or `| tail` that takes
  * only a line count. Each command, and each git subcommand, accepts only the
  * options named in its `OptionSpec`; a value that names a file is checked
- * like an operand, whether attached (`-fFILE`) or the next word. `cd <dir inside the workspace>` may lead a segment
- * followed by `&&`, and `cd "$PWD"` is accepted as the no-op models write.
+ * like an operand, whether attached (`-fFILE`) or the next word. The only cd
+ * accepted is the no-op `cd "$PWD" &&` that models write; a call that needs
+ * another directory passes the bash tool's `cwd` argument.
  *
  * Lexing: single quotes are literal; double quotes are literal too, but any
  * `$`, backtick, backslash or `!` inside them fails the lex (except the
@@ -24,7 +25,7 @@
  * unicode lookalike operators. Quoted and unquoted parts join into one word.
  */
 
-import { lstatSync, realpathSync, statSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isWithinRoot } from "./file-access.ts";
 
@@ -691,26 +692,6 @@ function commandAllowed(words: string[], cwd: string, rootReal: string): string 
 }
 
 /**
- * The directory a `cd` lands in, or null when it may not be auto-approved.
- * bash's `cd` is logical: it applies `..` to the path as written before the
- * kernel follows any symlink, while every other command resolves physically.
- * So a `cd` is accepted only when the two agree, that is when no symlink is
- * involved: then the shell's directory and the one checked here stay the
- * same for every later segment. `cwd` is always physical (the executor
- * starts bash with PWD set to the real directory).
- */
-function directoryInside(rootReal: string, cwd: string, path: string): string | null {
-  const real = resolveFollowingLinks(cwd, path);
-  if (real === null || !isWithinRoot(rootReal, real)) return null;
-  if (real !== resolve(cwd, path)) return null;
-  try {
-    return statSync(real).isDirectory() ? real : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Decide whether `command`, run by `bash -c` in `cwd`, may skip approval.
  * `rootReal` is the workspace root's real path, and `cwd` an absolute path
  * inside it.
@@ -732,25 +713,20 @@ export function classifyReadOnlyBash(
   const parsed = segments(tokens);
   if (typeof parsed === "string") return ask(parsed);
 
-  let here = cwd;
   for (const segment of parsed) {
     const [head, ...rest] = segment.words;
     if (head.kind !== "word") return ask("`$PWD` outside `cd \"$PWD\"`");
     if (head.value === "cd") {
-      if (rest.length !== 1 || segment.mergesStderr || segment.pipe !== null) {
-        return ask("a cd other than `cd <dir> &&`");
+      // Only the no-op `cd "$PWD" &&` that models write is accepted. Any other
+      // cd asks: bash's cd is logical, reads options (`-P`, `-L`, `-e`),
+      // CDPATH and HOME, and a model that wants another directory passes the
+      // cwd argument instead.
+      if (
+        rest.length !== 1 || rest[0].kind !== "pwd" || segment.mergesStderr ||
+        segment.pipe !== null || segment.next === ";"
+      ) {
+        return ask("a cd other than `cd \"$PWD\" &&` (pass cwd instead)");
       }
-      if (segment.next === ";") return ask("a cd followed by `;` rather than `&&`");
-      const target = rest[0];
-      if (target.kind === "pwd") continue;
-      if (target.kind !== "word" || target.value === "-") {
-        return ask("a cd other than `cd <dir> &&`");
-      }
-      const next = directoryInside(rootReal, here, target.value);
-      if (next === null) {
-        return ask("a cd outside the workspace or through a symlink");
-      }
-      here = next;
       continue;
     }
     const words: string[] = [];
@@ -758,7 +734,7 @@ export function classifyReadOnlyBash(
       if (token.kind !== "word") return ask("`$PWD` outside `cd \"$PWD\"`");
       words.push(token.value);
     }
-    const refused = commandAllowed(words, here, rootReal);
+    const refused = commandAllowed(words, cwd, rootReal);
     if (refused !== null) return ask(refused);
     if (segment.pipe !== null && !pipeAllowed(segment.pipe)) {
       return ask("a pipe to something other than `head` or `tail` with a line count");

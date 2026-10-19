@@ -20,6 +20,8 @@ before(() => {
   writeFileSync(join(root, "patterns"), "a\n");
   // bash's cd is logical: `link/..` is the workspace root, not `src`.
   symlinkSync(join(root, "src", "deep"), join(root, "deep-link"));
+  mkdirSync(join(root, "-P"));
+  writeFileSync(join(root, "-P", "f"), "x\n");
   writeFileSync(join(outside, "secret"), "s\n");
   symlinkSync(join(outside, "secret"), join(root, "escape"));
   symlinkSync(outside, join(root, "escape-dir"));
@@ -60,8 +62,6 @@ describe("classifyReadOnlyBash: read-only commands run without asking", () => {
       "sed -n '10,$p' f",
       'cd "$PWD" && git status',
       "cd $PWD && git status",
-      "cd src && ls",
-      `cd ${"'"}${"src/deep"}${"'"} && ls`,
       "git status && git diff",
       "git status; git log --oneline -3",
       "git diff 2>&1 | head -50",
@@ -101,12 +101,24 @@ describe("classifyReadOnlyBash: read-only commands run without asking", () => {
 
   it("an absolute path inside the workspace", () => {
     assert.equal(allowed(`cat ${root}/f`), true);
-    assert.equal(allowed(`cd ${root}/src && ls`), true);
+    assert.equal(allowed(`cd ${root}/src && ls`), false, "cd asks");
   });
 
   it("paths resolve against the effective cwd", () => {
     assert.equal(allowed("cat ../f", join(root, "src")), true);
-    assert.equal(allowed("cd src && cat ../f"), true);
+  });
+
+  // An option-shaped word is an option unless it follows `--`, so it goes
+  // through the accepted-option set; after `--` it is a path like any other.
+  it("an option-shaped file name is an option before `--` and a path after it", () => {
+    writeFileSync(join(root, "-n"), "dash\n");
+    writeFileSync(join(root, "--files0-from=f"), "f\n");
+    assert.equal(allowed("cat -n f"), true, "`-n` is cat's number-lines flag");
+    assert.equal(allowed("cat -- -n"), true, "after `--`, `-n` is the in-workspace file");
+    assert.equal(allowed("wc --files0-from=f"), false, "an option, and not an accepted one");
+    assert.equal(allowed("wc f --files0-from=f"), false, "an option after an operand is still an option");
+    assert.equal(allowed("wc -- --files0-from=f"), true, "after `--`, the in-workspace file");
+    assert.equal(allowed("grep -n x -- -n"), true);
   });
 });
 
@@ -142,6 +154,12 @@ describe("classifyReadOnlyBash: anything else asks", () => {
       ["absolute outside", "cat /etc/passwd"],
       ["symlink to an outside file", "cat escape"],
       ["symlink to an outside directory", "ls escape-dir"],
+      // Only `cd "$PWD"` (a no-op) is accepted; the cwd argument does the rest.
+      ["cd into a workspace directory", "cd src && ls"],
+      ["cd into a quoted workspace path", "cd 'src/deep' && ls"],
+      ["cd -- into a workspace directory", "cd -- src && ls"],
+      ["cd into an option-shaped directory", "cd -P && cat f"],
+      ["cd then a relative path", "cd src && cat ../f"],
       ["cd outside", "cd /tmp && ls"],
       ["cd up and out", "cd .. && ls"],
       ["cd followed by ;", "cd src; ls"],
