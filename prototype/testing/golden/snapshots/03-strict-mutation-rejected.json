@@ -47,7 +47,11 @@
         "agent": {
           "toolStepsUsed": 1,
           "maxToolSteps": 32,
-          "limitReached": false
+          "limitReached": false,
+          "autoApprovals": {
+            "allowlist": 0,
+            "sessionGrant": 0
+          }
         }
       },
       "stderr": ""

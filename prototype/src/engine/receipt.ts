@@ -14,6 +14,7 @@ import {
   formatHistoryOmissionSummary,
   type HistoryOmissionReceipt,
 } from "../contract/mod.ts";
+import type { AutoApprovals } from "../contract/mod.ts";
 import { formatMoney } from "./route.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
 
@@ -55,6 +56,7 @@ export interface WorkbenchReceiptInput {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    autoApprovals?: AutoApprovals;
   };
   /**
    * Best-effort event writes that failed this session. Zero renders nothing;
@@ -132,6 +134,13 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
       (input.agent.limitReached ? " (limit reached)" : ""),
   );
+  const auto = input.agent.autoApprovals;
+  if (auto !== undefined && auto.allowlist + auto.sessionGrant > 0) {
+    lines.push(
+      `Auto-approved: ${auto.allowlist + auto.sessionGrant} (allowlist ${auto.allowlist}, ` +
+        `session grant ${auto.sessionGrant})`,
+    );
+  }
   if ((input.skippedEventWrites ?? 0) > 0) {
     lines.push(
       `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +

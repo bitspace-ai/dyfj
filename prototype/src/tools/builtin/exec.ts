@@ -1,12 +1,16 @@
 /**
  * Workspace command execution for the agent loop.
  *
- * `bash` runs an arbitrary shell command with the working directory pinned to
- * the workspace root. It is the system's most dangerous capability, so the
- * command policy ALWAYS routes it through per-call operator approval: it carries
- * a `run.*` (exec-class) effect, and the no-exec invariant in
- * `evaluateCommandPolicy` keeps exec-class effects out of operator
- * auto-approval. The executor therefore never runs unapproved.
+ * `bash` runs an arbitrary shell command in the workspace root, or in the
+ * workspace directory its `cwd` argument names. It is the system's most
+ * dangerous capability, so the command policy routes it through per-call
+ * operator approval: it carries a `run.*` (exec-class) effect, and the no-exec
+ * invariant in `evaluateCommandPolicy` keeps exec-class effects out of
+ * operator auto-approval. Two declared exceptions skip the prompt (BIT-707):
+ * a call the read-only allowlist accepts (`bash-allowlist.ts`, operator
+ * posture on loopback only), which then runs with git's program-running
+ * config switched off (`GIT_SAFETY_ENV`); and a call that repeats exactly one
+ * the operator allowed for the rest of the session.
  *
  * This module is the explicit danger boundary until a Rust exec/sandbox
  * enforcement floor replaces the TypeScript process runner; until then,
@@ -24,8 +28,12 @@
  * operator approves the duration along with the command.
  */
 
+import { realpathSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { type Env, processEnv } from "../../config/mod.ts";
-import type { CommandDefinition } from "../definition.ts";
+import type { CommandCall, CommandDefinition } from "../definition.ts";
+import { classifyReadOnlyBash } from "./bash-allowlist.ts";
+import { isWithinRoot } from "./file-access.ts";
 import {
   type BoundedResult,
   describeTimeout,
@@ -38,6 +46,7 @@ export type BashRunner = (
   command: string,
   cwd: string,
   timeoutMs: number,
+  env: Record<string, string>,
 ) => Promise<BashResult>;
 
 const DEFAULT_TIMEOUT_SEC = 120;
@@ -89,17 +98,55 @@ export function buildSafeBashEnv(
   return env;
 }
 
+/** The authorisation basis of a call the read-only allowlist approved. */
+export const BASH_ALLOWLIST_BASIS = "policy:allow:bash-allowlist";
+
+/**
+ * The environment added to a call the read-only allowlist approved (BIT-707).
+ * Repository config and attributes can make `git status`, `diff`, `log` and
+ * `show` run programs, and such a call ran without a prompt, so git's
+ * program-running sources are switched off for it:
+ * - `core.fsmonitor=false`: no fsmonitor hook on status or diff;
+ * - `GIT_ATTR_SOURCE` set to the empty tree, and `core.attributesFile` to
+ *   /dev/null: worktree and global attributes assign no diff or filter
+ *   driver, so no textconv or clean filter runs;
+ * - `safe.bareRepository=explicit`: a bare repository planted in a workspace
+ *   subdirectory is not picked up by discovery;
+ * - `log.showSignature=false`: no gpg on log;
+ * - `core.pager=cat` and `GIT_PAGER=cat`: no pager, though none runs without
+ *   a terminal anyway;
+ * - `GIT_CONFIG_NOSYSTEM=1`: no system-wide config.
+ * What remains is `$GIT_DIR` itself (`.git/config`, `.git/info/attributes`),
+ * which the write tools refuse to touch, and the operator's own global config.
+ */
+export const GIT_SAFETY_ENV: Readonly<Record<string, string>> = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_ATTR_SOURCE: "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+  GIT_PAGER: "cat",
+  GIT_CONFIG_COUNT: "5",
+  GIT_CONFIG_KEY_0: "core.fsmonitor",
+  GIT_CONFIG_VALUE_0: "false",
+  GIT_CONFIG_KEY_1: "core.attributesFile",
+  GIT_CONFIG_VALUE_1: "/dev/null",
+  GIT_CONFIG_KEY_2: "safe.bareRepository",
+  GIT_CONFIG_VALUE_2: "explicit",
+  GIT_CONFIG_KEY_3: "log.showSignature",
+  GIT_CONFIG_VALUE_3: "false",
+  GIT_CONFIG_KEY_4: "core.pager",
+  GIT_CONFIG_VALUE_4: "cat",
+};
+
 /**
  * Real runner: `bash -c <command>` with cwd pinned, bounded by the timeout. At
  * the deadline the command's whole process group is stopped and output
  * collection ends (`bounded-process.ts`).
  */
-const defaultRunner: BashRunner = (command, cwd, timeoutMs) =>
+const defaultRunner: BashRunner = (command, cwd, timeoutMs, env) =>
   runBounded({
     command: "bash",
     args: ["-c", command],
     cwd,
-    env: buildSafeBashEnv(),
+    env,
     timeoutMs,
   });
 
@@ -112,7 +159,12 @@ const defaultRunner: BashRunner = (command, cwd, timeoutMs) =>
 export async function executeBash(
   root: string,
   command: string,
-  opts: { timeoutMs?: number; maxBytes?: number; runner?: BashRunner } = {},
+  opts: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    runner?: BashRunner;
+    env?: Record<string, string>;
+  } = {},
 ): Promise<string> {
   const cmd = command.trim();
   if (cmd === "") return "error: empty command";
@@ -122,7 +174,7 @@ export async function executeBash(
 
   let res: BashResult;
   try {
-    res = await runner(cmd, root, timeoutMs);
+    res = await runner(cmd, root, timeoutMs, opts.env ?? buildSafeBashEnv());
   } catch (err) {
     return `error: cannot run command: ${(err as Error).message}`;
   }
@@ -172,6 +224,52 @@ export function resolveBashTimeoutMs(
   return { timeoutMs: timeoutSec * 1_000 };
 }
 
+// ── The working directory ────────────────────────────────────────────────────
+
+/**
+ * The directory one call runs in, from its `cwd` argument: the workspace root
+ * when absent, otherwise an existing directory, relative to the root or
+ * absolute, whose real path is inside the root. Anything else is refused, and
+ * the command does not run.
+ */
+export function resolveBashCwd(
+  root: string,
+  cwd: unknown,
+): { cwd: string } | { error: string } {
+  if (cwd === undefined) return { cwd: root };
+  if (typeof cwd !== "string" || cwd === "") {
+    return { error: "cwd must be a non-empty path" };
+  }
+  try {
+    const rootReal = realpathSync(root);
+    const real = realpathSync(resolve(rootReal, cwd));
+    if (!isWithinRoot(rootReal, real)) {
+      return { error: "cwd must be inside the workspace" };
+    }
+    if (!statSync(real).isDirectory()) {
+      return { error: "cwd must be a directory" };
+    }
+    return { cwd: real };
+  } catch {
+    return { error: "cwd must be an existing directory inside the workspace" };
+  }
+}
+
+/** Whether a bash call may skip the prompt; see `bash-allowlist.ts`. */
+function readOnlyBashCall(root: string, call: CommandCall): boolean {
+  const cwd = resolveBashCwd(root, call.arguments.cwd);
+  if ("error" in cwd) return false;
+  try {
+    return classifyReadOnlyBash(
+      String(call.arguments.command),
+      cwd.cwd,
+      realpathSync(root),
+    ).allow;
+  } catch {
+    return false;
+  }
+}
+
 const TITLE = "Run Bash Command";
 
 /** The approval prompt names the effective deadline, e.g. `(timeout 300 s)`. */
@@ -193,14 +291,17 @@ export function defineBash(
     title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
-      "root, but the command is NOT sandboxed — it can read and write anywhere on " +
+      "root, or the workspace directory cwd names, but the command is NOT " +
+      "sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. " +
-      "Returns the exit status and combined stdout/stderr. Always requires " +
-      "explicit operator approval before it runs — it is never auto-approved. " +
+      "Returns the exit status and combined stdout/stderr. Requires operator " +
+      "approval before it runs, except for a small set of read-only commands " +
+      "(git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) " +
+      "and commands the operator allowed for the rest of the session. " +
       `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
       `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
       "a command needs longer (a full test run, for example). A larger value is " +
-      "refused, not clamped.",
+      "refused, not clamped. Pass cwd rather than prefixing the command with cd.",
     inputSchema: {
       type: "object",
       required: ["command"],
@@ -208,6 +309,12 @@ export function defineBash(
         command: {
           type: "string",
           description: "The shell command to run (executed as `bash -c`).",
+        },
+        cwd: {
+          type: "string",
+          description:
+            "Directory to run in, relative to the workspace root. It must be an " +
+            "existing directory inside the workspace. Default: the workspace root.",
         },
         timeoutSec: {
           type: "integer",
@@ -221,12 +328,17 @@ export function defineBash(
       additionalProperties: false,
     },
     approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec),
+    readOnlyCall: (call) => readOnlyBashCall(root, call),
+    // The prompt may offer "allow this exact command for the rest of the
+    // session"; the grant matches command, cwd and timeoutSec exactly.
+    grantable: true,
     permission: {
       // run.process is an exec-class effect: the no-exec invariant in
       // evaluateCommandPolicy keeps it out of operator auto-approval, so bash
-      // ALWAYS routes to "ask". The honest filesystem/network envelope (a shell
-      // command can read, write, and reach the network) is recorded for audit,
-      // but the run.process effect is what actually gates it.
+      // routes to "ask" unless `readOnlyCall` accepts it. The honest
+      // filesystem/network envelope (a shell command can read, write, and
+      // reach the network) is recorded for audit, but the run.process effect
+      // is what actually gates it.
       effects: [
         "run.process",
         "read.filesystem",
@@ -242,12 +354,18 @@ export function defineBash(
     // bash output can carry secrets the approver can't pre-screen (env dumps,
     // file contents), so keep the raw result out of the durable event log.
     redactResult: true,
-    executor: (call) => {
+    executor: (call, context) => {
       const timeout = resolveBashTimeoutMs(call.arguments.timeoutSec);
       if ("error" in timeout) return `error: ${timeout.error}`;
-      return executeBash(root, String(call.arguments.command), {
+      const cwd = resolveBashCwd(root, call.arguments.cwd);
+      if ("error" in cwd) return `error: ${cwd.error}`;
+      const env = context.authzBasis === BASH_ALLOWLIST_BASIS
+        ? { ...buildSafeBashEnv(), ...GIT_SAFETY_ENV }
+        : buildSafeBashEnv();
+      return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
         runner: opts.runner,
+        env,
       });
     },
   };

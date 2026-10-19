@@ -6,7 +6,7 @@
  */
 
 import { readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import type { WorkspaceRoot } from "./root-anchors.ts";
 import {
   containedRealPath,
@@ -14,10 +14,27 @@ import {
   isWithinRoot,
   lstatFile,
   resolveWorkspacePath,
+  toPosixPath,
   safeErrorReason,
   sanitizeOutputText,
   statFile,
 } from "./file-access.ts";
+
+/**
+ * True when a workspace-relative path names `.git` or anything inside one.
+ * Repository config and attributes there can make read-only git commands run
+ * programs (core.fsmonitor, diff drivers), and the bash allowlist lets those
+ * commands run without a prompt, so the write tools never touch them
+ * (BIT-707). Case-insensitive, because the default macOS filesystem is.
+ */
+function insideGitDir(relativePath: string): boolean {
+  return toPosixPath(relativePath).split("/").some((segment) =>
+    segment.toLowerCase() === ".git"
+  );
+}
+
+const refuseGitDir = (p: string): string =>
+  `error: refusing to write inside .git: ${sanitizeOutputText(p)}`;
 
 /**
  * Write UTF-8 text to a file scoped to the workspace root, creating or
@@ -45,11 +62,16 @@ export async function executeWriteFile(
     // resolveWorkspacePath's message carries only the caller-supplied path.
     return `error: ${(err as Error).message}`;
   }
+  if (insideGitDir(relative(workspace.path, abs))) return refuseGitDir(p);
   try {
     const rootReal = await workspace.verify();
     const parentReal = await realpath(dirname(abs));
     if (!isWithinRoot(rootReal, parentReal)) {
       return `error: path escapes the workspace root: ${sanitizeOutputText(p)}`;
+    }
+    // Again on the real parent, so a symlink to .git is refused too.
+    if (insideGitDir(relative(rootReal, join(parentReal, basename(abs))))) {
+      return refuseGitDir(p);
     }
     // Refuse to write through a symlink at the target path: write_file never
     // follows symlinks. lstat (no-follow) detects a symlink even when it dangles

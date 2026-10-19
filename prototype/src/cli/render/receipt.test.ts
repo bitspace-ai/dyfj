@@ -245,6 +245,21 @@ describe("presentation", () => {
       ) to include "tools 2/2 (limit reached)"`,
     );
   });
+  it("formatReceipt counts the tool calls that ran without a prompt", () => {
+    assert.equal(formatReceipt(result(), false).includes("auto-approved"), false);
+    const s = formatReceipt(
+      result({
+        agent: {
+          toolStepsUsed: 3,
+          maxToolSteps: 32,
+          limitReached: false,
+          autoApprovals: { allowlist: 2, sessionGrant: 1 },
+        },
+      }),
+      false,
+    );
+    assert.ok(s.includes("tools 3/32 · auto-approved 3 (allowlist 2, session 1)"), s);
+  });
   it("formatReceipt shows the runtime's session figure in a REPL", () => {
     // The runtime's figure is the one its spending envelope checks; it counts
     // turns this REPL never saw complete, so it wins over the running sum.

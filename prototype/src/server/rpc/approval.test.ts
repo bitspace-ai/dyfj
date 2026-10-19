@@ -20,3 +20,19 @@ test("toApprovalVerdict approves only an explicit approve", () => {
     });
   }
 });
+
+test("toApprovalVerdict carries a session scope only on an approval", () => {
+  assert.deepStrictEqual(
+    toApprovalVerdict({ decision: "approve", scope: "session" }),
+    { decision: "approve", scope: "session" },
+  );
+  for (const scope of ["forever", "SESSION", 1, null, { session: true }]) {
+    assert.deepStrictEqual(toApprovalVerdict({ decision: "approve", scope }), {
+      decision: "approve",
+    });
+  }
+  assert.deepStrictEqual(
+    toApprovalVerdict({ decision: "deny", scope: "session" }),
+    { decision: "deny", reason: "operator denied the tool call" },
+  );
+});

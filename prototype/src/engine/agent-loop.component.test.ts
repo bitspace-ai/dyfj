@@ -40,6 +40,7 @@ import type {
   NativeWorkbenchRuntimeResult,
   WorkbenchRuntimeInput,
 } from "./runtime-types.ts";
+import { SessionOwners } from "./session-owner.ts";
 
 type ToolCall = { id: string; name: string; arguments: unknown };
 
@@ -149,6 +150,7 @@ test("agent loop honors a configured small step limit and forces a no-tools conc
     toolStepsUsed: 2,
     maxToolSteps: 2,
     limitReached: true,
+    autoApprovals: { allowlist: 0, sessionGrant: 0 },
   });
   // The final forced call dropped tools to make the model conclude.
   const last = run.transport.requests.at(-1)!;
@@ -189,6 +191,7 @@ for (
       toolStepsUsed: 0,
       maxToolSteps: expected,
       limitReached: false,
+      autoApprovals: { allowlist: 0, sessionGrant: 0 },
     });
   });
 }
@@ -205,6 +208,7 @@ test("agent loop forces a conclusion when the model repeats prior tool calls", a
     toolStepsUsed: 2,
     maxToolSteps: AGENT_DEFAULTS.maxToolSteps,
     limitReached: false,
+    autoApprovals: { allowlist: 0, sessionGrant: 0 },
   });
   // step 0 + one gather + the forced conclusion — not the full step cap
   assert.deepStrictEqual(run.transport.requests.length, 3);
@@ -1299,5 +1303,76 @@ describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
         ["300", (240 * 2 + 300 * 10) / 1_000_000],
       ],
     );
+  });
+});
+
+describe("bash calls that run without a prompt (BIT-707)", () => {
+  const BASH = (id: string, command: string): ToolCall => ({
+    id,
+    name: "bash",
+    arguments: { command },
+  });
+
+  it("allowlisted and session-granted calls skip the prompt, are journaled by basis and counted", async () => {
+    const asked: { command: unknown; grantable: unknown }[] = [];
+    const committed: unknown[][] = [];
+    const loop = await loopTurn([
+      toolReply([BASH("c1", "ls")]),
+      toolReply([BASH("c2", "echo hi")]),
+      toolReply([BASH("c3", "echo hi")]),
+      chatReply({ content: "done" }),
+    ], {
+      prompt: "look around",
+      permissionLevel: "operator",
+      approver: {
+        confirmToolApproval: (request) => {
+          asked.push({ command: request.arguments.command, grantable: request.grantable });
+          return Promise.resolve({ decision: "approve", scope: "session" });
+        },
+      },
+    }, (run) => {
+      run.services.sessionGrants = new SessionOwners();
+      // The event reader does not return authz_basis; record what is committed.
+      run.services.store = patchStore(run.store, {
+        journal: {
+          commit: (batch, options) => {
+            for (const event of batch.events) {
+              if (event.event_type === "tool_call") {
+                committed.push([event.tool_call_id, event.authz_basis]);
+              }
+            }
+            return run.store.journal.commit(batch, options);
+          },
+        },
+      });
+    });
+    assert.equal(loop.error, null, String(loop.error));
+    assert.deepStrictEqual(asked, [{ command: "echo hi", grantable: true }]);
+    assert.deepStrictEqual(loop.result?.agent.autoApprovals, { allowlist: 1, sessionGrant: 1 });
+    assert.deepStrictEqual(committed, [
+      ["c1", "policy:allow:bash-allowlist"],
+      ["c2", "policy:allow:operator-approved-session-grant"],
+      ["c3", "policy:allow:session-grant"],
+    ]);
+  });
+
+  it("under strict every bash call asks", async () => {
+    const asked: unknown[] = [];
+    const loop = await loopTurn([
+      toolReply([BASH("c1", "ls")]),
+      chatReply({ content: "done" }),
+    ], {
+      prompt: "look around",
+      permissionLevel: "strict",
+      approver: {
+        confirmToolApproval: (request) => {
+          asked.push(request.arguments.command);
+          return Promise.resolve({ decision: "approve" });
+        },
+      },
+    });
+    assert.equal(loop.error, null, String(loop.error));
+    assert.deepStrictEqual(asked, ["ls"]);
+    assert.deepStrictEqual(loop.result?.agent.autoApprovals, { allowlist: 0, sessionGrant: 0 });
   });
 });

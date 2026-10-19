@@ -87,6 +87,8 @@ export interface NativeTurnReceipt {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    /** Calls that ran without a prompt; absent from a runtime that predates it. */
+    autoApprovals?: AutoApprovals;
   };
   /** Context provenance — what fed the turn (memory + repo sources). */
   context: { sources: string[] };
@@ -205,6 +207,27 @@ export function prependHistoryOmissionNotice(
 
 function counted(count: number, singular: string): string {
   return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * Tool calls in one turn that ran without a per-call prompt (BIT-707): those
+ * the read-only bash allowlist accepted, and those matching an earlier
+ * "allow for the rest of the session" answer.
+ */
+export interface AutoApprovals {
+  allowlist: number;
+  sessionGrant: number;
+}
+
+/** `auto-approved 3 (allowlist 2, session 1)`, or nothing when none did. */
+export function formatAutoApprovals(
+  autoApprovals: AutoApprovals | undefined,
+): string | undefined {
+  if (autoApprovals === undefined) return undefined;
+  const total = autoApprovals.allowlist + autoApprovals.sessionGrant;
+  if (total <= 0) return undefined;
+  return `auto-approved ${total} (allowlist ${autoApprovals.allowlist}, ` +
+    `session ${autoApprovals.sessionGrant})`;
 }
 
 /** Compact operator-facing rendering shared by receipts and CLI footers. */

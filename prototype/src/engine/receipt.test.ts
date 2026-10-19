@@ -328,3 +328,18 @@ test("shouldPrintBudgetTally: off mode always stays quiet", () => {
     false,
   );
 });
+
+test("buildWorkbenchReceipt: counts the tool calls that ran without a prompt", () => {
+  assert.equal(buildWorkbenchReceipt(BASE_RECEIPT).includes("Auto-approved"), false);
+  const receipt = buildWorkbenchReceipt({
+    ...BASE_RECEIPT,
+    agent: {
+      ...BASE_RECEIPT.agent,
+      autoApprovals: { allowlist: 2, sessionGrant: 1 },
+    },
+  });
+  assert.ok(
+    receipt.includes("Auto-approved: 3 (allowlist 2, session grant 1)"),
+    receipt,
+  );
+});

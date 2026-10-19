@@ -14,7 +14,13 @@ export function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
   const r = typeof response === "object" && response !== null
     ? response as Record<string, unknown>
     : {};
-  if (r.decision === "approve") return { decision: "approve" };
+  if (r.decision === "approve") {
+    // Only the exact `scope: "session"` widens an approval; anything else
+    // approves this call once.
+    return r.scope === "session"
+      ? { decision: "approve", scope: "session" }
+      : { decision: "approve" };
+  }
   return {
     decision: "deny",
     reason: typeof r.reason === "string"

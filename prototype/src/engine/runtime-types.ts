@@ -10,6 +10,7 @@ import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
   AcpRunnerSelection,
+  AutoApprovals,
   ExternalAgentWorkbenchRuntimeResult,
   NativeTurnReceipt,
   PaidEscalationVerdict,
@@ -43,7 +44,7 @@ import type {
 import type { Clock } from "../kernel/mod.ts";
 import type { HttpTransport } from "../providers/mod.ts";
 import type { Store } from "../store/mod.ts";
-import type { BudgetScopes } from "./session-owner.ts";
+import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
 
 export interface WorkbenchInvocation {
   mode: WorkbenchRuntimeMode;
@@ -237,6 +238,7 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    autoApprovals: AutoApprovals;
   };
   validation?: WorkbenchValidationSummary;
 }
@@ -279,6 +281,11 @@ export interface WorkbenchRuntimeServices {
    * confirmations persist for their scope periods.
    */
   budgetScopes: BudgetScopes;
+  /**
+   * Where a turn finds its session's "allow for the rest of the session"
+   * grants: the same `SessionOwners`. Absent, the prompt offers no grant.
+   */
+  sessionGrants?: SessionGrantScopes;
   /**
    * The engine's workspace-root anchors, built once at the composition root
    * so a root's anchor lasts for the engine process, not one turn.

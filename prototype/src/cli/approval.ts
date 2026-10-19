@@ -147,10 +147,24 @@ export async function promptMidTurnApproval(
     : String(r.commandId ?? "tool");
   io.err(`\n⚠  approve ${title}?`);
   io.err(formatApprovalArgs(r.arguments));
-  const answer = await io.readLine("   approve? [y/N] ", abortSignal);
+  // Only a request the runtime marks grantable offers "allow for the rest of
+  // the session"; elsewhere `s` is not consent and denies like any other line.
+  const grantable = r.grantable === true;
+  if (grantable) {
+    io.err(
+      "   s = yes, and allow this exact command for the rest of this session",
+    );
+  }
+  const answer = await io.readLine(
+    grantable ? "   approve? [y/N/s] " : "   approve? [y/N] ",
+    abortSignal,
+  );
   if (abortSignal?.aborted) return { decision: "abort" };
   if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
     return { decision: "approve" };
+  }
+  if (grantable && answer !== null && /^s(ession)?$/i.test(answer.trim())) {
+    return { decision: "approve", scope: "session" };
   }
   return { decision: "deny", reason: "operator declined" };
 }

@@ -539,6 +539,7 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
       toolStepsUsed: state.toolSteps,
       maxToolSteps: session.maxToolSteps,
       limitReached: state.toolStepLimitReached,
+      autoApprovals: { ...state.autoApprovals },
     },
     skippedEventWrites: state.audit.skippedEventWrites,
     historyOmission: state.historyOmission,
@@ -595,6 +596,7 @@ function turnResult(
       toolStepsUsed: state.toolSteps,
       maxToolSteps: session.maxToolSteps,
       limitReached: state.toolStepLimitReached,
+      autoApprovals: { ...state.autoApprovals },
     },
     validation: state.validation,
     ...(state.turnEndNotice === undefined

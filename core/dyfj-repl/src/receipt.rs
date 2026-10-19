@@ -122,6 +122,22 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             if limit { " (limit reached)" } else { "" }
         ));
     }
+    // Calls that ran without a prompt: the read-only allowlist and the
+    // operator's "allow for the rest of the session" grants.
+    let allowlist = receipt
+        .pointer("/agent/autoApprovals/allowlist")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let session_grant = receipt
+        .pointer("/agent/autoApprovals/sessionGrant")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if allowlist + session_grant > 0 {
+        parts.push(format!(
+            "auto-approved {} (allowlist {allowlist}, session {session_grant})",
+            allowlist + session_grant
+        ));
+    }
     if receipt.get("historyOmission").is_some_and(|v| !v.is_null()) {
         parts.push("history omitted (see TypeScript receipt)".into());
     }
@@ -170,6 +186,19 @@ mod tests {
             line(&receipt(), 0.0456),
             "— GLM 5.2 · $0.0123 · session $0.0456 · 1,200→50 tok · tools 2/32 · explicit_model_id"
         );
+    }
+
+    /// BIT-707: calls that ran without a prompt are counted beside the tools.
+    #[test]
+    fn counts_auto_approved_calls_when_there_were_any() {
+        let mut r = receipt();
+        r["agent"]["autoApprovals"] = json!({"allowlist": 2, "sessionGrant": 1});
+        assert_eq!(
+            line(&r, 0.0456),
+            "— GLM 5.2 · $0.0123 · session $0.0456 · 1,200→50 tok · tools 2/32 · auto-approved 3 (allowlist 2, session 1) · explicit_model_id"
+        );
+        r["agent"]["autoApprovals"] = json!({"allowlist": 0, "sessionGrant": 0});
+        assert!(!line(&r, 0.0456).contains("auto-approved"));
     }
 
     /// The session figure is the runtime's, the one its spending envelope

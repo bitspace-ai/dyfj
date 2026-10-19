@@ -32,6 +32,7 @@ export type {
   PermissionEnvelope,
   PolicyDecision,
   PrincipalType,
+  SessionGrants,
   ToolApprovalRequest,
   ToolApprovalVerdict,
   ToolProjection,

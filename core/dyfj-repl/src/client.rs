@@ -48,6 +48,10 @@ pub enum Verdict {
         decision: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
+        /// `session` on an approval that also allows this exact call for the
+        /// rest of the session.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        scope: Option<&'static str>,
     },
     Select {
         decision: &'static str,
@@ -58,15 +62,19 @@ pub enum Verdict {
 
 impl Verdict {
     pub fn approve() -> Self {
-        Verdict::Decision { decision: "approve", reason: None }
+        Verdict::Decision { decision: "approve", reason: None, scope: None }
+    }
+    /// Approve, and allow this exact call for the rest of the session.
+    pub fn approve_for_session() -> Self {
+        Verdict::Decision { decision: "approve", reason: None, scope: Some("session") }
     }
     pub fn deny(reason: impl Into<String>) -> Self {
-        Verdict::Decision { decision: "deny", reason: Some(reason.into()) }
+        Verdict::Decision { decision: "deny", reason: Some(reason.into()), scope: None }
     }
     /// Ctrl-C at the approval prompt. The runtime treats `abort` as an
     /// interrupted approval and stops the turn. It is not a denial.
     pub fn abort() -> Self {
-        Verdict::Decision { decision: "abort", reason: None }
+        Verdict::Decision { decision: "abort", reason: None, scope: None }
     }
     pub fn select(option_id: impl Into<String>) -> Self {
         Verdict::Select { decision: "select", option_id: option_id.into() }

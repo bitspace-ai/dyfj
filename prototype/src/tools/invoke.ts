@@ -52,6 +52,18 @@ export function approvalDeniedReason(
     `it. Ask the operator or take a different approach. Reason given: ${reason}.`;
 }
 
+/**
+ * The key a session grant matches: the command id and every argument, with
+ * object keys sorted so argument order does not matter. Values must match
+ * exactly, so `npm test` does not cover `npm test; rm x`.
+ */
+export function sessionGrantKey(call: CommandCall): string {
+  const args = Object.fromEntries(
+    Object.keys(call.arguments).sort().map((key) => [key, call.arguments[key]]),
+  );
+  return JSON.stringify([call.commandId, args]);
+}
+
 const denyToolApproval: ConfirmToolApproval = () =>
   Promise.resolve({
     decision: "deny",
@@ -119,7 +131,17 @@ async function runCommand<TResult>(
   }
 
   let authzBasis = policy.authzBasis;
-  if (policy.decision === "ask") {
+  const grants = command.grantable === true
+    ? policyContext.sessionGrants
+    : undefined;
+  const grantKey = grants === undefined ? undefined : sessionGrantKey(call);
+  if (
+    policy.decision === "ask" && grantKey !== undefined &&
+    grants?.has(grantKey) === true
+  ) {
+    // The operator allowed this exact call for the rest of the session.
+    authzBasis = "policy:allow:session-grant";
+  } else if (policy.decision === "ask") {
     // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
     // an unapproved or channel-less call never executes. The arguments have
@@ -130,6 +152,7 @@ async function runCommand<TResult>(
       callId: call.callId,
       title: command.approvalTitle?.(call) ?? command.title,
       arguments: call.arguments,
+      ...(grantKey === undefined ? {} : { grantable: true }),
     });
     if (verdict.decision !== "approve") {
       return {
@@ -143,7 +166,12 @@ async function runCommand<TResult>(
         verdict: "approval_denied",
       };
     }
-    authzBasis = "policy:allow:operator-approved";
+    if (verdict.scope === "session" && grantKey !== undefined) {
+      grants?.add(grantKey);
+      authzBasis = "policy:allow:operator-approved-session-grant";
+    } else {
+      authzBasis = "policy:allow:operator-approved";
+    }
   }
 
   let result: TResult;
