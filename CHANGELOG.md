@@ -17,8 +17,14 @@ README are tracked separately in its Revision history section.
   `git show`, `git rev-parse`, `git branch --show-current`, `ls`, `cat`,
   `head`, `tail`, `wc`, `grep`, `rg` and `sed -n` line printing, joined by
   `&&` or `;`, optionally led by `cd <dir> &&` or `cd "$PWD" &&` and ended by
-  `2>&1` and `| head` or `| tail`, with every path inside the workspace.
-  Anything else asks as before: another command or option, a redirection,
+  `2>&1` and `| head` or `| tail`. Each command, and each git subcommand,
+  accepts only a listed set of options (for example `git log --oneline -n 5`,
+  `git diff --cached --name-only`, `grep -rn -A3`), and every path, whether an
+  operand or an option's value such as `grep -f <file>`, must resolve inside
+  the workspace with symlinks followed. Options that read file names from a
+  file (`wc --files0-from`) are refused, and so is a git format that asks git
+  to verify signatures (`%G`). Anything else asks as before: another command
+  or option, a redirection,
   `$`, backticks, globs, an environment assignment, a non-ASCII character, a
   path outside the workspace, or a command over 2,000 characters. The test
   commands are not on the list, because they run workspace code. Under

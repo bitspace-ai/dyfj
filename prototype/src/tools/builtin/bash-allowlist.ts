@@ -12,7 +12,9 @@
  *
  * Accepted shape: segments joined by `&&` or `;`. A segment is one simple
  * command, optionally `2>&1`, optionally one `| head` or `| tail` that takes
- * only a line count. `cd <dir inside the workspace>` may lead a segment
+ * only a line count. Each command, and each git subcommand, accepts only the
+ * options named in its `OptionSpec`; a value that names a file is checked
+ * like an operand, whether attached (`-fFILE`) or the next word. `cd <dir inside the workspace>` may lead a segment
  * followed by `&&`, and `cd "$PWD"` is accepted as the no-op models write.
  *
  * Lexing: single quotes are literal; double quotes are literal too, but any
@@ -224,66 +226,366 @@ function looksLikePath(word: string): boolean {
   return word.startsWith("/") || word.startsWith(".") || word.includes("/");
 }
 
-/** Every argument word must keep the command inside the workspace. */
-function argumentInside(rootReal: string, cwd: string, word: string): boolean {
-  let candidate = word;
-  if (word.startsWith("--")) {
-    const eq = word.indexOf("=");
-    if (eq === -1) return true;
-    candidate = word.slice(eq + 1);
-  } else if (word.startsWith("-") && word.length > 1) {
-    // A short option with an attached value is not worth parsing per tool.
-    return !word.includes("/");
-  }
-  if (candidate === "") return true;
-  if (looksLikePath(candidate) || exists(resolve(cwd, candidate))) {
-    return pathInside(rootReal, cwd, candidate);
+/**
+ * An operand (a file, a directory, a revision, a pattern) keeps the command
+ * inside the workspace: one that looks like a path, or names something that
+ * exists, must resolve inside it, symlinks followed.
+ */
+function operandInside(rootReal: string, cwd: string, word: string): boolean {
+  if (looksLikePath(word) || exists(resolve(cwd, word))) {
+    return pathInside(rootReal, cwd, word);
   }
   return true;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
 
-interface OptionRules {
-  /** Short-option letters refused anywhere in a cluster such as `-nz`. */
-  deniedShort?: string;
-  /** Long options refused, along with any abbreviation getopt would accept. */
-  deniedLong?: readonly string[];
+/**
+ * What an option's value may be: a count, free text (a pattern, a glob, a
+ * format), a git format (free text that does not ask git to verify a
+ * signature), or a path, which must stay inside the workspace.
+ */
+type ValueKind = "number" | "text" | "format" | "path";
+
+/**
+ * The options a command accepts. Anything not named here asks: an accepted
+ * set rather than a denylist, so an option nobody reviewed can never skip the
+ * prompt. Long options match exactly, so an abbreviation getopt would accept
+ * (`--files0` for `--files0-from`) asks too.
+ */
+interface OptionSpec {
+  /** Short flags that take no value, combinable as in `-la`. */
+  flags?: string;
+  /** Short options that take a value, attached (`-n5`) or as the next word. */
+  values?: Readonly<Record<string, ValueKind>>;
+  /** Long options that take no value; a listed `--x=y` matches whole. */
+  longFlags?: readonly string[];
+  /** Long options that take a value, as `--x=v` or as the next word. */
+  longValues?: Readonly<Record<string, ValueKind>>;
+  /** A bare count such as `-5` (head, tail, git log). */
+  numericShort?: boolean;
 }
 
-function optionDenied(word: string, rules: OptionRules): boolean {
-  if (word === "--" || !word.startsWith("-") || word === "-") return false;
-  if (word.startsWith("--")) {
-    const name = word.split("=", 1)[0];
-    return (rules.deniedLong ?? []).some((denied) =>
-      name.startsWith(denied) || (name.length >= 3 && denied.startsWith(name))
-    );
+const NUMBER = /^\+?\d+$/;
+
+function valueAllowed(
+  kind: ValueKind,
+  value: string,
+  cwd: string,
+  rootReal: string,
+): boolean {
+  switch (kind) {
+    case "number":
+      return NUMBER.test(value);
+    case "text":
+      return true;
+    case "format":
+      // `%G?`, `%GS` and the other `%G` placeholders run gpg.
+      return !value.includes("%G");
+    case "path":
+      return value !== "" && pathInside(rootReal, cwd, value);
   }
-  return [...word.slice(1)].some((ch) => (rules.deniedShort ?? "").includes(ch));
 }
 
-const GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "rev-parse"]);
+/** Check every word after the command name (or git subcommand). */
+function argumentsAllowed(
+  name: string,
+  args: readonly string[],
+  spec: OptionSpec,
+  cwd: string,
+  rootReal: string,
+): string | null {
+  let operandsOnly = false;
+  for (let i = 0; i < args.length; i++) {
+    const word = args[i];
+    if (operandsOnly || word === "-" || !word.startsWith("-")) {
+      if (!operandInside(rootReal, cwd, word)) return "a path outside the workspace";
+      continue;
+    }
+    if (word === "--") {
+      operandsOnly = true;
+      continue;
+    }
+    const refused = `the ${name} option \`${word}\``;
+    if (word.startsWith("--")) {
+      if (spec.longFlags?.includes(word)) continue;
+      const eq = word.indexOf("=");
+      const option = eq === -1 ? word : word.slice(0, eq);
+      const kind = spec.longValues?.[option];
+      if (kind === undefined) return refused;
+      const value = eq === -1 ? args[++i] : word.slice(eq + 1);
+      if (value === undefined || !valueAllowed(kind, value, cwd, rootReal)) {
+        return refused;
+      }
+      continue;
+    }
+    if (spec.numericShort === true && /^-\d+$/.test(word)) continue;
+    // A cluster of short options: flags, then at most one that takes a value,
+    // whose value is the rest of the word or the next word.
+    for (let at = 1; at < word.length; at++) {
+      const letter = word[at];
+      if (spec.flags?.includes(letter)) continue;
+      const kind = spec.values?.[letter];
+      if (kind === undefined) return refused;
+      const rest = word.slice(at + 1);
+      const value = rest === "" ? args[++i] : rest;
+      if (value === undefined || !valueAllowed(kind, value, cwd, rootReal)) {
+        return refused;
+      }
+      break;
+    }
+  }
+  return null;
+}
 
-// Options of the read-only git subcommands that write a file, run a
-// configured program, or read outside the repository.
-const GIT_DENIED_LONG = [
-  "--output",
-  "--ext-diff",
-  "--textconv",
-  "--show-signature",
-  "--no-index",
+const COMMAND_OPTIONS: Readonly<Record<string, OptionSpec>> = {
+  ls: {
+    flags: "laAhrtSR1dFp",
+    longFlags: [
+      "--all",
+      "--almost-all",
+      "--human-readable",
+      "--reverse",
+      "--recursive",
+      "--directory",
+      "--classify",
+    ],
+  },
+  cat: {
+    flags: "nbsAvetET",
+    longFlags: ["--number", "--number-nonblank", "--squeeze-blank"],
+  },
+  head: {
+    flags: "qv",
+    values: { n: "number", c: "number" },
+    longValues: { "--lines": "number", "--bytes": "number" },
+    numericShort: true,
+  },
+  tail: {
+    flags: "qv",
+    values: { n: "number", c: "number" },
+    longValues: { "--lines": "number", "--bytes": "number" },
+    numericShort: true,
+  },
+  // No `--files0-from`: it reads file names from a file nothing checks.
+  wc: {
+    flags: "lwcmL",
+    longFlags: ["--lines", "--words", "--bytes", "--chars", "--max-line-length"],
+  },
+  // No `-R`: it follows symlinks out of the workspace.
+  grep: {
+    flags: "iInrvwxcloLHhsqEFGPa",
+    values: {
+      e: "text",
+      f: "path",
+      A: "number",
+      B: "number",
+      C: "number",
+      m: "number",
+    },
+    longFlags: [
+      "--ignore-case",
+      "--line-number",
+      "--recursive",
+      "--invert-match",
+      "--word-regexp",
+      "--line-regexp",
+      "--count",
+      "--files-with-matches",
+      "--files-without-match",
+      "--only-matching",
+      "--with-filename",
+      "--no-filename",
+      "--no-messages",
+      "--quiet",
+      "--silent",
+      "--extended-regexp",
+      "--fixed-strings",
+      "--basic-regexp",
+      "--perl-regexp",
+      "--text",
+    ],
+    longValues: {
+      "--regexp": "text",
+      "--file": "path",
+      "--after-context": "number",
+      "--before-context": "number",
+      "--context": "number",
+      "--max-count": "number",
+      "--include": "text",
+      "--exclude": "text",
+      "--exclude-dir": "text",
+      "--color": "text",
+    },
+  },
+  // No `--pre`, `-z` or `-L`: they run a program, a decompressor, or follow
+  // symlinks out of the workspace.
+  rg: {
+    flags: "inwvxclqFSUuHNo",
+    values: {
+      e: "text",
+      f: "path",
+      g: "text",
+      t: "text",
+      T: "text",
+      A: "number",
+      B: "number",
+      C: "number",
+      m: "number",
+      d: "number",
+    },
+    longFlags: [
+      "--files",
+      "--line-number",
+      "--no-line-number",
+      "--ignore-case",
+      "--smart-case",
+      "--case-sensitive",
+      "--word-regexp",
+      "--line-regexp",
+      "--invert-match",
+      "--count",
+      "--files-with-matches",
+      "--files-without-match",
+      "--only-matching",
+      "--fixed-strings",
+      "--hidden",
+      "--no-ignore",
+      "--heading",
+      "--no-heading",
+      "--with-filename",
+      "--no-filename",
+      "--multiline",
+      "--json",
+      "--vimgrep",
+      "--column",
+      "--trim",
+      "--quiet",
+      "--type-list",
+    ],
+    longValues: {
+      "--regexp": "text",
+      "--file": "path",
+      "--glob": "text",
+      "--iglob": "text",
+      "--type": "text",
+      "--type-not": "text",
+      "--after-context": "number",
+      "--before-context": "number",
+      "--context": "number",
+      "--max-count": "number",
+      "--max-depth": "number",
+      "--max-columns": "number",
+      "--ignore-file": "path",
+      "--sort": "text",
+      "--color": "text",
+    },
+  },
+};
+
+// Options of the read-only git subcommands, again an accepted set. A git
+// global option (`-c`, `-C`, `--git-dir`, `-p`) would come before the
+// subcommand, which must be the first word, so none is accepted.
+const DIFF_OUTPUT_FLAGS = [
+  "--stat",
+  "--shortstat",
+  "--numstat",
+  "--name-only",
+  "--name-status",
+  "--patch",
+  "--raw",
+  "--summary",
+  "--no-color",
+  "--color=never",
+  "--no-ext-diff",
+  "--no-textconv",
 ] as const;
 
-const COMMAND_OPTIONS: Record<string, OptionRules> = {
-  ls: { deniedShort: "L", deniedLong: ["--dereference"] },
-  cat: {},
-  wc: {},
-  head: {},
-  tail: { deniedShort: "fF", deniedLong: ["--follow", "--retry", "--pid"] },
-  grep: { deniedShort: "R", deniedLong: ["--dereference-recursive"] },
-  rg: {
-    deniedShort: "zL",
-    deniedLong: ["--pre", "--search-zip", "--follow", "--hostname-bin"],
+const LOG_FORMATS = {
+  "--format": "format",
+  "--pretty": "format",
+} as const;
+
+const GIT_OPTIONS: Readonly<Record<string, OptionSpec>> = {
+  status: {
+    flags: "sb",
+    longFlags: [
+      "--short",
+      "--branch",
+      "--long",
+      "--porcelain",
+      "--porcelain=v1",
+      "--porcelain=v2",
+      "--show-stash",
+      "--ahead-behind",
+      "--no-ahead-behind",
+    ],
+  },
+  diff: {
+    flags: "pbw",
+    values: { U: "number" },
+    longFlags: [
+      ...DIFF_OUTPUT_FLAGS,
+      "--cached",
+      "--staged",
+      "--check",
+      "--ignore-all-space",
+      "--ignore-space-change",
+      "--word-diff",
+      "--minimal",
+    ],
+    longValues: { "--unified": "number", "--diff-filter": "text" },
+  },
+  log: {
+    flags: "p",
+    values: { n: "number" },
+    longFlags: [
+      ...DIFF_OUTPUT_FLAGS,
+      "--oneline",
+      "--graph",
+      "--decorate",
+      "--no-decorate",
+      "--all",
+      "--reverse",
+      "--first-parent",
+      "--no-merges",
+      "--merges",
+      "--follow",
+      "--abbrev-commit",
+      "--date-order",
+    ],
+    longValues: {
+      ...LOG_FORMATS,
+      "--max-count": "number",
+      "--skip": "number",
+      "--since": "text",
+      "--until": "text",
+      "--after": "text",
+      "--before": "text",
+      "--author": "text",
+      "--grep": "text",
+      "--date": "text",
+    },
+    numericShort: true,
+  },
+  show: {
+    flags: "ps",
+    longFlags: [...DIFF_OUTPUT_FLAGS, "--oneline", "--no-patch", "--abbrev-commit"],
+    longValues: LOG_FORMATS,
+  },
+  "rev-parse": {
+    longFlags: [
+      "--abbrev-ref",
+      "--git-dir",
+      "--git-common-dir",
+      "--show-toplevel",
+      "--show-prefix",
+      "--show-cdup",
+      "--short",
+      "--verify",
+      "--is-inside-work-tree",
+      "--symbolic-full-name",
+    ],
   },
 };
 
@@ -341,31 +643,22 @@ function pipeAllowed(stage: string[]): boolean {
 function commandAllowed(words: string[], cwd: string, rootReal: string): string | null {
   const [name, ...args] = words;
   if (name === "git") {
-    const sub = args[0];
+    const [sub, ...rest] = args;
     if (sub === "branch") {
-      return args.length === 2 && args[1] === "--show-current"
+      return rest.length === 1 && rest[0] === "--show-current"
         ? null
         : "a git branch call other than `--show-current`";
     }
-    if (sub === undefined || !GIT_SUBCOMMANDS.has(sub)) {
+    const spec = sub === undefined ? undefined : GIT_OPTIONS[sub];
+    if (spec === undefined) {
       return "a git option or subcommand outside the read-only set";
     }
-    for (const word of args.slice(1)) {
-      if (optionDenied(word, { deniedLong: GIT_DENIED_LONG })) {
-        return `the git option \`${word}\``;
-      }
-      if (!argumentInside(rootReal, cwd, word)) return "a path outside the workspace";
-    }
-    return null;
+    return argumentsAllowed(`git ${sub}`, rest, spec, cwd, rootReal);
   }
   if (name === "sed") return sedAllowed(args, cwd, rootReal);
-  const rules = COMMAND_OPTIONS[name];
-  if (rules === undefined) return `the command \`${name}\``;
-  for (const word of args) {
-    if (optionDenied(word, rules)) return `the ${name} option \`${word}\``;
-    if (!argumentInside(rootReal, cwd, word)) return "a path outside the workspace";
-  }
-  return null;
+  const spec = COMMAND_OPTIONS[name];
+  if (spec === undefined) return `the command \`${name}\``;
+  return argumentsAllowed(name, args, spec, cwd, rootReal);
 }
 
 function directoryInside(rootReal: string, cwd: string, path: string): string | null {

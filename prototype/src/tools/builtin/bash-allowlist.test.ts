@@ -17,6 +17,7 @@ before(() => {
   mkdirSync(outside);
   writeFileSync(join(root, "f"), "a\nb\n");
   writeFileSync(join(root, "src", "x.ts"), "x\n");
+  writeFileSync(join(root, "patterns"), "a\n");
   writeFileSync(join(outside, "secret"), "s\n");
   symlinkSync(join(outside, "secret"), join(root, "escape"));
   symlinkSync(outside, join(root, "escape-dir"));
@@ -62,6 +63,33 @@ describe("classifyReadOnlyBash: read-only commands run without asking", () => {
       "git diff 2>&1 | head -50",
       "git log 2>&1 | tail -n 20",
       'cd "$PWD" && git status && git diff 2>&1 | head -50',
+      // The option forms models actually use.
+      "grep -f patterns f",
+      "grep --file=patterns f",
+      "grep -e foo -n f",
+      "grep -A3 -B 2 foo f",
+      "grep -rn --include='*.ts' foo src",
+      "head -c 10 f",
+      "tail -n +2 f",
+      "wc -lw f",
+      "rg -n -g '*.ts' foo src",
+      "rg -C2 -i foo",
+      "rg --ignore-file=patterns foo",
+      "git status --porcelain",
+      "git status -sb",
+      "git status --short --branch",
+      "git diff --cached --name-only",
+      "git diff --staged --stat",
+      "git diff -U3 HEAD~1",
+      "git log --format=%H -n 3",
+      "git log --pretty=format:%h%x20%s -5",
+      "git log -n5 --stat",
+      "git log --oneline -- src",
+      "git show --stat HEAD",
+      "git show --name-only HEAD~2",
+      "git rev-parse --show-toplevel",
+      "git rev-parse --git-dir",
+      "git rev-parse --short HEAD",
     ]
   ) {
     it(command, () => assert.equal(allowed(command), true, command));
@@ -158,6 +186,29 @@ describe("classifyReadOnlyBash: anything else asks", () => {
       ["tail -f", "tail -f f"],
       ["short option with an attached path", "grep -f/etc/passwd f"],
       ["long option with an outside value", "grep --file=/etc/passwd f"],
+      // File-bearing option values are path-checked in every form.
+      ["attached short pattern file through a symlink", "grep -fescape f"],
+      ["separate short pattern file through a symlink", "grep -f escape f"],
+      ["long pattern file through a symlink", "grep --file=escape f"],
+      ["long pattern file as the next word", "grep --file escape f"],
+      ["rg ignore file through a symlink", "rg --ignore-file=escape foo"],
+      ["rg ignore file as the next word", "rg --ignore-file escape foo"],
+      ["rg pattern file through a symlink", "rg -fescape foo"],
+      ["filename indirection", "wc --files0-from=f"],
+      ["an option abbreviation", "wc --files0=f"],
+      ["an unknown ls option", "ls --dereference"],
+      ["an unknown cat option", "cat --unknown f"],
+      ["an unknown grep option", "grep --devices=read x f"],
+      ["an unknown rg option", "rg --type-add=x:* foo"],
+      ["a non-numeric count", "head -n x f"],
+      ["an unknown git status option", "git status --untracked-files=all"],
+      ["an unknown git diff option", "git diff --relative"],
+      ["git diff orderfile through a symlink", "git diff -Oescape"],
+      ["an unknown git log option", "git log --walk-reflogs"],
+      ["a git format that verifies signatures", "git log '--format=%G?'"],
+      ["a git pretty that verifies signatures", "git log --pretty=format:%GS"],
+      ["an unknown git show option", "git show --ext-diff HEAD"],
+      ["an unknown git rev-parse option", "git rev-parse --local-env-vars"],
     ] as const
   ) {
     it(label, () => assert.equal(allowed(command), false, command));
