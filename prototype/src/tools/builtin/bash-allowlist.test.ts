@@ -18,6 +18,8 @@ before(() => {
   writeFileSync(join(root, "f"), "a\nb\n");
   writeFileSync(join(root, "src", "x.ts"), "x\n");
   writeFileSync(join(root, "patterns"), "a\n");
+  // bash's cd is logical: `link/..` is the workspace root, not `src`.
+  symlinkSync(join(root, "src", "deep"), join(root, "deep-link"));
   writeFileSync(join(outside, "secret"), "s\n");
   symlinkSync(join(outside, "secret"), join(root, "escape"));
   symlinkSync(outside, join(root, "escape-dir"));
@@ -145,6 +147,10 @@ describe("classifyReadOnlyBash: anything else asks", () => {
       ["cd followed by ;", "cd src; ls"],
       ["bare cd", "cd && ls"],
       ["cd -", "cd - && ls"],
+      ["cd ~", "cd ~ && ls"],
+      ["cd through a symlink then .. (logical cd)", "cd deep-link/.. && cat escape"],
+      ["cd into a symlink then cd .. (logical cd)", "cd deep-link && cd .. && cat escape"],
+      ["cd into an in-workspace symlink", "cd deep-link && ls"],
       ["cd to a file", "cd f && ls"],
       ["cd to a missing directory", "cd nope && ls"],
       ["substitution in double quotes", 'grep "$(id)" f'],

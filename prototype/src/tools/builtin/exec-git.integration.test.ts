@@ -13,6 +13,7 @@ import { join } from "node:path";
 import process from "node:process";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import type { CommandCall } from "../definition.ts";
+import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { defineBash } from "./exec.ts";
 
 const posix = process.platform !== "win32";
@@ -96,5 +97,42 @@ describe("planted git config under an allowlisted call", { skip: !posix }, () =>
 
     await run("cd planted && git show", "policy:allow:bash-allowlist");
     assert.equal(existsSync(marker), false, "git used the planted bare repository");
+  });
+});
+
+// bash starts from the physical directory the classifier resolved: PWD and
+// OLDPWD are set to it, and CDPATH is never passed, whatever the runtime's
+// own environment holds (BIT-707).
+describe("bash's starting directory", { skip: !posix }, () => {
+  it("ignores an inherited symlinked PWD and an inherited CDPATH", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "exec-pwd-")));
+    try {
+      const ws = join(base, "ws");
+      const elsewhere = join(base, "elsewhere");
+      execFileSync("mkdir", ["-p", join(ws, "sub"), join(elsewhere, "sub")]);
+      writeFileSync(join(ws, "sub", "f"), "inside\n");
+      writeFileSync(join(elsewhere, "sub", "f"), "outside\n");
+      const linkToWs = join(base, "ws-link");
+      execFileSync("ln", ["-s", ws, linkToWs]);
+      const env = new MapEnv({
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PWD: linkToWs,
+        OLDPWD: elsewhere,
+        CDPATH: elsewhere,
+      });
+      const bash = defineBash(ws, { env });
+      const out = String(
+        await bash.executor(
+          call("cd sub && cat f && echo pwd=$PWD old=$OLDPWD cdpath=$CDPATH"),
+          { authzBasis: "policy:allow:bash-allowlist" },
+        ),
+      );
+      assert.match(out, /^exit 0/, out);
+      assert.match(out, /\ninside\n/, out);
+      assert.doesNotMatch(out, /outside/, out);
+      assert.match(out, new RegExp(`pwd=${join(ws, "sub")} old=${ws} cdpath=$`, "m"), out);
+    } finally {
+      rmSync(base, { recursive: true });
+    }
   });
 });

@@ -296,7 +296,7 @@ function bashApprovalTitle(timeoutSec: unknown): string {
 
 export function defineBash(
   root: string,
-  opts: { runner?: BashRunner } = {},
+  opts: { runner?: BashRunner; env?: Env } = {},
 ): CommandDefinition<string> {
   return {
     id: "bash",
@@ -371,9 +371,18 @@ export function defineBash(
       if ("error" in timeout) return `error: ${timeout.error}`;
       const cwd = resolveBashCwd(root, call.arguments.cwd);
       if ("error" in cwd) return `error: ${cwd.error}`;
+      // bash starts in the physical directory the allowlist checked: PWD and
+      // OLDPWD name it, so a logical `cd ..` or `cd -` cannot start from a
+      // symlinked path, and CDPATH is never passed (buildSafeBashEnv does not
+      // forward it), so `cd foo` cannot land elsewhere.
+      const base = {
+        ...buildSafeBashEnv(opts.env),
+        PWD: cwd.cwd,
+        OLDPWD: cwd.cwd,
+      };
       const env = context.authzBasis === BASH_ALLOWLIST_BASIS
-        ? { ...buildSafeBashEnv(), ...GIT_SAFETY_ENV }
-        : buildSafeBashEnv();
+        ? { ...base, ...GIT_SAFETY_ENV }
+        : base;
       return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
         runner: opts.runner,

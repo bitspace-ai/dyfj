@@ -690,9 +690,19 @@ function commandAllowed(words: string[], cwd: string, rootReal: string): string 
   return argumentsAllowed(name, args, spec, cwd, rootReal);
 }
 
+/**
+ * The directory a `cd` lands in, or null when it may not be auto-approved.
+ * bash's `cd` is logical: it applies `..` to the path as written before the
+ * kernel follows any symlink, while every other command resolves physically.
+ * So a `cd` is accepted only when the two agree, that is when no symlink is
+ * involved: then the shell's directory and the one checked here stay the
+ * same for every later segment. `cwd` is always physical (the executor
+ * starts bash with PWD set to the real directory).
+ */
 function directoryInside(rootReal: string, cwd: string, path: string): string | null {
   const real = resolveFollowingLinks(cwd, path);
   if (real === null || !isWithinRoot(rootReal, real)) return null;
+  if (real !== resolve(cwd, path)) return null;
   try {
     return statSync(real).isDirectory() ? real : null;
   } catch {
@@ -737,7 +747,9 @@ export function classifyReadOnlyBash(
         return ask("a cd other than `cd <dir> &&`");
       }
       const next = directoryInside(rootReal, here, target.value);
-      if (next === null) return ask("a cd outside the workspace");
+      if (next === null) {
+        return ask("a cd outside the workspace or through a symlink");
+      }
       here = next;
       continue;
     }

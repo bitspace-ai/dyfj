@@ -31,7 +31,10 @@ README are tracked separately in its Revision history section.
   `strict` the allowlist does not apply, and every bash call asks unless the
   operator allowed that exact command for the session (below). Paths resolve
   as the kernel resolves them, a symlink followed before any `..` after it, so
-  `link/../x` is checked where it really lands. Such a call is journaled with
+  `link/../x` is checked where it really lands. A `cd` through a symlink asks,
+  because bash's `cd` resolves `..` before following links; and every bash
+  call starts with `PWD` and `OLDPWD` set to its real directory and no
+  `CDPATH`. Such a call is journaled with
   basis `policy:allow:bash-allowlist` and runs with git's program-running
   sources switched off: no fsmonitor, no worktree or global attributes (so no
   textconv or filter driver), no implicit bare repository, no signature check

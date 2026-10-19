@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { CommandCall } from "../definition.ts";
+import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import { type BashRunner, defineBash, GIT_SAFETY_ENV, resolveBashCwd } from "./exec.ts";
 
@@ -163,5 +164,27 @@ describe("git config overrides on allowlisted calls", () => {
     const bash = defineBash(root, { runner: recordingRunner(ran) });
     await bash.executor(call({ command: "git commit" }), { authzBasis: "policy:allow:operator-approved" });
     assert.equal(ran[0].env.GIT_CONFIG_COUNT, undefined);
+  });
+});
+
+describe("bash's starting directory", () => {
+  it("PWD and OLDPWD are the real cwd and CDPATH is absent, whatever the runtime inherited", async () => {
+    const ran: Ran[] = [];
+    const env = new MapEnv({
+      PATH: "/usr/bin:/bin",
+      PWD: join(root, "out-link"),
+      OLDPWD: "/tmp",
+      CDPATH: "/tmp",
+    });
+    const bash = defineBash(root, { runner: recordingRunner(ran), env });
+    for (const authzBasis of ["policy:allow:bash-allowlist", "policy:allow:operator-approved"]) {
+      await bash.executor(call({ command: "ls", cwd: "src" }), { authzBasis });
+    }
+    for (const run of ran) {
+      assert.equal(run.env.PWD, join(root, "src"));
+      assert.equal(run.env.OLDPWD, join(root, "src"));
+      assert.equal("CDPATH" in run.env, false);
+      assert.equal(run.env.PATH, "/usr/bin:/bin");
+    }
   });
 });
