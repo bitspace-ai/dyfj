@@ -11,6 +11,52 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Read-only bash commands run without a prompt under the `operator`
+  posture.** On a loopback turn with `permission operator`, a `bash` call that
+  only reads runs at once: chains of `git status`, `git diff`, `git log`,
+  `git show`, `git rev-parse`, `git branch --show-current`, `ls`, `cat`,
+  `head`, `tail`, `wc`, `grep`, `rg` and `sed -n` line printing, joined by
+  `&&` or `;`, optionally led by the no-op `cd "$PWD" &&` and ended by
+  `2>&1` and `| head` or `| tail`. Each command, and each git subcommand,
+  accepts only a listed set of options (for example `git log --oneline -n 5`,
+  `git diff --cached --name-only`, `grep -rn -A3`), and every path, whether an
+  operand or an option's value such as `grep -f <file>`, must resolve inside
+  the workspace with symlinks followed. Options that read file names from a
+  file (`wc --files0-from`) are refused, and so is a git format that asks git
+  to verify signatures (`%G`). Anything else asks as before: another command
+  or option, a redirection,
+  `$`, backticks, globs, an environment assignment, a non-ASCII character, a
+  path outside the workspace, or a command over 2,000 characters. The test
+  commands are not on the list, because they run workspace code. Under
+  `strict` the allowlist does not apply, and every bash call asks unless the
+  operator allowed that exact command for the session (below). Paths resolve
+  as the kernel resolves them, a symlink followed before any `..` after it, so
+  `link/../x` is checked where it really lands. Any other `cd` asks, since
+  bash's `cd` resolves `..` before following links and reads options, `CDPATH`
+  and `HOME`: pass the `cwd` argument instead. Every bash call starts with
+  `PWD` and `OLDPWD` set to its real directory and no `CDPATH`. Such a call is journaled with
+  basis `policy:allow:bash-allowlist` and runs with git's program-running
+  sources switched off: no fsmonitor, no worktree or global attributes (so no
+  textconv or filter driver), no implicit bare repository, no signature check
+  and no pager. One remains: a `diff.external` program configured by the
+  operator or by a command the operator approved still runs on an allowlisted
+  `git diff`; the model cannot plant one, since the write tools refuse `.git`.
+- **"Allow this exact command for the rest of this session."** Both REPLs ask
+  `approve? [y/N/s]` for a bash call; `s` approves it and lets the same
+  command, with the same `cwd` and `timeoutSec`, run again in that session
+  without asking, under `strict` as under `operator`. The grant lives in the
+  runtime's memory, is never persisted,
+  and is gone in a new session or after a runtime restart. The granting call is
+  journaled as `policy:allow:operator-approved-session-grant`, and each reuse
+  as `policy:allow:session-grant`.
+- **The receipt counts calls that ran without a prompt.** Both REPLs' receipt
+  lines add `auto-approved N (allowlist A, session S)` when any did, the
+  stored receipt adds an `Auto-approved:` line, and the turn result carries
+  `agent.autoApprovals`.
+- **`bash` takes an optional `cwd`.** A directory, relative to the workspace
+  root, that must exist inside the workspace with symlinks followed; an
+  absolute path or anything else is refused and the command does not run. Models no longer need to prefix commands with `cd`.
+
 - **Both REPLs refuse an unknown slash command instead of sending it.** A line
   that is one `/word` (letters, digits and hyphens, then a space or the end of
   the line) and names no command now prints `unknown command /word; /help
@@ -296,6 +342,11 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **`write_file` and `edit_file` refuse paths inside `.git`.** Any path with
+  a `.git` segment, in any letter case and through a symlinked directory, is
+  refused. Repository config and attributes there can make read-only git
+  commands run programs, and those commands may now run without a prompt.
 
 - **OpenRouter requests run at the catalog price or not at all.** OpenRouter
   routes a request to one of several upstreams, each at its own price, and

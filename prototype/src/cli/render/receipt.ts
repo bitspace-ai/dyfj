@@ -1,6 +1,9 @@
 /** The per-turn receipt line printed to stderr after a turn. */
 
-import { formatHistoryOmissionSummary } from "../../contract/mod.ts";
+import {
+  formatAutoApprovals,
+  formatHistoryOmissionSummary,
+} from "../../contract/mod.ts";
 import type { TurnResult } from "../turn-client.ts";
 
 function formatUsdShort(usd: number): string {
@@ -118,9 +121,11 @@ export function formatReceipt(
   const tokens = `${formatTokenCount(result.tokens.input)}→${
     formatTokenCount(result.tokens.output)
   } tok${reasoning}${cache}`;
+  const autoApproved = formatAutoApprovals(result.agent.autoApprovals);
   const toolSteps =
     `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
-    (result.agent.limitReached ? " (limit reached)" : "");
+    (result.agent.limitReached ? " (limit reached)" : "") +
+    (autoApproved === undefined ? "" : ` · ${autoApproved}`);
   const history = result.historyOmission === undefined
     ? ""
     : ` · ${formatHistoryOmissionSummary(result.historyOmission)}`;

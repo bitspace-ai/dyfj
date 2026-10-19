@@ -39,7 +39,11 @@
         "agent": {
           "toolStepsUsed": 1,
           "maxToolSteps": 32,
-          "limitReached": false
+          "limitReached": false,
+          "autoApprovals": {
+            "allowlist": 0,
+            "sessionGrant": 0
+          }
         }
       }
     },
@@ -159,7 +163,8 @@
           "title": "Run Bash Command (timeout <DURATION>)",
           "arguments": {
             "command": "echo golden-bash-output"
-          }
+          },
+          "grantable": true
         }
       },
       {
@@ -265,7 +270,11 @@
           "agent": {
             "toolStepsUsed": 1,
             "maxToolSteps": 32,
-            "limitReached": false
+            "limitReached": false,
+            "autoApprovals": {
+              "allowlist": 0,
+              "sessionGrant": 0
+            }
           }
         }
       }
@@ -278,7 +287,8 @@
           "title": "Run Bash Command (timeout <DURATION>)",
           "arguments": {
             "command": "echo golden-bash-output"
-          }
+          },
+          "grantable": true
         },
         "response": {
           "decision": "approve"

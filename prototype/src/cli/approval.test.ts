@@ -339,3 +339,44 @@ describe("promptMidTurnApproval", () => {
     assert.strictEqual(verdict.decision, "deny");
   });
 });
+
+describe("promptMidTurnApproval: allow for the rest of the session", () => {
+  const grantable = {
+    commandId: "bash",
+    title: "Run Bash Command (timeout 120 s)",
+    arguments: { command: "npm test" },
+    grantable: true,
+  };
+
+  for (const answer of ["s", "S", " session "]) {
+    it(`"${answer}" approves and asks for a session grant`, async () => {
+      const { io } = fakeIo([answer]);
+      assert.deepStrictEqual(await promptMidTurnApproval(io, grantable, true), {
+        decision: "approve",
+        scope: "session",
+      });
+    });
+  }
+
+  it("offers the answer on a grantable request", async () => {
+    const fake = fakeIo(["n"]);
+    await promptMidTurnApproval(fake.io, grantable, true);
+    assert.deepStrictEqual(fake.prompts, ["   approve? [y/N/s] "]);
+    assert.ok(
+      fake.stderr.some((line) => line.includes("s = yes, and allow this exact command for the rest of this session")),
+      fake.stderr.join("\n"),
+    );
+  });
+
+  it("y still approves once", async () => {
+    const { io } = fakeIo(["y"]);
+    assert.deepStrictEqual(await promptMidTurnApproval(io, grantable, true), { decision: "approve" });
+  });
+
+  it("a request that is not grantable neither offers nor accepts it", async () => {
+    const fake = fakeIo(["s"]);
+    const verdict = await promptMidTurnApproval(fake.io, { ...grantable, grantable: undefined }, true);
+    assert.deepStrictEqual(verdict, { decision: "deny", reason: "operator declined" });
+    assert.deepStrictEqual(fake.prompts, ["   approve? [y/N] "]);
+  });
+});

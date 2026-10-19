@@ -16,6 +16,9 @@
  *   operator-confirmed overrun raises the envelope for its scope period
  *   instead of re-prompting every turn. The owners hold the confirmation
  *   store; a turn reaches its session's scope only through `budgetScope`.
+ * - The session grants are the operator's "allow this exact call for the rest
+ *   of the session" answers (BIT-707). The owners hold the grant store; a turn
+ *   reaches its session's grants only through `sessionGrants`.
  * - A `TurnTicket` is one admitted turn's cancel signal. It exists from
  *   admission, before the turn holds the lock, so a cancel that arrives while
  *   the turn waits still lands. Other code changes it only by sending it a
@@ -26,6 +29,8 @@ import {
   CeilingConfirmationStore,
 } from "../budget/mod.ts";
 import { generateULID } from "../kernel/mod.ts";
+import type { SessionGrants } from "../tools/mod.ts";
+import { SessionGrantStore } from "./session-grants.ts";
 
 /** One admitted turn's cancel signal and its cancellation window. */
 export class TurnTicket {
@@ -107,11 +112,17 @@ export interface BudgetScopes {
   budgetScope(sessionId: string): BudgetCeilingConfirmations;
 }
 
+/** Where a turn finds its session's "allow for the rest of the session" grants. */
+export interface SessionGrantScopes {
+  sessionGrants(sessionId: string): SessionGrants;
+}
+
 /** The engine's session owners, one per session with a turn in flight. */
-export class SessionOwners implements BudgetScopes {
+export class SessionOwners implements BudgetScopes, SessionGrantScopes {
   readonly #owners = new Map<string, SessionOwner>();
   #inFlightTurns = 0;
   readonly #confirmations: CeilingConfirmationStore;
+  readonly #grants = new SessionGrantStore();
 
   /**
    * One per engine, so ceiling confirmations persist for their scope periods
@@ -129,6 +140,11 @@ export class SessionOwners implements BudgetScopes {
    */
   budgetScope(sessionId: string): BudgetCeilingConfirmations {
     return this.#confirmations.for(sessionId);
+  }
+
+  /** The session's grants, kept across its turns for the engine's lifetime. */
+  sessionGrants(sessionId: string): SessionGrants {
+    return this.#grants.for(sessionId);
   }
 
   /**

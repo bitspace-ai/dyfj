@@ -103,6 +103,21 @@ export interface CommandDefinition<TResult = unknown> {
    */
   approvalTitle?: (call: CommandCall) => string;
   /**
+   * True when this call may run without a prompt because it only reads
+   * (bash's read-only allowlist, BIT-707). Called after argument validation,
+   * and only under the operator posture on loopback. It is the one declared
+   * place where a permission check reads a model-supplied argument (README
+   * Section 1), and it must fail closed: false whenever it is unsure.
+   */
+  readOnlyCall?: (call: CommandCall) => boolean;
+  /**
+   * The approval prompt may offer "allow this exact call for the rest of the
+   * session" (BIT-707). The grant matches the command id and every argument
+   * exactly, lives in the runtime's memory for that session only, and is
+   * never persisted.
+   */
+  grantable?: boolean;
+  /**
    * Redact this command's RESULT from the durable tool_call event (the model
    * still receives it in-turn). Set for tools whose output can carry secrets the
    * approver cannot pre-screen — e.g. bash printing env or file contents that
@@ -187,11 +202,25 @@ export interface ToolApprovalRequest {
   callId: string;
   title: string;
   arguments: Record<string, unknown>;
+  /** The operator may answer "allow this exact call for the rest of the session". */
+  grantable?: boolean;
 }
 
 export interface ToolApprovalVerdict {
   decision: "approve" | "deny";
   reason?: string;
+  /** On an approval: also allow this exact call for the rest of the session. */
+  scope?: "session";
+}
+
+/**
+ * One session's "allow for the rest of the session" grants, keyed by
+ * `sessionGrantKey`. Owned by the engine's session owners; held in memory
+ * only.
+ */
+export interface SessionGrants {
+  has(key: string): boolean;
+  add(key: string): void;
 }
 
 /**

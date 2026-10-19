@@ -180,7 +180,10 @@ internal move.
      The refusal reaches the model as an `approval_denied:` message and the
      turn's second provider call is a forced conclusion; scenario 03 was
      re-snapshotted under that decision (below, scenario 13).
-  4. `bash` always asks; approved via the scripted approver.
+  4. `bash` asks under `strict` (the golden posture); approved via the
+     scripted approver. Under `operator` a read-only call skips the prompt
+     (`bash-allowlist.ts`), and in either posture a call the operator allowed
+     for the session skips it; unit and component tests cover both.
   5. Continue an existing session (history projection). The resumed turn
      names no model, so it runs on the session's recorded model and reports
      the route reason `session_model`; scenarios 05, 10 (whose

@@ -112,7 +112,9 @@ tasks are removed) over a duplex
 JSON-RPC 2.0 Unix-socket seam (the canonical loopback
 transport), shared single-turn runtime boundary, a multi-step agent loop
 (iterating model↔tools with workspace file tools, an approval-gated `bash`
-escape hatch, and a bounded `git` tool; a call that is not approved reaches the model as an `approval_denied` refusal and ends tool use for that turn), an operator-routed
+escape hatch whose read-only commands run without a prompt under the
+`operator` posture and which the operator can allow per exact command for the
+rest of a session, and a bounded `git` tool; a call that is not approved reaches the model as an `approval_denied` refusal and ends tool use for that turn), an operator-routed
 provider path with local models plus hosted providers (Anthropic, OpenAI,
 OpenRouter, Google Gemini, and xAI) behind paid-approval and budget controls, and a
 local ACP-client foundation verified against a deterministic fixture agent. The
@@ -248,7 +250,12 @@ plan (`specs/README.md`, decision D29).
 ### Authority and policy
 
 - **Permissions reason about call shape, not the model's justification.**
-  Model-supplied arguments are ignored during permission checks.
+  Model-supplied arguments are ignored during permission checks. One declared
+  exception: the read-only `bash` allowlist reads the `command` string (and
+  its `cwd`), only to decide whether that call may run without a prompt, and
+  fails closed, so anything it cannot classify asks. It applies only under the
+  `operator` posture on a loopback turn, and it is interim: a sandbox boundary
+  replaces it.
 - **Immutable message log is ground truth.** Memory is a derived view; the log
   is the audit trail.
   _Runtime status: not yet true in full. Events are append-only, but session
@@ -2649,3 +2656,8 @@ Document revisions only. Code and behavior changes are tracked in
   good code when an edit breaks the runtime, the boot-failure block native
   turns carry to the model, `/rollback`, the snapshot's limits, and when to
   rebuild the release REPL for plain `dyfj`.
+- 2026-10-18 - Section 1, "Permissions reason about call shape", declares one
+  exception: the read-only `bash` allowlist reads the command string to decide
+  whether a call may skip the prompt, failing closed, under the `operator`
+  posture on loopback only. The status paragraph says `bash`'s read-only
+  commands and session-allowed commands run without a prompt.

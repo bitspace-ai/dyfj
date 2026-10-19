@@ -771,7 +771,7 @@
           {
             "id": "bash",
             "title": "Run Bash Command",
-            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped.",
+            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, or the workspace directory cwd names, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Requires operator approval before it runs, except for a small set of read-only commands (git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) and commands the operator allowed for the rest of the session. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped. Pass cwd rather than prefixing the command with cd.",
             "inputSchema": {
               "type": "object",
               "required": [
@@ -781,6 +781,10 @@
                 "command": {
                   "type": "string",
                   "description": "The shell command to run (executed as `bash -c`)."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Directory to run in, relative to the workspace root. It must be an existing directory inside the workspace. Default: the workspace root."
                 },
                 "timeoutSec": {
                   "type": "integer",
@@ -2116,7 +2120,7 @@
           {
             "id": "bash",
             "title": "Run Bash Command",
-            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Always requires explicit operator approval before it runs — it is never auto-approved. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped.",
+            "description": "Run a shell command via `bash -c`. The working directory is the workspace root, or the workspace directory cwd names, but the command is NOT sandboxed — it can read and write anywhere on the machine and reach the network, exactly as if the operator ran it. Returns the exit status and combined stdout/stderr. Requires operator approval before it runs, except for a small set of read-only commands (git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) and commands the operator allowed for the rest of the session. The command and its whole process tree are stopped after <DURATION> by default; pass timeoutSec, up to the <DURATION> ceiling, only when a command needs longer (a full test run, for example). A larger value is refused, not clamped. Pass cwd rather than prefixing the command with cd.",
             "inputSchema": {
               "type": "object",
               "required": [
@@ -2126,6 +2130,10 @@
                 "command": {
                   "type": "string",
                   "description": "The shell command to run (executed as `bash -c`)."
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Directory to run in, relative to the workspace root. It must be an existing directory inside the workspace. Default: the workspace root."
                 },
                 "timeoutSec": {
                   "type": "integer",

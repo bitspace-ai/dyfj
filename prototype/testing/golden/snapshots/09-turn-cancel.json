@@ -39,7 +39,11 @@
         "agent": {
           "toolStepsUsed": 0,
           "maxToolSteps": 32,
-          "limitReached": false
+          "limitReached": false,
+          "autoApprovals": {
+            "allowlist": 0,
+            "sessionGrant": 0
+          }
         }
       }
     },

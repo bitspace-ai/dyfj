@@ -65,8 +65,17 @@ declares:
   - a contained local write asks under `strict` and is auto-approved under the
     `operator` profile on a loopback turn;
   - process execution, spend, external writes and arbitrary network egress
-    always ask;
+    ask;
   - `defaultDecision: "deny"` denies.
+
+  Two declared exceptions let a process-executing call skip the prompt, and
+  only `bash` uses them. `readOnlyCall(call)` returns true for a call that
+  only reads, which the policy then allows under the `operator` profile on a
+  loopback turn (basis `policy:allow:bash-allowlist`); it reads a
+  model-supplied argument, the one place a permission check does (README
+  Section 1), so it must fail closed. `grantable: true` lets the prompt offer
+  "allow this exact call for the rest of the session". Do not add either to a
+  new tool without a decision that names it.
 - **Redaction.** Mark a payload-bearing argument `redact: true` on its schema
   property (file content, message bodies). Set `redactResult: true` when the
   result can carry what the approver could not pre-screen (process output).

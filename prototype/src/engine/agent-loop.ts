@@ -341,6 +341,11 @@ async function invokeTool(
     const outcome = await commandOutcome;
     if (!outcome.ok) throw outcome.error;
     const commandResult = outcome.value;
+    if (commandResult.authzBasis === "policy:allow:bash-allowlist") {
+      state.autoApprovals.allowlist++;
+    } else if (commandResult.authzBasis === "policy:allow:session-grant") {
+      state.autoApprovals.sessionGrant++;
+    }
     const approvalDenied = "verdict" in commandResult &&
       commandResult.verdict === "approval_denied";
     const durationMs = ports.clock.now() - toolStartedAt;
@@ -435,6 +440,7 @@ function startCommand(
 ): ReturnType<typeof invokeCommandWithEvent> {
   const { state, input, ports } = turn;
   const { session } = state;
+  const loopback = session.authContext.transport === "loopback";
   return invokeCommandWithEvent(
     state.commandRegistry,
     {
@@ -466,9 +472,13 @@ function startCommand(
     {
       // Operator permission profile: on a loopback turn with permissionLevel
       // "operator", contained mutating tools auto-approve instead of
-      // prompting.
+      // prompting, and so do read-only bash calls.
       permissionLevel: input.permissionLevel ?? "strict",
-      loopback: session.authContext.transport === "loopback",
+      loopback,
+      // "Allow for the rest of the session" grants, offered on loopback only.
+      ...(loopback && ports.sessionGrants !== undefined
+        ? { sessionGrants: ports.sessionGrants.sessionGrants(session.sessionId) }
+        : {}),
     },
   );
 }

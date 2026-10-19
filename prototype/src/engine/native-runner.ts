@@ -76,6 +76,9 @@ export async function runWorkbenchRuntime(
   return await runNativeWorkbenchRuntime(runtimeInput, {
     store: services.store,
     budgetScopes: services.budgetScopes,
+    ...(services.sessionGrants === undefined
+      ? {}
+      : { sessionGrants: services.sessionGrants }),
     rootAnchors: services.rootAnchors,
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,

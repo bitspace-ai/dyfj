@@ -357,6 +357,8 @@ function composeTurnRuntime(
       // The session owners hold each session's budget scope, so ceiling
       // confirmations persist for their scope periods across turns.
       budgetScopes: owners,
+      // ...and its "allow for the rest of the session" grants, in memory only.
+      sessionGrants: owners,
       rootAnchors,
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),

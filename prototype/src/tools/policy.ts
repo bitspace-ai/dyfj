@@ -11,6 +11,7 @@ import type {
   CommandDefinition,
   CommandEffect,
   CommandPolicyResult,
+  SessionGrants,
 } from "./definition.ts";
 import {
   formatInvalidArgumentsReason,
@@ -36,6 +37,12 @@ export interface CommandPolicyContext {
   permissionLevel?: PermissionLevel;
   /** Whether this turn is on the canonical loopback transport. */
   loopback?: boolean;
+  /**
+   * The session's "allow for the rest of the session" grants, on a loopback
+   * turn. Absent, nothing is offered or granted. `invokeCommand` consults it
+   * after an `ask` verdict.
+   */
+  sessionGrants?: SessionGrants;
 }
 
 export function evaluateCommandPolicy(
@@ -124,7 +131,8 @@ export function evaluateCommandPolicy(
   // operator profile. The no-exec invariant (`!executesProcesses`) is the
   // explicit gate: a tool carrying a run.* effect can never auto-approve here,
   // even if its filesystem/cost/network envelope would otherwise match — so bash
-  // always asks regardless of how its metadata is tagged.
+  // asks regardless of how its metadata is tagged, save for the read-only
+  // allowlist below.
   if (
     context.permissionLevel === "operator" &&
     context.loopback === true &&
@@ -138,6 +146,23 @@ export function evaluateCommandPolicy(
     return {
       decision: "allow",
       authzBasis: "policy:allow:operator-profile",
+    };
+  }
+
+  // The read-only allowlist (BIT-707): the one declared exception to the
+  // no-exec invariant, and to "permission checks ignore model-supplied
+  // arguments" (README Section 1). A command that declares `readOnlyCall`
+  // (bash) may skip the prompt for a call it judges read-only, under the
+  // operator posture on loopback only. The check fails closed, so a mistake
+  // costs a prompt rather than skipping one.
+  if (
+    context.permissionLevel === "operator" &&
+    context.loopback === true &&
+    command.readOnlyCall?.(call) === true
+  ) {
+    return {
+      decision: "allow",
+      authzBasis: "policy:allow:bash-allowlist",
     };
   }
 

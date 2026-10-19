@@ -271,6 +271,12 @@ async fn decide(input: &mpsc::Sender<Ask>, params: &Value, mut preamble: String)
     }
 
     if choices.is_empty() {
+        // Only a request the runtime marks grantable offers "allow for the
+        // rest of the session"; elsewhere `s` is not consent.
+        if params.get("grantable").and_then(Value::as_bool) == Some(true) {
+            preamble.push_str("   s = yes, and allow this exact command for the rest of this session\n");
+            return yes_no_or_session(input, &preamble).await;
+        }
         return yes_no(input, &preamble).await;
     }
     for (index, (_, name)) in choices.iter().enumerate() {
@@ -286,6 +292,20 @@ async fn yes_no(input: &mpsc::Sender<Ask>, preamble: &str) -> Outcome {
         ReadResult::Cancelled => Outcome::Cancelled,
         // Ctrl-D, a failed flush, or a terminal that went away. None of
         // these is a decision the operator typed.
+        ReadResult::Unavailable => {
+            Outcome::Verdict(Verdict::deny("approval prompt was not answered"))
+        }
+    }
+}
+
+async fn yes_no_or_session(input: &mpsc::Sender<Ask>, preamble: &str) -> Outcome {
+    match read(input, preamble, "   approve? [y/N/s] ").await {
+        ReadResult::Line(answer) if is_yes(&answer) => Outcome::Verdict(Verdict::approve()),
+        ReadResult::Line(answer) if is_session(&answer) => {
+            Outcome::Verdict(Verdict::approve_for_session())
+        }
+        ReadResult::Line(_) => Outcome::Verdict(Verdict::deny("operator declined")),
+        ReadResult::Cancelled => Outcome::Cancelled,
         ReadResult::Unavailable => {
             Outcome::Verdict(Verdict::deny("approval prompt was not answered"))
         }
@@ -311,6 +331,10 @@ async fn select(input: &mpsc::Sender<Ask>, preamble: &str, choices: &[(String, S
 
 fn is_yes(answer: &str) -> bool {
     matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+}
+
+fn is_session(answer: &str) -> bool {
+    matches!(answer.trim().to_ascii_lowercase().as_str(), "s" | "session")
 }
 
 enum ReadResult {
@@ -655,6 +679,43 @@ mod tests {
         assert!(spending_request(&json!({"kind": "runaway_anomaly"})).is_some());
         assert!(spending_request(&json!({"commandId": "bash"})).is_none());
         assert!(spending_request(&json!({"kind": "something_new"})).is_none());
+    }
+
+    /// BIT-707: a grantable request offers "allow this exact command for the
+    /// rest of this session", answered by `s`.
+    #[tokio::test]
+    async fn a_grantable_request_offers_and_accepts_a_session_grant() {
+        let params = json!({
+            "title": "Run Bash Command (timeout 120 s)",
+            "arguments": {"command": "npm test"},
+            "grantable": true
+        });
+        let (tx, mut rx) = mpsc::channel(1);
+        tokio::spawn(async move {
+            let Ask::Approval { preamble, question, respond } = rx.recv().await.unwrap() else {
+                panic!("expected an approval read");
+            };
+            assert!(
+                preamble.contains("s = yes, and allow this exact command for the rest of this session"),
+                "{preamble}"
+            );
+            assert!(question.contains("approve? [y/N/s]"), "{question}");
+            let _ = respond.send(ReadOutcome::Line("s".into()));
+        });
+        assert_eq!(verdict_json(ask(&tx, &params).await), r#"{"decision":"approve","scope":"session"}"#);
+        assert_eq!(answer(&params, "Session").await, r#"{"decision":"approve","scope":"session"}"#);
+        assert_eq!(answer(&params, "y").await, r#"{"decision":"approve"}"#);
+    }
+
+    #[tokio::test]
+    async fn s_is_not_consent_on_a_request_that_is_not_grantable() {
+        for params in [
+            json!({"title": "write_file", "arguments": {"path": "x"}}),
+            json!({"title": "write_file", "grantable": "true"}),
+        ] {
+            let verdict = answer(&params, "s").await;
+            assert!(verdict.contains("deny"), "{params} -> {verdict}");
+        }
     }
 
     #[test]

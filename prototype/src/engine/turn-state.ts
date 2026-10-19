@@ -12,7 +12,7 @@
  *   first failed integrity write, so neither is ever silent.
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
-import type { CostBasis } from "../contract/mod.ts";
+import type { AutoApprovals, CostBasis } from "../contract/mod.ts";
 import type { CommandRegistry, RootAnchors } from "../tools/mod.ts";
 import type {
   HistoryOmissionReceipt,
@@ -33,13 +33,15 @@ import type { EventInsert, Store } from "../store/mod.ts";
 import type { Clock } from "../kernel/mod.ts";
 import type { Env, RuntimePolicy } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
-import type { BudgetScopes } from "./session-owner.ts";
+import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
 
 /** The ports a native turn's stages run against. */
 export interface NativeTurnPorts {
   store: Store;
   budgetScopes: BudgetScopes;
+  /** The sessions' "allow for the rest of the session" grants; absent, none are offered. */
+  sessionGrants?: SessionGrantScopes;
   clock: Clock;
   env: Env;
   /**
@@ -191,6 +193,8 @@ export interface TurnState {
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
   toolStepLimitReached: boolean;
+  /** Tool calls that ran without a prompt, by basis (BIT-707). */
+  autoApprovals: AutoApprovals;
   /**
    * The first failed call of the latest tool step, with its operator reason;
    * undefined when that step had none. A turn that then ends with no reply
@@ -249,6 +253,7 @@ export function newTurnState(
     callTimings: undefined,
     toolSteps: 0,
     toolStepLimitReached: false,
+    autoApprovals: { allowlist: 0, sessionGrant: 0 },
     lastStepFailure: undefined,
     turnEndNotice: undefined,
     finalText: "",
