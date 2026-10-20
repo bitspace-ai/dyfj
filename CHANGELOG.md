@@ -343,8 +343,7 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
-- **Budget approvals hold for the rest of the turn, and each approval raises
-  its limit to a stated level (BIT-715).**
+- **Budget approvals raise their limit to a stated level instead of prompting at every step (BIT-715).**
   - Runaway anomaly gate: approving at actual spend S raises the tripped
     trigger's halt to 2S. The turn halt lasts the turn; the session and daily
     halts last the session and the local day. Spend past the raised halt
