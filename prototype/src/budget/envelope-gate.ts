@@ -20,6 +20,13 @@ export interface BudgetCeilingWarning {
    * prompt must not silently raise the session or daily envelope.
    */
   crossedScopes: BudgetLimitReason[];
+  /**
+   * The limit each presented scope is raised to if the operator approves
+   * (BIT-715): per-call to PER_CALL_HEADROOM × the estimate, session to the
+   * projected session spend plus one session envelope. Daily has no entry:
+   * it is unchanged and covers the local day.
+   */
+  raisesToUsd: Partial<Record<BudgetLimitReason, number>>;
   estimatedCostUsd: number;
   limitUsd: number;
   sessionCostSoFarUsd: number;
@@ -40,6 +47,31 @@ export type ConfirmBudgetCeiling = (
   warning: BudgetCeilingWarning,
 ) => Promise<BudgetCeilingVerdict>;
 
+/**
+ * A per-call approval covers estimates up to this multiple of the estimate
+ * the operator was shown (BIT-715). A call past that mark prompts again.
+ */
+const PER_CALL_HEADROOM = 2;
+
+/**
+ * The limit each scope in `scopes` is raised to by approving it. Daily is
+ * absent: its mark stays unbounded for the local day.
+ */
+function approvalRaises(
+  preCall: PreCallCheck,
+  scopes: BudgetLimitReason[],
+): Partial<Record<BudgetLimitReason, number>> {
+  const raises: Partial<Record<BudgetLimitReason, number>> = {};
+  if (scopes.includes("per_call_limit")) {
+    raises.per_call_limit = preCall.estimatedCost * PER_CALL_HEADROOM;
+  }
+  if (scopes.includes("session_limit")) {
+    raises.session_limit = projectedSessionSpend(preCall) +
+      preCall.sessionLimitUsd;
+  }
+  return raises;
+}
+
 export function buildBudgetCeilingWarning(
   preCall: PreCallCheck,
   overrideReason?: BudgetLimitReason,
@@ -51,12 +83,14 @@ export function buildBudgetCeilingWarning(
     : reason === "daily_limit"
     ? preCall.dailyLimitUsd
     : preCall.sessionLimitUsd;
+  const scopes = crossedScopes && crossedScopes.length > 0
+    ? crossedScopes
+    : [reason];
   return {
     kind: "budget_ceiling",
     reason,
-    crossedScopes: crossedScopes && crossedScopes.length > 0
-      ? crossedScopes
-      : [reason],
+    crossedScopes: scopes,
+    raisesToUsd: approvalRaises(preCall, scopes),
     estimatedCostUsd: preCall.estimatedCost,
     limitUsd,
     sessionCostSoFarUsd: preCall.sessionCostSoFar,
@@ -80,11 +114,22 @@ export function formatBudgetCeilingWarning(
   const scopes = warning.crossedScopes.length > 0
     ? warning.crossedScopes
     : [warning.reason];
+  const raiseLine = (scope: BudgetLimitReason): string =>
+    scope === "per_call_limit"
+      ? `  per-call limit  to $${
+        (warning.raisesToUsd.per_call_limit ?? 0).toFixed(6)
+      } (covers calls up to ${PER_CALL_HEADROOM}x this estimate)`
+      : scope === "session_limit"
+      ? `  session limit   to $${
+        (warning.raisesToUsd.session_limit ?? 0).toFixed(6)
+      } (projected spend + $${warning.sessionLimitUsd.toFixed(6)})`
+      : "  daily limit     unchanged; covers the rest of the local day";
   return [
     "Budget ceiling warning",
-    `Reason:          ${scopes.map(label).join(" + ")}`,
-    `Approving raises: ${scopes.map(label).join(", ")}`,
-    `Estimated cost:  $${warning.estimatedCostUsd.toFixed(6)}`,
+    `Reason:           ${scopes.map(label).join(" + ")}`,
+    "Approving raises:",
+    ...scopes.map(raiseLine),
+    `Estimated cost:   $${warning.estimatedCostUsd.toFixed(6)}`,
     `Limit:           $${warning.limitUsd.toFixed(6)}`,
     `Session spent:   $${warning.sessionCostSoFarUsd.toFixed(6)} / ${
       warning.sessionLimitUsd.toFixed(6)
@@ -260,18 +305,23 @@ function recordCeilingConfirmations(
   approvedScopes: BudgetLimitReason[],
 ): void {
   // Raise exactly the scopes the approval presented — never a scope the
-  // operator was not shown.
-  if (approvedScopes.includes("per_call_limit")) {
+  // operator was not shown — and only to the level the prompt stated.
+  const raises = approvalRaises(preCall, approvedScopes);
+  if (raises.per_call_limit !== undefined) {
     confirmed.per_call_limit = Math.max(
       confirmed.per_call_limit ?? 0,
-      preCall.estimatedCost,
+      raises.per_call_limit,
     );
   }
-  // Session and daily confirmations cover the whole scope period; recording
-  // the projected level instead re-prompted on every later agent-loop call
-  // as the projection grew — per-call ceremony under another name.
-  if (approvedScopes.includes("session_limit")) {
-    confirmed.session_limit = Number.POSITIVE_INFINITY;
+  // Session raises by one session envelope past the projection (BIT-715), so
+  // a long turn re-prompts at each envelope of growth, not never and not at
+  // every call. Daily is unchanged: unbounded for the local day, and bounded
+  // only by the daily anomaly halt.
+  if (raises.session_limit !== undefined) {
+    confirmed.session_limit = Math.max(
+      confirmed.session_limit ?? 0,
+      raises.session_limit,
+    );
   }
   if (approvedScopes.includes("daily_limit")) {
     confirmed.daily_limit = Number.POSITIVE_INFINITY;
@@ -280,20 +330,22 @@ function recordCeilingConfirmations(
 
 export interface TurnBudgetCeilingGate {
   /**
-   * Enforce the per-call/session/daily ceilings; a crossed, unconfirmed scope
-   * prompts once and the confirmation covers that scope per the injected
-   * confirmation store's lifetime.
+   * Enforce the per-call/session/daily ceilings; a crossed scope prompts only
+   * when its projection passes the level it was last raised to, and the
+   * approval raises that scope to the level the prompt stated.
    */
   ensureAllowed(preCall: PreCallCheck): Promise<void>;
 }
 
 /**
  * Wrap budget-ceiling confirmation over the per-call, session, and daily
- * scopes. One prompt names every newly-crossed scope and the approval covers
- * exactly those scopes. With the default fresh store, coverage lasts the
- * turn; pass `confirmationStore.for(sessionId)` (a `CeilingConfirmationStore`)
- * to persist confirmations for their scope periods — the rest of the session for
- * per-call/session marks, the rest of the local day for the daily mark.
+ * scopes. One prompt names every newly-crossed scope and the approval raises
+ * exactly those scopes, each to the level the prompt states: per-call to
+ * PER_CALL_HEADROOM × the estimate, session to the projection plus one session
+ * envelope, daily to unbounded for the day. With the default fresh store the
+ * marks last the turn; pass `confirmationStore.for(sessionId)` (a
+ * `CeilingConfirmationStore`) to persist them: per-call and session marks for
+ * the session, the daily mark for the local day.
  */
 export function createTurnBudgetCeilingGate(
   confirm?: ConfirmBudgetCeiling,

@@ -59,8 +59,10 @@ level = "strict"
 [anomaly]
 # Runaway-anomaly hard-stop multiples, applied to ACTUAL recorded spend (never
 # estimates) before every paid call. Unlike the soft ceilings above, an
-# approval here admits only the next call — nothing is raised, further
-# anomalous spend prompts again, and non-interactive callers fail closed.
+# approval here does not raise an envelope. It raises the tripped halt to twice
+# the actual spend at approval, for the turn or for the session or day its
+# scope names; spend past that raised halt prompts again, and non-interactive
+# callers fail closed.
 # Multiples must be strictly positive and there is no disable knob. The
 # multiples are config-only (no per-request field); the dollar thresholds
 # they produce scale with the budget envelope in force, including an explicit

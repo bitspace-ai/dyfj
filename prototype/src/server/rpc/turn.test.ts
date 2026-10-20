@@ -751,6 +751,7 @@ test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ce
         trigger: "turn_spend",
         spentUsd: 0.35,
         haltUsd: 0.30,
+        raisesHaltToUsd: 0.70,
         turnSpentUsd: 0.35,
         turnHaltUsd: 0.30,
         sessionSpentUsd: 0.35,
