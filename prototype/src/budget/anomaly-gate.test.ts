@@ -3,6 +3,7 @@
  * warning and wire shape, the turn-scoped gate, and the halt error.
  */
 
+import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { it, mock, test } from "node:test";
@@ -122,7 +123,7 @@ test("ensureAnomalyAllowed: approvals never persist: the same tripped check prom
 
 // ── runaway anomaly warning formatting ────────────────────────────────────────
 
-test("runaway anomaly warning formatting: format names the trigger, the actuals, and the no-raise semantics", () => {
+test("runaway anomaly warning formatting: format names the trigger, the actuals, and the halt an approval raises to", () => {
   const t = makeTracker();
   t.record(makeUsage(100_000, 1000, 0.35), 2);
   const text = formatRunawayAnomalyWarning(
@@ -146,9 +147,10 @@ test("runaway anomaly warning formatting: format names the trigger, the actuals,
     text.includes("$0.350000"),
     `expected ${JSON.stringify(text)} to include "$0.350000"`,
   );
+  // BIT-715: an approval at $0.35 raises the turn halt to twice that spend.
   assert.ok(
-    text.includes("nothing is raised"),
-    `expected ${JSON.stringify(text)} to include "nothing is raised"`,
+    text.includes("$0.700000"),
+    `expected ${JSON.stringify(text)} to include "$0.700000"`,
   );
 });
 
@@ -190,14 +192,19 @@ test("createRunawayAnomalyGate: one anomalous state prompts once: the same spend
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-test("createRunawayAnomalyGate: recorded spend past the approved level re-prompts", async () => {
+test("createRunawayAnomalyGate: approving at spend S does not prompt again until spend exceeds 2S", async () => {
   const confirm = approving();
   const gate = createRunawayAnomalyGate(confirm);
-  const t = trackerPast(0.35);
-  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY)); // $0.35 approved
-  t.record(makeUsage(1000, 100, 0.10), 2); // increment → $0.45
+  const t = trackerPast(0.35); // S = $0.35
+  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
+  assert.equal(confirm.mock.callCount(), 1);
+  t.record(makeUsage(1000, 100, 0.34), 2); // $0.69: inside 2S = $0.70
+  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
+  assert.equal(confirm.mock.callCount(), 1);
+  t.record(makeUsage(1000, 100, 0.02), 2); // $0.71: past 2S
   await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
   assert.equal(confirm.mock.callCount(), 2);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.71);
 });
 
 test("createRunawayAnomalyGate: approvals do not survive the gate instance (one turn)", async () => {
