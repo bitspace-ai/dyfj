@@ -25,7 +25,9 @@ node --permission --allow-fs-read=/path/to/dyfj --allow-net /path/to/dyfj/protot
 It runs on Node 26, after `npm ci` at the repository root: Node resolves the
 server's package imports from the root `node_modules`, from any working
 directory. The Dolt connection comes from `DOLT_HOST`, `DOLT_PORT`,
-`DOLT_USER`, `DOLT_PASSWORD` and `DOLT_DATABASE`.
+`DOLT_USER`, `DOLT_PASSWORD` and `DOLT_DATABASE`. Give the server its own Dolt
+user, `dyfj_mcp_memory` in [Dolt users](../../schema/README.md#dolt-users),
+which reads and writes only `memories` and `sessions`.
 
 `--permission` turns on Node's permission model: the server may read the
 checkout and use the network, and it may not write files, start child
@@ -121,7 +123,7 @@ Requires `dolt sql-server` running locally. See repo root README for setup.
 You can inspect the running server without installing `mysql`:
 
 ```bash
-dolt --host 127.0.0.1 --port 3306 --no-tls \
-  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+DOLT_CLI_PASSWORD="$DOLT_PASSWORD" dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user "$DOLT_USER" --use-db dolt \
   sql -q "SHOW TABLES;"
 ```

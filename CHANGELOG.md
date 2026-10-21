@@ -556,6 +556,27 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The docs give each process its own Dolt user instead of `root`.**
+  `schema/README.md` has a new "Dolt users" section. It lists three users:
+  - `dyfj_runtime` for the runtime: it may only append to `events`, and only
+    read `models` and `prompts`;
+  - `dyfj_mcp_memory` for the MCP memory server: `memories` and `sessions`
+    only;
+  - `dyfj_migrate` for migrations.
+
+  None of them holds `GRANT OPTION`. The section also covers the SQL to
+  create them, and how to apply a migration to a running server as the
+  migration user.
+  - It says the users bound SQL credentials only. While the server runs,
+    `dolt sql` inside the database directory logs in as Dolt's local
+    superuser.
+  - The setup examples now use `dyfj_runtime`.
+  - The `dolt` client examples pass the password through the client's
+    environment instead of `--password`, which would put it in the process
+    list.
+
+  No code changed: the runtime still connects as `root` when `DOLT_USER` is
+  unset.
 - **A `core` integration test no longer writes `DATABASE_URL` into its own
   error context.** When `schema_round_trip` could not connect, the context it
   added to the error interpolated the full `DATABASE_URL`, including any

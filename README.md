@@ -393,10 +393,14 @@ from environment variables; for the default local SQL server, export:
 ```sh
 export DOLT_HOST=127.0.0.1
 export DOLT_PORT=3306
-export DOLT_USER=root
+export DOLT_USER=dyfj_runtime
 export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
+
+Run the Workbench as its own Dolt user, not `root`. The user and the table
+grants it needs are in [Dolt users](schema/README.md#dolt-users). If
+`DOLT_USER` is unset, the runtime connects as `root`.
 
 The local default is Qwen3.6 35B-A3B served by llama.cpp, catalog slug
 `llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
@@ -1756,8 +1760,8 @@ To inspect the running Dolt SQL server without installing `mysql`, use Dolt as
 the client:
 
 ```sh
-dolt --host 127.0.0.1 --port 3306 --no-tls \
-  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+DOLT_CLI_PASSWORD="$DOLT_PASSWORD" dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user "$DOLT_USER" --use-db dolt \
   sql -q "SELECT event_type, session_id, trace_id FROM events ORDER BY created_at DESC LIMIT 5;"
 ```
 
