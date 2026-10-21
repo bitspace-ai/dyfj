@@ -140,10 +140,10 @@ test("runaway anomaly warning formatting: format names the trigger, the actuals,
     } to include "Runaway spend anomaly — hard stop"`,
   );
   assert.ok(
-    text.includes("turn spend at 3× the per-call limit"),
+    text.includes("turn spend past its halt (initially 3× the per-call limit)"),
     `expected ${
       JSON.stringify(text)
-    } to include "turn spend at 3× the per-call limit"`,
+    } to include "turn spend past its halt (initially 3× the per-call limit)"`,
   );
   assert.ok(
     text.includes("$0.350000"),

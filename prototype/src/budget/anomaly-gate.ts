@@ -96,10 +96,10 @@ export function formatRunawayAnomalyWarning(
   warning: RunawayAnomalyWarning,
 ): string {
   const label = warning.trigger === "daily_scope"
-    ? `today's spend at ${warning.scopeMultiple}× the daily envelope`
+    ? `today's spend past its halt (initially ${warning.scopeMultiple}× the daily envelope)`
     : warning.trigger === "session_scope"
-    ? `session spend at ${warning.scopeMultiple}× the session envelope`
-    : `turn spend at ${warning.turnMultiple}× the per-call limit`;
+    ? `session spend past its halt (initially ${warning.scopeMultiple}× the session envelope)`
+    : `turn spend past its halt (initially ${warning.turnMultiple}× the per-call limit)`;
   const scopeName = warning.trigger === "daily_scope"
     ? "daily halt, for today"
     : warning.trigger === "session_scope"
@@ -120,7 +120,7 @@ export function formatRunawayAnomalyWarning(
     `Today spent:    $${warning.dailySpentUsd.toFixed(6)} / halt $${
       warning.dailyHaltUsd.toFixed(6)
     }`,
-    `Approving raises the ${scopeName} to $${
+    `Approving through the turn gate raises the ${scopeName} to $${
       warning.raisesHaltToUsd.toFixed(6)
     } (${APPROVAL_HALT_MULTIPLE}× the spend at approval).`,
     "Spend past that halt prompts again.",
@@ -292,7 +292,7 @@ export function createRunawayAnomalyGate(
         // (computed from an older check) lands after a higher one.
         const raised = spent * APPROVAL_HALT_MULTIPLE;
         if (trigger === "turn_spend") {
-          turnHaltUsd = raised;
+          turnHaltUsd = Math.max(turnHaltUsd ?? 0, raised);
         } else if (trigger === "session_scope") {
           scopeHalts.anomaly_session_halt = Math.max(
             scopeHalts.anomaly_session_halt ?? 0,

@@ -187,7 +187,8 @@ All five apply from Day-1.
    configurable multiples of the per-call limit (turn accumulation) and of the
    session/daily envelopes. An approval raises the tripped halt to twice the
    spend at approval for its scope (the turn halt lasts the turn; the session
-   and daily halts last the session and the local day). Non-interactive
+   halt lasts the session; the daily halt lasts the local day, and a daily
+   approval made during a turn also holds until that turn ends). Non-interactive
    callers fail closed. Trailing-pattern anomaly detection is future work._
 3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line
    is a moving boundary that advances downward as components stabilize - Rust
