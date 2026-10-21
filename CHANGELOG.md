@@ -568,7 +568,7 @@ README are tracked separately in its Revision history section.
   None of them holds `GRANT OPTION`. The section also covers the SQL to
   create them, and how to apply a migration to a running server as the
   migration user.
-  - It says the users bound SQL credentials only. While the server runs,
+  - It says the users limit SQL credentials only. While the server runs,
     `dolt sql` inside the database directory logs in as Dolt's local
     superuser.
   - The setup examples now use `dyfj_runtime`.

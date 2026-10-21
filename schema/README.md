@@ -146,7 +146,7 @@ Keep the passwords out of argument lists and shell history:
   examples here, not through `--password`.
 - Point the runtime's `DOLT_PASSWORD` at a `[secrets.pointers]` entry.
 
-These users bound SQL credentials only. While `dolt sql-server` runs,
+These users limit SQL credentials only. While `dolt sql-server` runs,
 `dolt sql` run inside the database directory logs in as Dolt's local
 superuser, through `.dolt/sql-server.info`. Any process that can read the data
 directory, or write its config and privilege files, therefore has full access,
