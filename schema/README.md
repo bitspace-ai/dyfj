@@ -115,7 +115,12 @@ Why each grant is the size it is:
   is empty. A projector added later needs `DELETE` on its table, or its writes
   are refused.
 
-Create them as `root`:
+Create them as `root`. To change an existing user's grants, drop it and
+create it again rather than revoking: on Dolt 2.5.0,
+`REVOKE ALL PRIVILEGES, GRANT OPTION FROM <user>` is accepted and silently does
+nothing. A revoke that names the object, such as
+`REVOKE ALL ON dolt.events FROM <user>`, does work, but it misses grants on
+objects it does not name.
 
 ```sql
 CREATE USER 'dyfj_runtime'@'localhost' IDENTIFIED BY '<password>';
