@@ -81,7 +81,9 @@ export interface WorkbenchConfig {
   /**
    * Runaway-anomaly hard-stop multiples. Unlike the envelopes (soft,
    * confirmable, scope-persistent), the anomaly gate halts on ACTUAL recorded
-   * spend and its confirmations never persist. Multiples rather than dollar
+   * spend. An approval raises the tripped halt to twice the spend at approval
+   * for its scope: the turn halt lasts the turn, and the session and daily
+   * halts last the session and the local day. Multiples rather than dollar
    * knobs so they scale when the envelopes are retuned.
    */
   anomalyTurnMultiple: number;

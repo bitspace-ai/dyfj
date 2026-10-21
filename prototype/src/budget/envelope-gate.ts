@@ -163,6 +163,7 @@ export function budgetCeilingApprovalRequest(
     dailyCostSoFarUsd: warning.dailyCostSoFarUsd,
     dailyLimitUsd: warning.dailyLimitUsd,
     crossedScopes: warning.crossedScopes,
+    raisesToUsd: warning.raisesToUsd,
     authzBasis: warning.authzBasis,
     message: formatBudgetCeilingWarning(warning),
   };

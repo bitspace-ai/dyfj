@@ -76,6 +76,9 @@
             "crossedScopes": [
               "session_limit"
             ],
+            "raisesToUsd": {
+              "session_limit": 2.635
+            },
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
             "message": "Budget ceiling warning\nReason:           session limit\nApproving raises:\n  session limit   to $2.635000 (projected spend + $1.000000)\nEstimated cost:   $1.635000\nLimit:           $1.000000\nSession spent:   $0.000000 / 1.000000\nToday spent:     $0.000000 / 25.000000\nProjected session: $1.635000 / 1.000000\nProjected today: $1.635000 / 25.000000\nPer-call limit:  $100.000000"
           }
@@ -119,6 +122,9 @@
             "crossedScopes": [
               "session_limit"
             ],
+            "raisesToUsd": {
+              "session_limit": 2.635
+            },
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
             "message": "Budget ceiling warning\nReason:           session limit\nApproving raises:\n  session limit   to $2.635000 (projected spend + $1.000000)\nEstimated cost:   $1.635000\nLimit:           $1.000000\nSession spent:   $0.000000 / 1.000000\nToday spent:     $0.000000 / 25.000000\nProjected session: $1.635000 / 1.000000\nProjected today: $1.635000 / 25.000000\nPer-call limit:  $100.000000"
           },

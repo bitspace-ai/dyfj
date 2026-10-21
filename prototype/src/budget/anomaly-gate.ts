@@ -55,7 +55,8 @@ export interface RunawayAnomalyWarning {
   /** Audit basis for the halt itself. */
   authzBasis: "policy:halt:runaway-anomaly";
   /** Audit basis an operator approval carries; carried in the payload for
-   *  downstream audit logging — approvals never persist. */
+   *  downstream audit logging. An approval raises the tripped halt to twice
+   *  the spend at approval for its scope (BIT-715). */
   approvalAuthzBasis: "policy:allow:operator-confirmed-anomaly";
 }
 
@@ -287,14 +288,21 @@ export function createRunawayAnomalyGate(
           : effective.turnSpentUsd;
         await ensureAnomalyAllowed({ ...effective, trigger }, confirm);
         // Approved: raise this trigger's halt to APPROVAL_HALT_MULTIPLE × spend.
-        // Only reached past the halt in force, so the level never drops.
+        // Math.max keeps the level from dropping when an out-of-order approval
+        // (computed from an older check) lands after a higher one.
         const raised = spent * APPROVAL_HALT_MULTIPLE;
         if (trigger === "turn_spend") {
           turnHaltUsd = raised;
         } else if (trigger === "session_scope") {
-          scopeHalts.anomaly_session_halt = raised;
+          scopeHalts.anomaly_session_halt = Math.max(
+            scopeHalts.anomaly_session_halt ?? 0,
+            raised,
+          );
         } else {
-          scopeHalts.anomaly_daily_halt = raised;
+          scopeHalts.anomaly_daily_halt = Math.max(
+            scopeHalts.anomaly_daily_halt ?? 0,
+            raised,
+          );
         }
       }
     },

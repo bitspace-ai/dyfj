@@ -14,6 +14,7 @@ import {
   type BudgetCeilingWarning,
   BudgetExceededError,
   buildBudgetCeilingWarning,
+  budgetCeilingApprovalRequest,
   createTurnBudgetCeilingGate,
   ensureBudgetAllowed,
   formatBudgetCeilingWarning,
@@ -307,6 +308,29 @@ test("createTurnBudgetCeilingGate: a session approval raises the mark by one ses
     raisesTo(confirm.mock.calls[1].arguments[0], "session_limit") ??
       Number.NaN,
     3.1,
+  );
+});
+
+test("budgetCeilingApprovalRequest: the wire payload carries the limits an approval raises to", () => {
+  const warning = buildBudgetCeilingWarning(
+    {
+      allowed: false,
+      estimatedCost: 0.06,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.5,
+      ...dailyBudget,
+      reason: "session_limit",
+    },
+    undefined,
+    ["session_limit"],
+  );
+  const request = budgetCeilingApprovalRequest(warning);
+  assert.deepStrictEqual(request.raisesToUsd, warning.raisesToUsd);
+  assertAlmostEqual(
+    (request.raisesToUsd as Record<string, number>).session_limit ??
+      Number.NaN,
+    2.01,
   );
 });
 
