@@ -78,12 +78,87 @@ for dir in /path/to/dyfj/schema/current \
 done
 ```
 
+To bring an existing database forward while `dolt sql-server` is running,
+apply each unapplied file in `migrations/`, in order, as the migration user
+(below), with `DOLT_PASSWORD` holding that user's password:
+
+```sh
+DOLT_CLI_PASSWORD="$DOLT_PASSWORD" dolt --host 127.0.0.1 --port 3306 \
+  --no-tls --user dyfj_migrate --use-db dolt sql < /path/to/dyfj/schema/migrations/<file>.sql
+```
+
+## Dolt users
+
+Give each process its own Dolt user, with only the grants its statements need,
+and keep `root` for the operator. Table-level grants are enforced by Dolt's
+SQL server (checked on Dolt 2.5.0). These are the grants on the `dolt`
+database:
+
+| User | Process | Grants |
+|---|---|---|
+| `dyfj_runtime` | Workbench runtime | `events`: `SELECT, INSERT`. `sessions`, `memories`: `SELECT, INSERT, UPDATE`. `models`, `prompts`: `SELECT` |
+| `dyfj_mcp_memory` | MCP memory server (`prototype/mcp/`) | `memories`, `sessions`: `SELECT, INSERT, UPDATE` |
+| `dyfj_migrate` | Applying migrations | `ALL PRIVILEGES` on `dolt.*`, without `GRANT OPTION` |
+
+Why each grant is the size it is:
+
+- **`events` is append-only for these users.** Only `dyfj_migrate` and `root`
+  may update or delete it. A runtime started without `DOLT_USER` connects as
+  `root`, so set it.
+- **Upserts need `UPDATE`.** `INSERT … ON DUPLICATE KEY UPDATE` on an
+  existing row is refused without it.
+- **The runtime needs a grant on all five tables.** Its boot column check reads
+  `information_schema.columns`, which lists only the tables a user holds a
+  grant on.
+- **The runtime holds no `DELETE`.** The only `DELETE` it can issue is a
+  projector's, and `PHASE1_PROJECTORS` in `prototype/src/store/projectors.ts`
+  is empty. A projector added later needs `DELETE` on its table, or its writes
+  are refused.
+
+Create them as `root`. To change an existing user's grants, drop it and
+create it again rather than revoking: on Dolt 2.5.0,
+`REVOKE ALL PRIVILEGES, GRANT OPTION FROM <user>` is accepted and silently does
+nothing. A revoke that names the object, such as
+`REVOKE ALL ON dolt.events FROM <user>`, does work, but it misses grants on
+objects it does not name.
+
+```sql
+CREATE USER 'dyfj_runtime'@'localhost' IDENTIFIED BY '<password>';
+GRANT SELECT, INSERT ON dolt.events TO 'dyfj_runtime'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON dolt.sessions TO 'dyfj_runtime'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON dolt.memories TO 'dyfj_runtime'@'localhost';
+GRANT SELECT ON dolt.models TO 'dyfj_runtime'@'localhost';
+GRANT SELECT ON dolt.prompts TO 'dyfj_runtime'@'localhost';
+
+CREATE USER 'dyfj_mcp_memory'@'localhost' IDENTIFIED BY '<password>';
+GRANT SELECT, INSERT, UPDATE ON dolt.memories TO 'dyfj_mcp_memory'@'localhost';
+GRANT SELECT, INSERT, UPDATE ON dolt.sessions TO 'dyfj_mcp_memory'@'localhost';
+
+CREATE USER 'dyfj_migrate'@'localhost' IDENTIFIED BY '<password>';
+GRANT ALL PRIVILEGES ON dolt.* TO 'dyfj_migrate'@'localhost';
+```
+
+Keep the passwords out of argument lists and shell history:
+
+- Send these statements to `dolt sql` on stdin, rendered from a secret
+  manager's template.
+- Give the `dolt` client its password through its environment, as in the
+  examples here, not through `--password`.
+- Point the runtime's `DOLT_PASSWORD` at a `[secrets.pointers]` entry.
+
+These users limit SQL credentials only. While `dolt sql-server` runs,
+`dolt sql` run inside the database directory logs in as Dolt's local
+superuser, through `.dolt/sql-server.info`. Any process that can read the data
+directory, or write its config and privilege files, therefore has full access,
+whatever the SQL users are. Keep the data directory out of reach of the
+processes the grants are meant to limit.
+
 If a local `dolt sql-server` is already running, you can query it with Dolt
 itself:
 
 ```sh
-dolt --host 127.0.0.1 --port 3306 --no-tls \
-  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+DOLT_CLI_PASSWORD="$DOLT_PASSWORD" dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user "$DOLT_USER" --use-db dolt \
   sql -q "SHOW TABLES;"
 ```
 

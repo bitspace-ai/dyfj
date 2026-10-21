@@ -368,10 +368,14 @@ The prototype reads Dolt connection settings from environment variables. For the
 ```sh
 export DOLT_HOST=127.0.0.1
 export DOLT_PORT=3306
-export DOLT_USER=root
+export DOLT_USER=dyfj_runtime
 export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
+
+Run the Workbench as its own Dolt user, not `root`. The user and the table
+grants it needs are in [Dolt users](../schema/README.md#dolt-users). If
+`DOLT_USER` is unset, the runtime connects as `root`.
 
 Useful checks:
 

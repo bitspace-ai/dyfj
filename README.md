@@ -393,10 +393,17 @@ from environment variables; for the default local SQL server, export:
 ```sh
 export DOLT_HOST=127.0.0.1
 export DOLT_PORT=3306
-export DOLT_USER=root
+export DOLT_USER=dyfj_runtime
 export DOLT_PASSWORD=<your-local-dolt-password>
 export DOLT_DATABASE=dolt
 ```
+
+Run the Workbench as its own Dolt user, not `root`. A fresh checkout's
+`prototype/.env.example` still sets `DOLT_USER=root`, and `dyfj_runtime` does
+not exist until you create it. Create the users and their grants first, as
+[Dolt users](schema/README.md#dolt-users) describes, then set
+`DOLT_USER=dyfj_runtime` in `.env`. Until then, and whenever `DOLT_USER` is
+unset, the runtime connects as `root`.
 
 The local default is Qwen3.6 35B-A3B served by llama.cpp, catalog slug
 `llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
@@ -1756,8 +1763,8 @@ To inspect the running Dolt SQL server without installing `mysql`, use Dolt as
 the client:
 
 ```sh
-dolt --host 127.0.0.1 --port 3306 --no-tls \
-  --user root --password "$DOLT_PASSWORD" --use-db dolt \
+DOLT_CLI_PASSWORD="$DOLT_PASSWORD" dolt --host 127.0.0.1 --port 3306 --no-tls \
+  --user "$DOLT_USER" --use-db dolt \
   sql -q "SELECT event_type, session_id, trace_id FROM events ORDER BY created_at DESC LIMIT 5;"
 ```
 
@@ -2664,3 +2671,6 @@ Document revisions only. Code and behavior changes are tracked in
   whether a call may skip the prompt, failing closed, under the `operator`
   posture on loopback only. The status paragraph says `bash`'s read-only
   commands and session-allowed commands run without a prompt.
+- 2026-10-21 - Setup guidance runs the Workbench as its own Dolt user,
+  `dyfj_runtime`, created as `schema/README.md` (Dolt users) describes; until
+  then, and whenever `DOLT_USER` is unset, the runtime connects as `root`.
