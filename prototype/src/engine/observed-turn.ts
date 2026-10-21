@@ -102,8 +102,9 @@ async function gateCall(
   }
   // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
   // where the estimate-based ceiling below is blind (multi-call turn
-  // accumulation, spend a scope confirmation already covered). An approval
-  // admits the spend level it was shown; recorded spend past it re-prompts.
+  // accumulation, spend the ceiling approvals allowed for). An approval
+  // raises the tripped halt to twice the spend at approval; spend past the
+  // raised halt re-prompts.
   await route.anomalyGate.ensureAllowed(
     budget.checkAnomaly(selected.tier, anomalyConfig),
   );

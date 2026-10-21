@@ -343,6 +343,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Budget approvals raise their limit to a stated level instead of prompting at every step (BIT-715).**
+  - Runaway anomaly gate: approving at actual spend S raises the tripped
+    trigger's halt to 2S. The turn halt lasts the turn; the session and daily
+    halts last the session and the local day. Spend past the raised halt
+    prompts again. Before, every anomalous increment prompted.
+  - Per-call ceiling: approving raises the per-call limit to 2× the estimate
+    shown. Before, it was the estimate itself, so each growing estimate
+    prompted again.
+  - Session ceiling: approving raises the session limit to the projected
+    session spend plus one session envelope (`sessionLimitUsd`). Before, it
+    was unbounded. The daily limit is unchanged.
+  - Prompts: the ceiling prompt states the new per-call and session limits; the
+    anomaly prompt names its trigger and states the new halt.
+  - No config key is added. The `runaway_anomaly` warning gains a
+    `raisesHaltToUsd` field.
 - **`write_file` and `edit_file` refuse paths inside `.git`.** Any path with
   a `.git` segment, in any letter case and through a symlinked directory, is
   refused. Repository config and attributes there can make read-only git

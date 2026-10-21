@@ -75,8 +75,9 @@ export interface Approver {
   confirmBudgetCeiling?: ConfirmBudgetCeiling;
   /**
    * Confirm handler for a runaway-anomaly hard stop (actual spend past the
-   * anomaly multiples). Unlike the ceiling handler, an approval admits the
-   * next call only and never raises an envelope; without a handler the
+   * anomaly multiples). An approval raises the tripped halt to twice the
+   * actual spend at approval (BIT-715), for the turn or for the session or day
+   * its scope names; it does not raise an envelope. Without a handler the
    * runtime fails closed at the halt.
    */
   confirmRunawayAnomaly?: ConfirmRunawayAnomaly;

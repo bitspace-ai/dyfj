@@ -1,26 +1,36 @@
-// Scope-persistent budget-ceiling confirmations, held by one
-// `CeilingConfirmationStore` instance per engine (AGENTS.md rule 3: a single
-// owner, no module-level state).
+// Scope-persistent budget marks, held by one `CeilingConfirmationStore`
+// instance per engine (AGENTS.md rule 3: a single owner, no module-level
+// state).
 
 import { type Clock, systemClock } from "../kernel/mod.ts";
 import { localDayKey } from "./spend.ts";
 
 /**
- * Operator-confirmed ceiling overruns. Confirming a ceiling covers its scope
- * for the scope's period: a confirmed session or daily overrun does not
- * re-prompt for the rest of that session or local day — crossing an envelope
- * soft-confirms ONCE. After confirmation, spend in that scope is bounded only
- * by the per-call check, per-turn paid consent, and the agent-loop step cap
- * until the period ends. Per-call stays a
- * per-event high-water mark: a single call larger than any previously
- * confirmed one is a fresh fat-finger check. All of it lives in
- * runtime-process memory, so a restart forgets confirmations (the safe
- * direction).
+ * Operator-approved budget levels. Each mark is a level, not a coverage
+ * promise: a scope prompts again only when its projection passes the level
+ * the last approval raised it to (BIT-715).
+ *
+ * - `per_call_limit`: the largest per-call estimate approved so far, raised
+ *   to PER_CALL_HEADROOM (2×) that estimate by each approval; kept per session.
+ * - `session_limit`: the projected session spend plus one session envelope,
+ *   set by each session approval; kept per session.
+ * - `daily_limit`: unbounded for the local day once approved; kept per day
+ *   across sessions. Its only bound is the daily anomaly halt.
+ * - `anomaly_session_halt` / `anomaly_daily_halt`: the runaway halts an
+ *   anomaly approval raised to 2× the spend at approval (anomaly-gate.ts);
+ *   kept per session and per day. The turn-level halt is not stored here: it
+ *   lasts for one turn only. A daily anomaly approval made during a turn lasts
+ *   until that turn ends, even across midnight.
+ *
+ * All of it lives in runtime-process memory, so a restart forgets the marks
+ * (the safe direction).
  */
 export interface BudgetCeilingConfirmations {
   per_call_limit?: number;
   session_limit?: number;
   daily_limit?: number;
+  anomaly_session_halt?: number;
+  anomaly_daily_halt?: number;
 }
 
 const MAX_TRACKED_SCOPES = 512;
@@ -79,11 +89,23 @@ export class CeilingConfirmationStore {
       set session_limit(v: number | undefined) {
         session.session_limit = v;
       },
+      get anomaly_session_halt() {
+        return session.anomaly_session_halt;
+      },
+      set anomaly_session_halt(v: number | undefined) {
+        session.anomaly_session_halt = v;
+      },
       get daily_limit() {
         return daily.daily_limit;
       },
       set daily_limit(v: number | undefined) {
         daily.daily_limit = v;
+      },
+      get anomaly_daily_halt() {
+        return daily.anomaly_daily_halt;
+      },
+      set anomaly_daily_halt(v: number | undefined) {
+        daily.anomaly_daily_halt = v;
       },
     };
   }

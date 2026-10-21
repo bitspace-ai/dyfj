@@ -240,7 +240,11 @@ test("halts a multi-call turn on ACTUAL accumulated spend, failing closed withou
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-test("an approval admits one call only — the next anomalous call prompts again", async () => {
+test("an approval raises the turn halt to twice the spend at approval, so the next prompt waits until spend passes that level", async () => {
+  // Each pre-check is the spend recorded before the call. The halt is $0.30
+  // until the first prompt, which is approved at $0.36 and raises the halt to
+  // $0.72. Pre-checks $0.48, $0.60 and $0.72 do not exceed $0.72, so they do
+  // not prompt. The pre-check $0.84 exceeds $0.72 and prompts a second time.
   const confirmRunawayAnomaly = mock.fn((_: RunawayAnomalyWarning) =>
     APPROVE_PAID()
   );
@@ -249,8 +253,12 @@ test("an approval admits one call only — the next anomalous call prompts again
       toolReply("c1", TWELVE_CENTS), // pre-check: $0
       toolReply("c2", TWELVE_CENTS), // pre-check: $0.12
       toolReply("c3", TWELVE_CENTS), // pre-check: $0.24
-      toolReply("c4", TWELVE_CENTS), // pre-check: $0.36 → prompt 1
-      chatReply({ content: "done", usage: TWELVE_CENTS }), // $0.48 → prompt 2
+      toolReply("c4", TWELVE_CENTS), // pre-check: $0.36 → prompt 1, halt → $0.72
+      toolReply("c5", TWELVE_CENTS), // pre-check: $0.48, no prompt
+      toolReply("c6", TWELVE_CENTS), // pre-check: $0.60, no prompt
+      toolReply("c7", TWELVE_CENTS), // pre-check: $0.72, no prompt
+      toolReply("c8", TWELVE_CENTS), // pre-check: $0.84 → prompt 2, halt → $1.68
+      chatReply({ content: "done", usage: TWELVE_CENTS }),
     ],
     PER_TOKEN,
     {
@@ -259,14 +267,16 @@ test("an approval admits one call only — the next anomalous call prompts again
     },
   );
   assert.deepStrictEqual(result?.text, "done");
-  assert.deepStrictEqual(run.transport.requests.length, 5);
-  // Never persists: BOTH anomalous pre-checks prompted, unlike the ceiling
-  // gate's scope-period coverage where the first approval would have
-  // silenced the second.
+  assert.deepStrictEqual(run.transport.requests.length, 9);
   assert.equal(confirmRunawayAnomaly.mock.callCount(), 2);
-  const first = confirmRunawayAnomaly.mock.calls[0].arguments[0];
+  const [first, second] = confirmRunawayAnomaly.mock.calls.map(
+    (call) => call.arguments[0],
+  );
   assert.deepStrictEqual(first.trigger, "turn_spend");
   assertAlmostEqual(first.turnSpentUsd, 0.36);
+  assertAlmostEqual(first.raisesHaltToUsd, 0.72);
+  assertAlmostEqual(second.turnSpentUsd, 0.84);
+  assertAlmostEqual(second.raisesHaltToUsd, 1.68);
 });
 
 // ─── one spend truth ─────────────────────────────────────────────────────────

@@ -14,11 +14,26 @@ import {
   type BudgetCeilingWarning,
   BudgetExceededError,
   buildBudgetCeilingWarning,
+  budgetCeilingApprovalRequest,
   createTurnBudgetCeilingGate,
   ensureBudgetAllowed,
   formatBudgetCeilingWarning,
 } from "./envelope-gate.ts";
-import type { PreCallCheck } from "./tracker.ts";
+import type { BudgetCeilingConfirmations } from "./confirmations.ts";
+import type { BudgetLimitReason, PreCallCheck } from "./tracker.ts";
+
+/**
+ * The per-scope limit an approval of this warning raises to. Carried on the
+ * warning by the BIT-715 change; read through a cast until that type lands.
+ */
+function raisesTo(
+  warning: BudgetCeilingWarning,
+  scope: BudgetLimitReason,
+): number | undefined {
+  return (warning as BudgetCeilingWarning & {
+    raisesToUsd?: Partial<Record<BudgetLimitReason, number>>;
+  }).raisesToUsd?.[scope];
+}
 
 const dailyBudget = { dailyCostSoFar: 0, dailyLimitUsd: 25 };
 
@@ -234,6 +249,113 @@ test("createTurnBudgetCeilingGate: without a confirm handler fails closed on eve
   );
 });
 
+// ── BIT-715: approvals hold for the rest of the turn, with stated increments ──
+
+test("createTurnBudgetCeilingGate: a per-call approval covers growth to twice the approved estimate, then asks again", async () => {
+  const confirm = approving();
+  const gate = createTurnBudgetCeilingGate(confirm);
+  const overPerCall = (estimatedCost: number): PreCallCheck => ({
+    allowed: false,
+    estimatedCost,
+    sessionCostSoFar: 0,
+    sessionLimitUsd: 1,
+    perCallLimitUsd: 0.1,
+    ...dailyBudget,
+    reason: "per_call_limit",
+  });
+  // Approval at $0.12 covers estimates up to $0.24.
+  await gate.ensureAllowed(overPerCall(0.12));
+  await gate.ensureAllowed(overPerCall(0.15));
+  await gate.ensureAllowed(overPerCall(0.2));
+  assert.equal(confirm.mock.callCount(), 1);
+  // $0.25 passes the $0.24 mark: one more prompt, which raises to $0.50.
+  await gate.ensureAllowed(overPerCall(0.25));
+  assert.equal(confirm.mock.callCount(), 2);
+  assertAlmostEqual(
+    raisesTo(confirm.mock.calls[1].arguments[0], "per_call_limit") ??
+      Number.NaN,
+    0.5,
+  );
+});
+
+test("createTurnBudgetCeilingGate: a session approval raises the mark by one session envelope, not without limit", async () => {
+  const confirm = approving();
+  const confirmed: BudgetCeilingConfirmations = {};
+  const gate = createTurnBudgetCeilingGate(confirm, confirmed);
+  const overSession = (
+    sessionCostSoFar: number,
+    estimatedCost: number,
+  ): PreCallCheck => ({
+    allowed: false,
+    estimatedCost,
+    sessionCostSoFar,
+    sessionLimitUsd: 1,
+    perCallLimitUsd: 0.5,
+    ...dailyBudget,
+    reason: "session_limit",
+  });
+  // Projection $1.01 crosses the $1.00 envelope: the mark becomes $1.01 + $1.00.
+  await gate.ensureAllowed(overSession(0.95, 0.06));
+  assert.equal(confirm.mock.callCount(), 1);
+  assertAlmostEqual(confirmed.session_limit ?? Number.NaN, 2.01);
+  // Projection $2.00 is inside the mark: no prompt.
+  await gate.ensureAllowed(overSession(1.94, 0.06));
+  assert.equal(confirm.mock.callCount(), 1);
+  // Projection $2.10 passes the mark: prompt, raising to $3.10.
+  await gate.ensureAllowed(overSession(2.04, 0.06));
+  assert.equal(confirm.mock.callCount(), 2);
+  assertAlmostEqual(
+    raisesTo(confirm.mock.calls[1].arguments[0], "session_limit") ??
+      Number.NaN,
+    3.1,
+  );
+});
+
+test("budgetCeilingApprovalRequest: the wire payload carries the limits an approval raises to", () => {
+  const warning = buildBudgetCeilingWarning(
+    {
+      allowed: false,
+      estimatedCost: 0.06,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.5,
+      ...dailyBudget,
+      reason: "session_limit",
+    },
+    undefined,
+    ["session_limit"],
+  );
+  const request = budgetCeilingApprovalRequest(warning);
+  assert.deepStrictEqual(request.raisesToUsd, warning.raisesToUsd);
+  assertAlmostEqual(
+    (request.raisesToUsd as Record<string, number>).session_limit ??
+      Number.NaN,
+    2.01,
+  );
+});
+
+test("formatBudgetCeilingWarning: the approval prompt states the session limit it raises to", () => {
+  const warning = buildBudgetCeilingWarning(
+    {
+      allowed: false,
+      estimatedCost: 0.06,
+      sessionCostSoFar: 0.95,
+      sessionLimitUsd: 1,
+      perCallLimitUsd: 0.5,
+      ...dailyBudget,
+      reason: "session_limit",
+    },
+    undefined,
+    ["session_limit"],
+  );
+  const message = formatBudgetCeilingWarning(warning);
+  assert.match(
+    message,
+    /session limit\s+to \$2\.010000/,
+    `expected ${JSON.stringify(message)} to state "session limit to $2.010000"`,
+  );
+});
+
 // ── composite ceiling approvals ───────────────────────────────────────────────
 
 test("composite ceiling approvals: one prompt names every newly-crossed scope and raises only those", async () => {
@@ -268,9 +390,11 @@ test("composite ceiling approvals: one prompt names every newly-crossed scope an
     message.includes("Approving raises:"),
     `expected ${JSON.stringify(message)} to include "Approving raises:"`,
   );
-  // Only the presented scopes were confirmed — period-wide for session and
-  // daily; per-call was never confirmed.
-  assert.strictEqual(confirmed.session_limit, Number.POSITIVE_INFINITY);
+  // Only the presented scopes were confirmed; per-call was never confirmed.
+  // Session is stored as the projected session spend ($5.10) plus one session
+  // envelope ($5), so it covers spend up to $10.10 and no further. Daily is
+  // stored as unbounded (Infinity) for the local day.
+  assertAlmostEqual(confirmed.session_limit ?? Number.NaN, 10.1);
   assert.strictEqual(confirmed.daily_limit, Number.POSITIVE_INFINITY);
   assert.strictEqual(confirmed.per_call_limit, undefined);
 });

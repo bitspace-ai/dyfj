@@ -3,9 +3,12 @@
  * warning and wire shape, the turn-scoped gate, and the halt error.
  */
 
+import { assertAlmostEqual } from "../../testing/assertions/almost-equal.ts";
 import { captureRejection } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { it, mock, test } from "node:test";
+import { ManualClock } from "../../testing/fakes/manual-clock.ts";
+import { CeilingConfirmationStore } from "./confirmations.ts";
 import type { BudgetCeilingVerdict } from "./envelope-gate.ts";
 import {
   buildRunawayAnomalyWarning,
@@ -122,7 +125,7 @@ test("ensureAnomalyAllowed: approvals never persist: the same tripped check prom
 
 // ── runaway anomaly warning formatting ────────────────────────────────────────
 
-test("runaway anomaly warning formatting: format names the trigger, the actuals, and the no-raise semantics", () => {
+test("runaway anomaly warning formatting: format names the trigger, the actuals, and the halt an approval raises to", () => {
   const t = makeTracker();
   t.record(makeUsage(100_000, 1000, 0.35), 2);
   const text = formatRunawayAnomalyWarning(
@@ -137,18 +140,19 @@ test("runaway anomaly warning formatting: format names the trigger, the actuals,
     } to include "Runaway spend anomaly — hard stop"`,
   );
   assert.ok(
-    text.includes("turn spend at 3× the per-call limit"),
+    text.includes("turn spend past its halt (initially 3× the per-call limit)"),
     `expected ${
       JSON.stringify(text)
-    } to include "turn spend at 3× the per-call limit"`,
+    } to include "turn spend past its halt (initially 3× the per-call limit)"`,
   );
   assert.ok(
     text.includes("$0.350000"),
     `expected ${JSON.stringify(text)} to include "$0.350000"`,
   );
+  // BIT-715: an approval at $0.35 raises the turn halt to twice that spend.
   assert.ok(
-    text.includes("nothing is raised"),
-    `expected ${JSON.stringify(text)} to include "nothing is raised"`,
+    text.includes("$0.700000"),
+    `expected ${JSON.stringify(text)} to include "$0.700000"`,
   );
 });
 
@@ -190,14 +194,19 @@ test("createRunawayAnomalyGate: one anomalous state prompts once: the same spend
   assert.equal(confirm.mock.callCount(), 1);
 });
 
-test("createRunawayAnomalyGate: recorded spend past the approved level re-prompts", async () => {
+test("createRunawayAnomalyGate: approving at spend S does not prompt again until spend exceeds 2S", async () => {
   const confirm = approving();
   const gate = createRunawayAnomalyGate(confirm);
-  const t = trackerPast(0.35);
-  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY)); // $0.35 approved
-  t.record(makeUsage(1000, 100, 0.10), 2); // increment → $0.45
+  const t = trackerPast(0.35); // S = $0.35
+  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
+  assert.equal(confirm.mock.callCount(), 1);
+  t.record(makeUsage(1000, 100, 0.34), 2); // $0.69: inside 2S = $0.70
+  await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
+  assert.equal(confirm.mock.callCount(), 1);
+  t.record(makeUsage(1000, 100, 0.02), 2); // $0.71: past 2S
   await gate.ensureAllowed(t.checkAnomaly(2, ANOMALY));
   assert.equal(confirm.mock.callCount(), 2);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.71);
 });
 
 test("createRunawayAnomalyGate: approvals do not survive the gate instance (one turn)", async () => {
@@ -219,6 +228,44 @@ test("createRunawayAnomalyGate: fails closed without a handler and records no ap
     () => gate.ensureAllowed(check),
     RunawayAnomalyHaltError,
   );
+});
+
+test("createRunawayAnomalyGate: approving only the outermost tripped halt still prompts for each other tripped halt", async () => {
+  // Turn halt $0.30, session halt $0.80, daily halt $1.00; $1.20 spent trips all three.
+  const t = makeTracker({ sessionLimitUsd: 0.40, dailyLimitUsd: 0.50 });
+  t.record(makeUsage(1000, 100, 1.20), 2);
+  const check = t.checkAnomaly(2, ANOMALY);
+  assert.strictEqual(check.trigger, "daily_scope");
+  const confirm = approving();
+  await createRunawayAnomalyGate(confirm).ensureAllowed(check);
+  assert.deepStrictEqual(
+    confirm.mock.calls.map((call) => call.arguments[0].trigger),
+    ["daily_scope", "session_scope", "turn_spend"],
+  );
+});
+
+test("createRunawayAnomalyGate: declining a still-tripped halt after the outermost approval blocks the call", async () => {
+  const t = makeTracker({ sessionLimitUsd: 0.40, dailyLimitUsd: 0.50 });
+  t.record(makeUsage(1000, 100, 1.20), 2);
+  const verdicts: BudgetCeilingVerdict[] = [
+    { decision: "approve" },
+    { decision: "deny", reason: "session stop" },
+  ];
+  const confirm = mock.fn(
+    (_warning: RunawayAnomalyWarning): Promise<BudgetCeilingVerdict> =>
+      Promise.resolve(verdicts.shift()!),
+  );
+  const caught = await captureRejection(
+    () =>
+      createRunawayAnomalyGate(confirm).ensureAllowed(
+        t.checkAnomaly(2, ANOMALY),
+      ),
+    RunawayAnomalyHaltError,
+  );
+  assert.strictEqual(caught.trigger, "session_scope");
+  assert.strictEqual(caught.declined, true);
+  // The turn halt was never prompted: the call stopped at the session halt.
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 // ── RunawayAnomalyHaltError — decline reason sanitization ─────────────────────
@@ -286,4 +333,131 @@ it("RunawayAnomalyHaltError keeps its own properties and message", () => {
       "$2.000000 (no confirmation channel; failing closed)",
   );
   assert.strictEqual(err.cause, undefined);
+});
+
+// ── scope-persistent anomaly halts (BIT-715) ─────────────────────────────────
+
+const SCOPE_SESSION = "01TEST0SCOPESESSIONA0000000";
+const SCOPE_OTHER_SESSION = "01TEST0SCOPESESSIONB0000000";
+
+/** A clock pinned to local noon on the given day (month is 0-based). */
+function clockOn(year: number, month: number, day: number): ManualClock {
+  return new ManualClock({ start: new Date(year, month, day, 12).getTime() });
+}
+
+/**
+ * A session check with session spend `sessionSpent` (session halt $0.80 on a
+ * $0.40 session envelope). The turn is $0.10, under its $0.30 halt, so only the
+ * session scope can trip.
+ */
+function sessionCheckAt(sessionSpent: number) {
+  const t = new BudgetTracker(
+    SCOPE_SESSION,
+    TRACE_ID,
+    { sessionLimitUsd: 0.40, perCallLimitUsd: 0.10, dailyLimitUsd: 25 },
+    "user",
+    {
+      sessionSpentUsd: sessionSpent - 0.10,
+      sessionSpentTodayUsd: sessionSpent - 0.10,
+      dailyOtherSessionsUsd: 0,
+    },
+  );
+  t.record(makeUsage(1000, 100, 0.10), 2);
+  return t.checkAnomaly(2, ANOMALY);
+}
+
+/**
+ * A daily check for one session: daily halt $1.00 on a $0.50 daily envelope,
+ * session halt $2.00, turn halt $0.30. `otherSessionsUsd` is today's spend in
+ * other sessions; `turnSpend` is this turn's spend.
+ */
+function dailyCheckFor(
+  sessionId: string,
+  otherSessionsUsd: number,
+  turnSpend: number,
+) {
+  const t = new BudgetTracker(
+    sessionId,
+    TRACE_ID,
+    { sessionLimitUsd: 1.00, perCallLimitUsd: 0.10, dailyLimitUsd: 0.50 },
+    "user",
+    {
+      sessionSpentUsd: 0,
+      sessionSpentTodayUsd: 0,
+      dailyOtherSessionsUsd: otherSessionsUsd,
+    },
+  );
+  t.record(makeUsage(1000, 100, turnSpend), 2);
+  return t.checkAnomaly(2, ANOMALY);
+}
+
+test("scope halts: a session anomaly halt survives into a new turn of the same session", async () => {
+  const store = new CeilingConfirmationStore(clockOn(2026, 6, 6));
+  const confirm = approving();
+  // Turn 1: $0.85 session spend passes the $0.80 halt and prompts once.
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_SESSION))
+    .ensureAllowed(sessionCheckAt(0.85));
+  assert.equal(confirm.mock.callCount(), 1);
+  assert.strictEqual(confirm.mock.calls[0].arguments[0].trigger, "session_scope");
+  // Turn 2, same session: $0.95 is under the raised $1.70 halt, so no prompt.
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_SESSION))
+    .ensureAllowed(sessionCheckAt(0.95));
+  assert.equal(confirm.mock.callCount(), 1);
+  // Contrast: a gate without the store sees the original $0.80 halt and prompts.
+  await createRunawayAnomalyGate(confirm)
+    .ensureAllowed(sessionCheckAt(0.95));
+  assert.equal(confirm.mock.callCount(), 2);
+  // Turn 3, same session: $1.75 passes the raised $1.70 halt and prompts again,
+  // with the raised level as the halt in force.
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_SESSION))
+    .ensureAllowed(sessionCheckAt(1.75));
+  assert.equal(confirm.mock.callCount(), 3);
+  assertAlmostEqual(confirm.mock.calls[2].arguments[0].haltUsd, 1.70);
+});
+
+test("scope halts: a daily anomaly halt is shared across sessions and resets when the local day rolls over", async () => {
+  const clock = clockOn(2026, 6, 6);
+  const store = new CeilingConfirmationStore(clock);
+  const confirm = approving();
+  // Session A: $1.10 today passes the $1.00 daily halt and prompts once.
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_SESSION))
+    .ensureAllowed(dailyCheckFor(SCOPE_SESSION, 0.90, 0.20));
+  assert.equal(confirm.mock.callCount(), 1);
+  assert.strictEqual(confirm.mock.calls[0].arguments[0].trigger, "daily_scope");
+  // Session B, same day: $1.30 is under the shared raised $2.20 halt.
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_OTHER_SESSION))
+    .ensureAllowed(dailyCheckFor(SCOPE_OTHER_SESSION, 1.10, 0.20));
+  assert.equal(confirm.mock.callCount(), 1);
+  // Contrast: without the store, session B's $1.30 passes the $1.00 halt.
+  await createRunawayAnomalyGate(confirm)
+    .ensureAllowed(dailyCheckFor(SCOPE_OTHER_SESSION, 1.10, 0.20));
+  assert.equal(confirm.mock.callCount(), 2);
+  // Next local day: the raised halt is forgotten and the default $1.00 applies.
+  clock.set(new Date(2026, 6, 7, 12).getTime());
+  const before = confirm.mock.callCount();
+  await createRunawayAnomalyGate(confirm, store.for(SCOPE_OTHER_SESSION))
+    .ensureAllowed(dailyCheckFor(SCOPE_OTHER_SESSION, 0, 1.50));
+  // The turn's first prompt is the daily scope (the turn halt trips after it).
+  const first = confirm.mock.calls[before].arguments[0];
+  assert.strictEqual(first.trigger, "daily_scope");
+  assertAlmostEqual(first.haltUsd, 1.00);
+});
+
+test("scope halts: an out-of-order approval never lowers a stored halt", async () => {
+  const store = new CeilingConfirmationStore(clockOn(2026, 6, 6));
+  const scope = store.for(SCOPE_SESSION);
+  // The slow gate's approval is held open while a newer check is approved.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const slow = createRunawayAnomalyGate(
+    () => held.then(() => ({ decision: "approve" as const })),
+    scope,
+  );
+  const slowDone = slow.ensureAllowed(sessionCheckAt(0.85)); // raises to 1.70
+  await createRunawayAnomalyGate(approving(), scope)
+    .ensureAllowed(sessionCheckAt(0.90)); // raises to 1.80
+  release();
+  await slowDone;
+  // The older 0.85 approval would set 1.70; Math.max keeps 1.80.
+  assertAlmostEqual(scope.anomaly_session_halt ?? Number.NaN, 1.80);
 });

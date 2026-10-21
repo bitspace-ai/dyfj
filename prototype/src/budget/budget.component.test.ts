@@ -285,10 +285,52 @@ test("anomaly: turn spend past 3× the per-call limit halts; approvals are per l
   assertAlmostEqual(warning.spentUsd, 0.33);
   assertAlmostEqual(warning.haltUsd, 0.30);
 
-  tracker.record(usage(0.05), 2); // $0.38: past the approved level
+  // BIT-715: the approval at $0.33 raised the turn halt to 2 × $0.33 = $0.66.
+  tracker.record(usage(0.30), 2); // $0.63: inside the raised halt
+  await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
+  assert.equal(confirm.mock.callCount(), 1);
+  tracker.record(usage(0.10), 2); // $0.73: past the raised halt
   await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
   assert.equal(confirm.mock.callCount(), 2);
-  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.38);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.73);
+});
+
+test("anomaly: a long turn that grows past $2.40 asks exactly three times, each when spend passes the level the last approval raised", async () => {
+  const { clock, store } = setup();
+  // Session and daily envelopes sized so only the turn halt trips.
+  const config: BudgetConfig = {
+    sessionLimitUsd: 10,
+    perCallLimitUsd: 0.10,
+    dailyLimitUsd: 50,
+  };
+  const tracker = await trackerFor(store, clock, "COMP-C-LONG", config);
+  const confirm = anomalyConfirm({ decision: "approve" });
+  const gate = createRunawayAnomalyGate(confirm);
+  // Each call's input grows 8% over the last, priced at $3/MTok.
+  let inputCount = 20_000;
+  let calls = 0;
+  while (tracker.totalCost <= 2.40 && calls < 60) {
+    await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
+    const cost = (inputCount / 1_000_000) * 3;
+    tracker.record(
+      { input: inputCount, output: 800, cost: { total: cost } },
+      2,
+    );
+    inputCount = Math.round(inputCount * 1.08);
+    calls += 1;
+  }
+  assert.ok(
+    tracker.totalCost > 2.40,
+    `expected the turn to pass $2.40, ended at $${tracker.totalCost.toFixed(2)}`,
+  );
+  // Recorded turn spend after n calls is 0.75 × (1.08^n − 1). Prompts:
+  // call 6 at $0.352 (halt $0.30 → raised to $0.704); call 10 at $0.749
+  // (→ $1.499); call 16 at $1.629 (→ $3.258). Spend stays under $3.258 through
+  // the last call, so exactly three prompts.
+  assert.strictEqual(confirm.mock.callCount(), 3);
+  assertAlmostEqual(confirm.mock.calls[0].arguments[0].spentUsd, 0.352, 1e-3);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.749, 1e-3);
+  assertAlmostEqual(confirm.mock.calls[2].arguments[0].spentUsd, 1.629, 1e-3);
 });
 
 test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {

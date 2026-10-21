@@ -1,30 +1,38 @@
 // ── Runaway anomaly gate ──────────────────────────────────────────────────────
 //
-// The one HARD stop in the cost posture. The envelopes (envelope-gate.ts) are
-// soft by design: estimate-based, confirmable, and a session/daily confirmation
-// covers its whole scope period. That leaves two blind spots the anomaly gate closes,
-// both checked against ACTUAL recorded spend (BudgetTracker.record), never
-// pre-call estimates:
+// The runaway hard stop in the cost posture. The envelopes (envelope-gate.ts)
+// are soft by design: estimate-based and confirmable. The anomaly gate closes
+// two blind spots, both checked against ACTUAL recorded spend
+// (BudgetTracker.record), never pre-call estimates:
 //
 //   - Turn accumulation: the agent loop can make many calls in one turn, each
 //     under the per-call estimate, while the turn's real spend piles up.
 //     Halt before the next call once the turn's actual spend exceeds
 //     turnMultiple × the per-call limit.
-//   - Scope hard-multiple: a confirmed envelope overrun covers its scope
-//     period, so one small confirmation can license unbounded further spend.
-//     Halt once actual session/daily spend exceeds scopeMultiple × the
-//     envelope, even after a ceiling confirmation.
+//   - Scope hard-multiple: a confirmed envelope overrun raises the envelope,
+//     so spend can still grow without bound. Halt once actual session/daily
+//     spend exceeds scopeMultiple × the envelope.
 //
-// Halt semantics are deliberately harder than the ceiling gate: an approval
-// never raises anything — every anomalous increment re-prompts fresh (no
-// scope-period coverage, no high-water marks) — and non-interactive callers
-// fail closed. Statistical trailing-pattern detection is deferred until the
-// receipt corpus can support it; this gate claims only what it does.
+// An approval raises the tripped trigger's halt to APPROVAL_HALT_MULTIPLE (2×)
+// the actual spend at approval (BIT-715). Each trigger keeps its own raised
+// halt for its scope: the turn halt lasts the turn; the session and daily halts
+// are stored in the scope store (confirmations.ts) and last the session and
+// the local day. Spend that passes the raised halt prompts again with the
+// next level. Non-interactive callers fail closed. Statistical
+// trailing-pattern detection is deferred until the receipt corpus can support
+// it; this gate claims only what it does.
 
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import { DomainError, MAX_REASON_FIELD_BYTES } from "../contract/mod.ts";
+import type { BudgetCeilingConfirmations } from "./confirmations.ts";
 import type { BudgetCeilingVerdict } from "./envelope-gate.ts";
 import type { AnomalyCheck, AnomalyTrigger } from "./tracker.ts";
+
+/**
+ * An approval raises the tripped trigger's halt to this multiple of the
+ * actual spend at approval (BIT-715).
+ */
+const APPROVAL_HALT_MULTIPLE = 2;
 
 /** Structured warn payload for a runaway-anomaly halt (telemetry-safe). */
 export interface RunawayAnomalyWarning {
@@ -34,6 +42,8 @@ export interface RunawayAnomalyWarning {
   spentUsd: number;
   /** The hard-stop threshold that spend crossed. */
   haltUsd: number;
+  /** The halt this trigger is raised to if the operator approves: 2× spentUsd. */
+  raisesHaltToUsd: number;
   turnSpentUsd: number;
   turnHaltUsd: number;
   sessionSpentUsd: number;
@@ -45,7 +55,8 @@ export interface RunawayAnomalyWarning {
   /** Audit basis for the halt itself. */
   authzBasis: "policy:halt:runaway-anomaly";
   /** Audit basis an operator approval carries; carried in the payload for
-   *  downstream audit logging — approvals never persist. */
+   *  downstream audit logging. An approval raises the tripped halt to twice
+   *  the spend at approval for its scope (BIT-715). */
   approvalAuthzBasis: "policy:allow:operator-confirmed-anomaly";
 }
 
@@ -67,6 +78,7 @@ export function buildRunawayAnomalyWarning(
     trigger,
     spentUsd,
     haltUsd,
+    raisesHaltToUsd: spentUsd * APPROVAL_HALT_MULTIPLE,
     turnSpentUsd: check.turnSpentUsd,
     turnHaltUsd: check.turnHaltUsd,
     sessionSpentUsd: check.sessionSpentUsd,
@@ -84,10 +96,15 @@ export function formatRunawayAnomalyWarning(
   warning: RunawayAnomalyWarning,
 ): string {
   const label = warning.trigger === "daily_scope"
-    ? `today's spend at ${warning.scopeMultiple}× the daily envelope`
+    ? `today's spend past its halt (initially ${warning.scopeMultiple}× the daily envelope)`
     : warning.trigger === "session_scope"
-    ? `session spend at ${warning.scopeMultiple}× the session envelope`
-    : `turn spend at ${warning.turnMultiple}× the per-call limit`;
+    ? `session spend past its halt (initially ${warning.scopeMultiple}× the session envelope)`
+    : `turn spend past its halt (initially ${warning.turnMultiple}× the per-call limit)`;
+  const scopeName = warning.trigger === "daily_scope"
+    ? "daily halt, for today"
+    : warning.trigger === "session_scope"
+    ? "session halt, for this session"
+    : "turn halt, for this turn";
   return [
     "Runaway spend anomaly — hard stop",
     `Trigger:        ${label}`,
@@ -103,8 +120,10 @@ export function formatRunawayAnomalyWarning(
     `Today spent:    $${warning.dailySpentUsd.toFixed(6)} / halt $${
       warning.dailyHaltUsd.toFixed(6)
     }`,
-    "Approving allows the next call only; nothing is raised and further",
-    "anomalous spend will halt again.",
+    `Approving through the turn gate raises the ${scopeName} to $${
+      warning.raisesHaltToUsd.toFixed(6)
+    } (${APPROVAL_HALT_MULTIPLE}× the spend at approval).`,
+    "Spend past that halt prompts again.",
   ].join("\n");
 }
 
@@ -118,6 +137,7 @@ export function runawayAnomalyApprovalRequest(
     trigger: warning.trigger,
     spentUsd: warning.spentUsd,
     haltUsd: warning.haltUsd,
+    raisesHaltToUsd: warning.raisesHaltToUsd,
     turnSpentUsd: warning.turnSpentUsd,
     turnHaltUsd: warning.turnHaltUsd,
     sessionSpentUsd: warning.sessionSpentUsd,
@@ -167,9 +187,9 @@ export class RunawayAnomalyHaltError extends DomainError {
 
 /**
  * Enforce the runaway-anomaly hard stop: a tripped check prompts when a
- * handler is supplied and fails closed otherwise. An approval admits the next
- * call only — the caller re-checks before every subsequent call and nothing
- * here records or raises anything.
+ * handler is supplied and fails closed otherwise. This function records
+ * nothing; the turn-scoped gate (createRunawayAnomalyGate) stores the raised
+ * halt after an approval.
  */
 export async function ensureAnomalyAllowed(
   check: AnomalyCheck,
@@ -202,30 +222,89 @@ export interface RunawayAnomalyGate {
 }
 
 /**
- * Turn-scoped wrapper over ensureAnomalyAllowed. An approval covers exactly
- * the actual-spend level it was shown — the turn-entry check and the first
- * call's check see identical actuals, and one anomalous state should prompt
- * once, not twice. Any recorded spend after an approval raises the level past
- * what was approved, so every anomalous INCREMENT still re-prompts fresh, and
- * nothing survives the gate instance (one turn): no scope-period coverage,
- * unlike the ceiling gate's persistent store.
+ * The raised halts that scope-persistent approvals keep. The session and daily
+ * halts live in the scope store (the same object the ceiling gate uses); the
+ * turn halt is local to one gate instance, so it lasts one turn.
+ */
+export type AnomalyScopeHalts = Pick<
+  BudgetCeilingConfirmations,
+  "anomaly_session_halt" | "anomaly_daily_halt"
+>;
+
+/** The check with each halt replaced by its raised level, where one exists. */
+function withRaisedHalts(
+  check: AnomalyCheck,
+  turnHaltUsd: number | undefined,
+  scoped: AnomalyScopeHalts,
+): AnomalyCheck {
+  return {
+    ...check,
+    turnHaltUsd: turnHaltUsd ?? check.turnHaltUsd,
+    sessionHaltUsd: scoped.anomaly_session_halt ?? check.sessionHaltUsd,
+    dailyHaltUsd: scoped.anomaly_daily_halt ?? check.dailyHaltUsd,
+  };
+}
+
+/** The outermost trigger whose actual spend exceeds its (raised) halt. */
+function outermostTrip(check: AnomalyCheck): AnomalyTrigger | undefined {
+  return check.dailySpentUsd > check.dailyHaltUsd
+    ? "daily_scope"
+    : check.sessionSpentUsd > check.sessionHaltUsd
+    ? "session_scope"
+    : check.turnSpentUsd > check.turnHaltUsd
+    ? "turn_spend"
+    : undefined;
+}
+
+/**
+ * Turn-scoped wrapper over ensureAnomalyAllowed (BIT-715). Each trigger is
+ * checked against its raised halt. An approval at spend S raises that trigger's
+ * halt to 2S, so spend up to 2S does not prompt again; spend past 2S prompts
+ * with the next level. The turn halt lasts this gate instance (one turn). The
+ * session and daily halts are written to `scopeHalts`, which the caller
+ * passes from the scope store, so they last the session and the local day.
+ * Non-interactive callers fail closed, as before.
  */
 export function createRunawayAnomalyGate(
   confirm?: ConfirmRunawayAnomaly,
+  scopeHalts: AnomalyScopeHalts = {},
 ): RunawayAnomalyGate {
-  const approvedLevel: Partial<Record<AnomalyTrigger, number>> = {};
+  let turnHaltUsd: number | undefined;
   return {
     async ensureAllowed(check: AnomalyCheck): Promise<void> {
-      if (!check.halted || check.trigger === undefined) return;
-      const spent = check.trigger === "daily_scope"
-        ? check.dailySpentUsd
-        : check.trigger === "session_scope"
-        ? check.sessionSpentUsd
-        : check.turnSpentUsd;
-      const prior = approvedLevel[check.trigger];
-      if (prior !== undefined && spent <= prior) return;
-      await ensureAnomalyAllowed(check, confirm);
-      approvedLevel[check.trigger] = spent;
+      if (!check.halted) return;
+      // Re-check after each approval: an approval raises only the outermost
+      // tripped halt, so any other halt this call still exceeds must prompt
+      // too. Each approval raises a halt past the call's spend, so the loop
+      // ends once no trigger is still tripped.
+      for (;;) {
+        const effective = withRaisedHalts(check, turnHaltUsd, scopeHalts);
+        const trigger = outermostTrip(effective);
+        if (trigger === undefined) return;
+        const spent = trigger === "daily_scope"
+          ? effective.dailySpentUsd
+          : trigger === "session_scope"
+          ? effective.sessionSpentUsd
+          : effective.turnSpentUsd;
+        await ensureAnomalyAllowed({ ...effective, trigger }, confirm);
+        // Approved: raise this trigger's halt to APPROVAL_HALT_MULTIPLE × spend.
+        // Math.max keeps the level from dropping when an out-of-order approval
+        // (computed from an older check) lands after a higher one.
+        const raised = spent * APPROVAL_HALT_MULTIPLE;
+        if (trigger === "turn_spend") {
+          turnHaltUsd = Math.max(turnHaltUsd ?? 0, raised);
+        } else if (trigger === "session_scope") {
+          scopeHalts.anomaly_session_halt = Math.max(
+            scopeHalts.anomaly_session_halt ?? 0,
+            raised,
+          );
+        } else {
+          scopeHalts.anomaly_daily_halt = Math.max(
+            scopeHalts.anomaly_daily_halt ?? 0,
+            raised,
+          );
+        }
+      }
     },
   };
 }

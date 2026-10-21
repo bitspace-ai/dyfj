@@ -78,11 +78,13 @@ export async function budgetGate(
       input.approver?.confirmBudgetCeiling,
       ports.budgetScopes.budgetScope(session.sessionId),
     ),
-    // Turn-scoped: an approval covers the spend level it was shown (the entry
-    // check and the first call's check see identical actuals); any recorded
-    // increment re-prompts, and nothing survives the turn.
+    // An approval raises the tripped halt to twice the spend at approval
+    // (BIT-715). The turn halt lasts this turn; the session and daily halts
+    // live in the same scope store as the ceiling marks, so they last the
+    // session and the local day.
     anomalyGate: createRunawayAnomalyGate(
       input.approver?.confirmRunawayAnomaly,
+      ports.budgetScopes.budgetScope(session.sessionId),
     ),
   };
   await gateEntry(state, input, route);
