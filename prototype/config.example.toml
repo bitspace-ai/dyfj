@@ -66,8 +66,8 @@ level = "strict"
 # Multiples must be strictly positive and there is no disable knob. The
 # multiples are config-only (no per-request field); the dollar thresholds
 # they produce scale with the budget envelope in force, including an explicit
-# loopback per-turn budget override — the gate always binds at
-# multiple × the effective limit.
+# loopback per-turn budget override. The multiples set each initial halt:
+# an approval replaces that halt with the raised level described above.
 #   turn halt:  turn_multiple  × per_call_limit_usd of real spend in one turn
 #   scope halt: scope_multiple × the session/daily envelope
 # turn_multiple = 3.0

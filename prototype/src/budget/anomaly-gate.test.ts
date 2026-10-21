@@ -228,6 +228,44 @@ test("createRunawayAnomalyGate: fails closed without a handler and records no ap
   );
 });
 
+test("createRunawayAnomalyGate: approving only the outermost tripped halt still prompts for each other tripped halt", async () => {
+  // Turn halt $0.30, session halt $0.80, daily halt $1.00; $1.20 spent trips all three.
+  const t = makeTracker({ sessionLimitUsd: 0.40, dailyLimitUsd: 0.50 });
+  t.record(makeUsage(1000, 100, 1.20), 2);
+  const check = t.checkAnomaly(2, ANOMALY);
+  assert.strictEqual(check.trigger, "daily_scope");
+  const confirm = approving();
+  await createRunawayAnomalyGate(confirm).ensureAllowed(check);
+  assert.deepStrictEqual(
+    confirm.mock.calls.map((call) => call.arguments[0].trigger),
+    ["daily_scope", "session_scope", "turn_spend"],
+  );
+});
+
+test("createRunawayAnomalyGate: declining a still-tripped halt after the outermost approval blocks the call", async () => {
+  const t = makeTracker({ sessionLimitUsd: 0.40, dailyLimitUsd: 0.50 });
+  t.record(makeUsage(1000, 100, 1.20), 2);
+  const verdicts: BudgetCeilingVerdict[] = [
+    { decision: "approve" },
+    { decision: "deny", reason: "session stop" },
+  ];
+  const confirm = mock.fn(
+    (_warning: RunawayAnomalyWarning): Promise<BudgetCeilingVerdict> =>
+      Promise.resolve(verdicts.shift()!),
+  );
+  const caught = await captureRejection(
+    () =>
+      createRunawayAnomalyGate(confirm).ensureAllowed(
+        t.checkAnomaly(2, ANOMALY),
+      ),
+    RunawayAnomalyHaltError,
+  );
+  assert.strictEqual(caught.trigger, "session_scope");
+  assert.strictEqual(caught.declined, true);
+  // The turn halt was never prompted: the call stopped at the session halt.
+  assert.equal(confirm.mock.callCount(), 2);
+});
+
 // ── RunawayAnomalyHaltError — decline reason sanitization ─────────────────────
 
 test("RunawayAnomalyHaltError — decline reason sanitization: a short, ordinary decline reason passes through unchanged", () => {

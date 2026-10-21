@@ -366,9 +366,10 @@ test("composite ceiling approvals: one prompt names every newly-crossed scope an
     message.includes("Approving raises:"),
     `expected ${JSON.stringify(message)} to include "Approving raises:"`,
   );
-  // Only the presented scopes were confirmed — period-wide for session and
-  // daily; per-call was never confirmed.
-  // Session raises to the projection ($5.10) plus one session envelope ($5).
+  // Only the presented scopes were confirmed; per-call was never confirmed.
+  // Session is stored as the projected session spend ($5.10) plus one session
+  // envelope ($5), so it covers spend up to $10.10 and no further. Daily is
+  // stored as unbounded (Infinity) for the local day.
   assertAlmostEqual(confirmed.session_limit ?? Number.NaN, 10.1);
   assert.strictEqual(confirmed.daily_limit, Number.POSITIVE_INFINITY);
   assert.strictEqual(confirmed.per_call_limit, undefined);

@@ -272,24 +272,30 @@ export function createRunawayAnomalyGate(
   return {
     async ensureAllowed(check: AnomalyCheck): Promise<void> {
       if (!check.halted) return;
-      const effective = withRaisedHalts(check, turnHaltUsd, scopeHalts);
-      const trigger = outermostTrip(effective);
-      if (trigger === undefined) return;
-      const spent = trigger === "daily_scope"
-        ? effective.dailySpentUsd
-        : trigger === "session_scope"
-        ? effective.sessionSpentUsd
-        : effective.turnSpentUsd;
-      await ensureAnomalyAllowed({ ...effective, trigger }, confirm);
-      // Approved: raise this trigger's halt to APPROVAL_HALT_MULTIPLE × spend.
-      // Only reached past the halt in force, so the level never drops.
-      const raised = spent * APPROVAL_HALT_MULTIPLE;
-      if (trigger === "turn_spend") {
-        turnHaltUsd = raised;
-      } else if (trigger === "session_scope") {
-        scopeHalts.anomaly_session_halt = raised;
-      } else {
-        scopeHalts.anomaly_daily_halt = raised;
+      // Re-check after each approval: an approval raises only the outermost
+      // tripped halt, so any other halt this call still exceeds must prompt
+      // too. Each approval raises a halt past the call's spend, so the loop
+      // ends once no trigger is still tripped.
+      for (;;) {
+        const effective = withRaisedHalts(check, turnHaltUsd, scopeHalts);
+        const trigger = outermostTrip(effective);
+        if (trigger === undefined) return;
+        const spent = trigger === "daily_scope"
+          ? effective.dailySpentUsd
+          : trigger === "session_scope"
+          ? effective.sessionSpentUsd
+          : effective.turnSpentUsd;
+        await ensureAnomalyAllowed({ ...effective, trigger }, confirm);
+        // Approved: raise this trigger's halt to APPROVAL_HALT_MULTIPLE × spend.
+        // Only reached past the halt in force, so the level never drops.
+        const raised = spent * APPROVAL_HALT_MULTIPLE;
+        if (trigger === "turn_spend") {
+          turnHaltUsd = raised;
+        } else if (trigger === "session_scope") {
+          scopeHalts.anomaly_session_halt = raised;
+        } else {
+          scopeHalts.anomaly_daily_halt = raised;
+        }
       }
     },
   };

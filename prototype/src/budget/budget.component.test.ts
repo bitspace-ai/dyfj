@@ -295,7 +295,7 @@ test("anomaly: turn spend past 3× the per-call limit halts; approvals are per l
   assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.73);
 });
 
-test("anomaly: a long turn that grows past $2.40 asks at most four times, once per doubling of the approved level", async () => {
+test("anomaly: a long turn that grows past $2.40 asks exactly three times, each when spend passes the level the last approval raised", async () => {
   const { clock, store } = setup();
   // Session and daily envelopes sized so only the turn halt trips.
   const config: BudgetConfig = {
@@ -323,10 +323,14 @@ test("anomaly: a long turn that grows past $2.40 asks at most four times, once p
     tracker.totalCost > 2.40,
     `expected the turn to pass $2.40, ended at $${tracker.totalCost.toFixed(2)}`,
   );
-  assert.ok(
-    confirm.mock.callCount() <= 4,
-    `expected at most 4 anomaly prompts, got ${confirm.mock.callCount()}`,
-  );
+  // Recorded turn spend after n calls is 0.75 × (1.08^n − 1). Prompts:
+  // call 6 at $0.352 (halt $0.30 → raised to $0.704); call 10 at $0.749
+  // (→ $1.499); call 16 at $1.629 (→ $3.258). Spend stays under $3.258 through
+  // the last call, so exactly three prompts.
+  assert.strictEqual(confirm.mock.callCount(), 3);
+  assertAlmostEqual(confirm.mock.calls[0].arguments[0].spentUsd, 0.352, 1e-3);
+  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.749, 1e-3);
+  assertAlmostEqual(confirm.mock.calls[2].arguments[0].spentUsd, 1.629, 1e-3);
 });
 
 test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {
