@@ -19,7 +19,8 @@ import { localDayKey } from "./spend.ts";
  * - `anomaly_session_halt` / `anomaly_daily_halt`: the runaway halts an
  *   anomaly approval raised to 2× the spend at approval (anomaly-gate.ts);
  *   kept per session and per day. The turn-level halt is not stored here: it
- *   lasts for one turn only.
+ *   lasts for one turn only. A daily anomaly approval made during a turn lasts
+ *   until that turn ends, even across midnight.
  *
  * All of it lives in runtime-process memory, so a restart forgets the marks
  * (the safe direction).

@@ -123,7 +123,7 @@ export function formatBudgetCeilingWarning(
       ? `  session limit   to $${
         (warning.raisesToUsd.session_limit ?? 0).toFixed(6)
       } (projected spend + $${warning.sessionLimitUsd.toFixed(6)})`
-      : "  daily limit     unchanged; covers the rest of the local day";
+      : "  daily limit     removed for the rest of the local day";
   return [
     "Budget ceiling warning",
     `Reason:           ${scopes.map(label).join(" + ")}`,
