@@ -558,8 +558,9 @@ README are tracked separately in its Revision history section.
 
 - **The docs give each process its own Dolt user instead of `root`.**
   `schema/README.md` has a new "Dolt users" section. It lists three users:
-  - `dyfj_runtime` for the runtime: it may only append to `events`, and only
-    read `models` and `prompts`;
+  - `dyfj_runtime` for the runtime: it may read and append to `events` but
+    not change or delete rows there, read, add and update `sessions` and
+    `memories`, and only read `models` and `prompts`;
   - `dyfj_mcp_memory` for the MCP memory server: `memories` and `sessions`
     only;
   - `dyfj_migrate` for migrations.

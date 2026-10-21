@@ -102,8 +102,9 @@ database:
 
 Why each grant is the size it is:
 
-- **`events` is append-only.** No process but migrations may update or delete
-  it.
+- **`events` is append-only for these users.** Only `dyfj_migrate` and `root`
+  may update or delete it. A runtime started without `DOLT_USER` connects as
+  `root`, so set it.
 - **Upserts need `UPDATE`.** `INSERT … ON DUPLICATE KEY UPDATE` on an
   existing row is refused without it.
 - **The runtime needs a grant on all five tables.** Its boot column check reads
