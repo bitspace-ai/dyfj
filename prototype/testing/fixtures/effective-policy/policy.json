@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "identity": {
+    "principal": "principal-01",
+    "job": "job-01",
+    "run": "run-01",
+    "repositories": [
+      "repo-b",
+      "repo-a"
+    ],
+    "expiresAt": "2026-12-31T23:59:59.000Z",
+    "digest": "sha256:3e899663f979f14a2d6b074c239e5e0e37c009ff38a9cf98aafe95865c190b47"
+  },
+  "filesystem": {
+    "roots": [
+      {
+        "name": "workspace",
+        "source": "/srv/work/space",
+        "target": "workspace",
+        "rights": [
+          "write",
+          "read"
+        ]
+      },
+      {
+        "name": "toolchain",
+        "source": "/opt/toolchain",
+        "target": "toolchain",
+        "rights": [
+          "execute",
+          "read"
+        ]
+      }
+    ],
+    "scratch": "scratch",
+    "forbiddenPaths": [
+      "/srv/secrets",
+      "/root/.ssh"
+    ],
+    "protectedGit": [
+      ".git/hooks",
+      ".git/config"
+    ]
+  },
+  "network": {
+    "entries": [
+      {
+        "role": "provider",
+        "host": "api.anthropic.com",
+        "port": 443,
+        "protocol": "tcp",
+        "dns": "resolver:192.0.2.53:53",
+        "hostnameAssurance": "tls"
+      },
+      {
+        "role": "dolt",
+        "host": "127.0.0.1",
+        "port": 3306,
+        "protocol": "tcp",
+        "dns": "none",
+        "hostnameAssurance": "none"
+      },
+      {
+        "role": "dns",
+        "host": "192.0.2.53",
+        "port": 53,
+        "protocol": "udp",
+        "dns": "none",
+        "hostnameAssurance": "none"
+      },
+      {
+        "role": "local-model",
+        "host": "[::1]",
+        "port": 8080,
+        "protocol": "tcp",
+        "dns": "none",
+        "hostnameAssurance": "none"
+      }
+    ],
+    "brokerOperations": [
+      "memory.search",
+      "issues.comment"
+    ],
+    "dolt": "127.0.0.1:3306"
+  },
+  "processes": {
+    "executables": [
+      {
+        "program": "git",
+        "role": "tool",
+        "digest": null
+      },
+      {
+        "program": "/usr/bin/bash",
+        "role": "tool",
+        "digest": "sha256:abababababababababababababababababababababababababababababababab"
+      }
+    ],
+    "descendants": true,
+    "maxProcesses": 64,
+    "syscallProfile": null,
+    "environment": [
+      "PATH",
+      "HOME",
+      "DOLT_HOST"
+    ]
+  },
+  "secrets": [
+    {
+      "name": "DOLT_PASSWORD",
+      "owner": "dolt"
+    },
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "owner": "provider"
+    }
+  ],
+  "effects": {
+    "tools": [
+      "read_file",
+      "bash",
+      "edit_file"
+    ],
+    "externalMutations": [
+      "issues.comment"
+    ],
+    "approvalPosture": "strict",
+    "paidRouting": false,
+    "limits": {
+      "timeMs": 3600000,
+      "steps": 32,
+      "outputBytes": 1048576,
+      "spendMicroUsd": {
+        "session": 1000000,
+        "perCall": 100000,
+        "daily": null
+      }
+    }
+  }
+}

@@ -3,8 +3,9 @@
  * hosts the runtime may reach, the binaries it may start and the environment
  * names it may see.
  *
- * The static lists below are the only source of the runtime's fixed entries.
- * `composeRuntimePolicy` adds the operator's launch-resolved entries, plus
+ * The static tables below are the only source of the runtime's fixed entries;
+ * each entry carries the role it is granted for, and the exported lists are
+ * derived from them. `composeRuntimePolicy` adds the operator's launch-resolved entries, plus
  * `[network] allow` from config.toml (`network-config.ts`), the operator's one
  * way to add a host. The launcher
  * builds the runtime's explicit env from the composed policy, and the engine
@@ -29,33 +30,67 @@ import type { McpHttpServerConfig } from "./mcp-servers.ts";
 import { memoryMcpNetGrant } from "./memory-url.ts";
 import type { SecretsConfig } from "./secrets-config.ts";
 
-/** Hosts every runtime may reach: Dolt, local model servers, hosted providers. */
-export const RUNTIME_NET_GRANTS: readonly string[] = Object.freeze([
-  "127.0.0.1:3306",
-  "127.0.0.1:8080",
-  "localhost:8080",
-  "127.0.0.1:18080",
-  "localhost:18080",
-  "127.0.0.1:11434",
-  "localhost:11434",
-  "api.anthropic.com:443",
-  "api.openai.com:443",
-  "openrouter.ai:443",
-  "generativelanguage.googleapis.com:443",
-  "api.x.ai:443",
-]);
+/** Why a static host is granted. */
+export type StaticNetRole = "provider" | "local-model" | "dolt";
+
+/** What a static binary is for. */
+export type StaticRunRole = "tool" | "runner";
+
+/** One static grant and the role it is granted for. */
+export interface TaggedGrant<Role extends string> {
+  readonly entry: string;
+  readonly role: Role;
+}
+
+function taggedTable<Role extends string>(
+  rows: readonly TaggedGrant<Role>[],
+): readonly TaggedGrant<Role>[] {
+  return Object.freeze(rows.map((row) => Object.freeze({ ...row })));
+}
 
 /**
- * Binaries every runtime may start: the exec tools' `bash` and `git`, and the
- * ACP runner's `/bin/kill` signaler and `/bin/sleep` process-group probe. The
- * runtime's own Node executable is granted by path in the base policy.
+ * Hosts every runtime may reach, each with its role: Dolt, local model
+ * servers, hosted providers. The one source of the static net entries.
  */
-export const RUNTIME_RUN_GRANTS: readonly string[] = Object.freeze([
-  "bash",
-  "git",
-  "/bin/kill",
-  "/bin/sleep",
-]);
+export const RUNTIME_NET_GRANT_TABLE: readonly TaggedGrant<StaticNetRole>[] =
+  taggedTable<StaticNetRole>([
+    { entry: "127.0.0.1:3306", role: "dolt" },
+    { entry: "127.0.0.1:8080", role: "local-model" },
+    { entry: "localhost:8080", role: "local-model" },
+    { entry: "127.0.0.1:18080", role: "local-model" },
+    { entry: "localhost:18080", role: "local-model" },
+    { entry: "127.0.0.1:11434", role: "local-model" },
+    { entry: "localhost:11434", role: "local-model" },
+    { entry: "api.anthropic.com:443", role: "provider" },
+    { entry: "api.openai.com:443", role: "provider" },
+    { entry: "openrouter.ai:443", role: "provider" },
+    { entry: "generativelanguage.googleapis.com:443", role: "provider" },
+    { entry: "api.x.ai:443", role: "provider" },
+  ]);
+
+/** Hosts every runtime may reach, in table order. */
+export const RUNTIME_NET_GRANTS: readonly string[] = Object.freeze(
+  RUNTIME_NET_GRANT_TABLE.map((row) => row.entry),
+);
+
+/**
+ * Binaries every runtime may start, each with its role: the exec tools' `bash`
+ * and `git`, and the ACP runner's `/bin/kill` signaler and `/bin/sleep`
+ * process-group probe. The runtime's own Node executable is granted by path in
+ * the base policy.
+ */
+export const RUNTIME_RUN_GRANT_TABLE: readonly TaggedGrant<StaticRunRole>[] =
+  taggedTable<StaticRunRole>([
+    { entry: "bash", role: "tool" },
+    { entry: "git", role: "tool" },
+    { entry: "/bin/kill", role: "runner" },
+    { entry: "/bin/sleep", role: "runner" },
+  ]);
+
+/** Binaries every runtime may start, in table order. */
+export const RUNTIME_RUN_GRANTS: readonly string[] = Object.freeze(
+  RUNTIME_RUN_GRANT_TABLE.map((row) => row.entry),
+);
 
 /** Environment names the runtime reads. */
 export const RUNTIME_ENV_GRANTS: readonly string[] = Object.freeze([
@@ -160,6 +195,84 @@ export const RUNTIME_PLATFORM_ENV: readonly string[] = Object.freeze([
   "TEMP",
 ]);
 
+const OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])";
+const IPV4_ADDRESS = new RegExp(`^${OCTET}(?:\\.${OCTET}){3}$`);
+
+/**
+ * `host` is a dotted-quad IPv4 address, or brackets around IPv6 address
+ * characters that the WHATWG URL parser accepts as an IPv6 address.
+ */
+export function isAddressLiteral(host: string): boolean {
+  if (BRACKETED_IPV6.test(host)) return canonicalHost(host) !== null;
+  return IPV4_ADDRESS.test(host);
+}
+
+/** Brackets around IPv6 address characters only, and nothing else. */
+const BRACKETED_IPV6 = /^\[[0-9A-Fa-f:.]+\]$/;
+
+/** A bare host: no port, user info, path, query, fragment or whitespace. */
+const BARE_HOST = /^[^\s/?#@\\:\[\]]+$/;
+
+/**
+ * `host` in the canonical form a URL gives it, or null when `host` is not a
+ * host on its own (a port, a path or user info around it) or has no
+ * canonical form.
+ */
+function canonicalHost(host: string): string | null {
+  if (!BRACKETED_IPV6.test(host) && !BARE_HOST.test(host)) return null;
+  try {
+    return new URL(`http://${host}/`).hostname.replace(/\.$/, "");
+  } catch {
+    return null;
+  }
+}
+
+const IPV4_MAPPED = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/;
+
+/** The IPv4 address an IPv4-mapped IPv6 host carries, or null. */
+function mappedIpv4(canonical: string): string | null {
+  const match = IPV4_MAPPED.exec(canonical);
+  if (match === null) return null;
+  const high = parseInt(match[1]!, 16);
+  const low = parseInt(match[2]!, 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+function isLoopbackIpv4(address: string): boolean {
+  return IPV4_ADDRESS.test(address) &&
+    (address.startsWith("127.") || address === "0.0.0.0");
+}
+
+/**
+ * `host` names this machine's loopback or any-address in some spelling:
+ * `localhost` and its subdomains, `127.0.0.0/8` and `0.0.0.0` (also as
+ * `127.1`, a decimal or an IPv4-mapped IPv6 address), and `[::1]` and `[::]`
+ * (also uncompressed). Inside another network namespace or a pod such a host names
+ * that environment's own loopback, so a platform compiler maps it.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const canonical = canonicalHost(host);
+  if (canonical === null) return false;
+  const mapped = mappedIpv4(canonical);
+  return canonical === "localhost" || canonical.endsWith(".localhost") ||
+    isLoopbackIpv4(canonical) ||
+    canonical === "[::1]" || canonical === "[::]" ||
+    (mapped !== null && isLoopbackIpv4(mapped));
+}
+
+const DNS_NAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
+/**
+ * `host` is spelled the one way a URL spells it, and is an address literal or
+ * a DNS name. `127.1`, `LOCALHOST`, `localhost.` and an uncompressed IPv6
+ * address are not: two spellings of one host must not count as two hosts.
+ */
+export function isCanonicalHost(host: string): boolean {
+  return canonicalHost(host) === host &&
+    (isAddressLiteral(host) || DNS_NAME.test(host));
+}
+
 /** The fixed signaler the ACP runner's process-group contract uses. */
 const KILL_BINARY = "/bin/kill";
 
@@ -198,10 +311,188 @@ export interface RuntimePolicyInputs {
   runtimeExecutable?: string | null;
 }
 
-function appendNew(list: string[], entries: readonly (string | null)[]) {
+/** Where a composed net entry came from. */
+export type NetGrantSource =
+  | { readonly kind: "static"; readonly role: StaticNetRole }
+  /** `tls`: the configured URL is https. */
+  | { readonly kind: "memory-mcp"; readonly tls: boolean }
+  | { readonly kind: "mcp-server"; readonly tls: boolean }
+  | { readonly kind: "network-allow" }
+  | { readonly kind: "nameserver" }
+  | { readonly kind: "dolt-endpoint" };
+
+/** Where a composed run entry came from. */
+export type RunGrantSource =
+  | { readonly kind: "static"; readonly role: StaticRunRole }
+  | { readonly kind: "runtime-executable" }
+  | { readonly kind: "node-path" }
+  | { readonly kind: "secrets-resolver" };
+
+export interface ComposedGrant<Source> {
+  readonly entry: string;
+  /**
+   * The first source to add the entry. It decides the entry's place in the
+   * list; the effective policy chooses the role from all of `sources`.
+   */
+  readonly source: Source;
+  /** Every source that added the entry, in the order they added it. */
+  readonly sources: readonly Source[];
+}
+
+/**
+ * The composed policy with the provenance of each net and run entry, in the
+ * order `composeRuntimePolicy` lists them. `composeEffectivePolicy` reads the
+ * provenance; `composeRuntimePolicy` drops it.
+ */
+export interface ComposedRuntimeGrants {
+  readonly net: readonly ComposedGrant<NetGrantSource>[];
+  readonly run: readonly ComposedGrant<RunGrantSource>[];
+  readonly env: readonly string[];
+  readonly dolt: string | null;
+}
+
+interface Building<Source> {
+  readonly entry: string;
+  readonly sources: Source[];
+}
+
+/**
+ * Add each new entry to `list`. An entry already there keeps its place and
+ * gains `source`, so no source's provenance is lost to deduplication.
+ */
+function appendNew<Source>(
+  list: Building<Source>[],
+  entries: readonly (string | null)[],
+  source: Source,
+) {
   for (const entry of entries) {
-    if (entry !== null && !list.includes(entry)) list.push(entry);
+    if (entry === null) continue;
+    const existing = list.find((grant) => grant.entry === entry);
+    if (existing === undefined) list.push({ entry, sources: [source] });
+    else if (!existing.sources.includes(source)) existing.sources.push(source);
   }
+}
+
+function fromTable<Role extends string, Source>(
+  table: readonly TaggedGrant<Role>[],
+  source: (role: Role) => Source,
+): Building<Source>[] {
+  return table.map((row) => ({ entry: row.entry, sources: [source(row.role)] }));
+}
+
+function freezeGrants<Source>(
+  list: readonly Building<Source>[],
+): readonly ComposedGrant<Source>[] {
+  return Object.freeze(list.map((grant) =>
+    Object.freeze({
+      entry: grant.entry,
+      source: grant.sources[0]!,
+      sources: Object.freeze([...grant.sources]),
+    })
+  ));
+}
+
+const STATIC_NET: Readonly<Record<StaticNetRole, NetGrantSource>> = {
+  provider: Object.freeze({ kind: "static", role: "provider" }),
+  "local-model": Object.freeze({ kind: "static", role: "local-model" }),
+  dolt: Object.freeze({ kind: "static", role: "dolt" }),
+};
+const STATIC_RUN: Readonly<Record<StaticRunRole, RunGrantSource>> = {
+  tool: Object.freeze({ kind: "static", role: "tool" }),
+  runner: Object.freeze({ kind: "static", role: "runner" }),
+};
+
+const MEMORY_MCP_TLS: NetGrantSource = Object.freeze({
+  kind: "memory-mcp",
+  tls: true,
+});
+const MEMORY_MCP_PLAIN: NetGrantSource = Object.freeze({
+  kind: "memory-mcp",
+  tls: false,
+});
+const MCP_SERVER_TLS: NetGrantSource = Object.freeze({
+  kind: "mcp-server",
+  tls: true,
+});
+const MCP_SERVER_PLAIN: NetGrantSource = Object.freeze({
+  kind: "mcp-server",
+  tls: false,
+});
+
+function isHttps(url: string): boolean {
+  return new URL(url).protocol === "https:";
+}
+const NETWORK_ALLOW: NetGrantSource = Object.freeze({ kind: "network-allow" });
+const NAMESERVER: NetGrantSource = Object.freeze({ kind: "nameserver" });
+const DOLT_ENDPOINT: NetGrantSource = Object.freeze({ kind: "dolt-endpoint" });
+const RUNTIME_EXECUTABLE: RunGrantSource = Object.freeze({
+  kind: "runtime-executable",
+});
+const NODE_PATH: RunGrantSource = Object.freeze({ kind: "node-path" });
+const RESOLVER_COMMAND: RunGrantSource = Object.freeze({
+  kind: "secrets-resolver",
+});
+const KILL: RunGrantSource = STATIC_RUN.runner;
+
+/**
+ * The static tables plus the operator's entries, each tagged with where it
+ * came from. The runtime's own executable is included: the ACP fixture starts
+ * it by path.
+ */
+export function composeRuntimeGrants(
+  inputs: RuntimePolicyInputs = {},
+): ComposedRuntimeGrants {
+  const net = fromTable(RUNTIME_NET_GRANT_TABLE, (role) => STATIC_NET[role]);
+  const memory = memoryMcpNetGrant(inputs.memoryMcpUrl);
+  if (memory !== null) {
+    appendNew(
+      net,
+      [memory],
+      isHttps(inputs.memoryMcpUrl!) ? MEMORY_MCP_TLS : MEMORY_MCP_PLAIN,
+    );
+  }
+  for (const server of inputs.mcpServers ?? []) {
+    appendNew(
+      net,
+      mcpServerNetGrants([server]),
+      isHttps(server.url) ? MCP_SERVER_TLS : MCP_SERVER_PLAIN,
+    );
+  }
+  appendNew(net, inputs.networkAllow ?? [], NETWORK_ALLOW);
+  appendNew(net, inputs.nameserverGrants ?? [], NAMESERVER);
+
+  const run = fromTable(RUNTIME_RUN_GRANT_TABLE, (role) => STATIC_RUN[role]);
+  const resolver = inputs.secrets?.command[0] ?? null;
+  appendNew(run, [
+    inputs.runtimeExecutable === undefined
+      ? process.execPath
+      : inputs.runtimeExecutable,
+  ], RUNTIME_EXECUTABLE);
+  appendNew(run, [inputs.nodePath ?? null], NODE_PATH);
+  appendNew(run, [KILL_BINARY], KILL);
+  appendNew(
+    run,
+    [resolver === undefined || resolver === "" ? null : resolver],
+    RESOLVER_COMMAND,
+  );
+
+  const env = [...RUNTIME_ENV_GRANTS];
+  for (const name of inputs.secrets?.inheritEnv ?? []) {
+    if (!env.includes(name)) env.push(name);
+  }
+
+  // The Dolt endpoint is both the pool's one allowed endpoint and a net entry,
+  // so the runtime's permission flag admits the connection the guard admits.
+  const dolt = inputs.dolt == null
+    ? null
+    : `${inputs.dolt.host}:${validateDoltPort(inputs.dolt.port)}`;
+  appendNew(net, [dolt], DOLT_ENDPOINT);
+  return Object.freeze({
+    net: freezeGrants(net),
+    run: freezeGrants(run),
+    env: Object.freeze(env),
+    dolt,
+  });
 }
 
 /**
@@ -211,37 +502,12 @@ function appendNew(list: string[], entries: readonly (string | null)[]) {
 export function composeRuntimePolicy(
   inputs: RuntimePolicyInputs = {},
 ): RuntimePolicy {
-  const net = [...RUNTIME_NET_GRANTS];
-  appendNew(net, [memoryMcpNetGrant(inputs.memoryMcpUrl)]);
-  appendNew(net, mcpServerNetGrants(inputs.mcpServers ?? []));
-  appendNew(net, inputs.networkAllow ?? []);
-  appendNew(net, inputs.nameserverGrants ?? []);
-
-  const run = [...RUNTIME_RUN_GRANTS];
-  const resolver = inputs.secrets?.command[0] ?? null;
-  appendNew(run, [
-    inputs.runtimeExecutable === undefined
-      ? process.execPath
-      : inputs.runtimeExecutable,
-    inputs.nodePath ?? null,
-    KILL_BINARY,
-    resolver === undefined || resolver === "" ? null : resolver,
-  ]);
-
-  const env = [...RUNTIME_ENV_GRANTS];
-  appendNew(env, inputs.secrets?.inheritEnv ?? []);
-
-  // The Dolt endpoint is both the pool's one allowed endpoint and a net entry,
-  // so the runtime's permission flag admits the connection the guard admits.
-  const dolt = inputs.dolt == null
-    ? null
-    : `${inputs.dolt.host}:${validateDoltPort(inputs.dolt.port)}`;
-  appendNew(net, [dolt]);
+  const grants = composeRuntimeGrants(inputs);
   return Object.freeze({
-    net: Object.freeze(net),
-    run: Object.freeze(run),
-    env: Object.freeze(env),
-    dolt,
+    net: Object.freeze(grants.net.map((grant) => grant.entry)),
+    run: Object.freeze(grants.run.map((grant) => grant.entry)),
+    env: grants.env,
+    dolt: grants.dolt,
   });
 }
 

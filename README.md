@@ -627,6 +627,13 @@ policy (`prototype/src/config/runtime-policy.ts`) holds the static lists and
 composes the operator's entries from `config.toml` and the environment: the
 `[[mcp.servers]]` hosts, `DYFJ_MEMORY_MCP_URL`, `[network] allow`, the system
 nameservers, the Dolt endpoint, `DYFJ_NODE_PATH` and `[secrets].command`.
+Its static net and run entries are tagged tables, each entry with the role it
+is granted for. The same composition also builds an effective role policy
+(`prototype/src/config/effective-policy*.ts`): a versioned, frozen description
+with a digest, a check that a session stays inside its run envelope, and pure
+Kubernetes and Linux compilers for its filesystem, network and process groups
+that refuse, listing every offender, the unsupported conditions they check.
+Nothing reads or enforces the effective policy yet.
 `dyfj start` builds the runtime's environment from that policy, and the engine
 composes the same policy at boot and checks it in code:
 
@@ -2674,3 +2681,7 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-10-21 - Setup guidance runs the Workbench as its own Dolt user,
   `dyfj_runtime`, created as `schema/README.md` (Dolt users) describes; until
   then, and whenever `DOLT_USER` is unset, the runtime connects as `root`.
+- 2026-10-22 - "Egress, spawn and environment limits" says the static net and
+  run entries are tagged tables, and that an effective role policy with a
+  digest, a session subset check and Kubernetes and Linux compilers is built
+  from the same composition but not yet read or enforced.

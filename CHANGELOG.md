@@ -11,6 +11,40 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **An effective role policy, built from the existing grant composition,
+  with a digest, a subset check and two platform compilers (data only).**
+  `prototype/src/config/effective-policy.ts` describes what a runtime may do as
+  one versioned, deeply frozen policy in six groups: identity, filesystem,
+  network, processes, secrets (names and owning roles, never values) and
+  effects and limits (spend as integer micro-USD). `composeEffectivePolicy`
+  builds it from the same composition as `composeRuntimePolicy`, and
+  `projectRuntimePolicy` rebuilds today's `{net, run, env, dolt}` from it, so
+  there is no second host list. The static net and run grants in
+  `runtime-policy.ts` are now tagged tables (each entry with its role), and
+  `composeRuntimeGrants` records every source of each composed entry, and a
+  `host:port` granted both as a nameserver (UDP) and over TCP becomes two
+  effective entries, one per transport, that project back to one;
+  `RUNTIME_NET_GRANTS` and `RUNTIME_RUN_GRANTS` keep their contents and order.
+  `effective-policy-digest.ts` gives a stable `sha256:` digest over canonical
+  JSON, pinned by a golden vector in `prototype/testing/fixtures/effective-policy/`.
+  `effective-policy-subset.ts` checks a session policy against its run
+  envelope and reports its violations, across every group, as a path and a
+  kind. `effective-policy-compile.ts` adds `compileKubernetes` and
+  `compileLinux`, which compile the filesystem, network and process groups for
+  a declared platform target into plain data. Identity, secrets and effects
+  are not compiled; the output carries only the policy digest that binds them,
+  and nothing enforces them from it yet. For each unsupported condition the
+  compilers check (listed in the module: a right, protocol, DNS mode,
+  hostname assurance, digest, process limit or syscall profile the target does
+  not declare; an unmapped loopback host or resolver in any spelling; a host
+  not spelled canonically; an invalid service mapping; an unsafe mount name)
+  they throw `UnsupportedRightError` listing every offender, and return
+  nothing. The compiled shapes are not verified against a real cluster or
+  kernel.
+  **Runtime behaviour is unchanged:** boot, the launcher and the egress,
+  spawn and env seams still read `composeRuntimePolicy`, nothing reads the
+  effective policy, and nothing is deployed.
+
 - **Read-only bash commands run without a prompt under the `operator`
   posture.** On a loopback turn with `permission operator`, a `bash` call that
   only reads runs at once: chains of `git status`, `git diff`, `git log`,

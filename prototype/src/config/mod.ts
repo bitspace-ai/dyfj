@@ -7,7 +7,9 @@
  * into the environment (`secrets.ts`), the launch-resolved
  * nameserver net grants, and the runtime's egress, spawn and env policy with
  * the guards that enforce it at the product's seams (`runtime-policy.ts`,
- * `egress.ts`, `spawn-guard.ts`), and the code fingerprint the runtime records
+ * `egress.ts`, `spawn-guard.ts`), the effective policy built from that same
+ * composition, with its digest, session-within-run check and pure Kubernetes
+ * and Linux compilers (`effective-policy*.ts`; nothing enforces it yet), and the code fingerprint the runtime records
  * and its clients compare (`code-fingerprint.ts`). Nothing else in the runtime
  * reads the process environment directly.
  *
@@ -107,17 +109,52 @@ export {
   baseRuntimePolicy,
   CLI_NODE_PERMISSION_FLAGS,
   cliRuntimePolicy,
+  type ComposedRuntimeGrants,
+  composeRuntimeGrants,
   composeRuntimePolicy,
+  isAddressLiteral,
+  isLoopbackHost,
+  type NetGrantSource,
   nodePermissionArgs,
   RUNTIME_ENV_GRANTS,
+  RUNTIME_NET_GRANT_TABLE,
   RUNTIME_NET_GRANTS,
   RUNTIME_NODE_PERMISSION_FLAGS,
   RUNTIME_PLATFORM_ENV,
+  RUNTIME_RUN_GRANT_TABLE,
   RUNTIME_RUN_GRANTS,
+  type RunGrantSource,
   runtimeChildEnv,
   type RuntimePolicy,
   type RuntimePolicyInputs,
 } from "./runtime-policy.ts";
+export {
+  composeEffectivePolicy,
+  EFFECTIVE_POLICY_VERSION,
+  type EffectivePolicy,
+  type EffectivePolicyEnvelope,
+  parseEffectivePolicy,
+  projectRuntimePolicy,
+} from "./effective-policy.ts";
+export {
+  canonicalPolicyJson,
+  policyDigest,
+  verifyDigest,
+} from "./effective-policy-digest.ts";
+export {
+  assertSessionWithinRun,
+  checkSessionWithinRun,
+  PolicyEnvelopeError,
+  type PolicyViolation,
+} from "./effective-policy-subset.ts";
+export {
+  compileKubernetes,
+  compileLinux,
+  type KubernetesTarget,
+  type LinuxTarget,
+  type PlatformCapabilities,
+  UnsupportedRightError,
+} from "./effective-policy-compile.ts";
 export {
   assertConnectAllowed,
   assertEgressAllowed,
