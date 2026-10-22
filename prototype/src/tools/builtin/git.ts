@@ -29,7 +29,9 @@
  * `run.process` is an exec-class effect, so the no-exec invariant in
  * `evaluateCommandPolicy` routes every call through per-call operator approval.
  * This module does not change that invariant and must not be read as sandboxed
- * execution.
+ * execution. On the contained Linux target (`DYFJ_EXECUTOR_SOCKET` set), git
+ * runs in the isolated executor instead (`containedRunner`), so repository
+ * configuration executes there, not in the runtime.
  *
  * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
  * git's whole process group, hooks and their children included, is stopped and
@@ -46,7 +48,17 @@
  */
 
 import { relative, resolve } from "node:path";
-import { buildSafeBashEnv } from "./exec.ts";
+import type { Env } from "../../config/mod.ts";
+import {
+  BASH_COMMAND_ENV_KEYS,
+  buildSafeBashEnv,
+  executorSocket,
+  undialable,
+} from "./exec.ts";
+import {
+  createExecutorProcessRunner,
+  type ExecutorDialer,
+} from "./executor-transport.ts";
 import {
   type BoundedResult,
   describeTimeout,
@@ -351,6 +363,25 @@ export function buildGitArgv(root: string, args: GitArguments): GitArgvPlan {
   return { argv };
 }
 
+/** Every environment name a git call carries; none holds a secret. */
+export const GIT_COMMAND_ENV_KEYS: readonly string[] = Object.freeze([
+  ...BASH_COMMAND_ENV_KEYS,
+  "GIT_TERMINAL_PROMPT",
+  "GIT_OPTIONAL_LOCKS",
+]);
+
+function gitEnv(source?: Env): Record<string, string> {
+  return {
+    ...buildSafeBashEnv(source),
+    // Disables git's own terminal credential prompt. It does not disable
+    // SSH or an askpass helper, which a hook or helper can still invoke.
+    GIT_TERMINAL_PROMPT: "0",
+    // Read-only subcommands should not take the index lock; a blocked lock is
+    // a stall, not a result.
+    GIT_OPTIONAL_LOCKS: "0",
+  };
+}
+
 /**
  * Real runner: git with cwd pinned to the workspace, bounded by the timeout.
  * At the deadline git's whole process group (hooks and helpers included) is
@@ -361,17 +392,26 @@ const defaultRunner: GitRunner = (args, cwd, timeoutMs) =>
     command: "git",
     args,
     cwd,
-    env: {
-      ...buildSafeBashEnv(),
-      // Disables git's own terminal credential prompt. It does not disable
-      // SSH or an askpass helper, which a hook or helper can still invoke.
-      GIT_TERMINAL_PROMPT: "0",
-      // Read-only subcommands should not take the index lock; a blocked lock is
-      // a stall, not a result.
-      GIT_OPTIONAL_LOCKS: "0",
-    },
+    env: gitEnv(),
     timeoutMs,
   });
+
+/**
+ * The runner on an isolated machine: git starts in the executor, so a hook or
+ * fsmonitor planted in the workspace's writable git metadata runs there, never
+ * in the runtime, which holds secrets and egress. Without a dialer to reach
+ * the executor, every operation is refused rather than run here.
+ */
+function containedRunner(
+  socket: string,
+  dial: ExecutorDialer | undefined,
+  source: Env | undefined,
+): GitRunner {
+  if (dial === undefined) return undialable;
+  const run = createExecutorProcessRunner(socket, dial);
+  return (args, cwd, timeoutMs) =>
+    run(["git", ...args], cwd, timeoutMs, gitEnv(source));
+}
 
 /**
  * Run one allowed git operation and return a single string carrying the exit
@@ -458,7 +498,14 @@ export async function executeGit(
 
 // ── Command definition ───────────────────────────────────────────────────────
 
-export function defineGit(root: string): CommandDefinition<string> {
+export function defineGit(
+  root: string,
+  opts: { env?: Env; dialExecutor?: ExecutorDialer } = {},
+): CommandDefinition<string> {
+  const socket = executorSocket(opts.env);
+  const runner = socket === undefined
+    ? undefined
+    : containedRunner(socket, opts.dialExecutor, opts.env);
   return {
     id: "git",
     title: "Run Git Operation",
@@ -469,8 +516,13 @@ export function defineGit(root: string): CommandDefinition<string> {
       "be passed through. Network subcommands (push, pull, fetch, remote) and " +
       "history-rewriting or working-tree-destroying ones (reset, rebase, " +
       "checkout, clean, stash) are unavailable by design — publishing and " +
-      "recovery stay with the operator. Note that git still runs repository " +
-      "configuration: hooks and helpers execute, and can reach the network. A " +
+      "recovery stay with the operator. " +
+      (runner === undefined
+        ? "Note that git still runs repository " +
+          "configuration: hooks and helpers execute, and can reach the network. "
+        : "Git runs in the isolated executor: hooks and helpers execute " +
+          "there, with no network and no access to the runtime's credentials. ") +
+      "A " +
       "commit without paths records everything staged in the enclosing " +
       "repository, not only the workspace subtree. Prefer this over running " +
       "git through bash: the approval names the exact operation and paths. " +
@@ -548,6 +600,6 @@ export function defineGit(root: string): CommandDefinition<string> {
         message: call.arguments.message,
         staged: call.arguments.staged,
         limit: call.arguments.limit,
-      }),
+      }, runner === undefined ? {} : { runner }),
   };
 }

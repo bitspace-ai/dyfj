@@ -1,6 +1,7 @@
 /**
- * The executor transport: a bash runner that hands each command to the
- * isolated machine's trusted supervisor instead of spawning it here. The
+ * The executor transport: runners that hand each command (the bash tool's
+ * shell, the git tool's git) to the isolated machine's trusted supervisor
+ * instead of spawning it here. The
  * supervisor runs it in the secret-free executor (its own uid, no network,
  * writes persisting only in the workspace) and answers with the result. The runtime is
  * opted in by `DYFJ_EXECUTOR_SOCKET`, which the supervisor sets when it starts
@@ -8,7 +9,7 @@
  *
  * The protocol is one request per connection, each message one line of JSON:
  *
- *   → {"v":1,"argv":["bash","-c",command],"cwd":…,"env":{…},"timeoutMs":…}
+ *   → {"v":1,"argv":[…],"cwd":…,"env":{…},"timeoutMs":…}
  *   ← {"v":1,"code":…,"signal":…,"stdout":…,"stderr":…,"timedOut":…,
  *      "termination"?:{…}}  or  {"v":1,"error":"…"}
  *
@@ -20,6 +21,14 @@
  */
 
 import type { BoundedResult, GroupStop } from "./bounded-process.ts";
+
+/** Runs one process in the executor: argv, start directory, deadline, env. */
+export type ExecutorProcessRunner = (
+  argv: readonly string[],
+  cwd: string,
+  timeoutMs: number,
+  env: Record<string, string>,
+) => Promise<BoundedResult>;
 
 /** The bash tool's runner shape (`BashRunner` in `exec.ts`). */
 export type ExecutorRunner = (
@@ -147,9 +156,23 @@ export function createExecutorRunner(
   dial: ExecutorDialer,
   options: ExecutorRunnerOptions = {},
 ): ExecutorRunner {
+  const run = createExecutorProcessRunner(path, dial, options);
+  return (command, cwd, timeoutMs, env) =>
+    run(["bash", "-c", command], cwd, timeoutMs, env);
+}
+
+/**
+ * A runner that starts each argv in the executor, through the supervisor at
+ * `path`, dialed with `dial`.
+ */
+export function createExecutorProcessRunner(
+  path: string,
+  dial: ExecutorDialer,
+  options: ExecutorRunnerOptions = {},
+): ExecutorProcessRunner {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES;
-  return async (command, cwd, timeoutMs, env) => {
+  return async (argv, cwd, timeoutMs, env) => {
     const deadline = timeoutMs + graceMs;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -172,7 +195,7 @@ export function createExecutorRunner(
       }
       const request = JSON.stringify({
         v: EXECUTOR_PROTOCOL_VERSION,
-        argv: ["bash", "-c", command],
+        argv: [...argv],
         cwd,
         env,
         timeoutMs,

@@ -176,7 +176,41 @@ grep -q 'local commit in the executor.*exit 0.*L8: harmless edit' <<<"$loop" && 
 grep -q "\"output\":\"exit 0\\\\ndyfj-ex\"" <<<"$loop" && result pass "loop: commands ran as the executor uid" "dyfj-ex" \
   || result fail "loop: commands ran as the executor uid" "$(grep whoami <<<"$loop")"
 
-echo "== 5. role firewalls stay separate (CLI and runtime, both orders, and a restart)"
+echo "== 5. a git hook the executor plants never runs outside the executor"
+EX_UID=$(uid_of executor); RT_UID=$(uid_of runtime)
+rm -f "$WORK"/.l8-ran-*
+plant='
+printf "#!/bin/sh\necho pre-commit >> /work/.l8-ran-\$(id -u)\n" > .git/hooks/pre-commit
+printf "#!/bin/sh\necho fsmonitor >> /work/.l8-ran-\$(id -u)\n" > .git/fsmon.sh
+chmod +x .git/hooks/pre-commit .git/fsmon.sh
+git config core.fsmonitor /work/.git/fsmon.sh && echo planted'
+planted=$(in_role executor /work bash -c "$plant" 2>&1)
+[[ $planted == planted ]] && result pass "hooks: the executor can write git metadata (planted a hook and an fsmonitor)" "$planted" \
+  || result fail "hooks: the executor can write git metadata (planted a hook and an fsmonitor)" "$planted"
+gitrun=$("${CLEAN_ENV[@]}" "$SANDBOX" serve --runtime-plan "$PLANS/runtime.plan.json" --executor-plan "$PLANS/executor.plan.json" \
+  --socket "$SOCKET" -- node "$HERE/loop-probe.ts" git 2>&1)
+echo "$gitrun" | sed 's/^/      /'
+markers=$(cd "$WORK" && ls .l8-ran-* 2>/dev/null | tr '\n' ' ')
+grep -q 'L8: note' <<<"$(in_role executor /work git log --oneline -1 2>&1)" && result pass "hooks: the runtime's git tool committed through the executor" "$(in_role executor /work git log --oneline -1 2>&1)" \
+  || result fail "hooks: the runtime's git tool committed through the executor" "see output"
+[[ ! -e $WORK/.l8-ran-$RT_UID ]] && result pass "hooks: nothing ran as the runtime uid" "markers: ${markers:-none} (executor uid $EX_UID, runtime uid $RT_UID)" \
+  || result fail "hooks: nothing ran as the runtime uid" "markers: $markers"
+[[ -e $WORK/.l8-ran-$EX_UID ]] && result pass "hooks: the planted hook ran only inside the executor" "$(tr '\n' ' ' <"$WORK/.l8-ran-$EX_UID")" \
+  || result fail "hooks: the planted hook ran only inside the executor" "no executor marker; markers: ${markers:-none}"
+rm -f "$WORK"/.l8-ran-*
+exported=$(in_role executor /work git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat format-patch --stdout --no-ext-diff --no-textconv --root HEAD -- 2>&1 | grep -c '^From ')
+after_export=$(cd "$WORK" && ls .l8-ran-* 2>/dev/null | tr '\n' ' ')
+[[ -z $after_export && $exported -ge 1 ]] && result pass "hooks: the export runs no planted hook or fsmonitor" "$exported patch(es), markers: none" \
+  || result fail "hooks: the export runs no planted hook or fsmonitor" "patches $exported, markers: ${after_export:-none}"
+cli_view=$(in_role cli "" bash -c 'ls /work/.git/hooks/pre-commit /work/greeting.mjs 2>&1 | head -2 | tr "\n" " "')
+grep -q "No such file" <<<"$cli_view" && ! grep -q "^/work/.git/hooks/pre-commit$" <<<"$cli_view" \
+  && result pass "hooks: the CLI's workspace is not the one the executor plants in" "$cli_view" \
+  || result fail "hooks: the CLI's workspace is not the one the executor plants in" "$cli_view"
+ex_view=$(in_role executor /work bash -c 'ls /srv/dyfj/work 2>&1 | head -1')
+grep -q "No such file" <<<"$ex_view" && result pass "hooks: the executor cannot reach the CLI's workspace" "$ex_view" \
+  || result fail "hooks: the executor cannot reach the CLI's workspace" "$ex_view"
+
+echo "== 6. role firewalls stay separate (CLI and runtime, both orders, and a restart)"
 CLI_TABLE=$(table_of cli)
 refused() { # role: does a raw connect from the role to a disallowed address fail with an errno?
   in_role "$1" "" node -e 'require("net").connect(443,"1.1.1.1").on("error",e=>{console.log(e.code);process.exit()}).on("connect",()=>{console.log("CONNECTED");process.exit()});setTimeout(()=>{console.log("TIMEOUT");process.exit()},5000)' 2>&1
@@ -205,7 +239,7 @@ both "runtime restarted while the CLI's rules stand"
 in_role cli "" true
 both "CLI restarted while the runtime's rules stand"
 
-echo "== 6. timings"
+echo "== 7. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
 echo "single executor sandbox start (run, true): $(( (t1 - t0) / 1000000 )) ms"
 grep 'warm dispatch' <<<"$loop" | sed 's/^/      /'

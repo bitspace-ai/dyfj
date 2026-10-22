@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { checkSessionWithinRun } from "../src/config/effective-policy-subset.ts";
-import { BASH_COMMAND_ENV_KEYS } from "../src/tools/builtin/exec.ts";
+import { GIT_COMMAND_ENV_KEYS } from "../src/tools/builtin/git.ts";
 
 const installModule = () => import("./sandbox-install.ts");
 
@@ -26,6 +26,7 @@ function profile(): any {
     cli: {
       uid: 2003,
       gid: 2003,
+      workspace: "/srv/dyfj/work/run-0001-cli",
       networkAllow: ["api.anthropic.com:443", "statsig.anthropic.com:443"],
     },
   };
@@ -73,9 +74,9 @@ describe("the role policies", () => {
     assert.deepStrictEqual(executor.plan.landlock.execute, ["/usr", "/work"]);
   });
 
-  it("give the executor the bash tool's command environment", async () => {
+  it("give the executor the bash and git tools' command environment", async () => {
     const { executor } = await build();
-    for (const name of BASH_COMMAND_ENV_KEYS) {
+    for (const name of GIT_COMMAND_ENV_KEYS) {
       assert.ok(executor.plan.environment.includes(name), name);
     }
   });
@@ -100,6 +101,35 @@ describe("the role policies", () => {
   it("start the runtime with the executor socket's directory readable", async () => {
     const { runtime } = await build();
     assert.ok(runtime.plan.bwrap.options.includes("/run/dyfj-exec"));
+  });
+});
+
+describe("git metadata", () => {
+  it("carries no protection the target cannot enforce, in any envelope", async () => {
+    const { run, cliRun, runtime, executor, cli } = await build();
+    for (const policy of [run, cliRun, runtime.policy, executor.policy, cli.policy]) {
+      assert.deepStrictEqual(policy.filesystem.protectedGit, []);
+    }
+  });
+
+  it("keeps the CLI's workspace apart from the one the executor writes", async () => {
+    const { executor, cli } = await build();
+    const sources = (plan: any) =>
+      plan.bwrap.options.flatMap((o: string, i: number, all: string[]) =>
+        o === "--bind" ? [all[i + 1]] : []
+      );
+    assert.deepStrictEqual(sources(executor.plan), ["/srv/dyfj/work/run-0001"]);
+    assert.deepStrictEqual(sources(cli.plan).filter((p: string) => p.startsWith("/srv/dyfj/work")), [
+      "/srv/dyfj/work/run-0001-cli",
+    ]);
+  });
+
+  it("refuses a CLI workspace that is, or lies within, the executor's", async () => {
+    for (const workspace of ["/srv/dyfj/work/run-0001", "/srv/dyfj/work/run-0001/sub"]) {
+      const p = profile();
+      p.cli.workspace = workspace;
+      await assert.rejects(build({ profile: p }), /CLI workspace/);
+    }
   });
 });
 

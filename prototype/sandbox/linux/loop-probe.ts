@@ -8,14 +8,17 @@
 //   node loop-probe.ts            the edit, test and commit loop
 //   node loop-probe.ts executor   the executor-side probes, printed
 //   node loop-probe.ts hold       one long command, for the lease test
+//   node loop-probe.ts git        the runtime's git tool: status, add, commit
 import { writeFileSync } from "node:fs";
 import process from "node:process";
 import { defineBash } from "../../src/tools/builtin/exec.ts";
+import { defineGit } from "../../src/tools/builtin/git.ts";
 import { nodeSocketHost } from "../../src/transport/mod.ts";
 
 const ROOT = "/work";
 // As the engine's composition root does: the transport's socket connect.
 const bash = defineBash(ROOT, { dialExecutor: nodeSocketHost.connect });
+const git = defineGit(ROOT, { dialExecutor: nodeSocketHost.connect });
 const context = { authzBasis: "policy:allow:operator-approved" };
 
 async function run(command: string, timeoutSec = 120): Promise<string> {
@@ -36,7 +39,25 @@ function line(step: string, output: string) {
 
 const mode = process.argv[2] ?? "loop";
 
-if (mode === "hold") {
+if (mode === "git") {
+  const op = (args: Record<string, unknown>) =>
+    git.executor(
+      {
+        commandId: "git",
+        callId: `l8-${Date.now()}`,
+        caller: { principalId: "operator", principalType: "human" },
+        arguments: args,
+      },
+      context,
+    ) as Promise<string>;
+  writeFileSync(`${ROOT}/note.txt`, "a harmless note\n");
+  line("git status by the runtime's git tool", await op({ subcommand: "status" }));
+  line("git add by the runtime's git tool", await op({ subcommand: "add", paths: ["note.txt"] }));
+  line(
+    "git commit by the runtime's git tool",
+    await op({ subcommand: "commit", message: "L8: note", paths: ["note.txt"] }),
+  );
+} else if (mode === "hold") {
   line("hold", await run("sleep 300", 600));
 } else if (mode === "executor") {
   line("executor probes", await run(String(process.argv[3])));

@@ -14,6 +14,7 @@ import {
   BASH_COMMAND_ENV_KEYS,
   defineBash,
 } from "./exec.ts";
+import { defineGit, GIT_COMMAND_ENV_KEYS } from "./git.ts";
 
 const transportModule = () => import("./executor-transport.ts");
 
@@ -247,5 +248,63 @@ describe("the bash tool", () => {
   it("keeps today's description when no socket is configured", () => {
     const bash = defineBash("/work", { env: new MapEnv({}) });
     assert.match(bash.description, /NOT sandboxed/);
+  });
+});
+
+describe("a process handed to the executor", () => {
+  it("sends the argv as given", async () => {
+    const { createExecutorProcessRunner } = await transportModule();
+    const s = await supervisor((_, socket) => answer(socket, OK));
+    const run = createExecutorProcessRunner(s.path, dialExecutor);
+    await run(["git", "--no-pager", "status"], "/work", 1_000, { PATH: "/usr/bin" });
+    assert.deepStrictEqual(s.requests[0].argv, ["git", "--no-pager", "status"]);
+  });
+});
+
+// With writable git metadata in the workspace, a hook or fsmonitor the
+// executor plants must never run in the runtime, which holds secrets and
+// egress. So the git tool, like bash, runs git only in the executor.
+describe("the git tool", () => {
+  const context = { authzBasis: "policy:allow:operator-approved" };
+  const call = (args: Record<string, unknown>) => ({
+    commandId: "git",
+    callId: "g1",
+    caller: { principalId: "p", principalType: "human" as const },
+    arguments: args,
+  });
+
+  it("runs git in the executor when the socket is configured, never here", async () => {
+    const root = await realpath(dir);
+    const s = await supervisor((_, socket) => answer(socket, OK));
+    const git = defineGit(root, {
+      env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: s.path, PATH: "/usr/bin" }),
+      dialExecutor,
+    });
+    const out = await git.executor(call({ subcommand: "status" }), context);
+    assert.match(String(out), /^exit 0/);
+    assert.strictEqual(s.requests.length, 1);
+    assert.strictEqual(s.requests[0].argv[0], "git");
+    assert.strictEqual(s.requests[0].cwd, root);
+    assert.deepStrictEqual(
+      Object.keys(s.requests[0].env).filter((name) => !GIT_COMMAND_ENV_KEYS.includes(name)),
+      [],
+    );
+  });
+
+  it("refuses every operation when the socket is set but no dialer was given", async () => {
+    const root = await realpath(dir);
+    const git = defineGit(root, {
+      env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: `${dir}/any.sock` }),
+    });
+    const out = await git.executor(call({ subcommand: "status" }), context);
+    assert.match(String(out), /^error: cannot run git: executor unavailable: no executor connection/);
+  });
+
+  it("tells the model git runs in the isolated executor", () => {
+    const git = defineGit("/work", {
+      env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" }),
+      dialExecutor,
+    });
+    assert.match(git.description, /isolated executor/);
   });
 });

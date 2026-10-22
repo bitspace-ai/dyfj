@@ -17,9 +17,16 @@
  *   additions, and each `tls` provider the profile accepts enforced by address
  *   set. Other providers and local model servers are dropped;
  * - the executor role: toolchain and workspace only, no network, no secrets,
- *   no database, and the bash tool's command environment;
+ *   no database, and the bash and git tools' command environment;
  * - the CLI role: its own composition, with the profile's network additions
- *   for the Claude Code and Codex CLIs, and its own home.
+ *   for the Claude Code and Codex CLIs, its own home and its own workspace.
+ *
+ * Workspace git metadata is writable by the roles that write the workspace;
+ * Landlock cannot deny beneath a writable mount, so no envelope claims to
+ * protect it. What keeps a planted hook harmless is that nothing outside the
+ * executor runs git where the executor writes: the runtime's git and bash
+ * tools run in the executor, the export runs there with hooks and config
+ * disabled, and the CLI has a workspace of its own.
  *
  * Each role is checked to sit inside its run, compiled for the machine's Linux
  * target (hostname assurance `none`, address-set downgrade offered) and
@@ -55,7 +62,7 @@ import {
   type ResolvedHosts,
 } from "../src/config/linux-launch-plan.ts";
 import { isAddressLiteral } from "../src/config/runtime-policy.ts";
-import { BASH_COMMAND_ENV_KEYS } from "../src/tools/builtin/exec.ts";
+import { GIT_COMMAND_ENV_KEYS } from "../src/tools/builtin/git.ts";
 
 export interface RoleIds {
   readonly uid: number;
@@ -70,7 +77,15 @@ export interface MachineProfile {
   readonly acceptAddressSet: readonly string[];
   readonly runtime: RoleIds;
   readonly executor: RoleIds;
-  readonly cli: RoleIds & { readonly networkAllow: readonly string[] };
+  /**
+   * The CLI's own workspace, apart from the executor's: the executor can
+   * write git metadata in its workspace, and the CLI runs git with its own
+   * login and egress, so it never runs git where the executor writes.
+   */
+  readonly cli: RoleIds & {
+    readonly workspace: string;
+    readonly networkAllow: readonly string[];
+  };
 }
 
 /** What the installer read from the machine itself. */
@@ -237,6 +252,14 @@ export function buildMachinePlans(input: {
   if (new Set(uids).size !== uids.length) {
     throw new Error("each role needs a distinct uid");
   }
+  const work = profile.workspace;
+  const cliWork = profile.cli.workspace;
+  if (
+    cliWork === work || cliWork.startsWith(`${work}/`) ||
+    work.startsWith(`${cliWork}/`)
+  ) {
+    throw new Error("the CLI workspace must be apart from the executor's");
+  }
 
   const base = {
     nameserverGrants: machine.nameservers,
@@ -251,12 +274,16 @@ export function buildMachinePlans(input: {
         roots: [
           root("usr", "/usr", ["read", "execute"]),
           root("opt", "/opt", ["read", "execute"]),
-          root("work", profile.workspace, ["read", "write", "execute"]),
+          root("work", work, ["read", "write", "execute"]),
           root("home", RUNTIME_HOME, ["read", "write"]),
           root("secrets", SECRETS_DIR, ["read"]),
         ],
         scratch: "tmp",
-        protectedGit: [".git/hooks", ".git/config"],
+        // Workspace git metadata is writable on this target (Landlock cannot
+        // deny beneath a writable mount), so no envelope claims to protect
+        // it. Instead nothing outside the executor runs git in it: the git
+        // and bash tools run there, and the export disables hooks and config.
+        protectedGit: [],
       },
     },
   );
@@ -288,11 +315,11 @@ export function buildMachinePlans(input: {
       filesystem: {
         roots: [
           root("usr", "/usr", ["read", "execute"]),
-          root("work", profile.workspace, ["read", "write", "execute"]),
+          root("work", cliWork, ["read", "write", "execute"]),
           root("home", CLI_HOME, ["read", "write"]),
         ],
         scratch: "tmp",
-        protectedGit: [".git/hooks", ".git/config"],
+        protectedGit: [],
       },
     },
   );
@@ -316,7 +343,7 @@ export function buildMachinePlans(input: {
     executorPolicy,
     {},
     template("executor", profile.executor, machine, {
-      commandEnvironment: BASH_COMMAND_ENV_KEYS,
+      commandEnvironment: GIT_COMMAND_ENV_KEYS,
     }),
     resolved,
   );

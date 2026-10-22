@@ -18,8 +18,8 @@ contained by this.
 | Database | `dyfj-db` | systemd unit. | Loopback `127.0.0.1:3306`, reachable only by roles whose policy names it. | The machine's own Dolt store. |
 
 `dyfj-sandbox serve` starts the runtime and answers the executor transport
-(`DYFJ_EXECUTOR_SOCKET`) for the runtime's uid only. Each bash command runs in
-a fresh executor sandbox. When the runtime exits, the lease expires, and every
+(`DYFJ_EXECUTOR_SOCKET`) for the runtime's uid only. Each bash command and
+each git operation runs in a fresh executor sandbox. When the runtime exits, the lease expires, and every
 running executor is killed.
 
 ## Files
@@ -57,5 +57,17 @@ repository.
 - **The runtime's own secrets.** A compromised runtime dependency can use the
   runtime's secrets and reach its allowed destinations. The boundary stops it
   from reaching anything else.
+- **Workspace git metadata is writable.** Landlock only grants access, so
+  `.git/hooks` and `.git/config` beneath a writable workspace cannot be
+  protected. The launch plan refuses a policy that asks for that protection;
+  it does not drop it silently. Nothing outside the executor runs git where
+  the executor writes:
+  - the runtime's `git` and `bash` tools run in the executor;
+  - the export runs there too, with hooks, fsmonitor, external diff, textconv,
+    pager and system config all off;
+  - the CLI has a workspace of its own.
+
+  So a planted hook runs only in the executor. The acceptance run plants a
+  hook and an fsmonitor to show this.
 - **Approval is unchanged.** The bash tool still asks as it does natively.
   Deciding approval from the boundary is separate work.

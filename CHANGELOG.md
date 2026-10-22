@@ -20,8 +20,12 @@ README are tracked separately in its Revision history section.
   chain.
   - `src/config/linux-launch-plan.ts` turns `compileLinux` output, a role
     template and the installer's host resolution into the bubblewrap options,
-    Landlock path sets and nftables ruleset for one role. An executor granted
-    any network is refused.
+    Landlock path sets and nftables ruleset for one role. Each role gets its
+    own nftables table. The plan refuses:
+    - an executor granted any network;
+    - git-metadata protection beneath a writable mount, which Landlock cannot
+      enforce;
+    - a forbidden path inside a mount.
   - `scripts/sandbox-install.ts` derives the run envelope and the runtime,
     executor and CLI role policies from one composition. It checks that each
     role sits inside its run, compiles and plans each one, and writes a
@@ -46,14 +50,19 @@ README are tracked separately in its Revision history section.
     provider addresses (a CDN's neighbours) are reachable until a
     hostname-checking gateway removes the downgrade;
   - the CLIs' own shells and model logins stay in the CLI role;
+  - workspace git metadata is writable, so nothing outside the executor runs
+    git where the executor writes: the runtime's git and bash tools run in the
+    executor, the export disables hooks and config, and the CLI has its own
+    workspace;
   - approval is unchanged.
 
   Native runs on the Mac are not contained by it.
-- **The `bash` tool can run commands in an isolated executor.** When
-  `DYFJ_EXECUTOR_SOCKET` is set (only the contained target's launcher sets
-  it), the tool sends each command over that Unix socket instead of spawning
-  it. Every transport failure is reported as a tool error, and nothing falls
-  back to a local spawn. The tool's description then says the command runs in
+- **The `bash` and `git` tools can run commands in an isolated executor.**
+  When `DYFJ_EXECUTOR_SOCKET` is set (only the contained target's launcher
+  sets it), each tool sends its command over that Unix socket instead of
+  spawning it. The engine's composition root supplies the connection through
+  the transport port. If it was not supplied, or on any transport failure,
+  the tool reports an error, and nothing falls back to a local spawn. The tool's description then says the command runs in
   the isolated executor, with no network. `BASH_COMMAND_ENV_KEYS` lists every
   environment name a call can carry, so the executor keeps git's safety
   switches.

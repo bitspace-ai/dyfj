@@ -86,6 +86,15 @@ const SAFE_ENV_KEYS = [
   "TMPDIR",
 ] as const;
 
+/**
+ * The isolated machine's executor socket, when its launcher set one. With it,
+ * the bash and git tools run their commands in the executor and never here.
+ */
+export function executorSocket(source: Env = processEnv): string | undefined {
+  const socket = readEnv(source, "DYFJ_EXECUTOR_SOCKET");
+  return socket === undefined || socket === "" ? undefined : socket;
+}
+
 function readEnv(source: Env, key: string): string | undefined {
   try {
     return source.get(key);
@@ -322,7 +331,7 @@ function bashReach(contained: boolean): string {
 }
 
 /** A runner for a socket set with no dialer to reach it: always refuses. */
-const undialable: BashRunner = () =>
+export const undialable: (...args: unknown[]) => Promise<never> = () =>
   Promise.reject(
     new Error("executor unavailable: no executor connection is configured"),
   );
@@ -335,9 +344,8 @@ export function defineBash(
   // The supervisor of an isolated machine sets the socket when it starts the
   // runtime. With it, commands run in the executor and never here: without a
   // dialer to reach it, every command is refused rather than run locally.
-  const socket = readEnv(opts.env ?? processEnv, "DYFJ_EXECUTOR_SOCKET");
-  const contained = opts.runner === undefined && socket !== undefined &&
-    socket !== "";
+  const socket = executorSocket(opts.env);
+  const contained = opts.runner === undefined && socket !== undefined;
   const runner = !contained
     ? opts.runner
     : opts.dialExecutor === undefined

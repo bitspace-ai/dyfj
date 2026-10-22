@@ -25,7 +25,8 @@
  *
  * An executor that the policy grants any network entry is refused: this
  * target runs executors without a network. A seccomp profile is refused too,
- * because the launcher installs none.
+ * because the launcher installs none, and so is any filesystem protection the
+ * plan cannot honour (`checkProtections`).
  */
 
 import type {
@@ -232,6 +233,26 @@ function checkNetwork(
   });
 }
 
+/**
+ * The filesystem protections this plan can honour. Landlock only grants, so
+ * nothing beneath a writable mount can be denied: protected git metadata in a
+ * role that writes anywhere, and a forbidden path inside a mounted source,
+ * are refused rather than silently dropped. A forbidden path no mount reaches
+ * is absent from the sandbox and so stays forbidden.
+ */
+function checkProtections(output: LinuxOutput, report: Report) {
+  if (output.landlock.write.length > 0) {
+    output.protectedGit.forEach((_, index) => {
+      report("filesystem", `protectedGit[${index}]`, "protected-git-unsupported");
+    });
+  }
+  output.forbiddenPaths.forEach((path, index) => {
+    if (output.mounts.some((mount) => within(path, mount.source))) {
+      report("filesystem", `forbiddenPaths[${index}]`, "forbidden-path-mounted");
+    }
+  });
+}
+
 function nftables(
   output: LinuxOutput,
   template: LaunchTemplate,
@@ -328,6 +349,7 @@ export function planLinuxLaunch(
     offenders.push({ group, path, right });
   checkTemplate(output, template, report);
   checkNetwork(output, template, resolved, report);
+  checkProtections(output, report);
   if (output.process.seccompProfile !== null) {
     report("processes", "process.seccompProfile", "seccomp-unsupported");
   }

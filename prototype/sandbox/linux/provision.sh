@@ -89,11 +89,12 @@ install -d -o root -g root -m 0755 /srv/dyfj /srv/dyfj/state /srv/dyfj/work /etc
 install -d -o dyfj-rt -g dyfj-work -m 0700 /srv/dyfj/state/runtime
 install -d -o dyfj-cli -g dyfj-work -m 0700 /srv/dyfj/state/cli
 install -d -o dyfj-db -g dyfj-db -m 0700 /srv/dyfj/dolt
-# The executor runs git, so it owns the workspace and git's ownership check
-# passes even with the system config off. The CLI, which runs git as its own
-# uid, is let in by the system safe.directory entry below.
+# The executor runs the runtime's git, so it owns the run's workspace and
+# git's ownership check passes even with the system config off. The CLI has a
+# workspace of its own, apart from the one the executor can plant git hooks
+# in, because it runs git with its own login and egress.
 install -d -o dyfj-ex -g dyfj-work -m 2770 "/srv/dyfj/work/$RUN"
-printf '[safe]\n\tdirectory = /work\n' >/etc/gitconfig
+install -d -o dyfj-cli -g dyfj-work -m 2770 "/srv/dyfj/work/$RUN-cli"
 install -o root -g root -m 0755 "$STAGING/dyfj-sandbox" /usr/libexec/dyfj/dyfj-sandbox
 
 # /run is a tmpfs, so the secrets directory and the executor socket's
@@ -165,6 +166,7 @@ cat >/etc/dyfj/l8/profile.json <<EOF
   "cli": {
     "uid": $CLI_UID,
     "gid": $WORK_GID,
+    "workspace": "/srv/dyfj/work/$RUN-cli",
     "networkAllow": [
       "api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443",
       "auth.openai.com:443", "chatgpt.com:443"

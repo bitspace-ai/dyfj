@@ -72,12 +72,20 @@ export type ToolCatalogEntry = (
   deps: ToolCatalogDependencies,
 ) => CommandDefinition | undefined;
 
-/** A workspace-rooted tool: present only when a workspace root is resolved. */
+/**
+ * A workspace-rooted process tool: present only when a workspace root is
+ * resolved, and given the executor dialer when the engine has one.
+ */
 function workspaceTool(
-  define: (root: string) => CommandDefinition,
+  define: (
+    root: string,
+    opts: { dialExecutor?: ExecutorDialer },
+  ) => CommandDefinition,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot }) =>
-    workspaceRoot === undefined ? undefined : define(workspaceRoot);
+  return ({ workspaceRoot, dialExecutor }) =>
+    workspaceRoot === undefined
+      ? undefined
+      : define(workspaceRoot, dialExecutor === undefined ? {} : { dialExecutor });
 }
 
 /**
@@ -109,13 +117,7 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
   workspaceFileTool(defineGlobFiles),
   workspaceFileTool(defineWriteFile),
   workspaceFileTool(defineEditFile),
-  ({ workspaceRoot, dialExecutor }) =>
-    workspaceRoot === undefined
-      ? undefined
-      : defineBash(
-        workspaceRoot,
-        dialExecutor === undefined ? {} : { dialExecutor },
-      ),
+  workspaceTool(defineBash),
   workspaceTool(defineGit),
 ];
 

@@ -21,22 +21,32 @@ function fixture(name: string): any {
   return JSON.parse(readFileSync(`${FIXTURE}${name}`, "utf8"));
 }
 
-/** The golden policy compiled for Linux. */
-function compiled(): LinuxOutput {
-  return compileLinux(
-    parseEffectivePolicy(fixture("policy.json")),
-    fixture("target-linux.json"),
-  );
-}
-
-/** A Linux output whose firewall accepts nothing: a no-network profile. */
-function offline(): LinuxOutput {
+/** The golden policy, edited by `edit`, re-sealed and compiled for Linux. */
+function compiledWith(edit: (policy: any) => void): LinuxOutput {
   const policy = fixture("policy.json");
-  policy.network.entries = [];
-  policy.network.dolt = null;
+  edit(policy);
   policy.identity.digest = "";
   policy.identity.digest = policyDigest(policy);
   return compileLinux(parseEffectivePolicy(policy), fixture("target-linux.json"));
+}
+
+/**
+ * The golden policy compiled for Linux, without its git-metadata protection,
+ * which this target cannot enforce beneath a writable workspace.
+ */
+function compiled(): LinuxOutput {
+  return compiledWith((policy) => {
+    policy.filesystem.protectedGit = [];
+  });
+}
+
+/** As `compiled`, with a firewall that accepts nothing: a no-network profile. */
+function offline(): LinuxOutput {
+  return compiledWith((policy) => {
+    policy.filesystem.protectedGit = [];
+    policy.network.entries = [];
+    policy.network.dolt = null;
+  });
 }
 
 function template(role: "runtime" | "executor"): any {
@@ -265,6 +275,53 @@ describe("the executor role", () => {
       offenders.map((o) => o.right),
       ["executor-network", "executor-network", "executor-network", "executor-network"],
     );
+  });
+});
+
+describe("filesystem protections the plan cannot enforce", () => {
+  it("refuses protected git metadata beneath a writable mount, rather than drop it", async () => {
+    const output = compileLinux(
+      parseEffectivePolicy(fixture("policy.json")),
+      fixture("target-linux.json"),
+    );
+    const offenders = await refusal(output, template("runtime"));
+    assert.deepStrictEqual(offenders, [
+      { group: "filesystem", path: "protectedGit[0]", right: "protected-git-unsupported" },
+      { group: "filesystem", path: "protectedGit[1]", right: "protected-git-unsupported" },
+    ]);
+  });
+
+  it("refuses a forbidden path inside a mounted source", async () => {
+    const output = compiledWith((policy) => {
+      policy.filesystem.protectedGit = [];
+      policy.network.entries = [];
+      policy.network.dolt = null;
+      policy.filesystem.forbiddenPaths = ["/srv/work/space/.env"];
+    });
+    const offenders = await refusal(output, template("executor"));
+    assert.deepStrictEqual(offenders, [
+      { group: "filesystem", path: "forbiddenPaths[0]", right: "forbidden-path-mounted" },
+    ]);
+  });
+
+  it("accepts a forbidden path that no mount reaches, which stays absent", async () => {
+    const result = await plan(offline(), template("executor"));
+    assert.ok(!result.bwrap.options.includes("/srv/secrets"));
+    assert.ok(!result.bwrap.options.includes("/root/.ssh"));
+  });
+
+  it("accepts protected git metadata when the role writes nowhere", async () => {
+    const output = compiledWith((policy) => {
+      policy.network.entries = [];
+      policy.network.dolt = null;
+      policy.filesystem.scratch = null;
+      policy.filesystem.roots = policy.filesystem.roots.map((root: any) => ({
+        ...root,
+        rights: root.rights.filter((right: string) => right !== "write"),
+      }));
+    });
+    const result = await plan(output, template("executor"));
+    assert.deepStrictEqual(result.writableTargets, []);
   });
 });
 
