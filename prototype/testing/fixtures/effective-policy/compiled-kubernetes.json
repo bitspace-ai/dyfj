@@ -11,6 +11,11 @@
     { "name": "toolchain", "mountPath": "/mnt/dyfj/toolchain", "subPath": "toolchain", "readOnly": true },
     { "name": "scratch", "mountPath": "/mnt/dyfj/scratch", "readOnly": false }
   ],
+  "landlock": {
+    "read": ["/mnt/dyfj/workspace", "/mnt/dyfj/toolchain", "/mnt/dyfj/scratch"],
+    "write": ["/mnt/dyfj/workspace", "/mnt/dyfj/scratch"],
+    "execute": ["/mnt/dyfj/toolchain"]
+  },
   "securityContext": {
     "runAsNonRoot": true,
     "allowPrivilegeEscalation": false,

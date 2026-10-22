@@ -529,11 +529,58 @@ describe("the pre-gate cases", () => {
     it(`refuses a service mapping to an invalid host, on ${platform}`, async () => {
       const input = target(platform);
       input.services[0].host = "not a host";
-      await assertRefused(platform, parseEffectivePolicy(golden()), input, {
-        group: "network",
-        path: "network.entries[1]",
-        right: "service-host-invalid",
+      const found = await offenders(platform, parseEffectivePolicy(golden()), input);
+      assert.deepStrictEqual(found, [
+        { group: "network", path: "network.entries[1]", right: "service-host-invalid" },
+        { group: "network", path: "network.dolt", right: "service-host-invalid" },
+      ]);
+    });
+
+    it(`refuses a service mapping to an impossible port, on ${platform}`, async () => {
+      for (const port of [0, 70000, 1.5, NaN]) {
+        const input = target(platform);
+        input.services[1].port = port;
+        await assertRefused(platform, parseEffectivePolicy(golden()), input, {
+          group: "network",
+          path: "network.entries[3]",
+          right: "service-port-invalid",
+        });
+      }
+    });
+
+    it(`refuses a resolver mapping to an invalid host, on ${platform}`, async () => {
+      const input = target(platform);
+      input.services.push({ entry: "192.0.2.53:53", host: "not a host", port: 53 });
+      const found = await offenders(platform, parseEffectivePolicy(golden()), input);
+      assert.deepStrictEqual(found, [
+        { group: "network", path: "network.entries[0].dns", right: "service-host-invalid" },
+        { group: "network", path: "network.entries[2]", right: "service-host-invalid" },
+      ]);
+    });
+
+    it(`refuses scratch storage on a target without write, on ${platform}`, async () => {
+      const policy = golden();
+      for (const root of policy.filesystem.roots) root.rights = ["read"];
+      const input = target(platform);
+      input.capabilities.filesystemRights = ["read"];
+      await assertRefused(platform, sealed(policy), input, {
+        group: "filesystem",
+        path: "filesystem.scratch",
+        right: "write",
       });
+    });
+
+    it(`denies execute on a writable root that lacks it, on ${platform}`, async () => {
+      const output: any = await compile(
+        platform,
+        parseEffectivePolicy(golden()),
+        target(platform),
+      );
+      const workspace = platform === "kubernetes"
+        ? "/mnt/dyfj/workspace"
+        : "/run/dyfj/workspace";
+      assert.ok(output.landlock.write.includes(workspace));
+      assert.ok(!output.landlock.execute.includes(workspace));
     });
 
     it(`rewrites a mapped resolver in every entry that names it, on ${platform}`, async () => {
@@ -574,6 +621,7 @@ describe("every offender is reported at once", () => {
       assert.deepStrictEqual(found, [
         { group: "filesystem", path: "filesystem.roots[0].rights", right: "write" },
         { group: "filesystem", path: "filesystem.roots[1].rights", right: "execute" },
+        { group: "filesystem", path: "filesystem.scratch", right: "write" },
         { group: "network", path: "network.entries[0].hostnameAssurance", right: "tls" },
         { group: "network", path: "network.entries[1]", right: "loopback-unmapped" },
         { group: "network", path: "network.entries[2].protocol", right: "udp" },

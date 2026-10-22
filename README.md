@@ -632,7 +632,7 @@ is granted for. The same composition also builds an effective role policy
 (`prototype/src/config/effective-policy*.ts`): a versioned, frozen description
 with a digest, a check that a session stays inside its run envelope, and pure
 Kubernetes and Linux compilers for its filesystem, network and process groups
-that refuse any of those rights a target cannot enforce.
+that refuse, listing every offender, the unsupported conditions they check.
 Nothing reads or enforces the effective policy yet.
 `dyfj start` builds the runtime's environment from that policy, and the engine
 composes the same policy at boot and checks it in code:

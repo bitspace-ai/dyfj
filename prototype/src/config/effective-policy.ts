@@ -562,7 +562,33 @@ function byBytes(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 }
 
-function networkRole(source: NetGrantSource): NetworkRole {
+/**
+ * The source that names an entry's role when several added it: the most
+ * specific one. A nameserver also listed in `[network] allow` stays a
+ * nameserver, and the Dolt endpoint stays the database.
+ */
+const NET_SOURCE_PRECEDENCE: readonly NetGrantSource["kind"][] = [
+  "static",
+  "dolt-endpoint",
+  "memory-mcp",
+  "mcp-server",
+  "nameserver",
+  "network-allow",
+];
+
+function primary<Source extends { readonly kind: string }>(
+  sources: readonly Source[],
+  precedence: readonly Source["kind"][],
+): Source {
+  for (const kind of precedence) {
+    const found = sources.find((source) => source.kind === kind);
+    if (found !== undefined) return found;
+  }
+  return sources[0]!;
+}
+
+function networkRole(sources: readonly NetGrantSource[]): NetworkRole {
+  const source = primary(sources, NET_SOURCE_PRECEDENCE);
   switch (source.kind) {
     case "static":
       return source.role;
@@ -586,13 +612,13 @@ function networkEntries(
   // composition lists nameservers in never changes the policy. Every
   // nameserver is its own `dns` entry.
   const resolver = net
-    .filter((grant) => grant.source.kind === "nameserver")
+    .filter((grant) => networkRole(grant.sources) === "dns")
     .map((grant) => grant.entry)
     .sort(byBytes)[0];
 
-  return net.map(({ entry, source }): NetworkEntry => {
+  return net.map(({ entry, sources }): NetworkEntry => {
     const { host, port } = splitHostPort(entry);
-    const role = networkRole(source);
+    const role = networkRole(sources);
     const dns = role !== "dns" && needsDns(host) && resolver !== undefined
       ? `resolver:${resolver}`
       : "none";
@@ -609,7 +635,15 @@ function networkEntries(
   });
 }
 
-function executionRole(source: RunGrantSource): ExecutionRole {
+const RUN_SOURCE_PRECEDENCE: readonly RunGrantSource["kind"][] = [
+  "static",
+  "secrets-resolver",
+  "runtime-executable",
+  "node-path",
+];
+
+function executionRole(sources: readonly RunGrantSource[]): ExecutionRole {
+  const source = primary(sources, RUN_SOURCE_PRECEDENCE);
   switch (source.kind) {
     case "static":
       return source.role;
@@ -624,9 +658,9 @@ function executionRole(source: RunGrantSource): ExecutionRole {
 function executables(
   run: readonly ComposedGrant<RunGrantSource>[],
 ): ExecutableGrant[] {
-  return run.map(({ entry, source }): ExecutableGrant => ({
+  return run.map(({ entry, sources }): ExecutableGrant => ({
     program: entry,
-    role: executionRole(source),
+    role: executionRole(sources),
     digest: null,
   }));
 }

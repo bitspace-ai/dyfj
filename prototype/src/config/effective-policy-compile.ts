@@ -12,18 +12,21 @@
  * explicitly, because inside a pod or a network namespace it names that
  * environment's loopback, not the database or model server the policy means.
  *
- * The compilers cover the groups a platform enforces: filesystem, network and
- * processes. Identity, secrets and effects (tools, approval posture, paid
- * routing, limits) are enforced by the runtime and its broker, not by the
- * platform, so the output carries none of them; it carries the policy digest,
- * which binds them, and a launcher checks it against the policy it releases
- * secrets for.
+ * The compilers cover the filesystem, network and process groups. Identity,
+ * secrets and effects (tools, approval posture, paid routing, limits) are not
+ * compiled: the output carries only the policy digest, which binds them, for a
+ * launcher integration that does not exist yet. Nothing enforces those groups
+ * from this output.
  *
- * Within those groups, a right the target cannot enforce, or a field the
- * target requires and the policy lacks, refuses: `UnsupportedRightError`
+ * Refusal covers the conditions `commonOffenders` and each compiler check, and
+ * no others: a filesystem right, protocol, DNS mode, hostname assurance,
+ * executable digest, process limit, descendant ban or syscall profile the
+ * target does not declare; an unmapped loopback host or resolver; a host not
+ * spelled canonically; an invalid service mapping; a mount name that is not
+ * one plain segment, or two mounts on one name; a digest that does not
+ * verify; and, on the cluster, a root no volume holds. `UnsupportedRightError`
  * lists every offender found (group, path, right; never a value) and no
- * partial output is returned. A refused field is never dropped from the
- * output instead.
+ * partial output is returned.
  */
 
 import type {
@@ -132,6 +135,17 @@ export interface CiliumEgressRule {
   }[];
 }
 
+/**
+ * The mount paths with each filesystem right. A path not listed for a right
+ * is denied it: a writable workspace without `execute` cannot run what it
+ * holds, which a mount's read-only flag alone cannot say.
+ */
+export interface LandlockPaths {
+  readonly read: readonly string[];
+  readonly write: readonly string[];
+  readonly execute: readonly string[];
+}
+
 export interface KubernetesOutput {
   readonly platform: "kubernetes";
   readonly policyDigest: string;
@@ -148,6 +162,8 @@ export interface KubernetesOutput {
     readonly subPath?: string;
     readonly readOnly: boolean;
   }[];
+  /** Path sets for the Landlock floor the launcher installs in the pod. */
+  readonly landlock: LandlockPaths;
   readonly securityContext: {
     readonly runAsNonRoot: true;
     readonly allowPrivilegeEscalation: false;
@@ -179,11 +195,7 @@ export interface LinuxOutput {
     readonly exec: boolean;
   }[];
   readonly scratch: { readonly target: string; readonly type: "tmpfs" } | null;
-  readonly landlock: {
-    readonly read: readonly string[];
-    readonly write: readonly string[];
-    readonly execute: readonly string[];
-  };
+  readonly landlock: LandlockPaths;
   readonly firewall: {
     readonly defaultAction: "drop";
     readonly accept: readonly CompiledEgress[];
@@ -203,6 +215,23 @@ export interface LinuxOutput {
 }
 
 type Report = (group: string, path: string, right: string) => void;
+
+/** Scratch is private storage the runtime both reads and writes. */
+const SCRATCH_RIGHTS: readonly FilesystemRight[] = ["read", "write"];
+
+/** Refuse a service mapping the target could not reach. */
+function checkService(service: ServiceMapping, path: string, report: Report) {
+  const group = path.split(".")[0]!;
+  if (!isCanonicalHost(service.host)) {
+    report(group, path, "service-host-invalid");
+  }
+  if (
+    !Number.isSafeInteger(service.port) || service.port < 1 ||
+    service.port > 65535
+  ) {
+    report(group, path, "service-port-invalid");
+  }
+}
 
 /** A mount name: one path segment, never `.` or `..`. */
 const MOUNT_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
@@ -252,8 +281,15 @@ function commonOffenders(
     targets.add(root.target);
   });
   const scratch = policy.filesystem.scratch;
-  if (scratch !== null && !MOUNT_NAME.test(scratch)) {
-    report("filesystem", "filesystem.scratch", "mount-target-invalid");
+  if (scratch !== null) {
+    if (!MOUNT_NAME.test(scratch)) {
+      report("filesystem", "filesystem.scratch", "mount-target-invalid");
+    }
+    for (const right of SCRATCH_RIGHTS) {
+      if (!capabilities.filesystemRights.includes(right)) {
+        report("filesystem", "filesystem.scratch", right);
+      }
+    }
   }
 
   policy.network.entries.forEach((entry, index) => {
@@ -264,9 +300,7 @@ function commonOffenders(
     } else if (isLoopbackHost(entry.host) && mapped === undefined) {
       report("network", path, "loopback-unmapped");
     }
-    if (mapped !== undefined && !isCanonicalHost(mapped.host)) {
-      report("network", path, "service-host-invalid");
-    }
+    if (mapped !== undefined) checkService(mapped, path, report);
     const resolver = resolverEntry(entry.dns);
     if (resolver !== null) {
       const resolverMapped = mapping(target.services, resolver);
@@ -276,6 +310,9 @@ function commonOffenders(
         isLoopbackHost(hostOf(resolver)) && resolverMapped === undefined
       ) {
         report("network", `${path}.dns`, "loopback-unmapped");
+      }
+      if (resolverMapped !== undefined) {
+        checkService(resolverMapped, `${path}.dns`, report);
       }
     }
     if (!capabilities.protocols.includes(entry.protocol)) {
@@ -289,11 +326,14 @@ function commonOffenders(
     }
   });
   const dolt = policy.network.dolt;
-  if (
-    dolt !== null && isLoopbackHost(hostOf(dolt)) &&
-    mapping(target.services, dolt) === undefined
-  ) {
-    report("network", "network.dolt", "loopback-unmapped");
+  if (dolt !== null) {
+    const doltMapped = mapping(target.services, dolt);
+    if (isLoopbackHost(hostOf(dolt)) && doltMapped === undefined) {
+      report("network", "network.dolt", "loopback-unmapped");
+    }
+    if (doltMapped !== undefined) {
+      checkService(doltMapped, "network.dolt", report);
+    }
   }
 
   const processes = policy.processes;
@@ -422,6 +462,25 @@ function volumeFor(
     : { claim: best.claim, subPath: inner.slice(best.depth).join("/") };
 }
 
+function landlockPaths(
+  policy: EffectivePolicy,
+  target: CommonTarget,
+): LandlockPaths {
+  const roots = policy.filesystem.roots;
+  const withRight = (right: FilesystemRight) =>
+    roots.filter((root) => root.rights.includes(right)).map((root) =>
+      mountPath(target, root.target)
+    );
+  const scratch = policy.filesystem.scratch === null
+    ? []
+    : [mountPath(target, policy.filesystem.scratch)];
+  return {
+    read: [...withRight("read"), ...scratch],
+    write: [...withRight("write"), ...scratch],
+    execute: withRight("execute"),
+  };
+}
+
 function copyExecutables(policy: EffectivePolicy): ExecutableGrant[] {
   return policy.processes.executables.map((executable) => ({ ...executable }));
 }
@@ -472,6 +531,7 @@ export function compileKubernetes(
         readOnly: false,
       }]),
     ],
+    landlock: landlockPaths(policy, target),
     securityContext: {
       runAsNonRoot: true,
       allowPrivilegeEscalation: false,
@@ -505,11 +565,6 @@ export function compileLinux(
   const scratch = policy.filesystem.scratch === null
     ? null
     : mountPath(target, policy.filesystem.scratch);
-  const withRight = (right: FilesystemRight) =>
-    roots.filter((root) => root.rights.includes(right)).map((root) =>
-      mountPath(target, root.target)
-    );
-  const scratchPaths = scratch === null ? [] : [scratch];
   return {
     platform: "linux",
     policyDigest: policy.identity.digest,
@@ -520,11 +575,7 @@ export function compileLinux(
       exec: root.rights.includes("execute"),
     })),
     scratch: scratch === null ? null : { target: scratch, type: "tmpfs" },
-    landlock: {
-      read: [...withRight("read"), ...scratchPaths],
-      write: [...withRight("write"), ...scratchPaths],
-      execute: withRight("execute"),
-    },
+    landlock: landlockPaths(policy, target),
     firewall: { defaultAction: "drop", accept: egress(policy, target.services) },
     doltEndpoint: doltEndpoint(policy, target.services),
     brokerOperations: [...policy.network.brokerOperations],

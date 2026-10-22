@@ -199,18 +199,27 @@ const OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])";
 const IPV4_ADDRESS = new RegExp(`^${OCTET}(?:\\.${OCTET}){3}$`);
 
 /**
- * `host` is a dotted-quad IPv4 address, or a valid IPv6 address in brackets
- * (the WHATWG URL parser validates it).
+ * `host` is a dotted-quad IPv4 address, or brackets around IPv6 address
+ * characters that the WHATWG URL parser accepts as an IPv6 address.
  */
 export function isAddressLiteral(host: string): boolean {
-  if (host.startsWith("[") && host.endsWith("]")) {
-    return canonicalHost(host) !== null;
-  }
+  if (BRACKETED_IPV6.test(host)) return canonicalHost(host) !== null;
   return IPV4_ADDRESS.test(host);
 }
 
-/** `host` in the canonical form a URL gives it, or null when it has none. */
+/** Brackets around IPv6 address characters only, and nothing else. */
+const BRACKETED_IPV6 = /^\[[0-9A-Fa-f:.]+\]$/;
+
+/** A bare host: no port, user info, path, query, fragment or whitespace. */
+const BARE_HOST = /^[^\s/?#@\\:\[\]]+$/;
+
+/**
+ * `host` in the canonical form a URL gives it, or null when `host` is not a
+ * host on its own (a port, a path or user info around it) or has no
+ * canonical form.
+ */
 function canonicalHost(host: string): string | null {
+  if (!BRACKETED_IPV6.test(host) && !BARE_HOST.test(host)) return null;
   try {
     return new URL(`http://${host}/`).hostname.replace(/\.$/, "");
   } catch {
@@ -306,7 +315,10 @@ export type RunGrantSource =
 
 export interface ComposedGrant<Source> {
   readonly entry: string;
+  /** The first source to add the entry; it decides the entry's place. */
   readonly source: Source;
+  /** Every source that added the entry, in the order they added it. */
+  readonly sources: readonly Source[];
 }
 
 /**
@@ -321,28 +333,56 @@ export interface ComposedRuntimeGrants {
   readonly dolt: string | null;
 }
 
+interface Building<Source> {
+  readonly entry: string;
+  readonly sources: Source[];
+}
+
+/**
+ * Add each new entry to `list`. An entry already there keeps its place and
+ * gains `source`, so no source's provenance is lost to deduplication.
+ */
 function appendNew<Source>(
-  list: ComposedGrant<Source>[],
+  list: Building<Source>[],
   entries: readonly (string | null)[],
   source: Source,
 ) {
   for (const entry of entries) {
-    if (entry !== null && !list.some((grant) => grant.entry === entry)) {
-      list.push(Object.freeze({ entry, source }));
-    }
+    if (entry === null) continue;
+    const existing = list.find((grant) => grant.entry === entry);
+    if (existing === undefined) list.push({ entry, sources: [source] });
+    else if (!existing.sources.includes(source)) existing.sources.push(source);
   }
 }
 
-function fromTable<Role extends string>(
+function fromTable<Role extends string, Source>(
   table: readonly TaggedGrant<Role>[],
-): ComposedGrant<{ readonly kind: "static"; readonly role: Role }>[] {
-  return table.map((row) =>
-    Object.freeze({
-      entry: row.entry,
-      source: Object.freeze({ kind: "static" as const, role: row.role }),
-    })
-  );
+  source: (role: Role) => Source,
+): Building<Source>[] {
+  return table.map((row) => ({ entry: row.entry, sources: [source(row.role)] }));
 }
+
+function freezeGrants<Source>(
+  list: readonly Building<Source>[],
+): readonly ComposedGrant<Source>[] {
+  return Object.freeze(list.map((grant) =>
+    Object.freeze({
+      entry: grant.entry,
+      source: grant.sources[0]!,
+      sources: Object.freeze([...grant.sources]),
+    })
+  ));
+}
+
+const STATIC_NET: Readonly<Record<StaticNetRole, NetGrantSource>> = {
+  provider: Object.freeze({ kind: "static", role: "provider" }),
+  "local-model": Object.freeze({ kind: "static", role: "local-model" }),
+  dolt: Object.freeze({ kind: "static", role: "dolt" }),
+};
+const STATIC_RUN: Readonly<Record<StaticRunRole, RunGrantSource>> = {
+  tool: Object.freeze({ kind: "static", role: "tool" }),
+  runner: Object.freeze({ kind: "static", role: "runner" }),
+};
 
 const MEMORY_MCP: NetGrantSource = Object.freeze({ kind: "memory-mcp" });
 const MCP_SERVER: NetGrantSource = Object.freeze({ kind: "mcp-server" });
@@ -356,7 +396,7 @@ const NODE_PATH: RunGrantSource = Object.freeze({ kind: "node-path" });
 const RESOLVER_COMMAND: RunGrantSource = Object.freeze({
   kind: "secrets-resolver",
 });
-const KILL: RunGrantSource = Object.freeze({ kind: "static", role: "runner" });
+const KILL: RunGrantSource = STATIC_RUN.runner;
 
 /**
  * The static tables plus the operator's entries, each tagged with where it
@@ -366,17 +406,13 @@ const KILL: RunGrantSource = Object.freeze({ kind: "static", role: "runner" });
 export function composeRuntimeGrants(
   inputs: RuntimePolicyInputs = {},
 ): ComposedRuntimeGrants {
-  const net: ComposedGrant<NetGrantSource>[] = fromTable(
-    RUNTIME_NET_GRANT_TABLE,
-  );
+  const net = fromTable(RUNTIME_NET_GRANT_TABLE, (role) => STATIC_NET[role]);
   appendNew(net, [memoryMcpNetGrant(inputs.memoryMcpUrl)], MEMORY_MCP);
   appendNew(net, mcpServerNetGrants(inputs.mcpServers ?? []), MCP_SERVER);
   appendNew(net, inputs.networkAllow ?? [], NETWORK_ALLOW);
   appendNew(net, inputs.nameserverGrants ?? [], NAMESERVER);
 
-  const run: ComposedGrant<RunGrantSource>[] = fromTable(
-    RUNTIME_RUN_GRANT_TABLE,
-  );
+  const run = fromTable(RUNTIME_RUN_GRANT_TABLE, (role) => STATIC_RUN[role]);
   const resolver = inputs.secrets?.command[0] ?? null;
   appendNew(run, [
     inputs.runtimeExecutable === undefined
@@ -403,8 +439,8 @@ export function composeRuntimeGrants(
     : `${inputs.dolt.host}:${validateDoltPort(inputs.dolt.port)}`;
   appendNew(net, [dolt], DOLT_ENDPOINT);
   return Object.freeze({
-    net: Object.freeze(net),
-    run: Object.freeze(run),
+    net: freezeGrants(net),
+    run: freezeGrants(run),
     env: Object.freeze(env),
     dolt,
   });
