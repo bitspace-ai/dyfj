@@ -433,13 +433,34 @@ function resolveProgram(program: string): string | undefined {
   return found === undefined ? undefined : realpathSync(found);
 }
 
+const LOADER = /^ld-linux.*\.so\.\d+$/;
+
+/**
+ * The dynamic loader's path: directly under /usr/lib, else under one of its
+ * multiarch directories (`/usr/lib/<triplet>/`), or null.
+ */
+export function findDynamicLoader(list: (dir: string) => readonly string[]): string | null {
+  const top = list("/usr/lib");
+  const direct = top.find((entry) => LOADER.test(entry));
+  if (direct !== undefined) return `/usr/lib/${direct}`;
+  for (const triplet of top.filter((entry) => /-linux-gnu[a-z]*$/.test(entry))) {
+    const found = list(`/usr/lib/${triplet}`).find((entry) => LOADER.test(entry));
+    if (found !== undefined) return `/usr/lib/${triplet}/${found}`;
+  }
+  return null;
+}
+
 /** The dynamic loader's real path. */
 function dynamicLoader(): string {
-  const name = readdirSync("/usr/lib").find((entry) =>
-    /^ld-linux.*\.so\.\d+$/.test(entry)
-  );
-  if (name === undefined) throw new Error("no dynamic loader in /usr/lib");
-  return realpathSync(`/usr/lib/${name}`);
+  const found = findDynamicLoader((dir) => {
+    try {
+      return readdirSync(dir);
+    } catch {
+      return [];
+    }
+  });
+  if (found === null) throw new Error("no dynamic loader under /usr/lib");
+  return realpathSync(found);
 }
 
 function flag(args: readonly string[], name: string): string {

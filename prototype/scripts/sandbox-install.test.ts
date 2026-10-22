@@ -212,3 +212,31 @@ describe("refusals", () => {
     await assert.rejects(build({ resolved: {} }), /host-unresolved/);
   });
 });
+
+describe("the dynamic loader", () => {
+  const listing = (tree: Record<string, string[]>) => (dir: string) => tree[dir] ?? [];
+
+  it("is found directly under /usr/lib", async () => {
+    const { findDynamicLoader } = await installModule();
+    assert.strictEqual(
+      findDynamicLoader(listing({ "/usr/lib": ["ld-linux-aarch64.so.1", "aarch64-linux-gnu"] })),
+      "/usr/lib/ld-linux-aarch64.so.1",
+    );
+  });
+
+  it("falls back to a multiarch directory under /usr/lib", async () => {
+    const { findDynamicLoader } = await installModule();
+    assert.strictEqual(
+      findDynamicLoader(listing({
+        "/usr/lib": ["aarch64-linux-gnu", "os-release"],
+        "/usr/lib/aarch64-linux-gnu": ["libc.so.6", "ld-linux-aarch64.so.1"],
+      })),
+      "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+    );
+  });
+
+  it("is null when no loader exists", async () => {
+    const { findDynamicLoader } = await installModule();
+    assert.strictEqual(findDynamicLoader(listing({ "/usr/lib": ["x"] })), null);
+  });
+});

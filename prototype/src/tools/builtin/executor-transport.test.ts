@@ -227,6 +227,24 @@ describe("the bash tool", () => {
     assert.match(out, /^error: cannot run command: executor unavailable/);
   });
 
+  it("lets the socket win over an injected runner: the runner never runs", async () => {
+    const root = await realpath(dir);
+    const s = await supervisor((_, socket) => answer(socket, OK));
+    let local = 0;
+    const bash = defineBash(root, {
+      env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: s.path }),
+      dialExecutor,
+      runner: async () => {
+        local += 1;
+        return { code: 0, signal: null, stdout: "local", stderr: "", timedOut: false };
+      },
+    });
+    const out = await bash.executor(call("echo hello"), context);
+    assert.strictEqual(local, 0);
+    assert.strictEqual(s.requests.length, 1);
+    assert.strictEqual(out, "exit 0\nhello");
+  });
+
   it("refuses every command when the socket is set but no dialer was given", async () => {
     const root = await realpath(dir);
     const bash = defineBash(root, {

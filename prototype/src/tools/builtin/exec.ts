@@ -342,10 +342,11 @@ export function defineBash(
     {},
 ): CommandDefinition<string> {
   // The supervisor of an isolated machine sets the socket when it starts the
-  // runtime. With it, commands run in the executor and never here: without a
-  // dialer to reach it, every command is refused rather than run locally.
+  // runtime. With it, commands run in the executor and never here, whatever
+  // runner was injected: without a dialer to reach it, every command is
+  // refused rather than run locally.
   const socket = executorSocket(opts.env);
-  const contained = opts.runner === undefined && socket !== undefined;
+  const contained = socket !== undefined;
   const runner = !contained
     ? opts.runner
     : opts.dialExecutor === undefined
