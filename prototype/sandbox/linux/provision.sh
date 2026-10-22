@@ -102,15 +102,20 @@ systemd-tmpfiles --create /etc/tmpfiles.d/dyfj.conf 2>/dev/null ||
 
 echo "== workbench code"
 rm -rf /opt/dyfj
-git clone -q --no-hardlinks "$STAGING/dyfj.bundle" /opt/dyfj
+git -c init.defaultBranch=main -c advice.detachedHead=false clone -q --no-hardlinks "$STAGING/dyfj.bundle" /opt/dyfj
 git -C /opt/dyfj remote remove origin
 (cd /opt/dyfj && npm ci --no-fund --no-audit --ignore-scripts >/dev/null)
 chown -R root:root /opt/dyfj
 chmod -R go-w /opt/dyfj
 
 echo "== local dolt (an empty store; it owns no memory class yet)"
-if [[ ! -d /srv/dyfj/dolt/.dolt ]]; then
-  runuser -u dyfj-db -- bash -c 'cd /srv/dyfj/dolt && HOME=/srv/dyfj/dolt dolt config --global --add user.name dyfj-db >/dev/null && HOME=/srv/dyfj/dolt dolt config --global --add user.email dyfj-db@localhost >/dev/null && HOME=/srv/dyfj/dolt dolt init >/dev/null'
+# Dolt keeps its global config in $HOME/.dolt, so the store has its own
+# directory beneath the home.
+if [[ ! -d /srv/dyfj/dolt/data/.dolt ]]; then
+  runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt bash -c '
+    dolt config --global --get user.name >/dev/null 2>&1 ||
+      { dolt config --global --add user.name dyfj-db && dolt config --global --add user.email dyfj-db@localhost; } >/dev/null
+    mkdir -p /srv/dyfj/dolt/data && cd /srv/dyfj/dolt/data && dolt init >/dev/null'
 fi
 if [[ -d /run/systemd/system ]]; then
   cat >/etc/systemd/system/dyfj-dolt.service <<'EOF'
@@ -122,7 +127,7 @@ After=network.target
 User=dyfj-db
 Group=dyfj-db
 Environment=HOME=/srv/dyfj/dolt
-WorkingDirectory=/srv/dyfj/dolt
+WorkingDirectory=/srv/dyfj/dolt/data
 ExecStart=/usr/local/bin/dolt sql-server --host 127.0.0.1 --port 3306
 Restart=on-failure
 NoNewPrivileges=yes
