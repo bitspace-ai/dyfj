@@ -42,6 +42,7 @@ import {
   describeTimeout,
   runBounded,
 } from "./bounded-process.ts";
+import { createExecutorRunner } from "./executor-transport.ts";
 
 export type BashResult = BoundedResult;
 
@@ -294,18 +295,33 @@ function bashApprovalTitle(timeoutSec: unknown): string {
 
 // ── Command definition ───────────────────────────────────────────────────────
 
+/** What the command can reach, as the model is told it. */
+function bashReach(contained: boolean): string {
+  return contained
+    ? "The command runs in the isolated executor: only the workspace is " +
+      "writable, it has no network, and it cannot see the runtime's " +
+      "credentials. "
+    : "The command is NOT sandboxed — it can read and write anywhere on " +
+      "the machine and reach the network, exactly as if the operator ran it. ";
+}
+
 export function defineBash(
   root: string,
   opts: { runner?: BashRunner; env?: Env } = {},
 ): CommandDefinition<string> {
+  // The supervisor of an isolated machine sets the socket when it starts the
+  // runtime. With it, commands run in the executor and never here.
+  const socket = readEnv(opts.env ?? processEnv, "DYFJ_EXECUTOR_SOCKET");
+  const contained = opts.runner === undefined && socket !== undefined &&
+    socket !== "";
+  const runner = contained ? createExecutorRunner(socket!) : opts.runner;
   return {
     id: "bash",
     title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
-      "root, or the workspace directory cwd names, but the command is NOT " +
-      "sandboxed — it can read and write anywhere on " +
-      "the machine and reach the network, exactly as if the operator ran it. " +
+      "root, or the workspace directory cwd names. " +
+      bashReach(contained) +
       "Returns the exit status and combined stdout/stderr. Requires operator " +
       "approval before it runs, except for a small set of read-only commands " +
       "(git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) " +
@@ -385,7 +401,7 @@ export function defineBash(
         : base;
       return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
-        runner: opts.runner,
+        runner,
         env,
       });
     },

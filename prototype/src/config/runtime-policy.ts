@@ -98,6 +98,7 @@ export const RUNTIME_ENV_GRANTS: readonly string[] = Object.freeze([
   "DYFJ_NODE_PATH",
   "DYFJ_CODEX_TOOLCHAIN_PATH",
   "DYFJ_CODEX_RUSTUP_HOME",
+  "DYFJ_EXECUTOR_SOCKET",
   "USER",
   "HOME",
   "XDG_RUNTIME_DIR",
