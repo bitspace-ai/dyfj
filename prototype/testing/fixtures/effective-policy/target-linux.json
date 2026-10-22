@@ -1,0 +1,19 @@
+{
+  "capabilities": {
+    "filesystemRights": ["read", "write", "execute"],
+    "protocols": ["tcp", "udp"],
+    "hostnameAssurances": ["tls", "none"],
+    "dnsModes": ["none", "resolver"],
+    "executeByDigest": true,
+    "requireExecutableDigest": false,
+    "processLimit": true,
+    "forbidDescendants": true,
+    "syscallProfiles": ["standard-v1"],
+    "requireSyscallProfile": false
+  },
+  "services": [
+    { "entry": "127.0.0.1:3306", "host": "192.0.2.10", "port": 3306 },
+    { "entry": "[::1]:8080", "host": "192.0.2.10", "port": 8080 }
+  ],
+  "mountBase": "/run/dyfj"
+}

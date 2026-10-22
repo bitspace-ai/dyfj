@@ -1,0 +1,44 @@
+{
+  "platform": "kubernetes",
+  "policyDigest": "sha256:3e899663f979f14a2d6b074c239e5e0e37c009ff38a9cf98aafe95865c190b47",
+  "volumes": [
+    { "name": "workspace", "persistentVolumeClaim": { "claimName": "workspace-claim" } },
+    { "name": "toolchain", "persistentVolumeClaim": { "claimName": "toolchain-image" } },
+    { "name": "scratch", "emptyDir": {} }
+  ],
+  "volumeMounts": [
+    { "name": "workspace", "mountPath": "/mnt/dyfj/workspace", "readOnly": false },
+    { "name": "toolchain", "mountPath": "/mnt/dyfj/toolchain", "readOnly": true },
+    { "name": "scratch", "mountPath": "/mnt/dyfj/scratch", "readOnly": false }
+  ],
+  "securityContext": {
+    "runAsNonRoot": true,
+    "allowPrivilegeEscalation": false,
+    "readOnlyRootFilesystem": true,
+    "capabilities": { "drop": ["ALL"] },
+    "seccompProfile": { "type": "RuntimeDefault" }
+  },
+  "egress": [
+    { "role": "provider", "policyEntry": "api.anthropic.com:443", "host": "api.anthropic.com", "port": 443, "protocol": "tcp", "dns": "resolver:192.0.2.53:53", "hostnameAssurance": "tls" },
+    { "role": "dolt", "policyEntry": "127.0.0.1:3306", "host": "dolt.dyfj.svc.cluster.local", "port": 3306, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" },
+    { "role": "dns", "policyEntry": "192.0.2.53:53", "host": "192.0.2.53", "port": 53, "protocol": "udp", "dns": "none", "hostnameAssurance": "none" },
+    { "role": "local-model", "policyEntry": "[::1]:8080", "host": "models.dyfj.svc.cluster.local", "port": 8080, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" }
+  ],
+  "ciliumEgress": [
+    { "toFQDNs": [{ "matchName": "api.anthropic.com" }], "toPorts": [{ "ports": [{ "port": "443", "protocol": "TCP" }] }] },
+    { "toFQDNs": [{ "matchName": "dolt.dyfj.svc.cluster.local" }], "toPorts": [{ "ports": [{ "port": "3306", "protocol": "TCP" }] }] },
+    { "toCIDR": ["192.0.2.53/32"], "toPorts": [{ "ports": [{ "port": "53", "protocol": "UDP" }] }] },
+    { "toFQDNs": [{ "matchName": "models.dyfj.svc.cluster.local" }], "toPorts": [{ "ports": [{ "port": "8080", "protocol": "TCP" }] }] }
+  ],
+  "doltEndpoint": "dolt.dyfj.svc.cluster.local:3306",
+  "brokerOperations": ["memory.search", "issues.comment"],
+  "executables": [
+    { "program": "git", "role": "tool", "digest": null },
+    { "program": "/usr/bin/bash", "role": "tool", "digest": "sha256:abababababababababababababababababababababababababababababababab" }
+  ],
+  "descendants": true,
+  "maxProcesses": 64,
+  "environment": ["PATH", "HOME", "DOLT_HOST"],
+  "forbiddenPaths": ["/srv/secrets", "/root/.ssh"],
+  "protectedGit": [".git/hooks", ".git/config"]
+}

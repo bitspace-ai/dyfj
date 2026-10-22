@@ -1,0 +1,38 @@
+{
+  "platform": "linux",
+  "policyDigest": "sha256:3e899663f979f14a2d6b074c239e5e0e37c009ff38a9cf98aafe95865c190b47",
+  "mounts": [
+    { "source": "/srv/work/space", "target": "/run/dyfj/workspace", "readOnly": false, "exec": false },
+    { "source": "/opt/toolchain", "target": "/run/dyfj/toolchain", "readOnly": true, "exec": true }
+  ],
+  "scratch": { "target": "/run/dyfj/scratch", "type": "tmpfs" },
+  "landlock": {
+    "read": ["/run/dyfj/workspace", "/run/dyfj/toolchain", "/run/dyfj/scratch"],
+    "write": ["/run/dyfj/workspace", "/run/dyfj/scratch"],
+    "execute": ["/run/dyfj/toolchain"]
+  },
+  "firewall": {
+    "defaultAction": "drop",
+    "accept": [
+      { "role": "provider", "policyEntry": "api.anthropic.com:443", "host": "api.anthropic.com", "port": 443, "protocol": "tcp", "dns": "resolver:192.0.2.53:53", "hostnameAssurance": "tls" },
+      { "role": "dolt", "policyEntry": "127.0.0.1:3306", "host": "192.0.2.10", "port": 3306, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" },
+      { "role": "dns", "policyEntry": "192.0.2.53:53", "host": "192.0.2.53", "port": 53, "protocol": "udp", "dns": "none", "hostnameAssurance": "none" },
+      { "role": "local-model", "policyEntry": "[::1]:8080", "host": "192.0.2.10", "port": 8080, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" }
+    ]
+  },
+  "doltEndpoint": "192.0.2.10:3306",
+  "brokerOperations": ["memory.search", "issues.comment"],
+  "process": {
+    "noNewPrivileges": true,
+    "executables": [
+      { "program": "git", "role": "tool", "digest": null },
+      { "program": "/usr/bin/bash", "role": "tool", "digest": "sha256:abababababababababababababababababababababababababababababababab" }
+    ],
+    "descendants": true,
+    "maxProcesses": 64,
+    "seccompProfile": null
+  },
+  "environment": ["PATH", "HOME", "DOLT_HOST"],
+  "forbiddenPaths": ["/srv/secrets", "/root/.ssh"],
+  "protectedGit": [".git/hooks", ".git/config"]
+}

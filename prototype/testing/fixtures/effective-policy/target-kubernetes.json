@@ -1,0 +1,23 @@
+{
+  "capabilities": {
+    "filesystemRights": ["read", "write", "execute"],
+    "protocols": ["tcp", "udp"],
+    "hostnameAssurances": ["tls", "none"],
+    "dnsModes": ["none", "resolver"],
+    "executeByDigest": true,
+    "requireExecutableDigest": false,
+    "processLimit": true,
+    "forbidDescendants": true,
+    "syscallProfiles": [],
+    "requireSyscallProfile": false
+  },
+  "services": [
+    { "entry": "127.0.0.1:3306", "host": "dolt.dyfj.svc.cluster.local", "port": 3306 },
+    { "entry": "[::1]:8080", "host": "models.dyfj.svc.cluster.local", "port": 8080 }
+  ],
+  "mountBase": "/mnt/dyfj",
+  "volumes": [
+    { "root": "workspace", "claim": "workspace-claim" },
+    { "root": "toolchain", "claim": "toolchain-image" }
+  ]
+}
