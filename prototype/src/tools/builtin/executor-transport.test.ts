@@ -25,7 +25,14 @@ before(async () => {
   dir = await mkdtemp("/tmp/dyfj-exec-");
 });
 
+// Every scripted supervisor, closed before the directory holding their
+// sockets is removed, so no socket unlink is still pending when the file ends.
+const servers: Server[] = [];
+
 after(async () => {
+  await Promise.all(
+    servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))),
+  );
   await rm(dir, { recursive: true, force: true });
 });
 
@@ -51,7 +58,7 @@ async function supervisor(
     socket.on("error", () => {});
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
-  after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  servers.push(server);
   return { path, requests, server };
 }
 
