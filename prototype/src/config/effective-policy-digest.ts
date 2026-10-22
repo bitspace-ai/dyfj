@@ -45,9 +45,15 @@ function canonicalize(value: unknown, path: string): string {
       return String(value);
     case "object": {
       if (Array.isArray(value)) {
-        const elements = value.map((element, index) =>
-          canonicalize(element, `${path}[${index}]`)
-        );
+        // An explicit index walk: `map` would skip a hole, and a sparse
+        // array would then hash like a shorter one.
+        const elements: string[] = [];
+        for (let index = 0; index < value.length; index++) {
+          if (!(index in value)) {
+            throw new Error(`effective policy: ${path}[${index}] is missing`);
+          }
+          elements.push(canonicalize(value[index], `${path}[${index}]`));
+        }
         elements.sort(compareBytes);
         return `[${elements.join(",")}]`;
       }

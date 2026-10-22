@@ -271,6 +271,15 @@ function commonOffenders(
   if (segments(target.mountBase) === null) {
     report("target", "target.mountBase", "mount-base-invalid");
   }
+  // The service map is the target author's explicit table: two rows for one
+  // entry would leave the destination to input order, so both are refused.
+  const entries = new Set<string>();
+  target.services.forEach((service, index) => {
+    if (entries.has(service.entry)) {
+      report("target", `target.services[${index}]`, "service-duplicate");
+    }
+    entries.add(service.entry);
+  });
 
   const targets = new Set<string>();
   policy.filesystem.roots.forEach((root, index) => {

@@ -731,6 +731,24 @@ describe("the fifth-pass cases", () => {
     assert.throws(() => parseEffectivePolicy(policy), /executables\[0\] is missing/);
   });
 
+  it("hashes a sparse array as malformed, never as a shorter one", () => {
+    const sparse = golden();
+    sparse.effects.tools = new Array(1);
+    assert.throws(() => policyDigest(sparse), /effects\.tools\[0\] is missing/);
+  });
+
+  for (const platform of PLATFORMS) {
+    it(`refuses a service map with two rows for one entry, on ${platform}`, async () => {
+      const input = target(platform);
+      input.services.push({ ...input.services[0], host: "elsewhere.cluster.test" });
+      await assertRefused(platform, parseEffectivePolicy(golden()), input, {
+        group: "target",
+        path: "target.services[2]",
+        right: "service-duplicate",
+      });
+    });
+  }
+
   it("refuses an impossible calendar date as the expiry", () => {
     for (const stamp of ["2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-12-31T24:00:00Z"]) {
       const policy = golden();
