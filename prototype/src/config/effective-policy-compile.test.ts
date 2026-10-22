@@ -650,6 +650,26 @@ describe("the pre-gate cases", () => {
       assert.ok(found.some((o) => o.right === "source-not-canonical"));
     });
 
+    it(`refuses a resolver granted only over TCP, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries[2].protocol = "tcp";
+      await assertRefused(platform, sealed(policy), target(platform), {
+        group: "network",
+        path: "network.entries[0].dns",
+        right: "resolver-not-granted",
+      });
+    });
+
+    it(`refuses a Dolt endpoint the policy grants no TCP entry for, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries.splice(1, 1);
+      const input = target(platform);
+      const found = await offenders(platform, sealed(policy), input);
+      assert.deepStrictEqual(found, [
+        { group: "network", path: "network.dolt", right: "dolt-not-granted" },
+      ]);
+    });
+
     it(`refuses a loopback resolver with no mapping, on ${platform}`, async () => {
       const policy = golden();
       policy.network.entries[0].dns = "resolver:127.0.0.53:53";

@@ -71,21 +71,28 @@ describe("composeRuntimeGrants", () => {
     ]);
   });
 
-  it("refuses a nameserver that another source also grants over TCP", () => {
+  it("grants a host:port both as a nameserver and over TCP as two entries", async () => {
+    const { projectRuntimePolicy } = await import("./effective-policy.ts");
     for (
-      const inputs of [
-        { networkAllow: ["192.0.2.53:53"], nameserverGrants: ["192.0.2.53:53"] },
-        {
-          mcpServers: [{ url: "http://192.0.2.53:53/mcp" } as never],
+      const [inputs, tcpRole] of [
+        [{ networkAllow: ["192.0.2.53:53"], nameserverGrants: ["192.0.2.53:53"] }, "operator"],
+        [{
+          mcpServers: [{ url: "https://192.0.2.53:53/mcp" } as never],
           nameserverGrants: ["192.0.2.53:53"],
-        },
-      ]
+        }, "mcp"],
+      ] as const
     ) {
-      assert.throws(
-        () => composeEffectivePolicy(inputs, ENVELOPE),
-        /granted as a nameserver and over TCP/,
+      const policy = composeEffectivePolicy(inputs, ENVELOPE);
+      const both = policy.network.entries.filter((e) => e.host === "192.0.2.53");
+      assert.deepStrictEqual(
+        both.map((e) => [e.role, e.protocol]),
+        [[tcpRole, "tcp"], ["dns", "udp"]],
       );
-      assert.doesNotThrow(() => composeRuntimePolicy(inputs));
+      assert.deepStrictEqual(projectRuntimePolicy(policy), composeRuntimePolicy(inputs));
+      const provider = policy.network.entries.find((e) =>
+        e.host === "api.anthropic.com"
+      )!;
+      assert.strictEqual(provider.dns, "resolver:192.0.2.53:53");
     }
   });
 

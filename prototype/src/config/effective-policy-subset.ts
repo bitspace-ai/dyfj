@@ -282,7 +282,8 @@ function checkEffects(
 }
 
 /**
- * Every way `session` breaks out of `run`, in group order. Empty when the
+ * The ways `session` breaks out of `run`, in group order: every group and
+ * field is checked, with the first failing check per filesystem root. Empty when the
  * session is within its envelope. The digests are not compared: any narrower
  * session has a different one.
  */

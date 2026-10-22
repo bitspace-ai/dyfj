@@ -604,9 +604,8 @@ function byBytes(a: string, b: string): number {
 }
 
 /**
- * The source that names an entry's role when several added it, highest
- * first: the most specific. Only sources that need the same transport can
- * share an entry; `networkEntries` refuses the rest.
+ * The source that names an entry's role when several sources that need the
+ * same transport added it, highest first: the most specific.
  */
 const NET_SOURCE_PRECEDENCE: readonly NetGrantSource["kind"][] = [
   "static",
@@ -663,6 +662,27 @@ function carriesTls(source: NetGrantSource): boolean {
   }
 }
 
+function transport(source: NetGrantSource): NetworkProtocol {
+  return source.kind === "nameserver" ? "udp" : "tcp";
+}
+
+/**
+ * The sources of one composed grant, split by the transport each needs, in
+ * the order the transports first appear. A nameserver (UDP) that another
+ * source also grants over TCP becomes two groups, so neither is lost.
+ */
+function byTransport(
+  sources: readonly NetGrantSource[],
+): NetGrantSource[][] {
+  const groups = new Map<NetworkProtocol, NetGrantSource[]>();
+  for (const source of sources) {
+    const group = groups.get(transport(source));
+    if (group === undefined) groups.set(transport(source), [source]);
+    else group.push(source);
+  }
+  return [...groups.values()];
+}
+
 function networkEntries(
   net: readonly ComposedGrant<NetGrantSource>[],
 ): NetworkEntry[] {
@@ -670,38 +690,30 @@ function networkEntries(
   // composition lists nameservers in never changes the policy. Every
   // nameserver is its own `dns` entry.
   const resolver = net
-    .filter((grant) => networkRole(grant.sources) === "dns")
+    .filter((grant) => grant.sources.some((s) => s.kind === "nameserver"))
     .map((grant) => grant.entry)
     .sort(byBytes)[0];
 
-  return net.map(({ entry, sources }): NetworkEntry => {
+  // A grant whose sources need both transports becomes one entry per
+  // transport, each with its own role; `projectRuntimePolicy` collapses them
+  // back to the one `host:port` the seams read.
+  return net.flatMap(({ entry, sources }): NetworkEntry[] => {
     const { host, port } = splitHostPort(entry);
-    const role = networkRole(sources);
-    // One entry has one protocol. A nameserver (UDP) that another source
-    // also grants over TCP cannot be described without losing one of them,
-    // so the composition is refused rather than narrowed or widened.
-    const protocols = new Set(
-      sources.map((source) => source.kind === "nameserver" ? "udp" : "tcp"),
-    );
-    if (protocols.size > 1) {
-      throw new Error(
-        `effective policy: ${entry} is granted as a nameserver and over TCP; ` +
-          "one entry cannot carry both",
-      );
-    }
-    const dns = role !== "dns" && needsDns(host) && resolver !== undefined
-      ? `resolver:${resolver}`
-      : "none";
-    return {
-      role,
-      host,
-      port,
-      protocol: role === "dns" ? "udp" : "tcp",
-      dns,
-      hostnameAssurance: needsDns(host) && sources.some(carriesTls)
-        ? "tls"
-        : "none",
-    };
+    return byTransport(sources).map((group): NetworkEntry => {
+      const role = networkRole(group);
+      return {
+        role,
+        host,
+        port,
+        protocol: transport(group[0]!),
+        dns: role !== "dns" && needsDns(host) && resolver !== undefined
+          ? `resolver:${resolver}`
+          : "none",
+        hostnameAssurance: needsDns(host) && group.some(carriesTls)
+          ? "tls"
+          : "none",
+      };
+    });
   });
 }
 
@@ -837,9 +849,13 @@ export function composeEffectivePolicy(
  */
 export function projectRuntimePolicy(policy: EffectivePolicy): RuntimePolicy {
   return Object.freeze({
-    net: Object.freeze(
-      policy.network.entries.map((entry) => `${entry.host}:${entry.port}`),
-    ),
+    // One `host:port` granted over both UDP and TCP is two entries here and
+    // one net entry for the seams, at the place of the first.
+    net: Object.freeze([
+      ...new Set(
+        policy.network.entries.map((entry) => `${entry.host}:${entry.port}`),
+      ),
+    ]),
     run: Object.freeze(policy.processes.executables.map((e) => e.program)),
     env: Object.freeze([...policy.processes.environment]),
     dolt: policy.network.dolt,

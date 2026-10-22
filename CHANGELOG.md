@@ -21,9 +21,9 @@ README are tracked separately in its Revision history section.
   `projectRuntimePolicy` rebuilds today's `{net, run, env, dolt}` from it, so
   there is no second host list. The static net and run grants in
   `runtime-policy.ts` are now tagged tables (each entry with its role), and
-  `composeRuntimeGrants` records every source of each composed entry, and
-  `composeEffectivePolicy` refuses an entry granted both as a nameserver
-  (UDP) and over TCP, which one entry cannot describe;
+  `composeRuntimeGrants` records every source of each composed entry, and a
+  `host:port` granted both as a nameserver (UDP) and over TCP becomes two
+  effective entries, one per transport, that project back to one;
   `RUNTIME_NET_GRANTS` and `RUNTIME_RUN_GRANTS` keep their contents and order.
   `effective-policy-digest.ts` gives a stable `sha256:` digest over canonical
   JSON, pinned by a golden vector in `prototype/testing/fixtures/effective-policy/`.

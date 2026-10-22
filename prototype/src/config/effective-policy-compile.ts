@@ -327,7 +327,8 @@ function commonOffenders(
         checkService(resolverMapped, `${path}.dns`, report);
       }
       const granted = policy.network.entries.some((other) =>
-        other.role === "dns" && `${other.host}:${other.port}` === resolver
+        other.role === "dns" && other.protocol === "udp" &&
+        `${other.host}:${other.port}` === resolver
       );
       if (!granted) report("network", `${path}.dns`, "resolver-not-granted");
     }
@@ -351,6 +352,14 @@ function commonOffenders(
     }
     if (doltMapped !== undefined) {
       checkService(doltMapped, "network.dolt", report);
+    }
+    const granted = policy.network.entries.some((entry) =>
+      entry.role === "dolt" && entry.protocol === "tcp" &&
+      `${entry.host}:${entry.port}` === dolt
+    );
+    const valid = isCanonicalHost(hostOf(dolt)) && isPort(portOf(dolt));
+    if (valid && !granted) {
+      report("network", "network.dolt", "dolt-not-granted");
     }
   }
 
