@@ -23,7 +23,6 @@
  * follow-up that closes both gaps.
  */
 
-import { isIP } from "node:net";
 import process from "node:process";
 import type { Env } from "./env.ts";
 import { mcpServerNetGrants, validateDoltPort } from "./mcp-net-grants.ts";
@@ -196,12 +195,18 @@ export const RUNTIME_PLATFORM_ENV: readonly string[] = Object.freeze([
   "TEMP",
 ]);
 
-/** `host` is a valid IPv4 address, or a valid IPv6 address in brackets. */
+const OCTET = "(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])";
+const IPV4_ADDRESS = new RegExp(`^${OCTET}(?:\\.${OCTET}){3}$`);
+
+/**
+ * `host` is a dotted-quad IPv4 address, or a valid IPv6 address in brackets
+ * (the WHATWG URL parser validates it).
+ */
 export function isAddressLiteral(host: string): boolean {
   if (host.startsWith("[") && host.endsWith("]")) {
-    return isIP(host.slice(1, -1)) === 6;
+    return canonicalHost(host) !== null;
   }
-  return isIP(host) === 4;
+  return IPV4_ADDRESS.test(host);
 }
 
 /** `host` in the canonical form a URL gives it, or null when it has none. */
@@ -226,7 +231,7 @@ export function isLoopbackHost(host: string): boolean {
   const canonical = canonicalHost(host);
   if (canonical === null) return false;
   return canonical === "localhost" || canonical.endsWith(".localhost") ||
-    (isIP(canonical) === 4 &&
+    (IPV4_ADDRESS.test(canonical) &&
       (canonical.startsWith("127.") || canonical === "0.0.0.0")) ||
     canonical === "[::1]" || canonical === "[::]" ||
     IPV4_MAPPED_LOOPBACK.test(canonical);
