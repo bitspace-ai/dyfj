@@ -4,15 +4,15 @@
  * secrets and effects (tools, approval posture, paid routing and limits).
  *
  * It is built from the same composition as `composeRuntimePolicy`, never from
- * a second list: `composeEffectivePolicy` calls it, then describes each entry
- * it produced. `projectRuntimePolicy` goes back to the `{net, run, env, dolt}`
+ * a second list: `composeEffectivePolicy` calls `composeRuntimeGrants`, then
+ * describes each entry it produced from the entry's recorded provenance. `projectRuntimePolicy` goes back to the `{net, run, env, dolt}`
  * the egress, spawn and env seams read, so a test can prove the two agree.
  * Nothing here is enforced yet and no runtime behaviour reads this policy.
  *
- * Roles, protocols, DNS behaviour and hostname assurance of the composed
- * entries are described from the inputs and the entry's own shape; the tagged
- * grant table in `runtime-policy.ts` will replace that description with the
- * grant's declared role. Anything the composition does not know (filesystem
+ * A static entry's role is the one its row declares in the tagged tables of
+ * `runtime-policy.ts`; an operator entry's role follows from its source.
+ * Protocol, DNS behaviour and hostname assurance follow from the role and the
+ * entry's own shape. Anything the composition does not know (filesystem
  * roots, tools, process limits, executable digests, syscall profile) is absent
  * or `null` ("not requested"); a platform that requires it refuses.
  *
@@ -21,11 +21,11 @@
 
 import { policyDigest } from "./effective-policy-digest.ts";
 import { BUDGET_DEFAULTS, AGENT_DEFAULTS } from "./defaults.ts";
-import { mcpServerNetGrants, validateDoltPort } from "./mcp-net-grants.ts";
-import { memoryMcpNetGrant } from "./memory-url.ts";
 import {
-  composeRuntimePolicy,
-  RUNTIME_NET_GRANTS,
+  type ComposedGrant,
+  composeRuntimeGrants,
+  type NetGrantSource,
+  type RunGrantSource,
   type RuntimePolicy,
   type RuntimePolicyInputs,
 } from "./runtime-policy.ts";
@@ -562,37 +562,37 @@ function byBytes(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 }
 
+function networkRole(source: NetGrantSource): NetworkRole {
+  switch (source.kind) {
+    case "static":
+      return source.role;
+    case "memory-mcp":
+      return "memory";
+    case "mcp-server":
+      return "mcp";
+    case "network-allow":
+      return "operator";
+    case "nameserver":
+      return "dns";
+    case "dolt-endpoint":
+      return "dolt";
+  }
+}
+
 function networkEntries(
-  inputs: RuntimePolicyInputs,
-  net: readonly string[],
-  dolt: string | null,
+  net: readonly ComposedGrant<NetGrantSource>[],
 ): NetworkEntry[] {
-  const doltPort = validateDoltPort(undefined);
-  const staticGrants = new Set(RUNTIME_NET_GRANTS);
-  const memory = memoryMcpNetGrant(inputs.memoryMcpUrl);
-  const mcp = new Set(mcpServerNetGrants(inputs.mcpServers ?? []));
-  const allow = new Set(inputs.networkAllow ?? []);
-  const nameservers = new Set(inputs.nameserverGrants ?? []);
   // One resolver names the DNS behaviour; the smallest, so that the order a
   // composition lists nameservers in never changes the policy. Every
   // nameserver is its own `dns` entry.
-  const resolver = [...nameservers].sort(byBytes)[0];
+  const resolver = net
+    .filter((grant) => grant.source.kind === "nameserver")
+    .map((grant) => grant.entry)
+    .sort(byBytes)[0];
 
-  return net.map((grant): NetworkEntry => {
-    const { host, port } = splitHostPort(grant);
-    let role: NetworkRole;
-    if (staticGrants.has(grant)) {
-      role = port === doltPort && !needsDns(host)
-        ? "dolt"
-        : needsDns(host) && port === TLS_PORT
-        ? "provider"
-        : "local-model";
-    } else if (grant === memory) role = "memory";
-    else if (mcp.has(grant)) role = "mcp";
-    else if (allow.has(grant)) role = "operator";
-    else if (nameservers.has(grant)) role = "dns";
-    else if (grant === dolt) role = "dolt";
-    else role = "operator";
+  return net.map(({ entry, source }): NetworkEntry => {
+    const { host, port } = splitHostPort(entry);
+    const role = networkRole(source);
     const dns = role !== "dns" && needsDns(host) && resolver !== undefined
       ? `resolver:${resolver}`
       : "none";
@@ -609,20 +609,24 @@ function networkEntries(
   });
 }
 
-const TOOL_PROGRAMS: ReadonlySet<string> = new Set(["bash", "git"]);
+function executionRole(source: RunGrantSource): ExecutionRole {
+  switch (source.kind) {
+    case "static":
+      return source.role;
+    case "secrets-resolver":
+      return "resolver";
+    case "runtime-executable":
+    case "node-path":
+      return "runner";
+  }
+}
 
 function executables(
-  inputs: RuntimePolicyInputs,
-  run: readonly string[],
+  run: readonly ComposedGrant<RunGrantSource>[],
 ): ExecutableGrant[] {
-  const resolver = inputs.secrets?.command[0];
-  return run.map((program): ExecutableGrant => ({
-    program,
-    role: TOOL_PROGRAMS.has(program)
-      ? "tool"
-      : program === resolver
-      ? "resolver"
-      : "runner",
+  return run.map(({ entry, source }): ExecutableGrant => ({
+    program: entry,
+    role: executionRole(source),
     digest: null,
   }));
 }
@@ -659,7 +663,7 @@ export function composeEffectivePolicy(
   inputs: RuntimePolicyInputs,
   envelope: EffectivePolicyEnvelope,
 ): EffectivePolicy {
-  const runtime = composeRuntimePolicy(inputs);
+  const runtime = composeRuntimeGrants(inputs);
   const job = envelope.effects;
   const spend = job?.limits?.spendMicroUsd;
   const candidate = {
@@ -682,12 +686,12 @@ export function composeEffectivePolicy(
       protectedGit: [...(envelope.filesystem?.protectedGit ?? [])],
     },
     network: {
-      entries: networkEntries(inputs, runtime.net, runtime.dolt),
+      entries: networkEntries(runtime.net),
       brokerOperations: [],
       dolt: runtime.dolt,
     },
     processes: {
-      executables: executables(inputs, runtime.run),
+      executables: executables(runtime.run),
       descendants: true,
       maxProcesses: null,
       syscallProfile: null,
