@@ -14,8 +14,12 @@ import process from "node:process";
 
 const allowedHost = process.argv[2];
 
+// A refusal must be an error the kernel or firewall returned: a timeout alone
+// proves nothing (design §8).
 function report(probe, expect, outcome) {
-  const pass = expect === "allowed" ? outcome === "ok" : outcome !== "ok";
+  const pass = expect === "allowed"
+    ? outcome === "ok"
+    : outcome !== "ok" && outcome !== "TIMEOUT";
   process.stdout.write(`${JSON.stringify({ probe, expect, outcome, pass })}\n`);
 }
 

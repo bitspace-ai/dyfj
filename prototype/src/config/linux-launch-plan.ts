@@ -245,7 +245,11 @@ function nftables(
     `table ${table} {`,
     "  chain output {",
     "    type filter hook output priority filter; policy accept;",
-    `    meta skuid != ${template.uid} accept`,
+    // Matched positively: a packet with no socket, such as the ICMP error a
+    // reject sends back, has no uid and must not be refused in turn.
+    `    meta skuid ${template.uid} jump role`,
+    "  }",
+    "  chain role {",
     ...established,
     ...accepts,
     // Rejected, not silently dropped: a refused connect fails at once with an
