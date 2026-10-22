@@ -22,3 +22,14 @@ of the policy so that `projectRuntimePolicy` can rebuild today's
 digest, syscall profile and unbounded daily spend on purpose: `null` means
 "not requested" or "unbounded", and the canonical form must keep it.
 Changing anything in `policy.json` changes the expected digest.
+
+## Compiled output
+
+`target-kubernetes.json` and `target-linux.json` are pinned platform targets:
+declared capabilities, an explicit service map for each loopback entry, and
+the mount base (plus, for Kubernetes, the volume claim behind each root).
+`compiled-kubernetes.json` and `compiled-linux.json` are what
+`compileKubernetes` and `compileLinux` (`effective-policy-compile.ts`) return
+for `policy.json` and that target. They pin the shape only; neither is
+verified against a real cluster or kernel. The host names and addresses in
+the targets are test data (`192.0.2.0/24` is a documentation range).

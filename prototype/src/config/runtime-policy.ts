@@ -195,6 +195,23 @@ export const RUNTIME_PLATFORM_ENV: readonly string[] = Object.freeze([
   "TEMP",
 ]);
 
+const IPV4_LITERAL = /^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/;
+
+/** `host` is an address literal: IPv4, or IPv6 in brackets. */
+export function isAddressLiteral(host: string): boolean {
+  return host.startsWith("[") || IPV4_LITERAL.test(host);
+}
+
+/**
+ * `host` names this machine's loopback: `localhost`, `127.0.0.0/8` or
+ * `[::1]`. Inside another network namespace or a pod it names that
+ * environment's own loopback instead, so a platform compiler maps it.
+ */
+export function isLoopbackHost(host: string): boolean {
+  return host === "localhost" || host === "[::1]" ||
+    (IPV4_LITERAL.test(host) && host.startsWith("127."));
+}
+
 /** The fixed signaler the ACP runner's process-group contract uses. */
 const KILL_BINARY = "/bin/kill";
 

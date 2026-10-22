@@ -24,6 +24,8 @@ import { BUDGET_DEFAULTS, AGENT_DEFAULTS } from "./defaults.ts";
 import {
   type ComposedGrant,
   composeRuntimeGrants,
+  isAddressLiteral,
+  isLoopbackHost,
   type NetGrantSource,
   type RunGrantSource,
   type RuntimePolicy,
@@ -549,11 +551,9 @@ function splitHostPort(entry: string): { host: string; port: number } {
   return { host: entry.slice(0, colon), port: Number(entry.slice(colon + 1)) };
 }
 
-const IPV4 = /^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/;
-
-/** A host that needs a DNS answer to reach: not an address, not `localhost`. */
+/** A host that needs a DNS answer to reach: not an address, not loopback. */
 function needsDns(host: string): boolean {
-  return !(host.startsWith("[") || IPV4.test(host) || host === "localhost");
+  return !(isAddressLiteral(host) || isLoopbackHost(host));
 }
 
 const TLS_PORT = 443;

@@ -8,8 +8,8 @@
  * nameserver net grants, and the runtime's egress, spawn and env policy with
  * the guards that enforce it at the product's seams (`runtime-policy.ts`,
  * `egress.ts`, `spawn-guard.ts`), the effective policy built from that same
- * composition, with its digest and session-within-run check
- * (`effective-policy*.ts`; nothing enforces it yet), and the code fingerprint the runtime records
+ * composition, with its digest, session-within-run check and pure Kubernetes
+ * and Linux compilers (`effective-policy*.ts`; nothing enforces it yet), and the code fingerprint the runtime records
  * and its clients compare (`code-fingerprint.ts`). Nothing else in the runtime
  * reads the process environment directly.
  *
@@ -112,6 +112,8 @@ export {
   type ComposedRuntimeGrants,
   composeRuntimeGrants,
   composeRuntimePolicy,
+  isAddressLiteral,
+  isLoopbackHost,
   type NetGrantSource,
   nodePermissionArgs,
   RUNTIME_ENV_GRANTS,
@@ -145,6 +147,14 @@ export {
   PolicyEnvelopeError,
   type PolicyViolation,
 } from "./effective-policy-subset.ts";
+export {
+  compileKubernetes,
+  compileLinux,
+  type KubernetesTarget,
+  type LinuxTarget,
+  type PlatformCapabilities,
+  UnsupportedRightError,
+} from "./effective-policy-compile.ts";
 export {
   assertConnectAllowed,
   assertEgressAllowed,

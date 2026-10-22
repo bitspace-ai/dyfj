@@ -491,10 +491,13 @@ describe("the new modules' source", () => {
   const HOST_LITERALS: readonly [string, RegExp][] = [
     ["an IPv4 address", /\b[0-9]{1,3}(?:\.[0-9]{1,3}){3}\b/],
     ["an IPv6 loopback", /::1/],
-    ["localhost", /localhost/i],
+    // Kubernetes' `Localhost` seccomp type is not a host.
+    ["localhost", /\blocalhost\b/],
+    // In a string literal, so that a property access such as `runtime.net`
+    // is not taken for a host name.
     [
       "a host name",
-      /\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|ai|org|net|io|dev|test|internal|local|cluster)\b/i,
+      /["'`][a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|ai|org|net|io|dev|test|internal|local|cluster)\b/i,
     ],
   ];
 
