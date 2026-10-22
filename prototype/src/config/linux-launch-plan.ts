@@ -11,7 +11,7 @@
  * - the command the sandbox runs first: the launcher's helper, which applies
  *   the Landlock path sets and then starts the role's command.
  * - an nftables ruleset that lets the role's uid reach only the resolved
- *   policy entries and logs every other packet it sends before dropping it.
+ *   policy entries, and logs, counts and rejects every other packet it sends.
  *
  * Every host comes from the policy, by way of `compileLinux`; the addresses
  * come from the installer's resolution, never from this module. A named host
@@ -69,6 +69,8 @@ export interface LinuxLaunchPlan {
     readonly inner: readonly string[];
   };
   readonly landlock: LandlockPaths;
+  /** The writable mounts, where the supervisor lets a command start. */
+  readonly writableTargets: readonly string[];
   readonly nftables: string;
   readonly environment: readonly string[];
   readonly maxProcesses: number | null;
@@ -234,7 +236,9 @@ function nftables(
     `    meta skuid != ${template.uid} accept`,
     ...established,
     ...accepts,
-    `    log prefix "dyfj-drop ${template.role} " counter drop`,
+    // Rejected, not silently dropped: a refused connect fails at once with an
+    // errno instead of waiting out its retries. The counter is the evidence.
+    `    log prefix "dyfj-drop ${template.role} " counter reject with icmpx admin-prohibited`,
     "  }",
     "}",
     "",
@@ -245,9 +249,10 @@ function bwrapOptions(
   output: LinuxOutput,
   template: LaunchTemplate,
 ): string[] {
+  // `--unshare-all` only tries a user namespace; `--disable-userns` needs one.
   const namespaces = template.role === "runtime"
-    ? ["--unshare-all", "--share-net"]
-    : ["--unshare-all"];
+    ? ["--unshare-all", "--unshare-user", "--share-net"]
+    : ["--unshare-all", "--unshare-user"];
   const writable = output.mounts.find((mount) => !mount.readOnly);
   return [
     ...namespaces,
@@ -298,9 +303,11 @@ export function planLinuxLaunch(
   }
   if (offenders.length > 0) throw new LaunchPlanError(offenders);
 
+  // bubblewrap makes a private /proc and a /dev of the harmless device nodes;
+  // shells read the one and write /dev/null in the other.
   const landlock: LandlockPaths = {
-    read: [...template.systemReadOnly, ...output.landlock.read],
-    write: [...output.landlock.write],
+    read: [...template.systemReadOnly, "/proc", "/dev", ...output.landlock.read],
+    write: ["/dev", ...output.landlock.write],
     execute: [...output.landlock.execute],
   };
   return deepFreeze({
@@ -313,6 +320,7 @@ export function planLinuxLaunch(
       inner: [template.helper, "apply-landlock", JSON.stringify(landlock), "--"],
     },
     landlock,
+    writableTargets: [...output.landlock.write],
     nftables: nftables(output, template, resolved),
     environment: [...output.environment],
     maxProcesses: output.process.maxProcesses,

@@ -76,8 +76,9 @@ async function refusal(output: unknown, role: any, resolved: unknown = RESOLVED)
 describe("the runtime role", () => {
   it("shares the network namespace and unshares the rest", async () => {
     const result = await plan(compiled(), template("runtime"));
-    assert.deepStrictEqual(result.bwrap.options.slice(0, 3), [
+    assert.deepStrictEqual(result.bwrap.options.slice(0, 4), [
       "--unshare-all",
+      "--unshare-user",
       "--share-net",
       "--disable-userns",
     ]);
@@ -85,7 +86,7 @@ describe("the runtime role", () => {
 
   it("builds the mount view from the template and the policy, in order", async () => {
     const result = await plan(compiled(), template("runtime"));
-    assert.deepStrictEqual(result.bwrap.options.slice(3), [
+    assert.deepStrictEqual(result.bwrap.options.slice(4), [
       "--die-with-parent",
       "--new-session",
       "--cap-drop",
@@ -127,19 +128,29 @@ describe("the runtime role", () => {
     ]);
   });
 
-  it("grants the template's read-only paths read, and nothing more", async () => {
+  it("grants the template's read-only paths read, and the sandbox's own /proc and /dev", async () => {
     const result = await plan(compiled(), template("runtime"));
     assert.deepStrictEqual(result.landlock, {
       read: [
         "/usr",
         "/etc/ld.so.cache",
+        "/proc",
+        "/dev",
         "/run/dyfj/workspace",
         "/run/dyfj/toolchain",
         "/run/dyfj/scratch",
       ],
-      write: ["/run/dyfj/workspace", "/run/dyfj/scratch"],
+      write: ["/dev", "/run/dyfj/workspace", "/run/dyfj/scratch"],
       execute: ["/run/dyfj/toolchain"],
     });
+  });
+
+  it("names the writable mounts a command may start in", async () => {
+    const result = await plan(compiled(), template("runtime"));
+    assert.deepStrictEqual(result.writableTargets, [
+      "/run/dyfj/workspace",
+      "/run/dyfj/scratch",
+    ]);
   });
 
   it("filters the runtime uid's egress to the resolved policy entries", async () => {
@@ -159,7 +170,7 @@ describe("the runtime role", () => {
         "    ip daddr 192.0.2.10 tcp dport 3306 accept",
         "    ip daddr 192.0.2.53 udp dport 53 accept",
         "    ip daddr 192.0.2.10 tcp dport 8080 accept",
-        '    log prefix "dyfj-drop runtime " counter drop',
+        '    log prefix "dyfj-drop runtime " counter reject with icmpx admin-prohibited',
         "  }",
         "}",
         "",
@@ -207,14 +218,15 @@ describe("the runtime role", () => {
 describe("the executor role", () => {
   it("unshares every namespace, the network included", async () => {
     const result = await plan(offline(), template("executor"));
-    assert.deepStrictEqual(result.bwrap.options.slice(0, 2), [
+    assert.deepStrictEqual(result.bwrap.options.slice(0, 3), [
       "--unshare-all",
+      "--unshare-user",
       "--disable-userns",
     ]);
     assert.ok(!result.bwrap.options.includes("--share-net"));
   });
 
-  it("drops every packet its uid sends on the machine's own network", async () => {
+  it("refuses every packet its uid sends on the machine's own network", async () => {
     const result = await plan(offline(), template("executor"));
     assert.strictEqual(
       result.nftables,
@@ -225,7 +237,7 @@ describe("the executor role", () => {
         "  chain output {",
         "    type filter hook output priority filter; policy accept;",
         "    meta skuid != 2002 accept",
-        '    log prefix "dyfj-drop executor " counter drop',
+        '    log prefix "dyfj-drop executor " counter reject with icmpx admin-prohibited',
         "  }",
         "}",
         "",
