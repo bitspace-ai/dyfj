@@ -314,8 +314,9 @@ export interface RuntimePolicyInputs {
 /** Where a composed net entry came from. */
 export type NetGrantSource =
   | { readonly kind: "static"; readonly role: StaticNetRole }
-  | { readonly kind: "memory-mcp" }
-  | { readonly kind: "mcp-server" }
+  /** `tls`: the configured URL is https. */
+  | { readonly kind: "memory-mcp"; readonly tls: boolean }
+  | { readonly kind: "mcp-server"; readonly tls: boolean }
   | { readonly kind: "network-allow" }
   | { readonly kind: "nameserver" }
   | { readonly kind: "dolt-endpoint" };
@@ -401,8 +402,26 @@ const STATIC_RUN: Readonly<Record<StaticRunRole, RunGrantSource>> = {
   runner: Object.freeze({ kind: "static", role: "runner" }),
 };
 
-const MEMORY_MCP: NetGrantSource = Object.freeze({ kind: "memory-mcp" });
-const MCP_SERVER: NetGrantSource = Object.freeze({ kind: "mcp-server" });
+const MEMORY_MCP_TLS: NetGrantSource = Object.freeze({
+  kind: "memory-mcp",
+  tls: true,
+});
+const MEMORY_MCP_PLAIN: NetGrantSource = Object.freeze({
+  kind: "memory-mcp",
+  tls: false,
+});
+const MCP_SERVER_TLS: NetGrantSource = Object.freeze({
+  kind: "mcp-server",
+  tls: true,
+});
+const MCP_SERVER_PLAIN: NetGrantSource = Object.freeze({
+  kind: "mcp-server",
+  tls: false,
+});
+
+function isHttps(url: string): boolean {
+  return new URL(url).protocol === "https:";
+}
 const NETWORK_ALLOW: NetGrantSource = Object.freeze({ kind: "network-allow" });
 const NAMESERVER: NetGrantSource = Object.freeze({ kind: "nameserver" });
 const DOLT_ENDPOINT: NetGrantSource = Object.freeze({ kind: "dolt-endpoint" });
@@ -424,8 +443,21 @@ export function composeRuntimeGrants(
   inputs: RuntimePolicyInputs = {},
 ): ComposedRuntimeGrants {
   const net = fromTable(RUNTIME_NET_GRANT_TABLE, (role) => STATIC_NET[role]);
-  appendNew(net, [memoryMcpNetGrant(inputs.memoryMcpUrl)], MEMORY_MCP);
-  appendNew(net, mcpServerNetGrants(inputs.mcpServers ?? []), MCP_SERVER);
+  const memory = memoryMcpNetGrant(inputs.memoryMcpUrl);
+  if (memory !== null) {
+    appendNew(
+      net,
+      [memory],
+      isHttps(inputs.memoryMcpUrl!) ? MEMORY_MCP_TLS : MEMORY_MCP_PLAIN,
+    );
+  }
+  for (const server of inputs.mcpServers ?? []) {
+    appendNew(
+      net,
+      mcpServerNetGrants([server]),
+      isHttps(server.url) ? MCP_SERVER_TLS : MCP_SERVER_PLAIN,
+    );
+  }
   appendNew(net, inputs.networkAllow ?? [], NETWORK_ALLOW);
   appendNew(net, inputs.nameserverGrants ?? [], NAMESERVER);
 

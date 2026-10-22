@@ -121,7 +121,11 @@ export interface NetworkEntry {
   readonly protocol: NetworkProtocol;
   /** `none`, or `resolver:<host>:<port>` (the resolver that answers). */
   readonly dns: string;
-  /** `tls` when the host name is verified by the connection's certificate. */
+  /**
+   * `tls` when the host is named and reached over https, so the connection's
+   * certificate verifies the name: a hosted provider, or an MCP or memory
+   * endpoint whose configured URL is https. Otherwise `none`.
+   */
   readonly hostnameAssurance: HostnameAssurance;
 }
 
@@ -595,8 +599,6 @@ function needsDns(host: string): boolean {
   return !(isAddressLiteral(host) || isLoopbackHost(host));
 }
 
-const TLS_PORT = 443;
-
 function byBytes(a: string, b: string): number {
   return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
 }
@@ -644,6 +646,23 @@ function networkRole(sources: readonly NetGrantSource[]): NetworkRole {
   }
 }
 
+/**
+ * The source reaches its host over https, so the certificate verifies the host
+ * name: the hosted providers, and an MCP or memory endpoint configured with an
+ * https URL. A `[network] allow` entry names no scheme and claims none.
+ */
+function carriesTls(source: NetGrantSource): boolean {
+  switch (source.kind) {
+    case "static":
+      return source.role === "provider";
+    case "memory-mcp":
+    case "mcp-server":
+      return source.tls;
+    default:
+      return false;
+  }
+}
+
 function networkEntries(
   net: readonly ComposedGrant<NetGrantSource>[],
 ): NetworkEntry[] {
@@ -679,7 +698,7 @@ function networkEntries(
       port,
       protocol: role === "dns" ? "udp" : "tcp",
       dns,
-      hostnameAssurance: role !== "dns" && needsDns(host) && port === TLS_PORT
+      hostnameAssurance: needsDns(host) && sources.some(carriesTls)
         ? "tls"
         : "none",
     };

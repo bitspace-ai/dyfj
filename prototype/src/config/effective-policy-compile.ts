@@ -326,6 +326,10 @@ function commonOffenders(
       if (resolverMapped !== undefined) {
         checkService(resolverMapped, `${path}.dns`, report);
       }
+      const granted = policy.network.entries.some((other) =>
+        other.role === "dns" && `${other.host}:${other.port}` === resolver
+      );
+      if (!granted) report("network", `${path}.dns`, "resolver-not-granted");
     }
     if (!capabilities.protocols.includes(entry.protocol)) {
       report("network", `${path}.protocol`, entry.protocol);

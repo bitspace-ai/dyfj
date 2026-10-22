@@ -99,6 +99,23 @@ describe("composeRuntimeGrants", () => {
     assert.strictEqual(provider.dns, "resolver:192.0.2.53:53");
   });
 
+  it("takes TLS hostname assurance from the configured scheme, not the port", () => {
+    const policy = composeEffectivePolicy({
+      mcpServers: [
+        { url: "http://127.0.0.1:443/mcp" } as never,
+        { url: "https://mcp.example.test:8443/mcp" } as never,
+      ],
+      networkAllow: ["api.example.test:443"],
+    }, ENVELOPE);
+    const assurance = (host: string, port: number) =>
+      policy.network.entries.find((e) => e.host === host && e.port === port)!
+        .hostnameAssurance;
+    assert.strictEqual(assurance("127.0.0.1", 443), "none");
+    assert.strictEqual(assurance("mcp.example.test", 8443), "tls");
+    assert.strictEqual(assurance("api.example.test", 443), "none");
+    assert.strictEqual(assurance("api.anthropic.com", 443), "tls");
+  });
+
   it("gives a Dolt endpoint also listed in [network] allow the database role", () => {
     const policy = composeEffectivePolicy({
       networkAllow: ["127.0.0.1:3307"],

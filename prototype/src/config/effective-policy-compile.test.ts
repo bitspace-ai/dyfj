@@ -605,11 +605,11 @@ describe("the pre-gate cases", () => {
     it(`refuses a resolver on an impossible port, on ${platform}`, async () => {
       const policy = golden();
       policy.network.entries[0].dns = "resolver:192.0.2.53:99999";
-      await assertRefused(platform, sealed(policy), target(platform), {
-        group: "network",
-        path: "network.entries[0].dns",
-        right: "host-invalid",
-      });
+      const found = await offenders(platform, sealed(policy), target(platform));
+      assert.deepStrictEqual(found, [
+        { group: "network", path: "network.entries[0].dns", right: "host-invalid" },
+        { group: "network", path: "network.entries[0].dns", right: "resolver-not-granted" },
+      ]);
     });
 
     it(`refuses a root source that is not a canonical absolute path, on ${platform}`, async () => {
@@ -653,10 +653,20 @@ describe("the pre-gate cases", () => {
     it(`refuses a loopback resolver with no mapping, on ${platform}`, async () => {
       const policy = golden();
       policy.network.entries[0].dns = "resolver:127.0.0.53:53";
+      const found = await offenders(platform, sealed(policy), target(platform));
+      assert.deepStrictEqual(found, [
+        { group: "network", path: "network.entries[0].dns", right: "loopback-unmapped" },
+        { group: "network", path: "network.entries[0].dns", right: "resolver-not-granted" },
+      ]);
+    });
+
+    it(`refuses a resolver the policy grants no DNS entry for, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries[0].dns = "resolver:198.51.100.53:53";
       await assertRefused(platform, sealed(policy), target(platform), {
         group: "network",
         path: "network.entries[0].dns",
-        right: "loopback-unmapped",
+        right: "resolver-not-granted",
       });
     });
   }
