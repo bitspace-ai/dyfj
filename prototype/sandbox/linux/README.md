@@ -12,7 +12,7 @@ contained by this.
 
 | Role | uid | Sandbox | Network | Holds |
 |---|---|---|---|---|
-| Runtime | `dyfj-rt` | Own user, PID, IPC, UTS, cgroup and mount namespaces. Landlock: workspace read-write without execute; toolchain and code read-execute. | Machine network. A per-uid nftables chain allows only the policy's resolved destinations, and rejects the rest (TCP with a reset). | Its bootstrap secrets, as files in `/secrets`. |
+| Runtime | `dyfj-rt` | Own user, PID, IPC, UTS, cgroup and mount namespaces. Landlock: workspace read-write without direct execute; toolchain and code read-execute. | Machine network. A per-uid nftables chain allows only the policy's resolved destinations, and rejects the rest (TCP with a reset). | Its bootstrap secrets, as files in `/secrets`. |
 | Executor | `dyfj-ex` | Every namespace, the network included (`lo` only). Landlock: workspace read-write-execute; toolchain read-execute. No nested user namespaces, no capabilities, no new privileges. | None. | Nothing. Only the bash tool's command environment. |
 | CLI | `dyfj-cli` | Runtime-shaped sandbox with its own home. | Its provider and login hosts only. | Its own model login. |
 | Database | `dyfj-db` | systemd unit. | Loopback `127.0.0.1:3306`, reachable only by roles whose policy names it. | The machine's own Dolt store. |
@@ -54,6 +54,15 @@ repository.
 - **The CLI's model login.** A login made inside the machine stays in
   `dyfj-cli`'s home. The executor cannot read it, but the CLI's own commands
   can.
+- **The execute floor covers direct execution only.** Landlock's execute
+  right governs `execve`. The dynamic loader (`ld-linux`) and the
+  interpreters are allowed toolchain files, and they map or read the program
+  they are given. So a role can still run a binary or script it can read,
+  from the workspace or scratch, through the loader or an interpreter. The
+  acceptance run records this as a residual: direct execution of a workspace
+  binary is refused with `EACCES`, and the same binary run through
+  `ld-linux-aarch64.so.1` succeeds. The floor stops a stray `execve` of a
+  dropped file, not arbitrary computation.
 - **The runtime's own secrets.** A compromised runtime dependency can use the
   runtime's secrets and reach its allowed destinations. The boundary stops it
   from reaching anything else.

@@ -12,7 +12,8 @@
  * From the composition and the profile it derives:
  * - the run envelope: the composed policy with the machine's filesystem
  *   roots (toolchain, code, workspace, runtime home, secrets) and a tmpfs;
- * - the runtime role: the workspace without execute, and only the network
+ * - the runtime role: the workspace without direct execute (the dynamic
+ *   loader can still run a readable binary from it), and only the network
  *   entries the run needs here: the database, the resolver, operator
  *   additions, and each `tls` provider the profile accepts enforced by address
  *   set. Other providers and local model servers are dropped;

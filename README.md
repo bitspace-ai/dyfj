@@ -705,6 +705,8 @@ and writes that persist only in the workspace (besides private scratch). A trans
 with a local spawn. Killing the runtime kills its executors. Approval is
 unchanged. The residuals are stated in that directory's README:
 - every machine shares one VM kernel;
+- the Landlock execute floor covers direct `execve` only, so a readable binary
+  still runs through the dynamic loader;
 - provider egress is filtered by resolved address set rather than hostname, so
   a CDN's neighbours are reachable;
 - the CLIs' own shells and model logins stay in the CLI role.

@@ -15,9 +15,13 @@ import process from "node:process";
 const allowedHost = process.argv[2];
 
 // A refusal must be an error the kernel or firewall returned: a timeout alone
-// proves nothing (design §8).
+// proves nothing (design §8). A "residual" probe records what really happens
+// for a gap the boundary is known not to close; it passes either way, and its
+// outcome is the evidence.
 function report(probe, expect, outcome) {
-  const pass = expect === "allowed"
+  const pass = expect === "residual"
+    ? true
+    : expect === "allowed"
     ? outcome === "ok"
     : outcome !== "ok" && outcome !== "TIMEOUT" && outcome !== "sent";
   process.stdout.write(`${JSON.stringify({ probe, expect, outcome, pass })}\n`);
@@ -91,3 +95,21 @@ report(
   }),
 );
 report("execute a toolchain binary", "allowed", attempt(() => execFileSync("/usr/bin/true")));
+
+// Landlock's execute right governs execve. The dynamic loader is itself an
+// allowed toolchain file, and it maps the program it is given with mmap,
+// which needs only read: so a readable copy of a binary in the workspace can
+// still be run through the loader.
+const LOADER = fs.readdirSync("/usr/lib").find((name) => /^ld-linux.*\.so\.\d+$/.test(name));
+fs.copyFileSync("/usr/bin/true", "/work/synthetic-true");
+fs.chmodSync("/work/synthetic-true", 0o755);
+report(
+  "execute a workspace copy of a binary directly",
+  "refused",
+  attempt(() => execFileSync("/work/synthetic-true")),
+);
+report(
+  `run a workspace copy of a binary through the dynamic loader (/usr/lib/${LOADER})`,
+  "residual",
+  attempt(() => execFileSync(`/usr/lib/${LOADER}`, ["/work/synthetic-true"])),
+);

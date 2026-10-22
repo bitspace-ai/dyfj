@@ -49,6 +49,9 @@ README are tracked separately in its Revision history section.
   - provider egress is enforced by address set, so other hosts behind the same
     provider addresses (a CDN's neighbours) are reachable until a
     hostname-checking gateway removes the downgrade;
+  - the Landlock execute floor covers direct `execve` only: a role can still
+    run a readable binary through the dynamic loader, or a script through an
+    interpreter, which the acceptance run records;
   - the CLIs' own shells and model logins stay in the CLI role;
   - workspace git metadata is writable, so nothing outside the executor runs
     git where the executor writes: the runtime's git and bash tools run in the

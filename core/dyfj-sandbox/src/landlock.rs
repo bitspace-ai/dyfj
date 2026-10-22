@@ -3,7 +3,8 @@
 //! access the kernel's ABI can handle is handled, so a path not listed for a
 //! right is denied it. ABI 3 (truncation) is the minimum: below it a file that
 //! is only readable could still be truncated, and the floor is refused rather
-//! than weakened.
+//! than weakened. Execute governs `execve` only: an allowed dynamic loader or
+//! interpreter can still run a program it is able to read.
 
 use crate::plan::LandlockPaths;
 use std::collections::BTreeMap;
