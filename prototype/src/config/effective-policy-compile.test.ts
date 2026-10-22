@@ -570,7 +570,7 @@ describe("the pre-gate cases", () => {
       });
     });
 
-    it(`denies execute on a writable root that lacks it, on ${platform}`, async () => {
+    it(`leaves a writable root without execute out of the execute paths, on ${platform}`, async () => {
       const output: any = await compile(
         platform,
         parseEffectivePolicy(golden()),
@@ -590,6 +590,43 @@ describe("the pre-gate cases", () => {
       const net = compiledNet(platform, output);
       assert.strictEqual(net[0].dns, "resolver:198.51.100.53:53");
       assert.strictEqual(net[2].host, "198.51.100.53");
+    });
+
+    it(`refuses a Dolt endpoint that is not a canonical host and port, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.dolt = "bad host:3306";
+      await assertRefused(platform, sealed(policy), target(platform), {
+        group: "network",
+        path: "network.dolt",
+        right: "host-invalid",
+      });
+    });
+
+    it(`refuses a resolver on an impossible port, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries[0].dns = "resolver:192.0.2.53:99999";
+      await assertRefused(platform, sealed(policy), target(platform), {
+        group: "network",
+        path: "network.entries[0].dns",
+        right: "host-invalid",
+      });
+    });
+
+    it(`refuses a root source that is not a canonical absolute path, on ${platform}`, async () => {
+      for (const source of ["relative/work", "/srv/work/../secrets", "/srv//work"]) {
+        const policy = golden();
+        policy.filesystem.roots[0].source = source;
+        const input = target(platform);
+        if (platform === "kubernetes") input.volumes.push({ source: "/", claim: "all" });
+        const found = await offenders(platform, sealed(policy), input);
+        assert.ok(
+          found.some((o) =>
+            o.path === "filesystem.roots[0].source" &&
+            o.right === "source-not-canonical"
+          ),
+          source,
+        );
+      }
     });
 
     it(`refuses a loopback resolver with no mapping, on ${platform}`, async () => {

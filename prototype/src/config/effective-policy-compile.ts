@@ -225,12 +225,16 @@ function checkService(service: ServiceMapping, path: string, report: Report) {
   if (!isCanonicalHost(service.host)) {
     report(group, path, "service-host-invalid");
   }
-  if (
-    !Number.isSafeInteger(service.port) || service.port < 1 ||
-    service.port > 65535
-  ) {
-    report(group, path, "service-port-invalid");
-  }
+  if (!isPort(service.port)) report(group, path, "service-port-invalid");
+}
+
+function isPort(port: number): boolean {
+  return Number.isSafeInteger(port) && port >= 1 && port <= 65535;
+}
+
+function portOf(entry: string): number {
+  const text = entry.slice(entry.lastIndexOf(":") + 1);
+  return /^[0-9]{1,5}$/.test(text) ? Number(text) : NaN;
 }
 
 /** A mount name: one path segment, never `.` or `..`. */
@@ -271,6 +275,9 @@ function commonOffenders(
         report("filesystem", `${path}.rights`, right);
       }
     }
+    if (segments(root.source) === null) {
+      report("filesystem", `${path}.source`, "source-not-canonical");
+    }
     if (!MOUNT_NAME.test(root.target)) {
       report("filesystem", `${path}.target`, "mount-target-invalid");
     } else if (
@@ -304,7 +311,7 @@ function commonOffenders(
     const resolver = resolverEntry(entry.dns);
     if (resolver !== null) {
       const resolverMapped = mapping(target.services, resolver);
-      if (!isCanonicalHost(hostOf(resolver))) {
+      if (!isCanonicalHost(hostOf(resolver)) || !isPort(portOf(resolver))) {
         report("network", `${path}.dns`, "host-invalid");
       } else if (
         isLoopbackHost(hostOf(resolver)) && resolverMapped === undefined
@@ -328,7 +335,9 @@ function commonOffenders(
   const dolt = policy.network.dolt;
   if (dolt !== null) {
     const doltMapped = mapping(target.services, dolt);
-    if (isLoopbackHost(hostOf(dolt)) && doltMapped === undefined) {
+    if (!isCanonicalHost(hostOf(dolt)) || !isPort(portOf(dolt))) {
+      report("network", "network.dolt", "host-invalid");
+    } else if (isLoopbackHost(hostOf(dolt)) && doltMapped === undefined) {
       report("network", "network.dolt", "loopback-unmapped");
     }
     if (doltMapped !== undefined) {

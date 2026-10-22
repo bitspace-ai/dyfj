@@ -85,6 +85,16 @@ describe("composeRuntimeGrants", () => {
     assert.strictEqual(provider.dns, "resolver:192.0.2.53:53");
   });
 
+  it("keeps a nameserver's UDP role over an MCP endpoint on the same host and port", () => {
+    const policy = composeEffectivePolicy({
+      mcpServers: [{ url: "http://192.0.2.53:53/mcp" } as never],
+      nameserverGrants: ["192.0.2.53:53"],
+    }, ENVELOPE);
+    const entry = policy.network.entries.find((e) => e.host === "192.0.2.53")!;
+    assert.strictEqual(entry.role, "dns");
+    assert.strictEqual(entry.protocol, "udp");
+  });
+
   it("gives a Dolt endpoint also listed in [network] allow the database role", () => {
     const policy = composeEffectivePolicy({
       networkAllow: ["127.0.0.1:3307"],

@@ -7,9 +7,11 @@
  * Canonical JSON: no whitespace; object keys sorted recursively by their UTF-8
  * bytes; keys whose value is `undefined` left out; integers only (spend is
  * integer micro-USD, so float formatting never reaches a digest); `null` kept,
- * because it means "not requested" or "unbounded". Every array is a set: its
- * elements are canonicalized first, then sorted by the UTF-8 bytes of each
- * element's canonical JSON, so composition order never reaches the digest.
+ * because it means "not requested" or "unbounded". Every array is treated as
+ * a set: its elements are canonicalized first, then sorted by the UTF-8 bytes
+ * of each element's canonical JSON, so composition order never reaches the
+ * digest. Duplicates are kept here; `parseEffectivePolicy` refuses them, so a
+ * parsed policy's arrays are sets.
  *
  * This module is pure: it opens no file and reads no clock, environment or
  * randomness. It takes the policy as plain data and imports nothing from the

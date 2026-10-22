@@ -19,7 +19,10 @@
  * `null` in a limit means unbounded. Spend is integer micro-USD.
  */
 
-import { policyDigest } from "./effective-policy-digest.ts";
+import {
+  canonicalPolicyJson,
+  policyDigest,
+} from "./effective-policy-digest.ts";
 import { BUDGET_DEFAULTS, AGENT_DEFAULTS } from "./defaults.ts";
 import {
   type ComposedGrant,
@@ -264,7 +267,18 @@ function list<T>(
   if (!Array.isArray(value)) {
     throw new Error(`effective policy: ${path} must be an array`);
   }
-  return value.map((element, index) => each(element, `${path}[${index}]`));
+  const parsed = value.map((element, index) => each(element, `${path}[${index}]`));
+  // Every list is a set: the digest sorts it, so a duplicate would make two
+  // policies that grant the same thing hash differently.
+  const seen = new Set<string>();
+  parsed.forEach((element, index) => {
+    const key = canonicalPolicyJson(element);
+    if (seen.has(key)) {
+      throw new Error(`effective policy: ${path}[${index}] is a duplicate`);
+    }
+    seen.add(key);
+  });
+  return parsed;
 }
 
 const CREDENTIAL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -563,16 +577,19 @@ function byBytes(a: string, b: string): number {
 }
 
 /**
- * The source that names an entry's role when several added it: the most
- * specific one. A nameserver also listed in `[network] allow` stays a
- * nameserver, and the Dolt endpoint stays the database.
+ * The source that names an entry's role when several added it, highest
+ * first. One entry has one protocol, so when two sources need different ones
+ * for the same `host:port` only the higher keeps its transport, and the other
+ * is refused at the seams rather than widened. A nameserver ranks above the
+ * MCP and memory endpoints, because DNS is infrastructure the platform must
+ * see as UDP; `[network] allow` ranks last.
  */
 const NET_SOURCE_PRECEDENCE: readonly NetGrantSource["kind"][] = [
   "static",
   "dolt-endpoint",
+  "nameserver",
   "memory-mcp",
   "mcp-server",
-  "nameserver",
   "network-allow",
 ];
 
