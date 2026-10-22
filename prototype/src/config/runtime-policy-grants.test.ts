@@ -123,6 +123,31 @@ describe("composeRuntimeGrants", () => {
     assert.strictEqual(assurance("api.anthropic.com", 443), "tls");
   });
 
+  it("claims TLS for an entry only when every source reaches it over https", () => {
+    const policy = composeEffectivePolicy({
+      mcpServers: [
+        { url: "https://mcp.example.test:8443/mcp" } as never,
+        { url: "http://mcp.example.test:8443/other" } as never,
+      ],
+      networkAllow: ["api.openai.com:443"],
+    }, ENVELOPE);
+    const assurance = (host: string) =>
+      policy.network.entries.find((e) => e.host === host)!.hostnameAssurance;
+    assert.strictEqual(assurance("mcp.example.test"), "none");
+    assert.strictEqual(assurance("api.openai.com"), "none");
+    assert.strictEqual(assurance("api.anthropic.com"), "tls");
+  });
+
+  it("gives a Dolt endpoint on a static port the database role, so it compiles", () => {
+    const policy = composeEffectivePolicy({
+      dolt: { host: "127.0.0.1", port: 8080 },
+    }, ENVELOPE);
+    const entry = policy.network.entries.find((e) =>
+      e.host === "127.0.0.1" && e.port === 8080
+    )!;
+    assert.strictEqual(entry.role, "dolt");
+  });
+
   it("gives a Dolt endpoint also listed in [network] allow the database role", () => {
     const policy = composeEffectivePolicy({
       networkAllow: ["127.0.0.1:3307"],

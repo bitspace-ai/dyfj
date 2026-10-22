@@ -122,9 +122,10 @@ export interface NetworkEntry {
   /** `none`, or `resolver:<host>:<port>` (the resolver that answers). */
   readonly dns: string;
   /**
-   * `tls` when the host is named and reached over https, so the connection's
-   * certificate verifies the name: a hosted provider, or an MCP or memory
-   * endpoint whose configured URL is https. Otherwise `none`.
+   * `tls` when the host is named and every source that grants this entry
+   * reaches it over https (a hosted provider, or an MCP or memory endpoint
+   * whose configured URL is https), so each permitted connection's
+   * certificate verifies the name. Otherwise `none`.
    */
   readonly hostnameAssurance: HostnameAssurance;
 }
@@ -608,8 +609,10 @@ function byBytes(a: string, b: string): number {
  * same transport added it, highest first: the most specific.
  */
 const NET_SOURCE_PRECEDENCE: readonly NetGrantSource["kind"][] = [
-  "static",
+  // The configured Dolt endpoint is the database even on a port a static
+  // row grants for something else.
   "dolt-endpoint",
+  "static",
   "nameserver",
   "memory-mcp",
   "mcp-server",
@@ -647,7 +650,7 @@ function networkRole(sources: readonly NetGrantSource[]): NetworkRole {
 
 /**
  * The source reaches its host over https, so the certificate verifies the host
- * name: the hosted providers, and an MCP or memory endpoint configured with an
+ * name. An entry claims `tls` only when every source does: the hosted providers, and an MCP or memory endpoint configured with an
  * https URL. A `[network] allow` entry names no scheme and claims none.
  */
 function carriesTls(source: NetGrantSource): boolean {
@@ -709,7 +712,7 @@ function networkEntries(
         dns: role !== "dns" && needsDns(host) && resolver !== undefined
           ? `resolver:${resolver}`
           : "none",
-        hostnameAssurance: needsDns(host) && group.some(carriesTls)
+        hostnameAssurance: needsDns(host) && group.every(carriesTls)
           ? "tls"
           : "none",
       };
