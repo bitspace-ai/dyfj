@@ -54,7 +54,7 @@ printf '%s' "$CANARY_TOKEN" | install -o root -g root -m 0600 /dev/stdin /srv/dy
 echo "planted a runtime secret and a service-token fixture (random, synthetic)"
 
 echo "== 1. synthetic dependency in the runtime role (no product guards)"
-before=$(counter dyfj_runtime)
+before=$(counter dyfj_runtime); before=${before:-0}
 dep=$(in_role runtime "" node "$HERE/synthetic-dependency.mjs" "$ALLOWED" 2>&1)
 after=$(counter dyfj_runtime)
 while IFS= read -r json; do
@@ -119,7 +119,7 @@ expect tcp_descendant "descendant socket refused" "unreachable|refused|not permi
 expect write_outside "write outside the workspace refused" "Read-only|Permission denied"
 expect write_workspace "write in the workspace allowed" "^written$"
 expect sudo "cannot become root (sudo)" "not found|no new privileges|must be owned|effective uid|not allowed|Permission denied"
-expect su "cannot become root (su)" "not found|failure|Permission denied|must be run|cannot"
+expect su "cannot become root (su)" "not found|failure|Permission denied|must be run|cannot|Critical error"
 expect nested_userns "cannot nest a user namespace" "No space left|Operation not permitted|Permission denied"
 expect nft_edit "cannot edit firewall rules" "not found|Operation not permitted|Permission denied"
 expect uid "runs as the executor uid" "^$(id -u dyfj-ex)$"
@@ -161,9 +161,9 @@ rm -rf "${WORK:?}"/* "${WORK:?}"/.git 2>/dev/null
 loop=$("${CLEAN_ENV[@]}" "$SANDBOX" serve --runtime-plan "$PLANS/runtime.plan.json" --executor-plan "$PLANS/executor.plan.json" \
   --socket "$SOCKET" -- node "$HERE/loop-probe.ts" 2>&1)
 echo "$loop" | sed 's/^/      /'
-grep -q 'pass 1' <<<"$loop" && result pass "loop: tests pass in the executor" "$(grep -o '# pass [0-9]*' <<<"$loop" | head -1)" \
+grep -q 'tests in the executor.*exit 0.*pass 1.*fail 0' <<<"$loop" && result pass "loop: tests pass in the executor" "$(grep 'tests in the executor' <<<"$loop")" \
   || result fail "loop: tests pass in the executor" "see output"
-grep -q 'L8: harmless edit' <<<"$loop" && result pass "loop: local commit made" "$(git -C "$WORK" log --oneline -1 2>&1)" \
+grep -q 'local commit in the executor.*exit 0.*L8: harmless edit' <<<"$loop" && result pass "loop: local commit made" "$(grep 'local commit' <<<"$loop")" \
   || result fail "loop: local commit made" "see output"
 grep -q "\"output\":\"exit 0\\\\ndyfj-ex\"" <<<"$loop" && result pass "loop: commands ran as the executor uid" "dyfj-ex" \
   || result fail "loop: commands ran as the executor uid" "$(grep whoami <<<"$loop")"

@@ -58,7 +58,7 @@ if (mode === "hold") {
   );
   line("harmless edit by the runtime", "wrote greeting.mjs and greeting.test.mjs");
   line("whoami in the executor", await run("id -un 2>/dev/null || id -u"));
-  line("tests in the executor", await run("node --test greeting.test.mjs 2>&1 | grep -E '^# (pass|fail)'"));
+  line("tests in the executor", await run("node --test greeting.test.mjs 2>&1 | grep -E '(pass|fail) [0-9]+$' | tr -d 'ℹ#'"));
   line("local commit in the executor", await run(
     "git add greeting.mjs greeting.test.mjs && git commit -qm 'L8: harmless edit' && git log --oneline -1",
   ));

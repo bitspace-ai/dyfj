@@ -93,14 +93,18 @@ install -d -o dyfj-ex -g dyfj-work -m 2770 "/srv/dyfj/work/$RUN"
 printf '[safe]\n\tdirectory = /work\n' >/etc/gitconfig
 install -o root -g root -m 0755 "$STAGING/dyfj-sandbox" /usr/libexec/dyfj/dyfj-sandbox
 
-# /run is a tmpfs, so the secrets directory is recreated at every boot by the
-# tmpfiles rule; the broker writes each value into it as a 0400 file.
+# /run is a tmpfs, so the secrets directory and the executor socket's
+# directory are recreated at every boot by the tmpfiles rule. The broker
+# writes each secret into the first as a 0400 file.
 cat >/etc/tmpfiles.d/dyfj.conf <<EOF
 d /run/dyfj 0755 root root -
 d /run/dyfj/secrets 0700 dyfj-rt dyfj-work -
+d /run/dyfj-exec 0750 root dyfj-work -
 EOF
-systemd-tmpfiles --create /etc/tmpfiles.d/dyfj.conf 2>/dev/null ||
+systemd-tmpfiles --create /etc/tmpfiles.d/dyfj.conf 2>/dev/null || {
   install -d -o dyfj-rt -g dyfj-work -m 0700 /run/dyfj/secrets
+  install -d -o root -g dyfj-work -m 0750 /run/dyfj-exec
+}
 
 echo "== workbench code"
 rm -rf /opt/dyfj
