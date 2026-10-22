@@ -11,9 +11,11 @@
 import { writeFileSync } from "node:fs";
 import process from "node:process";
 import { defineBash } from "../../src/tools/builtin/exec.ts";
+import { nodeSocketHost } from "../../src/transport/mod.ts";
 
 const ROOT = "/work";
-const bash = defineBash(ROOT);
+// As the engine's composition root does: the transport's socket connect.
+const bash = defineBash(ROOT, { dialExecutor: nodeSocketHost.connect });
 const context = { authzBasis: "policy:allow:operator-approved" };
 
 async function run(command: string, timeoutSec = 120): Promise<string> {
