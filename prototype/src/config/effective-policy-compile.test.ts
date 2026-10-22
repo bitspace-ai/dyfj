@@ -662,6 +662,51 @@ describe("the pre-gate cases", () => {
   }
 });
 
+describe("the fifth-pass cases", () => {
+  it("refuses a mount name that is not a Kubernetes volume name", async () => {
+    for (const name of ["Work_space", "work.space", "-work"]) {
+      const policy = golden();
+      policy.filesystem.roots[0].target = name;
+      const found = await offenders("kubernetes", sealed(policy), target("kubernetes"));
+      assert.ok(
+        found.some((o) =>
+          o.path === "filesystem.roots[0].target" &&
+          o.right === "volume-name-invalid"
+        ),
+        name,
+      );
+    }
+  });
+
+  it("accepts on Linux a mount name Kubernetes would refuse", async () => {
+    const policy = golden();
+    policy.filesystem.roots[0].target = "Work_space";
+    const output: any = await compile("linux", sealed(policy), target("linux"));
+    assert.strictEqual(output.mounts[0].target, "/run/dyfj/Work_space");
+  });
+
+  for (const platform of PLATFORMS) {
+    it(`joins a root mount base without a double separator, on ${platform}`, async () => {
+      const input = target(platform);
+      input.mountBase = "/";
+      const output: any = await compile(platform, parseEffectivePolicy(golden()), input);
+      assert.ok(output.landlock.read.includes("/workspace"));
+      assert.ok(!JSON.stringify(output).includes("//workspace"));
+    });
+  }
+
+  it("refuses an impossible calendar date as the expiry", () => {
+    for (const stamp of ["2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-12-31T24:00:00Z"]) {
+      const policy = golden();
+      policy.identity.expiresAt = stamp;
+      assert.throws(() => parseEffectivePolicy(policy), /ISO 8601 UTC instant/, stamp);
+    }
+    const leap = golden();
+    leap.identity.expiresAt = "2028-02-29T00:00:00Z";
+    assert.doesNotThrow(() => parseEffectivePolicy(leap));
+  });
+});
+
 describe("every offender is reported at once", () => {
   for (const platform of PLATFORMS) {
     it(`lists offenders from every group, in policy order, for ${platform}`, async () => {

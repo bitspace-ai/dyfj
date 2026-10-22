@@ -290,7 +290,13 @@ const UTC_INSTANT =
 
 function instant(value: unknown, path: string): string {
   const stamp = text(value, path);
-  if (!UTC_INSTANT.test(stamp) || Number.isNaN(Date.parse(stamp))) {
+  const parsed = Date.parse(stamp);
+  // `Date.parse` rolls an impossible date (February 30) into the next month;
+  // printing it back catches that.
+  if (
+    !UTC_INSTANT.test(stamp) || Number.isNaN(parsed) ||
+    new Date(parsed).toISOString().slice(0, 19) !== stamp.slice(0, 19)
+  ) {
     throw new Error(
       `effective policy: ${path} must be an ISO 8601 UTC instant`,
     );

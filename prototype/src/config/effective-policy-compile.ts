@@ -137,8 +137,9 @@ export interface CiliumEgressRule {
 
 /**
  * The mount paths with each filesystem right. A path not listed for a right
- * is denied it: a writable workspace without `execute` cannot run what it
- * holds, which a mount's read-only flag alone cannot say.
+ * is denied it, so a writable workspace without `execute` gets no direct
+ * execute permission, which a mount's read-only flag alone cannot say. An
+ * allowed interpreter can still read and run a script from it.
  */
 export interface LandlockPaths {
   readonly read: readonly string[];
@@ -418,7 +419,7 @@ function doltEndpoint(
 }
 
 function mountPath(target: CommonTarget, name: string): string {
-  return `${target.mountBase}/${name}`;
+  return target.mountBase === "/" ? `/${name}` : `${target.mountBase}/${name}`;
 }
 
 function ciliumRule(entry: CompiledEgress): CiliumEgressRule {
@@ -501,6 +502,9 @@ function copyExecutables(policy: EffectivePolicy): ExecutableGrant[] {
   return policy.processes.executables.map((executable) => ({ ...executable }));
 }
 
+/** A Kubernetes volume name: a DNS-1123 label. Mount names become these. */
+const VOLUME_NAME = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
+
 /** The pod description for `policy` on the cluster `target` describes. */
 export function compileKubernetes(
   policy: EffectivePolicy,
@@ -508,6 +512,21 @@ export function compileKubernetes(
 ): KubernetesOutput {
   refuseUnlessClean("kubernetes", (report) => {
     commonOffenders(policy, target, report);
+    policy.filesystem.roots.forEach((root, index) => {
+      if (MOUNT_NAME.test(root.target) && !VOLUME_NAME.test(root.target)) {
+        report(
+          "filesystem",
+          `filesystem.roots[${index}].target`,
+          "volume-name-invalid",
+        );
+      }
+    });
+    const scratch = policy.filesystem.scratch;
+    if (
+      scratch !== null && MOUNT_NAME.test(scratch) && !VOLUME_NAME.test(scratch)
+    ) {
+      report("filesystem", "filesystem.scratch", "volume-name-invalid");
+    }
     policy.filesystem.roots.forEach((root, index) => {
       if (volumeFor(target, root.source) === null) {
         report("filesystem", `filesystem.roots[${index}]`, "volume-unmapped");
