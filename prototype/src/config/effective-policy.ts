@@ -90,7 +90,7 @@ export interface IdentityGroup {
   readonly job: string;
   readonly run: string;
   readonly repositories: readonly string[];
-  /** An input (ISO 8601 UTC). Never read from a clock. */
+  /** An input, an ISO 8601 UTC instant (`Z`). Never read from a clock. */
   readonly expiresAt: string;
   /** `sha256:<hex>` of the rest of the policy (`effective-policy-digest.ts`). */
   readonly digest: string;
@@ -285,6 +285,19 @@ const CREDENTIAL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const EXECUTABLE_DIGEST = /^sha256:[0-9a-f]{64}$/;
 const DNS_BEHAVIOUR = /^(?:none|resolver:\S+:[0-9]{1,5})$/;
 
+const UTC_INSTANT =
+  /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,3})?Z$/;
+
+function instant(value: unknown, path: string): string {
+  const stamp = text(value, path);
+  if (!UTC_INSTANT.test(stamp) || Number.isNaN(Date.parse(stamp))) {
+    throw new Error(
+      `effective policy: ${path} must be an ISO 8601 UTC instant`,
+    );
+  }
+  return stamp;
+}
+
 function credentialName(value: unknown, path: string): string {
   const name = text(value, path);
   if (!CREDENTIAL_NAME.test(name)) {
@@ -318,7 +331,7 @@ function parseIdentity(value: unknown): IdentityGroup {
     job: text(fields["job"], "identity.job"),
     run: text(fields["run"], "identity.run"),
     repositories: list(fields["repositories"], "identity.repositories", text),
-    expiresAt: text(fields["expiresAt"], "identity.expiresAt"),
+    expiresAt: instant(fields["expiresAt"], "identity.expiresAt"),
     digest: text(fields["digest"], "identity.digest"),
   };
 }
@@ -578,11 +591,8 @@ function byBytes(a: string, b: string): number {
 
 /**
  * The source that names an entry's role when several added it, highest
- * first. One entry has one protocol, so when two sources need different ones
- * for the same `host:port` only the higher keeps its transport, and the other
- * is refused at the seams rather than widened. A nameserver ranks above the
- * MCP and memory endpoints, because DNS is infrastructure the platform must
- * see as UDP; `[network] allow` ranks last.
+ * first: the most specific. Only sources that need the same transport can
+ * share an entry; `networkEntries` refuses the rest.
  */
 const NET_SOURCE_PRECEDENCE: readonly NetGrantSource["kind"][] = [
   "static",
@@ -636,6 +646,18 @@ function networkEntries(
   return net.map(({ entry, sources }): NetworkEntry => {
     const { host, port } = splitHostPort(entry);
     const role = networkRole(sources);
+    // One entry has one protocol. A nameserver (UDP) that another source
+    // also grants over TCP cannot be described without losing one of them,
+    // so the composition is refused rather than narrowed or widened.
+    const protocols = new Set(
+      sources.map((source) => source.kind === "nameserver" ? "udp" : "tcp"),
+    );
+    if (protocols.size > 1) {
+      throw new Error(
+        `effective policy: ${entry} is granted as a nameserver and over TCP; ` +
+          "one entry cannot carry both",
+      );
+    }
     const dns = role !== "dns" && needsDns(host) && resolver !== undefined
       ? `resolver:${resolver}`
       : "none";

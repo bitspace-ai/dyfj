@@ -78,16 +78,21 @@ function checkIdentity(
   }
 }
 
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
 /**
  * The segments of a canonical absolute path, or null when `path` is relative
- * or has an empty, `.` or `..` segment.
+ * or has an empty, `.`, `..` or control-character segment.
  */
 function canonicalSegments(path: string): string[] | null {
   if (!path.startsWith("/")) return null;
   if (path === "/") return [];
   const segments = path.slice(1).split("/");
   for (const segment of segments) {
-    if (segment === "" || segment === "." || segment === "..") return null;
+    if (
+      segment === "" || segment === "." || segment === ".." ||
+      CONTROL.test(segment)
+    ) return null;
   }
   return segments;
 }

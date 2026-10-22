@@ -266,6 +266,9 @@ function commonOffenders(
   if (!verifyDigest(policy)) {
     report("identity", "identity.digest", "digest-mismatch");
   }
+  if (segments(target.mountBase) === null) {
+    report("target", "target.mountBase", "mount-base-invalid");
+  }
 
   const targets = new Set<string>();
   policy.filesystem.roots.forEach((root, index) => {
@@ -434,12 +437,16 @@ function ciliumRule(entry: CompiledEgress): CiliumEgressRule {
   return { toCIDR: [cidr], toPorts };
 }
 
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
 /** The segments of a canonical absolute path, or null. */
 function segments(path: string): string[] | null {
   if (!path.startsWith("/")) return null;
   if (path === "/") return [];
   const parts = path.slice(1).split("/");
-  return parts.every((part) => part !== "" && part !== "." && part !== "..")
+  return parts.every((part) =>
+      part !== "" && part !== "." && part !== ".." && !CONTROL.test(part)
+    )
     ? parts
     : null;
 }

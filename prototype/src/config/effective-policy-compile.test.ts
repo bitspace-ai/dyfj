@@ -629,6 +629,27 @@ describe("the pre-gate cases", () => {
       }
     });
 
+    it(`refuses a mount base that is not a canonical absolute path, on ${platform}`, async () => {
+      for (const base of ["/run/dyfj/../../etc", "run/dyfj", "/run//dyfj"]) {
+        const input = target(platform);
+        input.mountBase = base;
+        await assertRefused(platform, parseEffectivePolicy(golden()), input, {
+          group: "target",
+          path: "target.mountBase",
+          right: "mount-base-invalid",
+        });
+      }
+    });
+
+    it(`refuses a root source with a control character, on ${platform}`, async () => {
+      const policy = golden();
+      policy.filesystem.roots[0].source = "/srv/work\u0000/space";
+      const input = target(platform);
+      if (platform === "kubernetes") input.volumes.push({ source: "/", claim: "all" });
+      const found = await offenders(platform, sealed(policy), input);
+      assert.ok(found.some((o) => o.right === "source-not-canonical"));
+    });
+
     it(`refuses a loopback resolver with no mapping, on ${platform}`, async () => {
       const policy = golden();
       policy.network.entries[0].dns = "resolver:127.0.0.53:53";

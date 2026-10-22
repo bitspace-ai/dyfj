@@ -297,7 +297,7 @@ export interface RuntimePolicyInputs {
   runtimeExecutable?: string | null;
 }
 
-/** Where a composed net entry came from. The first source to add it wins. */
+/** Where a composed net entry came from. */
 export type NetGrantSource =
   | { readonly kind: "static"; readonly role: StaticNetRole }
   | { readonly kind: "memory-mcp" }
@@ -306,7 +306,7 @@ export type NetGrantSource =
   | { readonly kind: "nameserver" }
   | { readonly kind: "dolt-endpoint" };
 
-/** Where a composed run entry came from. The first source to add it wins. */
+/** Where a composed run entry came from. */
 export type RunGrantSource =
   | { readonly kind: "static"; readonly role: StaticRunRole }
   | { readonly kind: "runtime-executable" }
@@ -315,7 +315,10 @@ export type RunGrantSource =
 
 export interface ComposedGrant<Source> {
   readonly entry: string;
-  /** The first source to add the entry; it decides the entry's place. */
+  /**
+   * The first source to add the entry. It decides the entry's place in the
+   * list; the effective policy chooses the role from all of `sources`.
+   */
   readonly source: Source;
   /** Every source that added the entry, in the order they added it. */
   readonly sources: readonly Source[];
