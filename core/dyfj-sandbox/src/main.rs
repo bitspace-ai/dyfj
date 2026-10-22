@@ -12,6 +12,7 @@
 // and tested.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+mod gate;
 mod landlock;
 mod lease;
 mod plan;

@@ -73,7 +73,12 @@ export function exportCommand(machine: string, base: string | null): string[] {
   ];
 }
 
-/** The number of patches in a format-patch mbox; throws on anything else. */
+/**
+ * The number of patches in the export. Checks that it is UTF-8 text with no
+ * NUL, that it opens with a format-patch separator (`From <hash> `), and that
+ * each separator is followed by its own `Subject:` header. It does not parse
+ * the patches; `git am` does.
+ */
 export function checkMbox(output: Buffer): { patches: number } {
   if (output.length === 0) throw new Error("no commits since the base");
   let text: string;
@@ -86,7 +91,11 @@ export function checkMbox(output: Buffer): { patches: number } {
   if (!/^From [0-9a-f]{7,64} /.test(text)) {
     throw new Error("export is not a format-patch mbox");
   }
-  return { patches: text.match(/^From [0-9a-f]{7,64} /gm)!.length };
+  const patches = text.split(/^(?=From [0-9a-f]{7,64} )/m);
+  if (!patches.every((patch) => /^Subject: /m.test(patch))) {
+    throw new Error("export is not a format-patch mbox");
+  }
+  return { patches: patches.length };
 }
 
 /** `stream` in full, or a refusal once it passes `max` bytes. */
@@ -113,6 +122,35 @@ function flag(args: readonly string[], name: string): string | undefined {
   return at === -1 ? undefined : args[at + 1];
 }
 
+/** Runs `command` and returns its checked output, within `max` bytes. */
+export async function runExport(
+  command: readonly string[],
+  max: number,
+): Promise<{ output: Buffer; patches: number }> {
+  const [program, ...rest] = command;
+  const child = spawn(program!, rest, { stdio: ["ignore", "pipe", "inherit"] });
+  const started = new Promise<void>((resolve, reject) => {
+    child.once("spawn", () => resolve());
+    child.once("error", (error) =>
+      reject(new Error(`cannot start the export command: ${error.message}`))
+    );
+  });
+  const exited = new Promise<number | null>((resolve) =>
+    child.once("close", (code) => resolve(code))
+  );
+  await started;
+  let output: Buffer;
+  try {
+    output = await readBounded(child.stdout, max);
+  } catch (error) {
+    child.kill("SIGKILL");
+    throw error;
+  }
+  const code = await exited;
+  if (code !== 0) throw new Error(`the export command exited ${code}`);
+  return { output, ...checkMbox(output) };
+}
+
 async function main(args: readonly string[]) {
   const base = flag(args, "--base");
   const root = args.includes("--root");
@@ -125,21 +163,10 @@ async function main(args: readonly string[]) {
   if (!Number.isSafeInteger(max) || max <= 0) {
     throw new Error("--max-bytes must be a positive whole number");
   }
-  const [command, ...rest] = exportCommand(machine, base ?? null);
-  const child = spawn(command!, rest, { stdio: ["ignore", "pipe", "inherit"] });
-  const exited = new Promise<number | null>((resolve) =>
-    child.on("close", (code) => resolve(code))
+  const { output, patches } = await runExport(
+    exportCommand(machine, base ?? null),
+    max,
   );
-  let output: Buffer;
-  try {
-    output = await readBounded(child.stdout, max);
-  } catch (error) {
-    child.kill("SIGKILL");
-    throw error;
-  }
-  const code = await exited;
-  if (code !== 0) throw new Error(`the export command exited ${code}`);
-  const { patches } = checkMbox(output);
   writeFileSync(out, output, { flag: "wx", mode: 0o644 });
   process.stdout.write(`wrote ${patches} patch(es), ${output.length} bytes, to ${out}\n`);
 }

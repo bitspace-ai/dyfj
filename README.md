@@ -698,7 +698,7 @@ uid in a bubblewrap sandbox, with a Landlock floor and a per-uid firewall
 compiled from the policy. The `dyfj-sandbox` launcher (`core/dyfj-sandbox`)
 starts the runtime and sets `DYFJ_EXECUTOR_SOCKET`. With that set, the `bash`
 tool hands each command to a fresh executor sandbox: no network, no secrets,
-only the workspace writable. A transport failure is reported, never answered
+and writes that persist only in the workspace (besides private scratch). A transport failure is reported, never answered
 with a local spawn. Killing the runtime kills its executors. Approval is
 unchanged. The residuals are stated in that directory's README:
 - every machine shares one VM kernel;

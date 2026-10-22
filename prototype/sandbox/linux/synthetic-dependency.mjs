@@ -19,7 +19,7 @@ const allowedHost = process.argv[2];
 function report(probe, expect, outcome) {
   const pass = expect === "allowed"
     ? outcome === "ok"
-    : outcome !== "ok" && outcome !== "TIMEOUT";
+    : outcome !== "ok" && outcome !== "TIMEOUT" && outcome !== "sent";
   process.stdout.write(`${JSON.stringify({ probe, expect, outcome, pass })}\n`);
 }
 
@@ -73,7 +73,7 @@ function attempt(action) {
 report("tcp to a disallowed IPv4 address", "refused", await connect("1.1.1.1", 443));
 report("tcp to a disallowed IPv6 address", "refused", await connect("2606:4700:4700::1111", 443));
 report("tcp to the allowed host on a disallowed port", "refused", await connect(allowedHost, 80));
-report("udp to a disallowed resolver", "refused-or-counted", await udp("8.8.8.8", 53));
+report("udp to a disallowed resolver", "refused", await udp("8.8.8.8", 53));
 report("tcp to the laptop's loopback service port", "refused", await connect("127.0.0.1", 8080));
 report("tcp to the allowed provider", "allowed", await connect(allowedHost, 443));
 

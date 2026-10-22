@@ -2,7 +2,7 @@
  * The executor transport: a bash runner that hands each command to the
  * isolated machine's trusted supervisor instead of spawning it here. The
  * supervisor runs it in the secret-free executor (its own uid, no network,
- * only the workspace writable) and answers with the result. The runtime is
+ * writes persisting only in the workspace) and answers with the result. The runtime is
  * opted in by `DYFJ_EXECUTOR_SOCKET`, which the supervisor sets when it starts
  * the runtime; approval is unchanged.
  *

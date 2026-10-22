@@ -313,8 +313,9 @@ function bashApprovalTitle(timeoutSec: unknown): string {
 /** What the command can reach, as the model is told it. */
 function bashReach(contained: boolean): string {
   return contained
-    ? ". The command runs in the isolated executor: only the workspace is " +
-      "writable, it has no network, and it cannot see the runtime's " +
+    ? ". The command runs in the isolated executor: its writes persist only " +
+      "in the workspace (it also has private scratch space that is discarded " +
+      "after the command), it has no network, and it cannot see the runtime's " +
       "credentials. "
     : ", but the command is NOT sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. ";

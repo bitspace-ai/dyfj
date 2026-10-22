@@ -158,9 +158,9 @@ describe("the runtime role", () => {
     assert.strictEqual(
       result.nftables,
       [
-        "table inet dyfj_runtime",
-        "delete table inet dyfj_runtime",
-        "table inet dyfj_runtime {",
+        "table inet dyfj_runtime_2001",
+        "delete table inet dyfj_runtime_2001",
+        "table inet dyfj_runtime_2001 {",
         "  chain output {",
         "    type filter hook output priority filter; policy accept;",
         "    meta skuid 2001 jump role",
@@ -179,6 +179,14 @@ describe("the runtime role", () => {
         "",
       ].join("\n"),
     );
+  });
+
+  it("gives each uid its own table, so starting one role never replaces another's rules", async () => {
+    const runtime = await plan(compiled(), template("runtime"));
+    const cli = await plan(compiled(), { ...template("runtime"), uid: 2003 });
+    const table = (text: string) => text.split("\n")[0];
+    assert.notStrictEqual(table(runtime.nftables), table(cli.nftables));
+    assert.ok(!cli.nftables.includes("dyfj_runtime_2001"));
   });
 
   it("carries the identity, digest, environment names and process limit", async () => {
@@ -234,9 +242,9 @@ describe("the executor role", () => {
     assert.strictEqual(
       result.nftables,
       [
-        "table inet dyfj_executor",
-        "delete table inet dyfj_executor",
-        "table inet dyfj_executor {",
+        "table inet dyfj_executor_2002",
+        "delete table inet dyfj_executor_2002",
+        "table inet dyfj_executor_2002 {",
         "  chain output {",
         "    type filter hook output priority filter; policy accept;",
         "    meta skuid 2002 jump role",

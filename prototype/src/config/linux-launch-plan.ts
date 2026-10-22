@@ -10,9 +10,12 @@
  *   executor gets its own, with loopback only.
  * - the command the sandbox runs first: the launcher's helper, which applies
  *   the Landlock path sets and then starts the role's command.
- * - an nftables ruleset that lets the role's uid reach only the resolved
- *   policy entries, and logs, counts and rejects every other packet it sends
- *   (TCP with a reset, the rest with an ICMP error).
+ * - an nftables ruleset, in a table of the role's own, that lets the role's
+ *   uid open new connections only to the resolved policy entries, and logs,
+ *   counts and rejects every other new packet it sends (TCP with a reset, the
+ *   rest with an ICMP error). Established and related traffic is accepted, so
+ *   a connection opened under an earlier plan outlives a narrower one until
+ *   it closes.
  *
  * Every host comes from the policy, by way of `compileLinux`; the addresses
  * come from the installer's resolution, never from this module. A named host
@@ -234,7 +237,9 @@ function nftables(
   template: LaunchTemplate,
   resolved: ResolvedHosts,
 ): string {
-  const table = `inet dyfj_${template.role}`;
+  // One table per role and uid: two roles of one shape (the runtime and the
+  // CLI) must never replace each other's rules.
+  const table = `inet dyfj_${template.role}_${template.uid}`;
   const accepts = output.firewall.accept.flatMap((entry) =>
     addresses(entry, resolved)!.map((address) =>
       `    ${addressFamily(address) === 6 ? "ip6" : "ip"} daddr ${address} ${entry.protocol} dport ${entry.port} accept`

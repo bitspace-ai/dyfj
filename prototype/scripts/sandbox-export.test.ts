@@ -1,7 +1,8 @@
 // The isolated machine's patch export: the Mac asks the machine for the
 // workspace's commits since a base as one mbox, read through a bounded pipe and
-// checked before it is written. These tests pin the command and the checks;
-// the round trip itself runs in the machine acceptance.
+// checked before it is written. These tests pin the command and the checks.
+// The round trip (export from the machine, `git am` on the Mac) runs from the
+// Mac, in the operator's UAT, not in the in-machine acceptance script.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
@@ -83,6 +84,14 @@ describe("the mbox check", () => {
     assert.throws(() => checkMbox(Buffer.alloc(0)), /no commits/);
   });
 
+  it("refuses a separator with no patch headers after it", async () => {
+    const { checkMbox } = await exportModule();
+    assert.throws(
+      () => checkMbox(Buffer.from("From deadbee garbage\n")),
+      /not a format-patch mbox/,
+    );
+  });
+
   it("refuses output that is not an mbox", async () => {
     const { checkMbox } = await exportModule();
     assert.throws(() => checkMbox(Buffer.from("hello\n")), /not a format-patch mbox/);
@@ -93,6 +102,16 @@ describe("the mbox check", () => {
     assert.throws(
       () => checkMbox(Buffer.concat([PATCH, Buffer.from([0xff, 0xfe, 0x00])])),
       /not text/,
+    );
+  });
+});
+
+describe("the export run", () => {
+  it("reports a command that cannot start as an error, not a crash", async () => {
+    const { runExport } = await exportModule();
+    await assert.rejects(
+      runExport(["/nonexistent/dyfj-orb-missing"], 1_024),
+      /cannot start the export command/,
     );
   });
 });

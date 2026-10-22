@@ -22,6 +22,13 @@ fail=0
 result() { # pass|fail description evidence
   if [[ $1 == pass ]]; then printf 'ok    %s :: %s\n' "$2" "$3"; else printf 'FAIL  %s :: %s\n' "$2" "$3"; fail=1; fi
 }
+uid_of() { # role: the uid its plan runs as
+  node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1])).uid))' "$PLANS/$1.plan.json"
+}
+table_of() { # role: its nftables table, named for its shape and uid
+  local shape=$1; [[ $1 == cli ]] && shape=runtime
+  echo "dyfj_${shape}_$(uid_of "$1")"
+}
 counter() { # table: the sum of its reject counters
   nft list table inet "$1" 2>/dev/null | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | awk '{s+=$1} END {print s+0}'
 }
@@ -54,17 +61,18 @@ printf '%s' "$CANARY_TOKEN" | install -o root -g root -m 0600 /dev/stdin /srv/dy
 echo "planted a runtime secret and a service-token fixture (random, synthetic)"
 
 echo "== 1. synthetic dependency in the runtime role (no product guards)"
-before=$(counter dyfj_runtime); before=${before:-0}
+RT_TABLE=$(table_of runtime)
+before=$(counter "$RT_TABLE"); before=${before:-0}
 dep=$(in_role runtime "" node "$HERE/synthetic-dependency.mjs" "$ALLOWED" 2>&1)
-after=$(counter dyfj_runtime)
+after=$(counter "$RT_TABLE")
 while IFS= read -r json; do
   [[ $json == \{* ]] || { echo "      $json"; continue; }
   pass=$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).pass))' "$json")
   [[ $pass == true ]] && result pass "runtime: $(node -e 'process.stdout.write(JSON.parse(process.argv[1]).probe)' "$json")" "$json" \
     || result fail "runtime: $(node -e 'process.stdout.write(JSON.parse(process.argv[1]).probe)' "$json")" "$json"
 done <<<"$dep"
-[[ ${after:-0} -gt ${before:-0} ]] && result pass "runtime: firewall refusals counted" "dyfj_runtime reject counter $before -> $after" \
-  || result fail "runtime: firewall refusals counted" "dyfj_runtime reject counter $before -> $after"
+[[ ${after:-0} -gt ${before:-0} ]] && result pass "runtime: firewall refusals counted" "$RT_TABLE reject counter $before -> $after" \
+  || result fail "runtime: firewall refusals counted" "$RT_TABLE reject counter $before -> $after"
 cat /run/dyfj/secrets/CANARY_SECRET >/dev/null # the runtime's own secret: readable by it, below
 
 echo "== 2. executor: absent or denied"
@@ -168,7 +176,36 @@ grep -q 'local commit in the executor.*exit 0.*L8: harmless edit' <<<"$loop" && 
 grep -q "\"output\":\"exit 0\\\\ndyfj-ex\"" <<<"$loop" && result pass "loop: commands ran as the executor uid" "dyfj-ex" \
   || result fail "loop: commands ran as the executor uid" "$(grep whoami <<<"$loop")"
 
-echo "== 5. timings"
+echo "== 5. role firewalls stay separate (CLI and runtime, both orders, and a restart)"
+CLI_TABLE=$(table_of cli)
+refused() { # role: does a raw connect from the role to a disallowed address fail with an errno?
+  in_role "$1" "" node -e 'require("net").connect(443,"1.1.1.1").on("error",e=>{console.log(e.code);process.exit()}).on("connect",()=>{console.log("CONNECTED");process.exit()});setTimeout(()=>{console.log("TIMEOUT");process.exit()},5000)' 2>&1
+}
+intact() { # table uid: the table exists and still sends its uid to the role chain
+  nft list chain inet "$1" output 2>/dev/null | grep -q "meta skuid $2 jump role"
+}
+both() { # step
+  local rt cli
+  rt=$(refused runtime); cli=$(refused cli)
+  if intact "$RT_TABLE" "$(uid_of runtime)" && intact "$CLI_TABLE" "$(uid_of cli)" &&
+     [[ $rt == ECONNREFUSED && $cli == ECONNREFUSED ]]; then
+    result pass "firewalls: $1" "$RT_TABLE and $CLI_TABLE intact; runtime $rt, cli $cli"
+  else
+    result fail "firewalls: $1" "runtime table $(intact "$RT_TABLE" "$(uid_of runtime)" && echo intact || echo missing) ($rt); cli table $(intact "$CLI_TABLE" "$(uid_of cli)" && echo intact || echo missing) ($cli)"
+  fi
+}
+nft delete table inet "$RT_TABLE" 2>/dev/null; nft delete table inet "$CLI_TABLE" 2>/dev/null
+in_role cli "" true; in_role runtime "" true
+both "CLI started, then runtime"
+nft delete table inet "$RT_TABLE" 2>/dev/null; nft delete table inet "$CLI_TABLE" 2>/dev/null
+in_role runtime "" true; in_role cli "" true
+both "runtime started, then CLI"
+in_role runtime "" true
+both "runtime restarted while the CLI's rules stand"
+in_role cli "" true
+both "CLI restarted while the runtime's rules stand"
+
+echo "== 6. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
 echo "single executor sandbox start (run, true): $(( (t1 - t0) / 1000000 )) ms"
 grep 'warm dispatch' <<<"$loop" | sed 's/^/      /'

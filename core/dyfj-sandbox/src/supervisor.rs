@@ -7,18 +7,24 @@
 use crate::lease::Lease;
 use crate::plan::LaunchPlan;
 use crate::protocol::{self, Outcome, Termination};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use crate::gate::Gate;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const NFT: &str = "/usr/sbin/nft";
-/// Output kept per stream; the rest is read and discarded.
-const MAX_STREAM_BYTES: usize = 8 * 1024 * 1024;
+/// Output kept per stream; the rest is read and discarded. Two full streams,
+/// even fully escaped as JSON, stay inside the client's reply cap.
+const MAX_STREAM_BYTES: usize = 1024 * 1024;
+/// Requests in flight at once; a connection past this is closed unread.
+pub const MAX_CONNECTIONS: usize = 16;
+/// How long a connection may take to send its whole request line.
+const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
 fn fail(message: impl Into<String>) -> String {
     message.into()
@@ -167,13 +173,33 @@ fn peer_uid(stream: &UnixStream) -> Option<u32> {
     (rc == 0).then_some(cred.uid)
 }
 
-/// One transport request: run it in a fresh executor sandbox and answer.
-fn serve_one(stream: UnixStream, executor: &LaunchPlan, lease: &Mutex<Lease>) -> Result<(), String> {
-    stream.set_read_timeout(Some(Duration::from_secs(10))).ok();
-    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?)
-        .take(protocol::MAX_REQUEST_BYTES as u64 + 1);
+/// The request line, read within `REQUEST_DEADLINE` and the size cap; an
+/// idle, slow or oversized sender gets nothing.
+fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
+    let started = Instant::now();
     let mut line = Vec::new();
-    reader.read_until(b'\n', &mut line).map_err(|e| e.to_string())?;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let left = REQUEST_DEADLINE.checked_sub(started.elapsed()).ok_or("request deadline passed")?;
+        stream.set_read_timeout(Some(left.max(Duration::from_millis(1)))).map_err(|e| e.to_string())?;
+        let n = stream.read(&mut buffer).map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("connection closed before a request line".into());
+        }
+        line.extend_from_slice(&buffer[..n]);
+        if let Some(end) = line.iter().position(|b| *b == b'\n') {
+            line.truncate(end);
+            return Ok(line);
+        }
+        if line.len() > protocol::MAX_REQUEST_BYTES {
+            return Err("request too large".into());
+        }
+    }
+}
+
+/// One transport request: run it in a fresh executor sandbox and answer.
+fn serve_one(mut stream: UnixStream, executor: &LaunchPlan, lease: &Mutex<Lease>) -> Result<(), String> {
+    let line = read_request(&mut stream)?;
     let mut writer = stream;
     let answer = |writer: &mut UnixStream, text: String| writer.write_all(text.as_bytes()).map_err(|e| e.to_string());
 
@@ -294,16 +320,19 @@ pub fn serve(
 
     let runtime_uid = runtime.uid;
     let executor = Arc::new(executor);
+    let gate = Gate::new(MAX_CONNECTIONS);
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         if peer_uid(&stream) != Some(runtime_uid) {
             continue;
         }
+        let Some(pass) = gate.enter() else { continue };
         let (executor, lease) = (Arc::clone(&executor), Arc::clone(&lease));
         std::thread::spawn(move || {
             if let Err(e) = serve_one(stream, &executor, &lease) {
                 eprintln!("dyfj-sandbox: executor request failed: {e}");
             }
+            drop(pass);
         });
     }
     let _ = watcher.join();

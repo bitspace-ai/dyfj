@@ -7,9 +7,12 @@
 #
 # The staging directory holds dyfj.bundle (a git bundle of the repository),
 # dyfj-sandbox (the launcher, built for linux-arm64) and this script. Nothing
-# here reads or writes a secret. Every download is pinned to a version and a
-# SHA-256 digest. The script ends by checking that the Mac integrations are
-# absent and that no agent uid can escalate; any failed check fails it.
+# here reads or writes a secret. The Node and Dolt archives are pinned to a
+# version and a SHA-256 digest; the two CLIs to an npm version, without a
+# digest; the Debian packages come from the distribution's signed archive at
+# whatever version it serves. The script ends by checking that the Mac
+# integrations are absent and that no agent uid can escalate; any failed check
+# fails it.
 set -euo pipefail
 
 STAGING=${1:?staging directory}
@@ -186,7 +189,7 @@ check "no forwarded SSH agent" bash -c '[[ -z ${SSH_AUTH_SOCK:-} ]] && ! ls /run
 check "Landlock ABI is at least 3" bash -c '[[ $(/usr/libexec/dyfj/dyfj-sandbox abi) -ge 3 ]]'
 for user in dyfj-rt dyfj-ex dyfj-cli dyfj-db; do
   check "$user is in neither sudo nor orbstack" bash -c "! id -nG $user | grep -qwE 'sudo|orbstack|adm'"
-  check "$user has no sudo rule" bash -c "! sudo -l -U $user | grep -q 'may run'"
+  check "$user has no sudo rule" bash -c "sudo -l -U $user 2>&1 | grep -q 'is not allowed to run sudo'"
 done
 check "the launcher and plans are root-owned and not writable by others" bash -c \
   '[[ $(stat -c %U%a /usr/libexec/dyfj/dyfj-sandbox) == root755 ]] && ! find /etc/dyfj -perm /022 | grep -q .'
