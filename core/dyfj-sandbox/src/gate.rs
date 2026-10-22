@@ -1,6 +1,6 @@
-//! A bound on the transport requests the supervisor serves at once. A
-//! connection past the bound is closed unread, so a runtime that floods the
-//! socket cannot exhaust the supervisor's threads or descriptors.
+//! A bound on the transport requests the supervisor serves at once: at most
+//! the limit, each also bounded by the supervisor's request, command and
+//! reply deadlines. A connection past the bound is closed unread.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

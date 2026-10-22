@@ -117,9 +117,15 @@ export function readBounded(stream: Readable, max: number): Promise<Buffer> {
   });
 }
 
-function flag(args: readonly string[], name: string): string | undefined {
+/** The value after `name`, or undefined when `name` is absent. */
+export function flag(args: readonly string[], name: string): string | undefined {
   const at = args.indexOf(name);
-  return at === -1 ? undefined : args[at + 1];
+  if (at === -1) return undefined;
+  const value = args[at + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${name} needs a value`);
+  }
+  return value;
 }
 
 /** Runs `command` and returns its checked output, within `max` bytes. */

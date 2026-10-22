@@ -18,7 +18,9 @@ const allowedHost = process.argv[2];
 // proves nothing (design §8). A "residual" probe records what really happens
 // for a gap the boundary is known not to close; it passes either way, and its
 // outcome is the evidence.
+let probes = 0;
 function report(probe, expect, outcome) {
+  probes += 1;
   const pass = expect === "residual"
     ? true
     : expect === "allowed"
@@ -100,7 +102,8 @@ report("execute a toolchain binary", "allowed", attempt(() => execFileSync("/usr
 // allowed toolchain file, and it maps the program it is given with mmap,
 // which needs only read: so a readable copy of a binary in the workspace can
 // still be run through the loader.
-const LOADER = fs.readdirSync("/usr/lib").find((name) => /^ld-linux.*\.so\.\d+$/.test(name));
+const LOADER = fs.readdirSync("/usr/lib").find((name) => /^ld-linux.*\.so\.\d+$/.test(name)) ??
+  null;
 fs.copyFileSync("/usr/bin/true", "/work/synthetic-true");
 fs.chmodSync("/work/synthetic-true", 0o755);
 report(
@@ -111,5 +114,10 @@ report(
 report(
   `run a workspace copy of a binary through the dynamic loader (/usr/lib/${LOADER})`,
   "residual",
-  attempt(() => execFileSync(`/usr/lib/${LOADER}`, ["/work/synthetic-true"])),
+  LOADER === null
+    ? "no-loader-found"
+    : attempt(() => execFileSync(`/usr/lib/${LOADER}`, ["/work/synthetic-true"])),
 );
+
+// The closing line: acceptance requires it, so a run that stops partway fails.
+process.stdout.write(`${JSON.stringify({ done: probes })}\n`);

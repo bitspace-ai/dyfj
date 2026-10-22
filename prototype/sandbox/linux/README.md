@@ -59,9 +59,10 @@ repository.
   interpreters are allowed toolchain files, and they map or read the program
   they are given. So a role can still run a binary or script it can read,
   from the workspace or scratch, through the loader or an interpreter. The
-  acceptance run records this as a residual: direct execution of a workspace
-  binary is refused with `EACCES`, and the same binary run through
-  `ld-linux-aarch64.so.1` succeeds. The floor stops a stray `execve` of a
+  acceptance run records whether loader-mediated execution succeeds. On
+  2026-10-22 it did: direct execution of a workspace binary was refused with
+  `EACCES`, and the same binary run through `ld-linux-aarch64.so.1`
+  succeeded. The floor stops a stray `execve` of a
   dropped file, not arbitrary computation.
 - **The runtime's own secrets.** A compromised runtime dependency can use the
   runtime's secrets and reach its allowed destinations. The boundary stops it

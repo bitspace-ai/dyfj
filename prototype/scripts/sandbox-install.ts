@@ -38,7 +38,14 @@
 
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import process from "node:process";
 import {
   compileLinux,
@@ -420,14 +427,17 @@ async function main(args: readonly string[]) {
   ]);
   const result = buildMachinePlans({ profile, machine, resolved });
   mkdirSync(out, { recursive: true, mode: 0o755 });
+  // Set explicitly, not left to the umask or a previous run's file: the
+  // launcher trusts a plan only when root owns it and no one else can write.
+  const write = (path: string, value: unknown) => {
+    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+    chownSync(path, 0, 0);
+    chmodSync(path, 0o644);
+  };
   for (const role of ["runtime", "executor", "cli"] as const) {
-    writeFileSync(`${out}/${role}.plan.json`, `${JSON.stringify(result[role].plan, null, 2)}\n`, {
-      mode: 0o644,
-    });
+    write(`${out}/${role}.plan.json`, result[role].plan);
   }
-  writeFileSync(`${out}/receipt.json`, `${JSON.stringify(result.receipt, null, 2)}\n`, {
-    mode: 0o644,
-  });
+  write(`${out}/receipt.json`, result.receipt);
   process.stdout.write(`${JSON.stringify(result.receipt, null, 2)}\n`);
 }
 

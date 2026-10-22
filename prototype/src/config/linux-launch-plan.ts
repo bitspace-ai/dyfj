@@ -236,18 +236,27 @@ function checkNetwork(
 /**
  * The filesystem protections this plan can honour. Landlock only grants, so
  * nothing beneath a writable mount can be denied: protected git metadata in a
- * role that writes anywhere, and a forbidden path inside a mounted source,
- * are refused rather than silently dropped. A forbidden path no mount reaches
- * is absent from the sandbox and so stays forbidden.
+ * role that writes anywhere is refused rather than silently dropped. A
+ * forbidden path that equals, contains or lies beneath any path the sandbox
+ * binds (a policy mount's source or a template read-only path) is refused
+ * too. A forbidden path related to none of them is not bound into the sandbox.
  */
-function checkProtections(output: LinuxOutput, report: Report) {
+function checkProtections(
+  output: LinuxOutput,
+  template: LaunchTemplate,
+  report: Report,
+) {
+  const bound = [
+    ...output.mounts.map((mount) => mount.source),
+    ...template.systemReadOnly,
+  ];
   if (output.landlock.write.length > 0) {
     output.protectedGit.forEach((_, index) => {
       report("filesystem", `protectedGit[${index}]`, "protected-git-unsupported");
     });
   }
   output.forbiddenPaths.forEach((path, index) => {
-    if (output.mounts.some((mount) => within(path, mount.source))) {
+    if (bound.some((source) => within(path, source) || within(source, path))) {
       report("filesystem", `forbiddenPaths[${index}]`, "forbidden-path-mounted");
     }
   });
@@ -349,7 +358,7 @@ export function planLinuxLaunch(
     offenders.push({ group, path, right });
   checkTemplate(output, template, report);
   checkNetwork(output, template, resolved, report);
-  checkProtections(output, report);
+  checkProtections(output, template, report);
   if (output.process.seccompProfile !== null) {
     report("processes", "process.seccompProfile", "seccomp-unsupported");
   }

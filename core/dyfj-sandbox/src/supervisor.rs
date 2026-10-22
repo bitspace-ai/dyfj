@@ -25,6 +25,8 @@ const MAX_STREAM_BYTES: usize = 1024 * 1024;
 pub const MAX_CONNECTIONS: usize = 16;
 /// How long a connection may take to send its whole request line.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
+/// How long a reply may wait for the runtime to read it.
+const REPLY_DEADLINE: Duration = Duration::from_secs(10);
 
 fn fail(message: impl Into<String>) -> String {
     message.into()
@@ -200,6 +202,7 @@ fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
 /// One transport request: run it in a fresh executor sandbox and answer.
 fn serve_one(mut stream: UnixStream, executor: &LaunchPlan, lease: &Mutex<Lease>) -> Result<(), String> {
     let line = read_request(&mut stream)?;
+    stream.set_write_timeout(Some(REPLY_DEADLINE)).map_err(|e| e.to_string())?;
     let mut writer = stream;
     let answer = |writer: &mut UnixStream, text: String| writer.write_all(text.as_bytes()).map_err(|e| e.to_string());
 

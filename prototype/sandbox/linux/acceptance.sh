@@ -67,9 +67,16 @@ RT_TABLE=$(table_of runtime)
 in_role runtime "" true
 before=$(counter "$RT_TABLE"); before=${before:-0}
 dep=$(in_role runtime "" node "$HERE/synthetic-dependency.mjs" "$ALLOWED" 2>&1)
+dep_exit=$?
 after=$(counter "$RT_TABLE")
+expected=$(grep -c '^report(' "$HERE/synthetic-dependency.mjs")
+done_line=$(grep -o '{"done":[0-9]*}' <<<"$dep")
+[[ $dep_exit -eq 0 && $done_line == "{\"done\":$expected}" ]] \
+  && result pass "runtime: every probe ran to the end" "exit $dep_exit, $done_line of $expected" \
+  || result fail "runtime: every probe ran to the end" "exit $dep_exit, ${done_line:-no closing line}, expected $expected"
 while IFS= read -r json; do
   [[ $json == \{* ]] || { echo "      $json"; continue; }
+  [[ $json == \{\"done\"* ]] && continue
   pass=$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).pass))' "$json")
   [[ $pass == true ]] && result pass "runtime: $(node -e 'process.stdout.write(JSON.parse(process.argv[1]).probe)' "$json")" "$json" \
     || result fail "runtime: $(node -e 'process.stdout.write(JSON.parse(process.argv[1]).probe)' "$json")" "$json"

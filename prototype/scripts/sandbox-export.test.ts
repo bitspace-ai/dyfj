@@ -106,6 +106,15 @@ describe("the mbox check", () => {
   });
 });
 
+describe("the flags", () => {
+  it("refuses another flag as a missing flag's value", async () => {
+    const { flag } = await exportModule();
+    assert.throws(() => flag(["--root", "--out", "--machine", "dyfj-l8"], "--out"), /--out needs a value/);
+    assert.strictEqual(flag(["--out", "x.mbox"], "--out"), "x.mbox");
+    assert.strictEqual(flag(["--root"], "--out"), undefined);
+  });
+});
+
 describe("the export run", () => {
   it("reports a command that cannot start as an error, not a crash", async () => {
     const { runExport } = await exportModule();

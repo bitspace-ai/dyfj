@@ -304,6 +304,32 @@ describe("filesystem protections the plan cannot enforce", () => {
     ]);
   });
 
+  it("refuses a forbidden path that contains a mounted source", async () => {
+    const output = compiledWith((policy) => {
+      policy.filesystem.protectedGit = [];
+      policy.network.entries = [];
+      policy.network.dolt = null;
+      policy.filesystem.forbiddenPaths = ["/srv/work"];
+    });
+    const offenders = await refusal(output, template("executor"));
+    assert.deepStrictEqual(offenders, [
+      { group: "filesystem", path: "forbiddenPaths[0]", right: "forbidden-path-mounted" },
+    ]);
+  });
+
+  it("refuses a forbidden path the template binds read-only", async () => {
+    const output = compiledWith((policy) => {
+      policy.filesystem.protectedGit = [];
+      policy.network.entries = [];
+      policy.network.dolt = null;
+      policy.filesystem.forbiddenPaths = ["/etc/ld.so.cache"];
+    });
+    const offenders = await refusal(output, template("executor"));
+    assert.deepStrictEqual(offenders, [
+      { group: "filesystem", path: "forbiddenPaths[0]", right: "forbidden-path-mounted" },
+    ]);
+  });
+
   it("accepts a forbidden path that no mount reaches, which stays absent", async () => {
     const result = await plan(offline(), template("executor"));
     assert.ok(!result.bwrap.options.includes("/srv/secrets"));
