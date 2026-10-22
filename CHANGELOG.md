@@ -11,6 +11,31 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **An effective role policy, built from the existing grant composition,
+  with a digest, a subset check and two platform compilers (data only).**
+  `prototype/src/config/effective-policy.ts` describes what a runtime may do as
+  one versioned, deeply frozen policy in six groups: identity, filesystem,
+  network, processes, secrets (names and owning roles, never values) and
+  effects and limits (spend as integer micro-USD). `composeEffectivePolicy`
+  builds it from the same composition as `composeRuntimePolicy`, and
+  `projectRuntimePolicy` rebuilds today's `{net, run, env, dolt}` from it, so
+  there is no second host list. The static net and run grants in
+  `runtime-policy.ts` are now tagged tables (each entry with its role), and
+  `composeRuntimeGrants` records where every composed entry came from;
+  `RUNTIME_NET_GRANTS` and `RUNTIME_RUN_GRANTS` keep their contents and order.
+  `effective-policy-digest.ts` gives a stable `sha256:` digest over canonical
+  JSON, pinned by a golden vector in `prototype/testing/fixtures/effective-policy/`.
+  `effective-policy-subset.ts` checks a session policy against its run
+  envelope and reports every violation as a path and a kind.
+  `effective-policy-compile.ts` adds `compileKubernetes` and `compileLinux`,
+  which return plain data for a declared platform target and throw
+  `UnsupportedRightError`, listing every offender, for any right the target
+  cannot enforce, including a loopback entry with no service mapping. The
+  compiled shapes are not verified against a real cluster or kernel.
+  **Runtime behaviour is unchanged:** boot, the launcher and the egress,
+  spawn and env seams still read `composeRuntimePolicy`, nothing reads the
+  effective policy, and nothing is deployed.
+
 - **Read-only bash commands run without a prompt under the `operator`
   posture.** On a loopback turn with `permission operator`, a `bash` call that
   only reads runs at once: chains of `git status`, `git diff`, `git log`,
