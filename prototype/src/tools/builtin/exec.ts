@@ -42,7 +42,10 @@ import {
   describeTimeout,
   runBounded,
 } from "./bounded-process.ts";
-import { createExecutorRunner } from "./executor-transport.ts";
+import {
+  createExecutorRunner,
+  type ExecutorDialer,
+} from "./executor-transport.ts";
 
 export type BashResult = BoundedResult;
 
@@ -310,29 +313,41 @@ function bashApprovalTitle(timeoutSec: unknown): string {
 /** What the command can reach, as the model is told it. */
 function bashReach(contained: boolean): string {
   return contained
-    ? "The command runs in the isolated executor: only the workspace is " +
+    ? ". The command runs in the isolated executor: only the workspace is " +
       "writable, it has no network, and it cannot see the runtime's " +
       "credentials. "
-    : "The command is NOT sandboxed — it can read and write anywhere on " +
+    : ", but the command is NOT sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. ";
 }
 
+/** A runner for a socket set with no dialer to reach it: always refuses. */
+const undialable: BashRunner = () =>
+  Promise.reject(
+    new Error("executor unavailable: no executor connection is configured"),
+  );
+
 export function defineBash(
   root: string,
-  opts: { runner?: BashRunner; env?: Env } = {},
+  opts: { runner?: BashRunner; env?: Env; dialExecutor?: ExecutorDialer } =
+    {},
 ): CommandDefinition<string> {
   // The supervisor of an isolated machine sets the socket when it starts the
-  // runtime. With it, commands run in the executor and never here.
+  // runtime. With it, commands run in the executor and never here: without a
+  // dialer to reach it, every command is refused rather than run locally.
   const socket = readEnv(opts.env ?? processEnv, "DYFJ_EXECUTOR_SOCKET");
   const contained = opts.runner === undefined && socket !== undefined &&
     socket !== "";
-  const runner = contained ? createExecutorRunner(socket!) : opts.runner;
+  const runner = !contained
+    ? opts.runner
+    : opts.dialExecutor === undefined
+    ? undialable
+    : createExecutorRunner(socket!, opts.dialExecutor);
   return {
     id: "bash",
     title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
-      "root, or the workspace directory cwd names. " +
+      "root, or the workspace directory cwd names" +
       bashReach(contained) +
       "Returns the exit status and combined stdout/stderr. Requires operator " +
       "approval before it runs, except for a small set of read-only commands " +

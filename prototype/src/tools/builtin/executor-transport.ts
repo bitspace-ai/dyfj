@@ -15,10 +15,10 @@
  * The supervisor enforces the deadline and stops the command's tree. Every
  * failure here (no supervisor, a refusal, a malformed or oversized reply, no
  * reply by the deadline plus a grace) throws, so the bash tool reports it; the
- * command never falls back to running in the runtime.
+ * command never falls back to running in the runtime. The socket connection
+ * comes from the composition root, through the transport's socket port.
  */
 
-import { createConnection } from "node:net";
 import type { BoundedResult, GroupStop } from "./bounded-process.ts";
 
 /** The bash tool's runner shape (`BashRunner` in `exec.ts`). */
@@ -28,6 +28,22 @@ export type ExecutorRunner = (
   timeoutMs: number,
   env: Record<string, string>,
 ) => Promise<BoundedResult>;
+
+/**
+ * One end of a connection to the supervisor: the transport's `ByteConnection`
+ * port, which the composition root supplies (`nodeSocketHost.connect`).
+ */
+export interface ExecutorConnection {
+  read(): Promise<Uint8Array | null>;
+  write(bytes: Uint8Array): Promise<void>;
+  close(): void;
+}
+
+/** Dials the supervisor's socket. */
+export type ExecutorDialer = (
+  path: string,
+  signal?: AbortSignal,
+) => Promise<ExecutorConnection>;
 
 export const EXECUTOR_PROTOCOL_VERSION = 1;
 
@@ -94,79 +110,81 @@ function parseReply(line: string): BoundedResult {
   return result;
 }
 
-/** A bash runner that runs each command through the supervisor at `path`. */
+/** Reads one reply line from `connection`, within `maxBytes`. */
+async function readReply(
+  connection: ExecutorConnection,
+  maxBytes: number,
+): Promise<string> {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    let chunk: Uint8Array | null;
+    try {
+      chunk = await connection.read();
+    } catch (error) {
+      throw new Error(`executor reply failed: ${(error as Error).message}`);
+    }
+    if (chunk === null) {
+      throw new Error("executor reply ended before a complete line");
+    }
+    size += chunk.length;
+    if (size > maxBytes) {
+      throw new Error(`executor reply exceeded ${maxBytes} bytes`);
+    }
+    chunks.push(chunk);
+    const text = Buffer.concat(chunks).toString("utf8");
+    const end = text.indexOf("\n");
+    if (end !== -1) return text.slice(0, end);
+  }
+}
+
+/**
+ * A bash runner that runs each command through the supervisor at `path`,
+ * dialed with `dial`.
+ */
 export function createExecutorRunner(
   path: string,
+  dial: ExecutorDialer,
   options: ExecutorRunnerOptions = {},
 ): ExecutorRunner {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES;
-  return (command, cwd, timeoutMs, env) =>
-    new Promise<BoundedResult>((resolve, reject) => {
-      const socket = createConnection(path);
-      const chunks: Buffer[] = [];
-      let size = 0;
-      let settled = false;
-      const finish = (outcome: () => BoundedResult) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        socket.destroy();
-        try {
-          resolve(outcome());
-        } catch (error) {
-          reject(error);
-        }
-      };
-      const fail = (error: Error) =>
-        finish(() => {
-          throw error;
-        });
-      const timer = setTimeout(
-        () =>
-          fail(
-            new Error(
-              `executor did not answer within ${timeoutMs + graceMs} ms`,
-            ),
-          ),
-        timeoutMs + graceMs,
-      );
-
-      socket.on("connect", () => {
-        socket.write(
-          `${
-            JSON.stringify({
-              v: EXECUTOR_PROTOCOL_VERSION,
-              argv: ["bash", "-c", command],
-              cwd,
-              env,
-              timeoutMs,
-            })
-          }\n`,
-        );
-      });
-      socket.on("data", (chunk: Buffer) => {
-        size += chunk.length;
-        if (size > maxReplyBytes) {
-          fail(new Error(`executor reply exceeded ${maxReplyBytes} bytes`));
-          return;
-        }
-        chunks.push(chunk);
-        const text = Buffer.concat(chunks).toString("utf8");
-        const end = text.indexOf("\n");
-        if (end !== -1) finish(() => parseReply(text.slice(0, end)));
-      });
-      socket.on("end", () =>
-        fail(new Error("executor reply ended before a complete line"))
-      );
-      socket.on("error", (error: NodeJS.ErrnoException) =>
-        fail(
-          new Error(
-            settled || chunks.length > 0
-              ? `executor reply failed: ${error.code ?? error.message}`
-              : `executor unavailable: ${error.code ?? error.message}`,
-          ),
-        )
-      );
+  return async (command, cwd, timeoutMs, env) => {
+    const deadline = timeoutMs + graceMs;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let connection: ExecutorConnection | undefined;
+    const expired = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        abort.abort();
+        connection?.close();
+        reject(new Error(`executor did not answer within ${deadline} ms`));
+      }, deadline);
     });
+    const exchange = async (): Promise<BoundedResult> => {
+      try {
+        connection = await dial(path, abort.signal);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        throw new Error(
+          `executor unavailable: ${code ?? (error as Error).message}`,
+        );
+      }
+      const request = JSON.stringify({
+        v: EXECUTOR_PROTOCOL_VERSION,
+        argv: ["bash", "-c", command],
+        cwd,
+        env,
+        timeoutMs,
+      });
+      await connection.write(new TextEncoder().encode(`${request}\n`));
+      return parseReply(await readReply(connection, maxReplyBytes));
+    };
+    try {
+      return await Promise.race([exchange(), expired]);
+    } finally {
+      clearTimeout(timer);
+      connection?.close();
+    }
+  };
 }

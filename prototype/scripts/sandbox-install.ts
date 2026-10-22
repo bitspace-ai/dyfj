@@ -94,8 +94,8 @@ export const HELPER = "/usr/libexec/dyfj/dyfj-sandbox";
 export const EXECUTOR_SOCKET_DIR = "/run/dyfj-exec";
 export const EXECUTOR_SOCKET = `${EXECUTOR_SOCKET_DIR}/exec.sock`;
 export const SECRETS_DIR = "/run/dyfj/secrets";
-const RUNTIME_HOME = "/srv/dyfj/home/runtime";
-const CLI_HOME = "/srv/dyfj/home/cli";
+const RUNTIME_HOME = "/srv/dyfj/state/runtime";
+const CLI_HOME = "/srv/dyfj/state/cli";
 const DOLT = { host: "127.0.0.1", port: 3306 };
 
 /** Candidate files under /etc that programs in a sandbox expect. */

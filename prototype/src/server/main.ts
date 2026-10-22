@@ -43,6 +43,7 @@ import {
 } from "../store/mod.ts";
 import {
   ensureSocketDir,
+  nodeSocketHost,
   resolveSocketPath,
   type RpcHandlers,
   serveUnixJsonRpc,
@@ -360,6 +361,8 @@ function composeTurnRuntime(
       // ...and its "allow for the rest of the session" grants, in memory only.
       sessionGrants: owners,
       rootAnchors,
+      // Used only when an isolated machine's launcher set DYFJ_EXECUTOR_SOCKET.
+      dialExecutor: nodeSocketHost.connect,
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),

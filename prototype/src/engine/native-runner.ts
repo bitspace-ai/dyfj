@@ -80,6 +80,9 @@ export async function runWorkbenchRuntime(
       ? {}
       : { sessionGrants: services.sessionGrants }),
     rootAnchors: services.rootAnchors,
+    ...(services.dialExecutor === undefined
+      ? {}
+      : { dialExecutor: services.dialExecutor }),
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     policy,

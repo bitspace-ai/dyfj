@@ -13,7 +13,11 @@
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
 import type { AutoApprovals, CostBasis } from "../contract/mod.ts";
-import type { CommandRegistry, RootAnchors } from "../tools/mod.ts";
+import type {
+  CommandRegistry,
+  ExecutorDialer,
+  RootAnchors,
+} from "../tools/mod.ts";
 import type {
   HistoryOmissionReceipt,
   WorkbenchAuthContext,
@@ -57,6 +61,8 @@ export interface NativeTurnPorts {
   recoverContextOverflow?: ContextOverflowRecoverer;
   /** The engine's workspace-root anchors, which the file tools verify against. */
   rootAnchors: RootAnchors;
+  /** Dials the executor socket for the `bash` tool; see `ToolCatalogPorts`. */
+  dialExecutor?: ExecutorDialer;
   /** The runtime policy memory recall is checked against; the base when absent. */
   policy?: RuntimePolicy;
 }

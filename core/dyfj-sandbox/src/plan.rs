@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn composes_the_command_line_in_order() {
         let env = vec![
-            ("HOME".to_string(), "/home/x".to_string()),
+            ("HOME".to_string(), "/var/empty/x".to_string()),
             ("SECRET".to_string(), "canary".to_string()),
             ("PATH".to_string(), "/usr/bin".to_string()),
         ];
@@ -163,7 +163,7 @@ mod tests {
                 "/usr/bin",
                 "--setenv",
                 "HOME",
-                "/home/x",
+                "/var/empty/x",
                 "--",
                 "/usr/libexec/dyfj/dyfj-sandbox",
                 "apply-landlock",

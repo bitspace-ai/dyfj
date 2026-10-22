@@ -329,7 +329,7 @@ describe("the template is checked", () => {
   it("refuses a helper outside every read-only path", async () => {
     const offenders = await refusal(offline(), {
       ...template("executor"),
-      helper: "/home/dyfj-ex/dyfj-sandbox",
+      helper: "/var/tmp/dyfj-sandbox",
     });
     assert.deepStrictEqual(offenders, [
       { group: "template", path: "template.helper", right: "helper-not-read-only" },

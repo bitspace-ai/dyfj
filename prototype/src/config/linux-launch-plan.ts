@@ -25,7 +25,6 @@
  * because the launcher installs none.
  */
 
-import { isIP } from "node:net";
 import type {
   CompiledEgress,
   LandlockPaths,
@@ -189,6 +188,12 @@ function checkTemplate(
   }
 }
 
+/** 4 or 6 for a bare IPv4 or IPv6 address, 0 for anything else. */
+function addressFamily(address: string): 0 | 4 | 6 {
+  if (address.includes(":")) return isAddressLiteral(`[${address}]`) ? 6 : 0;
+  return isAddressLiteral(address) ? 4 : 0;
+}
+
 /** The address each accepted entry is filtered by, as nftables spells it. */
 function addresses(
   entry: CompiledEgress,
@@ -218,7 +223,7 @@ function checkNetwork(
     const found = addresses(entry, resolved);
     if (found === null) {
       report("network", at, "host-unresolved");
-    } else if (!found.every((address) => isIP(address) !== 0)) {
+    } else if (!found.every((address) => addressFamily(address) !== 0)) {
       report("network", at, "address-invalid");
     }
   });
@@ -232,7 +237,7 @@ function nftables(
   const table = `inet dyfj_${template.role}`;
   const accepts = output.firewall.accept.flatMap((entry) =>
     addresses(entry, resolved)!.map((address) =>
-      `    ${isIP(address) === 6 ? "ip6" : "ip"} daddr ${address} ${entry.protocol} dport ${entry.port} accept`
+      `    ${addressFamily(address) === 6 ? "ip6" : "ip"} daddr ${address} ${entry.protocol} dport ${entry.port} accept`
     )
   );
   const established = template.role === "runtime"

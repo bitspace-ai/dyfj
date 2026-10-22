@@ -74,17 +74,17 @@ mkuser() { # name uid home
   getent passwd "$1" >/dev/null ||
     useradd -u "$2" -g dyfj-work -d "$3" -M -s /usr/sbin/nologin "$1"
 }
-mkuser dyfj-rt "$RT_UID" /srv/dyfj/home/runtime
+mkuser dyfj-rt "$RT_UID" /srv/dyfj/state/runtime
 mkuser dyfj-ex "$EX_UID" /nonexistent
-mkuser dyfj-cli "$CLI_UID" /srv/dyfj/home/cli
+mkuser dyfj-cli "$CLI_UID" /srv/dyfj/state/cli
 getent group dyfj-db >/dev/null || groupadd -g "$DB_UID" dyfj-db
 getent passwd dyfj-db >/dev/null ||
   useradd -u "$DB_UID" -g dyfj-db -d /srv/dyfj/dolt -M -s /usr/sbin/nologin dyfj-db
 
 echo "== layout"
-install -d -o root -g root -m 0755 /srv/dyfj /srv/dyfj/home /srv/dyfj/work /etc/dyfj /etc/dyfj/l8 /usr/libexec/dyfj
-install -d -o dyfj-rt -g dyfj-work -m 0700 /srv/dyfj/home/runtime
-install -d -o dyfj-cli -g dyfj-work -m 0700 /srv/dyfj/home/cli
+install -d -o root -g root -m 0755 /srv/dyfj /srv/dyfj/state /srv/dyfj/work /etc/dyfj /etc/dyfj/l8 /usr/libexec/dyfj
+install -d -o dyfj-rt -g dyfj-work -m 0700 /srv/dyfj/state/runtime
+install -d -o dyfj-cli -g dyfj-work -m 0700 /srv/dyfj/state/cli
 install -d -o dyfj-db -g dyfj-db -m 0700 /srv/dyfj/dolt
 # The executor runs git, so it owns the workspace and git's ownership check
 # passes even with the system config off. The CLI, which runs git as its own

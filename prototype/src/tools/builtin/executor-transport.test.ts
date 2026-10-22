@@ -8,6 +8,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
+import { nodeSocketHost } from "../../transport/mod.ts";
 import {
   BASH_ALLOWLIST_BASIS,
   BASH_COMMAND_ENV_KEYS,
@@ -68,8 +69,10 @@ const OK = {
 
 async function runner(path: string, options: Record<string, number> = {}) {
   const { createExecutorRunner } = await transportModule();
-  return createExecutorRunner(path, options);
+  return createExecutorRunner(path, nodeSocketHost.connect, options);
 }
+
+const dialExecutor = nodeSocketHost.connect;
 
 describe("a command handed to the executor", () => {
   it("sends one versioned request and returns the supervisor's result", async () => {
@@ -184,6 +187,7 @@ describe("the bash tool", () => {
     const s = await supervisor((_, socket) => answer(socket, OK));
     const bash = defineBash(root, {
       env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: s.path, PATH: "/usr/bin" }),
+      dialExecutor,
     });
     const out = await bash.executor(call("echo hello"), context);
     assert.strictEqual(out, "exit 0\nhello");
@@ -202,7 +206,7 @@ describe("the bash tool", () => {
     for (const key of ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR"]) {
       env[key] = "x";
     }
-    const bash = defineBash(root, { env: new MapEnv(env) });
+    const bash = defineBash(root, { env: new MapEnv(env), dialExecutor });
     await bash.executor(call("git status"), { authzBasis: BASH_ALLOWLIST_BASIS });
     const sent = Object.keys(s.requests[0].env);
     assert.ok(sent.includes("GIT_CONFIG_COUNT"), "the git safety switches are sent");
@@ -216,9 +220,19 @@ describe("the bash tool", () => {
     const root = await realpath(dir);
     const bash = defineBash(root, {
       env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: `${dir}/absent.sock` }),
+      dialExecutor,
     });
     const out = await bash.executor(call("echo hello"), context);
     assert.match(out, /^error: cannot run command: executor unavailable/);
+  });
+
+  it("refuses every command when the socket is set but no dialer was given", async () => {
+    const root = await realpath(dir);
+    const bash = defineBash(root, {
+      env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: `${dir}/any.sock` }),
+    });
+    const out = await bash.executor(call("echo hello"), context);
+    assert.match(out, /^error: cannot run command: executor unavailable: no executor connection/);
   });
 
   it("tells the model the command runs in the isolated executor", () => {

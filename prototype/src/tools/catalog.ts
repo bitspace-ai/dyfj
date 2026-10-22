@@ -21,6 +21,7 @@ import {
 } from "./builtin/file.ts";
 import type { RootAnchors, WorkspaceRoot } from "./builtin/root-anchors.ts";
 import { defineBash } from "./builtin/exec.ts";
+import type { ExecutorDialer } from "./builtin/executor-transport.ts";
 import { defineGit } from "./builtin/git.ts";
 
 /** Runtime capabilities a tool is backed by. Absent ones leave their tools out. */
@@ -45,6 +46,12 @@ export interface ToolCatalogPorts {
    * composition root builds one per engine so an anchor outlives the turn.
    */
   rootAnchors?: RootAnchors;
+  /**
+   * Dials the isolated machine's executor socket, for the `bash` tool when
+   * `DYFJ_EXECUTOR_SOCKET` is set. Absent, such a `bash` refuses every
+   * command rather than run it here.
+   */
+  dialExecutor?: ExecutorDialer;
 }
 
 /** Resolved settings that shape the builtin tools. */
@@ -102,7 +109,13 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
   workspaceFileTool(defineGlobFiles),
   workspaceFileTool(defineWriteFile),
   workspaceFileTool(defineEditFile),
-  workspaceTool(defineBash),
+  ({ workspaceRoot, dialExecutor }) =>
+    workspaceRoot === undefined
+      ? undefined
+      : defineBash(
+        workspaceRoot,
+        dialExecutor === undefined ? {} : { dialExecutor },
+      ),
   workspaceTool(defineGit),
 ];
 

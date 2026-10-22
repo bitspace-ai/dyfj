@@ -300,6 +300,9 @@ async function buildCompanionContext(
     readMemory: (slug) => executeReadMemory(memories, slug, clearance),
     searchMemory: memoryRecall(state, input, ports),
     rootAnchors: ports.rootAnchors,
+    ...(ports.dialExecutor === undefined
+      ? {}
+      : { dialExecutor: ports.dialExecutor }),
   };
   state.commandRegistry = buildToolCatalog(
     toolPorts,

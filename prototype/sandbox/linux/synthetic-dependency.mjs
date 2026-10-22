@@ -80,7 +80,7 @@ report("tcp to the allowed provider", "allowed", await connect(allowedHost, 443)
 report("write outside the workspace (/opt)", "refused", attempt(() => fs.writeFileSync("/opt/dyfj/synthetic-marker", "x")));
 report("write outside the workspace (/)", "refused", attempt(() => fs.writeFileSync("/synthetic-marker", "x")));
 report("write in the workspace", "allowed", attempt(() => fs.writeFileSync("/work/synthetic-marker", "x")));
-report("read another role's home", "refused", attempt(() => fs.readdirSync("/srv/dyfj/home/cli")));
+report("read another role's home", "refused", attempt(() => fs.readdirSync("/srv/dyfj/state/cli")));
 report("read the machine's root home", "refused", attempt(() => fs.readdirSync("/root")));
 report(
   "execute a file from the workspace",
