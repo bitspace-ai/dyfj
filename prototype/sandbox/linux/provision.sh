@@ -63,7 +63,9 @@ if ! /usr/local/bin/dolt version 2>/dev/null | grep -qF "$DOLT_VERSION"; then
 fi
 
 echo "== CLIs"
-npm install -g --no-fund --no-audit \
+# Claude Code's install script fetches its native binary, so it alone may
+# run one; every other package's scripts stay off.
+npm install -g --no-fund --no-audit --allow-scripts=@anthropic-ai/claude-code \
   "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" >/dev/null
 
 echo "== users"
@@ -112,7 +114,7 @@ echo "== local dolt (an empty store; it owns no memory class yet)"
 # Dolt keeps its global config in $HOME/.dolt, so the store has its own
 # directory beneath the home.
 if [[ ! -d /srv/dyfj/dolt/data/.dolt ]]; then
-  runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt bash -c '
+  runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt bash -c 'cd /srv/dyfj/dolt
     dolt config --global --get user.name >/dev/null 2>&1 ||
       { dolt config --global --add user.name dyfj-db && dolt config --global --add user.email dyfj-db@localhost; } >/dev/null
     mkdir -p /srv/dyfj/dolt/data && cd /srv/dyfj/dolt/data && dolt init >/dev/null'
@@ -158,7 +160,7 @@ cat >/etc/dyfj/l8/profile.json <<EOF
     "gid": $WORK_GID,
     "networkAllow": [
       "api.anthropic.com:443", "claude.ai:443", "console.anthropic.com:443",
-      "statsig.anthropic.com:443", "auth.openai.com:443", "chatgpt.com:443"
+      "auth.openai.com:443", "chatgpt.com:443"
     ]
   }
 }
