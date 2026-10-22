@@ -254,6 +254,32 @@ describe("the executor role", () => {
   });
 });
 
+describe("the command environment", () => {
+  it("adds the template's command environment names after the policy's, once each", async () => {
+    const result = await plan(offline(), {
+      ...template("executor"),
+      commandEnvironment: ["PATH", "GIT_CONFIG_COUNT", "PWD"],
+    });
+    assert.deepStrictEqual(result.environment, [
+      "PATH",
+      "HOME",
+      "DOLT_HOST",
+      "GIT_CONFIG_COUNT",
+      "PWD",
+    ]);
+  });
+
+  it("refuses a name that is not a plain environment name", async () => {
+    const offenders = await refusal(offline(), {
+      ...template("executor"),
+      commandEnvironment: ["PATH", "A=B"],
+    });
+    assert.deepStrictEqual(offenders, [
+      { group: "template", path: "template.commandEnvironment[1]", right: "name-invalid" },
+    ]);
+  });
+});
+
 describe("the template is checked", () => {
   for (const uid of [0, -1, 1.5, 65536 * 65536]) {
     it(`refuses uid ${uid}`, async () => {

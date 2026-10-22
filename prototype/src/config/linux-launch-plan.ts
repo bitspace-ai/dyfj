@@ -50,6 +50,12 @@ export interface LaunchTemplate {
   }[];
   /** The launcher's helper, run inside the sandbox from a read-only path. */
   readonly helper: string;
+  /**
+   * Environment names the role's commands carry besides the policy's: the
+   * bash tool's command environment, which holds no secret by construction.
+   * Names only; the launcher takes each value from the request.
+   */
+  readonly commandEnvironment?: readonly string[];
 }
 
 /** The addresses each named policy host resolved to at install time. */
@@ -98,6 +104,7 @@ export class LaunchPlanError extends Error {
 }
 
 const CONTROL = /[\u0000-\u001f\u007f]/;
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** A canonical absolute path other than the root itself. */
 function isCanonicalPath(path: unknown): path is string {
@@ -154,6 +161,11 @@ function checkTemplate(
       mounted.some((target) => within(target, path) || within(path, target))
     ) {
       report("template", at, "mount-collides");
+    }
+  });
+  (template.commandEnvironment ?? []).forEach((name, index) => {
+    if (typeof name !== "string" || !ENV_NAME.test(name)) {
+      report("template", `template.commandEnvironment[${index}]`, "name-invalid");
     }
   });
   template.symlinks.forEach((symlink, index) => {
@@ -322,7 +334,9 @@ export function planLinuxLaunch(
     landlock,
     writableTargets: [...output.landlock.write],
     nftables: nftables(output, template, resolved),
-    environment: [...output.environment],
+    environment: [
+      ...new Set([...output.environment, ...(template.commandEnvironment ?? [])]),
+    ],
     maxProcesses: output.process.maxProcesses,
   });
 }

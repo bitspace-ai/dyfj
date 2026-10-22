@@ -8,7 +8,11 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { after, before, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
-import { defineBash } from "./exec.ts";
+import {
+  BASH_ALLOWLIST_BASIS,
+  BASH_COMMAND_ENV_KEYS,
+  defineBash,
+} from "./exec.ts";
 
 const transportModule = () => import("./executor-transport.ts");
 
@@ -188,6 +192,23 @@ describe("the bash tool", () => {
     assert.ok(
       !Object.hasOwn(s.requests[0].env, "DYFJ_EXECUTOR_SOCKET"),
       "the socket path is not passed to the command",
+    );
+  });
+
+  it("sends only names the executor's command environment lists", async () => {
+    const root = await realpath(dir);
+    const s = await supervisor((_, socket) => answer(socket, OK));
+    const env: Record<string, string> = { DYFJ_EXECUTOR_SOCKET: s.path };
+    for (const key of ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ", "TMPDIR"]) {
+      env[key] = "x";
+    }
+    const bash = defineBash(root, { env: new MapEnv(env) });
+    await bash.executor(call("git status"), { authzBasis: BASH_ALLOWLIST_BASIS });
+    const sent = Object.keys(s.requests[0].env);
+    assert.ok(sent.includes("GIT_CONFIG_COUNT"), "the git safety switches are sent");
+    assert.deepStrictEqual(
+      sent.filter((name) => !BASH_COMMAND_ENV_KEYS.includes(name)),
+      [],
     );
   });
 

@@ -145,6 +145,18 @@ export const GIT_SAFETY_ENV: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Every environment name a bash call can carry: the safe base, the git safety
+ * switches, and the working-directory pair. None holds a secret, which is why
+ * the isolated executor may receive them (`linux-launch-plan.ts`).
+ */
+export const BASH_COMMAND_ENV_KEYS: readonly string[] = Object.freeze([
+  ...SAFE_ENV_KEYS,
+  ...Object.keys(GIT_SAFETY_ENV),
+  "PWD",
+  "OLDPWD",
+]);
+
+/**
  * Real runner: `bash -c <command>` with cwd pinned, bounded by the timeout. At
  * the deadline the command's whole process group is stopped and output
  * collection ends (`bounded-process.ts`).
