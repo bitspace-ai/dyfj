@@ -136,10 +136,11 @@ export interface CiliumEgressRule {
 }
 
 /**
- * The mount paths with each filesystem right. A path not listed for a right
- * is denied it, so a writable workspace without `execute` gets no direct
- * execute permission, which a mount's read-only flag alone cannot say. An
- * allowed interpreter can still read and run a script from it.
+ * The mount roots granted each filesystem right; everything beneath a listed
+ * root inherits it. A mount not listed for a right is denied it, so a
+ * writable workspace without `execute` gets no direct execute permission,
+ * which a mount's read-only flag alone cannot say. An allowed interpreter can
+ * still read and run a script from it.
  */
 export interface LandlockPaths {
   readonly read: readonly string[];

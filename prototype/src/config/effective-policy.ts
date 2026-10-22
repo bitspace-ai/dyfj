@@ -267,7 +267,13 @@ function list<T>(
   if (!Array.isArray(value)) {
     throw new Error(`effective policy: ${path} must be an array`);
   }
-  const parsed = value.map((element, index) => each(element, `${path}[${index}]`));
+  const parsed: T[] = [];
+  for (let index = 0; index < value.length; index++) {
+    if (!(index in value)) {
+      throw new Error(`effective policy: ${path}[${index}] is missing`);
+    }
+    parsed.push(each(value[index], `${path}[${index}]`));
+  }
   // Every list is a set: the digest sorts it, so a duplicate would make two
   // policies that grant the same thing hash differently.
   const seen = new Set<string>();

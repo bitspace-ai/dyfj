@@ -140,11 +140,13 @@ describe("the host helpers", () => {
         "[::]",
         "[0:0:0:0:0:0:0:1]",
         "[::ffff:127.0.0.1]",
+        "[::ffff:0:0]",
+        "[::ffff:0.0.0.0]",
       ]
     ) {
       assert.ok(isLoopbackHost(host), host);
     }
-    for (const host of ["192.0.2.1", "example.test", "[2001:db8::1]", "localhost/x"]) {
+    for (const host of ["192.0.2.1", "example.test", "[2001:db8::1]", "[::ffff:192.0.2.1]", "localhost/x"]) {
       assert.ok(!isLoopbackHost(host), host);
     }
   });

@@ -695,6 +695,12 @@ describe("the fifth-pass cases", () => {
     });
   }
 
+  it("refuses a sparse list rather than pass its holes through", () => {
+    const policy = golden();
+    policy.processes.executables = new Array(1);
+    assert.throws(() => parseEffectivePolicy(policy), /executables\[0\] is missing/);
+  });
+
   it("refuses an impossible calendar date as the expiry", () => {
     for (const stamp of ["2026-02-30T00:00:00Z", "2026-13-01T00:00:00Z", "2026-12-31T24:00:00Z"]) {
       const policy = golden();

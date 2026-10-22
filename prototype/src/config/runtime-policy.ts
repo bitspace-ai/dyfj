@@ -227,23 +227,37 @@ function canonicalHost(host: string): string | null {
   }
 }
 
-const IPV4_MAPPED_LOOPBACK = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/;
+const IPV4_MAPPED = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/;
+
+/** The IPv4 address an IPv4-mapped IPv6 host carries, or null. */
+function mappedIpv4(canonical: string): string | null {
+  const match = IPV4_MAPPED.exec(canonical);
+  if (match === null) return null;
+  const high = parseInt(match[1]!, 16);
+  const low = parseInt(match[2]!, 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
+}
+
+function isLoopbackIpv4(address: string): boolean {
+  return IPV4_ADDRESS.test(address) &&
+    (address.startsWith("127.") || address === "0.0.0.0");
+}
 
 /**
  * `host` names this machine's loopback or any-address in some spelling:
- * `localhost` and its subdomains, `127.0.0.0/8` (also as `127.1`, a decimal
- * or an IPv4-mapped IPv6 address), `0.0.0.0`, `[::1]` and `[::]` (also
- * uncompressed). Inside another network namespace or a pod such a host names
+ * `localhost` and its subdomains, `127.0.0.0/8` and `0.0.0.0` (also as
+ * `127.1`, a decimal or an IPv4-mapped IPv6 address), and `[::1]` and `[::]`
+ * (also uncompressed). Inside another network namespace or a pod such a host names
  * that environment's own loopback, so a platform compiler maps it.
  */
 export function isLoopbackHost(host: string): boolean {
   const canonical = canonicalHost(host);
   if (canonical === null) return false;
+  const mapped = mappedIpv4(canonical);
   return canonical === "localhost" || canonical.endsWith(".localhost") ||
-    (IPV4_ADDRESS.test(canonical) &&
-      (canonical.startsWith("127.") || canonical === "0.0.0.0")) ||
+    isLoopbackIpv4(canonical) ||
     canonical === "[::1]" || canonical === "[::]" ||
-    IPV4_MAPPED_LOOPBACK.test(canonical);
+    (mapped !== null && isLoopbackIpv4(mapped));
 }
 
 const DNS_NAME =
