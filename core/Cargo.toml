@@ -1,6 +1,6 @@
 [package]
 name = "dyfj-core"
-# Two default members means two binaries, so a bare `cargo run` here would be
+# Several default members means several binaries, so a bare `cargo run` here would be
 # ambiguous. Name the one the README's quick start documents.
 default-run = "dyfj-core"
 version = "0.0.1"
@@ -17,11 +17,11 @@ readme = "README.md"
 # default-members is explicit: a root package would otherwise be the only
 # default, and the gate would silently stop covering the other members.
 [workspace]
-members = [".", "dyfj-repl"]
-# Both members are default so `cargo test` and `cargo build` here cover the
+members = [".", "dyfj-repl", "dyfj-sandbox"]
+# Every member is default so `cargo test` and `cargo build` here cover the
 # workspace; the gate runs `cargo test` in this directory and would otherwise
-# silently stop covering the other member.
-default-members = [".", "dyfj-repl"]
+# silently stop covering the other members.
+default-members = [".", "dyfj-repl", "dyfj-sandbox"]
 
 [dependencies]
 anyhow = "1.0.102"
