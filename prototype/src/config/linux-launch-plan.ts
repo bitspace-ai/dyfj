@@ -11,7 +11,8 @@
  * - the command the sandbox runs first: the launcher's helper, which applies
  *   the Landlock path sets and then starts the role's command.
  * - an nftables ruleset that lets the role's uid reach only the resolved
- *   policy entries, and logs, counts and rejects every other packet it sends.
+ *   policy entries, and logs, counts and rejects every other packet it sends
+ *   (TCP with a reset, the rest with an ICMP error).
  *
  * Every host comes from the policy, by way of `compileLinux`; the addresses
  * come from the installer's resolution, never from this module. A named host
@@ -253,7 +254,10 @@ function nftables(
     ...established,
     ...accepts,
     // Rejected, not silently dropped: a refused connect fails at once with an
-    // errno instead of waiting out its retries. The counter is the evidence.
+    // errno instead of waiting out its retries. TCP gets a reset, because the
+    // kernel rate-limits the ICMP errors a burst of refusals would need. The
+    // counters are the evidence.
+    `    meta l4proto tcp log prefix "dyfj-drop ${template.role} " counter reject with tcp reset`,
     `    log prefix "dyfj-drop ${template.role} " counter reject with icmpx admin-prohibited`,
     "  }",
     "}",

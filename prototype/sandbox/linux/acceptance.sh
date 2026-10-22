@@ -22,8 +22,8 @@ fail=0
 result() { # pass|fail description evidence
   if [[ $1 == pass ]]; then printf 'ok    %s :: %s\n' "$2" "$3"; else printf 'FAIL  %s :: %s\n' "$2" "$3"; fail=1; fi
 }
-counter() { # table
-  nft list table inet "$1" 2>/dev/null | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | head -1
+counter() { # table: the sum of its reject counters
+  nft list table inet "$1" 2>/dev/null | sed -n 's/.*counter packets \([0-9]*\).*/\1/p' | awk '{s+=$1} END {print s+0}'
 }
 in_role() { # plan cwd-or-empty command...
   local plan=$1 cwd=$2; shift 2
