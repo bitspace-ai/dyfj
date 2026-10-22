@@ -633,7 +633,8 @@ is granted for. The same composition also builds an effective role policy
 with a digest, a check that a session stays inside its run envelope, and pure
 Kubernetes and Linux compilers for its filesystem, network and process groups
 that refuse, listing every offender, the unsupported conditions they check.
-Nothing reads or enforces the effective policy yet.
+Natively, nothing reads or enforces the effective policy yet. The one place it
+is enforced is the opt-in contained Linux target described below.
 `dyfj start` builds the runtime's environment from that policy, and the engine
 composes the same policy at boot and checks it in code:
 
@@ -688,6 +689,24 @@ write files, and the web tools' DNS preflight queries the nameservers in
 entries). The planned follow-up for all of these is an OS-level sandbox that
 scopes the runtime's own process (its network, processes and files) without
 reaching into the Node processes it starts.
+
+**The contained Linux target (opt-in, attended).** An OrbStack isolated
+machine (`prototype/sandbox/linux/`) enforces the effective policy below the
+seams. There is no Mac file sharing, SSH agent forwarding or Mac-command
+integration. The runtime, the executor and the agent CLIs each run as their own
+uid in a bubblewrap sandbox, with a Landlock floor and a per-uid firewall
+compiled from the policy. The `dyfj-sandbox` launcher (`core/dyfj-sandbox`)
+starts the runtime and sets `DYFJ_EXECUTOR_SOCKET`. With that set, the `bash`
+tool hands each command to a fresh executor sandbox: no network, no secrets,
+only the workspace writable. A transport failure is reported, never answered
+with a local spawn. Killing the runtime kills its executors. Approval is
+unchanged. The residuals are stated in that directory's README:
+- every machine shares one VM kernel;
+- provider egress is filtered by resolved address set rather than hostname, so
+  a CDN's neighbours are reachable;
+- the CLIs' own shells and model logins stay in the CLI role.
+
+Native runs on the Mac are not contained by it.
 
 **Adding a host: `[network] allow`.** A local model server on a port the
 static list does not name (the list covers Ollama on 11434, llama.cpp on 8080
@@ -2685,3 +2704,7 @@ Document revisions only. Code and behavior changes are tracked in
   run entries are tagged tables, and that an effective role policy with a
   digest, a session subset check and Kubernetes and Linux compilers is built
   from the same composition but not yet read or enforced.
+- 2026-10-22 - "Egress, spawn and environment limits" describes the opt-in
+  contained Linux target: an OrbStack isolated machine where the runtime,
+  executor and agent CLIs run as separate uids under bubblewrap, Landlock and a
+  per-uid firewall compiled from the effective policy, with its residuals.
