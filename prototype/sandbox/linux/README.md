@@ -12,9 +12,9 @@ contained by this.
 
 | Role | uid | Sandbox | Network | Holds |
 |---|---|---|---|---|
-| Runtime | `dyfj-rt` | Own user, PID, IPC, UTS, cgroup and mount namespaces. Landlock: workspace read-write without direct execute; toolchain and code read-execute. | Machine network. A per-uid nftables chain allows only the policy's resolved destinations, and rejects the rest (TCP with a reset). | Its bootstrap secrets, as files in `/secrets`. |
-| Executor | `dyfj-ex` | Every namespace, the network included (`lo` only). Landlock: workspace read-write-execute; toolchain read-execute. No nested user namespaces, no capabilities, no new privileges. | None. | Nothing. Only the bash tool's command environment. |
-| CLI | `dyfj-cli` | Runtime-shaped sandbox with its own home. | Its provider and login hosts only. | Its own model login. |
+| Runtime | `dyfj-rt` | Own user, PID, IPC, UTS, cgroup and mount namespaces. Landlock: direct execute only on its run grants, resolved to real paths at install, and the dynamic loader (execute scope `files`); toolchain and code read-only; workspace read-write. | Machine network. A per-uid nftables chain allows only the policy's resolved destinations, and rejects the rest (TCP with a reset). | Its bootstrap secrets, as files in `/secrets`. |
+| Executor | `dyfj-ex` | Every namespace, the network included (`lo` only). Landlock: workspace read-write-execute; toolchain read-execute (execute scope `roots`: any program, by design). No nested user namespaces, no capabilities, no new privileges. | None. | Nothing. Only the bash tool's command environment. |
+| CLI | `dyfj-cli` | Runtime-shaped sandbox with its own home and workspace (execute scope `roots`). | Its provider and login hosts only. | Its own model login. |
 | Database | `dyfj-db` | systemd unit. | Loopback `127.0.0.1:3306`, reachable only by roles whose policy names it. | The machine's own Dolt store. |
 
 `dyfj-sandbox serve` starts the runtime and answers the executor transport
@@ -54,6 +54,9 @@ repository.
 - **The CLI's model login.** A login made inside the machine stays in
   `dyfj-cli`'s home. The executor cannot read it, but the CLI's own commands
   can.
+- **Only the runtime's executable list is enforced.** The executor and the
+  CLIs run arbitrary programs as their job, so they execute from their roots
+  whole. The plan and the receipt record this as execute scope `roots`.
 - **The execute floor covers direct execution only.** Landlock's execute
   right governs `execve`. The dynamic loader (`ld-linux`) and the
   interpreters are allowed toolchain files, and they map or read the program

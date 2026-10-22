@@ -49,6 +49,10 @@ README are tracked separately in its Revision history section.
   - provider egress is enforced by address set, so other hosts behind the same
     provider addresses (a CDN's neighbours) are reachable until a
     hostname-checking gateway removes the downgrade;
+  - only the runtime's executable list is enforced: the runtime may directly
+    execute only its run grants (resolved at install) and the dynamic loader.
+    The executor and the CLIs execute from their roots by design, recorded as
+    execute scope `roots`;
   - the Landlock execute floor covers direct `execve` only: a role can still
     run a readable binary through the dynamic loader, or a script through an
     interpreter, which the acceptance run records;

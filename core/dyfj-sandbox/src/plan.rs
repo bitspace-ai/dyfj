@@ -12,6 +12,15 @@ pub enum Role {
     Executor,
 }
 
+/// How the role's execute rights were drawn (`linux-launch-plan.ts`): exactly
+/// its resolved executables and the loader, or its execute roots whole.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecuteScope {
+    Files,
+    Roots,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Bwrap {
@@ -32,6 +41,7 @@ pub struct LandlockPaths {
 pub struct LaunchPlan {
     pub role: Role,
     pub policy_digest: String,
+    pub execute_scope: ExecuteScope,
     pub uid: u32,
     pub gid: u32,
     pub bwrap: Bwrap,
@@ -121,6 +131,7 @@ mod tests {
         serde_json::json!({
             "role": "executor",
             "policyDigest": "sha256:00",
+            "executeScope": "roots",
             "uid": 2002,
             "gid": 2002,
             "bwrap": {
@@ -242,8 +253,16 @@ mod tests {
     }
 
     #[test]
+    fn refuses_an_unknown_execute_scope() {
+        let mut value = json();
+        value["executeScope"] = "all".into();
+        assert!(LaunchPlan::parse(&value.to_string()).is_err());
+    }
+
+    #[test]
     fn parses_the_typescript_plan_shape() {
         let plan = plan();
+        assert_eq!(plan.execute_scope, ExecuteScope::Roots);
         assert_eq!(plan.role, Role::Executor);
         assert_eq!(plan.max_processes, Some(64));
         assert_eq!(plan.writable_targets.len(), 2);

@@ -36,6 +36,14 @@ const MACHINE = {
   nodePath: "/usr/local/bin/node",
   nameservers: ["192.0.2.53:53"],
   systemReadOnly: ["/etc/ld.so.cache", "/etc/passwd"],
+  executables: {
+    bash: "/usr/bin/bash",
+    git: "/usr/bin/git",
+    "/bin/kill": "/usr/bin/kill",
+    "/bin/sleep": "/usr/bin/sleep",
+    "/usr/local/bin/node": "/usr/local/bin/node",
+  },
+  loader: "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
 };
 
 const RESOLVED = {
@@ -79,6 +87,32 @@ describe("the role policies", () => {
     for (const name of GIT_COMMAND_ENV_KEYS) {
       assert.ok(executor.plan.environment.includes(name), name);
     }
+  });
+
+  it("let the runtime execute exactly its resolved executables and the loader", async () => {
+    const { runtime } = await build();
+    assert.strictEqual(runtime.plan.executeScope, "files");
+    assert.deepStrictEqual([...runtime.plan.landlock.execute].sort(), [
+      "/usr/bin/bash",
+      "/usr/bin/git",
+      "/usr/bin/kill",
+      "/usr/bin/sleep",
+      "/usr/lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+      "/usr/local/bin/node",
+    ]);
+  });
+
+  it("give the executor and the CLI their execute roots, as roots scope", async () => {
+    const { executor, cli } = await build();
+    assert.strictEqual(executor.plan.executeScope, "roots");
+    assert.deepStrictEqual(executor.plan.landlock.execute, ["/usr", "/work"]);
+    assert.strictEqual(cli.plan.executeScope, "roots");
+  });
+
+  it("refuses a runtime executable the installer could not resolve", async () => {
+    const machine = { ...MACHINE, executables: { ...MACHINE.executables } } as any;
+    delete machine.executables.git;
+    await assert.rejects(build({ machine }), /executable-unresolved/);
   });
 
   it("let the runtime write the workspace but not execute from it", async () => {
@@ -137,6 +171,9 @@ describe("the receipt", () => {
   it("records each role's digests and the enforced assurance beside the requested one", async () => {
     const { receipt, runtime, executor } = await build();
     assert.strictEqual(receipt.roles.runtime.policyDigest, runtime.policy.identity.digest);
+    assert.strictEqual(receipt.roles.runtime.executeScope, "files");
+    assert.strictEqual(receipt.roles.executor.executeScope, "roots");
+    assert.strictEqual(receipt.roles.cli.executeScope, "roots");
     assert.strictEqual(receipt.roles.executor.policyDigest, executor.policy.identity.digest);
     assert.match(receipt.roles.runtime.planDigest, /^sha256:[0-9a-f]{64}$/);
     const provider = receipt.roles.runtime.egress.find((e: any) =>

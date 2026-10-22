@@ -12,13 +12,17 @@
  * From the composition and the profile it derives:
  * - the run envelope: the composed policy with the machine's filesystem
  *   roots (toolchain, code, workspace, runtime home, secrets) and a tmpfs;
- * - the runtime role: the workspace without direct execute (the dynamic
- *   loader can still run a readable binary from it), and only the network
+ * - the runtime role: direct execute on exactly its run grants, each
+ *   resolved to its real path here, and the dynamic loader they need (the
+ *   loader can still run any readable binary); the workspace without
+ *   execute; and only the network
  *   entries the run needs here: the database, the resolver, operator
  *   additions, and each `tls` provider the profile accepts enforced by address
  *   set. Other providers and local model servers are dropped;
  * - the executor role: toolchain and workspace only, no network, no secrets,
- *   no database, and the bash and git tools' command environment;
+ *   no database, and the bash and git tools' command environment. Its job is
+ *   running arbitrary programs, so it executes from its roots whole
+ *   (`executeScope: "roots"`), as does the CLI role;
  * - the CLI role: its own composition, with the profile's network additions
  *   for the Claude Code and Codex CLIs, its own home and its own workspace.
  *
@@ -43,7 +47,9 @@ import {
   chownSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import process from "node:process";
@@ -69,7 +75,10 @@ import {
   planLinuxLaunch,
   type ResolvedHosts,
 } from "../src/config/linux-launch-plan.ts";
-import { isAddressLiteral } from "../src/config/runtime-policy.ts";
+import {
+  isAddressLiteral,
+  RUNTIME_RUN_GRANTS,
+} from "../src/config/runtime-policy.ts";
 import { GIT_COMMAND_ENV_KEYS } from "../src/tools/builtin/git.ts";
 
 export interface RoleIds {
@@ -103,6 +112,10 @@ export interface MachineFacts {
   readonly nameservers: readonly string[];
   /** The machine files each sandbox binds read-only (those that exist). */
   readonly systemReadOnly: readonly string[];
+  /** Each runtime run grant, resolved on PATH and to its real path. */
+  readonly executables: Readonly<Record<string, string>>;
+  /** The dynamic loader's real path. */
+  readonly loader: string;
 }
 
 export interface RoleOutput {
@@ -215,6 +228,7 @@ function template(
     systemReadOnly: [...machine.systemReadOnly],
     symlinks: SYMLINKS,
     helper: HELPER,
+    executeScope: "roots",
     ...extra,
   };
 }
@@ -235,6 +249,7 @@ function compileRole(
 function receiptRole(output: RoleOutput, resolved: ResolvedHosts) {
   return {
     uid: output.plan.uid,
+    executeScope: output.plan.executeScope,
     policyDigest: output.policy.identity.digest,
     planDigest: sha256(output.plan),
     egress: output.compiled.firewall.accept.map((entry) => ({
@@ -339,11 +354,17 @@ export function buildMachinePlans(input: {
   const cliTls = cliPolicy.network.entries.filter((e) => e.hostnameAssurance === "tls")
     .map(entryName);
 
+  // The runtime may directly execute only its run grants (and the loader they
+  // need). The executor and the CLIs run arbitrary programs as their job, so
+  // they take their execute roots whole, and the plan says so.
   const runtime = compileRole(
     runtimePolicy,
     { addressSet: accepted },
     template("runtime", profile.runtime, machine, {
       systemReadOnly: [...machine.systemReadOnly, EXECUTOR_SOCKET_DIR],
+      executeScope: "files",
+      resolvedExecutables: machine.executables,
+      loader: machine.loader,
     }),
     resolved,
   );
@@ -403,6 +424,24 @@ async function resolveHosts(policies: readonly EffectivePolicy[]): Promise<Resol
   return resolved;
 }
 
+/** A program's real path: an absolute one as given, a bare name on PATH. */
+function resolveProgram(program: string): string | undefined {
+  const candidates = program.startsWith("/")
+    ? [program]
+    : ["/usr/local/bin", "/usr/bin", "/bin"].map((dir) => `${dir}/${program}`);
+  const found = candidates.find((path) => existsSync(path));
+  return found === undefined ? undefined : realpathSync(found);
+}
+
+/** The dynamic loader's real path. */
+function dynamicLoader(): string {
+  const name = readdirSync("/usr/lib").find((entry) =>
+    /^ld-linux.*\.so\.\d+$/.test(entry)
+  );
+  if (name === undefined) throw new Error("no dynamic loader in /usr/lib");
+  return realpathSync(`/usr/lib/${name}`);
+}
+
 function flag(args: readonly string[], name: string): string {
   const at = args.indexOf(name);
   const value = at === -1 ? undefined : args[at + 1];
@@ -417,6 +456,14 @@ async function main(args: readonly string[]) {
     nodePath: process.execPath,
     nameservers: nameservers(),
     systemReadOnly: SYSTEM_READ_ONLY_CANDIDATES.filter((path) => existsSync(path)),
+    // A grant left unresolved here is refused by the plan, by name.
+    executables: Object.fromEntries(
+      [...RUNTIME_RUN_GRANTS, process.execPath].flatMap((program) => {
+        const path = resolveProgram(program);
+        return path === undefined ? [] : [[program, path]];
+      }),
+    ),
+    loader: dynamicLoader(),
   };
   // Every host any role can keep: the static rows and the CLI's additions.
   const resolved = await resolveHosts([

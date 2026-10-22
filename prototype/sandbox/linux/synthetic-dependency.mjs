@@ -96,7 +96,10 @@ report(
     execFileSync("/work/synthetic-exec.sh", { stdio: "pipe" });
   }),
 );
-report("execute a toolchain binary", "allowed", attempt(() => execFileSync("/usr/bin/true")));
+// The runtime's execute floor is its run grants (files scope): a direct
+// execve of a toolchain program the policy does not list is refused.
+report("execute a listed program (bash)", "allowed", attempt(() => execFileSync("/usr/bin/bash", ["-c", "true"])));
+report("execute an unlisted toolchain program (/usr/bin/id)", "refused", attempt(() => execFileSync("/usr/bin/id")));
 
 // Landlock's execute right governs execve. The dynamic loader is itself an
 // allowed toolchain file, and it maps the program it is given with mmap,

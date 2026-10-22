@@ -299,7 +299,12 @@ pub fn serve(
     env.push(("DYFJ_EXECUTOR_SOCKET".into(), socket.into()));
     let argv = runtime.argv(None, &env, command)?;
     let mut child = role_command(&runtime, &argv).spawn().map_err(|e| fail(format!("bwrap: {e}")))?;
-    eprintln!("dyfj-sandbox: runtime {} started (policy {})", child.id(), runtime.policy_digest);
+    eprintln!(
+        "dyfj-sandbox: runtime {} started (policy {}, execute scope {:?})",
+        child.id(),
+        runtime.policy_digest,
+        runtime.execute_scope
+    );
 
     let lease = Arc::new(Mutex::new(Lease::default()));
     let watcher = {

@@ -64,7 +64,7 @@ echo "== 1. synthetic dependency in the runtime role (no product guards)"
 RT_TABLE=$(table_of runtime)
 # Starting a role recreates its table and zeroes its counters, so the
 # baseline is read after the runtime's rules are installed.
-in_role runtime "" true
+in_role runtime "" /usr/bin/bash -c true
 before=$(counter "$RT_TABLE"); before=${before:-0}
 dep=$(in_role runtime "" node "$HERE/synthetic-dependency.mjs" "$ALLOWED" 2>&1)
 dep_exit=$?
@@ -239,12 +239,12 @@ both() { # step
   fi
 }
 nft delete table inet "$RT_TABLE" 2>/dev/null; nft delete table inet "$CLI_TABLE" 2>/dev/null
-in_role cli "" true; in_role runtime "" true
+in_role cli "" true; in_role runtime "" /usr/bin/bash -c true
 both "CLI started, then runtime"
 nft delete table inet "$RT_TABLE" 2>/dev/null; nft delete table inet "$CLI_TABLE" 2>/dev/null
-in_role runtime "" true; in_role cli "" true
+in_role runtime "" /usr/bin/bash -c true; in_role cli "" true
 both "runtime started, then CLI"
-in_role runtime "" true
+in_role runtime "" /usr/bin/bash -c true
 both "runtime restarted while the CLI's rules stand"
 in_role cli "" true
 both "CLI restarted while the runtime's rules stand"

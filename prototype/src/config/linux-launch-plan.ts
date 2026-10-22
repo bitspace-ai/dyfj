@@ -39,6 +39,18 @@ import { isAddressLiteral } from "./runtime-policy.ts";
 export type LaunchRole = "runtime" | "executor";
 export const LAUNCH_ROLES: readonly LaunchRole[] = ["runtime", "executor"];
 
+/**
+ * How a role's execute rights are drawn. `files`: exactly the policy's
+ * executables, resolved to real paths at install, and the dynamic loader an
+ * ELF program needs, so a direct `execve` of any unlisted program is refused.
+ * `roots`: the policy's execute roots whole, for a role whose job is running
+ * arbitrary programs (the executor, an agent CLI); its executable list is not
+ * enforced, and the plan and receipt say so. Either way execute governs
+ * `execve` only: the loader or an interpreter can still run a readable file.
+ */
+export type ExecuteScope = "files" | "roots";
+export const EXECUTE_SCOPES: readonly ExecuteScope[] = ["files", "roots"];
+
 /** The trusted launcher's fixed description of one role. */
 export interface LaunchTemplate {
   readonly role: LaunchRole;
@@ -60,6 +72,11 @@ export interface LaunchTemplate {
    * Names only; the launcher takes each value from the request.
    */
   readonly commandEnvironment?: readonly string[];
+  readonly executeScope: ExecuteScope;
+  /** Under `files`: each policy executable's real path, resolved at install. */
+  readonly resolvedExecutables?: Readonly<Record<string, string>>;
+  /** Under `files`: the dynamic loader's path inside the sandbox. */
+  readonly loader?: string;
 }
 
 /** The addresses each named policy host resolved to at install time. */
@@ -68,6 +85,7 @@ export type ResolvedHosts = Readonly<Record<string, readonly string[]>>;
 export interface LinuxLaunchPlan {
   readonly role: LaunchRole;
   readonly policyDigest: string;
+  readonly executeScope: ExecuteScope;
   readonly uid: number;
   readonly gid: number;
   /**
@@ -150,6 +168,9 @@ function checkTemplate(
   if (!LAUNCH_ROLES.includes(template.role)) {
     report("template", "template.role", "role-invalid");
   }
+  if (!EXECUTE_SCOPES.includes(template.executeScope)) {
+    report("template", "template.executeScope", "execute-scope-invalid");
+  }
   if (!isRoleId(template.uid)) report("template", "template.uid", "id-invalid");
   if (!isRoleId(template.gid)) report("template", "template.gid", "id-invalid");
 
@@ -196,6 +217,41 @@ function checkTemplate(
 function addressFamily(address: string): 0 | 4 | 6 {
   if (address.includes(":")) return isAddressLiteral(`[${address}]`) ? 6 : 0;
   return isAddressLiteral(address) ? 4 : 0;
+}
+
+/** Every path the sandbox makes visible: its mounts and the template's binds. */
+function visible(output: LinuxOutput, template: LaunchTemplate): string[] {
+  return [
+    ...output.mounts.map((mount) => mount.target),
+    ...template.systemReadOnly.filter(isCanonicalPath),
+  ];
+}
+
+/** Under `files` scope, every policy executable must resolve inside the sandbox. */
+function checkExecutables(
+  output: LinuxOutput,
+  template: LaunchTemplate,
+  report: Report,
+) {
+  if (template.executeScope !== "files") return;
+  const seen = visible(output, template);
+  const inside = (path: unknown) =>
+    isCanonicalPath(path) && seen.some((root) => within(path, root));
+  if (!inside(template.loader)) {
+    report("template", "template.loader", "loader-invalid");
+  }
+  const resolved = template.resolvedExecutables ?? {};
+  output.process.executables.forEach((executable, index) => {
+    const at = `process.executables[${index}]`;
+    const path = Object.hasOwn(resolved, executable.program)
+      ? resolved[executable.program]
+      : undefined;
+    if (path === undefined) {
+      report("processes", at, "executable-unresolved");
+    } else if (!inside(path)) {
+      report("processes", at, "executable-not-mounted");
+    }
+  });
 }
 
 /** The address each accepted entry is filtered by, as nftables spells it. */
@@ -359,6 +415,7 @@ export function planLinuxLaunch(
   checkTemplate(output, template, report);
   checkNetwork(output, template, resolved, report);
   checkProtections(output, template, report);
+  checkExecutables(output, template, report);
   if (output.process.seccompProfile !== null) {
     report("processes", "process.seccompProfile", "seccomp-unsupported");
   }
@@ -369,11 +426,19 @@ export function planLinuxLaunch(
   const landlock: LandlockPaths = {
     read: [...template.systemReadOnly, "/proc", "/dev", ...output.landlock.read],
     write: ["/dev", ...output.landlock.write],
-    execute: [...output.landlock.execute],
+    execute: template.executeScope === "files"
+      ? [
+        ...output.process.executables.map((executable) =>
+          template.resolvedExecutables![executable.program]!
+        ),
+        template.loader!,
+      ]
+      : [...output.landlock.execute],
   };
   return deepFreeze({
     role: template.role,
     policyDigest: output.policyDigest,
+    executeScope: template.executeScope,
     uid: template.uid,
     gid: template.gid,
     bwrap: {

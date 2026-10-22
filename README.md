@@ -696,8 +696,12 @@ seams. There is no Mac file sharing, SSH agent forwarding or Mac-command
 integration. The runtime, the executor and the agent CLIs each run as their own
 uid in a bubblewrap sandbox, with a Landlock floor and a per-uid firewall
 compiled from the policy. The policy's filesystem, network and process
-groups are enforced, except git-metadata protection: the plan refuses that
-rather than drop it, and the target's envelopes do not ask for it. The
+groups are enforced, with two exceptions:
+- **Git metadata:** the plan refuses git-metadata protection rather than drop
+  it, and the target's envelopes do not ask for it.
+- **The executable list:** only the runtime's list is enforced, and only for
+  direct `execve`. The executor and the CLIs execute from their roots by
+  design, recorded as execute scope `roots`. The
 `dyfj-sandbox` launcher (`core/dyfj-sandbox`) starts the runtime and sets
 `DYFJ_EXECUTOR_SOCKET`. With that set, the `bash` and `git` tools hand each
 command to a fresh executor sandbox: no network, no secrets,

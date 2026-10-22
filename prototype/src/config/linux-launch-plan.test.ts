@@ -57,6 +57,18 @@ function template(role: "runtime" | "executor"): any {
     systemReadOnly: ["/usr", "/etc/ld.so.cache"],
     symlinks: [{ link: "/bin", target: "usr/bin" }],
     helper: "/usr/libexec/dyfj/dyfj-sandbox",
+    executeScope: "roots",
+  };
+}
+
+/** A runtime template that executes only its resolved policy executables. */
+function filesTemplate(overrides: Record<string, unknown> = {}): any {
+  return {
+    ...template("runtime"),
+    executeScope: "files",
+    resolvedExecutables: { git: "/usr/bin/git", "/usr/bin/bash": "/usr/bin/bash" },
+    loader: "/usr/lib/ld-linux-aarch64.so.1",
+    ...overrides,
   };
 }
 
@@ -275,6 +287,77 @@ describe("the executor role", () => {
       offenders.map((o) => o.right),
       ["executor-network", "executor-network", "executor-network", "executor-network"],
     );
+  });
+});
+
+describe("the execute scope", () => {
+  it("records roots scope and grants execute on the policy's execute roots", async () => {
+    const result = await plan(compiled(), template("runtime"));
+    assert.strictEqual(result.executeScope, "roots");
+    assert.deepStrictEqual(result.landlock.execute, ["/run/dyfj/toolchain"]);
+  });
+
+  it("grants execute on exactly the resolved executables and the loader under files scope", async () => {
+    const result = await plan(compiled(), filesTemplate());
+    assert.strictEqual(result.executeScope, "files");
+    assert.deepStrictEqual(result.landlock.execute, [
+      "/usr/bin/git",
+      "/usr/bin/bash",
+      "/usr/lib/ld-linux-aarch64.so.1",
+    ]);
+    assert.ok(!result.landlock.execute.includes("/run/dyfj/toolchain"));
+    assert.strictEqual(result.bwrap.inner[2], JSON.stringify(result.landlock));
+  });
+
+  it("removes a program's execute right when its grant is removed", async () => {
+    const output = compiledWith((policy) => {
+      policy.filesystem.protectedGit = [];
+      policy.processes.executables = policy.processes.executables.filter(
+        (e: any) => e.program !== "git",
+      );
+    });
+    const result = await plan(output, filesTemplate());
+    assert.ok(!result.landlock.execute.includes("/usr/bin/git"));
+    assert.deepStrictEqual(result.landlock.execute, [
+      "/usr/bin/bash",
+      "/usr/lib/ld-linux-aarch64.so.1",
+    ]);
+  });
+
+  it("refuses an executable the installer did not resolve", async () => {
+    const offenders = await refusal(
+      compiled(),
+      filesTemplate({ resolvedExecutables: { "/usr/bin/bash": "/usr/bin/bash" } }),
+    );
+    assert.deepStrictEqual(offenders, [
+      { group: "processes", path: "process.executables[0]", right: "executable-unresolved" },
+    ]);
+  });
+
+  it("refuses a resolved executable the sandbox does not bind", async () => {
+    const offenders = await refusal(
+      compiled(),
+      filesTemplate({
+        resolvedExecutables: { git: "/var/lib/git", "/usr/bin/bash": "/usr/bin/bash" },
+      }),
+    );
+    assert.deepStrictEqual(offenders, [
+      { group: "processes", path: "process.executables[0]", right: "executable-not-mounted" },
+    ]);
+  });
+
+  it("refuses files scope without a loader inside the sandbox", async () => {
+    const offenders = await refusal(compiled(), filesTemplate({ loader: "/var/lib/ld.so" }));
+    assert.deepStrictEqual(offenders, [
+      { group: "template", path: "template.loader", right: "loader-invalid" },
+    ]);
+  });
+
+  it("refuses a scope it does not know", async () => {
+    const offenders = await refusal(compiled(), { ...template("runtime"), executeScope: "all" });
+    assert.deepStrictEqual(offenders, [
+      { group: "template", path: "template.executeScope", right: "execute-scope-invalid" },
+    ]);
   });
 });
 
