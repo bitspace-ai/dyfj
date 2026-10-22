@@ -8,7 +8,7 @@
   ],
   "volumeMounts": [
     { "name": "workspace", "mountPath": "/mnt/dyfj/workspace", "readOnly": false },
-    { "name": "toolchain", "mountPath": "/mnt/dyfj/toolchain", "readOnly": true },
+    { "name": "toolchain", "mountPath": "/mnt/dyfj/toolchain", "subPath": "toolchain", "readOnly": true },
     { "name": "scratch", "mountPath": "/mnt/dyfj/scratch", "readOnly": false }
   ],
   "securityContext": {

@@ -3,7 +3,11 @@
  * granted from, group by group. A session may narrow anything and widen
  * nothing.
  *
- * Every violation is reported, never just the first. A violation names a field
+ * Violations accumulate across every group and field, never stopping at the
+ * first. Within one filesystem root only the first failing check is reported
+ * (outside every run root, then target, then rights), since the later checks
+ * mean nothing for a root outside the envelope; a dropped forbidden path or
+ * protected git entry is reported once per list. A violation names a field
  * path and a kind, never a value, so a list can be logged or shown without
  * leaking a host's URL path, a secret name's value or anything else the policy
  * holds. Matching is exact: no wildcard, suffix or prefix match on a host, and

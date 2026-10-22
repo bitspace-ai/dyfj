@@ -12,10 +12,18 @@
  * explicitly, because inside a pod or a network namespace it names that
  * environment's loopback, not the database or model server the policy means.
  *
- * A right the target cannot enforce, or a field the target requires and the
- * policy lacks, refuses: `UnsupportedRightError` lists every offender (group,
- * path, right; never a value) and no partial output is returned. Nothing is
- * dropped silently.
+ * The compilers cover the groups a platform enforces: filesystem, network and
+ * processes. Identity, secrets and effects (tools, approval posture, paid
+ * routing, limits) are enforced by the runtime and its broker, not by the
+ * platform, so the output carries none of them; it carries the policy digest,
+ * which binds them, and a launcher checks it against the policy it releases
+ * secrets for.
+ *
+ * Within those groups, a right the target cannot enforce, or a field the
+ * target requires and the policy lacks, refuses: `UnsupportedRightError`
+ * lists every offender found (group, path, right; never a value) and no
+ * partial output is returned. A refused field is never dropped from the
+ * output instead.
  */
 
 import type {
@@ -27,7 +35,11 @@ import type {
   NetworkProtocol,
 } from "./effective-policy.ts";
 import { verifyDigest } from "./effective-policy-digest.ts";
-import { isAddressLiteral, isLoopbackHost } from "./runtime-policy.ts";
+import {
+  isAddressLiteral,
+  isCanonicalHost,
+  isLoopbackHost,
+} from "./runtime-policy.ts";
 
 /** What a target can enforce, declared by its launcher. */
 export interface PlatformCapabilities {
@@ -60,8 +72,15 @@ interface CommonTarget {
 }
 
 export interface KubernetesTarget extends CommonTarget {
-  /** The volume claim that backs each filesystem root, by root name. */
-  readonly volumes: readonly { readonly root: string; readonly claim: string }[];
+  /**
+   * The volume claims and the host directory each one holds. A root is
+   * mounted from the claim whose source contains it, at the sub-path between
+   * the two.
+   */
+  readonly volumes: readonly {
+    readonly source: string;
+    readonly claim: string;
+  }[];
 }
 
 export type LinuxTarget = CommonTarget;
@@ -126,6 +145,7 @@ export interface KubernetesOutput {
   readonly volumeMounts: readonly {
     readonly name: string;
     readonly mountPath: string;
+    readonly subPath?: string;
     readonly readOnly: boolean;
   }[];
   readonly securityContext: {
@@ -184,6 +204,14 @@ export interface LinuxOutput {
 
 type Report = (group: string, path: string, right: string) => void;
 
+/** A mount name: one path segment, never `.` or `..`. */
+const MOUNT_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+
+/** The `host:port` of the resolver an entry's DNS behaviour names, or null. */
+function resolverEntry(dns: string): string | null {
+  return dns.startsWith("resolver:") ? dns.slice("resolver:".length) : null;
+}
+
 function hostOf(entry: string): string {
   return entry.slice(0, entry.lastIndexOf(":"));
 }
@@ -214,19 +242,41 @@ function commonOffenders(
         report("filesystem", `${path}.rights`, right);
       }
     }
-    if (targets.has(root.target) || root.target === policy.filesystem.scratch) {
+    if (!MOUNT_NAME.test(root.target)) {
+      report("filesystem", `${path}.target`, "mount-target-invalid");
+    } else if (
+      targets.has(root.target) || root.target === policy.filesystem.scratch
+    ) {
       report("filesystem", `${path}.target`, "mount-target-conflict");
     }
     targets.add(root.target);
   });
+  const scratch = policy.filesystem.scratch;
+  if (scratch !== null && !MOUNT_NAME.test(scratch)) {
+    report("filesystem", "filesystem.scratch", "mount-target-invalid");
+  }
 
   policy.network.entries.forEach((entry, index) => {
     const path = `network.entries[${index}]`;
-    if (
-      isLoopbackHost(entry.host) &&
-      mapping(target.services, `${entry.host}:${entry.port}`) === undefined
-    ) {
+    const mapped = mapping(target.services, `${entry.host}:${entry.port}`);
+    if (!isCanonicalHost(entry.host)) {
+      report("network", `${path}.host`, "host-invalid");
+    } else if (isLoopbackHost(entry.host) && mapped === undefined) {
       report("network", path, "loopback-unmapped");
+    }
+    if (mapped !== undefined && !isCanonicalHost(mapped.host)) {
+      report("network", path, "service-host-invalid");
+    }
+    const resolver = resolverEntry(entry.dns);
+    if (resolver !== null) {
+      const resolverMapped = mapping(target.services, resolver);
+      if (!isCanonicalHost(hostOf(resolver))) {
+        report("network", `${path}.dns`, "host-invalid");
+      } else if (
+        isLoopbackHost(hostOf(resolver)) && resolverMapped === undefined
+      ) {
+        report("network", `${path}.dns`, "loopback-unmapped");
+      }
     }
     if (!capabilities.protocols.includes(entry.protocol)) {
       report("network", `${path}.protocol`, entry.protocol);
@@ -287,13 +337,19 @@ function egress(
   return policy.network.entries.map((entry) => {
     const policyEntry = `${entry.host}:${entry.port}`;
     const mapped = mapping(services, policyEntry);
+    const resolver = resolverEntry(entry.dns);
+    const resolverMapped = resolver === null
+      ? undefined
+      : mapping(services, resolver);
     return {
       role: entry.role,
       policyEntry,
       host: mapped?.host ?? entry.host,
       port: mapped?.port ?? entry.port,
       protocol: entry.protocol,
-      dns: entry.dns,
+      dns: resolverMapped === undefined
+        ? entry.dns
+        : `resolver:${resolverMapped.host}:${resolverMapped.port}`,
       hostnameAssurance: entry.hostnameAssurance,
     };
   });
@@ -329,6 +385,43 @@ function ciliumRule(entry: CompiledEgress): CiliumEgressRule {
   return { toCIDR: [cidr], toPorts };
 }
 
+/** The segments of a canonical absolute path, or null. */
+function segments(path: string): string[] | null {
+  if (!path.startsWith("/")) return null;
+  if (path === "/") return [];
+  const parts = path.slice(1).split("/");
+  return parts.every((part) => part !== "" && part !== "." && part !== "..")
+    ? parts
+    : null;
+}
+
+/**
+ * The claim whose source holds `source`, the longest such source winning, and
+ * the sub-path from it; null when no claim holds it or a path is not
+ * canonical.
+ */
+function volumeFor(
+  target: KubernetesTarget,
+  source: string,
+): { claim: string; subPath: string } | null {
+  const inner = segments(source);
+  if (inner === null) return null;
+  let best: { claim: string; depth: number } | null = null;
+  for (const volume of target.volumes) {
+    const outer = segments(volume.source);
+    if (
+      outer !== null && outer.length <= inner.length &&
+      outer.every((part, index) => inner[index] === part) &&
+      (best === null || outer.length > best.depth)
+    ) {
+      best = { claim: volume.claim, depth: outer.length };
+    }
+  }
+  return best === null
+    ? null
+    : { claim: best.claim, subPath: inner.slice(best.depth).join("/") };
+}
+
 function copyExecutables(policy: EffectivePolicy): ExecutableGrant[] {
   return policy.processes.executables.map((executable) => ({ ...executable }));
 }
@@ -341,7 +434,7 @@ export function compileKubernetes(
   refuseUnlessClean("kubernetes", (report) => {
     commonOffenders(policy, target, report);
     policy.filesystem.roots.forEach((root, index) => {
-      if (!target.volumes.some((volume) => volume.root === root.name)) {
+      if (volumeFor(target, root.source) === null) {
         report("filesystem", `filesystem.roots[${index}]`, "volume-unmapped");
       }
     });
@@ -358,17 +451,21 @@ export function compileKubernetes(
       ...roots.map((root) => ({
         name: root.target,
         persistentVolumeClaim: {
-          claimName: target.volumes.find((v) => v.root === root.name)!.claim,
+          claimName: volumeFor(target, root.source)!.claim,
         },
       })),
       ...(scratch === null ? [] : [{ name: scratch, emptyDir: {} }]),
     ],
     volumeMounts: [
-      ...roots.map((root) => ({
-        name: root.target,
-        mountPath: mountPath(target, root.target),
-        readOnly: !root.rights.includes("write"),
-      })),
+      ...roots.map((root) => {
+        const subPath = volumeFor(target, root.source)!.subPath;
+        return {
+          name: root.target,
+          mountPath: mountPath(target, root.target),
+          ...(subPath === "" ? {} : { subPath }),
+          readOnly: !root.rights.includes("write"),
+        };
+      }),
       ...(scratch === null ? [] : [{
         name: scratch,
         mountPath: mountPath(target, scratch),

@@ -17,7 +17,7 @@
   ],
   "mountBase": "/mnt/dyfj",
   "volumes": [
-    { "root": "workspace", "claim": "workspace-claim" },
-    { "root": "toolchain", "claim": "toolchain-image" }
+    { "source": "/srv/work/space", "claim": "workspace-claim" },
+    { "source": "/opt", "claim": "toolchain-image" }
   ]
 }

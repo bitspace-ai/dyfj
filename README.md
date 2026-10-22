@@ -631,7 +631,8 @@ Its static net and run entries are tagged tables, each entry with the role it
 is granted for. The same composition also builds an effective role policy
 (`prototype/src/config/effective-policy*.ts`): a versioned, frozen description
 with a digest, a check that a session stays inside its run envelope, and pure
-Kubernetes and Linux compilers that refuse any right a target cannot enforce.
+Kubernetes and Linux compilers for its filesystem, network and process groups
+that refuse any of those rights a target cannot enforce.
 Nothing reads or enforces the effective policy yet.
 `dyfj start` builds the runtime's environment from that policy, and the engine
 composes the same policy at boot and checks it in code:

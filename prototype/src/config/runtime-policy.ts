@@ -23,6 +23,7 @@
  * follow-up that closes both gaps.
  */
 
+import { isIP } from "node:net";
 import process from "node:process";
 import type { Env } from "./env.ts";
 import { mcpServerNetGrants, validateDoltPort } from "./mcp-net-grants.ts";
@@ -195,21 +196,53 @@ export const RUNTIME_PLATFORM_ENV: readonly string[] = Object.freeze([
   "TEMP",
 ]);
 
-const IPV4_LITERAL = /^[0-9]{1,3}(?:\.[0-9]{1,3}){3}$/;
-
-/** `host` is an address literal: IPv4, or IPv6 in brackets. */
+/** `host` is a valid IPv4 address, or a valid IPv6 address in brackets. */
 export function isAddressLiteral(host: string): boolean {
-  return host.startsWith("[") || IPV4_LITERAL.test(host);
+  if (host.startsWith("[") && host.endsWith("]")) {
+    return isIP(host.slice(1, -1)) === 6;
+  }
+  return isIP(host) === 4;
 }
 
+/** `host` in the canonical form a URL gives it, or null when it has none. */
+function canonicalHost(host: string): string | null {
+  try {
+    return new URL(`http://${host}/`).hostname.replace(/\.$/, "");
+  } catch {
+    return null;
+  }
+}
+
+const IPV4_MAPPED_LOOPBACK = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/;
+
 /**
- * `host` names this machine's loopback: `localhost`, `127.0.0.0/8` or
- * `[::1]`. Inside another network namespace or a pod it names that
- * environment's own loopback instead, so a platform compiler maps it.
+ * `host` names this machine's loopback or any-address in some spelling:
+ * `localhost` and its subdomains, `127.0.0.0/8` (also as `127.1`, a decimal
+ * or an IPv4-mapped IPv6 address), `0.0.0.0`, `[::1]` and `[::]` (also
+ * uncompressed). Inside another network namespace or a pod such a host names
+ * that environment's own loopback, so a platform compiler maps it.
  */
 export function isLoopbackHost(host: string): boolean {
-  return host === "localhost" || host === "[::1]" ||
-    (IPV4_LITERAL.test(host) && host.startsWith("127."));
+  const canonical = canonicalHost(host);
+  if (canonical === null) return false;
+  return canonical === "localhost" || canonical.endsWith(".localhost") ||
+    (isIP(canonical) === 4 &&
+      (canonical.startsWith("127.") || canonical === "0.0.0.0")) ||
+    canonical === "[::1]" || canonical === "[::]" ||
+    IPV4_MAPPED_LOOPBACK.test(canonical);
+}
+
+const DNS_NAME =
+  /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
+/**
+ * `host` is spelled the one way a URL spells it, and is an address literal or
+ * a DNS name. `127.1`, `LOCALHOST`, `localhost.` and an uncompressed IPv6
+ * address are not: two spellings of one host must not count as two hosts.
+ */
+export function isCanonicalHost(host: string): boolean {
+  return canonicalHost(host) === host &&
+    (isAddressLiteral(host) || DNS_NAME.test(host));
 }
 
 /** The fixed signaler the ACP runner's process-group contract uses. */

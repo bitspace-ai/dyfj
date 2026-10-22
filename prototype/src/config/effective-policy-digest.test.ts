@@ -1,6 +1,7 @@
 // The effective policy digest: `sha256:<hex>` over a domain prefix, a NUL and
 // the canonical JSON of the policy without its own digest. Stable across
-// composition order, key order and repeated runs; changed by any single field;
+// composition order, key order and repeated runs; changed by any single
+// hashed field (not by the policy's own digest or the order of a list);
 // pinned by the golden vector in `testing/fixtures/effective-policy` so a Rust
 // helper can match it byte for byte. The modules are loaded inside each test
 // so that each test fails (and is reported) on its own until they exist.

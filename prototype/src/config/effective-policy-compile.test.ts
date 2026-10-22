@@ -392,10 +392,7 @@ describe("each unsupported right refuses", () => {
       policy.filesystem.roots[1].target = "workspace";
       const input = target(platform);
       if (platform === "kubernetes") {
-        input.volumes = [{ root: "workspace", claim: "a" }, {
-          root: "toolchain",
-          claim: "b",
-        }];
+        input.volumes = [{ source: "/", claim: "a" }];
       }
       await assertRefused(platform, sealed(policy), input, {
         group: "filesystem",
@@ -417,7 +414,7 @@ describe("each unsupported right refuses", () => {
 
   it("a filesystem root with no volume on the cluster", async () => {
     const input = target("kubernetes");
-    input.volumes = input.volumes.filter((v: any) => v.root !== "toolchain");
+    input.volumes = input.volumes.filter((v: any) => v.source !== "/opt");
     await assertRefused("kubernetes", parseEffectivePolicy(golden()), input, {
       group: "filesystem",
       path: "filesystem.roots[1]",
@@ -436,6 +433,128 @@ describe("each unsupported right refuses", () => {
       localhostProfile: "standard-v1",
     });
   });
+});
+
+describe("the pre-gate cases", () => {
+  it("mounts a narrower root at its sub-path in the claim that holds it", async () => {
+    const policy = golden();
+    policy.filesystem.roots[0].source = "/srv/work/space/sub/dir";
+    const output: any = await compile("kubernetes", sealed(policy), target("kubernetes"));
+    assert.deepStrictEqual(output.volumeMounts[0], {
+      name: "workspace",
+      mountPath: "/mnt/dyfj/workspace",
+      subPath: "sub/dir",
+      readOnly: false,
+    });
+  });
+
+  it("mounts from the claim with the longest source that holds the root", async () => {
+    const input = target("kubernetes");
+    input.volumes.push({ source: "/opt/toolchain", claim: "exact" });
+    const output: any = await compile("kubernetes", parseEffectivePolicy(golden()), input);
+    assert.deepStrictEqual(output.volumes[1], {
+      name: "toolchain",
+      persistentVolumeClaim: { claimName: "exact" },
+    });
+    assert.strictEqual(output.volumeMounts[1].subPath, undefined);
+  });
+
+  it("refuses a root whose claim holds only a path-prefix lookalike", async () => {
+    const input = target("kubernetes");
+    input.volumes[0].source = "/srv/work/spa";
+    await assertRefused("kubernetes", parseEffectivePolicy(golden()), input, {
+      group: "filesystem",
+      path: "filesystem.roots[0]",
+      right: "volume-unmapped",
+    });
+  });
+
+  for (const platform of PLATFORMS) {
+    it(`refuses a mount target that is not one plain segment, on ${platform}`, async () => {
+      for (const bad of ["../outside", "x/../workspace", ".", "..", "a/b", ""]) {
+        const policy = golden();
+        policy.filesystem.roots[1].target = bad === "" ? "-" : bad;
+        const found = await offenders(platform, sealed(policy), target(platform));
+        assert.deepStrictEqual(found, [{
+          group: "filesystem",
+          path: "filesystem.roots[1].target",
+          right: "mount-target-invalid",
+        }], bad);
+      }
+      const scratch = golden();
+      scratch.filesystem.scratch = "../tmp";
+      await assertRefused(platform, sealed(scratch), target(platform), {
+        group: "filesystem",
+        path: "filesystem.scratch",
+        right: "mount-target-invalid",
+      });
+    });
+
+    it(`refuses another spelling of a loopback host rather than compile it unmapped, on ${platform}`, async () => {
+      for (const host of ["[0:0:0:0:0:0:0:1]", "127.1", "LOCALHOST", "localhost."]) {
+        const policy = golden();
+        policy.network.entries[3].host = host;
+        const found = await offenders(platform, sealed(policy), target(platform));
+        assert.deepStrictEqual(found, [{
+          group: "network",
+          path: "network.entries[3].host",
+          right: "host-invalid",
+        }], host);
+      }
+    });
+
+    it(`refuses an unmapped loopback host in any canonical spelling, on ${platform}`, async () => {
+      for (const host of ["[::]", "0.0.0.0", "127.0.0.2", "a.localhost", "[::ffff:7f00:1]"]) {
+        const policy = golden();
+        policy.network.entries[3].host = host;
+        const found = await offenders(platform, sealed(policy), target(platform));
+        assert.deepStrictEqual(found, [{
+          group: "network",
+          path: "network.entries[3]",
+          right: "loopback-unmapped",
+        }], host);
+      }
+    });
+
+    it(`refuses a host that is neither an address nor a DNS name, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries[3].host = "[garbage]";
+      await assertRefused(platform, sealed(policy), target(platform), {
+        group: "network",
+        path: "network.entries[3].host",
+        right: "host-invalid",
+      });
+    });
+
+    it(`refuses a service mapping to an invalid host, on ${platform}`, async () => {
+      const input = target(platform);
+      input.services[0].host = "not a host";
+      await assertRefused(platform, parseEffectivePolicy(golden()), input, {
+        group: "network",
+        path: "network.entries[1]",
+        right: "service-host-invalid",
+      });
+    });
+
+    it(`rewrites a mapped resolver in every entry that names it, on ${platform}`, async () => {
+      const input = target(platform);
+      input.services.push({ entry: "192.0.2.53:53", host: "198.51.100.53", port: 53 });
+      const output: any = await compile(platform, parseEffectivePolicy(golden()), input);
+      const net = compiledNet(platform, output);
+      assert.strictEqual(net[0].dns, "resolver:198.51.100.53:53");
+      assert.strictEqual(net[2].host, "198.51.100.53");
+    });
+
+    it(`refuses a loopback resolver with no mapping, on ${platform}`, async () => {
+      const policy = golden();
+      policy.network.entries[0].dns = "resolver:127.0.0.53:53";
+      await assertRefused(platform, sealed(policy), target(platform), {
+        group: "network",
+        path: "network.entries[0].dns",
+        right: "loopback-unmapped",
+      });
+    });
+  }
 });
 
 describe("every offender is reported at once", () => {

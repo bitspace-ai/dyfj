@@ -26,12 +26,17 @@ README are tracked separately in its Revision history section.
   `effective-policy-digest.ts` gives a stable `sha256:` digest over canonical
   JSON, pinned by a golden vector in `prototype/testing/fixtures/effective-policy/`.
   `effective-policy-subset.ts` checks a session policy against its run
-  envelope and reports every violation as a path and a kind.
-  `effective-policy-compile.ts` adds `compileKubernetes` and `compileLinux`,
-  which return plain data for a declared platform target and throw
-  `UnsupportedRightError`, listing every offender, for any right the target
-  cannot enforce, including a loopback entry with no service mapping. The
-  compiled shapes are not verified against a real cluster or kernel.
+  envelope and reports its violations, across every group, as a path and a
+  kind. `effective-policy-compile.ts` adds `compileKubernetes` and
+  `compileLinux`, which compile the filesystem, network and process groups for
+  a declared platform target into plain data and carry the policy digest that
+  binds the rest (identity, secrets and effects stay with the runtime). For a
+  filesystem, network or process right the target cannot enforce they throw
+  `UnsupportedRightError` listing every offender, and return nothing; that
+  includes a loopback host in any spelling with no service mapping, a mount
+  name that is not one plain path segment, and a host that is not spelled
+  canonically. The compiled shapes are not verified against a real cluster or
+  kernel.
   **Runtime behaviour is unchanged:** boot, the launcher and the egress,
   spawn and env seams still read `composeRuntimePolicy`, nothing reads the
   effective policy, and nothing is deployed.

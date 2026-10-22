@@ -21,13 +21,16 @@ of the policy so that `projectRuntimePolicy` can rebuild today's
 `verifyDigest(policy)` holds for it. `policy.json` uses a `null` executable
 digest, syscall profile and unbounded daily spend on purpose: `null` means
 "not requested" or "unbounded", and the canonical form must keep it.
-Changing anything in `policy.json` changes the expected digest.
+Changing any hashed content of `policy.json` changes the expected digest;
+its own `identity.digest` and the order of any list do not.
 
 ## Compiled output
 
 `target-kubernetes.json` and `target-linux.json` are pinned platform targets:
 declared capabilities, an explicit service map for each loopback entry, and
-the mount base (plus, for Kubernetes, the volume claim behind each root).
+the mount base (plus, for Kubernetes, the volume claims and the host
+directory each holds; a root is mounted at its sub-path in the claim that
+holds it).
 `compiled-kubernetes.json` and `compiled-linux.json` are what
 `compileKubernetes` and `compileLinux` (`effective-policy-compile.ts`) return
 for `policy.json` and that target. They pin the shape only; neither is
