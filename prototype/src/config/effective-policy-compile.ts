@@ -21,12 +21,20 @@
  * Refusal covers the conditions `commonOffenders` and each compiler check, and
  * no others: a filesystem right, protocol, DNS mode, hostname assurance,
  * executable digest, process limit, descendant ban or syscall profile the
- * target does not declare; an unmapped loopback host or resolver; a host not
+ * target does not declare; an acceptance naming no `tls` entry of the policy;
+ * an unmapped loopback host or resolver; a host not
  * spelled canonically; an invalid service mapping; a mount name that is not
  * one plain segment, or two mounts on one name; a digest that does not
  * verify; and, on the cluster, a root no volume holds. `UnsupportedRightError`
  * lists every offender found (group, path, right; never a value) and no
  * partial output is returned.
+ *
+ * One weaker enforcement is allowed, and only when asked for twice: a `tls`
+ * entry on a target without a hostname gateway compiles when the target
+ * declares `tlsByAddressSet` and the job's `CompileAcceptance` names the
+ * entry. It is then filtered by the addresses its host resolved to at
+ * install, and its compiled `enforcedAssurance` reads `address-set` beside
+ * the `tls` it asked for.
  */
 
 import type {
@@ -58,7 +66,27 @@ export interface PlatformCapabilities {
   readonly forbidDescendants: boolean;
   readonly syscallProfiles: readonly string[];
   readonly requireSyscallProfile: boolean;
+  /**
+   * The target has no `tls` gateway but can filter a named host by the
+   * addresses it resolved to at install. A weaker assurance: other hosts at
+   * the same addresses (a CDN's neighbours) are reachable too. Used only for
+   * entries the job's `CompileAcceptance` names, and recorded on each.
+   */
+  readonly tlsByAddressSet?: boolean;
 }
+
+/**
+ * What the job accepts beyond the policy, separately from what the target
+ * offers. `addressSet` names the `tls` policy entries (`host:port`) the job
+ * accepts enforced by address set. An entry it does not name keeps requiring
+ * exact-host assurance.
+ */
+export interface CompileAcceptance {
+  readonly addressSet?: readonly string[];
+}
+
+/** The assurance a compiled entry is enforced with. */
+export type EnforcedAssurance = HostnameAssurance | "address-set";
 
 /** Where a policy entry (`host:port`) is reached on the target. */
 export interface ServiceMapping {
@@ -121,7 +149,10 @@ export interface CompiledEgress {
   readonly port: number;
   readonly protocol: NetworkProtocol;
   readonly dns: string;
+  /** What the policy asks for. */
   readonly hostnameAssurance: HostnameAssurance;
+  /** What the target enforces: weaker than asked only by the downgrade. */
+  readonly enforcedAssurance: EnforcedAssurance;
 }
 
 export interface CiliumEgressRule {
@@ -259,12 +290,34 @@ function mapping(
 }
 
 /** The offenders every target shares, in policy order. */
+/** Whether `entry` is enforced by address set rather than as it asks. */
+function downgraded(
+  entry: NetworkEntry,
+  capabilities: PlatformCapabilities,
+  acceptance: CompileAcceptance,
+): boolean {
+  return entry.hostnameAssurance === "tls" &&
+    !capabilities.hostnameAssurances.includes("tls") &&
+    capabilities.tlsByAddressSet === true &&
+    (acceptance.addressSet ?? []).includes(`${entry.host}:${entry.port}`);
+}
+
 function commonOffenders(
   policy: EffectivePolicy,
   target: CommonTarget,
+  acceptance: CompileAcceptance,
   report: Report,
 ) {
   const capabilities = target.capabilities;
+  (acceptance.addressSet ?? []).forEach((accepted, index) => {
+    const named = policy.network.entries.some((entry) =>
+      entry.hostnameAssurance === "tls" &&
+      `${entry.host}:${entry.port}` === accepted
+    );
+    if (!named) {
+      report("network", `acceptance.addressSet[${index}]`, "address-set-unknown");
+    }
+  });
   if (!verifyDigest(policy)) {
     report("identity", "identity.digest", "digest-mismatch");
   }
@@ -347,7 +400,10 @@ function commonOffenders(
     if (!capabilities.dnsModes.includes(entry.dns === "none" ? "none" : "resolver")) {
       report("network", `${path}.dns`, "dns-resolver");
     }
-    if (!capabilities.hostnameAssurances.includes(entry.hostnameAssurance)) {
+    if (
+      !capabilities.hostnameAssurances.includes(entry.hostnameAssurance) &&
+      !downgraded(entry, capabilities, acceptance)
+    ) {
       report("network", `${path}.hostnameAssurance`, entry.hostnameAssurance);
     }
   });
@@ -408,8 +464,10 @@ function refuseUnlessClean(
 
 function egress(
   policy: EffectivePolicy,
-  services: readonly ServiceMapping[],
+  target: CommonTarget,
+  acceptance: CompileAcceptance,
 ): CompiledEgress[] {
+  const services = target.services;
   return policy.network.entries.map((entry) => {
     const policyEntry = `${entry.host}:${entry.port}`;
     const mapped = mapping(services, policyEntry);
@@ -427,6 +485,9 @@ function egress(
         ? entry.dns
         : `resolver:${resolverMapped.host}:${resolverMapped.port}`,
       hostnameAssurance: entry.hostnameAssurance,
+      enforcedAssurance: downgraded(entry, target.capabilities, acceptance)
+        ? "address-set"
+        : entry.hostnameAssurance,
     };
   });
 }
@@ -532,9 +593,10 @@ const VOLUME_NAME = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
 export function compileKubernetes(
   policy: EffectivePolicy,
   target: KubernetesTarget,
+  acceptance: CompileAcceptance = {},
 ): KubernetesOutput {
   refuseUnlessClean("kubernetes", (report) => {
-    commonOffenders(policy, target, report);
+    commonOffenders(policy, target, acceptance, report);
     policy.filesystem.roots.forEach((root, index) => {
       if (MOUNT_NAME.test(root.target) && !VOLUME_NAME.test(root.target)) {
         report(
@@ -559,7 +621,7 @@ export function compileKubernetes(
 
   const roots = policy.filesystem.roots;
   const scratch = policy.filesystem.scratch;
-  const net = egress(policy, target.services);
+  const net = egress(policy, target, acceptance);
   const profile = policy.processes.syscallProfile;
   return {
     platform: "kubernetes",
@@ -616,8 +678,12 @@ export function compileKubernetes(
 export function compileLinux(
   policy: EffectivePolicy,
   target: LinuxTarget,
+  acceptance: CompileAcceptance = {},
 ): LinuxOutput {
-  refuseUnlessClean("linux", (report) => commonOffenders(policy, target, report));
+  refuseUnlessClean(
+    "linux",
+    (report) => commonOffenders(policy, target, acceptance, report),
+  );
 
   const roots = policy.filesystem.roots;
   const scratch = policy.filesystem.scratch === null
@@ -634,7 +700,10 @@ export function compileLinux(
     })),
     scratch: scratch === null ? null : { target: scratch, type: "tmpfs" },
     landlock: landlockPaths(policy, target),
-    firewall: { defaultAction: "drop", accept: egress(policy, target.services) },
+    firewall: {
+      defaultAction: "drop",
+      accept: egress(policy, target, acceptance),
+    },
     doltEndpoint: doltEndpoint(policy, target.services),
     brokerOperations: [...policy.network.brokerOperations],
     process: {

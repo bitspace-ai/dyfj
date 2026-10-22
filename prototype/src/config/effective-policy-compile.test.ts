@@ -49,11 +49,16 @@ function target(platform: Platform): any {
   return fixture(`target-${platform}.json`);
 }
 
-async function compile(platform: Platform, policy: unknown, input: unknown) {
+async function compile(
+  platform: Platform,
+  policy: unknown,
+  input: unknown,
+  acceptance?: unknown,
+) {
   const { compileKubernetes, compileLinux } = await compileModule();
   return platform === "kubernetes"
-    ? compileKubernetes(policy as any, input as any)
-    : compileLinux(policy as any, input as any);
+    ? compileKubernetes(policy as any, input as any, acceptance as any)
+    : compileLinux(policy as any, input as any, acceptance as any);
 }
 
 interface Offender {
@@ -67,12 +72,13 @@ async function offenders(
   platform: Platform,
   policy: unknown,
   input: unknown,
+  acceptance?: unknown,
 ): Promise<Offender[]> {
   const { UnsupportedRightError } = await compileModule();
   let output: unknown;
   let thrown: unknown;
   try {
-    output = await compile(platform, policy, input);
+    output = await compile(platform, policy, input, acceptance);
   } catch (error) {
     thrown = error;
   }
@@ -87,8 +93,9 @@ async function assertRefused(
   policy: unknown,
   input: unknown,
   expected: Offender,
+  acceptance?: unknown,
 ) {
-  const found = await offenders(platform, policy, input);
+  const found = await offenders(platform, policy, input, acceptance);
   assert.deepStrictEqual(found, [expected]);
 }
 
@@ -759,6 +766,88 @@ describe("the fifth-pass cases", () => {
     leap.identity.expiresAt = "2028-02-29T00:00:00Z";
     assert.doesNotThrow(() => parseEffectivePolicy(leap));
   });
+});
+
+// The address-set downgrade (BIT-735): a target with no hostname gateway may
+// stand in for one with the addresses a `tls` entry resolved to at install,
+// only when both the target declares it can and the job's acceptance names the
+// entry. The weaker assurance is recorded on every compiled entry.
+describe("the address-set downgrade", () => {
+  /** A target that cannot check host names but can filter by address set. */
+  function downgradeTarget(platform: Platform, declares: boolean): any {
+    const input = target(platform);
+    input.capabilities.hostnameAssurances = ["none"];
+    if (declares) input.capabilities.tlsByAddressSet = true;
+    return input;
+  }
+  const ACCEPT = { addressSet: ["api.anthropic.com:443"] };
+
+  for (const platform of PLATFORMS) {
+    it(`compiles an accepted tls entry with its weaker assurance recorded, on ${platform}`, async () => {
+      const output: any = await compile(
+        platform,
+        parseEffectivePolicy(golden()),
+        downgradeTarget(platform, true),
+        ACCEPT,
+      );
+      const entry = output.egress?.[0] ?? output.firewall?.accept[0];
+      assert.strictEqual(entry.policyEntry, "api.anthropic.com:443");
+      assert.strictEqual(entry.hostnameAssurance, "tls");
+      assert.strictEqual(entry.enforcedAssurance, "address-set");
+    });
+
+    it(`refuses when only the job accepts it, on ${platform}`, async () => {
+      await assertRefused(
+        platform,
+        parseEffectivePolicy(golden()),
+        downgradeTarget(platform, false),
+        {
+          group: "network",
+          path: "network.entries[0].hostnameAssurance",
+          right: "tls",
+        },
+        ACCEPT,
+      );
+    });
+
+    it(`refuses when only the target offers it: a job that requires exact-host assurance, on ${platform}`, async () => {
+      await assertRefused(
+        platform,
+        parseEffectivePolicy(golden()),
+        downgradeTarget(platform, true),
+        {
+          group: "network",
+          path: "network.entries[0].hostnameAssurance",
+          right: "tls",
+        },
+      );
+    });
+
+    it(`refuses an acceptance that names no tls entry of the policy, on ${platform}`, async () => {
+      await assertRefused(
+        platform,
+        parseEffectivePolicy(golden()),
+        target(platform),
+        {
+          group: "network",
+          path: "acceptance.addressSet[0]",
+          right: "address-set-unknown",
+        },
+        { addressSet: ["192.0.2.53:53"] },
+      );
+    });
+
+    it(`leaves a target that checks host names enforcing tls even when the job accepts less, on ${platform}`, async () => {
+      const output: any = await compile(
+        platform,
+        parseEffectivePolicy(golden()),
+        { ...target(platform), capabilities: { ...target(platform).capabilities, tlsByAddressSet: true } },
+        ACCEPT,
+      );
+      const entry = output.egress?.[0] ?? output.firewall?.accept[0];
+      assert.strictEqual(entry.enforcedAssurance, "tls");
+    });
+  }
 });
 
 describe("every offender is reported at once", () => {
