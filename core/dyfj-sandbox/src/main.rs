@@ -56,6 +56,12 @@ fn apply_landlock(args: &[String]) -> Result<i32, String> {
     let paths: plan::LandlockPaths =
         serde_json::from_str(spec).map_err(|e| format!("Landlock paths are malformed: {e}"))?;
     landlock::apply(&paths)?;
+    // Roles share the workspace through their common group, so what one
+    // writes the others may change.
+    // SAFETY: umask has no preconditions.
+    unsafe {
+        libc::umask(0o002);
+    }
     use std::os::unix::process::CommandExt;
     let error = std::process::Command::new(&rest[1]).args(&rest[2..]).exec();
     Err(format!("{}: {error}", rest[1]))
