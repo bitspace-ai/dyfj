@@ -62,6 +62,9 @@ echo "planted a runtime secret and a service-token fixture (random, synthetic)"
 
 echo "== 1. synthetic dependency in the runtime role (no product guards)"
 RT_TABLE=$(table_of runtime)
+# Starting a role recreates its table and zeroes its counters, so the
+# baseline is read after the runtime's rules are installed.
+in_role runtime "" true
 before=$(counter "$RT_TABLE"); before=${before:-0}
 dep=$(in_role runtime "" node "$HERE/synthetic-dependency.mjs" "$ALLOWED" 2>&1)
 after=$(counter "$RT_TABLE")
