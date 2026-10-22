@@ -664,7 +664,7 @@ describe("the pre-gate cases", () => {
 
 describe("the fifth-pass cases", () => {
   it("refuses a mount name that is not a Kubernetes volume name", async () => {
-    for (const name of ["Work_space", "work.space", "-work"]) {
+    for (const name of ["Work_space", "work.space", "work-"]) {
       const policy = golden();
       policy.filesystem.roots[0].target = name;
       const found = await offenders("kubernetes", sealed(policy), target("kubernetes"));
