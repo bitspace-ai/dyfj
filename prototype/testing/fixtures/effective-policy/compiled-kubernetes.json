@@ -24,10 +24,10 @@
     "seccompProfile": { "type": "RuntimeDefault" }
   },
   "egress": [
-    { "role": "provider", "policyEntry": "api.anthropic.com:443", "host": "api.anthropic.com", "port": 443, "protocol": "tcp", "dns": "resolver:192.0.2.53:53", "hostnameAssurance": "tls" },
-    { "role": "dolt", "policyEntry": "127.0.0.1:3306", "host": "dolt.dyfj.svc.cluster.local", "port": 3306, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" },
-    { "role": "dns", "policyEntry": "192.0.2.53:53", "host": "192.0.2.53", "port": 53, "protocol": "udp", "dns": "none", "hostnameAssurance": "none" },
-    { "role": "local-model", "policyEntry": "[::1]:8080", "host": "models.dyfj.svc.cluster.local", "port": 8080, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none" }
+    { "role": "provider", "policyEntry": "api.anthropic.com:443", "host": "api.anthropic.com", "port": 443, "protocol": "tcp", "dns": "resolver:192.0.2.53:53", "hostnameAssurance": "tls", "enforcedAssurance": "tls" },
+    { "role": "dolt", "policyEntry": "127.0.0.1:3306", "host": "dolt.dyfj.svc.cluster.local", "port": 3306, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none", "enforcedAssurance": "none" },
+    { "role": "dns", "policyEntry": "192.0.2.53:53", "host": "192.0.2.53", "port": 53, "protocol": "udp", "dns": "none", "hostnameAssurance": "none", "enforcedAssurance": "none" },
+    { "role": "local-model", "policyEntry": "[::1]:8080", "host": "models.dyfj.svc.cluster.local", "port": 8080, "protocol": "tcp", "dns": "none", "hostnameAssurance": "none", "enforcedAssurance": "none" }
   ],
   "ciliumEgress": [
     { "toFQDNs": [{ "matchName": "api.anthropic.com" }], "toPorts": [{ "ports": [{ "port": "443", "protocol": "TCP" }] }] },

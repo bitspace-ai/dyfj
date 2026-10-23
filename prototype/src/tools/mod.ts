@@ -77,6 +77,10 @@ export {
 } from "./catalog.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
 export { RootAnchors } from "./builtin/root-anchors.ts";
+export type {
+  ExecutorConnection,
+  ExecutorDialer,
+} from "./builtin/executor-transport.ts";
 export {
   buildMemoryContextSourceLines,
   buildSystemPrompt,

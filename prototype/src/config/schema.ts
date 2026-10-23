@@ -345,6 +345,15 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
+  // The isolated machine's executor socket. Its supervisor sets it when it
+  // starts the runtime; with it, bash runs in the executor, never here.
+  {
+    key: "executorSocket",
+    envVar: "DYFJ_EXECUTOR_SOCKET",
+    domain: "engine",
+    type: "string",
+    kind: "value",
+  },
   // ── engine: session/identity — declared, but NOT config (rides the connection) ──
   {
     key: "principalId",

@@ -11,6 +11,72 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A contained Linux target: an OrbStack isolated machine where the
+  effective policy is enforced below the product's code (opt-in, attended).**
+  It is documented in `prototype/sandbox/linux/README.md`. The machine has no
+  Mac file sharing, SSH agent forwarding, Mac-command integration or engine
+  socket. The runtime, the executor and the agent CLIs run as separate uids,
+  each in a bubblewrap sandbox with a Landlock floor and a per-uid nftables
+  chain.
+  - `src/config/linux-launch-plan.ts` turns `compileLinux` output, a role
+    template and the installer's host resolution into the bubblewrap options,
+    Landlock path sets and nftables ruleset for one role. Each role gets its
+    own nftables table. The plan refuses:
+    - an executor granted any network;
+    - git-metadata protection beneath a writable mount, which Landlock cannot
+      enforce;
+    - a forbidden path inside a mount.
+  - `scripts/sandbox-install.ts` derives the run envelope and the runtime,
+    executor and CLI role policies from one composition. It checks that each
+    role sits inside its run, compiles and plans each one, and writes a
+    receipt of policy and plan digests and of each destination's requested
+    and enforced assurance.
+  - `core/dyfj-sandbox` is a small root-run Rust launcher that uses only crates
+    the workspace already locks. It installs a role's rules, drops to its uid
+    and starts its sandbox, refusing a Landlock ABI below 3. Its `serve`
+    command answers the executor transport for the runtime's uid only, and
+    kills every executor when the runtime exits.
+  - `sandbox/linux/provision.sh` provisions the machine with pinned downloads,
+    then checks that the Mac integrations are absent and that no agent uid can
+    escalate.
+  - `sandbox/linux/acceptance.sh` runs design §8's Mac scenario with synthetic
+    canaries.
+  - `scripts/sandbox-export.ts` reads the workspace's commits back to the Mac
+    as a bounded mbox, with git run in an executor sandbox.
+
+  Residuals:
+  - every machine shares one VM kernel;
+  - provider egress is enforced by address set, so other hosts behind the same
+    provider addresses (a CDN's neighbours) are reachable until a
+    hostname-checking gateway removes the downgrade;
+  - only the runtime's executable list is enforced: the runtime may directly
+    execute only its run grants (resolved at install) and the dynamic loader.
+    The executor and the CLIs execute from their roots by design, recorded as
+    execute scope `roots`;
+  - the Landlock execute floor covers direct `execve` only: a role can still
+    run a readable binary through the dynamic loader, or a script through an
+    interpreter, which the acceptance run records;
+  - the CLIs' own shells and model logins stay in the CLI role. Codex must
+    run with `--no-daemon` there: its managed daemon binary, downloaded into
+    the CLI's non-executable home, is refused by design. The target README
+    gives both CLIs' launch commands;
+  - workspace git metadata is writable, so nothing outside the executor runs
+    git where the executor writes: the runtime's git and bash tools run in the
+    executor, the export disables hooks and config, and the CLI has its own
+    workspace;
+  - approval is unchanged.
+
+  Native runs on the Mac are not contained by it.
+- **The `bash` and `git` tools can run commands in an isolated executor.**
+  When `DYFJ_EXECUTOR_SOCKET` is set (only the contained target's launcher
+  sets it), each tool sends its command over that Unix socket instead of
+  spawning it. The engine's composition root supplies the connection through
+  the transport port. If it was not supplied, or on any transport failure,
+  the tool reports an error, and nothing falls back to a local spawn. The tool's description then says the command runs in
+  the isolated executor, with no network. `BASH_COMMAND_ENV_KEYS` lists every
+  environment name a call can carry, so the executor keeps git's safety
+  switches.
+
 - **An effective role policy, built from the existing grant composition,
   with a digest, a subset check and two platform compilers (data only).**
   `prototype/src/config/effective-policy.ts` describes what a runtime may do as
@@ -376,6 +442,19 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The platform compilers record the assurance each destination is
+  enforced with.** Every compiled egress entry now carries
+  `enforcedAssurance` beside the `hostnameAssurance` it asked for. A `tls`
+  entry compiles on a target with no hostname gateway only when two
+  conditions both hold:
+  - the target declares `tlsByAddressSet`;
+  - the job's `CompileAcceptance` names that entry.
+
+  It is then enforced as `address-set`: filtered by the addresses its host
+  resolved to, which also reaches other hosts at those addresses. A job that
+  does not accept the downgrade still refuses, and an acceptance naming no
+  `tls` entry is refused.
 
 - **Budget approvals raise their limit to a stated level instead of prompting at every step (BIT-715).**
   - Runaway anomaly gate: approving at actual spend S raises the tripped

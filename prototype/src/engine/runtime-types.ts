@@ -28,6 +28,7 @@ import type {
 import type {
   CommandDefinition,
   ConfirmToolApproval,
+  ExecutorDialer,
   RootAnchors,
 } from "../tools/mod.ts";
 import type {
@@ -292,6 +293,11 @@ export interface WorkbenchRuntimeServices {
    * so a root's anchor lasts for the engine process, not one turn.
    */
   rootAnchors: RootAnchors;
+  /**
+   * Dials the isolated machine's executor socket for the `bash` tool, when
+   * the launcher set `DYFJ_EXECUTOR_SOCKET`. Built at the composition root.
+   */
+  dialExecutor?: ExecutorDialer;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

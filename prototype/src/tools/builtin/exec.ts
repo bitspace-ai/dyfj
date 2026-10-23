@@ -42,6 +42,10 @@ import {
   describeTimeout,
   runBounded,
 } from "./bounded-process.ts";
+import {
+  createExecutorRunner,
+  type ExecutorDialer,
+} from "./executor-transport.ts";
 
 export type BashResult = BoundedResult;
 
@@ -81,6 +85,15 @@ const SAFE_ENV_KEYS = [
   "TZ",
   "TMPDIR",
 ] as const;
+
+/**
+ * The isolated machine's executor socket, when its launcher set one. With it,
+ * the bash and git tools run their commands in the executor and never here.
+ */
+export function executorSocket(source: Env = processEnv): string | undefined {
+  const socket = readEnv(source, "DYFJ_EXECUTOR_SOCKET");
+  return socket === undefined || socket === "" ? undefined : socket;
+}
 
 function readEnv(source: Env, key: string): string | undefined {
   try {
@@ -142,6 +155,18 @@ export const GIT_SAFETY_ENV: Readonly<Record<string, string>> = {
   GIT_CONFIG_KEY_4: "core.pager",
   GIT_CONFIG_VALUE_4: "cat",
 };
+
+/**
+ * Every environment name a bash call can carry: the safe base, the git safety
+ * switches, and the working-directory pair. None holds a secret, which is why
+ * the isolated executor may receive them (`linux-launch-plan.ts`).
+ */
+export const BASH_COMMAND_ENV_KEYS: readonly string[] = Object.freeze([
+  ...SAFE_ENV_KEYS,
+  ...Object.keys(GIT_SAFETY_ENV),
+  "PWD",
+  "OLDPWD",
+]);
 
 /**
  * Real runner: `bash -c <command>` with cwd pinned, bounded by the timeout. At
@@ -294,18 +319,46 @@ function bashApprovalTitle(timeoutSec: unknown): string {
 
 // ── Command definition ───────────────────────────────────────────────────────
 
+/** What the command can reach, as the model is told it. */
+function bashReach(contained: boolean): string {
+  return contained
+    ? ". The command runs in the isolated executor: its writes persist only " +
+      "in the workspace (it also has private scratch space that is discarded " +
+      "after the command), it has no network, and it cannot see the runtime's " +
+      "credentials. "
+    : ", but the command is NOT sandboxed — it can read and write anywhere on " +
+      "the machine and reach the network, exactly as if the operator ran it. ";
+}
+
+/** A runner for a socket set with no dialer to reach it: always refuses. */
+export const undialable: (...args: unknown[]) => Promise<never> = () =>
+  Promise.reject(
+    new Error("executor unavailable: no executor connection is configured"),
+  );
+
 export function defineBash(
   root: string,
-  opts: { runner?: BashRunner; env?: Env } = {},
+  opts: { runner?: BashRunner; env?: Env; dialExecutor?: ExecutorDialer } =
+    {},
 ): CommandDefinition<string> {
+  // The supervisor of an isolated machine sets the socket when it starts the
+  // runtime. With it, commands run in the executor and never here, whatever
+  // runner was injected: without a dialer to reach it, every command is
+  // refused rather than run locally.
+  const socket = executorSocket(opts.env);
+  const contained = socket !== undefined;
+  const runner = !contained
+    ? opts.runner
+    : opts.dialExecutor === undefined
+    ? undialable
+    : createExecutorRunner(socket!, opts.dialExecutor);
   return {
     id: "bash",
     title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
-      "root, or the workspace directory cwd names, but the command is NOT " +
-      "sandboxed — it can read and write anywhere on " +
-      "the machine and reach the network, exactly as if the operator ran it. " +
+      "root, or the workspace directory cwd names" +
+      bashReach(contained) +
       "Returns the exit status and combined stdout/stderr. Requires operator " +
       "approval before it runs, except for a small set of read-only commands " +
       "(git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) " +
@@ -385,7 +438,7 @@ export function defineBash(
         : base;
       return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
-        runner: opts.runner,
+        runner,
         env,
       });
     },

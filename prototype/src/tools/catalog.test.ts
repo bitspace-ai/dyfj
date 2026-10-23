@@ -6,6 +6,7 @@ import type { CommandCall } from "./definition.ts";
 import { evaluateCommandPolicy } from "./policy.ts";
 import { buildToolCatalog } from "./catalog.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
+import { MapEnv } from "../../testing/fakes/map-env.ts";
 
 function call(
   args: Record<string, unknown> = { slug: "project_dyfj" },
@@ -150,5 +151,29 @@ describe("buildToolCatalog wiring", () => {
       ).decision,
       "ask",
     );
+  });
+});
+
+// The engine's Env port, not the process environment, says whether the bash
+// and git tools run in the isolated executor.
+describe("buildToolCatalog executor wiring", () => {
+  it("reads the executor socket from the env port it is given", () => {
+    const registry = buildToolCatalog(
+      {
+        rootAnchors: new RootAnchors(),
+        env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" }),
+      },
+      { workspaceRoot: "/work" },
+    );
+    assert.match(registry.lookup("bash")!.description, /isolated executor/);
+    assert.match(registry.lookup("git")!.description, /isolated executor/);
+  });
+
+  it("stays native when the env port holds no socket", () => {
+    const registry = buildToolCatalog(
+      { rootAnchors: new RootAnchors(), env: new MapEnv({}) },
+      { workspaceRoot: "/work" },
+    );
+    assert.match(registry.lookup("bash")!.description, /NOT sandboxed/);
   });
 });

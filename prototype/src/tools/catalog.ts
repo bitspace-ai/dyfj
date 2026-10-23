@@ -21,6 +21,8 @@ import {
 } from "./builtin/file.ts";
 import type { RootAnchors, WorkspaceRoot } from "./builtin/root-anchors.ts";
 import { defineBash } from "./builtin/exec.ts";
+import type { ExecutorDialer } from "./builtin/executor-transport.ts";
+import type { Env } from "../config/mod.ts";
 import { defineGit } from "./builtin/git.ts";
 
 /** Runtime capabilities a tool is backed by. Absent ones leave their tools out. */
@@ -45,6 +47,17 @@ export interface ToolCatalogPorts {
    * composition root builds one per engine so an anchor outlives the turn.
    */
   rootAnchors?: RootAnchors;
+  /**
+   * Dials the isolated machine's executor socket, for the `bash` tool when
+   * `DYFJ_EXECUTOR_SOCKET` is set. Absent, such a `bash` refuses every
+   * command rather than run it here.
+   */
+  dialExecutor?: ExecutorDialer;
+  /**
+   * The engine's environment, where the `bash` and `git` tools look for
+   * `DYFJ_EXECUTOR_SOCKET`; the process environment when absent.
+   */
+  env?: Env;
 }
 
 /** Resolved settings that shape the builtin tools. */
@@ -65,12 +78,21 @@ export type ToolCatalogEntry = (
   deps: ToolCatalogDependencies,
 ) => CommandDefinition | undefined;
 
-/** A workspace-rooted tool: present only when a workspace root is resolved. */
+/**
+ * A workspace-rooted process tool: present only when a workspace root is
+ * resolved, and given the engine's environment and executor dialer.
+ */
 function workspaceTool(
-  define: (root: string) => CommandDefinition,
+  define: (
+    root: string,
+    opts: { dialExecutor?: ExecutorDialer; env?: Env },
+  ) => CommandDefinition,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot }) =>
-    workspaceRoot === undefined ? undefined : define(workspaceRoot);
+  return ({ workspaceRoot, dialExecutor, env }) =>
+    workspaceRoot === undefined ? undefined : define(workspaceRoot, {
+      ...(dialExecutor === undefined ? {} : { dialExecutor }),
+      ...(env === undefined ? {} : { env }),
+    });
 }
 
 /**
