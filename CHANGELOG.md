@@ -56,7 +56,10 @@ README are tracked separately in its Revision history section.
   - the Landlock execute floor covers direct `execve` only: a role can still
     run a readable binary through the dynamic loader, or a script through an
     interpreter, which the acceptance run records;
-  - the CLIs' own shells and model logins stay in the CLI role;
+  - the CLIs' own shells and model logins stay in the CLI role. Codex must
+    run with `--no-daemon` there: its managed daemon binary, downloaded into
+    the CLI's non-executable home, is refused by design. The target README
+    gives both CLIs' launch commands;
   - workspace git metadata is writable, so nothing outside the executor runs
     git where the executor writes: the runtime's git and bash tools run in the
     executor, the export disables hooks and config, and the CLI has its own

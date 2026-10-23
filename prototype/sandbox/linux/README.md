@@ -36,6 +36,29 @@ The operator's Mac-side scripts create the machine and deliver named
 bootstrap secrets. They live with the operator's private tooling, not in this
 repository.
 
+## Running the CLIs
+
+From the Mac, start an agent CLI in the CLI role. It runs in its own
+workspace (`/work`), with its own home (`/home`):
+
+```bash
+orb -m dyfj-l8 -u root env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/home TERM="$TERM" LANG=C.UTF-8 /usr/libexec/dyfj/dyfj-sandbox run --plan /etc/dyfj/l8/cli.plan.json -- claude
+```
+
+Start Codex with `--no-daemon`, which goes before any subcommand:
+
+```bash
+orb -m dyfj-l8 -u root env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/home TERM="$TERM" LANG=C.UTF-8 /usr/libexec/dyfj/dyfj-sandbox run --plan /etc/dyfj/l8/cli.plan.json -- codex --no-daemon
+```
+
+Without that flag, Codex downloads a managed binary into
+`~/.codex/packages/` and tries to run it. The CLI's home is writable but not
+executable, so the kernel refuses with `EACCES` ("Permission denied (os
+error 13)"). That refusal is intended: a role may not run what it downloads
+into its home. With `--no-daemon`, Codex runs the npm-installed binary under
+`/usr/local`, which the role may execute. Do not make the home executable to
+avoid the flag.
+
 ## What it does not contain
 
 - **One kernel.** Every OrbStack machine and container shares one Linux VM
