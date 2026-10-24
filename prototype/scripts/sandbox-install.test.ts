@@ -240,3 +240,30 @@ describe("the dynamic loader", () => {
     assert.strictEqual(findDynamicLoader(listing({ "/usr/lib": ["x"] })), null);
   });
 });
+
+describe("the executor's approval envelope", () => {
+  it("can be derived from the installed executor policy", async () => {
+    const { deriveApprovalEnvelope } = await import("../src/config/approval-envelope.ts");
+    const { executor } = await build();
+    const derived = deriveApprovalEnvelope(
+      executor.policy,
+      "ab".repeat(16),
+      new Date(Date.parse(executor.policy.identity.expiresAt) - 1_000),
+      120_000,
+    );
+    assert.ok("envelope" in derived, JSON.stringify(derived));
+    assert.strictEqual(derived.envelope.policyDigest, executor.policy.identity.digest);
+  });
+
+  it("is granted by digest, and refused for a policy whose digest does not verify", async () => {
+    const { envelopeGrant } = await installModule();
+    const { executor } = await build();
+    assert.deepStrictEqual(envelopeGrant(executor.policy), {
+      version: 1,
+      executorPolicyDigest: executor.policy.identity.digest,
+    });
+    const tampered = JSON.parse(JSON.stringify(executor.policy));
+    tampered.filesystem.scratch = "elsewhere";
+    assert.throws(() => envelopeGrant(tampered), /does not verify/);
+  });
+});

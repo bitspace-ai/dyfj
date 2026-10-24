@@ -11,6 +11,38 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **On the contained Linux target, a bash or git call can run without a
+  prompt when the executor's containment is attested and the operator has
+  granted its envelope (BIT-736).** Approval then comes from the boundary,
+  not from parsing the command, so pipes, `cd`, redirects, tests and
+  compilers need no per-call approval. Everything else keeps its own verdict.
+  - Before each contained call, the runtime asks the supervisor to attest
+    (`src/tools/builtin/containment.ts`). The runtime checks that it could
+    not have bound the socket itself, that the reply echoes a fresh nonce,
+    that the lease is live and the plan and policy files are unchanged, and
+    that the supervisor's startup probe saw a connect and an
+    outside-workspace write refused in a fresh executor. It then derives the
+    envelope from the executor's effective policy
+    (`src/config/approval-envelope.ts`). An executor policy with network,
+    broker operations, a database, secrets, or a writable root over the
+    whole filesystem or a forbidden path has no envelope.
+  - The grant is a root-owned file beside the plans, written by
+    `sandbox-install.ts grant` and removed by `revoke`. It names the executor
+    policy's digest. The supervisor accepts it only when root owns it and its
+    directory and it names the policy being served, so the runtime's uid
+    cannot grant itself the envelope.
+  - The envelope applies only on loopback, to a command whose effects are a
+    process and the filesystem, at no cost, and for a deadline up to the
+    tool's default (120 s for bash) or the policy's time limit. Under
+    `strict` and `operator` alike, the envelope allows nothing without the
+    grant. An operator's approval of one call, or a session grant, works as
+    before.
+  - A call the envelope allowed is bound to the supervisor instance that
+    attested it. The supervisor refuses a call bound to another instance.
+  - An unattested contained call asks for approval, and names the reason. It
+    still runs only in the executor, never in the runtime.
+  - `sandbox/linux/approval-probe.sh` exercises this in the machine with
+    synthetic canaries. `acceptance.sh` gains an attestation section.
 - **A contained Linux target: an OrbStack isolated machine where the
   effective policy is enforced below the product's code (opt-in, attended).**
   It is documented in `prototype/sandbox/linux/README.md`. The machine has no
@@ -442,6 +474,18 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The executor transport is protocol version 2 (BIT-736).** Requests carry
+  an `op` (`exec` or `attest`), and an exec request may carry a `binding`. A
+  version 1 request or reply is refused. `dyfj-sandbox serve` takes
+  `--executor-policy` and `--grant`. Without them it serves, but cannot
+  attest.
+- **On the contained target, the BIT-707 read-only classifier no longer
+  decides anything (BIT-736).** A contained bash call asks unless the
+  envelope covers it. The classifier and its session grants are unchanged on
+  the native route. On the contained route, an exact-command session grant
+  is scoped to the attested executor policy it was made under, and an
+  unattested call is never granted for the session.
 
 - **The platform compilers record the assurance each destination is
   enforced with.** Every compiled egress entry now carries

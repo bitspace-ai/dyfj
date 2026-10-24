@@ -22,6 +22,59 @@ contained by this.
 each git operation runs in a fresh executor sandbox. When the runtime exits, the lease expires, and every
 running executor is killed.
 
+## Approval by the attested envelope
+
+Before it serves, `serve` runs one probe in a fresh executor: a connect to a
+TEST-NET-1 address, and a write beneath `/usr`. It logs whether the kernel
+refused both, and how long the probe took. Before each bash or git call, the
+runtime asks the supervisor to attest, and checks the answer
+(`src/tools/builtin/containment.ts`):
+
+- the runtime cannot write the socket's directory, so it cannot have bound
+  the socket itself;
+- the reply echoes a fresh nonce;
+- the lease is live;
+- the plan and policy files are as `serve` loaded them;
+- the probe passed;
+- the executor policy's digest verifies, and the policy has not expired;
+- the policy has no network, broker operations, database or secrets, and no
+  writable root over the whole filesystem or a forbidden path.
+
+With all of these, and a grant for that policy's digest, a call on loopback
+runs without a prompt, under `strict` and `operator` alike. Otherwise it asks,
+and the prompt's reason says why. Either way the command runs only in the
+executor. The read-only classifier is not used on this route.
+
+The grant is the operator's. Run as root:
+
+```bash
+node /opt/dyfj/prototype/scripts/sandbox-install.ts grant --dir /etc/dyfj/l8
+```
+
+It writes `/etc/dyfj/l8/envelope-grant.json`, naming the installed executor
+policy's digest. `revoke --dir /etc/dyfj/l8` removes it. The supervisor reads
+the grant at each attestation. It accepts the grant only when root owns the
+file and its directory, and no one else can write either. A reinstall that
+changes the policy leaves the grant naming the old digest, so it no longer
+applies. Start the pair with the policy and the grant:
+
+```bash
+dyfj-sandbox serve --runtime-plan /etc/dyfj/l8/runtime.plan.json --executor-plan /etc/dyfj/l8/executor.plan.json --executor-policy /etc/dyfj/l8/executor.policy.json --grant /etc/dyfj/l8/envelope-grant.json --socket /run/dyfj-exec/exec.sock -- <runtime command>
+```
+
+A call the envelope allowed carries the supervisor instance that attested
+it. The supervisor refuses a call bound to another instance.
+
+The envelope does not cover:
+
+- a deadline above the tool's default (120 s for bash);
+- a tool with any other effect;
+- a turn that is not on loopback.
+
+Publishing stays outside it. The executor has no network, the git tool
+refuses `push`, and patches leave through `sandbox-export.ts`.
+`approval-probe.sh` exercises all of this with synthetic canaries.
+
 ## Files
 
 | File | Runs where | What it does |
@@ -30,6 +83,7 @@ running executor is killed.
 | `../../scripts/sandbox-install.ts` | In the machine, as root | Derives the run envelope and the role policies from one composition, compiles each for this target, and writes the plans and a receipt to `/etc/dyfj/l8/`. |
 | `core/dyfj-sandbox` | In the machine, as root | The launcher: installs a role's nftables rules, drops to its uid, starts bubblewrap, and applies Landlock inside it. |
 | `acceptance.sh` | In the machine, as root | Design §8's Mac scenario, using synthetic canaries only. |
+| `approval-probe.sh`, `approval-probe.ts` | In the machine, as root | Approval by the attested envelope: attestation, in-workspace shell syntax, escape attempts, session grants, and stale or forged attestations. Synthetic canaries only. |
 | `../../scripts/sandbox-export.ts` | On the Mac | Reads the workspace's commits as a bounded mbox. git runs in an executor sandbox. |
 
 The operator's Mac-side scripts create the machine and deliver named
@@ -105,5 +159,9 @@ avoid the flag.
 
   So a planted hook runs only in the executor. The acceptance run plants a
   hook and an fsmonitor to show this.
-- **Approval is unchanged.** The bash tool still asks as it does natively.
-  Deciding approval from the boundary is separate work.
+- **The attestation proves configuration and one probe, not the kernel.**
+  It shows which policy the supervisor loaded, and that one connect and one
+  write were refused when the pair started. It cannot show that the shared
+  kernel has no exploitable bug. The runtime's check that it did not bind
+  the socket itself rests on file modes, because Node exposes no peer
+  credential.
