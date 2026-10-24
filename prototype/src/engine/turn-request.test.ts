@@ -152,6 +152,44 @@ test("resolveTurnFromBody applies a budget override on loopback only", () => {
   );
 });
 
+test("resolveTurnFromBody takes a session's tool-step limit up to the ceiling", () => {
+  const options = { maxToolSteps: 32, maxToolStepsCeiling: 48 };
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 48 }, true, options), {
+    maxToolSteps: 48,
+  });
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 49 }, true, options), {
+    status: 400,
+    error: "maxToolSteps 49 is above the tool-step ceiling of 48",
+  });
+  const omitted = resolveTurnFromBody({ prompt: "hi" }, true, options);
+  assert.deepStrictEqual("maxToolSteps" in omitted, false);
+  for (const value of [0, -1, 1.5, "8", null]) {
+    match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: value }, true, options), {
+      status: 400,
+      error: "maxToolSteps must be a positive integer",
+    });
+  }
+  // The ceiling defaults to the declared 64 when the caller passes none.
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 65 }, true), {
+    status: 400,
+    error: "maxToolSteps 65 is above the tool-step ceiling of 64",
+  });
+});
+
+test("resolveTurnFromBody lets a remote caller lower the tool-step limit but not raise it", () => {
+  const options = { maxToolSteps: 32, maxToolStepsCeiling: 64 };
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 4 }, false, options), {
+    maxToolSteps: 4,
+  });
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 32 }, false, options), {
+    maxToolSteps: 32,
+  });
+  match(resolveTurnFromBody({ prompt: "hi", maxToolSteps: 33 }, false, options), {
+    status: 403,
+    error: "remote callers may not raise the tool-step limit",
+  });
+});
+
 test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
   assert.deepStrictEqual(parseBudgetOverride([]), {
     error: "budget must be an object",

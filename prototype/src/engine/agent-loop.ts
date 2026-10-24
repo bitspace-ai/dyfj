@@ -9,9 +9,12 @@
  *
  * On the OpenAI-compatible path each gather step streams live (text deltas
  * and captured tool calls); elsewhere gather steps buffer and only the forced
- * conclusion streams. Tools are dropped to force a concluding answer at the
- * cap or when the model thrashes (a whole step of calls it already made this
- * turn). The transcript grows as the loop iterates: the model's own
+ * conclusion streams. Tools are dropped to force a concluding answer when the
+ * model thrashes (a whole step of calls it already made this turn) or a call
+ * is not approved. At the cap the last call, also without tools, asks for a
+ * handoff instead: what is done, what is next, and any uncommitted state. If
+ * that call fails, the turn ends on a runtime notice of its last tool calls.
+ * The transcript grows as the loop iterates: the model's own
  * assistant turns (with their tool-call intentions) and the matching tool
  * results are appended each step and replayed on the next call.
  */
@@ -30,6 +33,12 @@ import {
   operatorFailureReason,
 } from "../tools/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
+import {
+  BudgetCeilingDeclinedError,
+  BudgetExceededError,
+  RunawayAnomalyHaltError,
+} from "../budget/mod.ts";
+import { ContextWindowOverflowError } from "../context/mod.ts";
 import { classifyErrorKind, ToolStepLimitConclusionError } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
 import { boundToolResult, estimateRequest, fitRequest } from "./fit-request.ts";
@@ -42,7 +51,16 @@ import {
   estimateRuntimeInputCount,
   transcriptEstimateText,
 } from "./transcript.ts";
-import { commitEvent, type TurnState } from "./turn-state.ts";
+import {
+  commitEvent,
+  type RecentToolCall,
+  type TurnState,
+} from "./turn-state.ts";
+
+/** The handoff call's output cap; the catalog cap applies when it is lower. */
+export const HANDOFF_OUTPUT_TOKENS = 2048;
+/** How many of the turn's latest tool calls the fallback notice names. */
+export const HANDOFF_NOTICE_CALLS = 5;
 
 export interface AgentLoopOutcome {
   /** The last call's result; aborted when the turn was cancelled. */
@@ -155,12 +173,11 @@ export async function agentLoop(
 function withoutToolCalls(
   session: TurnState["session"],
   result: LoopTurnResult,
+  when = "after a tool call was not approved",
 ): LoopTurnResult {
   const dropped = result.toolCalls?.length ?? 0;
   if (dropped === 0) return result;
-  session.log(
-    `Dropped ${dropped} tool call(s) requested after a tool call was not approved.`,
-  );
+  session.log(`Dropped ${dropped} tool call(s) requested ${when}.`);
   return { ...result, toolCalls: undefined, stopReason: "stop" };
 }
 
@@ -368,6 +385,15 @@ async function invokeTool(
         commandResult.recordedReason !== undefined
       ? fixedOperatorReason(commandResult.recordedReason)
       : undefined;
+    noteRecentToolCall(state, {
+      step: state.toolSteps,
+      commandId: toolCall.name,
+      outcome: !commandResult.isError
+        ? "ok"
+        : commandResult.decision !== "allow"
+        ? "refused"
+        : "failed",
+    });
     if (commandResult.isError) {
       state.lastStepFailure ??= {
         commandId: toolCall.name,
@@ -485,9 +511,9 @@ function startCommand(
 
 /**
  * Append the step to the transcript and make the next call: a normal
- * follow-up, or — at the step cap, when the model repeated itself, or when a
- * call in the step was not approved — a forced conclusion with tools
- * dropped.
+ * follow-up; at the step cap, the handoff; or, when the model repeated
+ * itself or a call in the step was not approved, a forced conclusion with
+ * tools dropped.
  */
 async function followUp(
   turn: RoutedTurn,
@@ -506,7 +532,7 @@ async function followUp(
   if (forceConclude) {
     session.log(
       atCap
-        ? `Reached the ${session.maxToolSteps}-step tool limit; forcing a concluding answer.`
+        ? `Reached the ${session.maxToolSteps}-step tool limit; asking for a handoff.`
         : step.approvalDenied
         ? "A tool call was not approved; forcing a concluding answer."
         : "Model repeated prior tool calls; forcing a concluding answer.",
@@ -528,7 +554,10 @@ async function followUp(
     ),
   );
   if (forceConclude) messages.splice(0, messages.length, ...withoutReplay(messages));
-  if (atCap) state.toolStepLimitReached = true;
+  if (atCap) {
+    state.toolStepLimitReached = true;
+    return await stepLimitHandoff(turn, result, messages, systemPrompt, streaming);
+  }
   await fitRequest(turn, { systemPrompt, messages, tools }, "before_send");
   const estimatedInputCount = estimateRuntimeInputCount(
     transcriptEstimateText(systemPrompt, messages),
@@ -548,15 +577,149 @@ async function followUp(
     },
     { modelSlug: turn.route.selected.slug, estimatedInputCount },
     forceConclude ? "forced_conclusion" : "tool_followup",
-    // A context-size rejection keeps its class so the loop can refit and
-    // retry; any other failure of the capped conclusion is the conclusion's.
-    atCap
-      ? (err) =>
+  );
+}
+
+/**
+ * The turn's last call at the step cap: no tools offered, a handoff asked
+ * for. The call passes the same per-call budget gates as every other call of
+ * the turn, on the same model. A call those gates stop, or one that fails,
+ * leaves the runtime's notice of the turn's last tool calls as the turn's
+ * text, and the failure for the turn's `error` event. A cancelled turn
+ * propagates as before.
+ */
+async function stepLimitHandoff(
+  turn: RoutedTurn,
+  lastStep: LoopTurnResult,
+  messages: WorkbenchMessage[],
+  systemPrompt: string,
+  streaming: Streaming,
+): Promise<LoopTurnResult> {
+  const { state, input } = turn;
+  const { session } = state;
+  let handoff: LoopTurnResult | undefined;
+  let failure: unknown;
+  try {
+    await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
+    const estimatedInputCount = estimateRuntimeInputCount(
+      transcriptEstimateText(systemPrompt, messages),
+    );
+    streaming.streamedText = false;
+    handoff = await recoveredTurn(
+      turn,
+      {
+        ...callParams(turn, systemPrompt, messages),
+        tools: undefined,
+        historyTools: state.commandTools,
+        maxOutputTokens: HANDOFF_OUTPUT_TOKENS,
+        onTextDelta: streaming.liveDelta,
+      },
+      { modelSlug: turn.route.selected.slug, estimatedInputCount },
+      "step_limit_handoff",
+      // A context-size rejection keeps its class so the loop can refit and
+      // retry; any other provider failure is the handoff's.
+      (err) =>
         err instanceof ProviderContextExceededError
           ? err
-          : new ToolStepLimitConclusionError()
-      : undefined,
+          : new ToolStepLimitConclusionError(),
+    );
+    if (handoff.stopReason === "error") {
+      failure = new ToolStepLimitConclusionError();
+    }
+  } catch (err) {
+    if (input.abortSignal?.aborted || !isHandoffFailure(err)) throw err;
+    failure = err;
+  }
+  if (failure === undefined && handoff !== undefined) {
+    if (handoff.stopReason === "aborted") return handoff;
+    state.stepLimitHandoff = { source: "model" };
+    await emitHandoff(turn, "model");
+    // Nothing runs after the handoff; a tool call it carries is dropped.
+    return withoutToolCalls(session, handoff, "in the step-limit handoff");
+  }
+  state.stepLimitHandoff = { source: "notice", failure };
+  state.turnEndNotice =
+    `tool-step limit reached and the handoff call failed (${
+      classifyErrorKind(failure)
+    }); the turn's text lists its last tool calls`;
+  session.log(
+    `The step-limit handoff failed (${classifyErrorKind(failure)}); writing a notice of the last tool calls.`,
   );
+  await emitHandoff(turn, "notice");
+  // Text streamed before the failure is not the turn's reply; the notice is,
+  // so the client takes it from the result.
+  streaming.streamedText = false;
+  return {
+    ...(handoff ?? lastStep),
+    text: stepLimitNotice(state.toolSteps, session.maxToolSteps, failure, state.recentToolCalls),
+    stopReason: "stop",
+    toolCalls: undefined,
+  };
+}
+
+/**
+ * The failures the handoff call ends on with a notice: the provider's, a
+ * request that cannot fit the window, and a per-call budget gate that stops
+ * the call (a declined ceiling, a hard limit, the runaway-anomaly stop, or a
+ * gate with no approver to ask). Anything else fails the turn as before.
+ */
+function isHandoffFailure(err: unknown): boolean {
+  return err instanceof ToolStepLimitConclusionError ||
+    err instanceof ProviderContextExceededError ||
+    err instanceof ContextWindowOverflowError ||
+    err instanceof BudgetCeilingDeclinedError ||
+    err instanceof BudgetExceededError ||
+    err instanceof RunawayAnomalyHaltError;
+}
+
+async function emitHandoff(
+  turn: RoutedTurn,
+  source: "model" | "notice",
+): Promise<void> {
+  const { session } = turn.state;
+  await emitRuntimeEvent(turn.input.frames?.onRuntimeEvent, {
+    type: "toolStepLimitHandoff",
+    sessionId: session.sessionId,
+    maxSteps: session.maxToolSteps,
+    source,
+  });
+}
+
+/**
+ * The runtime's notice when the handoff call fails: the limit, the failure's
+ * class, and the turn's last tool calls by command and outcome. It carries no
+ * tool arguments, no results and no model text.
+ */
+export function stepLimitNotice(
+  toolSteps: number,
+  maxToolSteps: number,
+  failure: unknown,
+  calls: readonly RecentToolCall[],
+): string {
+  const lines = [
+    `Tool-step limit reached (${toolSteps}/${maxToolSteps}). The handoff ` +
+    `call did not complete (${classifyErrorKind(failure)}), so this notice ` +
+    "lists the turn's last tool calls instead.",
+    "",
+    "Last tool calls:",
+    ...(calls.length === 0 ? ["- none recorded"] : calls.map((call) =>
+      `- step ${call.step}: ${sanitizeBoundaryText(call.commandId, 128)} (${call.outcome})`
+    )),
+    "",
+    "Uncommitted state is unknown. Check `git status` before the next prompt.",
+  ];
+  return lines.join("\n");
+}
+
+/** Keep the turn's latest tool calls for the fallback notice. */
+function noteRecentToolCall(state: TurnState, call: RecentToolCall): void {
+  state.recentToolCalls.push(call);
+  if (state.recentToolCalls.length > HANDOFF_NOTICE_CALLS) {
+    state.recentToolCalls.splice(
+      0,
+      state.recentToolCalls.length - HANDOFF_NOTICE_CALLS,
+    );
+  }
 }
 
 /**
@@ -606,6 +769,7 @@ function nextRequestShape(
           : approvalDenied
           ? "approval_denied"
           : "repeated_tool_calls",
+        state.session.maxToolSteps,
       )
       : state.systemPrompt,
     tools: forceConclude ? undefined : state.commandTools,
@@ -615,15 +779,38 @@ function nextRequestShape(
 function forcedConclusionSystemPrompt(
   baseSystemPrompt: string,
   reason: "limit" | "repeated_tool_calls" | "approval_denied",
+  maxToolSteps: number,
 ): string {
-  const reasonText = reason === "limit"
-    ? "tool use ended because the configured Workbench tool-step limit was reached"
-    : reason === "approval_denied"
+  if (reason === "limit") {
+    return handoffSystemPrompt(
+      baseSystemPrompt,
+      `this turn reached its ${maxToolSteps}-step tool limit`,
+    );
+  }
+  const reasonText = reason === "approval_denied"
     ? "tool use ended because a tool call was not approved"
     : "tool use ended because the model repeated prior tool calls";
   return baseSystemPrompt + "\n\n" +
     `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +
     "from the transcript above. Do not request or call more tools.";
+}
+
+/**
+ * The handoff instruction: why tool use ended, then a short handoff for the
+ * operator's next prompt. The request that carries it offers no tools.
+ */
+export function handoffSystemPrompt(
+  baseSystemPrompt: string,
+  reasonText: string,
+): string {
+  return baseSystemPrompt + "\n\n" +
+    `Workbench instruction: tool use ended because ${reasonText}. ` +
+    "Do not call tools. Write a handoff for the operator's next prompt, " +
+    "under 200 words, in three labelled parts. Done: what this turn " +
+    "completed, with file paths. Next: the next concrete step. Uncommitted " +
+    "state: files changed but not committed, commands started but not " +
+    'verified, or "none known". State only what the transcript shows, and ' +
+    "mark anything you infer as inferred.";
 }
 
 /**

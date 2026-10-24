@@ -30,14 +30,36 @@ export function validatePositiveMultiple(
   return value;
 }
 
+/**
+ * The bound on every tool-step setting: the default limit, the configured
+ * ceiling and a session's own limit are all integers from 1 through this.
+ */
+export const TOOL_STEPS_BOUND = 64;
+
 export function validateMaxToolSteps(value: number, source: string): number {
-  if (!Number.isInteger(value) || value < 1 || value > 64) {
+  if (!Number.isInteger(value) || value < 1 || value > TOOL_STEPS_BOUND) {
     throw new Error(
       `config: invalid max tool steps from ${source} ` +
-        `(expected an integer from 1 through 64)`,
+        `(expected an integer from 1 through ${TOOL_STEPS_BOUND})`,
     );
   }
   return value;
+}
+
+/**
+ * The default tool-step limit must fit under the configured ceiling, or a
+ * session could never use its own default.
+ */
+export function validateToolStepsWithinCeiling(
+  maxToolSteps: number,
+  ceiling: number,
+): void {
+  if (maxToolSteps > ceiling) {
+    throw new Error(
+      `config: the default max tool steps (${maxToolSteps}) is above ` +
+        `the tool-step ceiling (${ceiling})`,
+    );
+  }
 }
 
 export function parseBooleanEnv(raw: string, source: string): boolean {
@@ -75,7 +97,7 @@ export function readMaxToolSteps(
   if (!/^[0-9]+$/.test(trimmed)) {
     throw new Error(
       `config: invalid max tool steps from ${envVar} ` +
-        `(expected an integer from 1 through 64)`,
+        `(expected an integer from 1 through ${TOOL_STEPS_BOUND})`,
     );
   }
   return validateMaxToolSteps(Number(trimmed), envVar);

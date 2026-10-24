@@ -25,6 +25,7 @@ function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
     defaultPerCallBudgetUsd: 0.1,
     defaultDailyBudgetUsd: 25,
     maxToolSteps: 32,
+    maxToolStepsCeiling: 64,
     ...overrides,
   };
 }

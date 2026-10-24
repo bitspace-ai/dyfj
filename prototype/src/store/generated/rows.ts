@@ -173,6 +173,7 @@ export const EVENT_PROVIDER_CALL_PURPOSE_VALUES = [
   "forced_conclusion",
   "recovery",
   "context_compression",
+  "step_limit_handoff",
 ] as const;
 export type EventProviderCallPurpose =
   (typeof EVENT_PROVIDER_CALL_PURPOSE_VALUES)[number];

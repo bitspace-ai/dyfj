@@ -240,6 +240,7 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    handoff?: "model" | "notice";
     autoApprovals: AutoApprovals;
   };
   validation?: WorkbenchValidationSummary;

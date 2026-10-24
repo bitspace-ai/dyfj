@@ -93,7 +93,7 @@ CREATE TABLE events (
     -- reconstruct the provider-call attempts recorded for a Workbench turn
     -- without duplicating replay text.
     provider_call_order       INT UNSIGNED,
-    provider_call_purpose     ENUM('initial', 'tool_followup', 'forced_conclusion', 'recovery', 'context_compression'),
+    provider_call_purpose     ENUM('initial', 'tool_followup', 'forced_conclusion', 'recovery', 'context_compression', 'step_limit_handoff'),
     provider_error_class      VARCHAR(64),
     unparsed_tool_call_count  INT UNSIGNED,
     unparsed_tool_call_count_is_lower_bound BOOLEAN,

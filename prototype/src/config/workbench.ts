@@ -40,6 +40,7 @@ import {
   validateMaxToolSteps,
   validatePositiveMultiple,
   validatePositiveUsd,
+  validateToolStepsWithinCeiling,
 } from "./values.ts";
 
 export interface WorkbenchConfig {
@@ -90,6 +91,8 @@ export interface WorkbenchConfig {
   anomalyScopeMultiple: number;
   /** Maximum model↔tool loop steps in one turn (startup posture). */
   maxToolSteps: number;
+  /** The highest tool-step limit a session may set for itself. */
+  maxToolStepsCeiling: number;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -105,6 +108,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   anomalyTurnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
   anomalyScopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
+  maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
 };
 
 /**
@@ -199,6 +203,13 @@ export async function loadConfig(
         `${configLabel(path)} [agent].max_tool_steps`,
       );
     }
+    const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");
+    if (fileCeiling !== undefined) {
+      config.maxToolStepsCeiling = validateMaxToolSteps(
+        fileCeiling,
+        `${configLabel(path)} [agent].max_tool_steps_ceiling`,
+      );
+    }
   }
 
   // ── env layer (overrides the file) ──
@@ -255,6 +266,15 @@ export async function loadConfig(
     env,
     schemaEnvVar("maxToolSteps"),
     config.maxToolSteps,
+  );
+  config.maxToolStepsCeiling = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolStepsCeiling"),
+    config.maxToolStepsCeiling,
+  );
+  validateToolStepsWithinCeiling(
+    config.maxToolSteps,
+    config.maxToolStepsCeiling,
   );
 
   return config;

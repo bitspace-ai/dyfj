@@ -273,6 +273,8 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
         {
           approvePaidDefault: engineDeps.approvePaidDefault,
           trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
+          maxToolSteps: engineDeps.maxToolSteps,
+          maxToolStepsCeiling: engineDeps.maxToolStepsCeiling,
         },
       );
       if ("error" in resolved) {
