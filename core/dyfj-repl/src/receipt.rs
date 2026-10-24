@@ -117,9 +117,15 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             .pointer("/agent/limitReached")
             .and_then(Value::as_bool)
             == Some(true);
+        let handoff = receipt.pointer("/agent/handoff").and_then(Value::as_str);
         parts.push(format!(
             "tools {used}/{max}{}",
-            if limit { " (limit reached)" } else { "" }
+            match (limit, handoff) {
+                (false, _) => "",
+                (true, Some("model")) => " (limit reached · handoff)",
+                (true, Some("notice")) => " (limit reached · handoff failed)",
+                (true, _) => " (limit reached)",
+            }
         ));
     }
     // Calls that ran without a prompt: the read-only allowlist and the
@@ -186,6 +192,17 @@ mod tests {
             line(&receipt(), 0.0456),
             "— GLM 5.2 · $0.0123 · session $0.0456 · 1,200→50 tok · tools 2/32 · explicit_model_id"
         );
+    }
+
+    #[test]
+    fn says_how_a_reached_limit_left_its_handoff() {
+        let mut r = receipt();
+        r["agent"] = json!({"toolStepsUsed": 2, "maxToolSteps": 2, "limitReached": true, "handoff": "model"});
+        assert!(line(&r, 0.0).contains("tools 2/2 (limit reached · handoff)"));
+        r["agent"]["handoff"] = json!("notice");
+        assert!(line(&r, 0.0).contains("tools 2/2 (limit reached · handoff failed)"));
+        r["agent"].as_object_mut().unwrap().remove("handoff");
+        assert!(line(&r, 0.0).contains("tools 2/2 (limit reached) ·"));
     }
 
     /// BIT-707: calls that ran without a prompt are counted beside the tools.

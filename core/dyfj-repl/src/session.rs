@@ -41,6 +41,9 @@ pub struct Session {
     pub default_model: Option<String>,
     /// Fast speed tier for models that advertise it. `None` sends nothing.
     pub fast: Option<bool>,
+    /// This session's tool-step limit (`--tool-steps`, `/steps`), sent on
+    /// every turn. `None` leaves the runtime's configured limit.
+    pub max_tool_steps: Option<u32>,
     /// Per-turn paid opt-in. The engine still decides; without it, a hosted
     /// turn fails closed unless the runtime's standing posture approves paid.
     pub approve_paid: bool,
@@ -85,6 +88,9 @@ impl Session {
         }
         if self.approve_paid {
             body["approvePaidInference"] = Value::Bool(true);
+        }
+        if let Some(steps) = self.max_tool_steps {
+            body["maxToolSteps"] = Value::from(steps);
         }
         body
     }
@@ -263,6 +269,7 @@ mod tests {
         session.fast = Some(true);
         let body = session.turn_body("hi", "t-1");
         assert_eq!(body["routingOptions"], json!({"fast": true}));
+        assert!(body.get("maxToolSteps").is_none(), "no limit set sends none");
         assert_eq!(body["sessionId"], "new");
     }
 

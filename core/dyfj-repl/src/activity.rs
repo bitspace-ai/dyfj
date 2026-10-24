@@ -74,9 +74,19 @@ pub fn describe(event: &Value) -> Option<String> {
                 _ => Some(line),
             }
         }
-        "toolStepLimitReached" => {
-            Some("· tool step limit reached; the turn stopped early".into())
-        }
+        "toolStepLimitReached" => match event.get("maxSteps").and_then(Value::as_i64) {
+            Some(max) => Some(format!(
+                "· tool step limit reached ({max} steps); asking the model for a handoff"
+            )),
+            None => Some("· tool step limit reached; asking the model for a handoff".into()),
+        },
+        // A handoff the model wrote is the reply itself; only the fallback
+        // needs saying, because the reply is then the runtime's notice.
+        "toolStepLimitHandoff" => (event.get("source").and_then(Value::as_str) == Some("notice"))
+            .then(|| {
+                "· the handoff call failed; the reply is the runtime's notice of the last tool calls"
+                    .into()
+            }),
         // A tool result was cut to fit the model's context window; the
         // model got a marker in its place, the session log kept the result.
         "toolResultTrimmed" => {
@@ -155,6 +165,24 @@ fn bounded_reason(reason: &str) -> String {
 mod tests {
     use super::describe;
     use serde_json::json;
+
+    #[test]
+    fn narrates_the_step_limit_and_a_failed_handoff() {
+        assert_eq!(
+            describe(&json!({"type": "toolStepLimitReached", "maxSteps": 2})).as_deref(),
+            Some("· tool step limit reached (2 steps); asking the model for a handoff")
+        );
+        assert_eq!(
+            describe(&json!({"type": "toolStepLimitHandoff", "maxSteps": 2, "source": "notice"}))
+                .as_deref(),
+            Some("· the handoff call failed; the reply is the runtime's notice of the last tool calls")
+        );
+        // The model's handoff is the reply; there is nothing more to say.
+        assert_eq!(
+            describe(&json!({"type": "toolStepLimitHandoff", "maxSteps": 2, "source": "model"})),
+            None
+        );
+    }
 
     /// Shapes captured from a live runtime turn, not invented.
     #[test]

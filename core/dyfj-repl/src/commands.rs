@@ -41,6 +41,8 @@ pub enum Command {
     },
     /// `/fast [on|off]`; `None` toggles.
     Fast(Option<bool>),
+    /// `/steps [N]`; `None` shows the limit.
+    Steps(Option<u32>),
     /// `/session`
     SessionShow,
     /// `/session list`
@@ -65,6 +67,18 @@ pub enum Command {
 }
 
 const SEVERITIES: [&str; 4] = ["blocker", "major", "minor", "paper-cut"];
+
+/// The bound on a session's tool-step limit. The runtime's configured
+/// ceiling can be lower; the runtime refuses a turn above it.
+pub const TOOL_STEPS_BOUND: u32 = 64;
+
+/// A tool-step limit as typed: an integer from 1 through the bound.
+pub fn parse_tool_steps(value: &str) -> Option<u32> {
+    if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok().filter(|steps| (1..=TOOL_STEPS_BOUND).contains(steps))
+}
 
 /// The 26-character Crockford Base32 shape the runtime gives session ids
 /// (`SESSION_ID_SHAPE` in `prototype/src/contract/turn.ts`).
@@ -132,6 +146,16 @@ pub fn parse(input: &str) -> Option<Command> {
             ["on"] => Command::Fast(Some(true)),
             ["off"] => Command::Fast(Some(false)),
             _ => Command::Usage("usage: /fast [on|off]".into()),
+        },
+        "/steps" => match args.as_slice() {
+            [] => Command::Steps(None),
+            [value] => match parse_tool_steps(value) {
+                Some(steps) => Command::Steps(Some(steps)),
+                None => Command::Usage(format!(
+                    "usage: /steps [N], with N an integer from 1 through {TOOL_STEPS_BOUND}"
+                )),
+            },
+            _ => Command::Usage("usage: /steps [N]".into()),
         },
         "/session" => match args.as_slice() {
             [] => Command::SessionShow,
@@ -241,6 +265,7 @@ const HELP: &str = "\
 commands (type them alone on a line; inside a paste they are prompt text):
   /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
   /fast [on|off]                                       toggle the fast speed tier
+  /steps [N]                                           show or set the tool-step limit
   /session | /session list | /session switch <id>     show, list or resume sessions
   /friction <sev> [--escaped] <text...>                post a daily-driver friction
   /idea mark <label...> | /idea list                   mark or list ideas
@@ -302,6 +327,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
             fast,
         } => model(client, session, slug, approve_paid, fast).await,
         Command::Fast(target) => fast_toggle(client, session, target).await,
+        Command::Steps(target) => steps(client, session, target).await,
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
@@ -771,6 +797,42 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
     }
     session.fast = Some(want);
     eprintln!("{}", posture(session, &rows));
+}
+
+/// `/steps` shows the session's tool-step limit; `/steps N` sets it for the
+/// rest of the session. A value above the runtime's ceiling is refused and the
+/// limit stays as it was. The runtime checks every turn again, because its
+/// ceiling can change when it restarts.
+async fn steps(client: &Client, session: &mut Session, target: Option<u32>) {
+    let status = match client.request("runtime/status", json!({})).await {
+        Ok(status) => status,
+        Err(err) => return error_line("could not read the runtime's tool-step ceiling", &err),
+    };
+    let field = |name: &str| {
+        status
+            .pointer(&format!("/runtime/{name}"))
+            .and_then(Value::as_u64)
+    };
+    let ceiling = field("maxToolStepsCeiling");
+    let current = session.max_tool_steps.map(u64::from).or(field("maxToolSteps"));
+    let show = |steps: Option<u64>| {
+        let steps = steps.map_or("unknown".to_string(), |s| s.to_string());
+        match ceiling {
+            Some(ceiling) => format!("tool-step limit: {steps} (ceiling {ceiling})"),
+            None => format!("tool-step limit: {steps}"),
+        }
+    };
+    let Some(wanted) = target else {
+        return eprintln!("{}", show(current));
+    };
+    if let Some(ceiling) = ceiling.filter(|c| u64::from(wanted) > *c) {
+        let stays = current.map_or("unchanged".to_string(), |s| s.to_string());
+        return eprintln!(
+            "refused: {wanted} is above the tool-step ceiling of {ceiling}; the limit stays {stays}"
+        );
+    }
+    session.max_tool_steps = Some(wanted);
+    eprintln!("{}", show(Some(u64::from(wanted))));
 }
 
 fn session_show(session: &Session) {
@@ -1356,6 +1418,42 @@ mod run_tests {
         let mut local = Session { model: Some("local/qwen".into()), ..Session::default() };
         drive(catalog, &mut local, vec![Command::Fast(Some(true))]).await;
         assert_eq!(local.fast, None, "a model without the tier is refused");
+    }
+
+    /// A runtime whose tool-step limit is 32 under a ceiling of 48.
+    fn ceiling_48(method: &str, params: &Value) -> Value {
+        match method {
+            "runtime/status" => json!({"runtime": {"maxToolSteps": 32, "maxToolStepsCeiling": 48}}),
+            _ => catalog(method, params),
+        }
+    }
+
+    #[test]
+    fn parses_steps_within_the_bound() {
+        use crate::commands::parse;
+        assert_eq!(parse("/steps"), Some(Command::Steps(None)));
+        assert_eq!(parse("/steps 12"), Some(Command::Steps(Some(12))));
+        for line in ["/steps 0", "/steps 65", "/steps x", "/steps -3", "/steps 1.5"] {
+            assert!(matches!(parse(line), Some(Command::Usage(_))), "{line}");
+        }
+        assert!(matches!(parse("/steps 2 3"), Some(Command::Usage(_))));
+    }
+
+    /// `/steps N` sets the session's limit; a value above the runtime's
+    /// ceiling is refused and the limit stays as it was.
+    #[tokio::test]
+    async fn steps_sets_the_limit_and_refuses_one_above_the_ceiling() {
+        let mut session = Session::default();
+        let seen = drive(ceiling_48, &mut session, vec![Command::Steps(Some(48))]).await;
+        assert_eq!(methods(&seen), ["runtime/status"]);
+        assert_eq!(session.max_tool_steps, Some(48));
+        assert_eq!(session.turn_body("hi", "t")["maxToolSteps"], 48);
+
+        drive(ceiling_48, &mut session, vec![Command::Steps(Some(49))]).await;
+        assert_eq!(session.max_tool_steps, Some(48), "the refused value is not kept");
+
+        drive(ceiling_48, &mut session, vec![Command::Steps(None)]).await;
+        assert_eq!(session.max_tool_steps, Some(48), "showing changes nothing");
     }
 
     #[tokio::test]

@@ -220,8 +220,16 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     if let Some(level) = runtime.get("permissionLevel").and_then(Value::as_str) {
         parts.push(format!("permission {}", visible(level)));
     }
-    if let Some(steps) = runtime.get("maxToolSteps").and_then(Value::as_i64) {
-        parts.push(format!("{steps} tool steps"));
+    // The session's own limit, when it set one, is what its turns run with.
+    let steps = session
+        .max_tool_steps
+        .map(i64::from)
+        .or_else(|| runtime.get("maxToolSteps").and_then(Value::as_i64));
+    if let Some(steps) = steps {
+        match runtime.get("maxToolStepsCeiling").and_then(Value::as_i64) {
+            Some(ceiling) => parts.push(format!("{steps} tool steps (ceiling {ceiling})")),
+            None => parts.push(format!("{steps} tool steps")),
+        }
     }
     parts.push(socket.to_string());
     format!("posture: {}", parts.join(" · "))
@@ -301,6 +309,18 @@ mod tests {
         assert!(rendered.contains("paid approved"), "{rendered}");
         assert!(rendered.contains("32 tool steps"), "{rendered}");
         assert!(rendered.contains("/tmp/s.sock"), "{rendered}");
+    }
+
+    /// The session's own tool-step limit replaces the runtime's, and the
+    /// ceiling is named when the runtime reports one.
+    #[test]
+    fn names_the_sessions_tool_step_limit_and_the_ceiling() {
+        let status = json!({"runtime": {"maxToolSteps": 32, "maxToolStepsCeiling": 48}});
+        let rendered = line(&status, &Session::default(), "/tmp/s.sock");
+        assert!(rendered.contains("32 tool steps (ceiling 48)"), "{rendered}");
+        let own = Session { max_tool_steps: Some(6), ..Session::default() };
+        let rendered = line(&status, &own, "/tmp/s.sock");
+        assert!(rendered.contains("6 tool steps (ceiling 48)"), "{rendered}");
     }
 
     /// The command line's choices override the runtime's defaults on the
