@@ -107,6 +107,8 @@ export type ContainmentVerdict =
     readonly envelope: ApprovalEnvelope;
     /** The operator's grant names this envelope's policy digest. */
     readonly granted: boolean;
+    /** Why the supervisor refused a grant that is present, if it did. */
+    readonly grantRefusal?: string;
   }
   | { readonly status: "unattested"; readonly reason: string };
 

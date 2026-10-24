@@ -41,9 +41,12 @@ runtime asks the supervisor to attest, and checks the answer
   writable root over the whole filesystem or a forbidden path.
 
 With all of these, and a grant for that policy's digest, a call on loopback
-runs without a prompt, under `strict` and `operator` alike. Otherwise it asks,
-and the prompt's reason says why. Either way the command runs only in the
-executor. The read-only classifier is not used on this route.
+runs without a prompt, under `strict` and `operator` alike. Otherwise it asks.
+The policy's verdict records why (an unattested containment and its reason,
+no grant, or the supervisor's reason for refusing a grant), but the approval
+prompt does not show it yet: run `approval-probe.sh attest` to see it.
+Either way the command runs only in the executor. The read-only classifier is
+not used on this route.
 
 The grant is the operator's. Run as root:
 

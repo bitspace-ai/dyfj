@@ -114,6 +114,9 @@ export function checkAttestation(
     status: "attested",
     envelope: derived.envelope,
     granted: reply.grant === derived.envelope.policyDigest,
+    ...(typeof reply.grantRefusal === "string"
+      ? { grantRefusal: reply.grantRefusal }
+      : {}),
   };
 }
 

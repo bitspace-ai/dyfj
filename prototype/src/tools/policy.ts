@@ -88,6 +88,58 @@ export function evaluateCommandPolicy(
     };
   }
 
+  if (command.permission.defaultDecision === "deny") {
+    return {
+      decision: "deny",
+      authzBasis: "policy:deny:default",
+      reason: "command default decision is deny",
+    };
+  }
+
+  // The attested envelope (BIT-736), evaluated before every generic
+  // auto-allow path below, so a contained command never reaches one of them.
+  // A command that runs in the isolated executor may run without a prompt
+  // when its containment is attested for
+  // this call, the operator's grant names the envelope's policy digest, and
+  // the turn is on loopback. Neither the posture nor the call's arguments
+  // decide it; only a deadline longer than the envelope's is read, and it
+  // asks. Without all three, a contained command asks (one whose default
+  // decision is deny was already denied above): the read-only
+  // classifier below never runs for it.
+  if (command.containment !== undefined) {
+    const verdict = context.containment;
+    if (
+      verdict?.status === "attested" && verdict.granted &&
+      context.loopback === true &&
+      command.permission.cost === "none" &&
+      command.permission.effects.every((effect) => ENVELOPE_EFFECTS.has(effect))
+    ) {
+      const asked = command.containment.callTimeoutMs?.(call);
+      if (asked !== undefined && asked > verdict.envelope.commandTimeoutMs) {
+        return {
+          decision: "ask",
+          authzBasis: "policy:ask:envelope-limit",
+          reason: `the call's deadline (${asked / 1_000} s) is above the ` +
+            `envelope's ${verdict.envelope.commandTimeoutMs / 1_000} s`,
+        };
+      }
+      return { decision: "allow", authzBasis: "policy:allow:attested-envelope" };
+    }
+    return {
+      decision: "ask",
+      authzBasis: "policy:ask:default",
+      reason: verdict?.status === "unattested"
+        ? `command requires operator approval (containment unattested: ${verdict.reason})`
+        : verdict?.status === "attested" && !verdict.granted
+        ? `command requires operator approval (${
+          verdict.grantRefusal === undefined
+            ? "no envelope grant for this executor policy"
+            : `envelope grant refused: ${verdict.grantRefusal}`
+        })`
+        : "command requires operator approval",
+    };
+  }
+
   if (
     command.permission.network === "configured-external" &&
     command.permission.defaultDecision === "allow" &&
@@ -136,50 +188,6 @@ export function evaluateCommandPolicy(
     };
   }
 
-  if (command.permission.defaultDecision === "deny") {
-    return {
-      decision: "deny",
-      authzBasis: "policy:deny:default",
-      reason: "command default decision is deny",
-    };
-  }
-
-  // The attested envelope (BIT-736). A command that runs in the isolated
-  // executor may run without a prompt when its containment is attested for
-  // this call, the operator's grant names the envelope's policy digest, and
-  // the turn is on loopback. Neither the posture nor the call's arguments
-  // decide it; only a deadline longer than the envelope's is read, and it
-  // asks. Without all three, a contained command asks: the read-only
-  // classifier below never runs for it.
-  if (command.containment !== undefined) {
-    const verdict = context.containment;
-    if (
-      verdict?.status === "attested" && verdict.granted &&
-      context.loopback === true &&
-      command.permission.cost === "none" &&
-      command.permission.effects.every((effect) => ENVELOPE_EFFECTS.has(effect))
-    ) {
-      const asked = command.containment.callTimeoutMs?.(call);
-      if (asked !== undefined && asked > verdict.envelope.commandTimeoutMs) {
-        return {
-          decision: "ask",
-          authzBasis: "policy:ask:envelope-limit",
-          reason: `the call's deadline (${asked / 1_000} s) is above the ` +
-            `envelope's ${verdict.envelope.commandTimeoutMs / 1_000} s`,
-        };
-      }
-      return { decision: "allow", authzBasis: "policy:allow:attested-envelope" };
-    }
-    return {
-      decision: "ask",
-      authzBasis: "policy:ask:default",
-      reason: verdict?.status === "unattested"
-        ? `command requires operator approval (containment unattested: ${verdict.reason})`
-        : verdict?.status === "attested" && !verdict.granted
-        ? "command requires operator approval (no envelope grant for this executor policy)"
-        : "command requires operator approval",
-    };
-  }
 
   // Operator permission profile (config permissionLevel="operator", on a
   // loopback/operator turn): a CONTAINED mutating tool — local, free,

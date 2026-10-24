@@ -51,6 +51,18 @@ describe("containment attestation", () => {
     }
   });
 
+  it("keeps the supervisor's reason for refusing a present grant", () => {
+    const verdict = check(reply((r) => {
+      r.grant = null;
+      r.grantRefusal = "grant names another executor policy";
+    }));
+    assert.ok(verdict.status === "attested" && !verdict.granted);
+    assert.strictEqual(
+      verdict.status === "attested" && verdict.grantRefusal,
+      "grant names another executor policy",
+    );
+  });
+
   for (
     const [label, edit, pattern] of [
       ["another nonce", (r: any) => (r.nonce = "ef".repeat(16)), /nonce/],

@@ -39,8 +39,10 @@ README are tracked separately in its Revision history section.
     before.
   - A call the envelope allowed is bound to the supervisor instance that
     attested it. The supervisor refuses a call bound to another instance.
-  - An unattested contained call asks for approval, and names the reason. It
-    still runs only in the executor, never in the runtime.
+  - An unattested contained call asks for approval. It still runs only in
+    the executor, never in the runtime. The policy's verdict records why the
+    envelope did not apply, including the supervisor's reason for refusing a
+    grant that is present. The approval prompt does not show that reason yet.
   - `sandbox/linux/approval-probe.sh` exercises this in the machine with
     synthetic canaries. `acceptance.sh` gains an attestation section.
 - **A contained Linux target: an OrbStack isolated machine where the

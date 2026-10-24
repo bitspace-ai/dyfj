@@ -187,6 +187,61 @@ describe("approval by the attested envelope", () => {
     assert.strictEqual(paid.decision, "ask");
   });
 
+  // Each generic auto-allow shape in `evaluateCommandPolicy`: a contained
+  // command with that shape still asks without an attested, granted envelope.
+  for (
+    const [shape, permission] of [
+      ["configured-external read", {
+        effects: ["read.external"],
+        defaultDecision: "allow",
+        resources: ["net:read"],
+        network: "configured-external",
+        filesystem: "none",
+        cost: "none",
+      }],
+      ["recall", {
+        effects: ["read.memory"],
+        defaultDecision: "allow",
+        resources: ["memory:*"],
+        network: "recall",
+        filesystem: "none",
+        cost: "none",
+      }],
+      ["read-only local", {
+        effects: ["read.filesystem"],
+        defaultDecision: "allow",
+        resources: ["fs:read"],
+        network: "none",
+        filesystem: "read",
+        cost: "none",
+      }],
+    ] as [string, CommandDefinition<string>["permission"]][]
+  ) {
+    it(`checks containment before the ${shape} auto-allow`, () => {
+      for (const verdict of [UNATTESTED, UNGRANTED, undefined]) {
+        const result = decide(verdict, OPERATOR, undefined, { permission });
+        assert.strictEqual(result.decision, "ask", `${shape}, ${verdict?.status ?? "no verdict"}`);
+      }
+    });
+  }
+
+  for (
+    const refusal of [
+      "/etc/dyfj/l8/envelope-grant.json: must be owned by root and not group- or world-writable",
+      "grant is malformed",
+      "grant names another executor policy",
+    ]
+  ) {
+    it(`names the supervisor's grant refusal: ${refusal.slice(-30)}`, () => {
+      const result = decide({ ...UNGRANTED, grantRefusal: refusal } as ContainmentVerdict, OPERATOR);
+      assert.strictEqual(result.decision, "ask");
+      assert.ok(
+        (result.reason ?? "").endsWith(`(envelope grant refused: ${refusal})`),
+        String(result.reason),
+      );
+    });
+  }
+
   it("never runs the read-only classifier for a contained command", () => {
     let consulted = 0;
     const result = decide(UNATTESTED, OPERATOR, { command: "git status" }, {
