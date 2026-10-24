@@ -200,9 +200,10 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   maxToolSteps?: number;
   /**
    * The highest tool-step limit a turn may run with (config), resolved at the
-   * boundary. The runtime clamps `maxToolSteps` to it, so a direct or
-   * in-process caller cannot run past the configured ceiling; the transport
-   * refuses a request above it before the turn starts. Absent means 64.
+   * boundary. The runtime clamps `maxToolSteps` to it. The transport and
+   * `resolveRuntimeEnvDefaults` supply it; a direct caller that omits it, or
+   * passes a non-integer, is clamped to 64 only. The transport also refuses a
+   * request above it before the turn starts.
    */
   maxToolStepsCeiling?: number;
   /**

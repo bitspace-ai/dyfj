@@ -74,7 +74,9 @@ README are tracked separately in its Revision history section.
     the ceiling (`[agent].max_tool_steps_ceiling`,
     `DYFJ_MAX_TOOL_STEPS_CEILING`, default 64, at most 64), and refuses a
     configuration whose default limit is above it. A direct or in-process
-    caller's limit is clamped to the ceiling, as it was clamped to 64 before. A non-loopback caller may
+    caller that passes the resolved ceiling (as `resolveRuntimeEnvDefaults`
+    and the transport supply it) is clamped to it; one that omits it is still
+    clamped to 64. A non-loopback caller may
     lower the limit but not raise it. `/steps` alone shows the limit and the
     ceiling, which `dyfj status` and the posture line also show.
   - Migration `019_events_step_limit_handoff_purpose.sql` adds the purpose to
