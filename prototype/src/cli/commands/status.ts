@@ -35,6 +35,8 @@ export interface RuntimeStatusPayload {
     defaultPerCallBudgetUsd?: number;
     defaultDailyBudgetUsd?: number;
     maxToolSteps?: number;
+    /** The highest limit a session may set; absent on older servers. */
+    maxToolStepsCeiling?: number;
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
     autostarted?: boolean;
@@ -217,7 +219,10 @@ export function formatRuntimeStatus(
     `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
       (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
     } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
-    `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}`,
+    `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}` +
+      (runtime.maxToolStepsCeiling === undefined
+        ? ""
+        : ` (ceiling ${runtime.maxToolStepsCeiling})`),
     ...(runtime.autostarted !== undefined
       ? [
         `launch: ${

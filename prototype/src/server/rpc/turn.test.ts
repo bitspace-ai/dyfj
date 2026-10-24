@@ -123,6 +123,7 @@ test("turn threads the configured agent-step limit and returns the receipt field
       anomalyTurnMultiple: 3,
       anomalyScopeMultiple: 2,
       maxToolSteps: 7,
+      maxToolStepsCeiling: 64,
     },
   });
   assert.deepStrictEqual(
@@ -132,6 +133,35 @@ test("turn threads the configured agent-step limit and returns the receipt field
     },
   );
   assert.deepStrictEqual(seenMaxToolSteps, 7);
+});
+
+test("a turn's own tool-step limit overrides the configured one, up to the ceiling", async () => {
+  const seen: (number | undefined)[] = [];
+  const rpc = handlers((input) => {
+    seen.push(input.maxToolSteps);
+    return Promise.resolve(result({}));
+  }, {
+    engineConfig: {
+      defaultCompanionModel: null,
+      permissionLevel: "strict",
+      approvePaidDefault: false,
+      trustWorkspaceInstructions: false,
+      defaultSessionBudgetUsd: 1,
+      defaultPerCallBudgetUsd: 0.1,
+      defaultDailyBudgetUsd: 25,
+      anomalyTurnMultiple: 3,
+      anomalyScopeMultiple: 2,
+      maxToolSteps: 7,
+      maxToolStepsCeiling: 12,
+    },
+  });
+  await callRpc(rpc, "turn", { prompt: "hi", maxToolSteps: 12 }, client());
+  await assert.rejects(
+    () => callRpc(rpc, "turn", { prompt: "hi", maxToolSteps: 13 }, client()),
+    /maxToolSteps 13 is above the tool-step ceiling of 12/,
+  );
+  // The refused turn never reached the runtime.
+  assert.deepStrictEqual(seen, [12]);
 });
 
 test("turn threads boot-discovered external MCP commands into the runtime", async () => {
@@ -327,6 +357,7 @@ test("loopback inherits approvePaidDefault when the request omits opt-in", async
       anomalyTurnMultiple: 3,
       anomalyScopeMultiple: 2,
       maxToolSteps: 32,
+      maxToolStepsCeiling: 64,
     },
   });
   assert.deepStrictEqual(

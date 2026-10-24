@@ -156,7 +156,7 @@ SOCKET_FLAG_SET=0
 # parse below never reads a flag VALUE as launcher control input.
 is_value_flag() {
   case "$1" in
-    --socket|--mode|--model|--tier|--hint|--session|--workspace|--runner|-p|--print)
+    --socket|--mode|--model|--tier|--hint|--session|--workspace|--runner|--tool-steps|-p|--print)
       return 0
       ;;
   esac
@@ -640,7 +640,7 @@ rust_repl_args() {
         RUST_REPL_ARGS+=("${args[$i]}")
         i=$((i + 1))
         ;;
-      --model|--session|--workspace)
+      --model|--session|--workspace|--tool-steps)
         # The Rust REPL refuses a value that starts with --, as a missing one.
         [[ $((i + 1)) -lt ${#args[@]} && "${args[$((i + 1))]}" != --* ]] || return 1
         RUST_REPL_ARGS+=("${args[$i]}" "${args[$((i + 1))]}")

@@ -124,7 +124,13 @@ export function formatReceipt(
   const autoApproved = formatAutoApprovals(result.agent.autoApprovals);
   const toolSteps =
     `tools ${result.agent.toolStepsUsed}/${result.agent.maxToolSteps}` +
-    (result.agent.limitReached ? " (limit reached)" : "") +
+    (result.agent.limitReached
+      ? result.agent.handoff === "model"
+        ? " (limit reached · handoff)"
+        : result.agent.handoff === "notice"
+        ? " (limit reached · handoff failed)"
+        : " (limit reached)"
+      : "") +
     (autoApproved === undefined ? "" : ` · ${autoApproved}`);
   const history = result.historyOmission === undefined
     ? ""

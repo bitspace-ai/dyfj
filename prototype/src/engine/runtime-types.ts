@@ -199,6 +199,14 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    */
   maxToolSteps?: number;
   /**
+   * The highest tool-step limit a turn may run with (config), resolved at the
+   * boundary. The runtime clamps `maxToolSteps` to it. The transport and
+   * `resolveRuntimeEnvDefaults` supply it; a direct caller that omits it, or
+   * passes a non-integer, is clamped to 64 only. The transport also refuses a
+   * request above it before the turn starts.
+   */
+  maxToolStepsCeiling?: number;
+  /**
    * Default budget limits (the engine's startup posture), resolved once at the
    * boundary from the declared config surface (DYFJ_BUDGET_* via
    * resolveBudgetDefaultsFromEnv) so the core reads no env. The core uses these
@@ -240,6 +248,7 @@ export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    handoff?: "model" | "notice";
     autoApprovals: AutoApprovals;
   };
   validation?: WorkbenchValidationSummary;

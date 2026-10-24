@@ -194,6 +194,7 @@ export interface WorkbenchUnixServerOptions {
     | "anomalyTurnMultiple"
     | "anomalyScopeMultiple"
     | "maxToolSteps"
+    | "maxToolStepsCeiling"
   >;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */
   acpSessions?: AcpSessionHandleMap;

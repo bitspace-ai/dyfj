@@ -164,7 +164,18 @@ function toAnthropicWireMessages(
   let replaying = true;
   for (const m of messages) {
     if (m.role === "user") {
-      wire.push({ role: "user", content: m.content });
+      // A user turn right after tool results (the step-limit handoff request)
+      // joins that turn as a text block after them, rather than making two
+      // user turns in a row.
+      const last = wire[wire.length - 1];
+      if (
+        last && last.role === "user" && Array.isArray(last.content) &&
+        last.content[0]?.type === "tool_result"
+      ) {
+        last.content.push({ type: "text", text: m.content });
+      } else {
+        wire.push({ role: "user", content: m.content });
+      }
     } else if (m.role === "assistant") {
       const replayed = replaying && m.replay?.api === ANTHROPIC_REPLAY_API &&
           m.replay.prefixDigest === prefix.after(wire)

@@ -46,6 +46,7 @@ import {
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
+import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -132,6 +133,10 @@ export async function runRepl(
         continue;
       }
       if (await handleReplFastCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
+        continue;
+      }
+      if (await handleReplStepsCommand(cmd, config, io, connect)) {
         sessionState.lastReplCommand = cmd;
         continue;
       }

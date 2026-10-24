@@ -25,6 +25,7 @@ export type ProviderCallPurpose =
   | "initial"
   | "tool_followup"
   | "forced_conclusion"
+  | "step_limit_handoff"
   | "recovery"
   | "context_compression";
 

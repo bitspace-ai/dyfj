@@ -245,6 +245,24 @@ describe("presentation", () => {
       ) to include "tools 2/2 (limit reached)"`,
     );
   });
+  it("formatReceipt says how a reached limit left its handoff", () => {
+    const at = (handoff: "model" | "notice") =>
+      formatReceipt(
+        result({
+          agent: {
+            toolStepsUsed: 2,
+            maxToolSteps: 2,
+            limitReached: true,
+            handoff,
+          },
+        }),
+        false,
+      );
+    assert.ok(at("model").includes("tools 2/2 (limit reached · handoff)"));
+    assert.ok(
+      at("notice").includes("tools 2/2 (limit reached · handoff failed)"),
+    );
+  });
   it("formatReceipt counts the tool calls that ran without a prompt", () => {
     assert.equal(formatReceipt(result(), false).includes("auto-approved"), false);
     const s = formatReceipt(

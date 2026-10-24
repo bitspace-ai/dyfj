@@ -164,6 +164,19 @@ export interface ReceiptModel {
 }
 
 /** What the stages have reached so far; finalize reads it whatever happened. */
+/** How a turn that reached its tool-step limit left its handoff. */
+export type StepLimitHandoff =
+  | { source: "model" }
+  /** The handoff call failed; `failure` is what the error event records. */
+  | { source: "notice"; failure: unknown };
+
+/** One tool call, as the fallback notice names it: no arguments, no result. */
+export interface RecentToolCall {
+  step: number;
+  commandId: string;
+  outcome: "ok" | "failed" | "refused";
+}
+
 export interface TurnState {
   readonly session: TurnSession;
   readonly audit: TurnAudit;
@@ -199,6 +212,14 @@ export interface TurnState {
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
   toolStepLimitReached: boolean;
+  /**
+   * How a turn that reached its tool-step limit left its handoff: "model"
+   * when the handoff call answered, "notice" when it failed and the runtime
+   * wrote a notice of the last steps. Undefined below the limit.
+   */
+  stepLimitHandoff: StepLimitHandoff | undefined;
+  /** The turn's latest tool calls, oldest first, for the fallback notice. */
+  recentToolCalls: RecentToolCall[];
   /** Tool calls that ran without a prompt, by basis (BIT-707). */
   autoApprovals: AutoApprovals;
   /**
@@ -259,6 +280,8 @@ export function newTurnState(
     callTimings: undefined,
     toolSteps: 0,
     toolStepLimitReached: false,
+    stepLimitHandoff: undefined,
+    recentToolCalls: [],
     autoApprovals: { allowlist: 0, sessionGrant: 0 },
     lastStepFailure: undefined,
     turnEndNotice: undefined,

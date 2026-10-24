@@ -209,10 +209,21 @@ export type WorkbenchRuntimeEvent =
     toolCallCount: number;
   }
   | {
-    /** The configured tool-step limit was reached; a no-tools conclusion is attempted next. */
+    /** The tool-step limit was reached; a no-tools handoff call is attempted next. */
     type: "toolStepLimitReached";
     sessionId: string;
     maxSteps: number;
+  }
+  | {
+    /**
+     * How the turn left its handoff: "model" when the handoff call answered,
+     * "notice" when it failed and the turn's text is the runtime's notice of
+     * its last tool calls.
+     */
+    type: "toolStepLimitHandoff";
+    sessionId: string;
+    maxSteps: number;
+    source: "model" | "notice";
   }
   | {
     type: "toolCallStarted";

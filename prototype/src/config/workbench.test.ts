@@ -339,6 +339,50 @@ const table = (t: Record<string, unknown>) => () => t;
     });
   }
 
+  test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(cfg.maxToolStepsCeiling, 64);
+    const fileCfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({ agent: { max_tool_steps: 8, max_tool_steps_ceiling: 16 } }),
+    });
+    assert.strictEqual(fileCfg.maxToolStepsCeiling, 16);
+    const envCfg = await loadConfig({
+      env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS_CEILING: "24" }),
+      readTextFile: present,
+      parseToml: table({ agent: { max_tool_steps: 8, max_tool_steps_ceiling: 16 } }),
+    });
+    assert.strictEqual(envCfg.maxToolStepsCeiling, 24);
+  });
+
+  test("loadConfig agent tool-step ceiling: refuses a default limit above the ceiling", async () => {
+    assert.match(
+      (await captureRejection(() =>
+        loadConfig({
+          env: env({ ...HOME, DYFJ_MAX_TOOL_STEPS: "8", DYFJ_MAX_TOOL_STEPS_CEILING: "4" }),
+          readTextFile: notFound,
+        })
+      ) as Error).message,
+      /default max tool steps \(8\) is above the tool-step ceiling \(4\)/,
+    );
+  });
+
+  for (const value of [0, 1.5, 65]) {
+    test(`loadConfig agent tool-step ceiling: rejects invalid TOML max_tool_steps_ceiling ${value}`, async () => {
+      assert.match(
+        (await captureRejection(() =>
+          loadConfig({
+            env: env(HOME),
+            readTextFile: present,
+            parseToml: table({ agent: { max_tool_steps_ceiling: value } }),
+          })
+        ) as Error).message,
+        /max_tool_steps_ceiling.*integer from 1 through 64/,
+      );
+    });
+  }
+
   for (const value of ["0", "-1", "1.5", "many", "65"]) {
     test(`loadConfig agent tool-step limit: rejects invalid env max tool steps ${value}`, async () => {
       assert.match(

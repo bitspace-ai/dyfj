@@ -53,10 +53,11 @@ fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
 }
 
 const USAGE: &str = "\
-usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--session <id>] [--workspace <dir>]
+usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--tool-steps <N>] [--session <id>] [--workspace <dir>]
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
+  --tool-steps <N>  this session's tool-step limit, 1 through 64 and not above the runtime's ceiling
   --session <id>    resume a runtime session, on the model it last ran on unless --model names one
   --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
 
@@ -91,6 +92,15 @@ fn parse_args(
                 session.model_pinned = true;
             }
             "--workspace" => session.workspace = Some(value("--workspace")?),
+            "--tool-steps" => {
+                let raw = value("--tool-steps")?;
+                session.max_tool_steps = Some(commands::parse_tool_steps(&raw).ok_or_else(|| {
+                    format!(
+                        "--tool-steps must be an integer from 1 through {}",
+                        commands::TOOL_STEPS_BOUND
+                    )
+                })?);
+            }
             "--session" => {
                 let reference = value("--session")?;
                 let id = commands::normalize_session_ref(&reference).ok_or_else(|| {
@@ -727,6 +737,33 @@ mod tests {
         );
     }
 
+    /// A handoff that failed after streaming part of itself is followed by the
+    /// runtime's notice, which is the reply: the receipt fallback must print it.
+    #[test]
+    fn a_failed_handoff_lets_the_notice_print_after_streamed_text() {
+        let mut wrote_any = false;
+        super::render(
+            crate::client::StreamFrame::Delta { text: "partial handoff".into() },
+            &mut wrote_any,
+        );
+        super::render(
+            crate::client::StreamFrame::Event {
+                event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "notice"}),
+            },
+            &mut wrote_any,
+        );
+        assert!(!wrote_any);
+        // A handoff the model wrote is the reply as streamed.
+        let mut wrote_any = true;
+        super::render(
+            crate::client::StreamFrame::Event {
+                event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "model"}),
+            },
+            &mut wrote_any,
+        );
+        assert!(wrote_any);
+    }
+
     /// A replacement that streams sets the flag again, so the receipt fallback
     /// does not double-print it.
     #[test]
@@ -897,6 +934,23 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn tool_steps_sets_the_sessions_limit_within_the_bound() {
+        let session = super::parse_args(&args(&["--tool-steps", "12"]), env(&[]), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(session.max_tool_steps, Some(12));
+        // The flag is in the turn body this session builds.
+        assert_eq!(session.turn_body("hi", "t")["maxToolSteps"], 12);
+        for value in ["0", "65", "x", "1.5"] {
+            assert_eq!(
+                super::parse_args(&args(&["--tool-steps", value]), env(&[]), None).unwrap_err(),
+                "--tool-steps must be an integer from 1 through 64",
+                "{value}"
+            );
+        }
     }
 
     #[test]
@@ -1156,6 +1210,17 @@ fn render(frame: StreamFrame, wrote_any: &mut bool) {
                 println!("{}", activity::SUPERSEDED_MARKER);
                 *wrote_any = false;
                 return;
+            }
+            // A handoff that failed part way is followed by the runtime's
+            // notice, which is the reply: clearing `wrote_any` lets the
+            // receipt fallback print it after what already streamed.
+            if event.get("type").and_then(Value::as_str) == Some("toolStepLimitHandoff")
+                && event.get("source").and_then(Value::as_str) == Some("notice")
+            {
+                if *wrote_any {
+                    println!();
+                }
+                *wrote_any = false;
             }
             if let Some(line) = activity::describe(&event) {
                 println!("{line}");

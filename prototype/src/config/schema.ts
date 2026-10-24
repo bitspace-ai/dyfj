@@ -115,6 +115,14 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: 32,
   },
+  {
+    key: "maxToolStepsCeiling",
+    envVar: "DYFJ_MAX_TOOL_STEPS_CEILING",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 64,
+  },
   // ── engine: budget defaults (env layer today; file layer is the next slice) ──
   {
     key: "defaultSessionBudgetUsd",

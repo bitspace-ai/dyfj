@@ -87,6 +87,13 @@ export interface NativeTurnReceipt {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    /**
+     * How a turn that reached the limit left its handoff: "model" when the
+     * handoff call answered, "notice" when the runtime wrote a notice of the
+     * last tool calls. Absent below the limit and from a runtime that
+     * predates it.
+     */
+    handoff?: "model" | "notice";
     /** Calls that ran without a prompt; absent from a runtime that predates it. */
     autoApprovals?: AutoApprovals;
   };

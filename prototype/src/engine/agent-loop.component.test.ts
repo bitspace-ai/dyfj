@@ -18,6 +18,7 @@ import {
   eventRows,
   LOCAL_MODEL,
   patchStore,
+  pricedLocalModel,
   requestBody,
   runTurn,
   systemMessage,
@@ -28,7 +29,13 @@ import {
   SONNET_55_STEP_1,
   SONNET_55_STEP_2,
 } from "../../testing/fixtures/anthropic-thinking.ts";
-import { AGENT_DEFAULTS } from "../config/mod.ts";
+import { AGENT_DEFAULTS, resolveRuntimeEnvDefaults } from "../config/mod.ts";
+import { MapEnv } from "../../testing/fakes/map-env.ts";
+import { HANDOFF_OUTPUT_TOKENS, hasHandoffLabels } from "./agent-loop.ts";
+
+/** A reply in the shape the handoff instruction asks for. */
+const HANDOFF_REPLY =
+  "**Done:** listed the workspace twice.\n**Next:** read README.md.\n**Uncommitted state:** none known.";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
 import {
@@ -136,35 +143,67 @@ test("agent loop iterates model<->tools until the model stops requesting tools",
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-test("agent loop honors a configured small step limit and forces a no-tools conclusion", async () => {
+test("agent loop honors a configured small step limit and asks for a no-tools handoff", async () => {
   // The model never stops requesting tools; the loop must bound it.
-  const loop = toolReply([LIST("c")], "forced conclusion");
+  const loop = toolReply([LIST("c")], HANDOFF_REPLY);
   const { run, frames, result } = await loopTurn([loop, loop, loop], {
     prompt: "loop without stopping",
     maxToolSteps: 2,
   });
-  assert.deepStrictEqual(result?.text, "forced conclusion");
-  // Step 0 plus one gather call, then one forced no-tools call.
+  // The handoff reply carried a tool call too; it is dropped, not run.
+  assert.deepStrictEqual(result?.text, HANDOFF_REPLY);
+  assert.deepStrictEqual(
+    frames.filter((f) => f.type === "toolCallStarted").length,
+    2,
+  );
+  // Step 0 plus one gather call, then one handoff call with no tools.
   assert.deepStrictEqual(run.transport.requests.length, 3);
   assert.deepStrictEqual(result?.agent, {
     toolStepsUsed: 2,
     maxToolSteps: 2,
     limitReached: true,
+    handoff: "model",
     autoApprovals: { allowlist: 0, sessionGrant: 0 },
   });
-  // The final forced call dropped tools to make the model conclude.
+  // The handoff call offers no tools, asks for the handoff, and caps output.
   const last = run.transport.requests.at(-1)!;
   assert.deepStrictEqual(requestBody(last).tools, undefined);
-  assert.ok(
-    systemMessage(last).includes(
-      "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached.",
-    ),
-    `expected systemMessage(last) to include "Workbench instruction: tool use ended because the configured Workbench tool-step limit was reached."`,
-  );
   assert.deepStrictEqual(
-    conversation(last).filter((m) => m.role === "user").map((m) => m.content),
-    ["loop without stopping"],
+    (JSON.parse(last.body) as { max_completion_tokens?: number })
+      .max_completion_tokens,
+    HANDOFF_OUTPUT_TOKENS,
   );
+  for (
+    const part of [
+      "Workbench instruction: tool use ended because this turn reached its 2-step tool limit.",
+      "Write a handoff for the operator's next prompt",
+      "Done:",
+      "Next:",
+      "Uncommitted state:",
+    ]
+  ) {
+    assert.ok(systemMessage(last).includes(part), `expected "${part}"`);
+  }
+  const calls = (await eventRows(run, result!.sessionId)).filter((row) =>
+    row.event_type === "provider_call"
+  );
+  assert.partialDeepStrictEqual(calls.at(-1)!, {
+    provider_call_purpose: "step_limit_handoff",
+  });
+  assert.partialDeepStrictEqual(
+    frames.find((f) => f.type === "toolStepLimitHandoff"),
+    { type: "toolStepLimitHandoff", maxSteps: 2, source: "model" },
+  );
+  // The request is the last turn the model reads, after the last tool result.
+  const turns = conversation(last);
+  assert.deepStrictEqual(turns.at(-2)?.role, "tool");
+  assert.deepStrictEqual(turns.at(-1)?.role, "user");
+  assert.ok(
+    String(turns.at(-1)?.content).startsWith(
+      "Workbench instruction: tool use ended because this turn reached its 2-step tool limit.",
+    ),
+  );
+  assert.deepStrictEqual(turns[0], { role: "user", content: "loop without stopping" });
   // An earlier gather call still offered tools, so the model could continue.
   assert.ok(Array.isArray(requestBody(run.transport.requests[1]).tools));
   const limitAt = frames.findIndex((f) => f.type === "toolStepLimitReached");
@@ -173,6 +212,27 @@ test("agent loop honors a configured small step limit and forces a no-tools conc
     maxSteps: 2,
   });
   assert.deepStrictEqual(frames[limitAt + 1].type, "beforeProviderRequest");
+});
+
+test("an in-process caller cannot run past the configured tool-step ceiling", async () => {
+  const loop = toolReply([LIST("c")], HANDOFF_REPLY);
+  const { run, result } = await loopTurn(Array(6).fill(loop), {
+    prompt: "loop without stopping",
+    // An in-process entrypoint spreads the boundary's env defaults, as
+    // examples/verify-workbench-events.ts does, then asks for more steps.
+    ...resolveRuntimeEnvDefaults(
+      new MapEnv({ DYFJ_MAX_TOOL_STEPS: "2", DYFJ_MAX_TOOL_STEPS_CEILING: "4" }),
+    ),
+    maxToolSteps: 10,
+  });
+  assert.partialDeepStrictEqual(result?.agent, {
+    toolStepsUsed: 4,
+    maxToolSteps: 4,
+    limitReached: true,
+    handoff: "model",
+  });
+  // The first call, three gather calls, then the handoff.
+  assert.deepStrictEqual(run.transport.requests.length, 5);
 });
 
 for (
@@ -347,8 +407,6 @@ describe("after a denied approval", () => {
   });
 });
 
-const CONCLUSION_FAILED =
-  "The no-tools conclusion after the tool-step limit could not be completed.";
 
 /** A distinct tool call per step, so the loop runs to the step cap. */
 function toolSteps(
@@ -361,7 +419,26 @@ function toolSteps(
   );
 }
 
-test("contains a failed capped conclusion without losing prior-call accounting", async () => {
+/** The fallback notice's fixed lines, for a turn that used `steps` steps. */
+function assertHandoffNotice(text: string | undefined, steps: number): void {
+  assert.ok(text !== undefined);
+  assert.ok(
+    text.startsWith(
+      `Tool-step limit reached (${steps}/${steps}). The handoff call did not produce a handoff (ToolStepLimitConclusionError)`,
+    ),
+    text,
+  );
+  assert.ok(text.includes("Last tool calls:"), text);
+  assert.ok(
+    text.includes(`- step ${steps}: list_files (ok)`),
+    `expected the last step in ${text}`,
+  );
+  // Only the latest calls are named.
+  assert.deepStrictEqual(text.match(/^- step /gm)?.length, 5);
+  assert.ok(text.includes("Uncommitted state is unknown."), text);
+}
+
+test("a failed handoff call ends the turn on a notice of its last tool calls", async () => {
   const sentinel = "PROVIDER_RESPONSE_BODY_MUST_NOT_SURFACE";
   const loop = await quietly(() =>
     loopTurn([
@@ -369,12 +446,17 @@ test("contains a failed capped conclusion without losing prior-call accounting",
       { respond: { status: 500, body: sentinel } },
     ], { prompt: "loop until the limit" })
   );
-  const { error, frames } = loop.value;
-  assert.ok(error instanceof Error);
-  assert.deepStrictEqual(error.message, CONCLUSION_FAILED);
-  const calls = (await rows(loop.value)).filter((row) =>
-    row.event_type === "provider_call"
-  );
+  const { error, frames, result } = loop.value;
+  assert.strictEqual(error, null);
+  assertHandoffNotice(result?.text, AGENT_DEFAULTS.maxToolSteps);
+  assert.deepStrictEqual(result?.stopReason, "stop");
+  assert.partialDeepStrictEqual(result?.agent, {
+    limitReached: true,
+    handoff: "notice",
+  });
+  assert.ok(result?.notice?.includes("the handoff call failed"));
+  const events = await rows(loop.value);
+  const calls = events.filter((row) => row.event_type === "provider_call");
   assert.deepStrictEqual(calls.length, AGENT_DEFAULTS.maxToolSteps + 1);
   for (const call of calls.slice(0, AGENT_DEFAULTS.maxToolSteps)) {
     assert.partialDeepStrictEqual(call, {
@@ -383,16 +465,27 @@ test("contains a failed capped conclusion without losing prior-call accounting",
     });
   }
   assert.partialDeepStrictEqual(calls.at(-1)!, {
-    provider_call_purpose: "forced_conclusion",
+    provider_call_purpose: "step_limit_handoff",
     provider_error_class: "ToolStepLimitConclusionError",
     stop_reason: "error",
   });
-  assert.partialDeepStrictEqual(frames.find((f) => f.type === "turnFailed")!, {
-    errorName: "ToolStepLimitConclusionError",
-    errorMessage: CONCLUSION_FAILED,
-  });
+  // The failure stays on record beside the notice the turn ended on.
   assert.deepStrictEqual(
-    JSON.stringify({ calls, frames }).includes(sentinel),
+    events.filter((row) => row.event_type === "error").length,
+    1,
+  );
+  assertHandoffNotice(
+    events.find((row) => row.event_type === "model_response")?.content ??
+      undefined,
+    AGENT_DEFAULTS.maxToolSteps,
+  );
+  assert.partialDeepStrictEqual(
+    frames.find((f) => f.type === "toolStepLimitHandoff"),
+    { source: "notice" },
+  );
+  assert.deepStrictEqual(frames.some((f) => f.type === "turnFailed"), false);
+  assert.deepStrictEqual(
+    JSON.stringify({ events, frames, result }).includes(sentinel),
     false,
   );
 });
@@ -420,24 +513,26 @@ test("contains a failed overflow-recovery call after the tool-step limit", async
       [{ ...LOCAL_MODEL, context_window: 10_000 }],
     )
   );
-  const { error, frames } = loop.value;
-  assert.ok(error instanceof Error);
-  assert.deepStrictEqual(error.message, CONCLUSION_FAILED);
+  const { error, frames, result } = loop.value;
+  assert.strictEqual(error, null);
+  assertHandoffNotice(result?.text, AGENT_DEFAULTS.maxToolSteps);
+  // The partial handoff streamed before the failure is not the reply.
+  assert.deepStrictEqual(result?.text.includes("partial conclusion"), false);
   const calls = (await rows(loop.value)).filter((row) =>
     row.event_type === "provider_call"
   );
   assert.deepStrictEqual(calls.length, AGENT_DEFAULTS.maxToolSteps + 2);
+  assert.partialDeepStrictEqual(calls.at(-2)!, {
+    provider_call_purpose: "step_limit_handoff",
+  });
   assert.partialDeepStrictEqual(calls.at(-1)!, {
     provider_call_purpose: "recovery",
     provider_error_class: "ToolStepLimitConclusionError",
     stop_reason: "error",
   });
-  assert.partialDeepStrictEqual(frames.find((f) => f.type === "turnFailed")!, {
-    errorName: "ToolStepLimitConclusionError",
-    errorMessage: CONCLUSION_FAILED,
-  });
+  assert.deepStrictEqual(frames.some((f) => f.type === "turnFailed"), false);
   assert.deepStrictEqual(
-    JSON.stringify({ calls, frames }).includes(sentinel),
+    JSON.stringify({ calls, frames, result }).includes(sentinel),
     false,
   );
 });
@@ -1284,10 +1379,27 @@ describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
       )
     ).then((r) => r.value);
     assert.equal(loop.error, null);
-    assert.equal(loop.result?.text, "The first heading is readme.");
+    // The fixture's final reply answers the prompt rather than handing off,
+    // so the turn ends on the runtime's notice.
+    assert.ok(
+      loop.result?.text.startsWith("Tool-step limit reached (1/1)."),
+      String(loop.result?.text),
+    );
     const last = JSON.parse(loop.run.transport.requests[1].body);
     assert.equal(last.tools, undefined);
     assert.ok(!JSON.stringify(last.messages).includes('"thinking"'));
+    // On the Anthropic wire the handoff request joins the tool-result turn as
+    // a text block after the results: one user turn, not two in a row.
+    const final = last.messages.at(-1);
+    assert.equal(final.role, "user");
+    assert.equal(final.content[0].type, "tool_result");
+    assert.equal(final.content.at(-1).type, "text");
+    assert.ok(
+      final.content.at(-1).text.startsWith(
+        "Workbench instruction: tool use ended because this turn reached its 1-step tool limit.",
+      ),
+    );
+    assert.equal(last.messages.at(-2).role, "assistant");
   });
 
   it("records thinking in each provider call's output tokens and cost", async () => {
@@ -1374,5 +1486,205 @@ describe("bash calls that run without a prompt (BIT-707)", () => {
     assert.equal(loop.error, null, String(loop.error));
     assert.deepStrictEqual(asked, ["ls"]);
     assert.deepStrictEqual(loop.result?.agent.autoApprovals, { allowlist: 0, sessionGrant: 0 });
+  });
+});
+
+test("a handoff reply that carries on with the task ends on the runtime's notice", async () => {
+  // The model reads the request and keeps going anyway, as a live run did.
+  const ignored = "First heading in CHANGELOG.md: # Changelog. Reading AGENTS.md next.";
+  const loop = await quietly(() =>
+    loopTurn([
+      ...toolSteps(2),
+      chatReply({ content: ignored }),
+    ], { prompt: "read three files", maxToolSteps: 2 })
+  );
+  const { error, frames, result } = loop.value;
+  assert.strictEqual(error, null);
+  assert.ok(
+    result?.text.startsWith(
+      "Tool-step limit reached (2/2). The handoff call did not produce a handoff (StepLimitHandoffIncompleteError)",
+    ),
+    String(result?.text),
+  );
+  assert.ok(result?.text.includes("- step 2: list_files (ok)"), String(result?.text));
+  assert.deepStrictEqual(result?.text.includes(ignored), false);
+  assert.partialDeepStrictEqual(result?.agent, { handoff: "notice" });
+  const events = await rows(loop.value);
+  const calls = events.filter((row) => row.event_type === "provider_call");
+  assert.partialDeepStrictEqual(calls.at(-1)!, {
+    provider_call_purpose: "step_limit_handoff",
+    stop_reason: "stop",
+  });
+  assert.ok(
+    events.find((row) => row.event_type === "error")?.content?.includes(
+      "lacked the Done, Next and Uncommitted state labels",
+    ),
+  );
+  assert.ok(
+    events.find((row) => row.event_type === "model_response")?.content
+      ?.startsWith("Tool-step limit reached (2/2)."),
+  );
+  assert.partialDeepStrictEqual(
+    frames.find((f) => f.type === "toolStepLimitHandoff"),
+    { source: "notice" },
+  );
+});
+
+describe("hasHandoffLabels", () => {
+  it("accepts the three labels in the forms models write them", () => {
+    for (
+      const text of [
+        "Done: a\nNext: b\nUncommitted state: none known",
+        HANDOFF_REPLY,
+        "## Done\nread a file\n## Next steps\nedit\n## Uncommitted state\nnone",
+        "- **Done**: a\n- **Next**: b\n- **Uncommitted state**: c",
+        "1. Done: a\n2. Next: b\n3. Uncommitted state: c",
+      ]
+    ) assert.ok(hasHandoffLabels(text), text);
+  });
+  it("refuses a reply that lacks a label, or only mentions one in passing", () => {
+    for (
+      const text of [
+        "First heading in CHANGELOG.md: # Changelog. Reading AGENTS.md next.",
+        "Done: a\nNext: b",
+        "I am done reading. Next I will commit; uncommitted state: none.",
+        "Done steps: a\nNext: b\nUncommitted state steps: c",
+        "Done: a. Next: b. Uncommitted state: none known.",
+        "",
+      ]
+    ) assert.ok(!hasHandoffLabels(text), text);
+  });
+});
+
+// ─── the step-limit handoff and the per-call gates ──────────────────────────
+
+const PRICED_LOOP = pricedLocalModel({ costInput: 15, costOutput: 75 });
+
+/**
+ * One step that reads a large file, then the handoff at a one-step limit.
+ * The file makes the handoff request far larger than the first call, so a
+ * per-call limit the first call fits under stops only the handoff.
+ */
+async function pricedHandoffTurn(
+  approver: WorkbenchRuntimeInput["approver"],
+  input: Partial<WorkbenchRuntimeInput> = {},
+): Promise<LoopRun> {
+  const root = await mkdtemp(join(tmpdir(), "engine-loop-"));
+  await writeFile(`${root}/big.txt`, "word ".repeat(24_000));
+  const run = engineServices([
+    chatReply({
+      toolCalls: [{ id: "r1", name: "read_file", arguments: { path: "big.txt" } }],
+    }),
+    chatReply({ content: HANDOFF_REPLY }),
+  ], { models: [PRICED_LOOP] });
+  const frames: WorkbenchRuntimeEvent[] = [];
+  try {
+    const result = await runTurn(run, {
+      prompt: "read big.txt",
+      rootOverride: root,
+      defaultCompanionModel: PRICED_LOOP.slug,
+      defaultPerCallBudgetUsd: 0.2,
+      maxToolSteps: 1,
+      approver,
+      ...input,
+      frames: { onRuntimeEvent: (event) => void frames.push(event) },
+    });
+    return { run, frames, result, error: null, root };
+  } catch (error) {
+    return { run, frames, error, root };
+  } finally {
+    await rm(root, { recursive: true });
+  }
+}
+
+const approvePaid = () => Promise.resolve({ decision: "approve" as const });
+
+describe("the step-limit handoff behind the per-call budget gates", () => {
+  it("asks the ceiling approval for the handoff like any other call", async () => {
+    const confirmBudgetCeiling = mock.fn(approvePaid);
+    const loop = await quietly(() =>
+      pricedHandoffTurn({
+        confirmPaidEscalation: approvePaid,
+        confirmBudgetCeiling,
+      })
+    );
+    const { error, result, run } = loop.value;
+    assert.strictEqual(error, null);
+    assert.deepStrictEqual(confirmBudgetCeiling.mock.callCount(), 1);
+    assert.deepStrictEqual(run.transport.requests.length, 2);
+    assert.deepStrictEqual(result?.text, HANDOFF_REPLY);
+    assert.partialDeepStrictEqual(result?.agent, { handoff: "model" });
+  });
+
+  it("a declined ceiling makes no handoff call and leaves the notice", async () => {
+    const confirmBudgetCeiling = mock.fn(() =>
+      Promise.resolve({ decision: "deny" as const, reason: "not now" })
+    );
+    const loop = await quietly(() =>
+      pricedHandoffTurn({
+        confirmPaidEscalation: approvePaid,
+        confirmBudgetCeiling,
+      })
+    );
+    const { error, result, run } = loop.value;
+    assert.strictEqual(error, null);
+    assert.deepStrictEqual(confirmBudgetCeiling.mock.callCount(), 1);
+    // Only the first call reached the provider.
+    assert.deepStrictEqual(run.transport.requests.length, 1);
+    assert.ok(
+      result?.text.startsWith(
+        "Tool-step limit reached (1/1). The handoff call did not produce a handoff (BudgetCeilingDeclinedError)",
+      ),
+      String(result?.text),
+    );
+    assert.ok(result?.text.includes("- step 1: read_file (ok)"), String(result?.text));
+    assert.partialDeepStrictEqual(result?.agent, { handoff: "notice" });
+    const events = await rows(loop.value);
+    assert.deepStrictEqual(
+      events.some((row) => row.provider_call_purpose === "step_limit_handoff"),
+      false,
+    );
+    assert.deepStrictEqual(
+      events.filter((row) => row.event_type === "error").length,
+      1,
+    );
+  });
+
+  it("a gate with no approver to ask fails closed to the notice", async () => {
+    const loop = await quietly(() =>
+      pricedHandoffTurn({ confirmPaidEscalation: approvePaid })
+    );
+    const { error, result, run } = loop.value;
+    assert.strictEqual(error, null);
+    assert.deepStrictEqual(run.transport.requests.length, 1);
+    assert.ok(
+      result?.text.startsWith("Tool-step limit reached (1/1)."),
+      String(result?.text),
+    );
+    assert.partialDeepStrictEqual(result?.agent, { handoff: "notice" });
+  });
+
+  it("a turn cancelled at the limit ends aborted with no handoff", async () => {
+    const abort = new AbortController();
+    const loop = await quietly(() =>
+      loopTurn([toolReply([LIST("c1")]), chatReply({ content: "unsent" })], {
+        prompt: "explore",
+        maxToolSteps: 1,
+        abortSignal: abort.signal,
+        frames: {
+          onRuntimeEvent: (event) => {
+            if (event.type === "toolStepLimitReached") abort.abort();
+          },
+        },
+      })
+    );
+    const { error, result, frames } = loop.value;
+    assert.strictEqual(error, null);
+    assert.deepStrictEqual(result?.stopReason, "aborted");
+    assert.deepStrictEqual(result?.agent.handoff, undefined);
+    assert.deepStrictEqual(
+      frames.some((f) => f.type === "toolStepLimitHandoff"),
+      false,
+    );
   });
 });

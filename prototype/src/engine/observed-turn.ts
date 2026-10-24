@@ -23,6 +23,7 @@ export type LoopCallPurpose =
   | "initial"
   | "tool_followup"
   | "forced_conclusion"
+  | "step_limit_handoff"
   | "recovery";
 
 /** What the call is sized as before it is made. */

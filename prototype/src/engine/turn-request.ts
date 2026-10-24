@@ -10,6 +10,7 @@ import {
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
+import { AGENT_DEFAULTS } from "../config/mod.ts";
 
 export interface TurnRequestBody {
   prompt?: unknown;
@@ -24,6 +25,9 @@ export interface TurnRequestBody {
   // the confirmPaidEscalation injection).
   approvePaidInference?: unknown;
   budget?: unknown;
+  // the session's own tool-step limit, within the configured ceiling. A
+  // remote caller may lower the limit but not raise it.
+  maxToolSteps?: unknown;
 }
 
 const TURN_ID_SHAPE =
@@ -181,6 +185,8 @@ export interface ResolvedTurn {
   runtimeInput: WorkbenchRuntimeInput;
   sessionId: string | undefined;
   approvePaidInference: boolean;
+  /** The request's own tool-step limit, already checked against the ceiling. */
+  maxToolSteps?: number;
 }
 
 /**
@@ -199,6 +205,10 @@ export interface ResolveTurnOptions {
   approvePaidDefault?: boolean;
   /** Standing operator trust required before Codex may read workspace config. */
   trustWorkspaceInstructions?: boolean;
+  /** The configured tool-step limit; a remote caller may not raise a turn above it. */
+  maxToolSteps?: number;
+  /** The highest tool-step limit a request may set. */
+  maxToolStepsCeiling?: number;
 }
 
 export function resolveTurnFromBody(
@@ -276,5 +286,45 @@ export function resolveTurnFromBody(
     }
   }
 
-  return { runtimeInput, sessionId, approvePaidInference };
+  const maxToolSteps = resolveMaxToolSteps(body.maxToolSteps, loopback, options);
+  if (typeof maxToolSteps === "object") return maxToolSteps;
+
+  return {
+    runtimeInput,
+    sessionId,
+    approvePaidInference,
+    ...(maxToolSteps === undefined ? {} : { maxToolSteps }),
+  };
+}
+
+/**
+ * A request's own tool-step limit: an integer from 1 through the configured
+ * ceiling. A value above the ceiling is refused, not clamped, so the caller
+ * learns its setting did not hold. A remote caller may only lower the limit.
+ */
+function resolveMaxToolSteps(
+  value: unknown,
+  loopback: boolean,
+  options: ResolveTurnOptions,
+): number | undefined | { error: string; status: number } {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    return { error: "maxToolSteps must be a positive integer", status: 400 };
+  }
+  const ceiling = options.maxToolStepsCeiling ??
+    AGENT_DEFAULTS.maxToolStepsCeiling;
+  if (value > ceiling) {
+    return {
+      error: `maxToolSteps ${value} is above the tool-step ceiling of ${ceiling}`,
+      status: 400,
+    };
+  }
+  const standing = options.maxToolSteps ?? AGENT_DEFAULTS.maxToolSteps;
+  if (!loopback && value > standing) {
+    return {
+      error: "remote callers may not raise the tool-step limit",
+      status: 403,
+    };
+  }
+  return value;
 }

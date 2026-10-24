@@ -42,6 +42,8 @@ export interface TurnRequest {
    * loopback transport AND only when set — a remote caller can never approve spend.
    */
   approvePaidInference?: boolean;
+  /** The session's own tool-step limit; the runtime refuses one above its ceiling. */
+  maxToolSteps?: number;
 }
 
 export function buildTurnBody(
@@ -72,6 +74,10 @@ export function buildTurnBody(
   }
   // Per-turn paid opt-in; the engine ignores it on non-loopback transports.
   if (config.approvePaid) body.approvePaidInference = true;
+  // External runners keep their own loop; the limit is the native loop's.
+  if (config.toolSteps !== undefined && config.runner === undefined) {
+    body.maxToolSteps = config.toolSteps;
+  }
   return body;
 }
 

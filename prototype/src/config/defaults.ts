@@ -15,6 +15,7 @@ import {
   readMaxToolSteps,
   readPositiveMultiple,
   readPositiveUsd,
+  validateToolStepsWithinCeiling,
 } from "./values.ts";
 
 // ── Budget defaults (declared in CONFIG_SCHEMA; env layer at the boundary) ─────
@@ -38,22 +39,30 @@ export const BUDGET_DEFAULTS: BudgetDefaults = {
 export interface AgentDefaults {
   /** Maximum model↔tool loop steps in one turn. */
   maxToolSteps: number;
+  /** The highest tool-step limit a session may set for itself. */
+  maxToolStepsCeiling: number;
 }
 
 export const AGENT_DEFAULTS: AgentDefaults = {
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
+  maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
 };
 
 export function resolveAgentDefaultsFromEnv(
   env: Env = processEnv,
 ): AgentDefaults {
-  return {
-    maxToolSteps: readMaxToolSteps(
-      env,
-      schemaEnvVar("maxToolSteps"),
-      AGENT_DEFAULTS.maxToolSteps,
-    ),
-  };
+  const maxToolSteps = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolSteps"),
+    AGENT_DEFAULTS.maxToolSteps,
+  );
+  const maxToolStepsCeiling = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolStepsCeiling"),
+    AGENT_DEFAULTS.maxToolStepsCeiling,
+  );
+  validateToolStepsWithinCeiling(maxToolSteps, maxToolStepsCeiling);
+  return { maxToolSteps, maxToolStepsCeiling };
 }
 
 /**
@@ -172,6 +181,7 @@ export interface RuntimeEnvDefaults {
   anomalyScopeMultiple: number;
   trustWorkspaceInstructions: boolean;
   maxToolSteps: number;
+  maxToolStepsCeiling: number;
 }
 
 /**
@@ -203,5 +213,6 @@ export function resolveRuntimeEnvDefaults(
     anomalyTurnMultiple: anomaly.turnMultiple,
     anomalyScopeMultiple: anomaly.scopeMultiple,
     maxToolSteps: agent.maxToolSteps,
+    maxToolStepsCeiling: agent.maxToolStepsCeiling,
   };
 }

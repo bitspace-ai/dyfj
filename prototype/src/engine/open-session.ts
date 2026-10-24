@@ -42,20 +42,27 @@ import {
   type TurnState,
 } from "./turn-state.ts";
 
-// Hard ceiling for the startup-configured model<->tool iterations in a single
-// turn. Bounds cost and guarantees termination if a model keeps requesting
-// tools; on the final permitted step the runtime drops tools to force a
-// concluding answer. The default is AGENT_DEFAULTS.maxToolSteps; no unlimited
-// mode exists.
+// Hard bound on model<->tool iterations in a single turn. Bounds cost and
+// guarantees termination if a model keeps requesting tools; at the limit the
+// runtime drops tools and asks for a handoff. The configured ceiling
+// (maxToolStepsCeiling) can only lower it. The default is
+// AGENT_DEFAULTS.maxToolSteps; no unlimited mode exists.
 export const MAX_TOOL_STEPS = 64;
 
-function effectiveMaxToolSteps(value: number | undefined): number {
+function effectiveMaxToolSteps(
+  value: number | undefined,
+  ceiling: number | undefined,
+): number {
+  const bound = ceiling !== undefined && Number.isInteger(ceiling) &&
+      ceiling >= 1
+    ? Math.min(MAX_TOOL_STEPS, ceiling)
+    : MAX_TOOL_STEPS;
   if (
     value === undefined || !Number.isFinite(value) || !Number.isInteger(value)
   ) {
-    return AGENT_DEFAULTS.maxToolSteps;
+    return Math.min(bound, AGENT_DEFAULTS.maxToolSteps);
   }
-  return Math.min(MAX_TOOL_STEPS, Math.max(1, value));
+  return Math.min(bound, Math.max(1, value));
 }
 
 // Direct CLI invocation is authenticated by the local OS session; transport
@@ -194,7 +201,10 @@ export async function openSession(
     isNextWork,
     usesRepoAskContext: input.mode === "ask" || isNextWork,
     workletId: isNextWork ? "next-work.v0" : undefined,
-    maxToolSteps: effectiveMaxToolSteps(input.maxToolSteps),
+    maxToolSteps: effectiveMaxToolSteps(
+      input.maxToolSteps,
+      input.maxToolStepsCeiling,
+    ),
     fallbackRoot,
     honoredWorkspace: workspace.honored,
     workspaceLookupFailed: workspace.lookupFailed,

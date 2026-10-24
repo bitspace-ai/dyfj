@@ -56,6 +56,7 @@ export interface WorkbenchReceiptInput {
     toolStepsUsed: number;
     maxToolSteps: number;
     limitReached: boolean;
+    handoff?: "model" | "notice";
     autoApprovals?: AutoApprovals;
   };
   /**
@@ -132,7 +133,13 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
     } written`,
     `Calls:   ${input.totalCalls}`,
     `Tool steps: ${input.agent.toolStepsUsed}/${input.agent.maxToolSteps}` +
-      (input.agent.limitReached ? " (limit reached)" : ""),
+      (input.agent.limitReached
+        ? input.agent.handoff === "model"
+          ? " (limit reached; handoff)"
+          : input.agent.handoff === "notice"
+          ? " (limit reached; handoff failed, notice)"
+          : " (limit reached)"
+        : ""),
   );
   const auto = input.agent.autoApprovals;
   if (auto !== undefined && auto.allowlist + auto.sessionGrant > 0) {

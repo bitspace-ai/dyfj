@@ -33,6 +33,7 @@ export function createTurnOutputHandlers(
   finish: () => void;
   streamed: () => boolean;
   supersede: () => void;
+  yieldToReceipt: () => void;
 } {
   let sawDelta = false;
   const renderer = createStreamingMarkdownRenderer({
@@ -64,6 +65,13 @@ export function createTurnOutputHandlers(
         "the reply restarts below";
       io.out(`\n${config.color ? `\x1b[2m${marker}\x1b[0m` : marker}\n\n`);
     },
+    // The reply is the receipt's text, whatever streamed before: a handoff
+    // that failed part way is followed by the runtime's notice. What already
+    // streamed stays on screen, and the status line says it was cut off.
+    yieldToReceipt: () => {
+      renderer.flush();
+      sawDelta = false;
+    },
   };
 }
 
@@ -92,6 +100,10 @@ export function handleTurnRuntimeEvent(
     runtimeEvent.type === "turnAborted" ||
     runtimeEvent.type === "unparsedToolCallMarkupDetected"
   ) output.finish();
+  if (
+    runtimeEvent.type === "toolStepLimitHandoff" &&
+    runtimeEvent.source === "notice"
+  ) output.yieldToReceipt();
   const line = formatRuntimeEvent(runtimeEvent);
   if (line !== null) io.err(line);
 }
@@ -109,7 +121,12 @@ export function formatRuntimeEvent(
   }
   if (event.type === "toolStepLimitReached") {
     const maxSteps = typeof event.maxSteps === "number" ? event.maxSteps : "?";
-    return `tool: reached ${maxSteps}-step limit; concluding now`;
+    return `tool: reached ${maxSteps}-step limit; asking the model for a handoff`;
+  }
+  // A handoff the model wrote is the reply itself; only the fallback needs
+  // saying, because the reply is then the runtime's notice.
+  if (event.type === "toolStepLimitHandoff" && event.source === "notice") {
+    return "tool: the handoff call failed; the reply is the runtime's notice of the last tool calls";
   }
   if (event.type === "unparsedToolCallMarkupDetected") {
     const count = typeof event.count === "number" &&

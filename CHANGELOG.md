@@ -45,6 +45,49 @@ README are tracked separately in its Revision history section.
     grant that is present. The approval prompt does not show that reason yet.
   - `sandbox/linux/approval-probe.sh` exercises this in the machine with
     synthetic canaries. `acceptance.sh` gains an attestation section.
+
+- **A turn that reaches its tool-step limit leaves a handoff, and a session can
+  set its own limit within a configured ceiling (BIT-716).**
+  - At the limit, the runtime makes a call that offers no tools and asks the
+    model for a short handoff: what is done, what is next, and any uncommitted
+    state. The request is the last user turn, after the last tool result, and
+    is also added to the system prompt. A length or context-size recovery may
+    retry the call, as it may any call. Its output is capped at 2,048 tokens,
+    or the model's catalog cap when that is lower. A tool call in the reply is
+    dropped and does not run. The reply counts as a handoff only when each of
+    the `Done`, `Next` and `Uncommitted state` labels starts a line. A handoff
+    is the turn's reply and its `model_response` content, and its
+    `provider_call` row has the new purpose `step_limit_handoff`.
+  - The handoff call passes the same per-call budget gates as every other call
+    of the turn, on the same model. If a gate stops it (a declined ceiling, a
+    hard limit, the runaway-anomaly stop, or no approver to ask), or the
+    provider call fails, or the reply lacks a label
+    (`StepLimitHandoffIncompleteError`), the turn no longer fails. It ends on a runtime notice
+    that names the failure's class and the turn's last five tool calls by
+    command and outcome, with no arguments, results or model text. The
+    failure is recorded as the turn's `error` event, a best-effort write like
+    the turn's other `error` events. If the handoff streamed part of a reply
+    before it failed, both REPLs keep that text on screen and print the notice
+    after it. A cancelled turn ends aborted, as before.
+  - The receipt's `agent.handoff` says which happened (`model` or `notice`),
+    and both REPLs show it beside the tool count. A `toolStepLimitHandoff`
+    runtime event carries the same.
+  - `--tool-steps N` and `/steps N` set a session's own limit in both REPLs,
+    sent on every native turn as `maxToolSteps` (an external runner keeps its
+    own loop and is sent none). The runtime refuses a value above
+    the ceiling (`[agent].max_tool_steps_ceiling`,
+    `DYFJ_MAX_TOOL_STEPS_CEILING`, default 64, at most 64), and refuses a
+    configuration whose default limit is above it. A direct or in-process
+    caller that passes the resolved ceiling (as `resolveRuntimeEnvDefaults`
+    and the transport supply it) is clamped to it; one that omits it is still
+    clamped to 64. A non-loopback caller may
+    lower the limit but not raise it. `/steps` alone shows the limit and the
+    ceiling, which `dyfj status` and the posture line also show.
+  - Migration `019_events_step_limit_handoff_purpose.sql` adds the purpose to
+    `events.provider_call_purpose`. It restates the whole column, so it can be
+    run again. On a database without it, the handoff's `provider_call` row is
+    a skipped best-effort write, as any failed one is.
+
 - **A contained Linux target: an OrbStack isolated machine where the
   effective policy is enforced below the product's code (opt-in, attended).**
   It is documented in `prototype/sandbox/linux/README.md`. The machine has no

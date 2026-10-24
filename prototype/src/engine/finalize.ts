@@ -86,6 +86,17 @@ export async function completeTurn(
   }
   state.finalText = turn.text;
   state.finalStopReason = turn.stopReason;
+  // The handoff call failed and the turn ended on the runtime's notice: the
+  // failure is still the session's record.
+  if (state.stepLimitHandoff?.source === "notice") {
+    await writeErrorEvent(
+      state,
+      ports,
+      state.stepLimitHandoff.failure,
+      "workbench_model",
+      "error",
+    );
+  }
   const notice = turnEndNotice(state, turn);
   if (notice !== undefined) {
     state.turnEndNotice = notice;
@@ -539,6 +550,9 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
       toolStepsUsed: state.toolSteps,
       maxToolSteps: session.maxToolSteps,
       limitReached: state.toolStepLimitReached,
+      ...(state.stepLimitHandoff === undefined
+        ? {}
+        : { handoff: state.stepLimitHandoff.source }),
       autoApprovals: { ...state.autoApprovals },
     },
     skippedEventWrites: state.audit.skippedEventWrites,
@@ -596,6 +610,9 @@ function turnResult(
       toolStepsUsed: state.toolSteps,
       maxToolSteps: session.maxToolSteps,
       limitReached: state.toolStepLimitReached,
+      ...(state.stepLimitHandoff === undefined
+        ? {}
+        : { handoff: state.stepLimitHandoff.source }),
       autoApprovals: { ...state.autoApprovals },
     },
     validation: state.validation,

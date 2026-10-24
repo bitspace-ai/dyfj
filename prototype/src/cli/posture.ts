@@ -41,6 +41,10 @@ export interface SessionPosture {
   runtimeFingerprint?: unknown;
   /** Whether `dyfj` autostarted the runtime; absent from an older runtime. */
   autostarted?: boolean;
+  /** The session's tool-step limit: its own, else the runtime's configured one. */
+  maxToolSteps?: number;
+  /** The highest limit a session may set; absent from an older runtime. */
+  maxToolStepsCeiling?: number;
 }
 
 /**
@@ -95,9 +99,18 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.trustWorkspaceInstructions === false
     ? "off"
     : "unknown";
+  const steps = posture.maxToolSteps === undefined
+    ? ""
+    : ` · ${formatToolSteps(posture.maxToolSteps, posture.maxToolStepsCeiling)}`;
   return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
-    `workspace instructions: ${workspace}`;
+    `workspace instructions: ${workspace}${steps}`;
+}
+
+/** "N tool steps (ceiling M)", without the ceiling an older runtime omits. */
+export function formatToolSteps(steps: number, ceiling?: number): string {
+  return `${steps} tool steps` +
+    (ceiling === undefined ? "" : ` (ceiling ${ceiling})`);
 }
 
 /**
@@ -158,6 +171,12 @@ export async function fetchSessionPosture(
         permissionLevel: runtime?.permissionLevel,
         trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
         ...(config.fast !== undefined ? { fast: config.fast } : {}),
+        ...((config.toolSteps ?? runtime?.maxToolSteps) !== undefined
+          ? { maxToolSteps: config.toolSteps ?? runtime?.maxToolSteps }
+          : {}),
+        ...(runtime?.maxToolStepsCeiling !== undefined
+          ? { maxToolStepsCeiling: runtime.maxToolStepsCeiling }
+          : {}),
         ...(runtime?.fingerprint !== undefined
           ? { runtimeFingerprint: runtime.fingerprint }
           : {}),

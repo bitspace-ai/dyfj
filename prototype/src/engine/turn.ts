@@ -137,6 +137,8 @@ export interface ExecuteTurnDeps {
   anomalyScopeMultiple?: number;
   /** Maximum model↔tool loop steps in one turn (config), resolved once at the boundary. */
   maxToolSteps?: number;
+  /** The highest tool-step limit a turn request may set (config). */
+  maxToolStepsCeiling?: number;
 }
 
 /** Thread the loaded engine config into executeTurn deps. */
@@ -153,6 +155,7 @@ export function engineConfigToTurnDeps(
     | "anomalyTurnMultiple"
     | "anomalyScopeMultiple"
     | "maxToolSteps"
+    | "maxToolStepsCeiling"
   >,
 ): Pick<
   ExecuteTurnDeps,
@@ -166,6 +169,7 @@ export function engineConfigToTurnDeps(
   | "anomalyTurnMultiple"
   | "anomalyScopeMultiple"
   | "maxToolSteps"
+  | "maxToolStepsCeiling"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -178,6 +182,7 @@ export function engineConfigToTurnDeps(
     anomalyTurnMultiple: config.anomalyTurnMultiple,
     anomalyScopeMultiple: config.anomalyScopeMultiple,
     maxToolSteps: config.maxToolSteps,
+    maxToolStepsCeiling: config.maxToolStepsCeiling,
   };
 }
 
@@ -280,6 +285,13 @@ function runExecuteTurn(
       : {}),
     ...(deps.maxToolSteps !== undefined
       ? { maxToolSteps: deps.maxToolSteps }
+      : {}),
+    ...(deps.maxToolStepsCeiling !== undefined
+      ? { maxToolStepsCeiling: deps.maxToolStepsCeiling }
+      : {}),
+    // the request's own limit, checked against the ceiling at resolution
+    ...(resolved.maxToolSteps !== undefined
+      ? { maxToolSteps: resolved.maxToolSteps }
       : {}),
     authContext: deps.authContext,
     frames: deps.frames,

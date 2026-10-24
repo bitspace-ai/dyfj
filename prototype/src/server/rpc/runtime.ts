@@ -68,6 +68,8 @@ export interface WorkbenchRuntimeStatus {
   defaultPerCallBudgetUsd: number;
   defaultDailyBudgetUsd: number;
   maxToolSteps: number;
+  /** The highest tool-step limit a session may set (`/steps N`). */
+  maxToolStepsCeiling: number;
   models: { total: number; local: number; hosted: number };
   autostarted?: boolean;
   /** Present only when a declared secret pointer failed to resolve at start. */
@@ -105,6 +107,7 @@ export interface RuntimePosture {
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
     | "maxToolSteps"
+    | "maxToolStepsCeiling"
   >;
   defaultCompanionModel?: string | null;
   permissionLevel?: PermissionLevel;
@@ -210,6 +213,8 @@ export function runtimeStatus(
     defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
     maxToolSteps: options.engineConfig?.maxToolSteps ??
       AGENT_DEFAULTS.maxToolSteps,
+    maxToolStepsCeiling: options.engineConfig?.maxToolStepsCeiling ??
+      AGENT_DEFAULTS.maxToolStepsCeiling,
     // Locality counts use the same provider+loopback classification as
     // `models/list[].local` and the bare-turn route — never the tier label,
     // which is catalog metadata a mis-tiered row can get wrong.
