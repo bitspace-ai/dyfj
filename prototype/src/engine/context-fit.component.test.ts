@@ -925,6 +925,9 @@ test("a continuation the fit can make fit is retried even where the raw transcri
 
 // ─── results before a forced conclusion are sized for that request ───────────
 
+/** A step-limit handoff in the labelled shape the request asks for. */
+const CONCLUDED = "Done: read notes.md.\nNext: summarize it.\nUncommitted state: none known.";
+
 test("a result before a forced conclusion is sized against the request without tool definitions", async () => {
   // A 12,000-token window and a one-step cap: the step's follow-up is the
   // forced conclusion, which carries no tool catalog. A 31,000-character
@@ -934,7 +937,7 @@ test("a result before a forced conclusion is sized against the request without t
   const fit = await fitTurn(
     [
       toolReply([READ("c1", "notes.md")]),
-      chatReply({ content: "concluded" }),
+      chatReply({ content: CONCLUDED }),
     ],
     { maxToolSteps: 1 },
     {
@@ -943,7 +946,7 @@ test("a result before a forced conclusion is sized against the request without t
     },
   );
   assert.strictEqual(fit.error, null);
-  assert.deepStrictEqual(fit.result?.text, "concluded");
+  assert.deepStrictEqual(fit.result?.text, CONCLUDED);
   assert.deepStrictEqual(fit.run.transport.requests.length, 2);
   const conclusion = fit.run.transport.requests[1];
   assert.deepStrictEqual(requestBody(conclusion).tools, undefined);

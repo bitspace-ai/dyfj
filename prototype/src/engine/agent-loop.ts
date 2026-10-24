@@ -298,9 +298,10 @@ async function runToolStep(
         result.replay,
       ),
     ];
+    const sized = next.forceConclude ? withoutReplay(sent) : sent;
     return estimateRequest(turn, {
       systemPrompt: next.systemPrompt,
-      messages: next.forceConclude ? withoutReplay(sent) : sent,
+      messages: next.atCap ? [...sized, handoffRequest(state)] : sized,
       tools: next.tools,
     });
   };
@@ -606,12 +607,7 @@ async function stepLimitHandoff(
   // The request itself is the last thing the model reads, after the last
   // tool result; the system prompt carries it too, for the adapter that sends
   // no transcript.
-  messages.push({
-    role: "user",
-    content: handoffInstruction(
-      `this turn reached its ${session.maxToolSteps}-step tool limit`,
-    ),
-  });
+  messages.push(handoffRequest(state));
   try {
     await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
     const estimatedInputCount = estimateRuntimeInputCount(
@@ -835,6 +831,16 @@ function forcedConclusionSystemPrompt(
   return baseSystemPrompt + "\n\n" +
     `Workbench instruction: ${reasonText}. Answer the original operator prompt ` +
     "from the transcript above. Do not request or call more tools.";
+}
+
+/** The handoff request as the turn's last user message. */
+function handoffRequest(state: TurnState): WorkbenchMessage {
+  return {
+    role: "user",
+    content: handoffInstruction(
+      `this turn reached its ${state.session.maxToolSteps}-step tool limit`,
+    ),
+  };
 }
 
 /** The handoff instruction appended to the system prompt. */
