@@ -1548,6 +1548,8 @@ describe("hasHandoffLabels", () => {
         "First heading in CHANGELOG.md: # Changelog. Reading AGENTS.md next.",
         "Done: a\nNext: b",
         "I am done reading. Next I will commit; uncommitted state: none.",
+        "Done steps: a\nNext: b\nUncommitted state steps: c",
+        "Done: a. Next: b. Uncommitted state: none known.",
         "",
       ]
     ) assert.ok(!hasHandoffLabels(text), text);

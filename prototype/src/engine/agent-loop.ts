@@ -677,7 +677,7 @@ const HANDOFF_LABELS = ["done", "next", "uncommitted state"] as const;
  * Whether a reply is a handoff: each of the Done, Next and Uncommitted state
  * labels starts a line, followed by a colon or alone on it (a heading).
  * Markdown emphasis, heading marks and list markers around a label are
- * ignored, and "Next steps" counts as Next.
+ * ignored, and "Next steps" counts as Next; no other label takes a suffix.
  */
 export function hasHandoffLabels(text: string): boolean {
   const lines = text.split("\n").map((line) =>
@@ -690,7 +690,8 @@ export function hasHandoffLabels(text: string): boolean {
     lines.some((line) => {
       if (!line.startsWith(label)) return false;
       const rest = line.slice(label.length).trim();
-      return rest === "" || rest === "steps" || /^(?:steps\s*)?:/.test(rest);
+      const body = label === "next" ? rest.replace(/^steps\b\s*/, "") : rest;
+      return body === "" || body.startsWith(":");
     })
   );
 }
@@ -858,10 +859,11 @@ export function handoffSystemPrompt(
 export function handoffInstruction(reasonText: string): string {
   return `Workbench instruction: tool use ended because ${reasonText}. ` +
     "Do not call tools. Write a handoff for the operator's next prompt, " +
-    "under 200 words, in three labelled parts. Done: what this turn " +
-    "completed, with file paths. Next: the next concrete step. Uncommitted " +
-    "state: files changed but not committed, commands started but not " +
-    'verified, or "none known". State only what the transcript shows, and ' +
+    "under 200 words, in three parts. Start each part on its own line with " +
+    "its label and a colon. Done: what this turn completed, with file " +
+    "paths. Next: the next concrete step. Uncommitted state: files changed " +
+    'but not committed, commands started but not verified, or "none known". ' +
+    "State only what the transcript shows, and " +
     "mark anything you infer as inferred.";
 }
 
