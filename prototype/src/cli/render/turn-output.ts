@@ -109,7 +109,12 @@ export function formatRuntimeEvent(
   }
   if (event.type === "toolStepLimitReached") {
     const maxSteps = typeof event.maxSteps === "number" ? event.maxSteps : "?";
-    return `tool: reached ${maxSteps}-step limit; concluding now`;
+    return `tool: reached ${maxSteps}-step limit; asking the model for a handoff`;
+  }
+  // A handoff the model wrote is the reply itself; only the fallback needs
+  // saying, because the reply is then the runtime's notice.
+  if (event.type === "toolStepLimitHandoff" && event.source === "notice") {
+    return "tool: the handoff call failed; the reply is the runtime's notice of the last tool calls";
   }
   if (event.type === "unparsedToolCallMarkupDetected") {
     const count = typeof event.count === "number" &&

@@ -1519,9 +1519,9 @@ describe("the step-limit handoff behind the per-call budget gates", () => {
       result?.text.startsWith(
         "Tool-step limit reached (1/1). The handoff call did not complete (BudgetCeilingDeclinedError)",
       ),
-      result?.text,
+      String(result?.text),
     );
-    assert.ok(result?.text.includes("- step 1: read_file (ok)"), result?.text);
+    assert.ok(result?.text.includes("- step 1: read_file (ok)"), String(result?.text));
     assert.partialDeepStrictEqual(result?.agent, { handoff: "notice" });
     const events = await rows(loop.value);
     assert.deepStrictEqual(
@@ -1543,7 +1543,7 @@ describe("the step-limit handoff behind the per-call budget gates", () => {
     assert.deepStrictEqual(run.transport.requests.length, 1);
     assert.ok(
       result?.text.startsWith("Tool-step limit reached (1/1)."),
-      result?.text,
+      String(result?.text),
     );
     assert.partialDeepStrictEqual(result?.agent, { handoff: "notice" });
   });

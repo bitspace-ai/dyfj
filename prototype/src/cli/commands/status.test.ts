@@ -44,10 +44,15 @@ describe("runtime lifecycle commands", () => {
         defaultSessionBudgetUsd: 2,
         defaultPerCallBudgetUsd: 0.25,
         maxToolSteps: 7,
+        maxToolStepsCeiling: 48,
         models: { total: 3, local: 1, hosted: 2 },
         methods: ["runtime/status", "models/list"],
       },
     });
+    assert.ok(
+      text.includes("tool-step limit: 7 (ceiling 48)"),
+      `expected ${JSON.stringify(text)} to include the ceiling`,
+    );
     assert.ok(
       text.includes("runtime: reachable"),
       `expected ${JSON.stringify(text)} to include "runtime: reachable"`,

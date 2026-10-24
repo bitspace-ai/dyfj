@@ -10,6 +10,7 @@ import {
   handleReplModelCommand,
   handleReplPacketCommand,
   handleReplSessionCommand,
+  handleReplStepsCommand,
   replPrompt,
   type ReplSessionState,
   runRepl,
@@ -1062,6 +1063,62 @@ describe("REPL /model", () => {
     assert.ok(
       stderr.join("\n").includes("cannot specify both --fast and --no-fast"),
       `expected stderr.join("\\n") to include "cannot specify both --fast and --no-fast"`,
+    );
+  });
+});
+
+describe("REPL /steps command", () => {
+  const connect = (runtime: Record<string, unknown>): ConnectFn => () =>
+    Promise.resolve({
+      request: (method: string) =>
+        Promise.resolve(method === "runtime/status" ? { runtime } : {}),
+      close: () => {},
+    });
+  const RUNTIME = { maxToolSteps: 32, maxToolStepsCeiling: 48 };
+
+  it("/steps shows the limit and the ceiling", async () => {
+    const { io, stderr } = fakeIo();
+    assert.strictEqual(
+      await handleReplStepsCommand("/steps", cfg(), io, connect(RUNTIME)),
+      true,
+    );
+    assert.deepStrictEqual(stderr, ["tool-step limit: 32 (ceiling 48)"]);
+  });
+
+  it("/steps N sets the session's limit and the posture line shows it", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplStepsCommand("/steps 48", config, io, connect(RUNTIME));
+    assert.strictEqual(config.toolSteps, 48);
+    assert.strictEqual(stderr[0], "tool-step limit: 48 (ceiling 48)");
+    assert.ok(stderr[1].endsWith(" · 48 tool steps (ceiling 48)"), stderr[1]);
+  });
+
+  it("/steps refuses a value above the ceiling and keeps the limit", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ toolSteps: 6 });
+    await handleReplStepsCommand("/steps 49", config, io, connect(RUNTIME));
+    assert.strictEqual(config.toolSteps, 6);
+    assert.deepStrictEqual(stderr, [
+      "refused: 49 is above the tool-step ceiling of 48; the limit stays 6",
+    ]);
+  });
+
+  for (const line of ["/steps 0", "/steps 65", "/steps x", "/steps 2 3"]) {
+    it(`${line} prints the usage and keeps the limit`, async () => {
+      const { io, stderr } = fakeIo();
+      const config = cfg();
+      await handleReplStepsCommand(line, config, io, connect(RUNTIME));
+      assert.strictEqual(config.toolSteps, undefined);
+      assert.match(stderr[0], /^usage: \/steps \[N\]/);
+    });
+  }
+
+  it("leaves other lines alone", async () => {
+    const { io } = fakeIo();
+    assert.strictEqual(
+      await handleReplStepsCommand("/stepsize", cfg(), io, connect(RUNTIME)),
+      false,
     );
   });
 });

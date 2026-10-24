@@ -220,6 +220,19 @@ describe("parseArgs", () => {
       true,
     );
   });
+  it("--tool-steps sets the session's tool-step limit within the bound", () => {
+    assert.strictEqual(
+      parseArgs(["--tool-steps", "12", "exec", "x"]).overrides.toolSteps,
+      12,
+    );
+    for (const value of ["0", "65", "1.5", "-3", "many"]) {
+      assert.strictEqual(
+        parseArgs(["--tool-steps", value, "exec", "x"]).error,
+        "--tool-steps must be an integer from 1 through 64",
+        value,
+      );
+    }
+  });
   it("--mode sets the context mode", () => {
     assert.strictEqual(
       parseArgs(["--mode", "ask", "exec", "x"]).overrides.mode,

@@ -559,6 +559,18 @@ describe("buildTurnBody", () => {
     );
   });
 
+  it("sends the session's tool-step limit on a native turn only", () => {
+    assert.deepStrictEqual(buildTurnBody("hi", cfg({ toolSteps: 6 })), {
+      prompt: "hi",
+      mode: "turn",
+      maxToolSteps: 6,
+    });
+    assert.deepStrictEqual(
+      buildTurnBody("hi", cfg({ toolSteps: 6, runner: "fixture" })),
+      { prompt: "hi", mode: "turn", runner: "fixture" },
+    );
+  });
+
   it("omits routingOptions when no routing is set", () => {
     assert.deepStrictEqual(buildTurnBody("hi", cfg()), {
       prompt: "hi",

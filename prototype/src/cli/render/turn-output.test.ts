@@ -49,13 +49,32 @@ describe("formatRuntimeEvent", () => {
     );
   });
 
-  it("marks the forced conclusion after the tool-step limit", () => {
+  it("marks the handoff call after the tool-step limit", () => {
     assert.strictEqual(
       formatRuntimeEvent({
         type: "toolStepLimitReached",
         maxSteps: 8,
       }),
-      "tool: reached 8-step limit; concluding now",
+      "tool: reached 8-step limit; asking the model for a handoff",
+    );
+  });
+
+  it("names a failed handoff, and leaves a model's handoff to the reply", () => {
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "toolStepLimitHandoff",
+        maxSteps: 8,
+        source: "notice",
+      }),
+      "tool: the handoff call failed; the reply is the runtime's notice of the last tool calls",
+    );
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "toolStepLimitHandoff",
+        maxSteps: 8,
+        source: "model",
+      }),
+      null,
     );
   });
 

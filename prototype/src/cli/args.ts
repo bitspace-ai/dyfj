@@ -40,6 +40,11 @@ export interface CliConfig {
    * Requests the fast service tier for prioritized generation throughput.
    */
   fast?: boolean;
+  /**
+   * The session's own tool-step limit (--tool-steps, /steps), sent on every
+   * turn. Undefined leaves the runtime's configured limit.
+   */
+  toolSteps?: number;
   color: boolean;
 }
 
@@ -85,9 +90,23 @@ const VALUE_FLAGS = new Set([
   "--session",
   "--workspace",
   "--runner",
+  "--tool-steps",
   "-p",
   "--print",
 ]);
+
+/**
+ * The bound on a session's tool-step limit. The runtime's configured ceiling
+ * can be lower; the runtime refuses a turn above it.
+ */
+export const TOOL_STEPS_BOUND = 64;
+
+/** A tool-step limit as typed: an integer from 1 through the bound. */
+export function parseToolSteps(value: string): number | undefined {
+  if (!/^[0-9]+$/.test(value)) return undefined;
+  const steps = Number(value);
+  return steps >= 1 && steps <= TOOL_STEPS_BOUND ? steps : undefined;
+}
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const overrides: Partial<CliConfig> = {};
@@ -141,6 +160,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
           );
         }
       } else if (arg === "--workspace") overrides.workspace = value;
+      else if (arg === "--tool-steps") {
+        const steps = parseToolSteps(value);
+        if (steps === undefined) {
+          return error(
+            `--tool-steps must be an integer from 1 through ${TOOL_STEPS_BOUND}`,
+          );
+        }
+        overrides.toolSteps = steps;
+      }
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
         if (value !== "turn" && value !== "ask" && value !== "next-work") {
@@ -328,6 +356,8 @@ REPL commands:
                             (hosted) inference when escalating; add --fast or
                             --no-fast to toggle fast speed tier
   /fast [on|off]            toggle or set fast speed tier (for supported models)
+  /steps [N]                show or set this session's tool-step limit; a value
+                            above the runtime's ceiling is refused
   /session                  show the current session id (for --session resume)
   /friction <sev> [--escaped] <text...>
                             post a daily-driver friction entry
@@ -342,6 +372,8 @@ Options:
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --fast           enable fast speed tier for supported models (faster generation)
   --no-fast        disable fast speed tier (standard speed)
+  --tool-steps <N> this session's tool-step limit, 1 through 64 and not above
+                   the runtime's ceiling (DYFJ_MAX_TOOL_STEPS_CEILING)
   --runner <name>  local ACP runner: fixture | codex-chatgpt (experimental;
                    codex-chatgpt requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
