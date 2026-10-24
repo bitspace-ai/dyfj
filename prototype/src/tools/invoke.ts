@@ -14,6 +14,7 @@ import {
   CommandExecutionError,
   type CommandInvocationResult,
   type ConfirmToolApproval,
+  type ContainmentVerdict,
 } from "./definition.ts";
 import { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
 import {
@@ -57,11 +58,28 @@ export function approvalDeniedReason(
  * object keys sorted so argument order does not matter. Values must match
  * exactly, so `npm test` does not cover `npm test; rm x`.
  */
-export function sessionGrantKey(call: CommandCall): string {
+export function sessionGrantKey(call: CommandCall, scope?: string): string {
   const args = Object.fromEntries(
     Object.keys(call.arguments).sort().map((key) => [key, call.arguments[key]]),
   );
-  return JSON.stringify([call.commandId, args]);
+  return JSON.stringify(
+    scope === undefined ? [call.commandId, args] : [call.commandId, args, scope],
+  );
+}
+
+/**
+ * A contained command's session grants are scoped to the attested executor
+ * policy they were made under, so a grant does not carry over to another
+ * policy. An unattested contained call is never granted for the session: it
+ * has no policy to scope the grant to. A native command's key is unchanged.
+ */
+function grantScope(
+  verdict: ContainmentVerdict | undefined,
+): string | undefined | null {
+  if (verdict === undefined) return undefined;
+  return verdict.status === "attested"
+    ? `contained:${verdict.envelope.policyDigest}`
+    : null;
 }
 
 const denyToolApproval: ConfirmToolApproval = () =>
@@ -120,7 +138,16 @@ async function runCommand<TResult>(
     };
   }
 
-  const policy = evaluateCommandPolicy(command, call, policyContext);
+  // A contained command is attested before every call; the verdict decides
+  // whether the envelope covers it (`tools/policy.ts`).
+  const containment = command.containment === undefined
+    ? undefined
+    : await command.containment.attest();
+  const policy = evaluateCommandPolicy(
+    command,
+    call,
+    containment === undefined ? policyContext : { ...policyContext, containment },
+  );
   if (policy.decision === "deny") {
     return {
       decision: "deny",
@@ -134,7 +161,10 @@ async function runCommand<TResult>(
   const grants = command.grantable === true
     ? policyContext.sessionGrants
     : undefined;
-  const grantKey = grants === undefined ? undefined : sessionGrantKey(call);
+  const scope = grantScope(containment);
+  const grantKey = grants === undefined || scope === null
+    ? undefined
+    : sessionGrantKey(call, scope);
   if (
     policy.decision === "ask" && grantKey !== undefined &&
     grants?.has(grantKey) === true
@@ -179,6 +209,11 @@ async function runCommand<TResult>(
     result = await command.executor(call, {
       authzBasis,
       ...executionContext,
+      // A call the envelope allowed is bound to the instance that attested it.
+      ...(authzBasis === "policy:allow:attested-envelope" &&
+          containment?.status === "attested"
+        ? { binding: containment.envelope.instance }
+        : {}),
     });
   } catch (error) {
     if (error instanceof CommandExecutionError) {

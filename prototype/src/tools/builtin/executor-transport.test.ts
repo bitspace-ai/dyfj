@@ -72,7 +72,7 @@ describe("the executor transport", () => {
   }
 
   const OK = {
-    v: 1,
+    v: 2,
     code: 0,
     signal: null,
     stdout: "hello\n",
@@ -95,7 +95,8 @@ describe("the executor transport", () => {
         PATH: "/usr/bin",
       });
       assert.deepStrictEqual(s.requests, [{
-        v: 1,
+        v: 2,
+        op: "exec",
         argv: ["bash", "-c", "echo hello"],
         cwd: "/run/dyfj/workspace",
         env: { PATH: "/usr/bin" },
@@ -108,6 +109,40 @@ describe("the executor transport", () => {
         stderr: "",
         timedOut: false,
       });
+    });
+
+    it("sends the attested binding when a call carries one", async () => {
+      const s = await supervisor((_, socket) => answer(socket, OK));
+      const run = await runner(s.path);
+      await run("true", "/w", 1_000, {}, "0123456789abcdef0123456789abcdef");
+      assert.equal(
+        (s.requests[0] as Record<string, unknown>).binding,
+        "0123456789abcdef0123456789abcdef",
+      );
+    });
+
+    it("asks for an attestation with the nonce and returns the reply", async () => {
+      const reply = { v: 2, nonce: "ab".repeat(16), instance: "cd".repeat(16) };
+      const { requestAttestation } = await transportModule();
+      const s = await supervisor((_, socket) => answer(socket, reply));
+      const got = await requestAttestation(s.path, dialExecutor, "ab".repeat(16));
+      assert.deepStrictEqual(s.requests, [{
+        v: 2,
+        op: "attest",
+        nonce: "ab".repeat(16),
+      }]);
+      assert.deepStrictEqual(got, reply);
+    });
+
+    it("reports a refused attestation as an error", async () => {
+      const { requestAttestation } = await transportModule();
+      const s = await supervisor((_, socket) =>
+        answer(socket, { v: 2, error: "request has an unknown op" })
+      );
+      await assert.rejects(
+        requestAttestation(s.path, dialExecutor, "ab".repeat(16)),
+        /executor refused the command: request has an unknown op/,
+      );
     });
 
     it("passes a timeout's termination through for the status line", async () => {
@@ -128,7 +163,7 @@ describe("the executor transport", () => {
 
     it("reports a refusal as an error carrying the supervisor's reason", async () => {
       const s = await supervisor((_, socket) =>
-        answer(socket, { v: 1, error: "cwd outside the executor's mounts" })
+        answer(socket, { v: 2, error: "cwd outside the executor's mounts" })
       );
       await assert.rejects(
         (await runner(s.path))("true", "/etc", 1_000, {}),
@@ -148,7 +183,7 @@ describe("the executor transport", () => {
     for (
       const [label, raw] of [
         ["a reply that is not JSON", "nope\n"],
-        ["a reply of another version", `${JSON.stringify({ ...OK, v: 2 })}\n`],
+        ["a reply of another version", `${JSON.stringify({ ...OK, v: 1 })}\n`],
         [
           "a reply with a malformed field",
           `${JSON.stringify({ ...OK, code: "0" })}\n`,
@@ -210,6 +245,33 @@ describe("the executor transport", () => {
         !Object.hasOwn(s.requests[0].env, "DYFJ_EXECUTOR_SOCKET"),
         "the socket path is not passed to the command",
       );
+    });
+
+    it("binds a call to the attested instance it was allowed under", async () => {
+      const root = await realpath(dir);
+      const s = await supervisor((_, socket) => answer(socket, OK));
+      const bash = defineBash(root, {
+        env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: s.path, PATH: "/usr/bin" }),
+        dialExecutor,
+      });
+      await bash.executor(call("echo hello"), {
+        authzBasis: "policy:allow:attested-envelope",
+        binding: "ef".repeat(16),
+      });
+      await bash.executor(call("echo hello"), context);
+      assert.strictEqual(s.requests[0].binding, "ef".repeat(16));
+      assert.ok(!Object.hasOwn(s.requests[1], "binding"), "an approved call is not bound");
+    });
+
+    it("is contained, with no read-only classifier, when the socket is set", () => {
+      const contained = defineBash("/work", {
+        env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" }),
+      });
+      assert.strictEqual(contained.containment?.route, "linux-isolated");
+      assert.strictEqual(contained.readOnlyCall, undefined);
+      const native = defineBash("/work", { env: new MapEnv({}) });
+      assert.strictEqual(native.containment, undefined);
+      assert.strictEqual(typeof native.readOnlyCall, "function");
     });
 
     it("sends only names the executor's command environment lists", async () => {
@@ -301,6 +363,28 @@ describe("the executor transport", () => {
       callId: "g1",
       caller: { principalId: "p", principalType: "human" as const },
       arguments: args,
+    });
+
+    it("binds an envelope-allowed operation, and is contained", async () => {
+      const root = await realpath(dir);
+      const s = await supervisor((_, socket) => answer(socket, OK));
+      const git = defineGit(root, {
+        env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: s.path, PATH: "/usr/bin" }),
+        dialExecutor,
+      });
+      assert.strictEqual(git.containment?.route, "linux-isolated");
+      // Its fixed deadline is what the envelope's limit checks.
+      assert.strictEqual(git.containment?.callTimeoutMs?.({
+        commandId: "git",
+        callId: "g0",
+        caller: { principalId: "p", principalType: "human" },
+        arguments: { subcommand: "status" },
+      }), 30_000);
+      await git.executor(call({ subcommand: "status" }), {
+        authzBasis: "policy:allow:attested-envelope",
+        binding: "ef".repeat(16),
+      });
+      assert.strictEqual(s.requests[0].binding, "ef".repeat(16));
     });
 
     it("runs git in the executor when the socket is configured, never here", async () => {

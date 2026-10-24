@@ -11,6 +11,7 @@ import type {
   CommandDefinition,
   CommandEffect,
   CommandPolicyResult,
+  ContainmentVerdict,
   SessionGrants,
 } from "./definition.ts";
 import {
@@ -18,10 +19,24 @@ import {
   validateCommandArguments,
 } from "./validate.ts";
 
-// Exec-class effects spawn external processes. Operator auto-approval NEVER
-// covers them: command execution always requires an explicit per-call approval,
-// regardless of the filesystem/cost/network envelope (the no-exec invariant).
-// Metadata alone must not be trusted to gate exec — this effect check is the gate.
+// The effects a contained command may have for the attested envelope to
+// cover it: a process, the filesystem it can reach, and its own events. A
+// command with any other effect (external writes, paid calls) keeps its own
+// verdict, whatever its containment.
+const ENVELOPE_EFFECTS: ReadonlySet<CommandEffect> = new Set([
+  "run.process",
+  "read.filesystem",
+  "write.filesystem",
+  "emit.event",
+]);
+
+// Exec-class effects spawn external processes. Operator auto-approval does not
+// cover them: on its own, the operator posture never skips the prompt for
+// command execution, whatever the filesystem/cost/network envelope (the no-exec
+// invariant). Metadata alone must not be trusted to gate exec — this effect
+// check is the gate. The two declared exceptions are below: the attested
+// envelope, which rests on an attested OS boundary and an operator grant, not
+// on the posture; and the BIT-707 read-only classifier, on the native route.
 const EXEC_EFFECTS: ReadonlySet<CommandEffect> = new Set([
   "run.checks",
   "run.process",
@@ -43,6 +58,12 @@ export interface CommandPolicyContext {
    * after an `ask` verdict.
    */
   sessionGrants?: SessionGrants;
+  /**
+   * The attestation of the command's containment for this call, when the
+   * command declares one (`invokeCommand` sets it). Absent, a contained
+   * command is treated as unattested.
+   */
+  containment?: ContainmentVerdict;
 }
 
 export function evaluateCommandPolicy(
@@ -120,6 +141,43 @@ export function evaluateCommandPolicy(
       decision: "deny",
       authzBasis: "policy:deny:default",
       reason: "command default decision is deny",
+    };
+  }
+
+  // The attested envelope (BIT-736). A command that runs in the isolated
+  // executor may run without a prompt when its containment is attested for
+  // this call, the operator's grant names the envelope's policy digest, and
+  // the turn is on loopback. Neither the posture nor the call's arguments
+  // decide it; only a deadline longer than the envelope's is read, and it
+  // asks. Without all three, a contained command asks: the read-only
+  // classifier below never runs for it.
+  if (command.containment !== undefined) {
+    const verdict = context.containment;
+    if (
+      verdict?.status === "attested" && verdict.granted &&
+      context.loopback === true &&
+      command.permission.cost === "none" &&
+      command.permission.effects.every((effect) => ENVELOPE_EFFECTS.has(effect))
+    ) {
+      const asked = command.containment.callTimeoutMs?.(call);
+      if (asked !== undefined && asked > verdict.envelope.commandTimeoutMs) {
+        return {
+          decision: "ask",
+          authzBasis: "policy:ask:envelope-limit",
+          reason: `the call's deadline (${asked / 1_000} s) is above the ` +
+            `envelope's ${verdict.envelope.commandTimeoutMs / 1_000} s`,
+        };
+      }
+      return { decision: "allow", authzBasis: "policy:allow:attested-envelope" };
+    }
+    return {
+      decision: "ask",
+      authzBasis: "policy:ask:default",
+      reason: verdict?.status === "unattested"
+        ? `command requires operator approval (containment unattested: ${verdict.reason})`
+        : verdict?.status === "attested" && !verdict.granted
+        ? "command requires operator approval (no envelope grant for this executor policy)"
+        : "command requires operator approval",
     };
   }
 
