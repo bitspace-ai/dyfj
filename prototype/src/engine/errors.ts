@@ -140,6 +140,19 @@ export class ToolStepLimitConclusionError extends DomainError {
   }
 }
 
+/**
+ * The step-limit handoff call answered, but its reply was not a handoff: it
+ * lacked one of the Done, Next and Uncommitted state labels.
+ */
+export class StepLimitHandoffIncompleteError extends DomainError {
+  constructor() {
+    super(
+      "The step-limit handoff reply lacked the Done, Next and Uncommitted state labels.",
+    );
+    this.name = "StepLimitHandoffIncompleteError";
+  }
+}
+
 /** The selected workspace could not safely supply request-time repo context. */
 export class WorkspaceContextUnavailableError extends DomainError {
   constructor() {
@@ -178,6 +191,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
     "ContextCompressionPersistenceUncertainError",
   ],
   [ToolStepLimitConclusionError, "ToolStepLimitConclusionError"],
+  [StepLimitHandoffIncompleteError, "StepLimitHandoffIncompleteError"],
   [WorkspaceContextUnavailableError, "WorkspaceContextUnavailableError"],
   [RpcError, "RpcError"],
   [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],

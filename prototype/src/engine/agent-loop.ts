@@ -39,7 +39,11 @@ import {
   RunawayAnomalyHaltError,
 } from "../budget/mod.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
-import { classifyErrorKind, ToolStepLimitConclusionError } from "./errors.ts";
+import {
+  classifyErrorKind,
+  StepLimitHandoffIncompleteError,
+  ToolStepLimitConclusionError,
+} from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
 import { boundToolResult, estimateRequest, fitRequest } from "./fit-request.ts";
 import type { LoopTurnResult } from "./observed-turn.ts";
@@ -599,6 +603,15 @@ async function stepLimitHandoff(
   const { session } = state;
   let handoff: LoopTurnResult | undefined;
   let failure: unknown;
+  // The request itself is the last thing the model reads, after the last
+  // tool result; the system prompt carries it too, for the adapter that sends
+  // no transcript.
+  messages.push({
+    role: "user",
+    content: handoffInstruction(
+      `this turn reached its ${session.maxToolSteps}-step tool limit`,
+    ),
+  });
   try {
     await fitRequest(turn, { systemPrompt, messages, tools: undefined }, "before_send");
     const estimatedInputCount = estimateRuntimeInputCount(
@@ -625,6 +638,11 @@ async function stepLimitHandoff(
     );
     if (handoff.stopReason === "error") {
       failure = new ToolStepLimitConclusionError();
+    } else if (
+      handoff.stopReason !== "aborted" && !hasHandoffLabels(handoff.text)
+    ) {
+      // A reply that carries on with the task instead is not a handoff.
+      failure = new StepLimitHandoffIncompleteError();
     }
   } catch (err) {
     if (input.abortSignal?.aborted || !isHandoffFailure(err)) throw err;
@@ -655,6 +673,30 @@ async function stepLimitHandoff(
     stopReason: "stop",
     toolCalls: undefined,
   };
+}
+
+const HANDOFF_LABELS = ["done", "next", "uncommitted state"] as const;
+
+/**
+ * Whether a reply is a handoff: each of the Done, Next and Uncommitted state
+ * labels starts a line, followed by a colon or alone on it (a heading).
+ * Markdown emphasis, heading marks and list markers around a label are
+ * ignored, and "Next steps" counts as Next.
+ */
+export function hasHandoffLabels(text: string): boolean {
+  const lines = text.split("\n").map((line) =>
+    line.replace(/[*_`]/g, "")
+      .replace(/^\s*(?:(?:[-+>#]+|\d+[.)])\s*)*/, "")
+      .trim()
+      .toLowerCase()
+  );
+  return HANDOFF_LABELS.every((label) =>
+    lines.some((line) => {
+      if (!line.startsWith(label)) return false;
+      const rest = line.slice(label.length).trim();
+      return rest === "" || rest === "steps" || /^(?:steps\s*)?:/.test(rest);
+    })
+  );
 }
 
 /**
@@ -698,8 +740,8 @@ export function stepLimitNotice(
 ): string {
   const lines = [
     `Tool-step limit reached (${toolSteps}/${maxToolSteps}). The handoff ` +
-    `call did not complete (${classifyErrorKind(failure)}), so this notice ` +
-    "lists the turn's last tool calls instead.",
+    `call did not produce a handoff (${classifyErrorKind(failure)}), so ` +
+    "this notice lists the turn's last tool calls instead.",
     "",
     "Last tool calls:",
     ...(calls.length === 0 ? ["- none recorded"] : calls.map((call) =>
@@ -795,16 +837,20 @@ function forcedConclusionSystemPrompt(
     "from the transcript above. Do not request or call more tools.";
 }
 
-/**
- * The handoff instruction: why tool use ended, then a short handoff for the
- * operator's next prompt. The request that carries it offers no tools.
- */
+/** The handoff instruction appended to the system prompt. */
 export function handoffSystemPrompt(
   baseSystemPrompt: string,
   reasonText: string,
 ): string {
-  return baseSystemPrompt + "\n\n" +
-    `Workbench instruction: tool use ended because ${reasonText}. ` +
+  return baseSystemPrompt + "\n\n" + handoffInstruction(reasonText);
+}
+
+/**
+ * The handoff instruction: why tool use ended, then a short handoff for the
+ * operator's next prompt. The request that carries it offers no tools.
+ */
+export function handoffInstruction(reasonText: string): string {
+  return `Workbench instruction: tool use ended because ${reasonText}. ` +
     "Do not call tools. Write a handoff for the operator's next prompt, " +
     "under 200 words, in three labelled parts. Done: what this turn " +
     "completed, with file paths. Next: the next concrete step. Uncommitted " +

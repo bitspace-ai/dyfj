@@ -50,15 +50,19 @@ README are tracked separately in its Revision history section.
   set its own limit within a configured ceiling (BIT-716).**
   - At the limit, the runtime makes a call that offers no tools and asks the
     model for a short handoff: what is done, what is next, and any uncommitted
-    state. A length or context-size recovery may retry it, as it may any call.
-    Its output is capped at 2,048 tokens, or the model's catalog cap when that
-    is lower. A tool call in the reply is dropped and does not run. The handoff
+    state. The request is the last user turn, after the last tool result, and
+    is also added to the system prompt. A length or context-size recovery may
+    retry the call, as it may any call. Its output is capped at 2,048 tokens,
+    or the model's catalog cap when that is lower. A tool call in the reply is
+    dropped and does not run. The reply counts as a handoff only when each of
+    the `Done`, `Next` and `Uncommitted state` labels starts a line. A handoff
     is the turn's reply and its `model_response` content, and its
     `provider_call` row has the new purpose `step_limit_handoff`.
   - The handoff call passes the same per-call budget gates as every other call
     of the turn, on the same model. If a gate stops it (a declined ceiling, a
     hard limit, the runaway-anomaly stop, or no approver to ask), or the
-    provider call fails, the turn no longer fails. It ends on a runtime notice
+    provider call fails, or the reply lacks a label
+    (`StepLimitHandoffIncompleteError`), the turn no longer fails. It ends on a runtime notice
     that names the failure's class and the turn's last five tool calls by
     command and outcome, with no arguments, results or model text. The
     failure is recorded as the turn's `error` event, a best-effort write like
