@@ -319,6 +319,9 @@ export function resolveConfig(
     unix: overrides.unix ?? true,
     approvePaid: overrides.approvePaid ?? false,
     fast: overrides.fast,
+    ...(overrides.toolSteps === undefined
+      ? {}
+      : { toolSteps: overrides.toolSteps }),
     color: !env.get("NO_COLOR") && isTty,
   };
 }

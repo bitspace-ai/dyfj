@@ -287,6 +287,17 @@ describe("resolveConfig", () => {
     assert.strictEqual(c.model, "flagmodel");
     assert.strictEqual(c.color, false);
   });
+  it("carries --tool-steps into the config the REPL sends turns from", () => {
+    const parsed = parseArgs(["--tool-steps", "2"]);
+    assert.strictEqual(
+      resolveConfig(parsed.overrides, { get: () => undefined }).toolSteps,
+      2,
+    );
+    assert.strictEqual(
+      "toolSteps" in resolveConfig({}, { get: () => undefined }),
+      false,
+    );
+  });
   it("enables color on a TTY", () => {
     const c = resolveConfig({}, { get: () => undefined }, true);
     assert.strictEqual(c.color, true);

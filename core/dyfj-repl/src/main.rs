@@ -942,6 +942,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(session.max_tool_steps, Some(12));
+        // The flag reaches every turn the session sends.
+        assert_eq!(session.turn_body("hi", "t")["maxToolSteps"], 12);
         for value in ["0", "65", "x", "1.5"] {
             assert_eq!(
                 super::parse_args(&args(&["--tool-steps", value]), env(&[]), None).unwrap_err(),
