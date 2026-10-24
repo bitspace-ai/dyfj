@@ -286,6 +286,9 @@ function runExecuteTurn(
     ...(deps.maxToolSteps !== undefined
       ? { maxToolSteps: deps.maxToolSteps }
       : {}),
+    ...(deps.maxToolStepsCeiling !== undefined
+      ? { maxToolStepsCeiling: deps.maxToolStepsCeiling }
+      : {}),
     // the request's own limit, checked against the ceiling at resolution
     ...(resolved.maxToolSteps !== undefined
       ? { maxToolSteps: resolved.maxToolSteps }

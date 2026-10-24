@@ -181,6 +181,7 @@ export interface RuntimeEnvDefaults {
   anomalyScopeMultiple: number;
   trustWorkspaceInstructions: boolean;
   maxToolSteps: number;
+  maxToolStepsCeiling: number;
 }
 
 /**
@@ -212,5 +213,6 @@ export function resolveRuntimeEnvDefaults(
     anomalyTurnMultiple: anomaly.turnMultiple,
     anomalyScopeMultiple: anomaly.scopeMultiple,
     maxToolSteps: agent.maxToolSteps,
+    maxToolStepsCeiling: agent.maxToolStepsCeiling,
   };
 }

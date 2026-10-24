@@ -169,6 +169,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
       anomalyTurnMultiple: 3.0,
       anomalyScopeMultiple: 2.0,
       maxToolSteps: 32,
+      maxToolStepsCeiling: 64,
     });
   });
 
@@ -184,6 +185,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
         DYFJ_ANOMALY_TURN_MULTIPLE: "4",
         DYFJ_ANOMALY_SCOPE_MULTIPLE: "5",
         DYFJ_MAX_TOOL_STEPS: "8",
+        DYFJ_MAX_TOOL_STEPS_CEILING: "12",
       })),
       {
         principalId: "p",
@@ -196,6 +198,7 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
         anomalyTurnMultiple: 4,
         anomalyScopeMultiple: 5,
         maxToolSteps: 8,
+        maxToolStepsCeiling: 12,
       },
     );
   });

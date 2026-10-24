@@ -29,7 +29,8 @@ import {
   SONNET_55_STEP_1,
   SONNET_55_STEP_2,
 } from "../../testing/fixtures/anthropic-thinking.ts";
-import { AGENT_DEFAULTS } from "../config/mod.ts";
+import { AGENT_DEFAULTS, resolveRuntimeEnvDefaults } from "../config/mod.ts";
+import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { HANDOFF_OUTPUT_TOKENS } from "./agent-loop.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
@@ -201,6 +202,27 @@ test("agent loop honors a configured small step limit and asks for a no-tools ha
     maxSteps: 2,
   });
   assert.deepStrictEqual(frames[limitAt + 1].type, "beforeProviderRequest");
+});
+
+test("an in-process caller cannot run past the configured tool-step ceiling", async () => {
+  const loop = toolReply([LIST("c")], "the handoff");
+  const { run, result } = await loopTurn(Array(6).fill(loop), {
+    prompt: "loop without stopping",
+    // An in-process entrypoint spreads the boundary's env defaults, as
+    // examples/verify-workbench-events.ts does, then asks for more steps.
+    ...resolveRuntimeEnvDefaults(
+      new MapEnv({ DYFJ_MAX_TOOL_STEPS: "2", DYFJ_MAX_TOOL_STEPS_CEILING: "4" }),
+    ),
+    maxToolSteps: 10,
+  });
+  assert.partialDeepStrictEqual(result?.agent, {
+    toolStepsUsed: 4,
+    maxToolSteps: 4,
+    limitReached: true,
+    handoff: "model",
+  });
+  // The first call, three gather calls, then the handoff.
+  assert.deepStrictEqual(run.transport.requests.length, 5);
 });
 
 for (
