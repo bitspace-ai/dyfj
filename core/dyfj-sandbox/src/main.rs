@@ -3,7 +3,8 @@
 //!   dyfj-sandbox abi
 //!   dyfj-sandbox apply-landlock <paths-json> -- <command>...
 //!   dyfj-sandbox run --plan <file> [--cwd <dir>] -- <command>...
-//!   dyfj-sandbox serve --runtime-plan <file> --executor-plan <file> --socket <path> -- <command>...
+//!   dyfj-sandbox serve --runtime-plan <file> --executor-plan <file> [--executor-policy <file>]
+//!                      [--grant <file>] --socket <path> -- <command>...
 //!
 //! `apply-landlock` runs inside a sandbox, as the role. `run` and `serve` run
 //! as root, from plans the installer wrote (`linux-launch-plan.ts`).
@@ -12,6 +13,7 @@
 // and tested.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
+mod attest;
 mod gate;
 mod landlock;
 mod lease;
@@ -79,14 +81,20 @@ fn launch(subcommand: &str, args: &[String]) -> Result<i32, String> {
             supervisor::run(&plan, flag(&pairs, "--cwd"), &command)
         }
         _ => {
-            known(&pairs, &["--runtime-plan", "--executor-plan", "--socket"])?;
+            known(&pairs, &["--runtime-plan", "--executor-plan", "--executor-policy", "--grant", "--socket"])?;
             let runtime = supervisor::load_plan(flag(&pairs, "--runtime-plan").ok_or("serve needs --runtime-plan")?)?;
-            let executor = supervisor::load_plan(flag(&pairs, "--executor-plan").ok_or("serve needs --executor-plan")?)?;
+            let executor_plan = flag(&pairs, "--executor-plan").ok_or("serve needs --executor-plan")?;
+            let executor = supervisor::load_plan(executor_plan)?;
             if runtime.role != plan::Role::Runtime || executor.role != plan::Role::Executor {
                 return Err("serve needs a runtime plan and an executor plan".into());
             }
             let socket = flag(&pairs, "--socket").ok_or("serve needs --socket")?;
-            supervisor::serve(runtime, executor, socket, &command)
+            let files = supervisor::ServeFiles {
+                executor_plan: executor_plan.to_string(),
+                executor_policy: flag(&pairs, "--executor-policy").map(str::to_string),
+                grant: flag(&pairs, "--grant").map(str::to_string),
+            };
+            supervisor::serve(runtime, executor, files, socket, &command)
         }
     }
 }
