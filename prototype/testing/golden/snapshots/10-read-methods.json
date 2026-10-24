@@ -139,6 +139,7 @@
           "defaultPerCallBudgetUsd": 0.1,
           "defaultDailyBudgetUsd": 25,
           "maxToolSteps": 32,
+          "maxToolStepsCeiling": 64,
           "models": {
             "total": 4,
             "local": 4,
@@ -303,6 +304,7 @@
           "defaultPerCallBudgetUsd": 0.1,
           "defaultDailyBudgetUsd": 25,
           "maxToolSteps": 32,
+          "maxToolStepsCeiling": 64,
           "models": {
             "total": 4,
             "local": 4,
