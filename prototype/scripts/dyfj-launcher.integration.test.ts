@@ -1362,6 +1362,8 @@ describe("interactive REPL front-end selection", () => {
         "--model",
         "z-ai/glm-5.2",
         "--approve-paid",
+        "--tool-steps",
+        "3",
         "--socket",
         "/tmp/r.sock",
       ],
@@ -1372,7 +1374,14 @@ describe("interactive REPL front-end selection", () => {
     assert.equal(sock, "sock=/tmp/r.sock");
     // The autostart log for that socket: basename plus a hash of the path.
     assert.match(log, new RegExp(`^log=${FAKE_HOME}/\\.dyfj/log/runtime-r-\\d+\\.log$`));
-    assert.deepEqual(flags, ["--model", "z-ai/glm-5.2", "--approve-paid", ""]);
+    assert.deepEqual(flags, [
+      "--model",
+      "z-ai/glm-5.2",
+      "--approve-paid",
+      "--tool-steps",
+      "3",
+      "",
+    ]);
   });
 
   it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {
