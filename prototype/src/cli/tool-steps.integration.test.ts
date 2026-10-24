@@ -33,7 +33,8 @@ interface Run {
  * Run the launcher with `args`, typing `lines` one at a time: each goes in
  * when the REPL prints its prompt, because the REPL reads with
  * `readline.question` and drops a line that arrives while it is busy. Stdin
- * ends after the last line has been read, or after 20 s.
+ * ends after the last line has been read. After 20 s the child is killed, so
+ * a hung launcher or REPL fails the test rather than hanging it.
  */
 function launch(args: string[], lines: string[], home: string): Promise<Run> {
   return new Promise((resolve, reject) => {
@@ -56,7 +57,10 @@ function launch(args: string[], lines: string[], home: string): Promise<Run> {
       }
       if (sent === lines.length && prompts() > lines.length) child.stdin.end();
     };
-    const timeout = setTimeout(() => child.stdin.end(), 20_000);
+    const timeout = setTimeout(() => {
+      child.stdin.end();
+      child.kill("SIGKILL");
+    }, 20_000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
       feed();
