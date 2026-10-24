@@ -45,7 +45,7 @@ README are tracked separately in its Revision history section.
     grant that is present. The approval prompt does not show that reason yet.
   - `sandbox/linux/approval-probe.sh` exercises this in the machine with
     synthetic canaries. `acceptance.sh` gains an attestation section.
-||||||| parent of 1256a9e (BIT-716: the launcher passes --tool-steps to the Rust REPL; changelog and docs)
+
 - **A turn that reaches its tool-step limit leaves a handoff, and a session can
   set its own limit within a configured ceiling (BIT-716).**
   - At the limit, the runtime makes a call that offers no tools and asks the
