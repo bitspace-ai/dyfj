@@ -9,9 +9,18 @@
  *
  * The protocol is one request per connection, each message one line of JSON:
  *
- *   → {"v":1,"argv":[…],"cwd":…,"env":{…},"timeoutMs":…}
- *   ← {"v":1,"code":…,"signal":…,"stdout":…,"stderr":…,"timedOut":…,
- *      "termination"?:{…}}  or  {"v":1,"error":"…"}
+ *   → {"v":2,"op":"exec","argv":[…],"cwd":…,"env":{…},"timeoutMs":…,
+ *      "binding"?:…}
+ *   ← {"v":2,"code":…,"signal":…,"stdout":…,"stderr":…,"timedOut":…,
+ *      "termination"?:{…}}  or  {"v":2,"error":"…"}
+ *
+ *   → {"v":2,"op":"attest","nonce":…}
+ *   ← {"v":2,"nonce":…,"instance":…,"executorPolicy":…,"grant":…,…}
+ *      (`containment.ts` reads it)
+ *
+ * A request carries `binding`, the supervisor instance the runtime attested,
+ * when the call was allowed by the attested envelope; the supervisor refuses
+ * a binding that names another instance (BIT-736). Version 1 is refused.
  *
  * The supervisor enforces the deadline and stops the command's tree. Every
  * failure here (no supervisor, a refusal, a malformed or oversized reply, no
@@ -22,12 +31,16 @@
 
 import type { BoundedResult, GroupStop } from "./bounded-process.ts";
 
-/** Runs one process in the executor: argv, start directory, deadline, env. */
+/**
+ * Runs one process in the executor: argv, start directory, deadline, env,
+ * and the attested instance the call is bound to, if any.
+ */
 export type ExecutorProcessRunner = (
   argv: readonly string[],
   cwd: string,
   timeoutMs: number,
   env: Record<string, string>,
+  binding?: string,
 ) => Promise<BoundedResult>;
 
 /** The bash tool's runner shape (`BashRunner` in `exec.ts`). */
@@ -36,6 +49,7 @@ export type ExecutorRunner = (
   cwd: string,
   timeoutMs: number,
   env: Record<string, string>,
+  binding?: string,
 ) => Promise<BoundedResult>;
 
 /**
@@ -54,7 +68,7 @@ export type ExecutorDialer = (
   signal?: AbortSignal,
 ) => Promise<ExecutorConnection>;
 
-export const EXECUTOR_PROTOCOL_VERSION = 1;
+export const EXECUTOR_PROTOCOL_VERSION = 2;
 
 export interface ExecutorRunnerOptions {
   /** How long past the command's deadline to wait for the supervisor. */
@@ -157,8 +171,8 @@ export function createExecutorRunner(
   options: ExecutorRunnerOptions = {},
 ): ExecutorRunner {
   const run = createExecutorProcessRunner(path, dial, options);
-  return (command, cwd, timeoutMs, env) =>
-    run(["bash", "-c", command], cwd, timeoutMs, env);
+  return (command, cwd, timeoutMs, env, binding) =>
+    run(["bash", "-c", command], cwd, timeoutMs, env, binding);
 }
 
 /**
@@ -172,42 +186,100 @@ export function createExecutorProcessRunner(
 ): ExecutorProcessRunner {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES;
-  return async (argv, cwd, timeoutMs, env) => {
-    const deadline = timeoutMs + graceMs;
-    const abort = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let connection: ExecutorConnection | undefined;
-    const expired = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        abort.abort();
-        connection?.close();
-        reject(new Error(`executor did not answer within ${deadline} ms`));
-      }, deadline);
-    });
-    const exchange = async (): Promise<BoundedResult> => {
-      try {
-        connection = await dial(path, abort.signal);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        throw new Error(
-          `executor unavailable: ${code ?? (error as Error).message}`,
-        );
-      }
-      const request = JSON.stringify({
-        v: EXECUTOR_PROTOCOL_VERSION,
+  return (argv, cwd, timeoutMs, env, binding) =>
+    exchange(
+      path,
+      dial,
+      {
+        op: "exec",
         argv: [...argv],
         cwd,
         env,
         timeoutMs,
-      });
-      await connection.write(new TextEncoder().encode(`${request}\n`));
-      return parseReply(await readReply(connection, maxReplyBytes));
-    };
-    try {
-      return await Promise.race([exchange(), expired]);
-    } finally {
-      clearTimeout(timer);
+        ...(binding === undefined ? {} : { binding }),
+      },
+      timeoutMs + graceMs,
+      maxReplyBytes,
+      parseReply,
+    );
+}
+
+/**
+ * Sends `attest` with `nonce` to the supervisor at `path` and returns its
+ * raw reply object; `containment.ts` checks it. Throws on any transport
+ * failure or refusal, as an exec request does.
+ */
+export function requestAttestation(
+  path: string,
+  dial: ExecutorDialer,
+  nonce: string,
+  options: ExecutorRunnerOptions = {},
+): Promise<Record<string, unknown>> {
+  return exchange(
+    path,
+    dial,
+    { op: "attest", nonce },
+    options.graceMs ?? DEFAULT_GRACE_MS,
+    options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES,
+    parseAttestation,
+  );
+}
+
+function parseAttestation(line: string): Record<string, unknown> {
+  let reply: any;
+  try {
+    reply = JSON.parse(line);
+  } catch {
+    throw new Error("executor reply is not JSON");
+  }
+  if (
+    reply === null || typeof reply !== "object" || Array.isArray(reply) ||
+    reply.v !== EXECUTOR_PROTOCOL_VERSION
+  ) {
+    throw new Error("executor reply has an unknown version");
+  }
+  if (typeof reply.error === "string") {
+    throw new Error(`executor refused the command: ${reply.error}`);
+  }
+  return reply;
+}
+
+/** One request and its reply on a fresh connection, within `deadline` ms. */
+async function exchange<T>(
+  path: string,
+  dial: ExecutorDialer,
+  body: Record<string, unknown>,
+  deadline: number,
+  maxReplyBytes: number,
+  parse: (line: string) => T,
+): Promise<T> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let connection: ExecutorConnection | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      abort.abort();
       connection?.close();
+      reject(new Error(`executor did not answer within ${deadline} ms`));
+    }, deadline);
+  });
+  const send = async (): Promise<T> => {
+    try {
+      connection = await dial(path, abort.signal);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      throw new Error(
+        `executor unavailable: ${code ?? (error as Error).message}`,
+      );
     }
+    const request = JSON.stringify({ v: EXECUTOR_PROTOCOL_VERSION, ...body });
+    await connection.write(new TextEncoder().encode(`${request}\n`));
+    return parse(await readReply(connection, maxReplyBytes));
   };
+  try {
+    return await Promise.race([send(), expired]);
+  } finally {
+    clearTimeout(timer);
+    connection?.close();
+  }
 }

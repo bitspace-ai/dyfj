@@ -249,7 +249,28 @@ both "runtime restarted while the CLI's rules stand"
 in_role cli "" true
 both "CLI restarted while the runtime's rules stand"
 
-echo "== 7. timings"
+echo "== 7. attestation (BIT-736)"
+att=$(bash "$HERE/approval-probe.sh" attest --grant none 2>&1)
+echo "$att" | sed 's/^/      /'
+grep -q '^attested .*granted=no' <<<"$att" && result pass "attestation: the supervisor attests the executor, with no grant" "$(grep -o 'probe [^ ]* [^ ]* ms=[0-9]*' <<<"$att")" \
+  || result fail "attestation: the supervisor attests the executor, with no grant" "see output"
+att=$(bash "$HERE/approval-probe.sh" attest --grant attested 2>&1)
+grep -q '^attested .*granted=yes' <<<"$att" && result pass "attestation: a root-owned grant for this policy is accepted" "$(grep -o 'executor-policy=[^ ]*' <<<"$att")" \
+  || result fail "attestation: a root-owned grant for this policy is accepted" "$att"
+stale=$(bash "$HERE/approval-probe.sh" stale 2>&1)
+echo "$stale" | sed 's/^/      /'
+grep -q 'granted=no (.*owned by root' <<<"$stale" && result pass "attestation: a runtime-writable grant is refused" "$(grep -o 'granted=no ([^)]*)' <<<"$stale" | head -1)" \
+  || result fail "attestation: a runtime-writable grant is refused" "see output"
+grep -q 'unattested  reason=the executor plan or policy changed' <<<"$stale" && result pass "attestation: a plan changed after start is unattested" "changed" \
+  || result fail "attestation: a plan changed after start is unattested" "see output"
+grep -q '^forged-supervisor .* unattested' <<<"$stale" && result pass "attestation: a supervisor the runtime serves itself is refused" "$(grep '^forged-supervisor ' <<<"$stale")" \
+  || result fail "attestation: a supervisor the runtime serves itself is refused" "see output"
+grep -q '^stale-binding .* refused .*attestation mismatch' <<<"$stale" && result pass "attestation: a call bound to another instance is refused" "mismatch" \
+  || result fail "attestation: a call bound to another instance is refused" "see output"
+grep -q 'decision=allow' <<<"$stale" && result fail "attestation: nothing is allowed in any stale case" "$(grep 'decision=allow' <<<"$stale" | head -1)" \
+  || result pass "attestation: nothing is allowed in any stale case" "all ask"
+
+echo "== 8. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
 echo "single executor sandbox start (run, true): $(( (t1 - t0) / 1000000 )) ms"
 grep 'warm dispatch' <<<"$loop" | sed 's/^/      /'

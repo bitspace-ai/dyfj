@@ -36,6 +36,7 @@ import {
   classifyReadOnlyBash,
   resolveFollowingLinks,
 } from "./bash-allowlist.ts";
+import { createContainment } from "./containment.ts";
 import { isWithinRoot } from "./file-access.ts";
 import {
   type BoundedResult,
@@ -54,6 +55,7 @@ export type BashRunner = (
   cwd: string,
   timeoutMs: number,
   env: Record<string, string>,
+  binding?: string,
 ) => Promise<BashResult>;
 
 const DEFAULT_TIMEOUT_SEC = 120;
@@ -352,17 +354,35 @@ export function defineBash(
     : opts.dialExecutor === undefined
     ? undialable
     : createExecutorRunner(socket!, opts.dialExecutor);
+  // Contained, approval comes from the attested envelope (BIT-736), and the
+  // read-only classifier is not used: it stays for the native route only.
+  const containment = !contained
+    ? undefined
+    : createContainment(socket!, opts.dialExecutor, {
+      defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
+      callTimeoutMs: (call) => {
+        const resolved = resolveBashTimeoutMs(call.arguments.timeoutSec);
+        return "timeoutMs" in resolved ? resolved.timeoutMs : undefined;
+      },
+    });
   return {
     id: "bash",
+    ...(containment === undefined ? {} : { containment }),
     title: TITLE,
     description:
       "Run a shell command via `bash -c`. The working directory is the workspace " +
       "root, or the workspace directory cwd names" +
       bashReach(contained) +
-      "Returns the exit status and combined stdout/stderr. Requires operator " +
-      "approval before it runs, except for a small set of read-only commands " +
-      "(git status/diff/log/show, ls, cat, head, tail, wc, grep, rg, sed -n) " +
-      "and commands the operator allowed for the rest of the session. " +
+      "Returns the exit status and combined stdout/stderr. " +
+      (contained
+        ? "Requires operator approval before it runs, unless the operator " +
+          `granted the isolated executor's attested envelope (then a call up to ${DEFAULT_TIMEOUT_SEC} s ` +
+          "runs without a prompt), and except for commands the operator " +
+          "allowed for the rest of the session. "
+        : "Requires operator approval before it runs, except for a small set " +
+          "of read-only commands (git status/diff/log/show, ls, cat, head, " +
+          "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
+          "the rest of the session. ") +
       `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
       `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
       "a command needs longer (a full test run, for example). A larger value is " +
@@ -393,7 +413,9 @@ export function defineBash(
       additionalProperties: false,
     },
     approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec),
-    readOnlyCall: (call) => readOnlyBashCall(root, call),
+    ...(contained
+      ? {}
+      : { readOnlyCall: (call: CommandCall) => readOnlyBashCall(root, call) }),
     // The prompt may offer "allow this exact command for the rest of the
     // session"; the grant matches command, cwd and timeoutSec exactly.
     grantable: true,
@@ -438,7 +460,10 @@ export function defineBash(
         : base;
       return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
-        runner,
+        runner: contained && runner !== undefined
+          ? (command, at, timeoutMs, env) =>
+            runner(command, at, timeoutMs, env, context.binding)
+          : runner,
         env,
       });
     },

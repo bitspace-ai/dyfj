@@ -4,10 +4,21 @@
  * and the machine profile into the files `dyfj-sandbox` starts roles from:
  *
  *   node sandbox-install.ts --profile <profile.json> --out <dir>
+ *   node sandbox-install.ts grant --dir <dir>
+ *   node sandbox-install.ts revoke --dir <dir>
  *
- * writes `<dir>/{runtime,executor,cli}.plan.json` and `<dir>/receipt.json`,
- * each owned by root and mode 0644. A run starts from these files, never from
- * anything its own roles can write.
+ * The first writes `<dir>/{runtime,executor,cli}.plan.json`,
+ * `<dir>/executor.policy.json` and `<dir>/receipt.json`, each owned by root
+ * and mode 0644. A run starts from these files, never from anything its own
+ * roles can write.
+ *
+ * `grant` is the operator's approval of the executor's envelope (BIT-736):
+ * it writes `<dir>/envelope-grant.json`, naming the installed executor
+ * policy's digest, owned by root and mode 0644, so no role can write it. The
+ * supervisor reads it at each attestation and accepts it only when root owns
+ * it and its directory, and it names the policy the supervisor serves; a
+ * reinstall that changes the policy leaves the grant naming the old digest,
+ * which no longer applies. `revoke` removes it.
  *
  * From the composition and the profile it derives:
  * - the run envelope: the composed policy with the machine's filesystem
@@ -46,12 +57,16 @@ import {
   chmodSync,
   chownSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
+import { dirname } from "node:path";
 import process from "node:process";
 import {
   compileLinux,
@@ -59,7 +74,11 @@ import {
   type LinuxOutput,
   type LinuxTarget,
 } from "../src/config/effective-policy-compile.ts";
-import { canonicalPolicyJson, policyDigest } from "../src/config/effective-policy-digest.ts";
+import {
+  canonicalPolicyJson,
+  policyDigest,
+  verifyDigest,
+} from "../src/config/effective-policy-digest.ts";
 import { assertSessionWithinRun } from "../src/config/effective-policy-subset.ts";
 import {
   composeEffectivePolicy,
@@ -463,6 +482,29 @@ function dynamicLoader(): string {
   return realpathSync(found);
 }
 
+/** The envelope grant for an installed executor policy, after checking its digest. */
+export function envelopeGrant(policy: unknown): {
+  version: 1;
+  executorPolicyDigest: string;
+} {
+  const parsed = parseEffectivePolicy(policy);
+  if (!verifyDigest(parsed)) {
+    throw new Error("the executor policy's digest does not verify; reinstall before granting");
+  }
+  return { version: 1, executorPolicyDigest: parsed.identity.digest };
+}
+
+/** A file root owns and no one else can write, in a directory of the same kind. */
+function readRootOwned(path: string): string {
+  for (const target of [path, dirname(path)]) {
+    const stat = lstatSync(target);
+    if (stat.uid !== 0 || (stat.mode & 0o022) !== 0) {
+      throw new Error(`${target} must be owned by root and not group- or world-writable`);
+    }
+  }
+  return readFileSync(path, "utf8");
+}
+
 function flag(args: readonly string[], name: string): string {
   const at = args.indexOf(name);
   const value = at === -1 ? undefined : args[at + 1];
@@ -470,7 +512,40 @@ function flag(args: readonly string[], name: string): string {
   return value;
 }
 
+/**
+ * Root-owned, mode 0644, set explicitly rather than left to the umask. The
+ * file is written under a fresh name, secured, then renamed into place, so
+ * a descriptor someone held open on an earlier file at `path` does not
+ * reach the new one.
+ */
+function writeRootFile(path: string, value: unknown) {
+  const fresh = `${path}.${process.pid}.tmp`;
+  rmSync(fresh, { force: true });
+  writeFileSync(fresh, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  chownSync(fresh, 0, 0);
+  chmodSync(fresh, 0o644);
+  renameSync(fresh, path);
+}
+
+function grantCommand(args: readonly string[]) {
+  if (process.getuid?.() !== 0) throw new Error("grant must run as root");
+  const dir = flag(args, "--dir");
+  const policy = JSON.parse(readRootOwned(`${dir}/executor.policy.json`));
+  const grant = envelopeGrant(policy);
+  writeRootFile(`${dir}/envelope-grant.json`, grant);
+  process.stdout.write(`granted ${grant.executorPolicyDigest}\n`);
+}
+
+function revokeCommand(args: readonly string[]) {
+  if (process.getuid?.() !== 0) throw new Error("revoke must run as root");
+  const path = `${flag(args, "--dir")}/envelope-grant.json`;
+  rmSync(path, { force: true });
+  process.stdout.write(`revoked ${path}\n`);
+}
+
 async function main(args: readonly string[]) {
+  if (args[0] === "grant") return grantCommand(args.slice(1));
+  if (args[0] === "revoke") return revokeCommand(args.slice(1));
   const profile = JSON.parse(readFileSync(flag(args, "--profile"), "utf8"));
   const out = flag(args, "--out");
   const machine: MachineFacts = {
@@ -497,15 +572,13 @@ async function main(args: readonly string[]) {
   mkdirSync(out, { recursive: true, mode: 0o755 });
   // Set explicitly, not left to the umask or a previous run's file: the
   // launcher trusts a plan only when root owns it and no one else can write.
-  const write = (path: string, value: unknown) => {
-    writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
-    chownSync(path, 0, 0);
-    chmodSync(path, 0o644);
-  };
   for (const role of ["runtime", "executor", "cli"] as const) {
-    write(`${out}/${role}.plan.json`, result[role].plan);
+    writeRootFile(`${out}/${role}.plan.json`, result[role].plan);
   }
-  write(`${out}/receipt.json`, result.receipt);
+  // The supervisor attests this policy to the runtime, which derives the
+  // approval envelope from it (BIT-736).
+  writeRootFile(`${out}/executor.policy.json`, result.executor.policy);
+  writeRootFile(`${out}/receipt.json`, result.receipt);
   process.stdout.write(`${JSON.stringify(result.receipt, null, 2)}\n`);
 }
 

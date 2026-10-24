@@ -66,6 +66,7 @@ import {
 } from "./bounded-process.ts";
 import { clipToUtf8Bytes } from "../../kernel/mod.ts";
 import type { CommandDefinition } from "../definition.ts";
+import { createContainment } from "./containment.ts";
 import {
   resolveWorkspacePath,
   sanitizeOutputText,
@@ -79,6 +80,7 @@ export type GitRunner = (
   args: readonly string[],
   cwd: string,
   timeoutMs: number,
+  binding?: string,
 ) => Promise<GitResult>;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -409,8 +411,8 @@ function containedRunner(
 ): GitRunner {
   if (dial === undefined) return undialable;
   const run = createExecutorProcessRunner(socket, dial);
-  return (args, cwd, timeoutMs) =>
-    run(["git", ...args], cwd, timeoutMs, gitEnv(source));
+  return (args, cwd, timeoutMs, binding) =>
+    run(["git", ...args], cwd, timeoutMs, gitEnv(source), binding);
 }
 
 /**
@@ -506,8 +508,17 @@ export function defineGit(
   const runner = socket === undefined
     ? undefined
     : containedRunner(socket, opts.dialExecutor, opts.env);
+  // Its operations take no deadline from the model: each runs with the fixed
+  // one, which the envelope's limit still checks.
+  const containment = socket === undefined
+    ? undefined
+    : createContainment(socket, opts.dialExecutor, {
+      defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
+      callTimeoutMs: () => DEFAULT_TIMEOUT_MS,
+    });
   return {
     id: "git",
+    ...(containment === undefined ? {} : { containment }),
     title: "Run Git Operation",
     description:
       "Run one bounded git operation in the workspace: `status`, `diff`, " +
@@ -526,7 +537,10 @@ export function defineGit(
       "commit without paths records everything staged in the enclosing " +
       "repository, not only the workspace subtree. Prefer this over running " +
       "git through bash: the approval names the exact operation and paths. " +
-      "Always requires explicit operator approval before it runs.",
+      (runner === undefined
+        ? "Always requires explicit operator approval before it runs."
+        : "Requires operator approval before it runs, unless the operator " +
+          "granted the isolated executor's attested envelope."),
     inputSchema: {
       type: "object",
       required: ["subcommand"],
@@ -593,13 +607,16 @@ export function defineGit(
     // can print anything it can read, which the approver cannot pre-screen, so
     // the raw result stays out of the durable event log (CWE-532).
     redactResult: true,
-    executor: (call) =>
+    executor: (call, context) =>
       executeGit(root, {
         subcommand: call.arguments.subcommand,
         paths: call.arguments.paths,
         message: call.arguments.message,
         staged: call.arguments.staged,
         limit: call.arguments.limit,
-      }, runner === undefined ? {} : { runner }),
+      }, runner === undefined ? {} : {
+        runner: (args, cwd, timeoutMs) =>
+          runner(args, cwd, timeoutMs, context.binding),
+      }),
   };
 }

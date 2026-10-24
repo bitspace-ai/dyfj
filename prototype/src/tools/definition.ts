@@ -6,6 +6,8 @@
  * `WorkbenchToolDefinition`); nothing else defines a second tool shape.
  */
 
+import type { ApprovalEnvelope } from "../config/approval-envelope.ts";
+
 export type PrincipalType = "human" | "agent" | "service";
 export type PolicyDecision = "allow" | "ask" | "deny";
 export type CommandEffect =
@@ -76,6 +78,12 @@ export interface CommandCall {
 
 export interface CommandExecutionContext {
   authzBasis: string;
+  /**
+   * The supervisor instance a call allowed by the attested envelope is bound
+   * to (BIT-736). A contained tool sends it with the command, and the
+   * supervisor refuses it if another instance now serves.
+   */
+  binding?: string;
   traceId?: string;
   spanId?: string;
   traceFlags?: number;
@@ -87,6 +95,34 @@ export interface CommandTraceContext {
   spanId: string;
   traceFlags: number;
   traceState?: string;
+}
+
+/**
+ * The attestation of a contained tool's executor for one call (BIT-736;
+ * `builtin/containment.ts` produces it).
+ */
+export type ContainmentVerdict =
+  | {
+    readonly status: "attested";
+    readonly envelope: ApprovalEnvelope;
+    /** The operator's grant names this envelope's policy digest. */
+    readonly granted: boolean;
+    /** Why the supervisor refused a grant that is present, if it did. */
+    readonly grantRefusal?: string;
+  }
+  | { readonly status: "unattested"; readonly reason: string };
+
+/** A tool's link to the executor it runs in. */
+export interface Containment {
+  readonly route: "linux-isolated";
+  /** Attest now. Never throws; a failure is `unattested`. */
+  attest(): Promise<ContainmentVerdict>;
+  /**
+   * The deadline this call asks for, in ms, when the tool takes one. A
+   * declared read of a model-supplied argument (README Section 1): it can
+   * only turn an envelope allow into a prompt, never the reverse.
+   */
+  callTimeoutMs?(call: CommandCall): number | undefined;
 }
 
 export interface CommandDefinition<TResult = unknown> {
@@ -105,11 +141,20 @@ export interface CommandDefinition<TResult = unknown> {
   /**
    * True when this call may run without a prompt because it only reads
    * (bash's read-only allowlist, BIT-707). Called after argument validation,
-   * and only under the operator posture on loopback. It is the one declared
-   * place where a permission check reads a model-supplied argument (README
-   * Section 1), and it must fail closed: false whenever it is unsure.
+   * and only under the operator posture on loopback. It is one of the two
+   * declared places where a permission check reads a model-supplied argument
+   * (README Section 1); `Containment.callTimeoutMs` is the other. It must
+   * fail closed: false whenever it is unsure.
    */
   readOnlyCall?: (call: CommandCall) => boolean;
+  /**
+   * Set when the tool runs its commands in the isolated machine's executor
+   * (BIT-736). `invokeCommand` attests it before each call, and the policy
+   * may then allow the call by the attested envelope instead of a prompt.
+   * A contained tool declares no `readOnlyCall`: no shell parsing decides
+   * anything on that route.
+   */
+  containment?: Containment;
   /**
    * The approval prompt may offer "allow this exact call for the rest of the
    * session" (BIT-707). The grant matches the command id and every argument

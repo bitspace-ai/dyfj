@@ -4,9 +4,10 @@
 //! command in a fresh executor sandbox, and kill every executor the moment the
 //! runtime exits.
 
+use crate::attest;
 use crate::lease::Lease;
 use crate::plan::LaunchPlan;
-use crate::protocol::{self, Outcome, Termination};
+use crate::protocol::{self, Attestation, Outcome, Probe, Request, Termination};
 use std::io::{Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -27,6 +28,8 @@ pub const MAX_CONNECTIONS: usize = 16;
 const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 /// How long a reply may wait for the runtime to read it.
 const REPLY_DEADLINE: Duration = Duration::from_secs(10);
+/// How long the enforcement probe may take; its connect gives up after 3 s.
+const PROBE_DEADLINE: Duration = Duration::from_secs(15);
 
 fn fail(message: impl Into<String>) -> String {
     message.into()
@@ -199,17 +202,75 @@ fn read_request(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
     }
 }
 
-/// One transport request: run it in a fresh executor sandbox and answer.
-fn serve_one(mut stream: UnixStream, executor: &LaunchPlan, lease: &Mutex<Lease>) -> Result<(), String> {
+/// The files and facts a pair was started from, for `attest` (BIT-736).
+pub struct ServeFiles {
+    pub executor_plan: String,
+    pub executor_policy: Option<String>,
+    pub grant: Option<String>,
+}
+
+struct Attested {
+    instance: String,
+    landlock_abi: i32,
+    files: ServeFiles,
+    /// The plan and policy files' bytes as loaded.
+    plan_bytes: Vec<u8>,
+    policy: Option<(serde_json::Value, Vec<u8>)>,
+    probe: Probe,
+}
+
+impl Attested {
+    /// The attestation for `nonce`. The files are read again, so a changed
+    /// plan, policy or grant shows in the next answer.
+    fn answer(&self, nonce: String, lease: &Mutex<Lease>) -> Attestation {
+        let now = |path: &str| attest::read_trusted(path).ok();
+        let plan_same = now(&self.files.executor_plan).as_ref() == Some(&self.plan_bytes);
+        let policy_same = match (&self.files.executor_policy, &self.policy) {
+            (Some(path), Some((_, bytes))) => now(path).as_ref() == Some(bytes),
+            _ => true,
+        };
+        let policy_digest = self.policy.as_ref().and_then(|(value, _)| attest::policy_digest(value));
+        let (grant, grant_refusal) = match policy_digest {
+            Some(digest) => attest::grant_status(self.files.grant.as_deref(), digest),
+            None => (None, None),
+        };
+        Attestation {
+            nonce,
+            instance: self.instance.clone(),
+            landlock_abi: self.landlock_abi,
+            lease: if lease.lock().expect("lease lock").is_live() { "live" } else { "expired" },
+            executor_policy: self.policy.as_ref().map(|(value, _)| value.clone()),
+            files_unchanged: plan_same && policy_same,
+            grant,
+            grant_refusal,
+            probe: self.probe.clone(),
+        }
+    }
+}
+
+/// One transport request: attest, or run a command in a fresh executor
+/// sandbox, and answer.
+fn serve_one(
+    mut stream: UnixStream,
+    executor: &LaunchPlan,
+    lease: &Mutex<Lease>,
+    attested: &Attested,
+) -> Result<(), String> {
     let line = read_request(&mut stream)?;
     stream.set_write_timeout(Some(REPLY_DEADLINE)).map_err(|e| e.to_string())?;
     let mut writer = stream;
     let answer = |writer: &mut UnixStream, text: String| writer.write_all(text.as_bytes()).map_err(|e| e.to_string());
 
     let request = match protocol::parse_request(line.trim_ascii_end()) {
-        Ok(request) => request,
+        Ok(Request::Exec(request)) => request,
+        Ok(Request::Attest { nonce }) => {
+            return answer(&mut writer, protocol::attestation(&attested.answer(nonce, lease)));
+        }
         Err(reason) => return answer(&mut writer, protocol::refusal(&reason)),
     };
+    if !attest::binding_matches(request.binding.as_deref(), &attested.instance) {
+        return answer(&mut writer, protocol::refusal("attestation mismatch"));
+    }
     let env: Vec<(String, String)> = request.env.into_iter().collect();
     let argv = match executor.argv(Some(&request.cwd), &env, &request.argv) {
         Ok(argv) => argv,
@@ -269,6 +330,41 @@ fn serve_one(mut stream: UnixStream, executor: &LaunchPlan, lease: &Mutex<Lease>
     )
 }
 
+/// Runs the enforcement probe in a fresh executor sandbox, before any request
+/// is served, and records what it saw and how long it took.
+fn run_probe(executor: &LaunchPlan) -> Probe {
+    let failed = |ms: u64| Probe { passed: false, connect: "none".into(), write: "none".into(), ms };
+    let started = Instant::now();
+    let Some(cwd) = executor.writable_targets.first() else { return failed(0) };
+    let env = vec![("PATH".to_string(), "/usr/local/bin:/usr/bin:/bin".to_string())];
+    let command = ["node".to_string(), "-e".to_string(), attest::PROBE_SCRIPT.to_string()];
+    let Ok(argv) = executor.argv(Some(cwd), &env, &command) else { return failed(0) };
+    let Ok(mut child) = role_command(executor, &argv)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return failed(0);
+    };
+    let stdout = collect(child.stdout.take().expect("piped"));
+    let deadline = started + PROBE_DEADLINE;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            _ => {
+                kill(child.id() as i32);
+                let _ = child.wait();
+                return failed(started.elapsed().as_millis() as u64);
+            }
+        }
+    }
+    let ms = started.elapsed().as_millis() as u64;
+    let (passed, connect, write) = attest::probe_verdict(&stdout.join().unwrap_or_default());
+    Probe { passed, connect, write, ms }
+}
+
 fn bind_socket(path: &str, runtime: &LaunchPlan) -> Result<UnixListener, String> {
     let socket = Path::new(path);
     let dir = socket.parent().ok_or("socket path has no directory")?;
@@ -287,11 +383,41 @@ fn bind_socket(path: &str, runtime: &LaunchPlan) -> Result<UnixListener, String>
 pub fn serve(
     runtime: LaunchPlan,
     executor: LaunchPlan,
+    files: ServeFiles,
     socket: &str,
     command: &[String],
 ) -> Result<i32, String> {
+    let plan_bytes = attest::read_trusted(&files.executor_plan)?;
+    let policy = match &files.executor_policy {
+        None => None,
+        Some(path) => {
+            let bytes = attest::read_trusted(path)?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|e| fail(format!("{path}: {e}")))?;
+            if attest::policy_digest(&value) != Some(executor.policy_digest.as_str()) {
+                return Err(fail(format!("{path}: its digest is not the executor plan's policy digest")));
+            }
+            Some((value, bytes))
+        }
+    };
     install_nftables(&runtime)?;
     install_nftables(&executor)?;
+    let probe = run_probe(&executor);
+    eprintln!(
+        "dyfj-sandbox: enforcement probe {} in {} ms (connect {}, write {})",
+        if probe.passed { "passed" } else { "FAILED" },
+        probe.ms,
+        probe.connect,
+        probe.write
+    );
+    let attested = Arc::new(Attested {
+        instance: attest::new_instance()?,
+        landlock_abi: crate::landlock::abi()?,
+        files,
+        plan_bytes,
+        policy,
+        probe,
+    });
     let listener = bind_socket(socket, &runtime)?;
 
     let mut env = environment();
@@ -335,9 +461,9 @@ pub fn serve(
             continue;
         }
         let Some(pass) = gate.enter() else { continue };
-        let (executor, lease) = (Arc::clone(&executor), Arc::clone(&lease));
+        let (executor, lease, attested) = (Arc::clone(&executor), Arc::clone(&lease), Arc::clone(&attested));
         std::thread::spawn(move || {
-            if let Err(e) = serve_one(stream, &executor, &lease) {
+            if let Err(e) = serve_one(stream, &executor, &lease, &attested) {
                 eprintln!("dyfj-sandbox: executor request failed: {e}");
             }
             drop(pass);
