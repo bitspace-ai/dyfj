@@ -48,8 +48,9 @@ README are tracked separately in its Revision history section.
 ||||||| parent of 1256a9e (BIT-716: the launcher passes --tool-steps to the Rust REPL; changelog and docs)
 - **A turn that reaches its tool-step limit leaves a handoff, and a session can
   set its own limit within a configured ceiling (BIT-716).**
-  - At the limit, the last call of the turn offers no tools and asks the model
-    for a short handoff: what is done, what is next, and any uncommitted state.
+  - At the limit, the runtime makes a call that offers no tools and asks the
+    model for a short handoff: what is done, what is next, and any uncommitted
+    state. A length or context-size recovery may retry it, as it may any call.
     Its output is capped at 2,048 tokens, or the model's catalog cap when that
     is lower. A tool call in the reply is dropped and does not run. The handoff
     is the turn's reply and its `model_response` content, and its
@@ -68,7 +69,8 @@ README are tracked separately in its Revision history section.
     and both REPLs show it beside the tool count. A `toolStepLimitHandoff`
     runtime event carries the same.
   - `--tool-steps N` and `/steps N` set a session's own limit in both REPLs,
-    sent on every turn as `maxToolSteps`. The runtime refuses a value above
+    sent on every native turn as `maxToolSteps` (an external runner keeps its
+    own loop and is sent none). The runtime refuses a value above
     the ceiling (`[agent].max_tool_steps_ceiling`,
     `DYFJ_MAX_TOOL_STEPS_CEILING`, default 64, at most 64), and refuses a
     configuration whose default limit is above it. A non-loopback caller may

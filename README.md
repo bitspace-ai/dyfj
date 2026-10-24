@@ -440,8 +440,8 @@ through 64, and the environment value takes precedence for the engine. The
 final receipt reports `Tool steps: used/limit` and marks when the configured
 limit ended tool use.
 
-At the limit, the turn's last call offers no tools and asks the model for a
-handoff: what is done, what is next, and any uncommitted state. If that call
+At the limit, the runtime makes a call that offers no tools and asks the model
+for a handoff: what is done, what is next, and any uncommitted state. If that call
 fails or a budget gate stops it, the turn ends on a runtime notice of its last
 tool calls instead. A session sets its own limit with `--tool-steps N` or
 `/steps N`, up to the ceiling in `[agent].max_tool_steps_ceiling`

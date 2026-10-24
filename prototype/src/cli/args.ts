@@ -42,7 +42,8 @@ export interface CliConfig {
   fast?: boolean;
   /**
    * The session's own tool-step limit (--tool-steps, /steps), sent on every
-   * turn. Undefined leaves the runtime's configured limit.
+   * native turn; an external runner keeps its own loop and is sent none.
+   * Undefined leaves the runtime's configured limit.
    */
   toolSteps?: number;
   color: boolean;
