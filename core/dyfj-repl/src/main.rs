@@ -737,6 +737,33 @@ mod tests {
         );
     }
 
+    /// A handoff that failed after streaming part of itself is followed by the
+    /// runtime's notice, which is the reply: the receipt fallback must print it.
+    #[test]
+    fn a_failed_handoff_lets_the_notice_print_after_streamed_text() {
+        let mut wrote_any = false;
+        super::render(
+            crate::client::StreamFrame::Delta { text: "partial handoff".into() },
+            &mut wrote_any,
+        );
+        super::render(
+            crate::client::StreamFrame::Event {
+                event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "notice"}),
+            },
+            &mut wrote_any,
+        );
+        assert!(!wrote_any);
+        // A handoff the model wrote is the reply as streamed.
+        let mut wrote_any = true;
+        super::render(
+            crate::client::StreamFrame::Event {
+                event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "model"}),
+            },
+            &mut wrote_any,
+        );
+        assert!(wrote_any);
+    }
+
     /// A replacement that streams sets the flag again, so the receipt fallback
     /// does not double-print it.
     #[test]
@@ -1181,6 +1208,17 @@ fn render(frame: StreamFrame, wrote_any: &mut bool) {
                 println!("{}", activity::SUPERSEDED_MARKER);
                 *wrote_any = false;
                 return;
+            }
+            // A handoff that failed part way is followed by the runtime's
+            // notice, which is the reply: clearing `wrote_any` lets the
+            // receipt fallback print it after what already streamed.
+            if event.get("type").and_then(Value::as_str) == Some("toolStepLimitHandoff")
+                && event.get("source").and_then(Value::as_str) == Some("notice")
+            {
+                if *wrote_any {
+                    println!();
+                }
+                *wrote_any = false;
             }
             if let Some(line) = activity::describe(&event) {
                 println!("{line}");

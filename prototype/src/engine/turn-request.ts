@@ -10,7 +10,7 @@ import {
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
-import { AGENT_DEFAULTS } from "../config/defaults.ts";
+import { AGENT_DEFAULTS } from "../config/mod.ts";
 
 export interface TurnRequestBody {
   prompt?: unknown;

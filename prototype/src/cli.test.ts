@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import { describe, it } from "node:test";
 import {
   fetchSessionPosture,
@@ -10,7 +11,6 @@ import {
   handleReplModelCommand,
   handleReplPacketCommand,
   handleReplSessionCommand,
-  handleReplStepsCommand,
   replPrompt,
   type ReplSessionState,
   runRepl,

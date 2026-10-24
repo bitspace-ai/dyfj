@@ -156,6 +156,28 @@ describe("handleTurnRuntimeEvent", () => {
     assert.deepStrictEqual(stderr.length, 0);
   });
 
+  it("a failed handoff leaves the reply to the receipt's notice", () => {
+    const { io, stderr } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io);
+    output.onDelta("partial handoff");
+    handleTurnRuntimeEvent(
+      { type: "toolStepLimitHandoff", maxSteps: 2, source: "notice" },
+      output,
+      io,
+    );
+    assert.strictEqual(output.streamed(), false);
+    assert.ok(stderr.some((line) => line.includes("the handoff call failed")));
+
+    const model = createTurnOutputHandlers(cfg(), io);
+    model.onDelta("the handoff");
+    handleTurnRuntimeEvent(
+      { type: "toolStepLimitHandoff", maxSteps: 2, source: "model" },
+      model,
+      io,
+    );
+    assert.strictEqual(model.streamed(), true);
+  });
+
   it("still renders tool progress lines to stderr", () => {
     const { io, stdout, stderr } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);

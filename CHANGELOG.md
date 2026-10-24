@@ -60,8 +60,10 @@ README are tracked separately in its Revision history section.
     provider call fails, the turn no longer fails. It ends on a runtime notice
     that names the failure's class and the turn's last five tool calls by
     command and outcome, with no arguments, results or model text. The
-    failure is still written as the turn's `error` event. A cancelled turn
-    ends aborted, as before.
+    failure is recorded as the turn's `error` event, a best-effort write like
+    the turn's other `error` events. If the handoff streamed part of a reply
+    before it failed, both REPLs keep that text on screen and print the notice
+    after it. A cancelled turn ends aborted, as before.
   - The receipt's `agent.handoff` says which happened (`model` or `notice`),
     and both REPLs show it beside the tool count. A `toolStepLimitHandoff`
     runtime event carries the same.
