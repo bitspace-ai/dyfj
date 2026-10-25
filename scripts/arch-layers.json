@@ -107,6 +107,10 @@
           "justification": "The contained Linux target's patch export, run by the operator on the Mac: it starts one fixed `orb` command, with no shell, that runs git format-patch in an executor sandbox inside the isolated machine, and reads its output through a byte cap. It is operator tooling outside the runtime graph, which no runtime module may import."
         },
         {
+          "path": "prototype/scripts/sandbox-runtime.ts",
+          "justification": "The runtime's entry point on the contained Linux target, which `dyfj-sandbox serve` starts as the runtime role: it starts exactly one child, the server (`src/server/main.ts`) on the same Node executable, with no shell, forwards its signals, and exits with its exit status (128 plus the signal number when a signal ended it). It is a launcher outside the runtime graph, which no runtime module may import."
+        },
+        {
           "path": "prototype/scripts/acp-fixture-agent.ts",
           "justification": "The deterministic ACP fixture agent, a test agent the fixture profile and the ACP tests start as a child process. On its parent's death it signals its own process group through /bin/kill, and on one test prompt it starts a TERM-ignoring bash descendant. It runs as its own process, outside the runtime graph, which no runtime module may import."
         },

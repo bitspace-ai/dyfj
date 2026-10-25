@@ -142,3 +142,64 @@ describe("the bounded read", () => {
     );
   });
 });
+
+describe("a run's plans (BIT-779)", () => {
+  it("reads the run's executor plan when given its plan directory", async () => {
+    const { exportCommand } = await exportModule();
+    const command = exportCommand("dyfj-l8", "main", "/etc/dyfj/l8/runs/wk-20261025-010203-a1b2c3");
+    assert.strictEqual(command[command.indexOf("--plan") + 1], "/etc/dyfj/l8/runs/wk-20261025-010203-a1b2c3/executor.plan.json");
+  });
+
+  it("defaults to the provisioned run's plans", async () => {
+    const { exportCommand } = await exportModule();
+    const command = exportCommand("dyfj-l8", "main");
+    assert.strictEqual(command[command.indexOf("--plan") + 1], "/etc/dyfj/l8/executor.plan.json");
+  });
+
+  for (
+    const plans of [
+      "/etc/dyfj/l8/",
+      "/etc/dyfj/l8/runs",
+      "/etc/dyfj/l8/runs/../x",
+      "/etc/dyfj/l8/runs/a/b",
+      "/etc/dyfj/l8/runs/Wk",
+      "/tmp/plans",
+      "etc/dyfj/l8",
+    ]
+  ) {
+    it(`refuses the plan directory ${JSON.stringify(plans)}`, async () => {
+      const { exportCommand, statusCommand } = await exportModule();
+      assert.throws(() => exportCommand("dyfj-l8", "main", plans), /plans must be/);
+      assert.throws(() => statusCommand("dyfj-l8", plans), /plans must be/);
+    });
+  }
+});
+
+describe("the uncommitted-work count", () => {
+  it("runs git status in an executor sandbox with git's program-running config off", async () => {
+    const { statusCommand } = await exportModule();
+    const command = statusCommand("dyfj-l8", "/etc/dyfj/l8/runs/wk-1");
+    assert.deepStrictEqual(command.slice(command.indexOf("git")), [
+      "git",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "core.pager=cat",
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+    ]);
+    assert.ok(command.includes("GIT_CONFIG_NOSYSTEM=1"));
+  });
+
+  it("counts entries, a rename's source path not counted twice", async () => {
+    const { countStatus } = await exportModule();
+    assert.strictEqual(countStatus(Buffer.alloc(0)), 0);
+    assert.strictEqual(countStatus(Buffer.from(" M a.ts\0?? new file.ts\0")), 2);
+    assert.strictEqual(countStatus(Buffer.from("R  new.ts\0old.ts\0 M b.ts\0")), 2);
+    assert.strictEqual(countStatus(Buffer.from(" R new.ts\0old.ts\0")), 1);
+  });
+});

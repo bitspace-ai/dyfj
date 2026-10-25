@@ -3,6 +3,13 @@
 # Run as root inside the machine after provision.sh:
 #
 #   bash /opt/dyfj/prototype/sandbox/linux/acceptance.sh
+#   bash acceptance.sh --check-run <profile.json>   the refusal below, alone
+#
+# It empties its run's workspace and commits test files there, so it runs
+# only on a disposable run: the provisioned profile's run ID must start with
+# `uat-` or `acc-`, and its configured workspace must be exactly the path
+# /srv/dyfj/work/<run>, and not a symbolic link. Any other run is refused before anything is touched:
+# run-0001, an operator's work run (`wk-`), or a profile it cannot read.
 #
 # Synthetic data only: the canaries it plants are random strings made here,
 # never a real credential, and it removes them at the end. Each probe prints
@@ -14,7 +21,29 @@ SANDBOX=/usr/libexec/dyfj/dyfj-sandbox
 PLANS=/etc/dyfj/l8
 HERE=/opt/dyfj/prototype/sandbox/linux
 SOCKET=/run/dyfj-exec/exec.sock
-WORK=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).workspace)' "$PLANS/profile.json")
+
+# Prints the profile's workspace when its run is disposable; otherwise says
+# why not and exits 2.
+disposable_workspace() { # profile.json
+  local run work
+  run=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).identity.run))' "$1" 2>/dev/null) ||
+    { echo "acceptance: cannot read the run from $1; refusing" >&2; exit 2; }
+  work=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workspace))' "$1" 2>/dev/null) ||
+    { echo "acceptance: cannot read the workspace from $1; refusing" >&2; exit 2; }
+  [[ $run =~ ^(uat|acc)-[a-z0-9][a-z0-9-]{0,58}$ ]] ||
+    { echo "acceptance: run $run is not disposable (its ID must start with uat- or acc-); refusing, nothing touched" >&2; exit 2; }
+  [[ $work == "/srv/dyfj/work/$run" ]] ||
+    { echo "acceptance: workspace $work is not run $run's own; refusing, nothing touched" >&2; exit 2; }
+  [[ ! -L $work ]] ||
+    { echo "acceptance: workspace $work is a symbolic link; refusing, nothing touched" >&2; exit 2; }
+  echo "$work"
+}
+if [[ ${1:-} == --check-run ]]; then
+  checked=$(disposable_workspace "${2:?--check-run needs a profile}") || exit 2
+  echo "disposable: $checked"
+  exit 0
+fi
+WORK=$(disposable_workspace "$PLANS/profile.json") || exit 2
 ALLOWED=api.anthropic.com
 CLEAN_ENV=(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp USER=dyfj LANG=C.UTF-8)
 fail=0
@@ -270,7 +299,110 @@ grep -q '^stale-binding .* refused .*attestation mismatch' <<<"$stale" && result
 grep -q 'decision=allow' <<<"$stale" && result fail "attestation: nothing is allowed in any stale case" "$(grep 'decision=allow' <<<"$stale" | head -1)" \
   || result pass "attestation: nothing is allowed in any stale case" "all ask"
 
-echo "== 8. timings"
+echo "== 8. a work session (BIT-779), no terminal and no model"
+# A throwaway run seeded from a one-commit repository made here, a work
+# session with the scripted client in place of the REPL, then the run removed.
+WK=wk-acceptance-$(head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n')
+wk_src=$(mktemp -d /var/tmp/l8-wk-src.XXXXXX)
+git -C "$wk_src" -c init.defaultBranch=work init -q
+printf 'acceptance\n' >"$wk_src/note.txt"
+git -C "$wk_src" add note.txt
+git -C "$wk_src" -c user.email=l8@example.invalid -c user.name=l8 commit -qm "seed"
+git -C "$wk_src" bundle create -q "$wk_src/seed.bundle" refs/heads/work
+seed=$(bash "$HERE/l8-seed.sh" "$WK" work local/acceptance l8 l8@example.invalid <"$wk_src/seed.bundle" 2>&1)
+echo "$seed" | sed 's/^/      /'
+grep -q '^seeded at [0-9a-f]\{40\}$' <<<"$seed" && result pass "work: seeded inside the run's executor" "$(grep '^seeded at' <<<"$seed")" \
+  || result fail "work: seeded inside the run's executor" "see output"
+owner=$(stat -c '%U %a' "/srv/dyfj/work/$WK/note.txt" 2>&1)
+[[ $owner == "dyfj-ex 664" ]] && result pass "work: seeded files are the executor's and group-writable" "$owner" \
+  || result fail "work: seeded files are the executor's and group-writable" "$owner"
+[[ -f /etc/dyfj/l8/runs/$WK/executor.plan.json && ! -e /etc/dyfj/l8/runs/$WK/envelope-grant.json ]] \
+  && result pass "work: the run has its own plans and no grant" "/etc/dyfj/l8/runs/$WK" \
+  || result fail "work: the run has its own plans and no grant" "$(ls "/etc/dyfj/l8/runs/$WK" 2>&1)"
+printf 'canary-%s' "$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" |
+  install -o dyfj-rt -g dyfj-work -m 0400 /dev/stdin /run/dyfj/secrets/ANTHROPIC_API_KEY
+session=$(bash "$HERE/l8-work.sh" "$WK" --probe 2>&1)
+session_exit=$?
+echo "$session" | sed 's/^/      /'
+[[ $session_exit -eq 0 ]] && result pass "work: the session exits with the client's status" "exit $session_exit" \
+  || result fail "work: the session exits with the client's status" "exit $session_exit"
+grep -q '^dyfj-l8: no grant for sha256:' <<<"$session" && result pass "work: the session says there is no grant" "$(grep '^dyfj-l8: no grant' <<<"$session")" \
+  || result fail "work: the session says there is no grant" "see output"
+grep -q 'sandbox-runtime: set ANTHROPIC_API_KEY, DOLT_PASSWORD from /secrets' "/srv/dyfj/state/l8-logs/$WK.log" \
+  && result pass "work: the runtime took the delivered secrets, by name" "ANTHROPIC_API_KEY, DOLT_PASSWORD" \
+  || result fail "work: the runtime took the delivered secrets, by name" "$(grep sandbox-runtime "/srv/dyfj/state/l8-logs/$WK.log")"
+grep -q '^work-probe: sessions/list ok' <<<"$session" && result pass "work: the client reached the runtime and its store" "$(grep '^work-probe: sessions/list' <<<"$session")" \
+  || result fail "work: the client reached the runtime and its store" "see output"
+left=$(ls /run/dyfj-exec/exec.sock /srv/dyfj/state/runtime/.dyfj/run/workbench.sock /run/dyfj/secrets/ANTHROPIC_API_KEY /run/dyfj/secrets/DOLT_PASSWORD /run/dyfj/l8-work.pid 2>/dev/null)
+[[ -z $left ]] && result pass "work: the session's sockets, secrets and lock holder are gone" "none left" \
+  || result fail "work: the session's sockets, secrets and lock holder are gone" "$left"
+pgrep -ax dyfj-sandbox >/dev/null && result fail "work: no supervisor outlives the session" "$(pgrep -ax dyfj-sandbox)" \
+  || result pass "work: no supervisor outlives the session" "none"
+rm -rf "/srv/dyfj/work/$WK" "/srv/dyfj/work/$WK-cli" "/etc/dyfj/l8/runs/$WK" "/srv/dyfj/state/l8-logs/$WK.log" "$wk_src"
+rm -f /run/dyfj/secrets/ANTHROPIC_API_KEY
+
+echo "== 8a. the store's accounts, from the runtime role"
+# The runtime can reach the store's listener, so the store must refuse root
+# without its password, and the runtime's own account must hold only its
+# grants. The runtime's password is handed over as a session would hand it.
+install -o dyfj-rt -g dyfj-work -m 0400 /etc/dyfj/dolt-runtime.password /run/dyfj/secrets/DOLT_PASSWORD
+dbprobe=$(in_role runtime "" node -e '
+  const mysql = require("/opt/dyfj/node_modules/mysql2/promise");
+  const fs = require("fs");
+  const base = { host: "127.0.0.1", port: 3306, database: "dolt" };
+  const attempt = async (label, options, sql) => {
+    try {
+      const c = await mysql.createConnection({ ...base, ...options });
+      try { await c.query(sql); console.log(label + " allowed"); } finally { await c.end(); }
+    } catch (e) { console.log(label + " refused " + e.code + " " + String(e.message).slice(0, 100)); }
+  };
+  (async () => {
+    await attempt("root-without-password", { user: "root", password: "" }, "SELECT 1");
+    const password = fs.readFileSync("/secrets/DOLT_PASSWORD", "utf8");
+    await attempt("runtime-read", { user: "dyfj_runtime", password }, "SELECT COUNT(*) FROM sessions");
+    await attempt("runtime-delete-events", { user: "dyfj_runtime", password }, "DELETE FROM events WHERE 1 = 0");
+  })();' 2>&1)
+rm -f /run/dyfj/secrets/DOLT_PASSWORD
+echo "$dbprobe" | sed 's/^/      /'
+grep -q '^root-without-password refused ER_ACCESS_DENIED_ERROR' <<<"$dbprobe" \
+  && result pass "store: root without its password is refused from the runtime role" "$(grep '^root-without-password' <<<"$dbprobe")" \
+  || result fail "store: root without its password is refused from the runtime role" "$(grep '^root-without-password' <<<"$dbprobe")"
+grep -q '^runtime-read allowed' <<<"$dbprobe" \
+  && result pass "store: the runtime's account reads its tables" "runtime-read allowed" \
+  || result fail "store: the runtime's account reads its tables" "$(grep '^runtime-read' <<<"$dbprobe")"
+# Dolt reports a missing table privilege as error 1105, "command denied".
+grep -q "^runtime-delete-events refused .*command denied to user 'dyfj_runtime'" <<<"$dbprobe" \
+  && result pass "store: the runtime's account cannot delete events" "$(grep '^runtime-delete-events' <<<"$dbprobe")" \
+  || result fail "store: the runtime's account cannot delete events" "$(grep '^runtime-delete-events' <<<"$dbprobe")"
+
+echo "== 8b. stop never signals a process the pid file only names"
+# A stale pid file can name a live, unrelated process after pid reuse. Each
+# case plants one naming a sleep made here, runs `l8-work.sh stop`, and
+# checks the sleep survived.
+start_of() { local s; s=$(cat "/proc/$1/stat"); s=${s##*) }; read -r -a f <<<"$s"; echo "${f[19]}"; }
+sleep 300 & victim=$!
+printf '%s %s\n' "$victim" "$(start_of "$victim")" >/run/dyfj/l8-work.pid
+out=$(bash "$HERE/l8-work.sh" stop 2>&1)
+kill -0 "$victim" 2>/dev/null && [[ ! -e /run/dyfj/l8-work.pid ]] && grep -q 'which was not signalled' <<<"$out" \
+  && result pass "stop: with the lock free, a stale pid file is removed and its pid not signalled" "$(head -1 <<<"$out")" \
+  || result fail "stop: with the lock free, a stale pid file is removed and its pid not signalled" "$out"
+# The lock held by something else, and the pid file naming the sleep with
+# its true start time (its command is not l8-work.sh), then with a wrong
+# start time (as after reuse).
+# One process holds the lock: the subshell takes it, then becomes the sleep.
+( exec 8>/run/dyfj/l8-work.lock && flock 8 && exec sleep 300 ) & holder=$!
+for _ in $(seq 1 50); do flock -n /run/dyfj/l8-work.lock true 2>/dev/null || break; sleep 0.1; done
+for recorded in "$(start_of "$victim")" 1; do
+  printf '%s %s\n' "$victim" "$recorded" >/run/dyfj/l8-work.pid
+  out=$(bash "$HERE/l8-work.sh" stop 2>&1); stop_exit=$?
+  kill -0 "$victim" 2>/dev/null && [[ $stop_exit -ne 0 ]] && grep -q 'does not name a live session; nothing signalled' <<<"$out" \
+    && result pass "stop: with the lock held, a pid file not naming a session is not signalled (start $recorded)" "exit $stop_exit" \
+    || result fail "stop: with the lock held, a pid file not naming a session is not signalled (start $recorded)" "$out"
+done
+kill "$holder" "$victim" 2>/dev/null; wait "$holder" "$victim" 2>/dev/null
+rm -f /run/dyfj/l8-work.pid
+
+echo "== 9. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
 echo "single executor sandbox start (run, true): $(( (t1 - t0) / 1000000 )) ms"
 grep 'warm dispatch' <<<"$loop" | sed 's/^/      /'
