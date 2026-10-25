@@ -37,6 +37,10 @@ README are tracked separately in its Revision history section.
     is made in the machine and handed to the runtime per session.
   - The work REPL is not sandboxed: it can read what the runtime's uid can
     read on the machine. The sandbox README states this.
+  - `acceptance.sh` empties its run's workspace, so it now runs only on a
+    disposable run: one whose ID starts with `uat-` or `acc-` and whose
+    workspace is that run's own directory. It refuses any other run,
+    `run-0001` and work runs included, before touching anything.
 
 - **On the contained Linux target, a bash or git call can run without a
   prompt when the executor's containment is attested and the operator has

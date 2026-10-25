@@ -3,6 +3,13 @@
 # Run as root inside the machine after provision.sh:
 #
 #   bash /opt/dyfj/prototype/sandbox/linux/acceptance.sh
+#   bash acceptance.sh --check-run <profile.json>   the refusal below, alone
+#
+# It empties its run's workspace and commits test files there, so it runs
+# only on a disposable run: the provisioned profile's run ID must start with
+# `uat-` or `acc-`, and its workspace must be that run's own directory,
+# /srv/dyfj/work/<run>. Any other run is refused before anything is touched:
+# run-0001, an operator's work run (`wk-`), or a profile it cannot read.
 #
 # Synthetic data only: the canaries it plants are random strings made here,
 # never a real credential, and it removes them at the end. Each probe prints
@@ -14,7 +21,27 @@ SANDBOX=/usr/libexec/dyfj/dyfj-sandbox
 PLANS=/etc/dyfj/l8
 HERE=/opt/dyfj/prototype/sandbox/linux
 SOCKET=/run/dyfj-exec/exec.sock
-WORK=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1])).workspace)' "$PLANS/profile.json")
+
+# Prints the profile's workspace when its run is disposable; otherwise says
+# why not and exits 2.
+disposable_workspace() { # profile.json
+  local run work
+  run=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).identity.run))' "$1" 2>/dev/null) ||
+    { echo "acceptance: cannot read the run from $1; refusing" >&2; exit 2; }
+  work=$(node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).workspace))' "$1" 2>/dev/null) ||
+    { echo "acceptance: cannot read the workspace from $1; refusing" >&2; exit 2; }
+  [[ $run =~ ^(uat|acc)-[a-z0-9][a-z0-9-]{0,58}$ ]] ||
+    { echo "acceptance: run $run is not disposable (its ID must start with uat- or acc-); refusing, nothing touched" >&2; exit 2; }
+  [[ $work == "/srv/dyfj/work/$run" ]] ||
+    { echo "acceptance: workspace $work is not run $run's own; refusing, nothing touched" >&2; exit 2; }
+  echo "$work"
+}
+if [[ ${1:-} == --check-run ]]; then
+  checked=$(disposable_workspace "${2:?--check-run needs a profile}") || exit 2
+  echo "disposable: $checked"
+  exit 0
+fi
+WORK=$(disposable_workspace "$PLANS/profile.json") || exit 2
 ALLOWED=api.anthropic.com
 CLEAN_ENV=(env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp USER=dyfj LANG=C.UTF-8)
 fail=0

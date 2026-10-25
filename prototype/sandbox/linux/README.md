@@ -85,7 +85,7 @@ refuses `push`, and patches leave through `sandbox-export.ts`.
 | `provision.sh` | In the machine, as root | Pinned toolchain and launcher, the uids, the layout, an empty local Dolt store and the role plans, then checks that the Mac integrations are absent. |
 | `../../scripts/sandbox-install.ts` | In the machine, as root | Derives the run envelope and the role policies from one composition, compiles each for this target, and writes the plans and a receipt to `/etc/dyfj/l8/`. |
 | `core/dyfj-sandbox` | In the machine, as root | The launcher: installs a role's nftables rules, drops to its uid, starts bubblewrap, and applies Landlock inside it. |
-| `acceptance.sh` | In the machine, as root | Design §8's Mac scenario, using synthetic canaries only. |
+| `acceptance.sh` | In the machine, as root | Design §8's Mac scenario, using synthetic canaries only. It empties its run's workspace, so it refuses any run whose ID does not start with `uat-` or `acc-`: provision a throwaway run before running it. |
 | `approval-probe.sh`, `approval-probe.ts` | In the machine, as root | Approval by the attested envelope: attestation, in-workspace shell syntax, escape attempts, session grants, and stale or forged attestations. Synthetic canaries only. |
 | `../../scripts/sandbox-export.ts` | On the Mac | Reads a run's workspace commits as a bounded mbox, or counts its uncommitted paths (`status`). git runs in an executor sandbox. `--plans` names a work run's plan directory. |
 | `l8-seed.sh` | In the machine, as root | Seeds a work run from a git bundle on stdin: its workspace, its own plans in `/etc/dyfj/l8/runs/<run>`, the clone (inside the run's executor), and its npm packages. |
