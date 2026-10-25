@@ -270,7 +270,45 @@ grep -q '^stale-binding .* refused .*attestation mismatch' <<<"$stale" && result
 grep -q 'decision=allow' <<<"$stale" && result fail "attestation: nothing is allowed in any stale case" "$(grep 'decision=allow' <<<"$stale" | head -1)" \
   || result pass "attestation: nothing is allowed in any stale case" "all ask"
 
-echo "== 8. timings"
+echo "== 8. a work session (BIT-779), no terminal and no model"
+# A throwaway run seeded from a one-commit repository made here, a work
+# session with the scripted client in place of the REPL, then the run removed.
+WK=wk-acceptance-$(head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n')
+wk_src=$(mktemp -d /var/tmp/l8-wk-src.XXXXXX)
+git -C "$wk_src" -c init.defaultBranch=work init -q
+printf 'acceptance\n' >"$wk_src/note.txt"
+git -C "$wk_src" add note.txt
+git -C "$wk_src" -c user.email=l8@example.invalid -c user.name=l8 commit -qm "seed"
+git -C "$wk_src" bundle create -q "$wk_src/seed.bundle" refs/heads/work
+seed=$(bash "$HERE/l8-seed.sh" "$WK" work local/acceptance l8 l8@example.invalid <"$wk_src/seed.bundle" 2>&1)
+echo "$seed" | sed 's/^/      /'
+grep -q '^seeded at [0-9a-f]\{40\}$' <<<"$seed" && result pass "work: seeded inside the run's executor" "$(grep '^seeded at' <<<"$seed")" \
+  || result fail "work: seeded inside the run's executor" "see output"
+owner=$(stat -c '%U %a' "/srv/dyfj/work/$WK/note.txt" 2>&1)
+[[ $owner == "dyfj-ex 664" ]] && result pass "work: seeded files are the executor's and group-writable" "$owner" \
+  || result fail "work: seeded files are the executor's and group-writable" "$owner"
+[[ -f /etc/dyfj/l8/runs/$WK/executor.plan.json && ! -e /etc/dyfj/l8/runs/$WK/envelope-grant.json ]] \
+  && result pass "work: the run has its own plans and no grant" "/etc/dyfj/l8/runs/$WK" \
+  || result fail "work: the run has its own plans and no grant" "$(ls "/etc/dyfj/l8/runs/$WK" 2>&1)"
+printf 'canary-%s' "$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" |
+  install -o dyfj-rt -g dyfj-work -m 0400 /dev/stdin /run/dyfj/secrets/ANTHROPIC_API_KEY
+session=$(bash "$HERE/l8-work.sh" "$WK" --probe 2>&1)
+echo "$session" | sed 's/^/      /'
+grep -q '^dyfj-l8: no grant for sha256:' <<<"$session" && result pass "work: the session says there is no grant" "$(grep '^dyfj-l8: no grant' <<<"$session")" \
+  || result fail "work: the session says there is no grant" "see output"
+grep -q 'sandbox-runtime: set ANTHROPIC_API_KEY, DOLT_PASSWORD from /secrets' "/srv/dyfj/state/l8-logs/$WK.log" \
+  && result pass "work: the runtime took the delivered secrets, by name" "ANTHROPIC_API_KEY, DOLT_PASSWORD" \
+  || result fail "work: the runtime took the delivered secrets, by name" "$(grep sandbox-runtime "/srv/dyfj/state/l8-logs/$WK.log")"
+grep -q '^work-probe: sessions/list ok' <<<"$session" && result pass "work: the client reached the runtime and its store" "$(grep '^work-probe: sessions/list' <<<"$session")" \
+  || result fail "work: the client reached the runtime and its store" "see output"
+left=$(ls /run/dyfj-exec/exec.sock /srv/dyfj/state/runtime/.dyfj/run/workbench.sock /run/dyfj/secrets/ANTHROPIC_API_KEY /run/dyfj/secrets/DOLT_PASSWORD /run/dyfj/l8-work.pid 2>/dev/null)
+[[ -z $left ]] && result pass "work: the session's sockets, secrets and lock holder are gone" "none left" \
+  || result fail "work: the session's sockets, secrets and lock holder are gone" "$left"
+pgrep -ax dyfj-sandbox >/dev/null && result fail "work: no supervisor outlives the session" "$(pgrep -ax dyfj-sandbox)" \
+  || result pass "work: no supervisor outlives the session" "none"
+rm -rf "/srv/dyfj/work/$WK" "/srv/dyfj/work/$WK-cli" "/etc/dyfj/l8/runs/$WK" "/srv/dyfj/state/l8-logs/$WK.log" "$wk_src"
+
+echo "== 9. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
 echo "single executor sandbox start (run, true): $(( (t1 - t0) / 1000000 )) ms"
 grep 'warm dispatch' <<<"$loop" | sed 's/^/      /'

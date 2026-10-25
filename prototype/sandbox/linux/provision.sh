@@ -6,8 +6,10 @@
 #   bash provision.sh <staging-dir> <run-id>
 #
 # The staging directory holds dyfj.bundle (a git bundle of the repository),
-# dyfj-sandbox (the launcher, built for linux-arm64) and this script. Nothing
-# here reads or writes a secret. The Node and Dolt archives are pinned to a
+# dyfj-sandbox (the launcher) and dyfj-repl (the Workbench REPL), both built
+# for linux-arm64, and this script. Nothing here reads a secret. It makes one:
+# the local Dolt store's runtime password, random, kept in a root-only file
+# in the machine and never printed (BIT-779). The Node and Dolt archives are pinned to a
 # version and a SHA-256 digest; the two CLIs to an npm version, without a
 # digest; the Debian packages come from the distribution's signed archive at
 # whatever version it serves. The script ends by checking that the Mac
@@ -96,6 +98,7 @@ install -d -o dyfj-db -g dyfj-db -m 0700 /srv/dyfj/dolt
 install -d -o dyfj-ex -g dyfj-work -m 2770 "/srv/dyfj/work/$RUN"
 install -d -o dyfj-cli -g dyfj-work -m 2770 "/srv/dyfj/work/$RUN-cli"
 install -o root -g root -m 0755 "$STAGING/dyfj-sandbox" /usr/libexec/dyfj/dyfj-sandbox
+install -o root -g root -m 0755 "$STAGING/dyfj-repl" /usr/libexec/dyfj/dyfj-repl
 
 # /run is a tmpfs, so the secrets directory and the executor socket's
 # directory are recreated at every boot by the tmpfiles rule. The broker
@@ -149,6 +152,45 @@ EOF
   systemctl enable --now dyfj-dolt.service >/dev/null 2>&1
 fi
 
+echo "== local dolt schema and runtime user"
+# The runtime refuses a store without its tables, so the store gets the
+# canonical schema once, when its database does not exist yet; an existing
+# database is left as it is. The runtime connects as dyfj_runtime with the
+# grants schema/README.md lists, never as root. Its password is made here,
+# kept in a root-only file, and handed to the runtime only for a live
+# session (l8-work.sh). Statements reach dolt on stdin, so the password is in
+# no argument list.
+DOLT_PASSWORD_FILE=/etc/dyfj/dolt-runtime.password
+dolt_root() { # dolt arguments...; run as the store's uid, from its home
+  (cd /srv/dyfj/dolt && runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt DOLT_CLI_PASSWORD= \
+    dolt --host 127.0.0.1 --port 3306 --no-tls --user root "$@")
+}
+for _ in $(seq 1 50); do dolt_root sql -q 'select 1' >/dev/null 2>&1 && break; sleep 0.2; done
+if ! dolt_root sql -r csv -q 'show databases' | grep -qx dolt; then
+  dolt_root sql -q 'CREATE DATABASE dolt'
+  for file in /opt/dyfj/schema/current/*.sql /opt/dyfj/schema/catalog/*.sql; do
+    dolt_root --use-db dolt sql <"$file" >/dev/null
+  done
+  echo "created database dolt from schema/current and schema/catalog"
+fi
+if [[ ! -s $DOLT_PASSWORD_FILE ]] ||
+  ! dolt_root sql -r csv -q "select user from mysql.user where user='dyfj_runtime'" | grep -qx dyfj_runtime; then
+  (umask 077 && head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$DOLT_PASSWORD_FILE")
+  chown root:root "$DOLT_PASSWORD_FILE"
+  chmod 0600 "$DOLT_PASSWORD_FILE"
+  # Dropped and created again rather than revoked: schema/README.md.
+  {
+    echo "DROP USER IF EXISTS 'dyfj_runtime'@'localhost';"
+    echo "CREATE USER 'dyfj_runtime'@'localhost' IDENTIFIED BY '$(cat "$DOLT_PASSWORD_FILE")';"
+    echo "GRANT SELECT, INSERT ON dolt.events TO 'dyfj_runtime'@'localhost';"
+    echo "GRANT SELECT, INSERT, UPDATE ON dolt.sessions TO 'dyfj_runtime'@'localhost';"
+    echo "GRANT SELECT, INSERT, UPDATE ON dolt.memories TO 'dyfj_runtime'@'localhost';"
+    echo "GRANT SELECT ON dolt.models TO 'dyfj_runtime'@'localhost';"
+    echo "GRANT SELECT ON dolt.prompts TO 'dyfj_runtime'@'localhost';"
+  } | dolt_root sql >/dev/null
+  echo "created the dyfj_runtime user"
+fi
+
 echo "== role plans"
 cat >/etc/dyfj/l8/profile.json <<EOF
 {
@@ -195,4 +237,10 @@ for user in dyfj-rt dyfj-ex dyfj-cli dyfj-db; do
 done
 check "the launcher and plans are root-owned and not writable by others" bash -c \
   '[[ $(stat -c %U%a /usr/libexec/dyfj/dyfj-sandbox) == root755 ]] && ! find /etc/dyfj -perm /022 | grep -q .'
+check "the REPL is root-owned and not writable by others" bash -c \
+  '[[ $(stat -c %U%a /usr/libexec/dyfj/dyfj-repl) == root755 ]]'
+check "the store's runtime password is readable by root only" bash -c \
+  '[[ $(stat -c %U%a /etc/dyfj/dolt-runtime.password) == root600 ]]'
+check "the store has the runtime's tables" bash -c \
+  "cd /srv/dyfj/dolt && runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt DOLT_CLI_PASSWORD= dolt --host 127.0.0.1 --port 3306 --no-tls --user root --use-db dolt sql -r csv -q 'show tables' | grep -qx sessions"
 exit $fail

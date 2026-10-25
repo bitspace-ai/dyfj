@@ -87,11 +87,51 @@ refuses `push`, and patches leave through `sandbox-export.ts`.
 | `core/dyfj-sandbox` | In the machine, as root | The launcher: installs a role's nftables rules, drops to its uid, starts bubblewrap, and applies Landlock inside it. |
 | `acceptance.sh` | In the machine, as root | Design §8's Mac scenario, using synthetic canaries only. |
 | `approval-probe.sh`, `approval-probe.ts` | In the machine, as root | Approval by the attested envelope: attestation, in-workspace shell syntax, escape attempts, session grants, and stale or forged attestations. Synthetic canaries only. |
-| `../../scripts/sandbox-export.ts` | On the Mac | Reads the workspace's commits as a bounded mbox. git runs in an executor sandbox. |
+| `../../scripts/sandbox-export.ts` | On the Mac | Reads a run's workspace commits as a bounded mbox, or counts its uncommitted paths (`status`). git runs in an executor sandbox. `--plans` names a work run's plan directory. |
+| `l8-seed.sh` | In the machine, as root | Seeds a work run from a git bundle on stdin: its workspace, its own plans in `/etc/dyfj/l8/runs/<run>`, the clone (inside the run's executor), and its npm packages. |
+| `l8-work.sh` | In the machine, as root | One attended work session: the session lock, the grant state, the attested pair, and the REPL in the operator's terminal; then cleanup. `stop` ends a session whose terminal went away. |
+| `../../scripts/sandbox-runtime.ts` | In the machine, in the runtime role | The runtime's entry point there: reads the delivered secret files into the runtime's environment, then runs the server. |
+| `work-probe.ts` | In the machine | A scripted client that stands in for the REPL (`l8-work.sh --probe`), with no model call. |
 
 The operator's Mac-side scripts create the machine and deliver named
 bootstrap secrets. They live with the operator's private tooling, not in this
 repository.
+
+## Work sessions
+
+The operator's `dyfj-l8 work` seeds a fresh run from a Mac branch and
+attaches the Workbench REPL to that run's runtime. `dyfj-l8 export` turns
+the run's new commits into a Mac branch. Both commands live with the
+operator's private tooling. In the machine:
+
+- **Each work run has its own plans.** `l8-seed.sh` installs them in
+  `/etc/dyfj/l8/runs/<run>`, from the provisioned profile with this run's
+  name and workspace. A new run therefore has a new executor policy digest,
+  and a grant applies to one run only. The provisioned run's plans in
+  `/etc/dyfj/l8` are not rewritten.
+- **The workspace is cloned inside the run's executor**, from a git bundle
+  on stdin, with group-writable files so the runtime's file tools can edit
+  them. When the branch has a root `package-lock.json`, root installs its
+  packages with `npm ci --ignore-scripts` from a copy of the manifests only,
+  because the executor has no network.
+- **One session at a time.** Every run's runtime shares the runtime uid's
+  firewall table and the executor socket, so `l8-work.sh` takes a lock.
+- **The REPL runs as `dyfj-rt` outside bubblewrap**, with no new privileges
+  and a cleared environment, connected to the runtime's socket in its home
+  (`/srv/dyfj/state/runtime/.dyfj/run/workbench.sock`). The runtime uid's
+  firewall table applies to it. It can read what that uid can read on the
+  machine: the runtime's delivered secrets, its home, and every workspace
+  through the shared group. It runs no tools; those go through the runtime
+  to the executor.
+- **Secrets last one session.** The runtime reads the files the broker
+  delivered for the secret variables it may take (`sandbox-runtime.ts`), and
+  `l8-work.sh` removes each file of those names when the session ends. Other
+  files in the secrets directory are left alone. The local store's runtime password is made at
+  provisioning, kept in a root-only file, and copied for the session only.
+- **The local store** gets the canonical schema when its `dolt` database
+  does not exist, and a `dyfj_runtime` user with the grants
+  `schema/README.md` lists. It holds no memories and no operator context. An
+  existing database is not migrated: a newer schema needs a new store.
 
 ## Running the CLIs
 
@@ -147,6 +187,8 @@ avoid the flag.
   `EACCES`, and the same binary run through `ld-linux-aarch64.so.1`
   succeeded. The floor stops a stray `execve` of a
   dropped file, not arbitrary computation.
+- **The work REPL is not sandboxed.** It runs as the runtime's uid with that
+  uid's read access to the machine; see Work sessions.
 - **The runtime's own secrets.** A compromised runtime dependency can use the
   runtime's secrets and reach its allowed destinations. The boundary stops it
   from reaching anything else.

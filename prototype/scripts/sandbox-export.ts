@@ -3,7 +3,8 @@
  * (BIT-735). Run on the Mac:
  *
  *   node sandbox-export.ts (--base <rev> | --root) --out <file.mbox>
- *                          [--machine dyfj-l8] [--max-bytes <n>]
+ *                          [--plans <dir>] [--machine dyfj-l8] [--max-bytes <n>]
+ *   node sandbox-export.ts status [--plans <dir>] [--machine dyfj-l8]
  *
  * The Mac starts the export and nothing on the Mac is mounted in the machine.
  * Inside the machine, `git format-patch` runs in a fresh executor sandbox: the
@@ -12,6 +13,12 @@
  * repository setting cannot run a program while exporting. The Mac reads at
  * most `--max-bytes` (8 MiB by default), checks the output is a format-patch
  * mbox of UTF-8 text, and writes it to a new file. Apply it with `git am`.
+ *
+ * `--plans` names the run's plan directory: `/etc/dyfj/l8` (the default, the
+ * machine's provisioned run) or `/etc/dyfj/l8/runs/<run>`, a run that
+ * `dyfj-l8 work` installed (BIT-779). The executor plan there decides which
+ * workspace `/work` is. `status` runs `git status --porcelain` the same way
+ * and prints the number of uncommitted paths, which an export leaves behind.
  */
 
 import { spawn } from "node:child_process";
@@ -20,7 +27,7 @@ import process from "node:process";
 import type { Readable } from "node:stream";
 
 const SANDBOX = "/usr/libexec/dyfj/dyfj-sandbox";
-const EXECUTOR_PLAN = "/etc/dyfj/l8/executor.plan.json";
+export const DEFAULT_PLANS = "/etc/dyfj/l8";
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
 
 /**
@@ -29,16 +36,16 @@ const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
  */
 const BASE = /^[A-Za-z0-9_][A-Za-z0-9._/-]*(?:~[0-9]+|\^)*$/;
 const MACHINE = /^[a-z0-9][a-z0-9-]*$/;
+/** The provisioned run's plans, or one run's under `runs/`. */
+const PLANS = /^\/etc\/dyfj\/l8(?:\/runs\/[a-z0-9][a-z0-9-]{0,62})?$/;
 
 /**
- * The command the Mac runs to read the commits since `base`, or every commit
- * when `base` is null.
+ * The machine command that runs `git` in a fresh executor sandbox for the
+ * run whose plans are in `plans`, with git's program-running config off.
  */
-export function exportCommand(machine: string, base: string | null): string[] {
+function executorGit(machine: string, plans: string, git: readonly string[]): string[] {
   if (!MACHINE.test(machine)) throw new Error("machine must be a plain name");
-  if (base !== null && (!BASE.test(base) || base.includes(".."))) {
-    throw new Error("base must be a plain revision name");
-  }
+  if (!PLANS.test(plans)) throw new Error("plans must be /etc/dyfj/l8 or /etc/dyfj/l8/runs/<run>");
   return [
     "orb",
     "-m",
@@ -53,7 +60,7 @@ export function exportCommand(machine: string, base: string | null): string[] {
     SANDBOX,
     "run",
     "--plan",
-    EXECUTOR_PLAN,
+    `${plans}/executor.plan.json`,
     "--cwd",
     "/work",
     "--",
@@ -64,13 +71,47 @@ export function exportCommand(machine: string, base: string | null): string[] {
     "core.fsmonitor=false",
     "-c",
     "core.pager=cat",
+    ...git,
+  ];
+}
+
+/**
+ * The command the Mac runs to read the commits since `base`, or every commit
+ * when `base` is null.
+ */
+export function exportCommand(
+  machine: string,
+  base: string | null,
+  plans: string = DEFAULT_PLANS,
+): string[] {
+  if (base !== null && (!BASE.test(base) || base.includes(".."))) {
+    throw new Error("base must be a plain revision name");
+  }
+  return executorGit(machine, plans, [
     "format-patch",
     "--stdout",
     "--no-ext-diff",
     "--no-textconv",
     ...(base === null ? ["--root", "HEAD"] : [`${base}..HEAD`]),
     "--",
-  ];
+  ]);
+}
+
+/** The command that lists the workspace's uncommitted paths, NUL-separated. */
+export function statusCommand(machine: string, plans: string = DEFAULT_PLANS): string[] {
+  return executorGit(machine, plans, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+}
+
+/** The number of entries in `git status --porcelain=v1 -z` output. */
+export function countStatus(output: Buffer): number {
+  // A rename or copy entry is followed by its source path as a second field.
+  const fields = output.toString("utf8").split("\u0000").filter((field) => field !== "");
+  let count = 0;
+  for (let i = 0; i < fields.length; i++) {
+    count++;
+    if (/^[RC]/.test(fields[i]!)) i++;
+  }
+  return count;
 }
 
 /**
@@ -133,6 +174,12 @@ export async function runExport(
   command: readonly string[],
   max: number,
 ): Promise<{ output: Buffer; patches: number }> {
+  const output = await runBounded(command, max);
+  return { output, ...checkMbox(output) };
+}
+
+/** Runs `command` and returns its output, within `max` bytes, or refuses. */
+export async function runBounded(command: readonly string[], max: number): Promise<Buffer> {
   const [program, ...rest] = command;
   const child = spawn(program!, rest, { stdio: ["ignore", "pipe", "inherit"] });
   const started = new Promise<void>((resolve, reject) => {
@@ -154,10 +201,17 @@ export async function runExport(
   }
   const code = await exited;
   if (code !== 0) throw new Error(`the export command exited ${code}`);
-  return { output, ...checkMbox(output) };
+  return output;
 }
 
 async function main(args: readonly string[]) {
+  const plans = flag(args, "--plans") ?? DEFAULT_PLANS;
+  if (args[0] === "status") {
+    const machine = flag(args, "--machine") ?? "dyfj-l8";
+    const output = await runBounded(statusCommand(machine, plans), DEFAULT_MAX_BYTES);
+    process.stdout.write(`uncommitted ${countStatus(output)}\n`);
+    return;
+  }
   const base = flag(args, "--base");
   const root = args.includes("--root");
   const out = flag(args, "--out");
@@ -170,7 +224,7 @@ async function main(args: readonly string[]) {
     throw new Error("--max-bytes must be a positive whole number");
   }
   const { output, patches } = await runExport(
-    exportCommand(machine, base ?? null),
+    exportCommand(machine, base ?? null, plans),
     max,
   );
   writeFileSync(out, output, { flag: "wx", mode: 0o644 });

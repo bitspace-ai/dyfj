@@ -11,6 +11,32 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Work sessions in the isolated machine, and export of their commits
+  (BIT-779).** The operator can seed a fresh run from a Mac branch, work in
+  it through the Workbench REPL attached to the run's attested runtime, and
+  take its commits back as a Mac branch.
+  - `sandbox/linux/l8-seed.sh` seeds a run from a git bundle on stdin. It
+    installs the run's own plans in `/etc/dyfj/l8/runs/<run>`, clones inside
+    the run's executor with group-writable files, and installs npm packages
+    from the lockfile with scripts off. A grant names one run's executor
+    policy, so it does not carry to the next run.
+  - `sandbox/linux/l8-work.sh` runs one session: the machine's session lock,
+    the grant state, `dyfj-sandbox serve`, and the REPL in the operator's
+    terminal, as the runtime's uid with no new privileges. When the session
+    ends it stops the pair, removes both sockets and the runtime's delivered
+    secret files, and releases the lock. `l8-work.sh stop` cleans up after a
+    lost terminal.
+  - `scripts/sandbox-runtime.ts` is the runtime's entry point in the machine.
+    It sets the runtime's declared secret variables from the delivered files,
+    never overwriting a set variable, and runs the server with its idle stop.
+  - `sandbox-export.ts` takes `--plans <dir>` for a work run, and `status`
+    counts the uncommitted paths an export would leave behind.
+  - `provision.sh` installs the REPL, and gives the local Dolt store the
+    canonical schema and a least-privilege `dyfj_runtime` user whose password
+    is made in the machine and handed to the runtime per session.
+  - The work REPL is not sandboxed: it can read what the runtime's uid can
+    read on the machine. The sandbox README states this.
+
 - **On the contained Linux target, a bash or git call can run without a
   prompt when the executor's containment is attested and the operator has
   granted its envelope (BIT-736).** Approval then comes from the boundary,
