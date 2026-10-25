@@ -7,8 +7,8 @@
 #
 # It empties its run's workspace and commits test files there, so it runs
 # only on a disposable run: the provisioned profile's run ID must start with
-# `uat-` or `acc-`, and its workspace must be that run's own directory,
-# /srv/dyfj/work/<run>. Any other run is refused before anything is touched:
+# `uat-` or `acc-`, and its configured workspace must be exactly the path
+# /srv/dyfj/work/<run>, and not a symbolic link. Any other run is refused before anything is touched:
 # run-0001, an operator's work run (`wk-`), or a profile it cannot read.
 #
 # Synthetic data only: the canaries it plants are random strings made here,
@@ -34,6 +34,8 @@ disposable_workspace() { # profile.json
     { echo "acceptance: run $run is not disposable (its ID must start with uat- or acc-); refusing, nothing touched" >&2; exit 2; }
   [[ $work == "/srv/dyfj/work/$run" ]] ||
     { echo "acceptance: workspace $work is not run $run's own; refusing, nothing touched" >&2; exit 2; }
+  [[ ! -L $work ]] ||
+    { echo "acceptance: workspace $work is a symbolic link; refusing, nothing touched" >&2; exit 2; }
   echo "$work"
 }
 if [[ ${1:-} == --check-run ]]; then

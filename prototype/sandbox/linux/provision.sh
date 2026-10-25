@@ -7,9 +7,10 @@
 #
 # The staging directory holds dyfj.bundle (a git bundle of the repository),
 # dyfj-sandbox (the launcher) and dyfj-repl (the Workbench REPL), both built
-# for linux-arm64, and this script. Nothing here reads a secret. It makes one:
-# the local Dolt store's runtime password, random, kept in a root-only file
-# in the machine and never printed (BIT-779). The Node and Dolt archives are pinned to a
+# for linux-arm64, and this script. It reads no secret from outside the
+# machine. It makes one, the local Dolt store's runtime password: random,
+# kept in a root-only file in the machine, read back only to create the
+# store's runtime user, and never printed (BIT-779). The Node and Dolt archives are pinned to a
 # version and a SHA-256 digest; the two CLIs to an npm version, without a
 # digest; the Debian packages come from the distribution's signed archive at
 # whatever version it serves. The script ends by checking that the Mac

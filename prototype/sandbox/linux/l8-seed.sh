@@ -114,12 +114,15 @@ if [[ -f $WORK/package-lock.json ]]; then
     while IFS= read -r -d '' file; do
       install -D -m 0644 "$WORK/$file" "$npm_stage/$file"
     done
-  (cd "$npm_stage" && npm ci --ignore-scripts --no-fund --no-audit >/dev/null)
+  (umask 002 && cd "$npm_stage" && npm ci --ignore-scripts --no-fund --no-audit >/dev/null)
   (cd "$npm_stage" && find . -name node_modules -prune -type d -print0) |
     while IFS= read -r -d '' dir; do
       rm -rf "${WORK:?}/$dir"
       mv "$npm_stage/$dir" "$WORK/$dir"
       chown -R dyfj-ex:dyfj-work "$WORK/$dir"
+      # Readable and writable by the run's roles through dyfj-work, whatever
+      # root's umask was.
+      chmod -R u+rwX,g+rwX,o-rwx "$WORK/$dir"
     done
   echo "installed packages"
 fi

@@ -19,10 +19,12 @@
 #      as dyfj-rt, with no new privileges and a cleared environment (with
 #      --probe, work-probe.ts instead, for acceptance);
 #   5. on any exit once the lock is taken (the REPL ending, Ctrl-C reaching
-#      this script, a hangup, or a failed start): stops the pair (the
-#      supervisor ends the lease and kills any executor), removes both
-#      sockets and each delivered file named for a secret the runtime may
-#      take, and releases the lock.
+#      this script, a hangup, a TERM from `stop`, or a failed start): stops
+#      the client and the pair (the supervisor ends the lease and kills any
+#      executor), removes both sockets and each delivered file named for a
+#      secret the runtime may take, and releases the lock. The client runs
+#      as a child the script waits on, so a signal reaches the cleanup at
+#      once, even while the client is stuck.
 #
 # Nothing here prints a secret. Delivered secrets are named, never read.
 set -uo pipefail
@@ -109,8 +111,14 @@ if ! flock -n 9; then
 fi
 
 serve_pid=
+client_pid=
 cleanup() {
   trap - EXIT INT TERM HUP
+  if [[ -n $client_pid ]] && kill -0 "$client_pid" 2>/dev/null; then
+    kill -TERM "$client_pid" 2>/dev/null
+    for _ in $(seq 1 30); do kill -0 "$client_pid" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL "$client_pid" 2>/dev/null
+  fi
   if [[ -n $serve_pid ]] && kill -0 "$serve_pid" 2>/dev/null; then
     # serve leads its own process group (setsid). Its runtime and executors
     # die with it (--die-with-parent), and the lease ends.
@@ -176,12 +184,18 @@ fi
 grep -h '^dyfj-sandbox: enforcement probe' "$log" | tail -n 1
 
 client_env=(env -i PATH=/usr/bin:/bin HOME="$RUNTIME_HOME" LANG=C.UTF-8 TERM="${TERM:-xterm-256color}" DYFJ_SOCKET="$SOCKET")
+# The client runs asynchronously and the script waits on it: bash runs a
+# trap only between commands, so a foreground client would hold off the
+# cleanup until it exits. `<&0` keeps the terminal as its stdin, which bash
+# would otherwise replace with /dev/null for an asynchronous command.
 if [[ -n $probe ]]; then
   runuser -u dyfj-rt -- setpriv --no-new-privs "${client_env[@]}" PATH=/usr/local/bin:/usr/bin:/bin \
-    node "$CODE/sandbox/linux/work-probe.ts" "$SOCKET"
+    node "$CODE/sandbox/linux/work-probe.ts" "$SOCKET" <&0 &
 else
   repl_args=(--workspace /work)
   [[ -n $model ]] && repl_args+=(--model "$model")
   [[ -n $approve_paid ]] && repl_args+=(--approve-paid)
-  runuser -u dyfj-rt -- setpriv --no-new-privs "${client_env[@]}" "$REPL" "${repl_args[@]}"
+  runuser -u dyfj-rt -- setpriv --no-new-privs "${client_env[@]}" "$REPL" "${repl_args[@]}" <&0 &
 fi
+client_pid=$!
+wait "$client_pid"
