@@ -18,13 +18,9 @@ const client = await connectUnixClient(socket);
 try {
   const status = await client.request("runtime/status") as { runtime?: { code?: unknown } };
   process.stdout.write(`work-probe: runtime/status ok${status.runtime === undefined ? " (no runtime field)" : ""}\n`);
-  const sessions = await client.request("sessions/list", {});
-  const count = Array.isArray(sessions)
-    ? sessions.length
-    : Array.isArray((sessions as { sessions?: unknown[] })?.sessions)
-    ? (sessions as { sessions: unknown[] }).sessions.length
-    : "?";
-  process.stdout.write(`work-probe: sessions/list ok (${count} sessions)\n`);
+  // The store answered: on an empty or missing database this call fails.
+  await client.request("sessions/list", {});
+  process.stdout.write("work-probe: sessions/list ok\n");
 } catch (error) {
   process.stdout.write(`work-probe: FAIL ${(error as Error).message}\n`);
   process.exitCode = 1;

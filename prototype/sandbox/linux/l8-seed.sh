@@ -48,7 +48,10 @@ stage=$(mktemp -d /var/tmp/dyfj-l8-seed.XXXXXX)
 trap 'rm -rf "$stage"' EXIT
 chmod 0700 "$stage"
 cat >"$stage/seed.bundle"
-git bundle verify -q "$stage/seed.bundle" >/dev/null 2>&1 || { echo "stdin is not a complete git bundle" >&2; exit 1; }
+# list-heads reads the bundle without a repository; the fetch below checks
+# its objects.
+git bundle list-heads "$stage/seed.bundle" "refs/heads/$BRANCH" 2>/dev/null | grep -q . ||
+  { echo "stdin is not a git bundle holding refs/heads/$BRANCH" >&2; exit 1; }
 
 echo "== workspace and plans for $RUN"
 install -d -o dyfj-ex -g dyfj-work -m 2770 "$WORK"

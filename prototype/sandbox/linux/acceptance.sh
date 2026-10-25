@@ -307,6 +307,7 @@ left=$(ls /run/dyfj-exec/exec.sock /srv/dyfj/state/runtime/.dyfj/run/workbench.s
 pgrep -ax dyfj-sandbox >/dev/null && result fail "work: no supervisor outlives the session" "$(pgrep -ax dyfj-sandbox)" \
   || result pass "work: no supervisor outlives the session" "none"
 rm -rf "/srv/dyfj/work/$WK" "/srv/dyfj/work/$WK-cli" "/etc/dyfj/l8/runs/$WK" "/srv/dyfj/state/l8-logs/$WK.log" "$wk_src"
+rm -f /run/dyfj/secrets/ANTHROPIC_API_KEY
 
 echo "== 9. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)
