@@ -22,10 +22,13 @@
 #      so this is the only way a seeded tree gets its packages.
 #
 # It prints the executor policy's digest, which a grant must name. It refuses
-# a run that exists, and run-0001. Nothing here reads a secret.
+# a run that exists, and run-0001, and a bundle over 2 GiB. If any step
+# fails, it removes the workspaces and plans it created, so the run can be
+# seeded again. Nothing here reads a secret.
 set -euo pipefail
 
 SANDBOX=/usr/libexec/dyfj/dyfj-sandbox
+MAX_BUNDLE_BYTES=$((2 * 1024 * 1024 * 1024))
 INSTALL=/opt/dyfj/prototype/scripts/sandbox-install.ts
 
 [[ $(id -u) -eq 0 ]] || { echo "l8-seed.sh must run as root" >&2; exit 2; }
@@ -45,18 +48,30 @@ for path in "$WORK" "$WORK-cli" "$PLANS"; do
 done
 
 stage=$(mktemp -d /var/tmp/dyfj-l8-seed.XXXXXX)
-trap 'rm -rf "$stage"' EXIT
+created=()
+on_exit() {
+  local status=$?
+  if [[ $status -ne 0 && ${#created[@]} -gt 0 ]]; then
+    rm -rf "${created[@]}"
+    echo "seeding failed; removed $RUN's workspaces and plans" >&2
+  fi
+  rm -rf "$stage"
+}
+trap on_exit EXIT
 chmod 0700 "$stage"
-cat >"$stage/seed.bundle"
+head -c $((MAX_BUNDLE_BYTES + 1)) >"$stage/seed.bundle"
+[[ $(stat -c %s "$stage/seed.bundle") -le $MAX_BUNDLE_BYTES ]] || { echo "the bundle is over 2 GiB" >&2; exit 1; }
 # list-heads reads the bundle without a repository; the fetch below checks
 # its objects.
 git bundle list-heads "$stage/seed.bundle" "refs/heads/$BRANCH" 2>/dev/null | grep -q . ||
   { echo "stdin is not a git bundle holding refs/heads/$BRANCH" >&2; exit 1; }
 
 echo "== workspace and plans for $RUN"
+install -d -o root -g root -m 0755 /etc/dyfj/l8/runs
+created=("$WORK" "$WORK-cli" "$PLANS")
 install -d -o dyfj-ex -g dyfj-work -m 2770 "$WORK"
 install -d -o dyfj-cli -g dyfj-work -m 2770 "$WORK-cli"
-install -d -o root -g root -m 0755 /etc/dyfj/l8/runs "$PLANS"
+install -d -o root -g root -m 0755 "$PLANS"
 node -e '
   const fs = require("fs");
   const [template, out, run, repository] = process.argv.slice(1);
@@ -74,13 +89,16 @@ chmod 0644 "$PLANS"/*.json
 
 echo "== clone $BRANCH in the executor"
 # The bundle sits in the workspace only while the executor fetches from it.
+# The fetch goes to a temporary ref, so the branch may be any name,
+# including the one `git init` leaves unborn.
 install -o dyfj-ex -g dyfj-work -m 0440 "$stage/seed.bundle" "$WORK/.dyfj-seed.bundle"
 env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp GIT_CONFIG_NOSYSTEM=1 \
   "$SANDBOX" run --plan "$PLANS/executor.plan.json" --cwd /work -- \
   /usr/bin/sh -c 'umask 002 &&
     git -c core.hooksPath=/dev/null init -q &&
-    git -c core.hooksPath=/dev/null -c core.fsmonitor=false fetch -q ./.dyfj-seed.bundle "refs/heads/$1:refs/heads/$1" &&
-    git -c core.hooksPath=/dev/null -c core.fsmonitor=false checkout -q "$1" &&
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false fetch -q ./.dyfj-seed.bundle "refs/heads/$1:refs/dyfj-seed/head" &&
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false checkout -q -B "$1" refs/dyfj-seed/head &&
+    git update-ref -d refs/dyfj-seed/head &&
     git config core.sharedRepository group &&
     git config user.name "$2" &&
     git config user.email "$3" &&
@@ -107,3 +125,4 @@ if [[ -f $WORK/package-lock.json ]]; then
 fi
 
 node -e 'console.log("executor policy " + JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).identity.digest)' "$PLANS/executor.policy.json"
+created=()

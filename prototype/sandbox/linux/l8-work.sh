@@ -18,9 +18,11 @@
 #   4. attaches the Workbench REPL to the runtime's socket in this terminal,
 #      as dyfj-rt, with no new privileges and a cleared environment (with
 #      --probe, work-probe.ts instead, for acceptance);
-#   5. on exit, Ctrl-C reaching this script, or hangup: stops the pair (the
+#   5. on any exit once the lock is taken (the REPL ending, Ctrl-C reaching
+#      this script, a hangup, or a failed start): stops the pair (the
 #      supervisor ends the lease and kills any executor), removes both
-#      sockets, removes every delivered runtime secret, and releases the lock.
+#      sockets and each delivered file named for a secret the runtime may
+#      take, and releases the lock.
 #
 # Nothing here prints a secret. Delivered secrets are named, never read.
 set -uo pipefail
@@ -42,26 +44,38 @@ DOLT_PASSWORD_FILE=/etc/dyfj/dolt-runtime.password
 
 [[ $(id -u) -eq 0 ]] || { echo "l8-work.sh must run as root" >&2; exit 2; }
 
-# `l8-work.sh stop` ends a session whose terminal went away: it signals the
-# session's script, whose cleanup runs, then stops any pair still serving a
-# work run's plans, selected by pid, and removes what a session leaves.
+# Each name the runtime may take from a delivered file, from the code that
+# reads them, so cleanup removes exactly those. Listed before anything is
+# taken or written, so a failure here leaves nothing behind.
+mapfile -t DELIVERABLE < <(cd "$CODE" && node -e \
+  'import("./scripts/sandbox-runtime.ts").then((m) => console.log(m.deliverableNames().join("\n")))')
+[[ ${#DELIVERABLE[@]} -gt 0 ]] || { echo "cannot list the runtime's secret names" >&2; exit 1; }
+
+# The pids of `dyfj-sandbox serve` processes serving a work run's plans.
+work_serves() {
+  local pid
+  for pid in $(pgrep -x dyfj-sandbox || true); do
+    tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -- ' serve .*--runtime-plan /etc/dyfj/l8/runs/' && echo "$pid"
+  done
+}
+
+# `l8-work.sh stop` ends a session whose terminal went away. It signals the
+# session's script, whose own cleanup runs, and any pair still serving a
+# work run's plans, selected by pid. It then takes the session lock, so no
+# new session can start while it removes what a session leaves, and it
+# removes nothing unless every such pair has exited.
 if [[ ${1:-} == stop ]]; then
   holder=$(cat "$PIDFILE" 2>/dev/null || true)
-  if [[ $holder =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
-    kill -TERM "$holder"
-    for _ in $(seq 1 60); do kill -0 "$holder" 2>/dev/null || break; sleep 0.1; done
-  fi
-  for pid in $(pgrep -x dyfj-sandbox || true); do
-    if tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -q -- ' serve .*--runtime-plan /etc/dyfj/l8/runs/'; then
-      kill -TERM "$pid" 2>/dev/null && echo "stopped serve $pid"
-    fi
-  done
-  sleep 0.5
+  [[ $holder =~ ^[0-9]+$ ]] && kill -TERM "$holder" 2>/dev/null
+  for pid in $(work_serves); do kill -TERM "$pid" 2>/dev/null && echo "signalled serve $pid"; done
+  exec 9>"$LOCK"
+  flock -w 10 9 || { echo "dyfj-l8: a session still holds the lock (pid ${holder:-unknown}); nothing removed" >&2; exit 1; }
+  for _ in $(seq 1 50); do [[ -z $(work_serves) ]] && break; sleep 0.1; done
+  left=$(work_serves | tr '\n' ' ')
+  [[ -z $left ]] || { echo "dyfj-l8: serve still running (pid $left); nothing removed" >&2; exit 1; }
   rm -f "$EXEC_SOCKET" "$SOCKET" "$PIDFILE"
-  for name in $(cd "$CODE" && node -e 'import("./scripts/sandbox-runtime.ts").then((m) => console.log(m.deliverableNames().join(" ")))'); do
-    rm -f "${SECRETS:?}/$name"
-  done
-  echo "dyfj-l8: no session is live"
+  for name in "${DELIVERABLE[@]}"; do rm -f "${SECRETS:?}/$name"; done
+  echo "dyfj-l8: no session is live; its sockets and the runtime's secret files are removed"
   exit 0
 fi
 
@@ -93,13 +107,6 @@ if ! flock -n 9; then
   echo "another dyfj-l8 session is live (pid $(cat "$PIDFILE" 2>/dev/null || echo unknown)); end it, or run dyfj-l8 stop" >&2
   exit 3
 fi
-echo $$ >"$PIDFILE"
-
-# Each name the runtime may take from a delivered file, from the code that
-# reads them, so cleanup removes exactly those.
-mapfile -t DELIVERABLE < <(cd "$CODE" && node -e \
-  'import("./scripts/sandbox-runtime.ts").then((m) => console.log(m.deliverableNames().join("\n")))')
-[[ ${#DELIVERABLE[@]} -gt 0 ]] || { echo "cannot list the runtime's secret names" >&2; exit 1; }
 
 serve_pid=
 cleanup() {
@@ -120,6 +127,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
+# Written once cleanup is in place, so every exit from here removes it.
+echo $$ >"$PIDFILE"
 
 # The grant applies only when it names this run's executor policy.
 grant_state=$(node -e '

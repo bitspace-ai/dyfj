@@ -200,5 +200,6 @@ describe("the uncommitted-work count", () => {
     assert.strictEqual(countStatus(Buffer.alloc(0)), 0);
     assert.strictEqual(countStatus(Buffer.from(" M a.ts\0?? new file.ts\0")), 2);
     assert.strictEqual(countStatus(Buffer.from("R  new.ts\0old.ts\0 M b.ts\0")), 2);
+    assert.strictEqual(countStatus(Buffer.from(" R new.ts\0old.ts\0")), 1);
   });
 });

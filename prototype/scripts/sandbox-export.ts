@@ -104,12 +104,13 @@ export function statusCommand(machine: string, plans: string = DEFAULT_PLANS): s
 
 /** The number of entries in `git status --porcelain=v1 -z` output. */
 export function countStatus(output: Buffer): number {
-  // A rename or copy entry is followed by its source path as a second field.
+  // A rename or copy entry, marked in either status column, is followed by
+  // its source path as a second field.
   const fields = output.toString("utf8").split("\u0000").filter((field) => field !== "");
   let count = 0;
   for (let i = 0; i < fields.length; i++) {
     count++;
-    if (/^[RC]/.test(fields[i]!)) i++;
+    if (/^(?:[RC].|.[RC])/.test(fields[i]!)) i++;
   }
   return count;
 }

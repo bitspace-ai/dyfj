@@ -42,7 +42,17 @@ describe("the secret environment", () => {
     assert.deepStrictEqual(Object.keys(set), ["ANTHROPIC_API_KEY"]);
   });
 
-  it("never overwrites a variable already set", () => {
+  it("keeps a leading byte-order mark", () => {
+    const set = secretEnvironment(["DOLT_PASSWORD"], () => Buffer.from(`\uFEFF${CANARY}`), {});
+    assert.strictEqual(set.DOLT_PASSWORD, `\uFEFF${CANARY}`);
+  });
+
+  it("treats an empty variable as unset", () => {
+    const set = secretEnvironment(["DOLT_PASSWORD"], () => Buffer.from(CANARY), { DOLT_PASSWORD: "" });
+    assert.deepStrictEqual(set, { DOLT_PASSWORD: CANARY });
+  });
+
+  it("never overwrites a non-empty variable", () => {
     const set = secretEnvironment(
       ["ANTHROPIC_API_KEY"],
       files({ ANTHROPIC_API_KEY: CANARY }),

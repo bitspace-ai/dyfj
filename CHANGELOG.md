@@ -28,7 +28,8 @@ README are tracked separately in its Revision history section.
     lost terminal.
   - `scripts/sandbox-runtime.ts` is the runtime's entry point in the machine.
     It sets the runtime's declared secret variables from the delivered files,
-    never overwriting a set variable, and runs the server with its idle stop.
+    never overwriting a non-empty variable, and runs the server with its idle
+    stop.
   - `sandbox-export.ts` takes `--plans <dir>` for a work run, and `status`
     counts the uncommitted paths an export would leave behind.
   - `provision.sh` installs the REPL, and gives the local Dolt store the
