@@ -788,11 +788,13 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- **A runtime that refuses to start over its configuration prints one line
-  and exits non-zero (BIT-766).** A config error, such as a default max tool
-  steps above the tool-step ceiling, surfaced as a raw Node stack trace. It is
-  now a single `dyfj runtime: config: …` line on stderr with exit status 1.
-  Any other startup failure still shows its stack.
+- **A runtime that refuses to start over its configuration reports one line
+  (BIT-766).** A config error, such as a default max tool steps above the
+  tool-step ceiling, surfaced as a raw Node stack trace. The runtime entry now
+  writes a single `dyfj runtime: config: …` line to stderr and sets the exit
+  status to 1, then lets Node exit once stderr has drained. It covers errors
+  whose message starts with `config:`; any other startup failure still shows
+  its stack.
 
 - **An MCP tool call's connect and version probe use the call bound.** They
   ran on the 5 s discovery bound, so a slow server failed a call before its

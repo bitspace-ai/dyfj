@@ -4,8 +4,12 @@
  * A misconfigured runtime refuses to boot, and the operator needs the reason,
  * not a Node stack trace. Config errors carry the `config:` prefix every
  * config validator already writes, so the guard reports those as one stderr
- * line and a non-zero exit. Any other failure is a bug, not an operator
+ * line and a non-zero exit status. Any other failure is a bug, not an operator
  * mistake, and keeps its stack: it is rethrown untouched.
+ *
+ * The guard sets the exit status and returns; it never calls `process.exit`,
+ * which can cut off a stderr line still buffered on a pipe. Node exits on its
+ * own once stderr has drained and nothing else keeps the event loop alive.
  */
 
 /** Exit status of a runtime that refused to start over its configuration. */
@@ -27,12 +31,14 @@ export function configErrorLine(error: unknown): string | undefined {
 export interface RuntimeEntryPorts {
   /** Writes one line to stderr. */
   say: (line: string) => void;
-  exit: (code: number) => void;
+  /** Records the exit status the process ends with (`process.exitCode`). */
+  setExitCode: (code: number) => void;
 }
 
 /**
  * Runs the runtime's boot. A config error becomes one stderr line and a
- * non-zero exit; anything else is rethrown with its stack.
+ * non-zero exit status, set without exiting; anything else is rethrown with
+ * its stack.
  */
 export async function runRuntimeEntry(
   boot: () => Promise<void>,
@@ -44,6 +50,6 @@ export async function runRuntimeEntry(
     const line = configErrorLine(error);
     if (line === undefined) throw error;
     ports.say(line);
-    ports.exit(CONFIG_ERROR_EXIT_CODE);
+    ports.setExitCode(CONFIG_ERROR_EXIT_CODE);
   }
 }

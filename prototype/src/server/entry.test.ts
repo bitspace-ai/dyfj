@@ -10,12 +10,16 @@ import {
 
 function ports() {
   const said: string[] = [];
-  const exit = mock.fn((_code: number) => {});
-  return { said, exit, ports: { say: (l: string) => said.push(l), exit } };
+  const setExitCode = mock.fn((_code: number) => {});
+  return {
+    said,
+    setExitCode,
+    ports: { say: (l: string) => said.push(l), setExitCode },
+  };
 }
 
 describe("runtime entry guard", () => {
-  it("reports a config error as one line and exits non-zero", async () => {
+  it("reports a config error as one line and sets a non-zero exit status", async () => {
     const p = ports();
     await runRuntimeEntry(
       () =>
@@ -29,8 +33,8 @@ describe("runtime entry guard", () => {
     assert.deepEqual(p.said, [
       "dyfj runtime: config: the default max tool steps (8) is above the tool-step ceiling (4)",
     ]);
-    assert.equal(p.exit.mock.callCount(), 1);
-    assert.equal(p.exit.mock.calls[0].arguments[0], CONFIG_ERROR_EXIT_CODE);
+    assert.equal(p.setExitCode.mock.callCount(), 1);
+    assert.equal(p.setExitCode.mock.calls[0].arguments[0], CONFIG_ERROR_EXIT_CODE);
     assert.notEqual(CONFIG_ERROR_EXIT_CODE, 0);
   });
 
@@ -49,7 +53,7 @@ describe("runtime entry guard", () => {
     assert.equal(p.said.length, 1);
     assert.match(p.said[0], /above the tool-step ceiling \(4\)/);
     assert.doesNotMatch(p.said[0], /\n|\bat .*\.ts/);
-    assert.equal(p.exit.mock.callCount(), 1);
+    assert.equal(p.setExitCode.mock.callCount(), 1);
   });
 
   it("keeps the report to a single line", () => {
@@ -67,13 +71,13 @@ describe("runtime entry guard", () => {
       (error) => error === failure,
     );
     assert.deepEqual(p.said, []);
-    assert.equal(p.exit.mock.callCount(), 0);
+    assert.equal(p.setExitCode.mock.callCount(), 0);
   });
 
   it("does nothing when the boot succeeds", async () => {
     const p = ports();
     await runRuntimeEntry(() => Promise.resolve(), p.ports);
     assert.deepEqual(p.said, []);
-    assert.equal(p.exit.mock.callCount(), 0);
+    assert.equal(p.setExitCode.mock.callCount(), 0);
   });
 });

@@ -657,9 +657,12 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   // A config error is the operator's to fix: one stderr line and a non-zero
-  // exit, not a stack trace (BIT-766).
+  // exit status, not a stack trace (BIT-766). The status is set, not forced
+  // with process.exit, so Node exits after stderr drains.
   await runRuntimeEntry(main, {
     say: (line) => console.error(line),
-    exit: (code) => process.exit(code),
+    setExitCode: (code) => {
+      process.exitCode = code;
+    },
   });
 }
