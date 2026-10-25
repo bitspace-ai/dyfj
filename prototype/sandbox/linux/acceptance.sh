@@ -322,7 +322,10 @@ owner=$(stat -c '%U %a' "/srv/dyfj/work/$WK/note.txt" 2>&1)
 printf 'canary-%s' "$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" |
   install -o dyfj-rt -g dyfj-work -m 0400 /dev/stdin /run/dyfj/secrets/ANTHROPIC_API_KEY
 session=$(bash "$HERE/l8-work.sh" "$WK" --probe 2>&1)
+session_exit=$?
 echo "$session" | sed 's/^/      /'
+[[ $session_exit -eq 0 ]] && result pass "work: the session exits with the client's status" "exit $session_exit" \
+  || result fail "work: the session exits with the client's status" "exit $session_exit"
 grep -q '^dyfj-l8: no grant for sha256:' <<<"$session" && result pass "work: the session says there is no grant" "$(grep '^dyfj-l8: no grant' <<<"$session")" \
   || result fail "work: the session says there is no grant" "see output"
 grep -q 'sandbox-runtime: set ANTHROPIC_API_KEY, DOLT_PASSWORD from /secrets' "/srv/dyfj/state/l8-logs/$WK.log" \
@@ -337,6 +340,33 @@ pgrep -ax dyfj-sandbox >/dev/null && result fail "work: no supervisor outlives t
   || result pass "work: no supervisor outlives the session" "none"
 rm -rf "/srv/dyfj/work/$WK" "/srv/dyfj/work/$WK-cli" "/etc/dyfj/l8/runs/$WK" "/srv/dyfj/state/l8-logs/$WK.log" "$wk_src"
 rm -f /run/dyfj/secrets/ANTHROPIC_API_KEY
+
+echo "== 8b. stop never signals a process the pid file only names"
+# A stale pid file can name a live, unrelated process after pid reuse. Each
+# case plants one naming a sleep made here, runs `l8-work.sh stop`, and
+# checks the sleep survived.
+start_of() { local s; s=$(cat "/proc/$1/stat"); s=${s##*) }; read -r -a f <<<"$s"; echo "${f[19]}"; }
+sleep 300 & victim=$!
+printf '%s %s\n' "$victim" "$(start_of "$victim")" >/run/dyfj/l8-work.pid
+out=$(bash "$HERE/l8-work.sh" stop 2>&1)
+kill -0 "$victim" 2>/dev/null && [[ ! -e /run/dyfj/l8-work.pid ]] && grep -q 'which was not signalled' <<<"$out" \
+  && result pass "stop: with the lock free, a stale pid file is removed and its pid not signalled" "$(head -1 <<<"$out")" \
+  || result fail "stop: with the lock free, a stale pid file is removed and its pid not signalled" "$out"
+# The lock held by something else, and the pid file naming the sleep with
+# its true start time (its command is not l8-work.sh), then with a wrong
+# start time (as after reuse).
+# One process holds the lock: the subshell takes it, then becomes the sleep.
+( exec 8>/run/dyfj/l8-work.lock && flock 8 && exec sleep 300 ) & holder=$!
+for _ in $(seq 1 50); do flock -n /run/dyfj/l8-work.lock true 2>/dev/null || break; sleep 0.1; done
+for recorded in "$(start_of "$victim")" 1; do
+  printf '%s %s\n' "$victim" "$recorded" >/run/dyfj/l8-work.pid
+  out=$(bash "$HERE/l8-work.sh" stop 2>&1); stop_exit=$?
+  kill -0 "$victim" 2>/dev/null && [[ $stop_exit -ne 0 ]] && grep -q 'does not name a live session; nothing signalled' <<<"$out" \
+    && result pass "stop: with the lock held, a pid file not naming a session is not signalled (start $recorded)" "exit $stop_exit" \
+    || result fail "stop: with the lock held, a pid file not naming a session is not signalled (start $recorded)" "$out"
+done
+kill "$holder" "$victim" 2>/dev/null; wait "$holder" "$victim" 2>/dev/null
+rm -f /run/dyfj/l8-work.pid
 
 echo "== 9. timings"
 t0=$(date +%s%N); in_role executor /work true; t1=$(date +%s%N)

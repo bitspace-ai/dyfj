@@ -174,8 +174,24 @@ if ! dolt_root sql -r csv -q 'show databases' | grep -qx dolt; then
   done
   echo "created database dolt from schema/current and schema/catalog"
 fi
+# Exactly the grants 'dyfj_runtime'@'localhost' must hold, as Dolt prints
+# them, sorted. The user is made again when its password file is missing or
+# its grants differ in any way (a missing user has none).
+EXPECTED_RUNTIME_GRANTS=$(LC_ALL=C sort <<'EOF'
+GRANT USAGE ON *.* TO `dyfj_runtime`@`localhost`
+GRANT SELECT, INSERT ON `dolt`.`events` TO `dyfj_runtime`@`localhost`
+GRANT SELECT, INSERT, UPDATE ON `dolt`.`memories` TO `dyfj_runtime`@`localhost`
+GRANT SELECT ON `dolt`.`models` TO `dyfj_runtime`@`localhost`
+GRANT SELECT ON `dolt`.`prompts` TO `dyfj_runtime`@`localhost`
+GRANT SELECT, INSERT, UPDATE ON `dolt`.`sessions` TO `dyfj_runtime`@`localhost`
+EOF
+)
+runtime_grants() { # the user's grants, one per line, sorted; nothing when it is missing
+  dolt_root sql -r csv -q "SHOW GRANTS FOR 'dyfj_runtime'@'localhost'" 2>/dev/null |
+    sed -e 1d -e 's/^"//' -e 's/"$//' | LC_ALL=C sort
+}
 if [[ ! -s $DOLT_PASSWORD_FILE ]] ||
-  ! dolt_root sql -r csv -q "select user from mysql.user where user='dyfj_runtime'" | grep -qx dyfj_runtime; then
+  [[ $(runtime_grants) != "$EXPECTED_RUNTIME_GRANTS" ]]; then
   (umask 077 && head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$DOLT_PASSWORD_FILE")
   chown root:root "$DOLT_PASSWORD_FILE"
   chmod 0600 "$DOLT_PASSWORD_FILE"
@@ -244,4 +260,10 @@ check "the store's runtime password is readable by root only" bash -c \
   '[[ $(stat -c %U%a /etc/dyfj/dolt-runtime.password) == root600 ]]'
 check "the store has the runtime's tables" bash -c \
   "cd /srv/dyfj/dolt && runuser -u dyfj-db -- env HOME=/srv/dyfj/dolt DOLT_CLI_PASSWORD= dolt --host 127.0.0.1 --port 3306 --no-tls --user root --use-db dolt sql -r csv -q 'show tables' | grep -qx sessions"
+if [[ $(runtime_grants) == "$EXPECTED_RUNTIME_GRANTS" ]]; then
+  echo "ok    'dyfj_runtime'@'localhost' holds exactly its grants"
+else
+  echo "FAIL  'dyfj_runtime'@'localhost' holds exactly its grants"
+  fail=1
+fi
 exit $fail

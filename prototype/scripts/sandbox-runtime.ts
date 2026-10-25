@@ -18,8 +18,8 @@
  * It then runs `src/server/main.ts --autostarted` as its child, so the
  * runtime stops 10 s after its last client leaves, forwards SIGINT, SIGTERM
  * and SIGHUP to it, and exits with its status, or 128 plus the signal's
- * number when a signal ended it. The supervisor's lease follows this
- * process.
+ * number when a signal ended it, or 1 when it could not be started. The
+ * supervisor's lease follows this process.
  */
 
 import { spawn } from "node:child_process";
@@ -74,7 +74,42 @@ function readSecret(dir: string, name: string): Buffer | undefined {
   }
 }
 
-function main(args: readonly string[]) {
+/**
+ * Runs `program` with `args` and `env` as the server child, forwarding
+ * SIGINT, SIGTERM and SIGHUP to it, and resolves to the exit status to take:
+ * the child's, 128 plus the signal's number when a signal ended it, or 1 when
+ * the child could not be started. A launch failure is reported by its error
+ * code alone, so no part of `env` reaches the message.
+ */
+export function runServer(
+  program: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+  report: (line: string) => void = (line) => void process.stderr.write(line),
+): Promise<number> {
+  return new Promise((resolve) => {
+    const child = spawn(program, args, { stdio: "inherit", env });
+    const forward = (signal: NodeJS.Signals) => () => void child.kill(signal);
+    const handlers = (["SIGINT", "SIGTERM", "SIGHUP"] as const).map((signal) => {
+      const handler = forward(signal);
+      process.on(signal, handler);
+      return [signal, handler] as const;
+    });
+    const done = (status: number) => {
+      for (const [signal, handler] of handlers) process.off(signal, handler);
+      resolve(status);
+    };
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      report(`sandbox-runtime: cannot start the server (${error.code ?? "unknown error"})\n`);
+      done(1);
+    });
+    child.once("exit", (code, signal) => {
+      done(code ?? (signal === null ? 1 : 128 + (constants.signals[signal] ?? 0)));
+    });
+  });
+}
+
+async function main(args: readonly string[]) {
   const at = args.indexOf("--secrets");
   const dir = at === -1 ? SECRETS_DIR : args[at + 1];
   if (dir === undefined) throw new Error("--secrets needs a directory");
@@ -83,23 +118,12 @@ function main(args: readonly string[]) {
     `sandbox-runtime: set ${Object.keys(set).length === 0 ? "no secrets" : Object.keys(set).join(", ")} from ${dir}\n`,
   );
   const server = fileURLToPath(new URL("../src/server/main.ts", import.meta.url));
-  const child = spawn(process.execPath, [server, "--autostarted"], {
-    stdio: "inherit",
-    env: { ...process.env, ...set },
-  });
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(signal, () => child.kill(signal));
-  }
-  child.on("exit", (code, signal) => {
-    process.exitCode = code ?? (signal === null ? 1 : 128 + (constants.signals[signal] ?? 0));
-  });
+  process.exitCode = await runServer(process.execPath, [server, "--autostarted"], { ...process.env, ...set });
 }
 
 if (import.meta.main) {
-  try {
-    main(process.argv.slice(2));
-  } catch (error) {
+  main(process.argv.slice(2)).catch((error) => {
     process.stderr.write(`sandbox-runtime: ${(error as Error).message}\n`);
     process.exitCode = 1;
-  }
+  });
 }

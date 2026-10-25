@@ -725,6 +725,26 @@ unchanged. The residuals are stated in that directory's README:
 
 Native runs on the Mac are not contained by it.
 
+**Working in the contained target.** The operator's `dyfj-l8 work <repo>
+<branch>` seeds a fresh run from a Mac branch, streamed in as a git bundle
+(`sandbox/linux/l8-seed.sh`). It asks whether to grant that run's envelope,
+and attaches the Workbench REPL to the run's runtime in the operator's
+terminal (`sandbox/linux/l8-work.sh`). `dyfj-l8 export` reads the run's new
+commits and applies them to a new local branch on the Mac, with hooks off.
+It never pushes. The Mac side of export is `prototype/scripts/sandbox-export.ts`:
+
+```sh
+node prototype/scripts/sandbox-export.ts --base <seed commit> --plans /etc/dyfj/l8/runs/<run> --out <file.mbox>
+node prototype/scripts/sandbox-export.ts status --plans /etc/dyfj/l8/runs/<run>
+```
+
+`--plans` names a work run's plan directory; without it, export reads the
+machine's provisioned run. `status` prints the number of uncommitted paths an
+export would leave behind. Each run has its own plans and needs its own grant.
+The REPL is not sandboxed: it runs as the runtime's uid, outside bubblewrap.
+`prototype/sandbox/linux/README.md` has the details and the residuals. The
+operator commands themselves live with the operator's private tooling.
+
 **Adding a host: `[network] allow`.** A local model server on a port the
 static list does not name (the list covers Ollama on 11434, llama.cpp on 8080
 and MLX-LM on 18080) needs an entry:

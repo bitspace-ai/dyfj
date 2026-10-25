@@ -2,7 +2,7 @@
 // become runtime environment variables. Synthetic canaries only.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deliverableNames, secretEnvironment } from "./sandbox-runtime.ts";
+import { deliverableNames, runServer, secretEnvironment } from "./sandbox-runtime.ts";
 
 const CANARY = "canary-6f1d0c9e2b7a";
 const files = (entries: Record<string, string | Buffer>) => (name: string) => {
@@ -73,5 +73,29 @@ describe("the secret environment", () => {
         (error: Error) => error.message.startsWith("DOLT_PASSWORD:") && !error.message.includes(CANARY),
       );
     }
+  });
+});
+
+describe("the server child", () => {
+  it("takes the child's exit status", async () => {
+    assert.strictEqual(await runServer(process.execPath, ["-e", "process.exit(7)"], {}), 7);
+  });
+
+  it("takes 128 plus the signal's number when a signal ends the child", async () => {
+    const status = await runServer(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], {});
+    assert.strictEqual(status, 143);
+  });
+
+  it("exits 1 when the child cannot start, naming only the error code", async () => {
+    const lines: string[] = [];
+    const status = await runServer(
+      "/nonexistent/dyfj-server-missing",
+      [],
+      { ANTHROPIC_API_KEY: CANARY },
+      (line) => void lines.push(line),
+    );
+    assert.strictEqual(status, 1);
+    assert.deepStrictEqual(lines, ["sandbox-runtime: cannot start the server (ENOENT)\n"]);
+    assert.ok(!lines.join("").includes(CANARY));
   });
 });

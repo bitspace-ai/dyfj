@@ -61,17 +61,54 @@ work_serves() {
   done
 }
 
-# `l8-work.sh stop` ends a session whose terminal went away. It signals the
-# session's script, whose own cleanup runs, and any pair still serving a
-# work run's plans, selected by pid. It then takes the session lock, so no
-# new session can start while it removes what a session leaves, and it
-# removes nothing unless every such pair has exited.
+# The start time of process $1 (field 22 of /proc/<pid>/stat, in clock
+# ticks since boot), or nothing. A pid that names another process after
+# reuse has another start time.
+start_time() {
+  local stat rest fields
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+  rest=${stat##*) }
+  read -r -a fields <<<"$rest"
+  echo "${fields[19]:-}"
+}
+
+# The session's identity, as the pid file records it: "<pid> <start time>".
+session_identity() { echo "$1 $(start_time "$1")"; }
+
+# Whether the pid file names a live l8-work.sh session: the same pid, the
+# same start time, and this script on its command line.
+is_session() { # pid recorded-start-time
+  [[ $1 =~ ^[0-9]+$ && -n $2 && $(start_time "$1") == "$2" ]] &&
+    tr '\0' ' ' <"/proc/$1/cmdline" 2>/dev/null | grep -q -- ' /opt/dyfj/prototype/sandbox/linux/l8-work.sh '
+}
+
+# `l8-work.sh stop` ends a session whose terminal went away.
+# - When the lock is free, no session is live, so it signals no session
+#   script: a pid file left by a killed session is reported and removed. It
+#   stops any pair still serving a work run's plans, each checked by its
+#   command line, since a killed session can leave one behind.
+# - When the lock is held, it signals the session script only if the pid
+#   file still names that script (same pid, same start time, same command),
+#   checked immediately before the signal. A pid reused in the instant
+#   between that check and the signal is not excluded. The session's own
+#   cleanup then stops its pair. If the pid file does not name a live
+#   session, it signals nothing at all and stops.
+# It then takes the lock, so no new session can start while it removes
+# what a session leaves, and it removes nothing unless every such pair has
+# exited.
 if [[ ${1:-} == stop ]]; then
-  holder=$(cat "$PIDFILE" 2>/dev/null || true)
-  [[ $holder =~ ^[0-9]+$ ]] && kill -TERM "$holder" 2>/dev/null
-  for pid in $(work_serves); do kill -TERM "$pid" 2>/dev/null && echo "signalled serve $pid"; done
   exec 9>"$LOCK"
-  flock -w 10 9 || { echo "dyfj-l8: a session still holds the lock (pid ${holder:-unknown}); nothing removed" >&2; exit 1; }
+  read -r holder holder_start <"$PIDFILE" 2>/dev/null || { holder=; holder_start=; }
+  if flock -n 9; then
+    [[ -n $holder ]] && echo "dyfj-l8: no session holds the lock; the pid file named $holder, which was not signalled"
+    for pid in $(work_serves); do kill -TERM "$pid" 2>/dev/null && echo "signalled serve $pid"; done
+  elif is_session "$holder" "$holder_start"; then
+    kill -TERM "$holder" 2>/dev/null && echo "signalled session $holder"
+  else
+    echo "dyfj-l8: the lock is held, but the pid file (${holder:-empty}) does not name a live session; nothing signalled, nothing removed" >&2
+    exit 1
+  fi
+  flock -w 10 9 || { echo "dyfj-l8: a session still holds the lock; nothing removed" >&2; exit 1; }
   for _ in $(seq 1 50); do [[ -z $(work_serves) ]] && break; sleep 0.1; done
   left=$(work_serves | tr '\n' ' ')
   [[ -z $left ]] || { echo "dyfj-l8: serve still running (pid $left); nothing removed" >&2; exit 1; }
@@ -135,8 +172,10 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
-# Written once cleanup is in place, so every exit from here removes it.
-echo $$ >"$PIDFILE"
+# Written once cleanup is in place, so every exit from here removes it. It
+# records this script's pid and start time, which `stop` checks before it
+# signals anything.
+session_identity $$ >"$PIDFILE"
 
 # The grant applies only when it names this run's executor policy.
 grant_state=$(node -e '
@@ -198,4 +237,9 @@ else
   runuser -u dyfj-rt -- setpriv --no-new-privs "${client_env[@]}" "$REPL" "${repl_args[@]}" <&0 &
 fi
 client_pid=$!
+# The session's exit status is the client's. Cleanup runs on the way out
+# and does not change it.
 wait "$client_pid"
+status=$?
+client_pid=
+exit "$status"

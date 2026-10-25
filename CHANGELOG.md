@@ -42,6 +42,18 @@ README are tracked separately in its Revision history section.
     configured workspace is exactly `/srv/dyfj/work/<run>`, not a symbolic
     link. It refuses any other run,
     `run-0001` and work runs included, before touching anything.
+  - `l8-work.sh stop` signals a session's script only when the session lock
+    is held and the pid file still names that script: the same pid, start
+    time and command line, checked immediately before the signal (a pid
+    reused between the check and the signal is not excluded). If the lock is
+    held and the pid file names no live session, `stop` signals nothing and
+    fails. With the lock free, a stale pid file is reported and removed, and
+    the pid it names is not signalled. A session exits with its client's
+    status.
+  - `sandbox-runtime.ts` exits 1 when the server cannot start, and names
+    only the error code. `provision.sh` makes the store's runtime user again
+    when its grants differ from the expected set, and a check fails unless
+    `'dyfj_runtime'@'localhost'` holds exactly those grants.
 
 - **On the contained Linux target, a bash or git call can run without a
   prompt when the executor's containment is attested and the operator has
