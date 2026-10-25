@@ -80,6 +80,7 @@ import {
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { composeBoot } from "./boot.ts";
+import { runRuntimeEntry } from "./entry.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
@@ -654,4 +655,15 @@ async function main(): Promise<void> {
   }
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) {
+  // A config error is the operator's to fix: one stderr line and a non-zero
+  // exit status, not a stack trace (BIT-766). The status is set, not forced
+  // with process.exit, so a piped stderr line is not cut off; Node exits once
+  // stderr drains and nothing else keeps the event loop alive.
+  await runRuntimeEntry(main, {
+    say: (line) => console.error(line),
+    setExitCode: (code) => {
+      process.exitCode = code;
+    },
+  });
+}
