@@ -341,6 +341,40 @@ pgrep -ax dyfj-sandbox >/dev/null && result fail "work: no supervisor outlives t
 rm -rf "/srv/dyfj/work/$WK" "/srv/dyfj/work/$WK-cli" "/etc/dyfj/l8/runs/$WK" "/srv/dyfj/state/l8-logs/$WK.log" "$wk_src"
 rm -f /run/dyfj/secrets/ANTHROPIC_API_KEY
 
+echo "== 8a. the store's accounts, from the runtime role"
+# The runtime can reach the store's listener, so the store must refuse root
+# without its password, and the runtime's own account must hold only its
+# grants. The runtime's password is handed over as a session would hand it.
+install -o dyfj-rt -g dyfj-work -m 0400 /etc/dyfj/dolt-runtime.password /run/dyfj/secrets/DOLT_PASSWORD
+dbprobe=$(in_role runtime "" node -e '
+  const mysql = require("/opt/dyfj/node_modules/mysql2/promise");
+  const fs = require("fs");
+  const base = { host: "127.0.0.1", port: 3306, database: "dolt" };
+  const attempt = async (label, options, sql) => {
+    try {
+      const c = await mysql.createConnection({ ...base, ...options });
+      try { await c.query(sql); console.log(label + " allowed"); } finally { await c.end(); }
+    } catch (e) { console.log(label + " refused " + e.code + " " + String(e.message).slice(0, 100)); }
+  };
+  (async () => {
+    await attempt("root-without-password", { user: "root", password: "" }, "SELECT 1");
+    const password = fs.readFileSync("/secrets/DOLT_PASSWORD", "utf8");
+    await attempt("runtime-read", { user: "dyfj_runtime", password }, "SELECT COUNT(*) FROM sessions");
+    await attempt("runtime-delete-events", { user: "dyfj_runtime", password }, "DELETE FROM events WHERE 1 = 0");
+  })();' 2>&1)
+rm -f /run/dyfj/secrets/DOLT_PASSWORD
+echo "$dbprobe" | sed 's/^/      /'
+grep -q '^root-without-password refused ER_ACCESS_DENIED_ERROR' <<<"$dbprobe" \
+  && result pass "store: root without its password is refused from the runtime role" "$(grep '^root-without-password' <<<"$dbprobe")" \
+  || result fail "store: root without its password is refused from the runtime role" "$(grep '^root-without-password' <<<"$dbprobe")"
+grep -q '^runtime-read allowed' <<<"$dbprobe" \
+  && result pass "store: the runtime's account reads its tables" "runtime-read allowed" \
+  || result fail "store: the runtime's account reads its tables" "$(grep '^runtime-read' <<<"$dbprobe")"
+# Dolt reports a missing table privilege as error 1105, "command denied".
+grep -q "^runtime-delete-events refused .*command denied to user 'dyfj_runtime'" <<<"$dbprobe" \
+  && result pass "store: the runtime's account cannot delete events" "$(grep '^runtime-delete-events' <<<"$dbprobe")" \
+  || result fail "store: the runtime's account cannot delete events" "$(grep '^runtime-delete-events' <<<"$dbprobe")"
+
 echo "== 8b. stop never signals a process the pid file only names"
 # A stale pid file can name a live, unrelated process after pid reuse. Each
 # case plants one naming a sleep made here, runs `l8-work.sh stop`, and

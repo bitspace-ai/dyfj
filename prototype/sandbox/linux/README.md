@@ -130,7 +130,9 @@ operator's private tooling. In the machine:
   provisioning, kept in a root-only file, and copied for the session only.
 - **The local store** gets the canonical schema when its `dolt` database
   does not exist, and a `dyfj_runtime` user with the grants
-  `schema/README.md` lists. It holds no memories and no operator context. An
+  `schema/README.md` lists. Its root account has a password made at
+  provisioning and kept root-only in the machine, so the runtime, which can
+  reach the store's listener, cannot log in as root. It holds no memories and no operator context. An
   existing database is not migrated: a newer schema needs a new store.
 
 ## Running the CLIs

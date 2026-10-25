@@ -53,7 +53,11 @@ README are tracked separately in its Revision history section.
   - `sandbox-runtime.ts` exits 1 when the server cannot start, and names
     only the error code. `provision.sh` makes the store's runtime user again
     when its grants differ from the expected set, and a check fails unless
-    `'dyfj_runtime'@'localhost'` holds exactly those grants.
+    `'dyfj_runtime'@'localhost'` holds exactly those grants. The store's
+    root account gets a random password at provisioning, kept in a root-only
+    file in the machine and used only for the store's administration, so
+    the runtime cannot log in as root. Acceptance checks this from the
+    runtime role.
 
 - **On the contained Linux target, a bash or git call can run without a
   prompt when the executor's containment is attested and the operator has
