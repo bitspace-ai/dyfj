@@ -658,7 +658,8 @@ async function main(): Promise<void> {
 if (import.meta.main) {
   // A config error is the operator's to fix: one stderr line and a non-zero
   // exit status, not a stack trace (BIT-766). The status is set, not forced
-  // with process.exit, so Node exits after stderr drains.
+  // with process.exit, so a piped stderr line is not cut off; Node exits once
+  // stderr drains and nothing else keeps the event loop alive.
   await runRuntimeEntry(main, {
     say: (line) => console.error(line),
     setExitCode: (code) => {

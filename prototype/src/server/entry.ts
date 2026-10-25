@@ -2,10 +2,11 @@
  * server/ (L5): the runtime process's entry guard.
  *
  * A misconfigured runtime refuses to boot, and the operator needs the reason,
- * not a Node stack trace. Config errors carry the `config:` prefix every
- * config validator already writes, so the guard reports those as one stderr
- * line and a non-zero exit status. Any other failure is a bug, not an operator
- * mistake, and keeps its stack: it is rethrown untouched.
+ * not a Node stack trace. The guard recognises an `Error` whose message starts
+ * with `config:`, the prefix most config validators write (the tool-step
+ * ceiling check is the one tested end to end), and reports it as one stderr
+ * line and a non-zero exit status. Any error it does not recognise is
+ * rethrown unchanged, with its stack.
  *
  * The guard sets the exit status and returns; it never calls `process.exit`,
  * which can cut off a stderr line still buffered on a pipe. Node exits on its
