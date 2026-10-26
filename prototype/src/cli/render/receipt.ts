@@ -154,8 +154,8 @@ function cachedPercent(
 }
 
 /**
- * `/receipt steps`: one line per agent-loop provider call of the last turn,
- * in call order. `in` excludes cache traffic, as on the receipt line. The
+ * `/receipt steps`: one line per recorded agent-loop provider call of the
+ * last turn, in call order. `in` excludes cache traffic, as on the receipt line. The
  * Rust REPL prints the same lines (`core/dyfj-repl/src/receipt.rs`).
  */
 export function formatStepLines(steps: readonly TurnStepUsage[]): string[] {

@@ -164,7 +164,7 @@ fn cached_percent(input: u64, read: u64, write: u64) -> u64 {
     (read as f64 / prompt as f64 * 100.0 + 0.5).floor() as u64
 }
 
-/// `/receipt steps`: one line per agent-loop provider call of the last turn,
+/// `/receipt steps`: one line per recorded agent-loop provider call of the last turn,
 /// in call order, as `formatStepLines` in the TypeScript CLI prints them.
 pub fn step_lines(steps: &[Value]) -> Vec<String> {
     let field = |step: &Value, key: &str| step.get(key).and_then(Value::as_u64).unwrap_or(0);

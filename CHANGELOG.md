@@ -25,11 +25,12 @@ README are tracked separately in its Revision history section.
     the API allows. Apart from the markers, the messages are the ones sent
     before; a marked prompt string goes out as one text block. The digest that decides whether thinking blocks are
     replayed is taken without the markers.
-  - The turn result's `tokens.steps` lists each agent-loop provider call in
-    order: purpose, fresh input, cache read, cache write, output and cost.
-    A context-compression call is not listed. The field is optional; a
+  - The turn result's `tokens.steps` lists, in order, each agent-loop
+    provider call whose usage was recorded: purpose, fresh input, cache
+    read, cache write, output and cost. A call that failed before returning
+    usage, and a context-compression call, are not listed. The field is optional; a
     runtime that predates it sends none.
-  - Both REPLs add `/receipt steps`, one line per call of the last turn, and
+  - Both REPLs add `/receipt steps`, one line per listed call of the last turn, and
     the receipt line adds `cached N%`, the share of the turn's input read
     from cache.
 

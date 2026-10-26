@@ -450,9 +450,10 @@ it.
 
 The receipt line adds `cached N%` when a provider reports cache traffic: the
 share of the turn's input read from the prompt cache. The turn result's
-optional `tokens.steps` lists each agent-loop provider call (purpose, fresh
-input, cache read, cache write, output and cost), and `/receipt steps` prints
-one line per call of the last turn in both REPLs.
+optional `tokens.steps` lists each agent-loop provider call whose usage was
+recorded (purpose, fresh input, cache read, cache write, output and cost), and
+`/receipt steps` prints one line per listed call of the last turn in both
+REPLs. A call that failed before returning usage is not listed.
 
 The REPL's `/friction <sev> [--escaped] <text...>` command posts one numbered
 entry to the daily-driver checkpoint through the configured Linear MCP read and

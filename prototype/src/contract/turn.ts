@@ -33,9 +33,10 @@ import { utf8SafePrefix } from "../kernel/mod.ts";
 export type CostBasis = "provider_billed" | "catalog_estimate";
 
 /**
- * One agent-loop provider call of a turn, in call order: what it sent
- * (`input` excludes cache traffic, as in `tokens`), what it got back, and
- * its cost. A context-compression call is not one of these.
+ * One agent-loop provider call of a turn whose usage was recorded, in call
+ * order: what it sent (`input` excludes cache traffic, as in `tokens`), what
+ * it got back, and its cost. A call that failed before returning usage, and
+ * a context-compression call, are not listed.
  */
 export interface TurnStepUsage {
   order: number;
@@ -101,7 +102,7 @@ export interface NativeTurnReceipt {
      */
     reasoning?: number;
     totalCalls: number;
-    /** Per-call usage (`/receipt steps`); absent from a runtime that predates it. */
+    /** Recorded per-call usage (`/receipt steps`); absent from a runtime that predates it. */
     steps?: TurnStepUsage[];
   };
   /** Agent-loop usage for this turn; provider calls and parallel tool calls are distinct. */
