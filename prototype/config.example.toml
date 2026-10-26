@@ -62,8 +62,8 @@ level = "strict"
 # One call's estimate. An approval covers calls up to twice the estimate, for
 # the session.
 # per_call_limit_usd = 0.50
-# One turn. An approval raises it to twice the turn's spend plus the call's
-# estimate, for the turn.
+# One turn. An approval raises it to twice the sum of the turn's spend and
+# the call's estimate, for the turn.
 # turn_limit_usd = 4.0
 # The runaway limit: spend in a turn since its last tool step that made
 # progress: a tool call new in the turn that the tool did not report as an
@@ -71,7 +71,7 @@ level = "strict"
 # a file tool's "not found" reply are output, not errors, so a new call that
 # returns one still counts; the turn limit, the tool-step limit and the loop's
 # repeat detection bound such turns. An approval raises the limit to twice
-# that spend plus the call's estimate, for the turn.
+# the sum of that spend and the call's estimate, for the turn.
 # runaway_stall_usd = 0.50
 # One session, its earlier turns included. An approval raises it to the
 # projected spend plus one more session limit, for the session.

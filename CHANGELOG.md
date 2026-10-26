@@ -11,7 +11,7 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
-- **One spend check, so a normal implementation turn runs without stopping
+- **One spend check, with defaults sized for a typical implementation turn
   (BIT-785).** An ordinary implementation turn could stop several times for
   spend: at the runaway halt, derived as three times the $0.10 per-call
   limit, again each time that halt doubled, and at the $1.00 session limit.

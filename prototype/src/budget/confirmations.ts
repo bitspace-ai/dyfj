@@ -18,9 +18,9 @@ import { localDayKey } from "./spend.ts";
  *   each daily approval; kept per day across sessions.
  *
  * Each mark is kept with its basis: the limit in force when it was approved.
- * A mark covers a call only while that limit is unchanged, so a limit the
- * operator lowers (or raises) for a session is not overridden by an approval
- * given against the old one.
+ * A mark applies only while the limit in force equals that basis, so a limit
+ * the operator sets to a different value for a session is not overridden by
+ * an approval given against the old one.
  *
  * The turn and runaway marks are not stored here: they last one turn and
  * live in the turn's spend gate (envelope-gate.ts).

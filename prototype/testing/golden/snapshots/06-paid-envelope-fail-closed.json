@@ -83,6 +83,7 @@
             "raisesToUsd": {
               "session_limit": 2.635
             },
+            "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
             "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
           }
@@ -133,6 +134,7 @@
             "raisesToUsd": {
               "session_limit": 2.635
             },
+            "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
             "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
           },

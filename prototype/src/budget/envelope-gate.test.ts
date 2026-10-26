@@ -584,6 +584,36 @@ test("createTurnBudgetCeilingGate: an approval given against one limit does not 
   assert.equal(confirmed.per_call_limit_basis, 0.1);
 });
 
+test("createTurnBudgetCeilingGate: a repeat prompt names the level the earlier approval raised the limit to", async () => {
+  const warnings: BudgetCeilingWarning[] = [];
+  const gate = createTurnBudgetCeilingGate((warning) => {
+    warnings.push(warning);
+    return Promise.resolve({ decision: "approve" });
+  });
+  const turnAt = (turnCostSoFar: number): PreCallCheck => ({
+    allowed: false,
+    estimatedCost: 0.1,
+    sessionCostSoFar: 0,
+    sessionLimitUsd: 1000,
+    perCallLimitUsd: 1000,
+    dailyCostSoFar: 0,
+    dailyLimitUsd: 1000,
+    ...turnBudget,
+    turnCostSoFar,
+    turnLimitUsd: 4,
+    reason: "turn_limit",
+  });
+  await gate.ensureAllowed(turnAt(4)); // $4.10: raises the turn limit to $8.20
+  await gate.ensureAllowed(turnAt(8.2)); // $8.30: past the raised level
+  assert.equal(warnings.length, 2);
+  assert.deepStrictEqual(warnings[0].approvedToUsd, {});
+  assertAlmostEqual(warnings[1].approvedToUsd.turn_limit ?? Number.NaN, 8.2);
+  assert.match(
+    formatBudgetCeilingWarning(warnings[1]),
+    /Turn: {6}\$8\.20 spent, \$8\.30 with this call, limit \$4\.00 \(approved to \$8\.20\)/,
+  );
+});
+
 // ── formatting ────────────────────────────────────────────────────────────────
 
 test("formatBudgetCeilingWarning: the prompt shows each scope's spend so far, the estimate, the limits and the raises", () => {

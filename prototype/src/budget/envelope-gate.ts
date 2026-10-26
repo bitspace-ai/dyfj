@@ -35,6 +35,12 @@ export interface BudgetCeilingWarning {
   crossedScopes: BudgetLimitReason[];
   /** The level each presented limit is raised to if the operator approves. */
   raisesToUsd: Partial<Record<BudgetLimitReason, number>>;
+  /**
+   * The level an earlier approval raised each limit to, where one applies:
+   * a crossed limit with an entry here is crossing that level, not the
+   * configured one.
+   */
+  approvedToUsd: Partial<Record<BudgetLimitReason, number>>;
   estimatedCostUsd: number;
   limitUsd: number;
   sessionCostSoFarUsd: number;
@@ -132,6 +138,7 @@ export function buildBudgetCeilingWarning(
   preCall: PreCallCheck,
   overrideReason?: BudgetLimitReason,
   crossedScopes?: BudgetLimitReason[],
+  approvedToUsd: Partial<Record<BudgetLimitReason, number>> = {},
 ): BudgetCeilingWarning {
   const reason = overrideReason ?? preCall.reason ?? "session_limit";
   const scopes = crossedScopes && crossedScopes.length > 0
@@ -142,6 +149,7 @@ export function buildBudgetCeilingWarning(
     reason,
     crossedScopes: scopes,
     raisesToUsd: approvalRaises(preCall, scopes),
+    approvedToUsd,
     estimatedCostUsd: preCall.estimatedCost,
     limitUsd: limitOf(preCall, reason),
     sessionCostSoFarUsd: preCall.sessionCostSoFar,
@@ -210,20 +218,36 @@ export function formatBudgetCeilingWarning(
         }), for today`;
     }
   };
-  const line = (spent: number, limit: number): string =>
+  const approved = (scope: BudgetLimitReason): string => {
+    const level = warning.approvedToUsd?.[scope];
+    return level === undefined ? "" : ` (approved to ${formatUsd(level)})`;
+  };
+  const line = (
+    spent: number,
+    limit: number,
+    scope: BudgetLimitReason,
+  ): string =>
     `${formatUsd(spent)} spent, ${
       formatUsd(spent + warning.estimatedCostUsd)
-    } with this call, limit ${formatUsd(limit)}`;
+    } with this call, limit ${formatUsd(limit)}${approved(scope)}`;
   return [
     "Spend check",
     `Crossed:   ${scopes.map(spendLimitLabel).join(" + ")}`,
-    `Turn:      ${line(warning.turnCostSoFarUsd, warning.turnLimitUsd)}`,
-    `Session:   ${line(warning.sessionCostSoFarUsd, warning.sessionLimitUsd)}`,
-    `Today:     ${line(warning.dailyCostSoFarUsd, warning.dailyLimitUsd)}`,
+    `Turn:      ${
+      line(warning.turnCostSoFarUsd, warning.turnLimitUsd, "turn_limit")
+    }`,
+    `Session:   ${
+      line(warning.sessionCostSoFarUsd, warning.sessionLimitUsd, "session_limit")
+    }`,
+    `Today:     ${
+      line(warning.dailyCostSoFarUsd, warning.dailyLimitUsd, "daily_limit")
+    }`,
     `Runaway:   ${
-      line(warning.stallCostSoFarUsd, warning.runawayStallUsd)
+      line(warning.stallCostSoFarUsd, warning.runawayStallUsd, "runaway_stall")
     } (since the last tool progress)`,
-    `Per call:  ${est}, limit ${formatUsd(warning.perCallLimitUsd)}`,
+    `Per call:  ${est}, limit ${formatUsd(warning.perCallLimitUsd)}${
+      approved("per_call_limit")
+    }`,
     "Approving raises:",
     ...scopes.map(raiseLine),
   ].join("\n");
@@ -250,6 +274,7 @@ export function budgetCeilingApprovalRequest(
     runawayStallUsd: warning.runawayStallUsd,
     crossedScopes: warning.crossedScopes,
     raisesToUsd: warning.raisesToUsd,
+    approvedToUsd: warning.approvedToUsd,
     authzBasis: warning.authzBasis,
     message: formatBudgetCeilingWarning(warning),
   };
@@ -281,6 +306,7 @@ export async function ensureBudgetAllowed(
   confirm?: ConfirmBudgetCeiling,
   promptReason?: BudgetLimitReason,
   crossedScopes?: BudgetLimitReason[],
+  approvedToUsd: Partial<Record<BudgetLimitReason, number>> = {},
 ): Promise<void> {
   if (preCall.allowed) return;
   const reason = promptReason ?? preCall.reason ?? "session_limit";
@@ -294,7 +320,12 @@ export async function ensureBudgetAllowed(
         : projected(preCall, reason) - preCall.estimatedCost,
     );
   }
-  const warning = buildBudgetCeilingWarning(preCall, reason, crossedScopes);
+  const warning = buildBudgetCeilingWarning(
+    preCall,
+    reason,
+    crossedScopes,
+    approvedToUsd,
+  );
   const verdict = await confirm(warning);
   if (verdict.decision !== "approve") {
     throw new BudgetCeilingDeclinedError(verdict.reason);
@@ -448,8 +479,14 @@ export function createTurnBudgetCeilingGate(
       if (preCall.allowed) return;
       const scopes = newlyExceededScopes(preCall, marks);
       if (scopes.length === 0) return;
-      // First (outermost) scope frames the prompt; the warning lists them all.
-      await ensureBudgetAllowed(preCall, confirm, scopes[0], scopes);
+      // First (outermost) scope frames the prompt; the warning lists them all,
+      // with the level an earlier approval raised each to, where one applies.
+      const approvedTo: Partial<Record<BudgetLimitReason, number>> = {};
+      for (const scope of SCOPE_ORDER) {
+        const level = approvedLevel(preCall, marks, scope);
+        if (level !== undefined) approvedTo[scope] = level;
+      }
+      await ensureBudgetAllowed(preCall, confirm, scopes[0], scopes, approvedTo);
       recordApprovals(preCall, marks, scopes);
     },
   };
