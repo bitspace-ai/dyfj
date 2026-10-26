@@ -606,8 +606,8 @@ export async function handleReplSessionCommand(
     sessionState.sessionSpendUsd = 0;
     sessionState.workspace = targetWorkspace;
     sessionState.events = [];
-    sessionState.lastModelSlug = undefined;
-    sessionState.lastReplCommand = undefined;
+    sessionState.lastModelSlug = sessionState.lastReplCommand = undefined;
+    sessionState.lastResult = undefined;
     io.err(`switched to session: ${targetId}`);
     return true;
   }

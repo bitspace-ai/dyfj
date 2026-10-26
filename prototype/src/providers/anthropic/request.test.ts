@@ -74,15 +74,21 @@ function stripped(body: Body): unknown[] {
   return JSON.parse(JSON.stringify(body.messages)).map(
     (message: { role: string; content: unknown }) => {
       if (!Array.isArray(message.content)) return message;
+      const [only] = message.content;
+      // A marked one-text-block message was a string before it was marked.
+      if (
+        message.content.length === 1 && only.type === "text" &&
+        "cache_control" in only
+      ) {
+        return { role: message.role, content: only.text };
+      }
       const content = message.content.map(
         (block: Record<string, unknown>) => {
           const { cache_control: _, ...rest } = block;
           return rest;
         },
       );
-      return content.length === 1 && content[0].type === "text"
-        ? { role: message.role, content: content[0].text }
-        : { role: message.role, content };
+      return { role: message.role, content };
     },
   );
 }
@@ -181,6 +187,42 @@ describe("anthropic history cache breakpoints", () => {
         anthropicReplyPrefixDigest(sent),
       );
     }
+  });
+
+  it("replay a thinking reply that follows a text-only reply", () => {
+    // A text-only assistant reply goes out as one text block with no marker;
+    // the reply digest must hash it in that form, as the replay check does.
+    const before: WorkbenchMessage[] = [
+      { role: "user", content: "first question" },
+      { role: "assistant", content: "first answer" },
+      { role: "user", content: "read a" },
+    ];
+    const sent = build(before);
+    const thinking = { type: "thinking", thinking: "plan", signature: "sig" };
+    const call = { id: "tu-1", name: "read_file", arguments: { path: "a" } };
+    const next = build([
+      ...before,
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [call],
+        replay: {
+          api: "anthropic-messages",
+          prefixDigest: anthropicReplyPrefixDigest(sent),
+          content: [thinking, {
+            type: "tool_use",
+            id: call.id,
+            name: call.name,
+            input: call.arguments,
+          }],
+        },
+      },
+      { role: "tool", toolCallId: "tu-1", name: "read_file", content: "A" },
+    ]);
+    assert.deepEqual(
+      (next.messages[3].content as Array<{ type: string }>)[0],
+      thinking,
+    );
   });
 
   it("leave a forced conclusion, which offers no tools, unmarked", () => {

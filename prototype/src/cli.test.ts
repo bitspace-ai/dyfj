@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
+import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import { describe, it } from "node:test";
 import {
   fetchSessionPosture,
@@ -1283,6 +1284,42 @@ describe("REPL /session command", () => {
       ),
       `expected stderr.join("\\n") to include "switched to session: 01NEW000000000000000000000"`,
     );
+  });
+
+  it("/session switch drops the last turn, so /receipt steps shows none", async () => {
+    const { io, stderr } = fakeIo();
+    const state: ReplSessionState = {
+      sessionId: "01OLD000000000000000000000",
+      turnCount: 1,
+      sessionSpendUsd: 0.1,
+      lastResult: result({
+        tokens: {
+          input: 1,
+          output: 1,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalCalls: 1,
+          steps: [{
+            order: 1,
+            purpose: "initial",
+            input: 1,
+            cacheRead: 0,
+            cacheWrite: 0,
+            output: 1,
+            costUsd: 0,
+          }],
+        },
+      }),
+    };
+    await handleReplSessionCommand(
+      "/session switch 01NEW000000000000000000000",
+      cfg({ sessionId: "01OLD000000000000000000000" }),
+      io,
+      state,
+    );
+    assert.strictEqual(state.lastResult, undefined);
+    handleReplReceiptCommand("/receipt steps", io, state.lastResult);
+    assert.strictEqual(stderr.at(-1), "no per-step usage for the last turn");
   });
 
   it("/session switch rejects oversized session identifiers", async () => {

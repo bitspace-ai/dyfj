@@ -110,17 +110,22 @@ function withoutCacheControl(
   message: AnthropicWireMessage,
 ): AnthropicWireMessage {
   if (typeof message.content === "string") return message;
+  const [only] = message.content;
+  // Marking a prompt string sent it as one marked text block; unmarked, it
+  // is that string again. A one-text-block message with no marker is kept
+  // as it is: the replay check hashes it in that form.
+  if (
+    message.content.length === 1 && only.type === "text" &&
+    "cache_control" in only
+  ) {
+    return { role: message.role, content: only.text };
+  }
   const content = message.content.map((block) => {
     if (!("cache_control" in block)) return block;
     const { cache_control: _, ...rest } = block;
     return rest as AnthropicContentBlock;
   });
-  // A marked prompt was sent as one text block; unmarked, it is a string.
-  // The history builder makes no other one-text-block message.
-  const [only] = content;
-  return content.length === 1 && only.type === "text"
-    ? { role: message.role, content: only.text }
-    : { role: message.role, content };
+  return { role: message.role, content };
 }
 
 /**
