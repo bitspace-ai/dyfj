@@ -865,7 +865,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":20,\"totalTokensOutput\":10,\"totalCalls\":2,\"config\":{\"sessionLimitUsd\":1,\"perCallLimitUsd\":0.1,\"dailyLimitUsd\":25},\"byTier\":{\"0\":{\"calls\":2,\"tokensInput\":20,\"tokensOutput\":10,\"costUsd\":0}},\"skippedEventWrites\":0}",
+        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":20,\"totalTokensOutput\":10,\"totalCalls\":2,\"config\":{\"sessionLimitUsd\":10,\"perCallLimitUsd\":0.5,\"dailyLimitUsd\":25,\"turnLimitUsd\":0.2,\"runawayStallUsd\":0.5},\"byTier\":{\"0\":{\"calls\":2,\"tokensInput\":20,\"tokensOutput\":10,\"costUsd\":0}},\"skippedEventWrites\":0}",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,

@@ -242,18 +242,15 @@ function compressionCompletion(
   model: WorkbenchModel,
 ): CompressionCompletion {
   const { state, route } = turn;
-  const { budget, anomalyConfig } = state.session;
+  const { budget } = state.session;
   return async (compressionInput) => {
     const estimatedInputCount = estimateRuntimeInputCount(
       transcriptEstimateText(COMPRESSION_SYSTEM_PROMPT, compressionInput),
     );
-    // Gate on the compression model's OWN tier (0 → free, so the gates pass
-    // trivially); a paid model — which selection forbids — would be caught
-    // here, and any budget refusal declines compression via the catch in
-    // compressElderTranscript rather than failing the turn.
-    await route.anomalyGate.ensureAllowed(
-      budget.checkAnomaly(model.tier, anomalyConfig),
-    );
+    // Gate on the compression model's OWN tier (0 → free, so the check
+    // passes trivially); a paid model — which selection forbids — would be
+    // caught here, and any budget refusal declines compression via the catch
+    // in compressElderTranscript rather than failing the turn.
     await route.budgetCeilingGate.ensureAllowed(
       budget.checkPreCall(model.tier, model.costInput, estimatedInputCount),
     );

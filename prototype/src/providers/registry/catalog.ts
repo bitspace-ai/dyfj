@@ -104,8 +104,8 @@ function toCatalogLimit(value: string | undefined): number | undefined {
 
 /**
  * A malformed catalog cost must land in the unpriced bucket (0), never as NaN:
- * NaN fails every budget comparison open — estimates, envelopes, and the
- * anomaly gate would all silently pass.
+ * NaN fails every budget comparison open — estimates and every spend limit
+ * would silently pass.
  */
 function toCatalogCost(value: string | undefined): number {
   const cost = Number(value || "0");
@@ -126,8 +126,7 @@ function optionalCatalogCost<K extends "costCacheRead" | "costCacheWrite">(
  * route it. Tier 0 is free by declaration — zero IS its price. For a paid
  * tier, zero/absent cost means nobody priced the row (the schema default),
  * and an unpriced paid model is invisible to every spend control: estimates,
- * recorded actuals, the envelopes, and the anomaly hard stop all derive from
- * these numbers.
+ * recorded actuals and every spend limit derive from these numbers.
  */
 export function modelHasCatalogPricing(model: WorkbenchModel): boolean {
   if (model.tier === 0 || model.modality === "subscription-oauth") return true;

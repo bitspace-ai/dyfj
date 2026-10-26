@@ -3,7 +3,7 @@
 # root inside the machine, by the operator's `dyfj-l8 work` over one `orb`
 # session from the operator's terminal:
 #
-#   bash l8-work.sh <run> [--model <slug>] [--approve-paid] [--probe]
+#   bash l8-work.sh <run> [--model <slug>] [--approve-paid] [--budget-<limit> <usd>]... [--probe]
 #
 # <run> names a run that `dyfj-l8 work` seeded: its workspace is
 # /srv/dyfj/work/<run> and its plans are in /etc/dyfj/l8/runs/<run>. The
@@ -120,15 +120,19 @@ fi
 
 RUN=${1:-}
 [[ $RUN =~ ^[a-z0-9][a-z0-9-]{0,62}$ && $RUN != run-0001 ]] ||
-  { echo "usage: l8-work.sh <run> [--model <slug>] [--approve-paid] [--probe] (not run-0001)" >&2; exit 2; }
+  { echo "usage: l8-work.sh <run> [--model <slug>] [--approve-paid] [--budget-<limit> <usd>]... [--probe] (not run-0001)" >&2; exit 2; }
 shift
 model=
 approve_paid=
 probe=
+budget_args=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     --model) model=${2:?--model needs a slug}; shift 2 ;;
     --approve-paid) approve_paid=1; shift ;;
+    --budget-turn|--budget-session|--budget-day|--budget-per-call|--budget-runaway)
+      [[ ${2:-} =~ ^[0-9]{1,4}(\.[0-9]{1,4})?$ ]] || { echo "$1 needs a dollar amount such as 4 or 0.50" >&2; exit 2; }
+      budget_args+=("$1" "$2"); shift 2 ;;
     --probe) probe=1; shift ;;
     *) echo "unknown argument $1" >&2; exit 2 ;;
   esac
@@ -234,6 +238,7 @@ else
   repl_args=(--workspace /work)
   [[ -n $model ]] && repl_args+=(--model "$model")
   [[ -n $approve_paid ]] && repl_args+=(--approve-paid)
+  repl_args+=(${budget_args[@]+"${budget_args[@]}"})
   runuser -u dyfj-rt -- setpriv --no-new-privs "${client_env[@]}" "$REPL" "${repl_args[@]}" <&0 &
 fi
 client_pid=$!

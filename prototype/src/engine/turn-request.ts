@@ -149,6 +149,8 @@ export function parseBudgetOverride(
     sessionLimitUsd?: number;
     perCallLimitUsd?: number;
     dailyLimitUsd?: number;
+    turnLimitUsd?: number;
+    runawayStallUsd?: number;
   }
   | { error: string } {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -159,12 +161,16 @@ export function parseBudgetOverride(
     sessionLimitUsd?: number;
     perCallLimitUsd?: number;
     dailyLimitUsd?: number;
+    turnLimitUsd?: number;
+    runawayStallUsd?: number;
   } = {};
   for (
     const key of [
       "sessionLimitUsd",
       "perCallLimitUsd",
       "dailyLimitUsd",
+      "turnLimitUsd",
+      "runawayStallUsd",
     ] as const
   ) {
     const raw = record[key];
@@ -282,6 +288,12 @@ export function resolveTurnFromBody(
       }
       if (budget.dailyLimitUsd !== undefined) {
         runtimeInput.dailyLimitUsd = budget.dailyLimitUsd;
+      }
+      if (budget.turnLimitUsd !== undefined) {
+        runtimeInput.turnLimitUsd = budget.turnLimitUsd;
+      }
+      if (budget.runawayStallUsd !== undefined) {
+        runtimeInput.runawayStallUsd = budget.runawayStallUsd;
       }
     }
   }

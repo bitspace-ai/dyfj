@@ -52,32 +52,37 @@ level = "strict"
 # approve_paid_default = true
 
 [budget]
-# Startup budget ceilings (USD). When projected spend would cross a ceiling the
-# runtime warns and requires explicit confirmation before proceeding; without
-# an interactive approver it fails closed. Per-turn overrides still win.
-# session_limit_usd = 1.0
-# per_call_limit_usd = 0.10
-# Daily envelope: total spend across ALL sessions in a local day (rolled up
-# from the events table). Confirming a crossed ceiling raises that envelope
-# for its scope — the session, or the whole day — instead of re-prompting.
+# Spend limits (USD), checked before every paid call against actual recorded
+# spend plus the call's estimate (BIT-785). Under every limit the call runs
+# with no prompt. A check that crosses one or more asks once, naming each, and
+# an approval raises exactly those limits to the level the prompt states.
+# Without an interactive approver the turn fails closed. A session's own
+# limits (--budget-* flags, /budget) win over these.
+#
+# One call's estimate. An approval covers calls up to twice the estimate, for
+# the session.
+# per_call_limit_usd = 0.50
+# One turn. An approval raises it to twice the sum of the turn's spend and
+# the call's estimate, for the turn.
+# turn_limit_usd = 4.0
+# The runaway limit: spend in a turn since its last tool step that made
+# progress: a tool call new in the turn that the tool did not report as an
+# error, or a write or edit that succeeded. A bash command's exit status and
+# a file tool's "not found" reply are output, not errors, so a new call that
+# returns one still counts; the turn limit, the tool-step limit and the loop's
+# repeat detection bound such turns. An approval raises the limit to twice
+# the sum of that spend and the call's estimate, for the turn.
+# runaway_stall_usd = 0.50
+# One session, its earlier turns included. An approval raises it to the
+# projected spend plus one more session limit, for the session.
+# session_limit_usd = 10.0
+# One local day, across every session (rolled up from the events table). An
+# approval raises it to the projected spend plus one more daily limit, for the
+# day.
 # daily_limit_usd = 25.0
-
-[anomaly]
-# Runaway-anomaly hard-stop multiples, applied to ACTUAL recorded spend (never
-# estimates) before every paid call. Unlike the soft ceilings above, an
-# approval here does not raise an envelope. It raises the tripped halt to twice
-# the actual spend at approval, for the turn or for the session or day its
-# scope names; spend past that raised halt prompts again, and non-interactive
-# callers fail closed.
-# Multiples must be strictly positive and there is no disable knob. The
-# multiples are config-only (no per-request field); the dollar thresholds
-# they produce scale with the budget envelope in force, including an explicit
-# loopback per-turn budget override. The multiples set each initial halt:
-# an approval replaces that halt with the raised level described above.
-#   turn halt:  turn_multiple  × per_call_limit_usd of real spend in one turn
-#   scope halt: scope_multiple × the session/daily envelope
-# turn_multiple = 3.0
-# scope_multiple = 2.0
+#
+# The [anomaly] table (turn_multiple, scope_multiple) was retired by BIT-785;
+# a config file that still has one fails to load.
 
 [secrets]
 # Declared secret POINTERS, resolved into the process environment at boot so

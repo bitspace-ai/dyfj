@@ -179,12 +179,9 @@ export type ContextOverflowRecoverer = (
  * means "the envelope refused this call". Used only for the recovery retry:
  * a refused retry downgrades to returning the truncated turn instead of
  * failing it — the paid partial output already streamed to the operator.
- * First-call budget errors keep their existing turn-failing behavior.
- *
- * A RunawayAnomalyHaltError is deliberately NOT a refusal: the anomaly gate
- * is a hard stop on runaway spend, and downgrading it to a delivered partial
- * would erase the halt from callers and the audit trail. It propagates and
- * fails the turn like any first-call halt.
+ * First-call budget errors keep their existing turn-failing behavior. Every
+ * spend limit, the runaway limit included, refuses through these two errors,
+ * so a refused retry ends the turn either way; the recovery event records it.
  */
 export function isBudgetRefusal(err: unknown): boolean {
   const name = (err as Error)?.name;

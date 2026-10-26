@@ -174,22 +174,21 @@ All five apply from Day-1.
 2. **Operator-routed inference inside cost envelopes.** The operator sets the
    default model; hosted frontier models are a normal choice, and local models
    are a first-class option (evals, privacy-scoped work, offline) rather than a
-   privileged default. Paid spend runs inside operator-configured budget
-   envelopes (per session and per day): within an envelope, calls run without
-   ceremony and every call is receipted; crossing an envelope requires one
-   explicit confirmation, which raises the envelope for that scope; runaway
-   spend (actual recorded spend crossing hard multiples of the per-call limit or
-   an envelope) halts for confirmation. Non-loopback transports never inherit
-   the standing paid posture and fail closed, and a model is not routable
-   without a catalog pricing row. _Runtime status: envelope enforcement
-   (session/day/per-call, warn-then-confirm) and a deterministic runaway-anomaly
-   hard stop are live; the hard stop halts on actual recorded spend at
-   configurable multiples of the per-call limit (turn accumulation) and of the
-   session/daily envelopes. An approval raises the tripped halt to twice the
-   spend at approval for its scope (the turn halt lasts the turn; the session
-   halt lasts the session; the daily halt lasts the local day, and a daily
-   approval made during a turn also holds until that turn ends). Non-interactive
-   callers fail closed. Trailing-pattern anomaly detection is future work._
+   privileged default. Paid spend runs inside operator-configured spend limits
+   (per call, per turn, per session and per day, plus a runaway limit on spend
+   with no tool progress): within them, calls run without ceremony and every
+   call is receipted; crossing one requires one explicit confirmation, which
+   raises that limit to a level the prompt states. Non-loopback transports
+   never inherit the standing paid posture and fail closed, and a model is not
+   routable without a catalog pricing row. _Runtime status: one spend check
+   (BIT-785) runs before every paid call. It measures each limit against actual
+   recorded spend plus the call's estimate; when one check crosses several
+   limits, they share one prompt. An approval raises the per-call limit to
+   twice the estimate for the session, the turn and runaway limits to twice
+   the projection (spend plus the call's estimate) for the turn, and the
+   session and daily limits to the projection plus one more session or daily
+   limit. A limit changed after an approval is checked afresh. Non-interactive callers fail closed. Statistical runaway
+   detection is future work._
 3. **Rust for the autonomous core; TypeScript for prototyping.** The Rust line
    is a moving boundary that advances downward as components stabilize - Rust
    where its compile/build cycle does not interfere with active prototyping.
@@ -474,9 +473,9 @@ default. The operator can instead configure a hosted companion default or select
 a hosted model from `dyfj models`. Paid inference requires approval on a
 loopback session: use `--approve-paid`, `/model <slug> --approve-paid`, or the
 standing `[paid].approve_paid_default` posture. Once approved, ordinary calls
-inside the configured budget envelopes run without another budget prompt and are
-receipted with cost and prompt-cache telemetry; crossing a ceiling requires
-explicit confirmation, and the runaway-anomaly hard stops remain separate.
+inside the configured spend limits run without another budget prompt and are
+receipted with cost and prompt-cache telemetry; crossing a limit requires one
+explicit confirmation that names every limit the call crosses.
 Non-loopback callers cannot inherit or assert paid approval and fail closed.
 
 A recorded cost is either what the provider billed or a catalog estimate (the

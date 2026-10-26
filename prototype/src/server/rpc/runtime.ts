@@ -10,6 +10,7 @@ import {
 } from "../../providers/mod.ts";
 import {
   AGENT_DEFAULTS,
+  BUDGET_DEFAULTS,
   type CodeFingerprint,
   type PermissionLevel,
   type WorkbenchConfig,
@@ -67,6 +68,8 @@ export interface WorkbenchRuntimeStatus {
   defaultSessionBudgetUsd: number;
   defaultPerCallBudgetUsd: number;
   defaultDailyBudgetUsd: number;
+  defaultTurnBudgetUsd: number;
+  defaultRunawayStallUsd: number;
   maxToolSteps: number;
   /** The highest tool-step limit a session may set (`/steps N`). */
   maxToolStepsCeiling: number;
@@ -106,6 +109,8 @@ export interface RuntimePosture {
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
+    | "defaultTurnBudgetUsd"
+    | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
   >;
@@ -207,10 +212,16 @@ export function runtimeStatus(
     approvePaidDefault: options.engineConfig?.approvePaidDefault ?? false,
     trustWorkspaceInstructions:
       options.engineConfig?.trustWorkspaceInstructions ?? false,
-    defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ?? 1,
+    defaultSessionBudgetUsd: options.engineConfig?.defaultSessionBudgetUsd ??
+      BUDGET_DEFAULTS.sessionLimitUsd,
     defaultPerCallBudgetUsd: options.engineConfig?.defaultPerCallBudgetUsd ??
-      0.1,
-    defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ?? 25,
+      BUDGET_DEFAULTS.perCallLimitUsd,
+    defaultDailyBudgetUsd: options.engineConfig?.defaultDailyBudgetUsd ??
+      BUDGET_DEFAULTS.dailyLimitUsd,
+    defaultTurnBudgetUsd: options.engineConfig?.defaultTurnBudgetUsd ??
+      BUDGET_DEFAULTS.turnLimitUsd,
+    defaultRunawayStallUsd: options.engineConfig?.defaultRunawayStallUsd ??
+      BUDGET_DEFAULTS.runawayStallUsd,
     maxToolSteps: options.engineConfig?.maxToolSteps ??
       AGENT_DEFAULTS.maxToolSteps,
     maxToolStepsCeiling: options.engineConfig?.maxToolStepsCeiling ??

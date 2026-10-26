@@ -14,6 +14,7 @@ import {
 } from "../config/mod.ts";
 import { connectUnixClient } from "../transport/mod.ts";
 import type { CliConfig } from "./args.ts";
+import { formatBudgetLine, type SessionBudget } from "./budget.ts";
 import type { ConnectFn, Io } from "./io.ts";
 import { socketError } from "./render/errors.ts";
 import type { ModelRow } from "./commands/models.ts";
@@ -45,6 +46,8 @@ export interface SessionPosture {
   maxToolSteps?: number;
   /** The highest limit a session may set; absent from an older runtime. */
   maxToolStepsCeiling?: number;
+  /** The session's spend limits: its own, else the runtime's defaults. */
+  budget?: SessionBudget;
 }
 
 /**
@@ -183,6 +186,7 @@ export async function fetchSessionPosture(
         ...(runtime?.autostarted !== undefined
           ? { autostarted: runtime.autostarted }
           : {}),
+        ...sessionBudget(config, runtime),
       };
     } finally {
       client.close();
@@ -190,6 +194,27 @@ export async function fetchSessionPosture(
   } catch (error) {
     return { error: socketError(error, config) };
   }
+}
+
+/**
+ * The session's spend limits: its own, else the runtime's defaults. Omitted
+ * when neither side names any (an older runtime and no --budget-* flag).
+ */
+function sessionBudget(
+  config: CliConfig,
+  runtime: RuntimeStatusPayload["runtime"],
+): { budget?: SessionBudget } {
+  const merged: SessionBudget = {
+    turn: config.budget?.turn ?? runtime?.defaultTurnBudgetUsd,
+    session: config.budget?.session ?? runtime?.defaultSessionBudgetUsd,
+    day: config.budget?.day ?? runtime?.defaultDailyBudgetUsd,
+    perCall: config.budget?.perCall ?? runtime?.defaultPerCallBudgetUsd,
+    runaway: config.budget?.runaway ?? runtime?.defaultRunawayStallUsd,
+  };
+  const known = Object.fromEntries(
+    Object.entries(merged).filter(([, v]) => v !== undefined),
+  ) as SessionBudget;
+  return Object.keys(known).length > 0 ? { budget: known } : {};
 }
 
 /**
@@ -220,6 +245,7 @@ export async function openReplSession(
   const posture = await fetchSessionPosture(config, connect);
   if (!("error" in posture)) {
     io.err(formatPostureLine(posture));
+    if (posture.budget !== undefined) io.err(formatBudgetLine(posture.budget));
     const warning = formatFreshnessWarning(
       posture,
       await sourceTreeHash(prototypeSourceDir()),

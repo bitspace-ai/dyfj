@@ -9,20 +9,26 @@
  * Design:
  *   - BudgetTracker is instantiated once per session by the caller
  *   - record()    called after each done event with the message's usage
- *   - checkPreCall() called before starting a Tier 1/2 model call
- *   - checkAnomaly() checks the runaway hard stops against actual spend
+ *   - checkPreCall() called before starting a Tier 1/2 model call; it
+ *     measures every spend limit against one projection (actual spend so far
+ *     plus this call's estimate)
+ *   - noteToolProgress() marks a tool step that made progress; spend since
+ *     the last mark is what the runaway limit measures
  *   - buildSummaryEventPayload() is a pure function — testable without Dolt
  *   - writeSummaryEvent() commits it through the journal; call once at session end
  *
  * Budget defaults are a declared engine config key (`CONFIG_SCHEMA` in
  * config/): the env-var bindings and the limit numbers live on the declared
  * surface, not inline here, so the permission allowlist derives from one source.
- *   DYFJ_BUDGET_SESSION_USD  — max total spend per session  (default $1.00)
- *   DYFJ_BUDGET_PER_CALL_USD — max spend per individual call (default $0.10)
+ *   DYFJ_BUDGET_PER_CALL_USD       — one call's estimate        (default $0.50)
+ *   DYFJ_BUDGET_TURN_USD           — one turn                   (default $4.00)
+ *   DYFJ_BUDGET_RUNAWAY_STALL_USD  — spend with no tool progress (default $0.50)
+ *   DYFJ_BUDGET_SESSION_USD        — one session                (default $10.00)
+ *   DYFJ_BUDGET_DAILY_USD          — one local day, all sessions (default $25.00)
  *
  * Pre-call cost estimate uses input tokens only (output is unknown pre-call).
- * This is a lower-bound estimate; the actual call may cost more. The session
- * limit check post-call (via record()) catches overruns if they occur.
+ * This is a lower-bound estimate; the actual call may cost more. record() adds
+ * the actual cost, so the next call's check counts any overrun.
  */
 
 import { generateSpanId, generateULID } from "../kernel/mod.ts";
@@ -46,6 +52,13 @@ export interface BudgetConfig {
   perCallLimitUsd: number;
   /** Maximum total USD spend across ALL sessions in a local day. */
   dailyLimitUsd: number;
+  /** Maximum total USD spend in one turn. */
+  turnLimitUsd: number;
+  /**
+   * The runaway limit: maximum USD spend in a turn since its last tool step
+   * that made progress (noteToolProgress).
+   */
+  runawayStallUsd: number;
 }
 
 /**
@@ -91,41 +104,21 @@ export interface PreCallCheck {
   perCallLimitUsd: number;
   dailyCostSoFar: number;
   dailyLimitUsd: number;
+  turnCostSoFar: number;
+  turnLimitUsd: number;
+  /** Actual spend since the turn's last tool step that made progress. */
+  stallCostSoFar: number;
+  runawayStallUsd: number;
   /** Only present when allowed === false */
   reason?: BudgetLimitReason;
 }
 
 export type BudgetLimitReason =
   | "per_call_limit"
+  | "runaway_stall"
+  | "turn_limit"
   | "session_limit"
   | "daily_limit";
-
-// ── Runaway anomaly check types ───────────────────────────────────────────────
-//
-// The tracker computes the anomaly check from actual recorded spend; the
-// hard-stop gate that acts on it lives in anomaly-gate.ts.
-
-export interface AnomalyConfig {
-  /** Halt when a turn's actual spend exceeds this × the per-call limit. */
-  turnMultiple: number;
-  /** Halt when actual session/daily spend exceeds this × the envelope. */
-  scopeMultiple: number;
-}
-
-export type AnomalyTrigger = "turn_spend" | "session_scope" | "daily_scope";
-
-export interface AnomalyCheck {
-  halted: boolean;
-  /** Outermost tripped trigger (daily > session > turn); set iff halted. */
-  trigger?: AnomalyTrigger;
-  turnSpentUsd: number;
-  turnHaltUsd: number;
-  sessionSpentUsd: number;
-  sessionHaltUsd: number;
-  dailySpentUsd: number;
-  dailyHaltUsd: number;
-  config: AnomalyConfig;
-}
 
 export interface BudgetSummary {
   totalCostUsd: number;
@@ -154,6 +147,8 @@ export class BudgetTracker {
   private _totalCost = 0;
   private _totalTokensInput = 0;
   private _totalTokensOutput = 0;
+  // `_totalCost` at the turn's last tool step that made progress.
+  private _costAtProgress = 0;
 
   constructor(
     sessionId: string,
@@ -212,12 +207,21 @@ export class BudgetTracker {
     });
   }
 
+  /**
+   * Mark a tool step that made progress. Spend after this mark is what the
+   * runaway limit measures.
+   */
+  noteToolProgress(): void {
+    this._costAtProgress = this._totalCost;
+  }
+
   // ── Pre-call guard ──────────────────────────────────────────────────────────
 
   /**
    * Check whether a proposed API call is within budget before initiating it.
-   * Tier 0 calls are always allowed (free). Tier 1/2 are checked against both
-   * per-call and session limits.
+   * Tier 0 calls are always allowed (free). Tier 1/2 are checked against
+   * every limit, each with the same projection: actual spend so far in its
+   * scope plus this call's estimate.
    *
    * Cost estimate uses input tokens only — a lower bound. Callers should treat
    * "allowed" as a green light, not a guarantee the session limit won't be
@@ -237,12 +241,18 @@ export class BudgetTracker {
     // a resumed session may span days; the live turn's spend is all today.
     const dailyCostSoFar = this.baselines.dailyOtherSessionsUsd +
       this.baselines.sessionSpentTodayUsd + this._totalCost;
+    const turnCostSoFar = this._totalCost;
+    const stallCostSoFar = this.stallSpentUsd;
     const base: Omit<PreCallCheck, "allowed" | "estimatedCost" | "reason"> = {
       sessionCostSoFar,
       sessionLimitUsd: this.config.sessionLimitUsd,
       perCallLimitUsd: this.config.perCallLimitUsd,
       dailyCostSoFar,
       dailyLimitUsd: this.config.dailyLimitUsd,
+      turnCostSoFar,
+      turnLimitUsd: this.config.turnLimitUsd,
+      stallCostSoFar,
+      runawayStallUsd: this.config.runawayStallUsd,
     };
 
     if (tier === 0) {
@@ -251,14 +261,19 @@ export class BudgetTracker {
 
     const estimatedCost = (estimatedInputTokens / 1_000_000) * costInputPerMTok;
 
-    // Reason reports the OUTERMOST crossed scope (daily > session > per-call)
-    // so a fail-closed error names the broadest envelope that blocked the
-    // call rather than masking a daily stop behind a session framing.
+    // Reason reports the OUTERMOST crossed scope (daily > session > turn >
+    // runaway > per-call) so a fail-closed error names the broadest limit
+    // that blocked the call rather than masking a daily stop behind a
+    // narrower framing.
     const reason: BudgetLimitReason | undefined =
       dailyCostSoFar + estimatedCost > this.config.dailyLimitUsd
         ? "daily_limit"
         : sessionCostSoFar + estimatedCost > this.config.sessionLimitUsd
         ? "session_limit"
+        : turnCostSoFar + estimatedCost > this.config.turnLimitUsd
+        ? "turn_limit"
+        : stallCostSoFar + estimatedCost > this.config.runawayStallUsd
+        ? "runaway_stall"
         : estimatedCost > this.config.perCallLimitUsd
         ? "per_call_limit"
         : undefined;
@@ -270,49 +285,6 @@ export class BudgetTracker {
     return { ...base, allowed: true, estimatedCost };
   }
 
-  // ── Runaway anomaly check ───────────────────────────────────────────────────
-
-  /**
-   * Check the runaway-anomaly hard stops against ACTUAL recorded spend — no
-   * estimates anywhere in this path, so it holds even where the pre-call
-   * estimate undercounts. Tier 0 never halts (free calls add no spend).
-   * `_totalCost` is this tracker's lifetime (= the current turn: one tracker
-   * per runtime invocation), so the turn trigger sees exactly the loop's
-   * accumulated actuals; the scope figures reuse the envelope arithmetic from
-   * checkPreCall.
-   */
-  checkAnomaly(tier: 0 | 1 | 2, anomaly: AnomalyConfig): AnomalyCheck {
-    const turnSpentUsd = this._totalCost;
-    const sessionSpentUsd = this.sessionSpentUsd;
-    const dailySpentUsd = this.baselines.dailyOtherSessionsUsd +
-      this.baselines.sessionSpentTodayUsd + this._totalCost;
-    const turnHaltUsd = anomaly.turnMultiple * this.config.perCallLimitUsd;
-    const sessionHaltUsd = anomaly.scopeMultiple * this.config.sessionLimitUsd;
-    const dailyHaltUsd = anomaly.scopeMultiple * this.config.dailyLimitUsd;
-    // Outermost trigger frames the halt (daily > session > turn), mirroring
-    // the ceiling gate's scope ordering.
-    const trigger: AnomalyTrigger | undefined = tier === 0
-      ? undefined
-      : dailySpentUsd > dailyHaltUsd
-      ? "daily_scope"
-      : sessionSpentUsd > sessionHaltUsd
-      ? "session_scope"
-      : turnSpentUsd > turnHaltUsd
-      ? "turn_spend"
-      : undefined;
-    return {
-      halted: trigger !== undefined,
-      ...(trigger !== undefined ? { trigger } : {}),
-      turnSpentUsd,
-      turnHaltUsd,
-      sessionSpentUsd,
-      sessionHaltUsd,
-      dailySpentUsd,
-      dailyHaltUsd,
-      config: { ...anomaly },
-    };
-  }
-
   // ── Accessors ───────────────────────────────────────────────────────────────
 
   get totalCost(): number {
@@ -320,11 +292,15 @@ export class BudgetTracker {
   }
   /**
    * The session's spend so far: every paid call its earlier turns recorded in
-   * the event log, plus this turn's. The session envelope and the anomaly
-   * halt check this figure, and the receipt reports it.
+   * the event log, plus this turn's. The session limit checks this figure,
+   * the spend prompt shows it, and the receipt reports it.
    */
   get sessionSpentUsd(): number {
     return this.baselines.sessionSpentUsd + this._totalCost;
+  }
+  /** This turn's spend since its last tool step that made progress. */
+  get stallSpentUsd(): number {
+    return this._totalCost - this._costAtProgress;
   }
   get totalTokensInput(): number {
     return this._totalTokensInput;

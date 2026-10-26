@@ -190,33 +190,6 @@ test("a retry the budget envelope refuses is skipped and the truncated turn is d
   assert.deepStrictEqual(frames.at(-1)?.type, "turnCompleted");
 });
 
-test("a runaway-anomaly halt on the retry fails the turn — never downgraded to a partial", async () => {
-  // Recorded $0.03 exceeds the turn halt (2 × $0.01 per-call limit); the
-  // retry's anomaly gate fails closed and the halt must surface, not be
-  // converted into a delivered partial.
-  const { run, frames, error } = await lengthTurn([
-    lengthReply("truncated answer", {
-      prompt_tokens: 42,
-      completion_tokens: 3,
-    }),
-  ], {
-    defaultPerCallBudgetUsd: 0.01,
-    anomalyTurnMultiple: 2,
-    approver: {
-      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-    },
-  }, { models: [PENNY_OUTPUT] });
-  assert.ok(error instanceof Error);
-  assert.deepStrictEqual(run.transport.requests.length, 1);
-  assert.partialDeepStrictEqual(frame(frames, "lengthRecoveryFinished")!, {
-    outcome: "retry_errored",
-  });
-  assert.partialDeepStrictEqual(frames.at(-1)!, {
-    type: "turnFailed",
-    errorName: "RunawayAnomalyHaltError",
-  });
-});
-
 test("a continuation retry never signals a supersede — its text extends the partial", async () => {
   const { frames, text } = await lengthTurn([
     lengthReply("first half "),

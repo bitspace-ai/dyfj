@@ -6,7 +6,6 @@ import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { CONFIG_SCHEMA } from "./schema.ts";
 import {
   BUDGET_DEFAULTS,
-  resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
   resolveRuntimeEnvDefaults,
@@ -57,9 +56,11 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
       BUDGET_DEFAULTS,
     );
     assert.deepStrictEqual(BUDGET_DEFAULTS, {
-      sessionLimitUsd: 1.0,
-      perCallLimitUsd: 0.1,
+      sessionLimitUsd: 10.0,
+      perCallLimitUsd: 0.5,
       dailyLimitUsd: 25.0,
+      turnLimitUsd: 4.0,
+      runawayStallUsd: 0.5,
     });
   });
 
@@ -72,7 +73,13 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
           DYFJ_BUDGET_DAILY_USD: "40",
         }),
       ),
-      { sessionLimitUsd: 5, perCallLimitUsd: 0.25, dailyLimitUsd: 40 },
+      {
+        sessionLimitUsd: 5,
+        perCallLimitUsd: 0.25,
+        dailyLimitUsd: 40,
+        turnLimitUsd: 4.0,
+        runawayStallUsd: 0.5,
+      },
     );
   });
 
@@ -112,34 +119,16 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
   });
 }
 
-{ // "anomaly env parsing strictness"
-  test("anomaly env parsing strictness: trailing junk fails loud instead of half-parsing ('2x' is not 2)", async () => {
-    assert.match(
-      (captureThrow(() =>
-        resolveAnomalyDefaultsFromEnv({
-          get: (key: string) =>
-            key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? "2x" : undefined,
-        })
-      ) as Error).message,
-      /positive/,
-    );
-    assert.match(
-      (captureThrow(() =>
-        resolveAnomalyDefaultsFromEnv({
-          get: (key: string) =>
-            key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "1e2junk" : undefined,
-        })
-      ) as Error).message,
-      /positive/,
-    );
-    // Plain and scientific forms still parse.
-    assert.strictEqual(
-      resolveAnomalyDefaultsFromEnv({
-        get: (key: string) =>
-          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? " 2.5 " : undefined,
-      }).turnMultiple,
-      2.5,
-    );
+{ // "turn and runaway limits from env"
+  test("turn and runaway limits from env: defaults are $4.00 and $0.50; env overrides them", () => {
+    assert.strictEqual(BUDGET_DEFAULTS.turnLimitUsd, 4.0);
+    assert.strictEqual(BUDGET_DEFAULTS.runawayStallUsd, 0.5);
+    const resolved = resolveBudgetDefaultsFromEnv(env({
+      DYFJ_BUDGET_TURN_USD: "6",
+      DYFJ_BUDGET_RUNAWAY_STALL_USD: "0.75",
+    }));
+    assert.strictEqual(resolved.turnLimitUsd, 6);
+    assert.strictEqual(resolved.runawayStallUsd, 0.75);
   });
 }
 
@@ -163,11 +152,11 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
       trustWorkspaceInstructions: false,
       rootOverride: undefined,
       budgetTallyMode: "paid",
-      defaultSessionBudgetUsd: 1.0,
-      defaultPerCallBudgetUsd: 0.1,
+      defaultSessionBudgetUsd: 10.0,
+      defaultPerCallBudgetUsd: 0.5,
       defaultDailyBudgetUsd: 25.0,
-      anomalyTurnMultiple: 3.0,
-      anomalyScopeMultiple: 2.0,
+      defaultTurnBudgetUsd: 4.0,
+      defaultRunawayStallUsd: 0.5,
       maxToolSteps: 32,
       maxToolStepsCeiling: 64,
     });
@@ -182,8 +171,8 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
         DYFJ_BUDGET_SESSION_USD: "2",
         DYFJ_BUDGET_PER_CALL_USD: "0.2",
         DYFJ_BUDGET_DAILY_USD: "30",
-        DYFJ_ANOMALY_TURN_MULTIPLE: "4",
-        DYFJ_ANOMALY_SCOPE_MULTIPLE: "5",
+        DYFJ_BUDGET_TURN_USD: "4.5",
+        DYFJ_BUDGET_RUNAWAY_STALL_USD: "0.6",
         DYFJ_MAX_TOOL_STEPS: "8",
         DYFJ_MAX_TOOL_STEPS_CEILING: "12",
       })),
@@ -195,8 +184,8 @@ const env = (map: Record<string, string> = {}) => new MapEnv(map);
         defaultSessionBudgetUsd: 2,
         defaultPerCallBudgetUsd: 0.2,
         defaultDailyBudgetUsd: 30,
-        anomalyTurnMultiple: 4,
-        anomalyScopeMultiple: 5,
+        defaultTurnBudgetUsd: 4.5,
+        defaultRunawayStallUsd: 0.6,
         maxToolSteps: 8,
         maxToolStepsCeiling: 12,
       },

@@ -106,6 +106,8 @@ function harness(options: { rejectWrites?: boolean } = {}): Harness {
     sessionLimitUsd: 1,
     perCallLimitUsd: 0.1,
     dailyLimitUsd: 5,
+    turnLimitUsd: 1,
+    runawayStallUsd: 1,
   }, "operator");
   const h: Harness = {
     store,

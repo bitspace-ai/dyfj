@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
+import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
+import { buildTurnBody } from "./cli/turn-client.ts";
 import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import { describe, it } from "node:test";
 import {
@@ -16,7 +18,7 @@ import {
   type ReplSessionState,
   runRepl,
 } from "./cli.ts";
-import type { CliConfig } from "./cli/args.ts";
+import { type CliConfig, parseArgs, resolveConfig } from "./cli/args.ts";
 import { formatRuntimeStatus } from "./cli/commands/status.ts";
 import type { ConnectFn, Io, TurnInterruptSource } from "./cli/io.ts";
 import { DomainError } from "./contract/mod.ts";
@@ -1064,6 +1066,89 @@ describe("REPL /model", () => {
     assert.ok(
       stderr.join("\n").includes("cannot specify both --fast and --no-fast"),
       `expected stderr.join("\\n") to include "cannot specify both --fast and --no-fast"`,
+    );
+  });
+});
+
+describe("REPL /budget command and --budget-* flags", () => {
+  const connect = (runtime: Record<string, unknown>): ConnectFn => () =>
+    Promise.resolve({
+      request: (method: string) =>
+        Promise.resolve(method === "runtime/status" ? { runtime } : {}),
+      close: () => {},
+    });
+  const RUNTIME = {
+    defaultTurnBudgetUsd: 4,
+    defaultSessionBudgetUsd: 10,
+    defaultDailyBudgetUsd: 25,
+    defaultPerCallBudgetUsd: 0.5,
+    defaultRunawayStallUsd: 0.5,
+  };
+
+  it("/budget shows the runtime's limits in the one budget line", async () => {
+    const { io, stderr } = fakeIo();
+    assert.strictEqual(
+      await handleReplBudgetCommand("/budget", cfg(), io, connect(RUNTIME)),
+      true,
+    );
+    assert.deepStrictEqual(stderr, [
+      "budget: turn $4.00 · session $10.00 · today $25.00 · per call $0.50 · runaway $0.50 without tool progress",
+    ]);
+  });
+
+  it("/budget <limit> <usd> sets that limit for the session, and turns send it", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg();
+    await handleReplBudgetCommand("/budget turn 6", config, io, connect(RUNTIME));
+    await handleReplBudgetCommand("/budget per-call 1", config, io, connect(RUNTIME));
+    assert.deepStrictEqual(config.budget, { turn: 6, perCall: 1 });
+    assert.ok(stderr[1].startsWith("budget: turn $6.00 · session $10.00"), stderr[1]);
+    assert.ok(stderr[1].includes("per call $1.00"), stderr[1]);
+    assert.deepStrictEqual(buildTurnBody("hi", config).budget, {
+      turnLimitUsd: 6,
+      perCallLimitUsd: 1,
+    });
+  });
+
+  for (
+    const line of [
+      "/budget turn 0",
+      "/budget turn 1001",
+      "/budget week 5",
+      "/budget constructor 5",
+      "/budget turn",
+    ]
+  ) {
+    it(`${line} prints the usage and keeps the limits`, async () => {
+      const { io, stderr } = fakeIo();
+      const config = cfg();
+      await handleReplBudgetCommand(line, config, io, connect(RUNTIME));
+      assert.strictEqual(config.budget, undefined);
+      assert.match(stderr[0], /^usage: \/budget/);
+    });
+  }
+
+  it("--budget-* flags set the session's limits and a turn without any sends none", () => {
+    const parsed = parseArgs([
+      "--budget-turn",
+      "6",
+      "--budget-session",
+      "$20",
+      "--budget-runaway",
+      "0.75",
+    ]);
+    assert.strictEqual(parsed.error, undefined);
+    assert.deepStrictEqual(
+      resolveConfig(parsed.overrides, { get: () => undefined }).budget,
+      { turn: 6, session: 20, runaway: 0.75 },
+    );
+    assert.strictEqual(buildTurnBody("hi", cfg()).budget, undefined);
+  });
+
+  it("refuses a malformed --budget-* value", () => {
+    assert.match(
+      parseArgs(["--budget-day", "lots"]).error ?? "",
+      /--budget-day must be a dollar amount/,
     );
   });
 });

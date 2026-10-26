@@ -14,13 +14,16 @@ import { localDayKey } from "./spend.ts";
  *   to PER_CALL_HEADROOM (2×) that estimate by each approval; kept per session.
  * - `session_limit`: the projected session spend plus one session envelope,
  *   set by each session approval; kept per session.
- * - `daily_limit`: unbounded for the local day once approved; kept per day
- *   across sessions. Its only bound is the daily anomaly halt.
- * - `anomaly_session_halt` / `anomaly_daily_halt`: the runaway halts an
- *   anomaly approval raised to 2× the spend at approval (anomaly-gate.ts);
- *   kept per session and per day. The turn-level halt is not stored here: it
- *   lasts for one turn only. A daily anomaly approval made during a turn lasts
- *   until that turn ends, even across midnight.
+ * - `daily_limit`: the projected spend today plus one daily envelope, set by
+ *   each daily approval; kept per day across sessions.
+ *
+ * Each mark is kept with its basis: the limit in force when it was approved.
+ * A mark applies only while the limit in force equals that basis, so a limit
+ * the operator sets to a different value for a session is not overridden by
+ * an approval given against the old one.
+ *
+ * The turn and runaway marks are not stored here: they last one turn and
+ * live in the turn's spend gate (envelope-gate.ts).
  *
  * All of it lives in runtime-process memory, so a restart forgets the marks
  * (the safe direction).
@@ -29,8 +32,10 @@ export interface BudgetCeilingConfirmations {
   per_call_limit?: number;
   session_limit?: number;
   daily_limit?: number;
-  anomaly_session_halt?: number;
-  anomaly_daily_halt?: number;
+  /** The limit each mark above was approved against. */
+  per_call_limit_basis?: number;
+  session_limit_basis?: number;
+  daily_limit_basis?: number;
 }
 
 const MAX_TRACKED_SCOPES = 512;
@@ -89,11 +94,17 @@ export class CeilingConfirmationStore {
       set session_limit(v: number | undefined) {
         session.session_limit = v;
       },
-      get anomaly_session_halt() {
-        return session.anomaly_session_halt;
+      get per_call_limit_basis() {
+        return session.per_call_limit_basis;
       },
-      set anomaly_session_halt(v: number | undefined) {
-        session.anomaly_session_halt = v;
+      set per_call_limit_basis(v: number | undefined) {
+        session.per_call_limit_basis = v;
+      },
+      get session_limit_basis() {
+        return session.session_limit_basis;
+      },
+      set session_limit_basis(v: number | undefined) {
+        session.session_limit_basis = v;
       },
       get daily_limit() {
         return daily.daily_limit;
@@ -101,11 +112,11 @@ export class CeilingConfirmationStore {
       set daily_limit(v: number | undefined) {
         daily.daily_limit = v;
       },
-      get anomaly_daily_halt() {
-        return daily.anomaly_daily_halt;
+      get daily_limit_basis() {
+        return daily.daily_limit_basis;
       },
-      set anomaly_daily_halt(v: number | undefined) {
-        daily.anomaly_daily_halt = v;
+      set daily_limit_basis(v: number | undefined) {
+        daily.daily_limit_basis = v;
       },
     };
   }

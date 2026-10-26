@@ -130,7 +130,7 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     domain: "engine",
     type: "number",
     kind: "value",
-    default: 1.0,
+    default: 10.0,
   },
   {
     key: "defaultPerCallBudgetUsd",
@@ -138,7 +138,23 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     domain: "engine",
     type: "number",
     kind: "value",
-    default: 0.1,
+    default: 0.5,
+  },
+  {
+    key: "defaultTurnBudgetUsd",
+    envVar: "DYFJ_BUDGET_TURN_USD",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 4.0,
+  },
+  {
+    key: "defaultRunawayStallUsd",
+    envVar: "DYFJ_BUDGET_RUNAWAY_STALL_USD",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: 0.5,
   },
   {
     key: "defaultDailyBudgetUsd",
@@ -163,23 +179,6 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "boolean",
     kind: "value",
     default: false,
-  },
-  // ── engine: runaway-anomaly hard-stop multiples (applied to ACTUAL spend) ──
-  {
-    key: "anomalyTurnMultiple",
-    envVar: "DYFJ_ANOMALY_TURN_MULTIPLE",
-    domain: "engine",
-    type: "number",
-    kind: "value",
-    default: 3.0,
-  },
-  {
-    key: "anomalyScopeMultiple",
-    envVar: "DYFJ_ANOMALY_SCOPE_MULTIPLE",
-    domain: "engine",
-    type: "number",
-    kind: "value",
-    default: 2.0,
   },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   {

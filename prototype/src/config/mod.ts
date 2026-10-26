@@ -3,7 +3,7 @@
  *
  * Responsibility: the env-key schema (every `DYFJ_*` key declared), the `Env`
  * port and its process adapter, the shared `.env` parser, TOML loading, and
- * secrets/MCP/budget/agent/anomaly config parsing, secret-pointer resolution
+ * secrets/MCP/budget/agent config parsing, secret-pointer resolution
  * into the environment (`secrets.ts`), the launch-resolved
  * nameserver net grants, and the runtime's egress, spawn and env policy with
  * the guards that enforce it at the product's seams (`runtime-policy.ts`,
@@ -84,14 +84,11 @@ export {
 export {
   AGENT_DEFAULTS,
   type AgentDefaults,
-  ANOMALY_DEFAULTS,
-  type AnomalyDefaults,
   BUDGET_DEFAULTS,
   type BudgetDefaults,
   type BudgetTallyMode,
   parseBudgetTallyMode,
   resolveAgentDefaultsFromEnv,
-  resolveAnomalyDefaultsFromEnv,
   resolveBudgetDefaultsFromEnv,
   resolvePrincipalId,
   resolveRuntimeEnvDefaults,

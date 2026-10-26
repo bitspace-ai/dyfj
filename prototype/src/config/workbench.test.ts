@@ -6,11 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-import {
-  ANOMALY_DEFAULTS,
-  BUDGET_DEFAULTS,
-  resolveAnomalyDefaultsFromEnv,
-} from "./defaults.ts";
+import { BUDGET_DEFAULTS } from "./defaults.ts";
 import { CONFIG_DEFAULTS, loadConfig } from "./workbench.ts";
 
 const env = (map: Record<string, string> = {}) => new MapEnv(map);
@@ -215,82 +211,44 @@ const table = (t: Record<string, unknown>) => () => t;
   });
 }
 
-{ // "anomaly multiples config surface"
-  test("anomaly multiples config surface: declared defaults: turn 3×, scope 2×", async () => {
-    assert.strictEqual(ANOMALY_DEFAULTS.turnMultiple, 3.0);
-    assert.strictEqual(ANOMALY_DEFAULTS.scopeMultiple, 2.0);
-    assert.strictEqual(CONFIG_DEFAULTS.anomalyTurnMultiple, 3.0);
-    assert.strictEqual(CONFIG_DEFAULTS.anomalyScopeMultiple, 2.0);
+{ // "turn and runaway limits config surface"
+  test("turn and runaway limits config surface: declared defaults: turn $4.00, runaway $0.50", () => {
+    assert.strictEqual(CONFIG_DEFAULTS.defaultTurnBudgetUsd, 4.0);
+    assert.strictEqual(CONFIG_DEFAULTS.defaultRunawayStallUsd, 0.5);
   });
 
-  test("anomaly multiples config surface: the [anomaly] file layer sets the multiples", async () => {
-    const config = await loadConfig({
+  test("turn and runaway limits config surface: the [budget] file layer sets them, and env overrides the file", async () => {
+    const fromFile = await loadConfig({
       env: { get: () => undefined },
       readTextFile: async () => "stub",
-      parseToml: () => ({ anomaly: { turn_multiple: 4, scope_multiple: 1.5 } }),
+      parseToml: () => ({
+        budget: { turn_limit_usd: 6, runaway_stall_usd: 0.8 },
+      }),
     });
-    assert.strictEqual(config.anomalyTurnMultiple, 4);
-    assert.strictEqual(config.anomalyScopeMultiple, 1.5);
-  });
-
-  test("anomaly multiples config surface: env overrides the file layer", async () => {
-    const config = await loadConfig({
+    assert.strictEqual(fromFile.defaultTurnBudgetUsd, 6);
+    assert.strictEqual(fromFile.defaultRunawayStallUsd, 0.8);
+    const fromEnv = await loadConfig({
       env: {
-        get: (key: string) =>
-          key === "DYFJ_ANOMALY_TURN_MULTIPLE" ? "5" : undefined,
+        get: (key: string) => key === "DYFJ_BUDGET_TURN_USD" ? "7" : undefined,
       },
       readTextFile: async () => "stub",
-      parseToml: () => ({ anomaly: { turn_multiple: 4 } }),
+      parseToml: () => ({ budget: { turn_limit_usd: 6 } }),
     });
-    assert.strictEqual(config.anomalyTurnMultiple, 5);
+    assert.strictEqual(fromEnv.defaultTurnBudgetUsd, 7);
   });
 
-  test("anomaly multiples config surface: a zero or negative multiple fails loud (no degenerate hard stop)", async () => {
-    assert.match(
-      (await captureRejection(() =>
-        loadConfig({
-          env: { get: () => undefined },
-          readTextFile: async () => "stub",
-          parseToml: () => ({ anomaly: { turn_multiple: 0 } }),
-        })
-      ) as Error).message,
-      /positive/,
-    );
-    assert.match(
-      (await captureRejection(() =>
-        loadConfig({
-          env: {
-            get: (key: string) =>
-              key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "-2" : undefined,
-          },
-          readTextFile: async () => {
-            throw Object.assign(new Error("ENOENT: no such file"), {
-              code: "ENOENT",
-            });
-          },
-          parseToml: () => ({}),
-        })
-      ) as Error).message,
-      /positive/,
-    );
+  test("turn and runaway limits config surface: a retired [anomaly] table fails loud and names the replacement keys", async () => {
+    const message = (await captureRejection(() =>
+      loadConfig({
+        env: { get: () => undefined },
+        readTextFile: async () => "stub",
+        parseToml: () => ({ anomaly: { turn_multiple: 3 } }),
+      })
+    ) as Error).message;
+    assert.match(message, /\[anomaly\] is no longer supported/);
+    assert.match(message, /turn_limit_usd and runaway_stall_usd/);
   });
 
-  test("anomaly multiples config surface: resolveAnomalyDefaultsFromEnv: defaults → env precedence", async () => {
-    assert.deepStrictEqual(
-      resolveAnomalyDefaultsFromEnv({ get: () => undefined }),
-      {
-        turnMultiple: 3.0,
-        scopeMultiple: 2.0,
-      },
-    );
-    assert.strictEqual(
-      resolveAnomalyDefaultsFromEnv({
-        get: (key: string) =>
-          key === "DYFJ_ANOMALY_SCOPE_MULTIPLE" ? "2.5" : undefined,
-      }).scopeMultiple,
-      2.5,
-    );
-  });
 }
 
 { // "loadConfig agent tool-step limit"

@@ -543,8 +543,8 @@ async function continueTruncated(
     if (isBudgetRefusal(err)) {
       // The envelope refused the retry, not the turn: the paid partial
       // output already streamed to the operator, so deliver it truncated
-      // rather than discarding it. First-call budget errors — and a
-      // runaway-anomaly halt anywhere — still fail the turn.
+      // rather than discarding it. First-call budget errors still fail the
+      // turn.
       await emitRecovery("retry_refused_budget", 0);
       log(
         `\n[response truncated at the output limit; retry skipped: ${

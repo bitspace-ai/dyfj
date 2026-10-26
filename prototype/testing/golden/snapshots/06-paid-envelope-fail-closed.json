@@ -64,7 +64,7 @@
           "method": "approval",
           "params": {
             "kind": "budget_ceiling",
-            "title": "Budget ceiling",
+            "title": "Spend check",
             "reason": "session_limit",
             "estimatedCostUsd": 1.6349999999999998,
             "limitUsd": 1,
@@ -73,14 +73,19 @@
             "perCallLimitUsd": 100,
             "dailyCostSoFarUsd": 0,
             "dailyLimitUsd": 25,
+            "turnCostSoFarUsd": 0,
+            "turnLimitUsd": 100,
+            "stallCostSoFarUsd": 0,
+            "runawayStallUsd": 100,
             "crossedScopes": [
               "session_limit"
             ],
             "raisesToUsd": {
               "session_limit": 2.635
             },
+            "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
-            "message": "Budget ceiling warning\nReason:           session limit\nApproving raises:\n  session limit   to $2.635000 (projected spend + $1.000000)\nEstimated cost:   $1.635000\nLimit:           $1.000000\nSession spent:   $0.000000 / 1.000000\nToday spent:     $0.000000 / 25.000000\nProjected session: $1.635000 / 1.000000\nProjected today: $1.635000 / 25.000000\nPer-call limit:  $100.000000"
+            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
           }
         },
         {
@@ -110,7 +115,7 @@
         {
           "request": {
             "kind": "budget_ceiling",
-            "title": "Budget ceiling",
+            "title": "Spend check",
             "reason": "session_limit",
             "estimatedCostUsd": 1.6349999999999998,
             "limitUsd": 1,
@@ -119,14 +124,19 @@
             "perCallLimitUsd": 100,
             "dailyCostSoFarUsd": 0,
             "dailyLimitUsd": 25,
+            "turnCostSoFarUsd": 0,
+            "turnLimitUsd": 100,
+            "stallCostSoFarUsd": 0,
+            "runawayStallUsd": 100,
             "crossedScopes": [
               "session_limit"
             ],
             "raisesToUsd": {
               "session_limit": 2.635
             },
+            "approvedToUsd": {},
             "authzBasis": "policy:allow:operator-confirmed-ceiling",
-            "message": "Budget ceiling warning\nReason:           session limit\nApproving raises:\n  session limit   to $2.635000 (projected spend + $1.000000)\nEstimated cost:   $1.635000\nLimit:           $1.000000\nSession spent:   $0.000000 / 1.000000\nToday spent:     $0.000000 / 25.000000\nProjected session: $1.635000 / 1.000000\nProjected today: $1.635000 / 25.000000\nPer-call limit:  $100.000000"
+            "message": "Spend check\nCrossed:   session limit\nTurn:      $0.00 spent, $1.6350 with this call, limit $100.00\nSession:   $0.00 spent, $1.6350 with this call, limit $1.00\nToday:     $0.00 spent, $1.6350 with this call, limit $25.00\nRunaway:   $0.00 spent, $1.6350 with this call, limit $100.00 (since the last tool progress)\nPer call:  ~$1.6350 this call, limit $100.00\nApproving raises:\n  session limit to $2.6350 (+$1.00), for this session"
           },
           "response": {
             "decision": "deny",
@@ -445,7 +455,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":1,\"perCallLimitUsd\":0.1,\"dailyLimitUsd\":25},\"byTier\":{},\"skippedEventWrites\":0}",
+        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":10,\"perCallLimitUsd\":0.5,\"dailyLimitUsd\":25,\"turnLimitUsd\":0.2,\"runawayStallUsd\":0.5},\"byTier\":{},\"skippedEventWrites\":0}",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,
@@ -640,7 +650,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":1,\"perCallLimitUsd\":100,\"dailyLimitUsd\":25},\"byTier\":{},\"skippedEventWrites\":0}",
+        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":1,\"perCallLimitUsd\":100,\"dailyLimitUsd\":25,\"turnLimitUsd\":100,\"runawayStallUsd\":100},\"byTier\":{},\"skippedEventWrites\":0}",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,
@@ -835,7 +845,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":100,\"perCallLimitUsd\":100,\"dailyLimitUsd\":25},\"byTier\":{},\"skippedEventWrites\":0}",
+        "content": "{\"totalCostUsd\":0,\"totalTokensInput\":0,\"totalTokensOutput\":0,\"totalCalls\":0,\"config\":{\"sessionLimitUsd\":100,\"perCallLimitUsd\":100,\"dailyLimitUsd\":25,\"turnLimitUsd\":100,\"runawayStallUsd\":100},\"byTier\":{},\"skippedEventWrites\":0}",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,

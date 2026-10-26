@@ -24,7 +24,6 @@ import {
 import { BudgetTracker, fetchSpendBaselines } from "../budget/mod.ts";
 import {
   AGENT_DEFAULTS,
-  ANOMALY_DEFAULTS,
   BUDGET_DEFAULTS,
 } from "../config/mod.ts";
 import {
@@ -75,10 +74,10 @@ const LOCAL_AUTH_CONTEXT: WorkbenchAuthContext = {
   authzBasis: "user_consent",
 };
 
-/** The turn's budget envelopes and anomaly multiples, in precedence order. */
+/** The turn's spend limits, in precedence order. */
 function budgetPosture(
   input: WorkbenchRuntimeInput,
-): Pick<TurnSession, "budgetConfig" | "anomalyConfig"> {
+): Pick<TurnSession, "budgetConfig"> {
   return {
     // Precedence: per-turn override → boundary-resolved default (from the
     // declared config surface) → the declared BUDGET_DEFAULTS. The core reads
@@ -92,16 +91,10 @@ function budgetPosture(
         input.defaultPerCallBudgetUsd ?? BUDGET_DEFAULTS.perCallLimitUsd,
       dailyLimitUsd: input.dailyLimitUsd ??
         input.defaultDailyBudgetUsd ?? BUDGET_DEFAULTS.dailyLimitUsd,
-    },
-    // The multiples have no per-turn override lane (boundary-resolved config
-    // or the declared defaults only); the dollar thresholds derive from
-    // budgetConfig above, so they track the envelope in force — including an
-    // explicit loopback per-turn budget override, which is the operator
-    // speaking, not a request weakening the gate relative to the envelopes.
-    anomalyConfig: {
-      turnMultiple: input.anomalyTurnMultiple ?? ANOMALY_DEFAULTS.turnMultiple,
-      scopeMultiple: input.anomalyScopeMultiple ??
-        ANOMALY_DEFAULTS.scopeMultiple,
+      turnLimitUsd: input.turnLimitUsd ??
+        input.defaultTurnBudgetUsd ?? BUDGET_DEFAULTS.turnLimitUsd,
+      runawayStallUsd: input.runawayStallUsd ??
+        input.defaultRunawayStallUsd ?? BUDGET_DEFAULTS.runawayStallUsd,
     },
   };
 }

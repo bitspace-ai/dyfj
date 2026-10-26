@@ -47,6 +47,7 @@ import {
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
+import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
 import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import {
   fetchSessionPosture,
@@ -129,17 +130,17 @@ export async function runRepl(
           interactive,
         )
       ) continue;
-      if (await handleReplModelCommand(cmd, config, io, connect)) {
-        sessionState.lastReplCommand = cmd;
-        continue;
-      }
-      if (await handleReplFastCommand(cmd, config, io, connect)) {
+      if (
+        await handleReplModelCommand(cmd, config, io, connect) ||
+        await handleReplFastCommand(cmd, config, io, connect)
+      ) {
         sessionState.lastReplCommand = cmd;
         continue;
       }
       if (
         handleReplReceiptCommand(cmd, io, sessionState.lastResult) ||
-        await handleReplStepsCommand(cmd, config, io, connect)
+        await handleReplStepsCommand(cmd, config, io, connect) ||
+        await handleReplBudgetCommand(cmd, config, io, connect)
       ) {
         sessionState.lastReplCommand = cmd;
         continue;

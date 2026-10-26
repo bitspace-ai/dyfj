@@ -120,8 +120,8 @@ test("turn threads the configured agent-step limit and returns the receipt field
       defaultSessionBudgetUsd: 1,
       defaultPerCallBudgetUsd: 0.1,
       defaultDailyBudgetUsd: 25,
-      anomalyTurnMultiple: 3,
-      anomalyScopeMultiple: 2,
+      defaultTurnBudgetUsd: 4,
+      defaultRunawayStallUsd: 0.5,
       maxToolSteps: 7,
       maxToolStepsCeiling: 64,
     },
@@ -149,8 +149,8 @@ test("a turn's own tool-step limit overrides the configured one, up to the ceili
       defaultSessionBudgetUsd: 1,
       defaultPerCallBudgetUsd: 0.1,
       defaultDailyBudgetUsd: 25,
-      anomalyTurnMultiple: 3,
-      anomalyScopeMultiple: 2,
+      defaultTurnBudgetUsd: 4,
+      defaultRunawayStallUsd: 0.5,
       maxToolSteps: 7,
       maxToolStepsCeiling: 12,
     },
@@ -354,8 +354,8 @@ test("loopback inherits approvePaidDefault when the request omits opt-in", async
       defaultSessionBudgetUsd: 1,
       defaultPerCallBudgetUsd: 0.1,
       defaultDailyBudgetUsd: 25,
-      anomalyTurnMultiple: 3,
-      anomalyScopeMultiple: 2,
+      defaultTurnBudgetUsd: 4,
+      defaultRunawayStallUsd: 0.5,
       maxToolSteps: 32,
       maxToolStepsCeiling: 64,
     },
@@ -772,34 +772,4 @@ test("no client approver -> fail-closed deny", async () => {
     prompt: "edit notes",
   }, client()) as { verdict: { decision: string } };
   assert.deepStrictEqual(verdict.decision, "deny");
-});
-
-test("a reasonless anomaly-halt denial names the anomaly gate, not the budget ceiling", async () => {
-  const runRuntime: TurnRuntime = async (input) =>
-    result({
-      verdict: await input.approver?.confirmRunawayAnomaly?.({
-        kind: "runaway_anomaly",
-        trigger: "turn_spend",
-        spentUsd: 0.35,
-        haltUsd: 0.30,
-        raisesHaltToUsd: 0.70,
-        turnSpentUsd: 0.35,
-        turnHaltUsd: 0.30,
-        sessionSpentUsd: 0.35,
-        sessionHaltUsd: 2,
-        dailySpentUsd: 0.35,
-        dailyHaltUsd: 50,
-        turnMultiple: 3,
-        scopeMultiple: 2,
-        authzBasis: "policy:halt:runaway-anomaly",
-        approvalAuthzBasis: "policy:allow:operator-confirmed-anomaly",
-      }),
-    });
-  const { verdict } = await callRpc(handlers(runRuntime), "turn", {
-    prompt: "spend",
-  }, client(() => ({ decision: "deny" }))) as { verdict: unknown };
-  assert.deepStrictEqual(verdict, {
-    decision: "deny",
-    reason: "operator declined the anomaly halt",
-  });
 });

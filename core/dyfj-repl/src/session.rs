@@ -44,6 +44,9 @@ pub struct Session {
     /// This session's tool-step limit (`--tool-steps`, `/steps`), sent on
     /// every turn. `None` leaves the runtime's configured limit.
     pub max_tool_steps: Option<u32>,
+    /// This session's own spend limits (`--budget-*`, `/budget`), sent on
+    /// every turn. An unset limit is the runtime's configured one.
+    pub budget: crate::budget::SessionBudget,
     /// Per-turn paid opt-in. The engine still decides; without it, a hosted
     /// turn fails closed unless the runtime's standing posture approves paid.
     pub approve_paid: bool,
@@ -93,6 +96,9 @@ impl Session {
         }
         if let Some(steps) = self.max_tool_steps {
             body["maxToolSteps"] = Value::from(steps);
+        }
+        if let Some(budget) = self.budget.override_body() {
+            body["budget"] = budget;
         }
         body
     }

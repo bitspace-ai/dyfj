@@ -18,7 +18,7 @@ import {
   tempWorkspace,
 } from "../../testing/builders/engine.ts";
 import type { ScriptedExchange } from "../../testing/fakes/scripted-http-transport.ts";
-import type { RunawayAnomalyWarning } from "../budget/mod.ts";
+import type { BudgetCeilingWarning } from "../budget/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import type { ModelSeed } from "../store/mod.ts";
 import type {
@@ -208,20 +208,20 @@ test("rejects an over-budget follow-up call before invoking the provider (tier 1
   assert.deepStrictEqual(run.transport.requests.length, 1);
 });
 
-// Estimates are ~0 (input nearly free) so the estimate-based ceiling stays
-// silent and only the anomaly gate — which reads ACTUAL recorded spend — is
-// exercised. Per-call limit $0.10 × turnMultiple 3 → the turn halts once its
-// actual spend passes $0.30; each call records $0.12.
-const ANOMALY = {
-  defaultPerCallBudgetUsd: 0.10,
-  anomalyTurnMultiple: 3,
-  anomalyScopeMultiple: 2,
+// Estimates are ~0 (input nearly free), so the turn limit is checked against
+// ACTUAL recorded spend: a $0.30 turn limit stops the turn once its actual
+// spend passes $0.30; each call records $0.12.
+// The runaway limit is set out of the way: these calls repeat one tool call,
+// which is no tool progress.
+const TURN_LIMIT = {
+  defaultTurnBudgetUsd: 0.30,
+  defaultRunawayStallUsd: 100,
   approver: { confirmPaidEscalation: APPROVE_PAID },
 };
 const TWELVE_CENTS = { prompt_tokens: 10, completion_tokens: 12 };
 
-test("halts a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
-  const { run, error } = await gatedTurn(
+test("stops a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
+  const { run, frames } = await gatedTurn(
     [
       toolReply("c1", TWELVE_CENTS),
       toolReply("c2", TWELVE_CENTS),
@@ -229,23 +229,22 @@ test("halts a multi-call turn on ACTUAL accumulated spend, failing closed withou
       chatReply({ content: "never reached", usage: TWELVE_CENTS }),
     ],
     PER_TOKEN,
-    ANOMALY,
+    TURN_LIMIT,
   );
-  assert.deepStrictEqual(error instanceof Error, true);
-  assert.deepStrictEqual(
-    (error as Error).message.includes("Runaway spend anomaly"),
-    true,
-  );
-  // Calls 1-3 ran ($0.36 recorded); the halt fired BEFORE call 4.
+  assert.partialDeepStrictEqual(frames.at(-1)!, {
+    type: "turnFailed",
+    errorName: "BudgetExceededError",
+  });
+  // Calls 1-3 ran ($0.36 recorded); the check stopped the turn BEFORE call 4.
   assert.deepStrictEqual(run.transport.requests.length, 3);
 });
 
-test("an approval raises the turn halt to twice the spend at approval, so the next prompt waits until spend passes that level", async () => {
-  // Each pre-check is the spend recorded before the call. The halt is $0.30
-  // until the first prompt, which is approved at $0.36 and raises the halt to
+test("an approval raises the turn limit to twice the spend at approval, so the next prompt waits until spend passes that level", async () => {
+  // Each pre-check is the spend recorded before the call. The limit is $0.30
+  // until the first prompt, which is approved at $0.36 and raises the limit to
   // $0.72. Pre-checks $0.48, $0.60 and $0.72 do not exceed $0.72, so they do
   // not prompt. The pre-check $0.84 exceeds $0.72 and prompts a second time.
-  const confirmRunawayAnomaly = mock.fn((_: RunawayAnomalyWarning) =>
+  const confirmBudgetCeiling = mock.fn((_: BudgetCeilingWarning) =>
     APPROVE_PAID()
   );
   const { run, result } = await gatedTurn(
@@ -253,30 +252,30 @@ test("an approval raises the turn halt to twice the spend at approval, so the ne
       toolReply("c1", TWELVE_CENTS), // pre-check: $0
       toolReply("c2", TWELVE_CENTS), // pre-check: $0.12
       toolReply("c3", TWELVE_CENTS), // pre-check: $0.24
-      toolReply("c4", TWELVE_CENTS), // pre-check: $0.36 → prompt 1, halt → $0.72
+      toolReply("c4", TWELVE_CENTS), // pre-check: $0.36 → prompt 1, limit → $0.72
       toolReply("c5", TWELVE_CENTS), // pre-check: $0.48, no prompt
       toolReply("c6", TWELVE_CENTS), // pre-check: $0.60, no prompt
       toolReply("c7", TWELVE_CENTS), // pre-check: $0.72, no prompt
-      toolReply("c8", TWELVE_CENTS), // pre-check: $0.84 → prompt 2, halt → $1.68
+      toolReply("c8", TWELVE_CENTS), // pre-check: $0.84 → prompt 2, limit → $1.68
       chatReply({ content: "done", usage: TWELVE_CENTS }),
     ],
     PER_TOKEN,
     {
-      ...ANOMALY,
-      approver: { ...ANOMALY.approver, confirmRunawayAnomaly },
+      ...TURN_LIMIT,
+      approver: { ...TURN_LIMIT.approver, confirmBudgetCeiling },
     },
   );
   assert.deepStrictEqual(result?.text, "done");
   assert.deepStrictEqual(run.transport.requests.length, 9);
-  assert.equal(confirmRunawayAnomaly.mock.callCount(), 2);
-  const [first, second] = confirmRunawayAnomaly.mock.calls.map(
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 2);
+  const [first, second] = confirmBudgetCeiling.mock.calls.map(
     (call) => call.arguments[0],
   );
-  assert.deepStrictEqual(first.trigger, "turn_spend");
-  assertAlmostEqual(first.turnSpentUsd, 0.36);
-  assertAlmostEqual(first.raisesHaltToUsd, 0.72);
-  assertAlmostEqual(second.turnSpentUsd, 0.84);
-  assertAlmostEqual(second.raisesHaltToUsd, 1.68);
+  assert.deepStrictEqual(first.crossedScopes, ["turn_limit"]);
+  assertAlmostEqual(first.turnCostSoFarUsd, 0.36);
+  assertAlmostEqual(first.raisesToUsd.turn_limit ?? 0, 0.72);
+  assertAlmostEqual(second.turnCostSoFarUsd, 0.84);
+  assertAlmostEqual(second.raisesToUsd.turn_limit ?? 0, 1.68);
 });
 
 // ─── one spend truth ─────────────────────────────────────────────────────────
@@ -287,7 +286,7 @@ test("spend: every paid call counts once toward the session and the day, halted 
     // Turn 1 completes: two calls at $0.12.
     toolReply("a1", TWELVE_CENTS),
     chatReply({ content: "first", usage: TWELVE_CENTS }),
-    // Turn 2 halts on turn spend after three calls ($0.36 > 3 × $0.10).
+    // Turn 2 stops at the turn limit after three calls ($0.36 > $0.30).
     toolReply("b1", TWELVE_CENTS),
     toolReply("b2", TWELVE_CENTS),
     toolReply("b3", TWELVE_CENTS),
@@ -299,7 +298,7 @@ test("spend: every paid call counts once toward the session and the day, halted 
       prompt: "explore",
       rootOverride: root.root,
       defaultCompanionModel: PER_TOKEN.slug,
-      ...ANOMALY,
+      ...TURN_LIMIT,
       ...(sessionId === undefined ? {} : { sessionId }),
     });
 
@@ -323,12 +322,9 @@ test("spend: every paid call counts once toward the session and the day, halted 
     0.24,
   );
 
-  await assert.rejects(
-    () => turn(sessionId),
-    (error: unknown) =>
-      error instanceof Error && error.message.includes("Runaway spend anomaly"),
-  );
-  // The halted turn wrote no model_response, but its three calls were paid
+  // The stopped turn fails without a spend handler; it does not throw.
+  await turn(sessionId);
+  // The stopped turn wrote no model_response, but its three calls were paid
   // for: they count, once.
   const afterHalt = await run.store.spend.baselines(sessionId, DAY_ZERO);
   assertAlmostEqual(afterHalt.sessionSpentUsd, 0.60);

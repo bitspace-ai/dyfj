@@ -24,6 +24,8 @@ function engineConfig(overrides: Partial<EngineConfig> = {}): EngineConfig {
     defaultSessionBudgetUsd: 1,
     defaultPerCallBudgetUsd: 0.1,
     defaultDailyBudgetUsd: 25,
+    defaultTurnBudgetUsd: 4,
+    defaultRunawayStallUsd: 0.5,
     maxToolSteps: 32,
     maxToolStepsCeiling: 64,
     ...overrides,
@@ -120,9 +122,11 @@ test("runtime/status falls back to the loose posture fields without an engine co
   assert.partialDeepStrictEqual(runtime, {
     defaultCompanionModel: "local-x",
     permissionLevel: "operator",
-    defaultSessionBudgetUsd: 1,
-    defaultPerCallBudgetUsd: 0.1,
+    defaultSessionBudgetUsd: 10,
+    defaultPerCallBudgetUsd: 0.5,
     defaultDailyBudgetUsd: 25,
+    defaultTurnBudgetUsd: 4,
+    defaultRunawayStallUsd: 0.5,
     autostarted: true,
   });
 });

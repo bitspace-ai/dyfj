@@ -1,19 +1,17 @@
 /**
  * The `budgetGate` stage (specs/01-architecture.md §5.1): select the turn's
- * model, then run every check that must pass before any spend — the runaway
- * anomaly hard stop, the budget-ceiling envelope, and the paid-escalation
- * preflight — and record the selection.
+ * model, then run every check that must pass before any spend — the spend
+ * check over every limit, and the paid-escalation preflight — and record the
+ * selection.
  *
- * The gates it builds stay with the turn: every later provider call (the
- * agent loop's and compression's) is checked against the same ceiling gate,
- * scoped to the session through its owner, and the same turn-scoped anomaly
- * gate.
+ * The spend check it builds stays with the turn: every later provider call
+ * (the agent loop's and compression's) is checked against the same gate,
+ * whose turn and runaway marks last the turn and whose per-call, session and
+ * daily marks are scoped to the session and day through its owner.
  */
 import { resolvePrincipalId } from "../config/mod.ts";
 import {
-  createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
-  type RunawayAnomalyGate,
   type TurnBudgetCeilingGate,
 } from "../budget/mod.ts";
 import { estimateTextTokens, type WorkbenchModel } from "../providers/mod.ts";
@@ -34,7 +32,6 @@ export interface TurnRoute {
   models: WorkbenchModel[];
   selected: WorkbenchModel;
   budgetCeilingGate: TurnBudgetCeilingGate;
-  anomalyGate: RunawayAnomalyGate;
 }
 
 /** Run the stage: select, gate, preflight, record. */
@@ -71,19 +68,12 @@ export async function budgetGate(
   const route: TurnRoute = {
     models,
     selected,
-    // Scope-persistent: a confirmed overrun raises the envelope for its scope
-    // (session marks per session id, the daily mark per local day) instead
-    // of re-prompting next turn.
+    // Scope-persistent: an approved overrun raises the limit for its scope
+    // (per-call and session marks per session id, the daily mark per local
+    // day) instead of re-prompting next turn; turn and runaway marks last
+    // this turn.
     budgetCeilingGate: createTurnBudgetCeilingGate(
       input.approver?.confirmBudgetCeiling,
-      ports.budgetScopes.budgetScope(session.sessionId),
-    ),
-    // An approval raises the tripped halt to twice the spend at approval
-    // (BIT-715). The turn halt lasts this turn; the session and daily halts
-    // live in the same scope store as the ceiling marks, so they last the
-    // session and the local day.
-    anomalyGate: createRunawayAnomalyGate(
-      input.approver?.confirmRunawayAnomaly,
       ports.budgetScopes.budgetScope(session.sessionId),
     ),
   };
@@ -92,28 +82,18 @@ export async function budgetGate(
   return route;
 }
 
-/**
- * The checks before the first call, in order: the anomaly hard stop, the
- * ceiling, then paid consent.
- */
+/** The checks before the first call, in order: the spend check, then paid consent. */
 async function gateEntry(
   state: TurnState,
   input: WorkbenchRuntimeInput,
   route: TurnRoute,
 ): Promise<void> {
-  const { budget, anomalyConfig } = state.session;
+  const { budget } = state.session;
   const { selected } = route;
   const preCall = budget.checkPreCall(
     selected.tier,
     selected.costInput,
     estimateTextTokens(`${state.systemPrompt}\n${state.modelPrompt}`),
-  );
-  // Hard stop BEFORE the soft ceiling confirm: a turn entered in an
-  // anomalous state must halt first — otherwise the ceiling prompt records
-  // its scope-period confirmation before the operator ever sees the halt,
-  // and an aborted turn leaves that confirmation behind.
-  await route.anomalyGate.ensureAllowed(
-    budget.checkAnomaly(selected.tier, anomalyConfig),
   );
   await route.budgetCeilingGate.ensureAllowed(preCall);
   state.estimatedCostUsd = preCall.estimatedCost;
