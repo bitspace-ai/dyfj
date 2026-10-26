@@ -102,8 +102,9 @@ export function evaluateCommandPolicy(
   // when its containment is attested for
   // this call, the operator's grant names the envelope's policy digest, and
   // the turn is on loopback. Neither the posture nor the call's arguments
-  // decide it; only a deadline longer than the envelope's is read, and it
-  // asks. Without all three, a contained command asks (one whose default
+  // decide it; only a deadline longer than the envelope's is read. One the
+  // model chose is refused as an argument it can correct, not asked for
+  // (BIT-796); a fixed one asks. Without all three, a contained command asks (one whose default
   // decision is deny was already denied above): the read-only
   // classifier below never runs for it.
   if (command.containment !== undefined) {
@@ -116,12 +117,21 @@ export function evaluateCommandPolicy(
     ) {
       const asked = command.containment.callTimeoutMs?.(call);
       if (asked !== undefined && asked > verdict.envelope.commandTimeoutMs) {
-        return {
-          decision: "ask",
-          authzBasis: "policy:ask:envelope-limit",
-          reason: `the call's deadline (${asked / 1_000} s) is above the ` +
-            `envelope's ${verdict.envelope.commandTimeoutMs / 1_000} s`,
-        };
+        const limit = verdict.envelope.commandTimeoutMs / 1_000;
+        const argument = command.containment.deadlineArgument;
+        return argument !== undefined && call.arguments[argument] !== undefined
+          ? {
+            decision: "deny",
+            authzBasis: "policy:deny:envelope-limit",
+            reason: `${argument} ${asked / 1_000} s is above the executor's ` +
+              `limit of ${limit} s; call again with ${argument} of at most ${limit}`,
+          }
+          : {
+            decision: "ask",
+            authzBasis: "policy:ask:envelope-limit",
+            reason: `the call's deadline (${asked / 1_000} s) is above the ` +
+              `envelope's ${limit} s`,
+          };
       }
       return { decision: "allow", authzBasis: "policy:allow:attested-envelope" };
     }

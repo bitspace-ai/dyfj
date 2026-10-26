@@ -603,7 +603,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "bash allowed",
+        "content": "bash allowed (asked: policy:ask:default: command requires operator approval)",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,

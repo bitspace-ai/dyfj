@@ -11,6 +11,43 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **In the isolated machine, a granted envelope also covers file writes, and
+  bash refuses a `timeoutSec` above its 120 s default instead of asking
+  (BIT-796).** Before this, a granted envelope covered only bash and git,
+  file writes always asked, and the bash description invited a `timeoutSec`
+  above the envelope's deadline for a full test run, which then asked too.
+  - On the executor route, bash's `timeoutSec` is capped at its 120 s
+    default, in the schema and in the executor's own check. The attested
+    envelope never allows a longer deadline, so a larger value is now refused
+    as an invalid argument the model can correct, not an approval prompt. The
+    description tells the model to omit `timeoutSec`. When the policy sets a
+    lower time limit, a call the granted envelope would otherwise cover is
+    refused the same way if its `timeoutSec` is above that limit
+    (`policy:deny:envelope-limit`); a fixed deadline above it, such as git's,
+    still asks. The native route keeps its 600 s ceiling.
+  - On the executor route, `write_file` and `edit_file` write in the executor,
+    as one `node` process, not in the runtime. The content reaches that
+    process on its standard input, not in its arguments, which other users
+    on the machine can read from `/proc`: the supervisor's exec request takes
+    an optional `stdin` field for this. The executor's mounts and
+    Landlock rules bound what the write can reach, as for bash. The path
+    checks also run again inside it before the file is opened: a relative
+    path inside the root, a real parent inside the root, no `.git` segment,
+    and a final component that is not a symlink. They do not catch a
+    directory swapped between the check and the open. The write tools are
+    then covered by the attested envelope the same way bash and git are.
+    The executor policy, and so its digest, is unchanged. One write takes at
+    most 512 KiB of content, and a new file is created with no access for
+    other users. `edit_file` still reads the file in the runtime, and
+    refuses a file that is not a regular file or is larger than one write
+    takes.
+  - A `tool_call` event whose call needed approval now ends its `content`
+    with `(asked: <basis>: <reason>)`, scrubbed and capped, whether the call
+    was approved, granted for the session or refused. Tools that define their
+    own event content keep it as it is.
+  - `dyfj-l8 work`'s grant line names the four tools the envelope can cover,
+    and the longest bash deadline, computed from the run's executor policy.
+
 - **One spend check, with defaults sized for a typical implementation turn
   (BIT-785).** An ordinary implementation turn could stop several times for
   spend: at the runaway halt, derived as three times the $0.10 per-call

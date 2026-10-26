@@ -120,9 +120,17 @@ export interface Containment {
   /**
    * The deadline this call asks for, in ms, when the tool takes one. A
    * declared read of a model-supplied argument (README Section 1): it can
-   * only turn an envelope allow into a prompt, never the reverse.
+   * only turn an envelope allow into a prompt or a refusal, never the
+   * reverse.
    */
   callTimeoutMs?(call: CommandCall): number | undefined;
+  /**
+   * The argument through which the model chooses the deadline, when the tool
+   * has one (bash's `timeoutSec`). A call that sets it above the envelope's
+   * deadline is refused with a reason the model can act on; a fixed deadline
+   * above it asks instead (BIT-796).
+   */
+  readonly deadlineArgument?: string;
 }
 
 export interface CommandDefinition<TResult = unknown> {

@@ -49,6 +49,8 @@ export interface ContainmentOptions {
   /** The tool's default command deadline, in ms. */
   defaultCommandTimeoutMs: number;
   callTimeoutMs?: (call: CommandCall) => number | undefined;
+  /** The argument the model sets the deadline with; see `Containment`. */
+  deadlineArgument?: string;
   /** Throws unless the socket is one the runtime cannot have bound. */
   checkSocket?: (socket: string) => void;
   now?: () => Date;
@@ -133,6 +135,9 @@ export function createContainment(
     ...(options.callTimeoutMs === undefined
       ? {}
       : { callTimeoutMs: options.callTimeoutMs }),
+    ...(options.deadlineArgument === undefined
+      ? {}
+      : { deadlineArgument: options.deadlineArgument }),
     async attest() {
       if (dial === undefined) {
         return unattested("no executor connection is configured");

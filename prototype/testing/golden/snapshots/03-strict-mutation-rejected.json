@@ -345,7 +345,7 @@
         "tokens_cache_write": null,
         "cost_total": null,
         "cost_basis": null,
-        "content": "write_file denied: approval_denied: this write_file call was not approved, so it did not run; this is not its output. Do not retry it or a variant of it. Ask the operator or take a different approach. Reason given: approval needs an interactive terminal.",
+        "content": "write_file denied: approval_denied: this write_file call was not approved, so it did not run; this is not its output. Do not retry it or a variant of it. Ask the operator or take a different approach. Reason given: approval needs an interactive terminal. (asked: policy:ask:default: command requires operator approval)",
         "stop_reason": null,
         "provider_call_order": null,
         "provider_call_purpose": null,

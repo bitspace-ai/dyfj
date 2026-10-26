@@ -17,6 +17,7 @@ import {
   truncateForEventColumn,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
+import { OPERATOR_REASON_MAX_BYTES } from "./failure-reason.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
 
 function readCommand(
@@ -208,6 +209,95 @@ describe("invokeCommand approval (ask) flow", () => {
       tool_result: approvalDeniedReason("write_file", "operator said no"),
       content: JSON.stringify({ outcome: "error" }),
     });
+  });
+
+  // BIT-796: the event records why the policy asked, whatever the outcome.
+  for (
+    const [label, verdict, basis] of [
+      ["approved", { decision: "approve" }, "policy:allow:operator-approved"],
+      ["declined", { decision: "deny", reason: "operator said no" }, "policy:deny:approval-denied"],
+    ] as const
+  ) {
+    it(`an ${label} ask records the policy's ask reason in the event content`, async () => {
+      const events: EventInsert[] = [];
+      await invokeCommandWithEvent(
+        createCommandRegistry([writeFileCommand()]),
+        call({ path: "x" }, { commandId: "write_file" }),
+        {
+          sessionId: "01TESTSESSION00000000000000",
+          traceId: "0123456789abcdef0123456789abcdef",
+          writeEvent: (event) => {
+            events.push(event);
+          },
+        },
+        () => Promise.resolve(verdict),
+      );
+      assert.strictEqual(events[0].authz_basis, basis);
+      assert.ok(
+        String(events[0].content).endsWith(
+          " (asked: policy:ask:default: command requires operator approval)",
+        ),
+        String(events[0].content),
+      );
+    });
+  }
+
+  it("a call the policy allowed records no ask reason", async () => {
+    const events: EventInsert[] = [];
+    const result = await invokeCommandWithEvent(
+      createCommandRegistry([{
+        ...writeFileCommand(),
+        permission: {
+          effects: ["read.filesystem"],
+          defaultDecision: "allow",
+          resources: ["file:read"],
+          network: "none",
+          filesystem: "read",
+          cost: "none",
+        },
+      }]),
+      call({ path: "x" }, { commandId: "write_file" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        writeEvent: (event) => {
+          events.push(event);
+        },
+      },
+    );
+    assert.strictEqual(result.decision, "allow");
+    assert.ok(!String(events[0].content).includes("asked:"));
+  });
+
+  it("an ask reason is scrubbed and capped before it is recorded", async () => {
+    const registry = createCommandRegistry([{
+      ...writeFileCommand(),
+      containment: {
+        route: "linux-isolated",
+        attest: () =>
+          Promise.resolve({
+            status: "unattested",
+            reason: `connect failed\n${"x".repeat(5_000)}`,
+          }),
+      },
+    }]);
+    const events: EventInsert[] = [];
+    await invokeCommandWithEvent(
+      registry,
+      call({ path: "x" }, { commandId: "write_file" }),
+      {
+        sessionId: "01TESTSESSION00000000000000",
+        traceId: "0123456789abcdef0123456789abcdef",
+        writeEvent: (event) => {
+          events.push(event);
+        },
+      },
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    const asked = /\(asked: (.*)\)$/s.exec(String(events[0].content))?.[1];
+    assert.ok(asked !== undefined, String(events[0].content));
+    assert.ok(!asked.includes("\n"));
+    assert.ok(new TextEncoder().encode(asked).byteLength <= OPERATOR_REASON_MAX_BYTES);
   });
 
   it("a call that needed no approval carries no approval verdict", async () => {

@@ -447,3 +447,42 @@ describe("bash timeoutSec", () => {
     assert.strictEqual(redacted.result, "[redacted]");
   });
 });
+
+// BIT-796: on the executor route the schema caps timeoutSec at the 120 s
+// default; a lower envelope limit is the policy's to enforce.
+describe("contained bash deadline", () => {
+  const env = new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" });
+  const contained = defineBash("/work", { env });
+  const native = defineBash("/work");
+  const schemaMax = (bash: typeof contained) =>
+    (bash.inputSchema.properties?.timeoutSec as { maximum?: number }).maximum;
+
+  it("caps timeoutSec at the 120 s default in the schema, natively at 600 s", () => {
+    assert.strictEqual(schemaMax(contained), 120);
+    assert.strictEqual(schemaMax(native), 600);
+  });
+
+  it("refuses a longer timeoutSec as an invalid argument, not an ask", () => {
+    const policy = evaluateCommandPolicy(
+      contained,
+      call({ command: "npm test", timeoutSec: 600 }, { commandId: "bash" }),
+      { permissionLevel: "strict", loopback: true },
+    );
+    assert.strictEqual(policy.decision, "deny");
+    assert.strictEqual(policy.authzBasis, "policy:deny:invalid-arguments");
+  });
+
+  it("the executor refuses it too, naming the 120 s ceiling", async () => {
+    const result = await contained.executor(
+      call({ command: "true", timeoutSec: 121 }, { commandId: "bash" }),
+      { authzBasis: "policy:allow:operator-approved" },
+    );
+    assert.match(result, /^error: timeoutSec must be at most 120 s/);
+  });
+
+  it("the contained description does not invite a longer deadline for a test run", () => {
+    assert.ok(!contained.description.includes("a command needs longer"));
+    assert.match(contained.description, /omit timeoutSec unless you want a command stopped sooner/);
+    assert.match(native.description, /a command needs longer \(a full test run, for example\)/);
+  });
+});

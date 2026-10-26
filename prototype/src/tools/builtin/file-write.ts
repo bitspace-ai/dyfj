@@ -5,6 +5,7 @@
  * resolves somewhere the operator did not see.
  */
 
+import { Buffer } from "node:buffer";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative } from "node:path";
 import type { WorkspaceRoot } from "./root-anchors.ts";
@@ -27,7 +28,7 @@ import {
  * commands run without a prompt, so the write tools never touch them
  * (BIT-707). Case-insensitive, because the default macOS filesystem is.
  */
-function insideGitDir(relativePath: string): boolean {
+export function insideGitDir(relativePath: string): boolean {
   return toPosixPath(relativePath).split("/").some((segment) =>
     segment.toLowerCase() === ".git"
   );
@@ -112,13 +113,29 @@ export async function executeWriteFile(
  * (CWE-59) guarantees. Mutating; the command policy routes it through operator
  * approval, so the executor never runs unapproved.
  */
+function tooLarge(p: string, size: number, maxBytes: number): string {
+  return `error: cannot edit ${sanitizeOutputText(p)}: the file is ${size} bytes, ` +
+    `above the ${maxBytes} bytes one write in the isolated executor takes`;
+}
+
 export async function executeEditFile(
   workspace: WorkspaceRoot,
   p: string,
   oldString: string,
   newString: string,
   lstat: (path: string) => Promise<{ isSymlink: boolean }> = lstatFile,
+  // Contained, the write-back is the executor's write
+  // (`file-write-contained.ts`). A file that is not a regular file, or whose
+  // size as stat reports it is above what one such write takes, is refused
+  // before it is read; the text read is checked again after. The read stays
+  // in the runtime.
+  contained?: {
+    write: (p: string, content: string) => Promise<string>;
+    maxBytes: number;
+  },
 ): Promise<string> {
+  const write = contained?.write ??
+    ((p: string, content: string) => executeWriteFile(workspace, p, content, lstat));
   const root = workspace.path;
   if (oldString === "") {
     return `error: oldString must be non-empty`;
@@ -143,7 +160,17 @@ export async function executeEditFile(
     if (info.isDirectory) {
       return `error: ${sanitizeOutputText(p)} is a directory`;
     }
+    if (contained !== undefined && !info.isFile) {
+      return `error: cannot edit ${sanitizeOutputText(p)}: not a regular file`;
+    }
+    if (contained !== undefined && info.size > contained.maxBytes) {
+      return tooLarge(p, info.size, contained.maxBytes);
+    }
     text = await readFile(target, "utf8");
+    if (contained !== undefined) {
+      const read = Buffer.byteLength(text, "utf8");
+      if (read > contained.maxBytes) return tooLarge(p, read, contained.maxBytes);
+    }
   } catch (err) {
     if (errorCode(err) === "ENOENT") {
       return `error: cannot edit ${sanitizeOutputText(p)}: file not found`;
@@ -163,8 +190,8 @@ export async function executeEditFile(
   }
   const updated = text.slice(0, first) + newString +
     text.slice(first + oldString.length);
-  const writeResult = await executeWriteFile(workspace, p, updated, lstat);
-  // executeWriteFile returns "wrote <p>" on success or "error: …" on failure.
+  const writeResult = await write(p, updated);
+  // Both writers return "wrote <p>" on success or "error: …" on failure.
   return writeResult.startsWith("error:")
     ? writeResult
     : `edited ${sanitizeOutputText(p)}`;

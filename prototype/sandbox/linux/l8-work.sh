@@ -190,10 +190,22 @@ grant_state=$(node -e '
   try { granted = JSON.parse(fs.readFileSync(grantPath, "utf8")).executorPolicyDigest; } catch {}
   console.log(granted === digest ? `present ${digest}` : `none ${digest}`);
 ' "$GRANT" "$PLANS/executor.policy.json")
+# The longest bash deadline the envelope allows, computed from the run's
+# executor policy by the code that decides it (BIT-796).
+deadline=$(cd "$CODE" && node -e '
+  Promise.all([
+    import("./src/config/effective-policy.ts"),
+    import("./src/config/approval-envelope.ts"),
+    import("./src/tools/builtin/exec.ts"),
+  ]).then(([policy, envelope, bash]) => {
+    const parsed = policy.parseEffectivePolicy(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")));
+    console.log(envelope.envelopeCommandTimeoutMs(parsed, bash.DEFAULT_TIMEOUT_MS) / 1000);
+  })' "$PLANS/executor.policy.json")
+[[ $deadline =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "dyfj-l8: cannot read the envelope's deadline from $PLANS/executor.policy.json" >&2; exit 1; }
 if [[ $grant_state == present* ]]; then
-  echo "dyfj-l8: grant present for ${grant_state#present } (bash and git run in the executor without prompts)"
+  echo "dyfj-l8: grant present for ${grant_state#present }: while the executor's containment is attested, bash, git, write_file and edit_file calls within its limits run in the executor without prompts; a bash call runs for at most $deadline s"
 else
-  echo "dyfj-l8: no grant for ${grant_state#none } (every bash and git call asks)"
+  echo "dyfj-l8: no grant for ${grant_state#none } (bash, git, write_file and edit_file calls with valid arguments ask)"
 fi
 
 install -d -o dyfj-rt -g dyfj-work -m 0700 "$SECRETS"

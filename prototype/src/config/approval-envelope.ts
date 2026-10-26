@@ -39,6 +39,21 @@ function within(path: string, root: string): boolean {
 }
 
 /**
+ * The longest command deadline the envelope allows without a prompt, in ms:
+ * the tool's default `defaultCommandTimeoutMs`, or the policy's
+ * `limits.timeMs` when that is lower.
+ */
+export function envelopeCommandTimeoutMs(
+  policy: EffectivePolicy,
+  defaultCommandTimeoutMs: number,
+): number {
+  const timeMs = policy.effects.limits.timeMs;
+  return timeMs === null
+    ? defaultCommandTimeoutMs
+    : Math.min(timeMs, defaultCommandTimeoutMs);
+}
+
+/**
  * The envelope for `policy`, attested by supervisor `instance` at `now`, or
  * why the policy cannot have one. `defaultCommandTimeoutMs` is the tool's own
  * default deadline; the envelope never allows more than that, nor more than
@@ -82,7 +97,6 @@ export function deriveApprovalEnvelope(
       return { refusal: `the writable root ${root.name} overlaps a forbidden path` };
     }
   }
-  const timeMs = policy.effects.limits.timeMs;
   return {
     envelope: {
       route: "linux-isolated",
@@ -93,9 +107,7 @@ export function deriveApprovalEnvelope(
         ...writableRoots.map((root) => root.target),
         ...(policy.filesystem.scratch === null ? [] : [policy.filesystem.scratch]),
       ],
-      commandTimeoutMs: timeMs === null
-        ? defaultCommandTimeoutMs
-        : Math.min(timeMs, defaultCommandTimeoutMs),
+      commandTimeoutMs: envelopeCommandTimeoutMs(policy, defaultCommandTimeoutMs),
       expiresAt: policy.identity.expiresAt,
     },
   };

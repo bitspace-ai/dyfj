@@ -283,7 +283,7 @@ fn serve_one(
             return answer(&mut writer, protocol::refusal("lease expired"));
         }
         let child = role_command(executor, &argv)
-            .stdin(Stdio::null())
+            .stdin(if request.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -292,6 +292,17 @@ fn serve_one(
         child
     };
     let pid = child.id() as i32;
+    // Written from its own thread, so a command that does not read it cannot
+    // stall the deadline below. The thread is not joined: once the sandbox's
+    // init is gone every process that could hold the pipe has ended, so a
+    // blocked write then fails and the thread ends, and the reply never waits
+    // on it. A write error is the command's business.
+    if let Some(text) = request.stdin {
+        let mut input = child.stdin.take().expect("piped");
+        std::thread::spawn(move || {
+            let _ = input.write_all(text.as_bytes());
+        });
+    }
     let stdout = collect(child.stdout.take().expect("piped"));
     let stderr = collect(child.stderr.take().expect("piped"));
 

@@ -59,7 +59,8 @@ export type BashRunner = (
 ) => Promise<BashResult>;
 
 const DEFAULT_TIMEOUT_SEC = 120;
-const DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_SEC * 1_000;
+/** bash's default deadline, which is also its ceiling on the executor route. */
+export const DEFAULT_TIMEOUT_MS = DEFAULT_TIMEOUT_SEC * 1_000;
 /**
  * The longest a call may ask for. The whole process group is stopped at the
  * deadline (BIT-571), which is what makes a deadline this long safe to grant.
@@ -235,23 +236,24 @@ export async function executeBash(
 
 /**
  * The deadline for one call from its `timeoutSec` argument: the default when
- * absent, otherwise a whole number of seconds from 1 to the ceiling. Anything
+ * absent, otherwise a whole number of seconds from 1 to `maxSec`. Anything
  * else is refused with a reason the model can act on. The schema's bounds
  * refuse the same values before the approval prompt; this is the executor's
  * own check for callers that reach it directly.
  */
 export function resolveBashTimeoutMs(
   timeoutSec: unknown,
+  maxSec: number = MAX_TIMEOUT_SEC,
 ): { timeoutMs: number } | { error: string } {
   if (timeoutSec === undefined) return { timeoutMs: DEFAULT_TIMEOUT_MS };
   if (typeof timeoutSec !== "number" || !Number.isInteger(timeoutSec)) {
     return { error: "timeoutSec must be a whole number of seconds" };
   }
   if (timeoutSec < 1) return { error: "timeoutSec must be at least 1 s" };
-  if (timeoutSec > MAX_TIMEOUT_SEC) {
+  if (timeoutSec > maxSec) {
     return {
       error:
-        `timeoutSec must be at most ${MAX_TIMEOUT_SEC} s (the ${MAX_TIMEOUT_SEC} s ceiling); ` +
+        `timeoutSec must be at most ${maxSec} s (the ${maxSec} s ceiling); ` +
         "ask for a shorter timeout or split the command",
     };
   }
@@ -312,8 +314,8 @@ function readOnlyBashCall(root: string, call: CommandCall): boolean {
 const TITLE = "Run Bash Command";
 
 /** The approval prompt names the effective deadline, e.g. `(timeout 300 s)`. */
-function bashApprovalTitle(timeoutSec: unknown): string {
-  const resolved = resolveBashTimeoutMs(timeoutSec);
+function bashApprovalTitle(timeoutSec: unknown, maxSec: number): string {
+  const resolved = resolveBashTimeoutMs(timeoutSec, maxSec);
   return "timeoutMs" in resolved
     ? `${TITLE} (timeout ${resolved.timeoutMs / 1_000} s)`
     : TITLE;
@@ -354,6 +356,11 @@ export function defineBash(
     : opts.dialExecutor === undefined
     ? undialable
     : createExecutorRunner(socket!, opts.dialExecutor);
+  // Contained, the ceiling is the default: the attested envelope never allows
+  // a longer deadline than the default (`deriveApprovalEnvelope`), so a longer
+  // one is refused as an argument the model can correct, not asked for
+  // (BIT-796).
+  const maxSec = contained ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
   // Contained, approval comes from the attested envelope (BIT-736), and the
   // read-only classifier is not used: it stays for the native route only.
   const containment = !contained
@@ -361,9 +368,10 @@ export function defineBash(
     : createContainment(socket!, opts.dialExecutor, {
       defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
       callTimeoutMs: (call) => {
-        const resolved = resolveBashTimeoutMs(call.arguments.timeoutSec);
+        const resolved = resolveBashTimeoutMs(call.arguments.timeoutSec, maxSec);
         return "timeoutMs" in resolved ? resolved.timeoutMs : undefined;
       },
+      deadlineArgument: "timeoutSec",
     });
   return {
     id: "bash",
@@ -376,17 +384,23 @@ export function defineBash(
       "Returns the exit status and combined stdout/stderr. " +
       (contained
         ? "Requires operator approval before it runs, unless the operator " +
-          `granted the isolated executor's attested envelope (then a call up to ${DEFAULT_TIMEOUT_SEC} s ` +
-          "runs without a prompt), and except for commands the operator " +
-          "allowed for the rest of the session. "
+          "granted the isolated executor's attested envelope and the call's " +
+          "deadline is within the envelope's (then it runs without a " +
+          "prompt), and except for commands the operator allowed for the " +
+          "rest of the session. " +
+          `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
+          "which is also the longest deadline a call may ask for here, so " +
+          "omit timeoutSec unless you want a command stopped sooner. A " +
+          "larger value is refused, not clamped. "
         : "Requires operator approval before it runs, except for a small set " +
           "of read-only commands (git status/diff/log/show, ls, cat, head, " +
           "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
-          "the rest of the session. ") +
-      `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
-      `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
-      "a command needs longer (a full test run, for example). A larger value is " +
-      "refused, not clamped. Pass cwd rather than prefixing the command with cd.",
+          "the rest of the session. " +
+          `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+          `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
+          "a command needs longer (a full test run, for example). A larger value is " +
+          "refused, not clamped. ") +
+      "Pass cwd rather than prefixing the command with cd.",
     inputSchema: {
       type: "object",
       required: ["command"],
@@ -404,15 +418,17 @@ export function defineBash(
         timeoutSec: {
           type: "integer",
           minimum: 1,
-          maximum: MAX_TIMEOUT_SEC,
-          description:
-            `Seconds before the command and its process tree are stopped. Default ${DEFAULT_TIMEOUT_SEC}; ` +
-            `at most ${MAX_TIMEOUT_SEC} (the ceiling; a larger value is refused).`,
+          maximum: maxSec,
+          description: contained
+            ? `Seconds before the command and its process tree are stopped. Default and ` +
+              `ceiling ${DEFAULT_TIMEOUT_SEC}; a larger value is refused.`
+            : `Seconds before the command and its process tree are stopped. Default ${DEFAULT_TIMEOUT_SEC}; ` +
+              `at most ${MAX_TIMEOUT_SEC} (the ceiling; a larger value is refused).`,
         },
       },
       additionalProperties: false,
     },
-    approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec),
+    approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec, maxSec),
     ...(contained
       ? {}
       : { readOnlyCall: (call: CommandCall) => readOnlyBashCall(root, call) }),
@@ -442,7 +458,7 @@ export function defineBash(
     // file contents), so keep the raw result out of the durable event log.
     redactResult: true,
     executor: (call, context) => {
-      const timeout = resolveBashTimeoutMs(call.arguments.timeoutSec);
+      const timeout = resolveBashTimeoutMs(call.arguments.timeoutSec, maxSec);
       if ("error" in timeout) return `error: ${timeout.error}`;
       const cwd = resolveBashCwd(root, call.arguments.cwd);
       if ("error" in cwd) return `error: ${cwd.error}`;

@@ -1,8 +1,8 @@
 //! The executor transport's wire format, as
 //! `prototype/src/tools/builtin/executor-transport.ts` speaks it: one request
 //! per connection, each message one line of JSON. Version 2 adds the
-//! `attest` request and an exec request's `binding` (BIT-736); a version 1
-//! request is refused.
+//! `attest` request and an exec request's `binding` (BIT-736), and an exec
+//! request's optional `stdin` (BIT-796); a version 1 request is refused.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -26,6 +26,12 @@ pub struct Exec {
     /// against.
     #[serde(default)]
     pub binding: Option<String>,
+    /// Text for the command's standard input, which is closed after it.
+    /// Absent, the command reads end of file. It carries what should not sit
+    /// in argv, where other users can read it from `/proc` while the command
+    /// runs: the file write tools send the content here (BIT-796).
+    #[serde(default)]
+    pub stdin: Option<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -176,9 +182,19 @@ mod tests {
         assert_eq!(parsed.env.get("PATH").map(String::as_str), Some("/usr/bin"));
         assert_eq!(parsed.timeout_ms, 5000);
         assert_eq!(parsed.binding, None);
+        assert_eq!(parsed.stdin, None);
         let mut bound = request();
         bound["binding"] = "abc".into();
         assert_eq!(exec(&bound).unwrap().binding.as_deref(), Some("abc"));
+    }
+
+    #[test]
+    fn parses_an_optional_stdin_and_refuses_a_non_string_one() {
+        let mut with_stdin = request();
+        with_stdin["stdin"] = "line one\nline two".into();
+        assert_eq!(exec(&with_stdin).unwrap().stdin.as_deref(), Some("line one\nline two"));
+        with_stdin["stdin"] = serde_json::json!([1, 2]);
+        assert!(exec(&with_stdin).is_err());
     }
 
     #[test]
