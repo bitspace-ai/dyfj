@@ -124,10 +124,10 @@ function withoutCacheControl(
 }
 
 /**
- * Cache breakpoints on the history (BIT-717). Each agent-loop request is the
- * previous one plus the reply and its tool results, so a breakpoint on the
- * last message lets the next request read everything before it at cache
- * price instead of re-paying full input price at every step. A second one
+ * Cache breakpoints on the history (BIT-717). An agent-loop follow-up that
+ * offers the same tools is the previous request plus the reply and its tool
+ * results, so a breakpoint on the last message lets the follow-up read
+ * everything before it at cache price instead of full input price. A second one
  * sits on the user message before the latest reply, the previous request's
  * end: the provider looks back only 20 blocks from a breakpoint for an
  * earlier cache entry, and a step with many parallel tool calls adds more.
@@ -341,9 +341,10 @@ export function buildAnthropicMessagesRequest(
       new PrefixDigest(system, tools),
     ),
   };
-  // A request that offers no tools (a forced conclusion, the step-limit
-  // handoff) ends the turn, and its prefix differs from the tool-bearing
-  // requests' anyway, so a cache entry written for it would not be read.
+  // History markers go only on a request that offers tools. The tool-free
+  // requests the agent loop makes, a forced conclusion and the step-limit
+  // handoff, are its last call of a turn, and their prefix differs from the
+  // tool-bearing requests' because the tools come first in it.
   if (tools && options.messages && options.messages.length > 0) {
     markHistoryCacheBreakpoints(body.messages);
   }
