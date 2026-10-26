@@ -28,8 +28,10 @@ export const ANTHROPIC_PROGRESS_UPDATES_CAPABILITY =
 export const ANTHROPIC_PROGRESS_UPDATES_BETA =
   "thinking-display-updates-2026-08-18";
 
+type CacheControl = { cache_control?: { type: "ephemeral" } };
+
 type AnthropicContentBlock =
-  | { type: "text"; text: string }
+  | ({ type: "text"; text: string } & CacheControl)
   | { type: "thinking"; thinking: string; signature: string }
   | { type: "redacted_thinking"; data: string }
   | {
@@ -38,23 +40,19 @@ type AnthropicContentBlock =
     name: string;
     input: Record<string, unknown>;
   }
-  | {
+  | ({
     type: "tool_result";
     tool_use_id: string;
     content: string;
     is_error?: boolean;
-  };
+  } & CacheControl);
 
 type AnthropicWireMessage = {
   role: "user" | "assistant";
   content: string | AnthropicContentBlock[];
 };
 
-type AnthropicSystemBlock = {
-  type: "text";
-  text: string;
-  cache_control?: { type: "ephemeral" };
-};
+type AnthropicSystemBlock = { type: "text"; text: string } & CacheControl;
 
 type AnthropicWireTool = {
   name: string;
@@ -101,7 +99,73 @@ export function anthropicReplyPrefixDigest(body: {
   tools?: readonly AnthropicWireTool[];
   messages: readonly AnthropicWireMessage[];
 }): string {
-  return new PrefixDigest(body.system, body.tools).after(body.messages);
+  // The history's cache breakpoints move every step, and the next request
+  // rebuilds its prefix without them, so the digest is taken without them.
+  return new PrefixDigest(body.system, body.tools).after(
+    body.messages.map(withoutCacheControl),
+  );
+}
+
+function withoutCacheControl(
+  message: AnthropicWireMessage,
+): AnthropicWireMessage {
+  if (typeof message.content === "string") return message;
+  const [only] = message.content;
+  // Marking a prompt string sent it as one marked text block; unmarked, it
+  // is that string again. A one-text-block message with no marker is kept
+  // as it is: the replay check hashes it in that form.
+  if (
+    message.content.length === 1 && only.type === "text" &&
+    "cache_control" in only
+  ) {
+    return { role: message.role, content: only.text };
+  }
+  const content = message.content.map((block) => {
+    if (!("cache_control" in block)) return block;
+    const { cache_control: _, ...rest } = block;
+    return rest as AnthropicContentBlock;
+  });
+  return { role: message.role, content };
+}
+
+/**
+ * Cache breakpoints on the history (BIT-717). An agent-loop follow-up that
+ * offers the same tools is the previous request plus the reply and its tool
+ * results, so a breakpoint on the last message lets the follow-up read
+ * everything before it at cache price instead of full input price. A second one
+ * sits on the user message before the latest reply, the previous request's
+ * end: the provider looks back only 20 blocks from a breakpoint for an
+ * earlier cache entry, and a step with many parallel tool calls adds more.
+ * With the system prompt's, that is three of the four breakpoints allowed.
+ * The markers change what a request costs, not what the model reads.
+ */
+function markHistoryCacheBreakpoints(messages: AnthropicWireMessage[]): void {
+  const last = messages.length - 1;
+  let previousEnd = -1;
+  for (let i = last - 1; i > 0; i--) {
+    if (messages[i].role === "assistant") {
+      if (messages[i - 1].role === "user") previousEnd = i - 1;
+      break;
+    }
+  }
+  for (const index of [previousEnd, last]) {
+    if (index < 0) continue;
+    const message = messages[index];
+    // A reply is sent back as produced; only the user side is marked.
+    if (message.role !== "user") continue;
+    const blocks: AnthropicContentBlock[] = typeof message.content === "string"
+      ? [{ type: "text", text: message.content }]
+      : [...message.content];
+    const end = blocks.length - 1;
+    const block = blocks[end];
+    // An empty text block is refused by the API, so it carries no marker.
+    if (block.type === "tool_result" || (block.type === "text" && block.text !== "")) {
+      blocks[end] = { ...block, cache_control: { type: "ephemeral" } };
+    } else {
+      continue;
+    }
+    messages[index] = { role: message.role, content: blocks };
+  }
 }
 
 /**
@@ -282,6 +346,13 @@ export function buildAnthropicMessagesRequest(
       new PrefixDigest(system, tools),
     ),
   };
+  // History markers go only on a request that offers tools. The tool-free
+  // requests the agent loop makes, a forced conclusion and the step-limit
+  // handoff, are its last call of a turn, and their prefix differs from the
+  // tool-bearing requests' because the tools come first in it.
+  if (tools && options.messages && options.messages.length > 0) {
+    markHistoryCacheBreakpoints(body.messages);
+  }
   if (tools) body.tools = tools;
   if (options.progressUpdates) {
     body.thinking = { type: "adaptive", display: "updates" };

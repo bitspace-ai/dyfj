@@ -11,6 +11,29 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Per-call usage on the turn receipt, and cache breakpoints on the
+  Anthropic history (BIT-717).** A long agent-loop turn re-sent its whole
+  history at full input price at every step: only the tool definitions and
+  the system prompt carried a cache breakpoint.
+  - The Anthropic request now also marks the last user message and the user
+    message that ended the previous request, so a follow-up can read the
+    earlier history from the prompt cache (the provider's 5-minute cache).
+    A request that offers no tools is not marked; in the agent loop those
+    are a forced conclusion and the step-limit handoff, whose prefix differs
+    from the tool-bearing requests'.
+    With the system prompt's, that is at most three of the four breakpoints
+    the API allows. Apart from the markers, the messages are the ones sent
+    before; a marked prompt string goes out as one text block. The digest that decides whether thinking blocks are
+    replayed is taken without the markers.
+  - The turn result's `tokens.steps` lists, in order, each agent-loop
+    provider call whose usage was recorded: purpose, fresh input, cache
+    read, cache write, output and cost. A call that failed before returning
+    usage, and a context-compression call, are not listed. The field is optional; a
+    runtime that predates it sends none.
+  - Both REPLs add `/receipt steps`, one line per listed call of the last turn, and
+    the receipt line adds `cached N%`, the share of the turn's input read
+    from cache.
+
 - **Work sessions in the isolated machine, and export of their commits
   (BIT-779).** The operator can seed a fresh run from a Mac branch, work in
   it through the Workbench REPL attached to the run's attested runtime, and

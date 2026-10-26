@@ -103,6 +103,7 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
             cache.push_str(&format!(", {} write", count(write)));
         }
         parts.push(cache);
+        parts.push(format!("cached {}%", cached_percent(tokens(receipt, "input"), read, write)));
     }
 
     if let (Some(used), Some(max)) = (
@@ -153,6 +154,38 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
     format!("— {}", parts.join(" · "))
 }
 
+/// The share of the turn's input served from cache, in whole percent, rounded
+/// as the TypeScript line's `Math.round` rounds.
+fn cached_percent(input: u64, read: u64, write: u64) -> u64 {
+    let prompt = input + read + write;
+    if prompt == 0 {
+        return 0;
+    }
+    (read as f64 / prompt as f64 * 100.0 + 0.5).floor() as u64
+}
+
+/// `/receipt steps`: one line per recorded agent-loop provider call of the last turn,
+/// in call order, as `formatStepLines` in the TypeScript CLI prints them.
+pub fn step_lines(steps: &[Value]) -> Vec<String> {
+    let field = |step: &Value, key: &str| step.get(key).and_then(Value::as_u64).unwrap_or(0);
+    steps
+        .iter()
+        .map(|step| {
+            let purpose = step.get("purpose").and_then(Value::as_str).unwrap_or("call");
+            format!(
+                "  #{} {} · {} in · {} read · {} write · {} out · {}",
+                field(step, "order"),
+                visible(purpose),
+                count(field(step, "input")),
+                count(field(step, "cacheRead")),
+                count(field(step, "cacheWrite")),
+                count(field(step, "output")),
+                usd(step.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0)),
+            )
+        })
+        .collect()
+}
+
 /// Safety-warning lines from the turn result's `receipt` string.
 ///
 /// The runtime writes a skipped-event-write warning into that string. It is
@@ -173,7 +206,7 @@ pub fn safety_warnings(result: &Value) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count, line, safety_warnings};
+    use super::{count, line, safety_warnings, step_lines};
     use serde_json::json;
 
     fn receipt() -> serde_json::Value {
@@ -356,5 +389,38 @@ mod tests {
         assert_eq!(count(999), "999");
         assert_eq!(count(1000), "1,000");
         assert_eq!(count(1234567), "1,234,567");
+    }
+
+    /// BIT-717: the share of input served from cache, as the TypeScript
+    /// line shows it.
+    #[test]
+    fn the_cache_segment_shows_the_cached_share() {
+        let mut r = receipt();
+        r["tokens"]["input"] = json!(1000);
+        r["tokens"]["cacheRead"] = json!(8800);
+        r["tokens"]["cacheWrite"] = json!(200);
+        assert!(
+            line(&r, 0.0).contains("cache 8,800 read, 200 write · cached 88% ·"),
+            "{}",
+            line(&r, 0.0)
+        );
+    }
+
+    /// The same lines `formatStepLines` prints for the same steps.
+    #[test]
+    fn step_lines_match_the_typescript_layout() {
+        let steps = vec![
+            json!({"order": 1, "purpose": "initial", "input": 312, "cacheRead": 0,
+                   "cacheWrite": 22021, "output": 203, "costUsd": 0.0634}),
+            json!({"order": 2, "purpose": "tool_followup", "input": 1204, "cacheRead": 22333,
+                   "cacheWrite": 7661, "output": 270, "costUsd": 0}),
+        ];
+        assert_eq!(
+            step_lines(&steps),
+            vec![
+                "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634",
+                "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0",
+            ]
+        );
     }
 }

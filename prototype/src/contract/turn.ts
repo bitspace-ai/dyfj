@@ -32,6 +32,27 @@ import { utf8SafePrefix } from "../kernel/mod.ts";
  */
 export type CostBasis = "provider_billed" | "catalog_estimate";
 
+/**
+ * One agent-loop provider call of a turn whose usage was recorded, in call
+ * order: what it sent (`input` excludes cache traffic, as in `tokens`), what
+ * it got back, and its cost. A call that failed before returning usage, and
+ * a context-compression call, are not listed.
+ */
+export interface TurnStepUsage {
+  order: number;
+  purpose:
+    | "initial"
+    | "tool_followup"
+    | "forced_conclusion"
+    | "step_limit_handoff"
+    | "recovery";
+  input: number;
+  cacheRead: number;
+  cacheWrite: number;
+  output: number;
+  costUsd: number;
+}
+
 export interface NativeTurnReceipt {
   sessionId: string;
   traceId: string;
@@ -81,6 +102,8 @@ export interface NativeTurnReceipt {
      */
     reasoning?: number;
     totalCalls: number;
+    /** Recorded per-call usage (`/receipt steps`); absent from a runtime that predates it. */
+    steps?: TurnStepUsage[];
   };
   /** Agent-loop usage for this turn; provider calls and parallel tool calls are distinct. */
   agent: {

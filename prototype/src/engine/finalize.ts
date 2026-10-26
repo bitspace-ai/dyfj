@@ -597,6 +597,7 @@ function turnResult(
       cacheWrite: state.cacheWriteTokens,
       reasoning: state.reasoningTokens,
       totalCalls: summary.totalCalls,
+      steps: state.stepUsage,
     },
     context: {
       profile: state.contextProfile,

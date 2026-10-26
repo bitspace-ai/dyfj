@@ -12,7 +12,11 @@
  *   first failed integrity write, so neither is ever silent.
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
-import type { AutoApprovals, CostBasis } from "../contract/mod.ts";
+import type {
+  AutoApprovals,
+  CostBasis,
+  TurnStepUsage,
+} from "../contract/mod.ts";
 import type {
   CommandRegistry,
   ExecutorDialer,
@@ -209,6 +213,8 @@ export interface TurnState {
   /** The basis of `turnCostUsd`; null until a call is recorded. */
   turnCostBasis: CostBasis | null;
   providerCallOrder: number;
+  /** Each recorded agent-loop call's usage, in call order (`tokens.steps`). */
+  stepUsage: TurnStepUsage[];
   callTimings: WorkbenchCallTimings | undefined;
   toolSteps: number;
   toolStepLimitReached: boolean;
@@ -277,6 +283,7 @@ export function newTurnState(
     turnCostUsd: 0,
     turnCostBasis: null,
     providerCallOrder: 0,
+    stepUsage: [],
     callTimings: undefined,
     toolSteps: 0,
     toolStepLimitReached: false,

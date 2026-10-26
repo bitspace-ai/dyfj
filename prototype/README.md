@@ -185,6 +185,8 @@ Workbench also carries built-in rows for the local models above and adds them wh
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use. At the limit, the runtime makes a call that offers no tools and asks the model for a handoff (done, next, uncommitted state); if that call fails or a budget gate stops it, the turn ends on a runtime notice of its last tool calls. A session sets its own limit with `--tool-steps N` or `/steps N`, up to `[agent].max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64); the runtime refuses a value above it.
 
+The receipt line adds `cached N%` when a provider reports cache traffic: the share of the turn's input read from the prompt cache. The turn result's optional `tokens.steps` lists each agent-loop provider call whose usage was recorded (purpose, fresh input, cache read, cache write, output and cost), and `/receipt steps` prints one line per listed call of the last turn in both REPLs. A call that failed before returning usage is not listed.
+
 With no configured companion default, a bare turn uses the registry's local
 default. The operator can instead configure a hosted companion default or
 select a hosted model listed by `dyfj models`. Paid inference requires approval
