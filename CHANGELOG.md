@@ -11,6 +11,43 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **One spend check, so a normal implementation turn runs without stopping
+  (BIT-785).** An ordinary implementation turn could stop several times for
+  spend: at the runaway halt, derived as three times the $0.10 per-call
+  limit, again each time that halt doubled, and at the $1.00 session limit.
+  The two guards also printed different session figures.
+  - One check now runs before every paid call. It measures five limits against
+    actual recorded spend plus the call's estimate: per call ($0.50), turn
+    ($4.00), runaway ($0.50 of spend since the turn's last tool step that made
+    progress), session ($10.00) and day ($25.00). When one check crosses
+    several limits they share one prompt, with one set of figures. The turn's
+    entry check and the first call's check are separate, so a first call whose
+    estimate grows past the level the entry approval stated asks again.
+  - Tool progress is a tool call that is new in the turn and that the tool
+    did not report as an error, or a write or edit that succeeded. Calls the
+    tool rejects (invalid arguments, an unknown tool, a refused or denied
+    call) and exact repeats are not progress. A bash command's exit status
+    and a "not found" reply from a file tool are tool output, not tool errors,
+    so a new call that returns them still counts; the loop's existing repeat
+    detection and the turn limit bound those turns.
+  - An approval raises the per-call limit to twice the estimate for the
+    session, the turn and runaway limits to twice the projection (spend plus
+    the call's estimate) for the turn, and the session and daily limits to the
+    projection plus one more session or daily limit. Each approval is kept
+    with the limit it was given against, so a limit the operator changes
+    afterwards is checked afresh.
+  - `[budget] turn_limit_usd` and `runaway_stall_usd` (env
+    `DYFJ_BUDGET_TURN_USD`, `DYFJ_BUDGET_RUNAWAY_STALL_USD`) configure the new
+    limits. Both REPLs take `--budget-turn`, `--budget-session`,
+    `--budget-day`, `--budget-per-call` and `--budget-runaway` for one
+    session, show the limits under the posture line at start, and have
+    `/budget` to show or set them. `runtime/status` reports the turn and
+    runaway defaults. `sandbox/linux/l8-work.sh` passes `--budget-*` through
+    to the REPL.
+  - A test runs a synthetic 24-call implementation turn through the engine
+    under the defaults and gets no prompt; a turn of failing calls still stops
+    at the runaway limit.
+
 - **Work sessions in the isolated machine, and export of their commits
   (BIT-779).** The operator can seed a fresh run from a Mac branch, work in
   it through the Workbench REPL attached to the run's attested runtime, and
@@ -520,6 +557,14 @@ README are tracked separately in its Revision history section.
 
 ### Removed
 
+- **The runaway anomaly gate and its multiples (BIT-785).**
+  `budget/anomaly-gate.ts`, the `[anomaly]` config table (`turn_multiple`,
+  `scope_multiple`) and `DYFJ_ANOMALY_TURN_MULTIPLE` /
+  `DYFJ_ANOMALY_SCOPE_MULTIPLE` are gone; the turn and runaway limits replace
+  them. A config file with an `[anomaly]` table fails to load with one line
+  naming the replacement keys. The two variables are no longer read or passed
+  to the runtime.
+
 - **Deno's lanes, tooling, config and CI steps: the Node runtime track
   (decision D32) is complete.** The runtime, the tests and the gate now run with no Deno on
   `PATH`. Deleted: the two `deno check` typecheck lanes (`typecheck.tsc`
@@ -567,6 +612,14 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **Spend limits (BIT-785).** The default per-call limit is $0.50 (was
+  $0.10) and the default session limit is $10.00 (was $1.00). A daily approval
+  raises the daily limit by one more day's limit instead of lifting it for the
+  rest of the day. With no approver, a turn stopped by the runaway limit now
+  fails as a refused spend (`BudgetExceededError`), as the ceilings always
+  did, instead of with `RunawayAnomalyHaltError`. The prompt is titled "Spend
+  check"; its wire kind is still `budget_ceiling`.
 
 - **The executor transport is protocol version 2 (BIT-736).** Requests carry
   an `op` (`exec` or `attest`), and an exec request may carry a `binding`. A

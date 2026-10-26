@@ -143,7 +143,8 @@ test("openSession resolves the budget posture: turn override, then boundary defa
       sessionLimitUsd: 3,
       defaultSessionBudgetUsd: 2,
       defaultPerCallBudgetUsd: 0.5,
-      anomalyTurnMultiple: 7,
+      defaultTurnBudgetUsd: 6,
+      runawayStallUsd: 0.7,
     }),
     fakes.ports,
   );
@@ -151,8 +152,9 @@ test("openSession resolves the budget posture: turn override, then boundary defa
     sessionLimitUsd: 3,
     perCallLimitUsd: 0.5,
     dailyLimitUsd: BUDGET_DEFAULTS.dailyLimitUsd,
+    turnLimitUsd: 6,
+    runawayStallUsd: 0.7,
   });
-  assert.deepStrictEqual(session.anomalyConfig.turnMultiple, 7);
 });
 
 test("openSession clamps the tool-step limit and falls back for non-integers", async () => {

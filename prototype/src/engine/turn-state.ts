@@ -100,8 +100,9 @@ export interface TurnSession {
     sessionLimitUsd: number;
     perCallLimitUsd: number;
     dailyLimitUsd: number;
+    turnLimitUsd: number;
+    runawayStallUsd: number;
   };
-  anomalyConfig: { turnMultiple: number; scopeMultiple: number };
   /** Reads the spend already on the books for a session. */
   fetchBaselines: (sessionId: string) => Promise<SpendBaselines>;
   budget: BudgetTracker;

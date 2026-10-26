@@ -30,7 +30,7 @@ pub struct Prompter<'a> {
 /// extension: the posted last-command context is clipped to this length.
 const FRICTION_COMMAND_MAX_CHARACTERS: usize = 120;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum Command {
     Help,
     /// `/model [slug] [--approve-paid] [--fast | --no-fast]`
@@ -43,6 +43,8 @@ pub enum Command {
     Fast(Option<bool>),
     /// `/steps [N]`; `None` shows the limit.
     Steps(Option<u32>),
+    /// `/budget [<limit> <usd>]`; `None` shows the limits.
+    Budget(Option<(crate::budget::Limit, f64)>),
     /// `/session`
     SessionShow,
     /// `/session list`
@@ -157,6 +159,14 @@ pub fn parse(input: &str) -> Option<Command> {
             },
             _ => Command::Usage("usage: /steps [N]".into()),
         },
+        "/budget" => match args.as_slice() {
+            [] => Command::Budget(None),
+            [word, usd] => match (crate::budget::Limit::from_word(word), crate::budget::parse_usd(usd)) {
+                (Some(limit), Some(usd)) => Command::Budget(Some((limit, usd))),
+                _ => Command::Usage(crate::budget::usage()),
+            },
+            _ => Command::Usage(crate::budget::usage()),
+        },
         "/session" => match args.as_slice() {
             [] => Command::SessionShow,
             ["list"] => Command::SessionList,
@@ -266,6 +276,7 @@ commands (type them alone on a line; inside a paste they are prompt text):
   /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
   /fast [on|off]                                       toggle the fast speed tier
   /steps [N]                                           show or set the tool-step limit
+  /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
   /session | /session list | /session switch <id>     show, list or resume sessions
   /friction <sev> [--escaped] <text...>                post a daily-driver friction
   /idea mark <label...> | /idea list                   mark or list ideas
@@ -328,6 +339,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         } => model(client, session, slug, approve_paid, fast).await,
         Command::Fast(target) => fast_toggle(client, session, target).await,
         Command::Steps(target) => steps(client, session, target).await,
+        Command::Budget(target) => budget(client, session, target).await,
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
@@ -833,6 +845,23 @@ async fn steps(client: &Client, session: &mut Session, target: Option<u32>) {
     }
     session.max_tool_steps = Some(wanted);
     eprintln!("{}", show(Some(u64::from(wanted))));
+}
+
+/// `/budget` shows the session's spend limits; `/budget <limit> <usd>` sets
+/// one for the rest of the session. The runtime applies a session's limits on
+/// the loopback transport only.
+async fn budget(client: &Client, session: &mut Session, target: Option<(crate::budget::Limit, f64)>) {
+    if let Some((limit, usd)) = target {
+        session.budget.set(limit, usd);
+    }
+    let status = match client.request("runtime/status", json!({})).await {
+        Ok(status) => status,
+        Err(err) => return error_line("could not read the runtime's spend limits", &err),
+    };
+    match crate::budget::line(&status, &session.budget) {
+        Some(line) => eprintln!("{line}"),
+        None => eprintln!("budget: this runtime reports no spend limits"),
+    }
 }
 
 fn session_show(session: &Session) {
@@ -1425,6 +1454,18 @@ mod run_tests {
         match method {
             "runtime/status" => json!({"runtime": {"maxToolSteps": 32, "maxToolStepsCeiling": 48}}),
             _ => catalog(method, params),
+        }
+    }
+
+    #[test]
+    fn parses_budget_limits() {
+        use crate::budget::Limit;
+        use crate::commands::parse;
+        assert_eq!(parse("/budget"), Some(Command::Budget(None)));
+        assert_eq!(parse("/budget turn 6"), Some(Command::Budget(Some((Limit::Turn, 6.0)))));
+        assert_eq!(parse("/budget per-call 1"), Some(Command::Budget(Some((Limit::PerCall, 1.0)))));
+        for line in ["/budget turn", "/budget week 5", "/budget turn 0", "/budget turn 1001", "/budget turn 2 3"] {
+            assert!(matches!(parse(line), Some(Command::Usage(_))), "{line}");
         }
     }
 

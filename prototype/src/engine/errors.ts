@@ -13,7 +13,6 @@ import {
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
-  RunawayAnomalyHaltError,
 } from "../budget/mod.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
 import {
@@ -181,7 +180,6 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
 > = [
   [BudgetExceededError, "BudgetExceededError"],
   [BudgetCeilingDeclinedError, "BudgetCeilingDeclinedError"],
-  [RunawayAnomalyHaltError, "RunawayAnomalyHaltError"],
   [ContextWindowOverflowError, "ContextWindowOverflowError"],
   [PaidEscalationDeclinedError, "PaidEscalationDeclinedError"],
   [SessionModelUnavailableError, "SessionModelUnavailableError"],

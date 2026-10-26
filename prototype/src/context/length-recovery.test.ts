@@ -187,12 +187,6 @@ test("isBudgetRefusal: recognizes every envelope-refusal error by name", () => {
   }
 });
 
-test("isBudgetRefusal: a runaway-anomaly halt is a hard stop, never a downgradeable refusal", () => {
-  const err = new Error("halted");
-  err.name = "RunawayAnomalyHaltError";
-  assert.strictEqual(isBudgetRefusal(err), false);
-});
-
 test("isBudgetRefusal: anything else is not a budget refusal", () => {
   assert.strictEqual(isBudgetRefusal(new Error("network down")), false);
   assert.strictEqual(isBudgetRefusal(undefined), false);

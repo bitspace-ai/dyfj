@@ -1,6 +1,6 @@
 /**
  * Component test for budget/: the real tracker, spend baselines, confirmation
- * store, envelope gate and anomaly gate wired together over a `MemoryStore`
+ * store and spend check wired together over a `MemoryStore`
  * and a `ManualClock`. Prior spend is committed to the store as
  * `provider_call` events; the store stamps them with the clock's time, and
  * the spend reader rolls them up against the clock's local day.
@@ -15,7 +15,6 @@ import { mock, test } from "node:test";
 import { ManualClock } from "../../testing/fakes/manual-clock.ts";
 import { type EventInsert, MemoryStore } from "../store/mod.ts";
 import {
-  type AnomalyConfig,
   BudgetCeilingDeclinedError,
   type BudgetCeilingVerdict,
   type BudgetCeilingWarning,
@@ -23,12 +22,9 @@ import {
   BudgetExceededError,
   BudgetTracker,
   CeilingConfirmationStore,
-  createRunawayAnomalyGate,
   createTurnBudgetCeilingGate,
   fetchSpendBaselines,
   localDayKey,
-  RunawayAnomalyHaltError,
-  type RunawayAnomalyWarning,
 } from "./mod.ts";
 
 const TRACE_ID = "aabbccddeeff00112233445566778899";
@@ -40,8 +36,10 @@ const CONFIG: BudgetConfig = {
   sessionLimitUsd: 1.00,
   perCallLimitUsd: 0.10,
   dailyLimitUsd: 5.00,
+  // Out of reach: the envelope tests are about the session and daily limits.
+  turnLimitUsd: 1000,
+  runawayStallUsd: 1000,
 };
-const ANOMALY: AnomalyConfig = { turnMultiple: 3, scopeMultiple: 2 };
 
 let eventSeq = 0;
 
@@ -80,10 +78,6 @@ async function trackerFor(
 
 function ceilingConfirm(verdict: BudgetCeilingVerdict) {
   return mock.fn((_w: BudgetCeilingWarning) => Promise.resolve(verdict));
-}
-
-function anomalyConfirm(verdict: BudgetCeilingVerdict) {
-  return mock.fn((_w: RunawayAnomalyWarning) => Promise.resolve(verdict));
 }
 
 function usage(costTotal: number) {
@@ -251,139 +245,119 @@ test("envelope: the daily confirmation and spend window roll over with the local
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-// ── (c) runaway anomaly hard stop ─────────────────────────────────────────────
+// ── (c) turn and runaway limits ───────────────────────────────────────────────
 
-test("anomaly: turn spend past 3× the per-call limit halts; approvals are per level", async () => {
+/**
+ * Turn and runaway limits only: session, daily and per-call sit out of reach.
+ * Each call estimates $0.06 ($3/MTok × 20k input tokens).
+ */
+const TURN_CONFIG: BudgetConfig = {
+  sessionLimitUsd: 100,
+  perCallLimitUsd: 0.50,
+  dailyLimitUsd: 100,
+  turnLimitUsd: 1.00,
+  runawayStallUsd: 0.20,
+};
+
+test("turn and runaway: a stalled loop asks at the runaway limit, progress clears it, and the turn limit asks once per raised level", async () => {
   const { clock, store } = setup();
-  const tracker = await trackerFor(store, clock, "COMP-C-TURN");
-  tracker.record(usage(0.09), 2);
-  tracker.record(usage(0.09), 2);
-  const under = tracker.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(under.halted, false); // $0.18 <= $0.30
-  await createRunawayAnomalyGate().ensureAllowed(under);
-
-  tracker.record(usage(0.15), 2);
-  const tripped = tracker.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(tripped.trigger, "turn_spend");
-  assertAlmostEqual(tripped.turnSpentUsd, 0.33);
-  assertAlmostEqual(tripped.turnHaltUsd, 0.30);
-
-  const halt = await captureRejection(
-    () => createRunawayAnomalyGate().ensureAllowed(tripped),
-    RunawayAnomalyHaltError,
+  // $0.40 from earlier turns counts for the session, not for this turn.
+  await store.journal.commit({ events: [paidCall("COMP-C-TURN", 0.40)] });
+  const tracker = await trackerFor(store, clock, "COMP-C-TURN", TURN_CONFIG);
+  const confirmations = new CeilingConfirmationStore(clock);
+  const confirm = ceilingConfirm({ decision: "approve" });
+  const gate = createTurnBudgetCeilingGate(
+    confirm,
+    confirmations.for("COMP-C-TURN"),
   );
-  assert.strictEqual(halt.trigger, "turn_spend");
-  assert.strictEqual(halt.declined, false);
+  const next = () => tracker.checkPreCall(2, 3.0, 20_000);
 
-  const confirm = anomalyConfirm({ decision: "approve" });
-  const gate = createRunawayAnomalyGate(confirm);
-  await gate.ensureAllowed(tripped); // turn entry
-  await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY)); // same level
-  assert.equal(confirm.mock.callCount(), 1);
-  const warning = confirm.mock.calls[0].arguments[0];
-  assert.strictEqual(warning.kind, "runaway_anomaly");
-  assertAlmostEqual(warning.spentUsd, 0.33);
-  assertAlmostEqual(warning.haltUsd, 0.30);
-
-  // BIT-715: the approval at $0.33 raised the turn halt to 2 × $0.33 = $0.66.
-  tracker.record(usage(0.30), 2); // $0.63: inside the raised halt
-  await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
-  assert.equal(confirm.mock.callCount(), 1);
-  tracker.record(usage(0.10), 2); // $0.73: past the raised halt
-  await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
-  assert.equal(confirm.mock.callCount(), 2);
-  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.73);
-});
-
-test("anomaly: a long turn that grows past $2.40 asks exactly three times, each when spend passes the level the last approval raised", async () => {
-  const { clock, store } = setup();
-  // Session and daily envelopes sized so only the turn halt trips.
-  const config: BudgetConfig = {
-    sessionLimitUsd: 10,
-    perCallLimitUsd: 0.10,
-    dailyLimitUsd: 50,
-  };
-  const tracker = await trackerFor(store, clock, "COMP-C-LONG", config);
-  const confirm = anomalyConfirm({ decision: "approve" });
-  const gate = createRunawayAnomalyGate(confirm);
-  // Each call's input grows 8% over the last, priced at $3/MTok.
-  let inputCount = 20_000;
-  let calls = 0;
-  while (tracker.totalCost <= 2.40 && calls < 60) {
-    await gate.ensureAllowed(tracker.checkAnomaly(2, ANOMALY));
-    const cost = (inputCount / 1_000_000) * 3;
-    tracker.record(
-      { input: inputCount, output: 800, cost: { total: cost } },
-      2,
-    );
-    inputCount = Math.round(inputCount * 1.08);
-    calls += 1;
+  // Three calls with no tool progress: $0.18 spent since the last progress.
+  for (let i = 0; i < 3; i++) {
+    const preCall = next();
+    assert.strictEqual(preCall.allowed, true);
+    await gate.ensureAllowed(preCall);
+    tracker.record(usage(0.06), 2);
   }
-  assert.ok(
-    tracker.totalCost > 2.40,
-    `expected the turn to pass $2.40, ended at $${tracker.totalCost.toFixed(2)}`,
-  );
-  // Recorded turn spend after n calls is 0.75 × (1.08^n − 1). Prompts:
-  // call 6 at $0.352 (halt $0.30 → raised to $0.704); call 10 at $0.749
-  // (→ $1.499); call 16 at $1.629 (→ $3.258). Spend stays under $3.258 through
-  // the last call, so exactly three prompts.
-  assert.strictEqual(confirm.mock.callCount(), 3);
-  assertAlmostEqual(confirm.mock.calls[0].arguments[0].spentUsd, 0.352, 1e-3);
-  assertAlmostEqual(confirm.mock.calls[1].arguments[0].spentUsd, 0.749, 1e-3);
-  assertAlmostEqual(confirm.mock.calls[2].arguments[0].spentUsd, 1.629, 1e-3);
-});
-
-test("anomaly: store-seeded session spend past 2× the session envelope halts", async () => {
-  const { clock, store } = setup();
-  await store.journal.commit({
-    events: [
-      paidCall("COMP-C-SCOPE", 1.00),
-      paidCall("COMP-C-SCOPE", 0.95),
-    ],
-  });
-  const tracker = await trackerFor(store, clock, "COMP-C-SCOPE");
-  assert.strictEqual(tracker.checkAnomaly(2, ANOMALY).halted, false); // $1.95
-  tracker.record(usage(0.10), 2); // $2.05 > $2.00; turn $0.10 < $0.30
-  const tripped = tracker.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(tripped.trigger, "session_scope");
-  assertAlmostEqual(tripped.sessionSpentUsd, 2.05);
-  assertAlmostEqual(tripped.sessionHaltUsd, 2.00);
-
-  const halt = await captureRejection(
-    () => createRunawayAnomalyGate().ensureAllowed(tripped),
-    RunawayAnomalyHaltError,
-  );
-  assert.strictEqual(halt.trigger, "session_scope");
-  assertAlmostEqual(halt.spentUsd, 2.05);
-  assertAlmostEqual(halt.haltUsd, 2.00);
-
-  const confirm = anomalyConfirm({ decision: "deny", reason: "stop here" });
-  const declined = await captureRejection(
-    () => createRunawayAnomalyGate(confirm).ensureAllowed(tripped),
-    RunawayAnomalyHaltError,
-  );
+  // The fourth projects $0.24 past the $0.20 runaway limit.
+  const stalled = next();
+  assert.strictEqual(stalled.reason, "runaway_stall");
+  assertAlmostEqual(stalled.stallCostSoFar, 0.18);
+  assertAlmostEqual(stalled.sessionCostSoFar, 0.58);
+  assertAlmostEqual(stalled.turnCostSoFar, 0.18);
+  await gate.ensureAllowed(stalled);
   assert.equal(confirm.mock.callCount(), 1);
-  assert.strictEqual(declined.declined, true);
-  assert.strictEqual(declined.trigger, "session_scope");
-  assert.ok(
-    declined.message.includes("stop here"),
-    `expected declined.message to include "stop here"`,
+  const runawayWarning = confirm.mock.calls[0].arguments[0];
+  assert.deepStrictEqual(runawayWarning.crossedScopes, ["runaway_stall"]);
+  assertAlmostEqual(
+    runawayWarning.raisesToUsd.runaway_stall ?? Number.NaN,
+    0.48,
   );
+
+  // Approved up to $0.48: the next stalled call ($0.30) does not ask.
+  tracker.record(usage(0.06), 2);
+  await gate.ensureAllowed(next());
+  assert.equal(confirm.mock.callCount(), 1);
+  // A tool step makes progress: the runaway figure starts again from zero.
+  tracker.record(usage(0.06), 2);
+  tracker.noteToolProgress();
+  assert.strictEqual(tracker.stallSpentUsd, 0);
+  assert.strictEqual(next().allowed, true);
+
+  // One large call, then progress: turn spend $0.90, projection $0.96.
+  tracker.record(usage(0.60), 2);
+  tracker.noteToolProgress();
+  assert.strictEqual(next().allowed, true);
+  // Turn spend $0.96: projection $1.02 crosses the $1.00 turn limit.
+  tracker.record(usage(0.06), 2);
+  tracker.noteToolProgress();
+  const overTurn = next();
+  assert.strictEqual(overTurn.reason, "turn_limit");
+  assertAlmostEqual(overTurn.turnCostSoFar, 0.96);
+  assertAlmostEqual(overTurn.sessionCostSoFar, 1.36);
+  await gate.ensureAllowed(overTurn);
+  assert.equal(confirm.mock.callCount(), 2);
+  const turnWarning = confirm.mock.calls[1].arguments[0];
+  assert.deepStrictEqual(turnWarning.crossedScopes, ["turn_limit"]);
+  assertAlmostEqual(turnWarning.raisesToUsd.turn_limit ?? Number.NaN, 2.04);
+
+  // Approved up to $2.04: the next call ($1.08) does not ask.
+  tracker.record(usage(0.06), 2);
+  tracker.noteToolProgress();
+  const inside = next();
+  assert.strictEqual(inside.reason, "turn_limit");
+  await gate.ensureAllowed(inside);
+  assert.equal(confirm.mock.callCount(), 2);
+
+  // The turn mark is the gate's own: another gate over the same confirmation
+  // store asks again, and one without a handler fails closed on the turn.
+  await createTurnBudgetCeilingGate(
+    confirm,
+    confirmations.for("COMP-C-TURN"),
+  ).ensureAllowed(inside);
+  assert.equal(confirm.mock.callCount(), 3);
+  const closed = await captureRejection(
+    () =>
+      createTurnBudgetCeilingGate(
+        undefined,
+        confirmations.for("COMP-C-TURN"),
+      ).ensureAllowed(inside),
+    BudgetExceededError,
+  );
+  assert.strictEqual(closed.reason, "turn_limit");
+  assert.strictEqual(closed.limitUsd, 1);
+  assertAlmostEqual(closed.scopeCostSoFar, 1.02);
 });
 
-test("anomaly: tier 0 never halts, even past every threshold", async () => {
+test("turn and runaway: tier 0 is allowed past both limits", async () => {
   const { clock, store } = setup();
-  await store.journal.commit({
-    events: [paidCall("COMP-C-TIER0", 3.00)],
-  });
-  const tracker = await trackerFor(store, clock, "COMP-C-TIER0");
-  tracker.record(usage(0.50), 2);
-  assert.strictEqual(tracker.checkAnomaly(2, ANOMALY).halted, true);
-  const free = tracker.checkAnomaly(0, ANOMALY);
-  assert.strictEqual(free.halted, false);
-  assert.strictEqual(free.trigger, undefined);
-  const confirm = anomalyConfirm({ decision: "approve" });
-  await createRunawayAnomalyGate(confirm).ensureAllowed(free);
-  await createRunawayAnomalyGate().ensureAllowed(free);
+  const tracker = await trackerFor(store, clock, "COMP-C-TIER0", TURN_CONFIG);
+  tracker.record(usage(1.50), 2); // past the turn and runaway limits
+  assert.strictEqual(tracker.checkPreCall(2, 3.0, 20_000).allowed, false);
+  const free = tracker.checkPreCall(0, 3.0, 20_000);
+  assert.strictEqual(free.allowed, true);
+  assert.strictEqual(free.reason, undefined);
+  const confirm = ceilingConfirm({ decision: "approve" });
+  await createTurnBudgetCeilingGate(confirm).ensureAllowed(free);
   assert.equal(confirm.mock.callCount(), 0);
 });

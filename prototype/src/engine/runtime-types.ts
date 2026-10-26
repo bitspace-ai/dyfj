@@ -22,7 +22,6 @@ import type {
 import type { WorkbenchMessage } from "../providers/mod.ts";
 import type {
   ConfirmBudgetCeiling,
-  ConfirmRunawayAnomaly,
   SpendBaselines,
 } from "../budget/mod.ts";
 import type {
@@ -69,19 +68,12 @@ export interface Approver {
    */
   confirmPaidEscalation?: (banner: string) => Promise<PaidEscalationVerdict>;
   /**
-   * Warn-then-confirm handler when projected spend crosses a budget ceiling.
-   * Without it the runtime fails closed at the ceiling (same posture as the
+   * Warn-then-confirm handler when projected spend crosses a spend limit
+   * (per call, runaway, turn, session or day). Without it the runtime fails
+   * closed at the limit (same posture as the
    * approval gate on non-interactive transports).
    */
   confirmBudgetCeiling?: ConfirmBudgetCeiling;
-  /**
-   * Confirm handler for a runaway-anomaly hard stop (actual spend past the
-   * anomaly multiples). An approval raises the tripped halt to twice the
-   * actual spend at approval (BIT-715), for the turn or for the session or day
-   * its scope names; it does not raise an envelope. Without a handler the
-   * runtime fails closed at the halt.
-   */
-  confirmRunawayAnomaly?: ConfirmRunawayAnomaly;
   /**
    * Approval handler for mutating tools. When a tool's policy is
    * "ask", the runtime calls this for an approve/deny verdict; the default (no
@@ -217,16 +209,8 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   defaultDailyBudgetUsd?: number;
-  /**
-   * Runaway-anomaly hard-stop multiples (startup posture), resolved at the
-   * boundary like the budget defaults. Deliberately config-only — no per-turn
-   * override field for the multiples themselves. The dollar thresholds they
-   * produce scale with the effective budget config, so an explicit loopback
-   * per-turn budget override moves them with the envelope it raises; the gate
-   * always binds at multiple × the envelope in force.
-   */
-  anomalyTurnMultiple?: number;
-  anomalyScopeMultiple?: number;
+  defaultTurnBudgetUsd?: number;
+  defaultRunawayStallUsd?: number;
   /**
    * Per-turn budget-limit overrides. Absent → the default limits above
    * apply. The HTTP boundary only sets these from a request on the LOOPBACK
@@ -236,6 +220,8 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   sessionLimitUsd?: number;
   perCallLimitUsd?: number;
   dailyLimitUsd?: number;
+  turnLimitUsd?: number;
+  runawayStallUsd?: number;
 }
 
 export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {

@@ -12,6 +12,7 @@ import {
   type UnixClient,
 } from "../../transport/mod.ts";
 import type { CliConfig } from "../args.ts";
+import { formatBudgetLine } from "../budget.ts";
 import type { ConnectFn, Io } from "../io.ts";
 import { socketError } from "../render/errors.ts";
 
@@ -34,6 +35,8 @@ export interface RuntimeStatusPayload {
     defaultSessionBudgetUsd?: number;
     defaultPerCallBudgetUsd?: number;
     defaultDailyBudgetUsd?: number;
+    defaultTurnBudgetUsd?: number;
+    defaultRunawayStallUsd?: number;
     maxToolSteps?: number;
     /** The highest limit a session may set; absent on older servers. */
     maxToolStepsCeiling?: number;
@@ -216,9 +219,13 @@ export function formatRuntimeStatus(
         : runtime.trustWorkspaceInstructions === false
         ? "off"
         : "unknown"}`,
-    `budget: $${(runtime.defaultSessionBudgetUsd ?? 0).toFixed(2)} session · $${
-      (runtime.defaultDailyBudgetUsd ?? 0).toFixed(2)
-    } day · $${(runtime.defaultPerCallBudgetUsd ?? 0).toFixed(2)} per call`,
+    formatBudgetLine({
+      turn: runtime.defaultTurnBudgetUsd,
+      session: runtime.defaultSessionBudgetUsd,
+      day: runtime.defaultDailyBudgetUsd,
+      perCall: runtime.defaultPerCallBudgetUsd,
+      runaway: runtime.defaultRunawayStallUsd,
+    }),
     `tool-step limit: ${runtime.maxToolSteps ?? "unknown"}` +
       (runtime.maxToolStepsCeiling === undefined
         ? ""

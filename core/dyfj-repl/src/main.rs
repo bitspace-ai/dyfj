@@ -6,6 +6,7 @@
 
 mod activity;
 mod approval;
+mod budget;
 mod client;
 mod commands;
 mod dev_control;
@@ -53,11 +54,14 @@ fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
 }
 
 const USAGE: &str = "\
-usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--tool-steps <N>] [--session <id>] [--workspace <dir>]
+usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--tool-steps <N>] [--budget-<limit> <usd>] [--session <id>] [--workspace <dir>]
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
   --tool-steps <N>  this session's tool-step limit, 1 through 64 and not above the runtime's ceiling
+  --budget-turn, --budget-session, --budget-day, --budget-per-call, --budget-runaway <usd>
+                    this session's spend limits (default: the runtime's [budget] config);
+                    runaway is spend with no tool progress
   --session <id>    resume a runtime session, on the model it last ran on unless --model names one
   --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
 
@@ -111,6 +115,17 @@ fn parse_args(
                     )
                 })?;
                 session.id = Some(id);
+            }
+            flag if budget::Limit::from_flag(flag).is_some() => {
+                let limit = budget::Limit::from_flag(flag).expect("matched above");
+                let raw = value(flag)?;
+                let usd = budget::parse_usd(&raw).ok_or_else(|| {
+                    format!(
+                        "{flag} must be a dollar amount above 0 and at most {}",
+                        budget::MAX_BUDGET_USD
+                    )
+                })?;
+                session.budget.set(limit, usd);
             }
             other => return Err(format!("unknown argument {other}")),
         }
@@ -934,6 +949,27 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn budget_flags_set_the_sessions_spend_limits_and_ride_the_turn() {
+        let session = super::parse_args(
+            &args(&["--budget-turn", "6", "--budget-runaway", "$0.75"]),
+            env(&[]),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            session.turn_body("hi", "t")["budget"],
+            serde_json::json!({"turnLimitUsd": 6.0, "runawayStallUsd": 0.75})
+        );
+        let plain = super::parse_args(&args(&[]), env(&[]), None).unwrap().unwrap();
+        assert!(plain.turn_body("hi", "t").get("budget").is_none(), "no limit set sends none");
+        assert_eq!(
+            super::parse_args(&args(&["--budget-day", "lots"]), env(&[]), None).unwrap_err(),
+            "--budget-day must be a dollar amount above 0 and at most 1000"
+        );
     }
 
     #[test]

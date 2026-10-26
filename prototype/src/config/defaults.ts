@@ -1,5 +1,5 @@
 /**
- * Env-layer resolvers for the budget, anomaly and agent defaults, the
+ * Env-layer resolvers for the budget and agent defaults, the
  * principal, and the runtime env defaults an entrypoint spreads into a runtime
  * input. The runtime boundary resolves these once so the core reads no env.
  */
@@ -13,7 +13,6 @@ import {
 import {
   parseBooleanEnv,
   readMaxToolSteps,
-  readPositiveMultiple,
   readPositiveUsd,
   validateToolStepsWithinCeiling,
 } from "./values.ts";
@@ -27,6 +26,10 @@ export interface BudgetDefaults {
   perCallLimitUsd: number;
   /** Default max total USD spend across all sessions in a local day. */
   dailyLimitUsd: number;
+  /** Default max total USD spend in one turn. */
+  turnLimitUsd: number;
+  /** Default runaway limit: USD spend in a turn with no tool progress. */
+  runawayStallUsd: number;
 }
 
 /** The declared budget defaults — the single source for the limit numbers. */
@@ -34,6 +37,8 @@ export const BUDGET_DEFAULTS: BudgetDefaults = {
   sessionLimitUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   perCallLimitUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
   dailyLimitUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
+  turnLimitUsd: schemaNumberDefault("defaultTurnBudgetUsd"),
+  runawayStallUsd: schemaNumberDefault("defaultRunawayStallUsd"),
 };
 
 export interface AgentDefaults {
@@ -106,42 +111,15 @@ export function resolveBudgetDefaultsFromEnv(
       schemaEnvVar("defaultDailyBudgetUsd"),
       BUDGET_DEFAULTS.dailyLimitUsd,
     ),
-  };
-}
-
-// ── Anomaly defaults (declared in CONFIG_SCHEMA; env layer at the boundary) ────
-
-export interface AnomalyDefaults {
-  /** Turn hard stop: halt when a turn's actual spend exceeds this × per-call limit. */
-  turnMultiple: number;
-  /** Scope hard stop: halt when actual session/daily spend exceeds this × the envelope. */
-  scopeMultiple: number;
-}
-
-/** The declared anomaly defaults — the single source for the multiples. */
-export const ANOMALY_DEFAULTS: AnomalyDefaults = {
-  turnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
-  scopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
-};
-
-/**
- * Resolve the anomaly multiples from the environment against the declared
- * surface (defaults → env), mirroring resolveBudgetDefaultsFromEnv: the
- * boundary resolves once; the core reads no env.
- */
-export function resolveAnomalyDefaultsFromEnv(
-  env: Env = processEnv,
-): AnomalyDefaults {
-  return {
-    turnMultiple: readPositiveMultiple(
+    turnLimitUsd: readPositiveUsd(
       env,
-      schemaEnvVar("anomalyTurnMultiple"),
-      ANOMALY_DEFAULTS.turnMultiple,
+      schemaEnvVar("defaultTurnBudgetUsd"),
+      BUDGET_DEFAULTS.turnLimitUsd,
     ),
-    scopeMultiple: readPositiveMultiple(
+    runawayStallUsd: readPositiveUsd(
       env,
-      schemaEnvVar("anomalyScopeMultiple"),
-      ANOMALY_DEFAULTS.scopeMultiple,
+      schemaEnvVar("defaultRunawayStallUsd"),
+      BUDGET_DEFAULTS.runawayStallUsd,
     ),
   };
 }
@@ -177,8 +155,8 @@ export interface RuntimeEnvDefaults {
   defaultSessionBudgetUsd: number;
   defaultPerCallBudgetUsd: number;
   defaultDailyBudgetUsd: number;
-  anomalyTurnMultiple: number;
-  anomalyScopeMultiple: number;
+  defaultTurnBudgetUsd: number;
+  defaultRunawayStallUsd: number;
   trustWorkspaceInstructions: boolean;
   maxToolSteps: number;
   maxToolStepsCeiling: number;
@@ -196,7 +174,6 @@ export function resolveRuntimeEnvDefaults(
   env: Env = processEnv,
 ): RuntimeEnvDefaults {
   const budget = resolveBudgetDefaultsFromEnv(env);
-  const anomaly = resolveAnomalyDefaultsFromEnv(env);
   const agent = resolveAgentDefaultsFromEnv(env);
   return {
     principalId: resolvePrincipalId(env),
@@ -210,8 +187,8 @@ export function resolveRuntimeEnvDefaults(
     defaultSessionBudgetUsd: budget.sessionLimitUsd,
     defaultPerCallBudgetUsd: budget.perCallLimitUsd,
     defaultDailyBudgetUsd: budget.dailyLimitUsd,
-    anomalyTurnMultiple: anomaly.turnMultiple,
-    anomalyScopeMultiple: anomaly.scopeMultiple,
+    defaultTurnBudgetUsd: budget.turnLimitUsd,
+    defaultRunawayStallUsd: budget.runawayStallUsd,
     maxToolSteps: agent.maxToolSteps,
     maxToolStepsCeiling: agent.maxToolStepsCeiling,
   };

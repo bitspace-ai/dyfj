@@ -3,8 +3,8 @@
  * loop makes — the first, each tool follow-up, a forced conclusion, a
  * recovery retry — passes the per-call gates and is recorded, because a turn
  * can make several calls: paid consent and the entry ceiling are granted once
- * per turn by `budgetGate`, while the per-call and session limits and the
- * runaway-anomaly stop must hold before each call.
+ * per turn by `budgetGate`, while every spend limit (per call, runaway,
+ * turn, session, day) must hold before each call.
  */
 import type {
   WorkbenchTurnParams,
@@ -92,7 +92,7 @@ async function gateCall(
   request: LoopCallRequest,
 ): Promise<void> {
   const { state, input, route } = turn;
-  const { budget, anomalyConfig, sessionId } = state.session;
+  const { budget, sessionId } = state.session;
   const { selected } = route;
   if (selected.tier > 0) {
     // Fresh cross-session daily figure before every paid call, so concurrent
@@ -101,14 +101,9 @@ async function gateCall(
     const fresh = await state.session.fetchBaselines(sessionId);
     budget.refreshDailyOtherSessions(fresh.dailyOtherSessionsUsd);
   }
-  // Runaway-anomaly hard stop FIRST, on actual recorded spend — it holds
-  // where the estimate-based ceiling below is blind (multi-call turn
-  // accumulation, spend the ceiling approvals allowed for). An approval
-  // raises the tripped halt to twice the spend at approval; spend past the
-  // raised halt re-prompts.
-  await route.anomalyGate.ensureAllowed(
-    budget.checkAnomaly(selected.tier, anomalyConfig),
-  );
+  // The spend check: every limit (per call, runaway, turn, session, day)
+  // against actual spend so far plus this call's estimate, with at most one
+  // prompt for the call.
   await route.budgetCeilingGate.ensureAllowed(
     budget.checkPreCall(
       selected.tier,

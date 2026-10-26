@@ -29,8 +29,8 @@ export function toApprovalVerdict(response: unknown): ToolApprovalVerdict {
   };
 }
 
-// Shared by the budget-ceiling and runaway-anomaly approvals: same verdict
-// shape, but a reasonless denial must name the gate that was declined.
+// The spend-check verdict; a reasonless denial names the gate that was
+// declined.
 export function toBudgetCeilingVerdict(
   response: unknown,
   fallbackReason = "operator declined the budget ceiling",

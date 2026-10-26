@@ -8,7 +8,7 @@
 export interface ServerProfile {
   /** Also the profile's directory name under the harness root. */
   name: string;
-  /** Engine environment beyond the harness base (posture, multiples). */
+  /** Engine environment beyond the harness base (posture, spend limits). */
   env: Record<string, string>;
   /** Wire the loopback Linear MCP fake and a friction checkpoint issue. */
   friction?: boolean;
@@ -18,7 +18,7 @@ export const OPERATOR: ServerProfile = {
   name: "operator",
   env: {
     DYFJ_PERMISSION_LEVEL: "operator",
-    DYFJ_ANOMALY_TURN_MULTIPLE: "2",
+    DYFJ_BUDGET_TURN_USD: "0.20",
   },
   friction: true,
 };

@@ -13,7 +13,7 @@ import {
 } from "../../testing/builders/engine.ts";
 import {
   BudgetCeilingDeclinedError,
-  RunawayAnomalyHaltError,
+  type BudgetCeilingWarning,
 } from "../budget/mod.ts";
 import type { WorkbenchRuntimeEvent } from "../contract/mod.ts";
 import { createCommandRegistry } from "../tools/mod.ts";
@@ -150,12 +150,12 @@ test("budgetGate confirms a ceiling overrun before paid consent, and a decline s
   assert.equal(confirmPaidEscalation.mock.callCount(), 0);
 });
 
-test("budgetGate halts an anomalous entry before the ceiling prompt can record a confirmation", async () => {
+test("budgetGate asks once at entry for a session already past its limit, naming that limit", async () => {
   await using root = await tempWorkspace();
   const fakes = enginePorts({
     models: [pricedLocalModel({ costInput: 0.000001, costOutput: 10_000 })],
   });
-  const confirmBudgetCeiling = mock.fn(() =>
+  const confirmBudgetCeiling = mock.fn((_: BudgetCeilingWarning) =>
     Promise.resolve({ decision: "approve" as const })
   );
   fakes.ports.fetchSpendBaselines = () =>
@@ -168,7 +168,6 @@ test("budgetGate halts an anomalous entry before the ceiling prompt can record a
     {
       defaultCompanionModel: "local-priced",
       defaultSessionBudgetUsd: 1,
-      anomalyScopeMultiple: 2,
       approver: {
         confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
         confirmBudgetCeiling,
@@ -178,11 +177,11 @@ test("budgetGate halts an anomalous entry before the ceiling prompt can record a
     root.root,
   );
 
-  await assert.rejects(
-    () => budgetGate(state, input, fakes.ports),
-    RunawayAnomalyHaltError,
-  );
-  assert.equal(confirmBudgetCeiling.mock.callCount(), 0);
+  await budgetGate(state, input, fakes.ports);
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 1);
+  const [warning] = confirmBudgetCeiling.mock.calls[0].arguments;
+  assert.deepStrictEqual(warning.crossedScopes, ["session_limit"]);
+  assert.equal(warning.sessionCostSoFarUsd, 2.5);
 });
 
 test("an approved ceiling overrun persists for the session through its owner's budget scope", async () => {

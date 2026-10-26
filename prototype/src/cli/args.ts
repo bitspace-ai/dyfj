@@ -6,6 +6,12 @@
 
 import { SESSION_ID_SHAPE } from "../contract/mod.ts";
 import { resolveSocketPath } from "../transport/mod.ts";
+import {
+  BUDGET_FLAGS,
+  MAX_BUDGET_USD,
+  parseBudgetUsd,
+  type SessionBudget,
+} from "./budget.ts";
 
 export interface CliConfig {
   /**
@@ -46,6 +52,11 @@ export interface CliConfig {
    * Undefined leaves the runtime's configured limit.
    */
   toolSteps?: number;
+  /**
+   * The session's own spend limits (--budget-*, /budget), sent on every
+   * native turn; an absent limit is the runtime's configured one.
+   */
+  budget?: SessionBudget;
   color: boolean;
 }
 
@@ -92,6 +103,7 @@ const VALUE_FLAGS = new Set([
   "--workspace",
   "--runner",
   "--tool-steps",
+  ...Object.keys(BUDGET_FLAGS),
   "-p",
   "--print",
 ]);
@@ -169,6 +181,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
           );
         }
         overrides.toolSteps = steps;
+      } else if (Object.hasOwn(BUDGET_FLAGS, arg)) {
+        const usd = parseBudgetUsd(value);
+        if (usd === undefined) {
+          return error(
+            `${arg} must be a dollar amount above 0 and at most ${MAX_BUDGET_USD}`,
+          );
+        }
+        overrides.budget = { ...overrides.budget, [BUDGET_FLAGS[arg]]: usd };
       }
       else if (arg === "-p" || arg === "--print") printPrompt = value;
       else if (arg === "--mode") {
@@ -322,6 +342,7 @@ export function resolveConfig(
     ...(overrides.toolSteps === undefined
       ? {}
       : { toolSteps: overrides.toolSteps }),
+    ...(overrides.budget === undefined ? {} : { budget: overrides.budget }),
     color: !env.get("NO_COLOR") && isTty,
   };
 }
@@ -362,6 +383,8 @@ REPL commands:
   /fast [on|off]            toggle or set fast speed tier (for supported models)
   /steps [N]                show or set this session's tool-step limit; a value
                             above the runtime's ceiling is refused
+  /budget [<limit> <usd>]   show the spend limits, or set one for this session:
+                            turn, session, day, per-call or runaway
   /session                  show the current session id (for --session resume)
   /friction <sev> [--escaped] <text...>
                             post a daily-driver friction entry
@@ -378,6 +401,10 @@ Options:
   --no-fast        disable fast speed tier (standard speed)
   --tool-steps <N> this session's tool-step limit, 1 through 64 and not above
                    the runtime's ceiling (DYFJ_MAX_TOOL_STEPS_CEILING)
+  --budget-turn <usd>, --budget-session <usd>, --budget-day <usd>,
+  --budget-per-call <usd>, --budget-runaway <usd>
+                   this session's spend limits (default: the runtime's
+                   [budget] config); runaway is spend with no tool progress
   --runner <name>  local ACP runner: fixture | codex-chatgpt (experimental;
                    codex-chatgpt requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')

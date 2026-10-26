@@ -1,7 +1,7 @@
 /**
  * The interactive answer to a mid-turn approval request: an ACP permission
- * option, a mutating-tool approval, a budget ceiling or a runaway-anomaly
- * stop. Shared by `exec` and the REPL.
+ * option, a mutating-tool approval, or a spend check. Shared by `exec` and
+ * the REPL.
  */
 
 import type { ToolApprovalVerdict } from "../transport/mod.ts";
@@ -112,28 +112,15 @@ export async function promptMidTurnApproval(
       reason: "approval needs an interactive terminal",
     };
   }
-  if (r.kind === "budget_ceiling") {
+  // A runtime from before BIT-785 may still send `runaway_anomaly`; it is a
+  // spend approval too, so it never falls through to the tool prompt below.
+  if (r.kind === "budget_ceiling" || r.kind === "runaway_anomaly") {
     const message = typeof r.message === "string"
       ? r.message
-      : "Projected spend crosses the configured budget ceiling.";
+      : "Projected spend crosses a configured spend limit.";
     io.err(`\n⚠  ${message}`);
     const answer = await io.readLine(
-      "   exceed budget ceiling? [y/N] ",
-      abortSignal,
-    );
-    if (abortSignal?.aborted) return { decision: "abort" };
-    if (answer !== null && /^y(es)?$/i.test(answer.trim())) {
-      return { decision: "approve" };
-    }
-    return { decision: "deny", reason: "operator declined" };
-  }
-  if (r.kind === "runaway_anomaly") {
-    const message = typeof r.message === "string"
-      ? r.message
-      : "Actual spend crossed a runaway-anomaly hard stop.";
-    io.err(`\n🛑 ${message}`);
-    const answer = await io.readLine(
-      "   allow the next call anyway? [y/N] ",
+      "   continue past this limit? [y/N] ",
       abortSignal,
     );
     if (abortSignal?.aborted) return { decision: "abort" };

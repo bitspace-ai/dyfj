@@ -107,8 +107,8 @@ export interface ExecuteTurnDeps {
   frames?: FrameSink;
   /**
    * The transport's approval handlers: the UDS transport supplies duplex
-   * round-trips for tool approval, ACP permission options, budget ceilings
-   * and runaway anomalies; HTTP omits them, so the runtime fails closed.
+   * round-trips for tool approval, ACP permission options and spend checks;
+   * HTTP omits them, so the runtime fails closed.
    * Paid escalation is not the transport's to answer: `executeTurn` decides
    * it from the transport's paid verdict.
    */
@@ -132,9 +132,8 @@ export interface ExecuteTurnDeps {
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   defaultDailyBudgetUsd?: number;
-  /** Runaway-anomaly hard-stop multiples (config), resolved once at the boundary. */
-  anomalyTurnMultiple?: number;
-  anomalyScopeMultiple?: number;
+  defaultTurnBudgetUsd?: number;
+  defaultRunawayStallUsd?: number;
   /** Maximum model↔tool loop steps in one turn (config), resolved once at the boundary. */
   maxToolSteps?: number;
   /** The highest tool-step limit a turn request may set (config). */
@@ -152,8 +151,8 @@ export function engineConfigToTurnDeps(
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
-    | "anomalyTurnMultiple"
-    | "anomalyScopeMultiple"
+    | "defaultTurnBudgetUsd"
+    | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
   >,
@@ -166,8 +165,8 @@ export function engineConfigToTurnDeps(
   | "defaultSessionBudgetUsd"
   | "defaultPerCallBudgetUsd"
   | "defaultDailyBudgetUsd"
-  | "anomalyTurnMultiple"
-  | "anomalyScopeMultiple"
+  | "defaultTurnBudgetUsd"
+  | "defaultRunawayStallUsd"
   | "maxToolSteps"
   | "maxToolStepsCeiling"
 > {
@@ -179,8 +178,8 @@ export function engineConfigToTurnDeps(
     defaultSessionBudgetUsd: config.defaultSessionBudgetUsd,
     defaultPerCallBudgetUsd: config.defaultPerCallBudgetUsd,
     defaultDailyBudgetUsd: config.defaultDailyBudgetUsd,
-    anomalyTurnMultiple: config.anomalyTurnMultiple,
-    anomalyScopeMultiple: config.anomalyScopeMultiple,
+    defaultTurnBudgetUsd: config.defaultTurnBudgetUsd,
+    defaultRunawayStallUsd: config.defaultRunawayStallUsd,
     maxToolSteps: config.maxToolSteps,
     maxToolStepsCeiling: config.maxToolStepsCeiling,
   };
@@ -277,11 +276,11 @@ function runExecuteTurn(
     ...(deps.defaultDailyBudgetUsd !== undefined
       ? { defaultDailyBudgetUsd: deps.defaultDailyBudgetUsd }
       : {}),
-    ...(deps.anomalyTurnMultiple !== undefined
-      ? { anomalyTurnMultiple: deps.anomalyTurnMultiple }
+    ...(deps.defaultTurnBudgetUsd !== undefined
+      ? { defaultTurnBudgetUsd: deps.defaultTurnBudgetUsd }
       : {}),
-    ...(deps.anomalyScopeMultiple !== undefined
-      ? { anomalyScopeMultiple: deps.anomalyScopeMultiple }
+    ...(deps.defaultRunawayStallUsd !== undefined
+      ? { defaultRunawayStallUsd: deps.defaultRunawayStallUsd }
       : {}),
     ...(deps.maxToolSteps !== undefined
       ? { maxToolSteps: deps.maxToolSteps }
@@ -297,13 +296,12 @@ function runExecuteTurn(
     frames: deps.frames,
     externalMcpCommands: deps.externalMcpCommands,
     approver: {
-      // mutating tools, ACP permission options, budget ceilings and runaway
-      // anomalies go to the transport's handlers; absent => fail closed.
+      // mutating tools, ACP permission options and spend checks go to the
+      // transport's handlers; absent => fail closed.
       confirmToolApproval: deps.approver?.confirmToolApproval,
       confirmExternalAgentPermission: deps.approver
         ?.confirmExternalAgentPermission,
       confirmBudgetCeiling: deps.approver?.confirmBudgetCeiling,
-      confirmRunawayAnomaly: deps.approver?.confirmRunawayAnomaly,
       // paid inference is granted only to a loopback caller that
       // explicitly opted in this turn; remote callers are always denied.
       confirmPaidEscalation: () =>

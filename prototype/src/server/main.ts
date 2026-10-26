@@ -182,7 +182,7 @@ export interface WorkbenchUnixServerOptions {
   defaultCompanionModel?: string | null;
   /** Operator permission posture (config); the seam is always loopback. */
   permissionLevel?: PermissionLevel;
-  /** Loaded engine config (companion, posture, budget defaults, anomaly multiples). */
+  /** Loaded engine config (companion, posture, budget defaults). */
   engineConfig?: Pick<
     WorkbenchConfig,
     | "defaultCompanionModel"
@@ -192,8 +192,8 @@ export interface WorkbenchUnixServerOptions {
     | "defaultSessionBudgetUsd"
     | "defaultPerCallBudgetUsd"
     | "defaultDailyBudgetUsd"
-    | "anomalyTurnMultiple"
-    | "anomalyScopeMultiple"
+    | "defaultTurnBudgetUsd"
+    | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
   >;

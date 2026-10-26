@@ -506,7 +506,7 @@ test("cancelling a budget approval finalizes an aborted turn", async () => {
   );
 });
 
-const ANOMALY_MODEL = pricedLocalModel({
+const PAST_LIMIT_MODEL = pricedLocalModel({
   costInput: 0.000001,
   costOutput: 10_000,
 });
@@ -517,67 +517,46 @@ const SPENT_PAST_SCOPE = () =>
     dailyOtherSessionsUsd: 0,
   });
 
-test("scope hard-multiple halts even spend a ceiling confirmation already covered", async () => {
+test("a session already past its limit makes no call without a spend handler", async () => {
   await using root = await tempWorkspace();
-  const run = engineServices([], { models: [ANOMALY_MODEL] });
-  // Session lifetime spend already past 2× the $1 envelope.
+  const run = engineServices([], { models: [PAST_LIMIT_MODEL] });
   run.services.fetchSpendBaselines = SPENT_PAST_SCOPE;
-  const confirmBudgetCeiling = mock.fn(() =>
-    Promise.resolve({ decision: "approve" as const })
-  );
-  await assert.rejects(
-    () =>
-      runTurn(run, {
-        prompt: "explore",
-        rootOverride: root.root,
-        defaultCompanionModel: ANOMALY_MODEL.slug,
-        defaultSessionBudgetUsd: 1.0,
-        anomalyTurnMultiple: 3,
-        anomalyScopeMultiple: 2,
-        approver: {
-          confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-          // The ceiling handler approving is exactly the blind spot: the
-          // anomaly halt must fire regardless, and fail closed without its own
-          // handler.
-          confirmBudgetCeiling,
-        },
-      }),
-    (error: unknown) =>
-      error instanceof Error && error.message.includes("Runaway spend anomaly"),
-  );
+  await runTurn(run, {
+    prompt: "explore",
+    rootOverride: root.root,
+    defaultCompanionModel: PAST_LIMIT_MODEL.slug,
+    defaultSessionBudgetUsd: 1.0,
+    approver: {
+      confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
+    },
+  });
   assert.deepStrictEqual(run.transport.requests.length, 0);
-  // The hard stop fires at turn entry BEFORE the soft ceiling confirm, so
-  // the aborted turn leaves no scope-period ceiling confirmation behind.
-  assert.equal(confirmBudgetCeiling.mock.callCount(), 0);
 });
 
-test("an approved entry halt does not re-prompt the identical state at the first call", async () => {
+test("an approved entry check does not re-prompt the identical state at the first call", async () => {
   await using root = await tempWorkspace();
   const run = engineServices([chatReply({
     content: "done",
     usage: { prompt_tokens: 10, completion_tokens: 12 },
-  })], { models: [ANOMALY_MODEL] });
+  })], { models: [PAST_LIMIT_MODEL] });
   run.services.fetchSpendBaselines = SPENT_PAST_SCOPE;
-  const confirmRunawayAnomaly = mock.fn(() =>
+  const confirmBudgetCeiling = mock.fn(() =>
     Promise.resolve({ decision: "approve" as const })
   );
   const result = await runTurn(run, {
     prompt: "explore",
     rootOverride: root.root,
-    defaultCompanionModel: ANOMALY_MODEL.slug,
+    defaultCompanionModel: PAST_LIMIT_MODEL.slug,
     defaultSessionBudgetUsd: 1.0,
-    anomalyTurnMultiple: 3,
-    anomalyScopeMultiple: 2,
     approver: {
       confirmPaidEscalation: () => Promise.resolve({ decision: "approve" }),
-      confirmBudgetCeiling: () => Promise.resolve({ decision: "approve" }),
-      confirmRunawayAnomaly,
+      confirmBudgetCeiling,
     },
   });
   assert.deepStrictEqual(result.text, "done");
-  // Entry check and first-call check see identical actuals ($2.50): one
-  // prompt, not two — the same-state dedupe, not scope-period coverage.
-  assert.equal(confirmRunawayAnomaly.mock.callCount(), 1);
+  // The entry check and the first call see the same spend ($2.50): the
+  // approval raised the session limit past it, so one prompt, not two.
+  assert.equal(confirmBudgetCeiling.mock.callCount(), 1);
 });
 
 // ─── approvals cannot start turns ────────────────────────────────────────────

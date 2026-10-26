@@ -317,21 +317,18 @@ describe("promptMidTurnApproval", () => {
     assert.strictEqual(asked, false);
   });
 
-  it("runaway_anomaly gets its own hard-stop prompt and approves on y", async () => {
+  it("a pre-BIT-785 runaway_anomaly request is still asked as a spend approval", async () => {
     const { io, stderr } = fakeIo(["y"]);
     const verdict = await promptMidTurnApproval(io, {
       kind: "runaway_anomaly",
       message: "Runaway spend anomaly — hard stop",
     }, true);
     assert.deepStrictEqual(verdict, { decision: "approve" });
-    assert.ok(
-      stderr.join("\n").includes("Runaway spend anomaly — hard stop"),
-      `expected stderr.join("\\n") to include "Runaway spend anomaly — hard stop"`,
-    );
-    assert.ok(!(stderr.join("\n")).includes("exceed budget ceiling"));
+    const shown = stderr.join("\n");
+    assert.ok(shown.includes("Runaway spend anomaly — hard stop"), shown);
   });
 
-  it("runaway_anomaly denies on anything but yes", async () => {
+  it("a pre-BIT-785 runaway_anomaly request denies on anything but yes", async () => {
     const { io } = fakeIo([""]);
     const verdict = await promptMidTurnApproval(io, {
       kind: "runaway_anomaly",

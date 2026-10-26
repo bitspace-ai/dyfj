@@ -1,6 +1,7 @@
 /**
  * Unit tests for budget/tracker.ts: default config, accumulation, the pre-call
- * envelope check, the anomaly check, and the budget_summary event.
+ * spend check over every limit, the tool-progress mark, and the
+ * budget_summary event.
  *
  * All tests are pure — no Dolt, no network. Most of the summary logic lives in
  * buildSummaryEventPayload(), which produces a deterministic, inspectable
@@ -38,6 +39,10 @@ function makeTracker(
       sessionLimitUsd: 1.00,
       perCallLimitUsd: 0.10,
       dailyLimitUsd: 25.00,
+      // Turn and runaway limits sit far out of reach unless a test sets them,
+      // so tests about the other limits are not framed by these two.
+      turnLimitUsd: 1000,
+      runawayStallUsd: 1000,
       ...config,
     },
     "user",
@@ -51,12 +56,20 @@ function makeUsage(input: number, output: number, costTotal: number) {
 
 // ── defaultBudgetConfig ───────────────────────────────────────────────────────
 
-test("defaultBudgetConfig: returns $1.00 session limit by default", () => {
-  assert.strictEqual(defaultBudgetConfig(new MapEnv()).sessionLimitUsd, 1.00);
+test("defaultBudgetConfig: returns $10.00 session limit by default", () => {
+  assert.strictEqual(defaultBudgetConfig(new MapEnv()).sessionLimitUsd, 10.00);
 });
 
-test("defaultBudgetConfig: returns $0.10 per-call limit by default", () => {
-  assert.strictEqual(defaultBudgetConfig(new MapEnv()).perCallLimitUsd, 0.10);
+test("defaultBudgetConfig: returns $0.50 per-call limit by default", () => {
+  assert.strictEqual(defaultBudgetConfig(new MapEnv()).perCallLimitUsd, 0.50);
+});
+
+test("defaultBudgetConfig: returns $4.00 turn limit by default", () => {
+  assert.strictEqual(defaultBudgetConfig(new MapEnv()).turnLimitUsd, 4.00);
+});
+
+test("defaultBudgetConfig: returns $0.50 runaway limit by default", () => {
+  assert.strictEqual(defaultBudgetConfig(new MapEnv()).runawayStallUsd, 0.50);
 });
 
 test("defaultBudgetConfig: reads DYFJ_BUDGET_SESSION_USD from env", () => {
@@ -67,6 +80,16 @@ test("defaultBudgetConfig: reads DYFJ_BUDGET_SESSION_USD from env", () => {
 test("defaultBudgetConfig: reads DYFJ_BUDGET_PER_CALL_USD from env", () => {
   const env = new MapEnv({ DYFJ_BUDGET_PER_CALL_USD: "0.25" });
   assert.strictEqual(defaultBudgetConfig(env).perCallLimitUsd, 0.25);
+});
+
+test("defaultBudgetConfig: reads DYFJ_BUDGET_TURN_USD from env", () => {
+  const env = new MapEnv({ DYFJ_BUDGET_TURN_USD: "6.00" });
+  assert.strictEqual(defaultBudgetConfig(env).turnLimitUsd, 6.00);
+});
+
+test("defaultBudgetConfig: reads DYFJ_BUDGET_RUNAWAY_STALL_USD from env", () => {
+  const env = new MapEnv({ DYFJ_BUDGET_RUNAWAY_STALL_USD: "0.75" });
+  assert.strictEqual(defaultBudgetConfig(env).runawayStallUsd, 0.75);
 });
 
 // ── record() ─────────────────────────────────────────────────────────────────
@@ -155,8 +178,15 @@ test("BudgetTracker.record(): tiers not called are absent from byTier", () => {
 // ── checkPreCall() ────────────────────────────────────────────────────────────
 
 test("BudgetTracker.checkPreCall(): Tier 0 is always allowed regardless of cost", () => {
-  // Even with a $0 limit, Tier 0 is free
-  const t = makeTracker({ sessionLimitUsd: 0, perCallLimitUsd: 0 });
+  // Every limit at $0 and paid spend already on the books: Tier 0 is free.
+  const t = makeTracker({
+    sessionLimitUsd: 0,
+    perCallLimitUsd: 0,
+    dailyLimitUsd: 0,
+    turnLimitUsd: 0,
+    runawayStallUsd: 0,
+  });
+  t.record(makeUsage(1000, 100, 0.5), 2);
   const check = t.checkPreCall(0, 999, 1_000_000);
   assert.strictEqual(check.allowed, true);
   assert.strictEqual(check.estimatedCost, 0);
@@ -208,7 +238,7 @@ test("BudgetTracker.checkPreCall(): Tier 2 exceeds per-call limit → denied", (
   assert.strictEqual(check.reason, "per_call_limit");
 });
 
-test("BudgetTracker.checkPreCall(): per-call check runs before session check (per-call limit is stricter)", () => {
+test("BudgetTracker.checkPreCall(): only the per-call limit crossed → reason: per_call_limit", () => {
   const t = makeTracker({ sessionLimitUsd: 10.00, perCallLimitUsd: 0.01 });
   // Session limit is generous but per-call is tight
   const check = t.checkPreCall(1, 1.0, 100_000); // $0.10 > $0.01 per-call
@@ -438,81 +468,86 @@ test("scope-aware budget errors: checkPreCall reports the outermost crossed scop
   assert.strictEqual(tracker.checkPreCall(2, 6, 10_000).reason, "daily_limit");
 });
 
-// ── checkAnomaly() ────────────────────────────────────────────────────────────
+// ── turn and runaway limits ───────────────────────────────────────────────────
 
-const ANOMALY = { turnMultiple: 3, scopeMultiple: 2 };
-// Config: per-call $0.10, session $1.00, daily $25.00 → halts at
-// turn $0.30, session $2.00, daily $50.00.
-
-test("BudgetTracker.checkAnomaly(): tier 0 never halts, even past every threshold", () => {
-  const t = makeTracker(undefined, {
-    sessionSpentUsd: 100,
-    sessionSpentTodayUsd: 100,
-    dailyOtherSessionsUsd: 100,
-  });
-  t.record(makeUsage(1000, 1000, 5), 2);
-  const check = t.checkAnomaly(0, ANOMALY);
-  assert.strictEqual(check.halted, false);
-  assert.strictEqual(check.trigger, undefined);
+test("turn limit: checkPreCall crosses when this turn's spend plus the call exceeds it", () => {
+  const t = makeTracker({ turnLimitUsd: 0.35 });
+  t.record(makeUsage(50_000, 500, 0.30), 2);
+  // $0.06 estimated: 0.30 + 0.06 > 0.35; session ($1.00) and per-call
+  // ($0.10) hold.
+  const check = t.checkPreCall(2, 6, 10_000);
+  assert.strictEqual(check.allowed, false);
+  assert.strictEqual(check.reason, "turn_limit");
+  assertAlmostEqual(check.turnCostSoFar, 0.30);
+  assert.strictEqual(check.turnLimitUsd, 0.35);
 });
 
-test("BudgetTracker.checkAnomaly(): no spend → no halt (first call of a fresh turn)", () => {
-  const check = makeTracker().checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.halted, false);
-  assert.strictEqual(check.turnSpentUsd, 0);
-  assertAlmostEqual(check.turnHaltUsd, 0.30);
+test("turn limit: earlier turns' session spend does not count toward the turn", () => {
+  const t = makeTracker(
+    { sessionLimitUsd: 10, turnLimitUsd: 0.10 },
+    { sessionSpentUsd: 5, sessionSpentTodayUsd: 5, dailyOtherSessionsUsd: 0 },
+  );
+  const check = t.checkPreCall(2, 6, 10_000); // $0.06
+  assert.strictEqual(check.allowed, true);
+  assert.strictEqual(check.turnCostSoFar, 0);
+  assertAlmostEqual(check.sessionCostSoFar, 5);
 });
 
-test("BudgetTracker.checkAnomaly(): uses ACTUAL recorded spend, not estimates: turn accumulation trips the turn trigger", () => {
-  const t = makeTracker();
-  // Three real calls, each under the per-call limit, piling past 3×.
-  t.record(makeUsage(50_000, 500, 0.09), 2);
-  t.record(makeUsage(60_000, 500, 0.09), 2);
-  let check = t.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.halted, false); // $0.18 < $0.30
-  t.record(makeUsage(80_000, 500, 0.15), 2);
-  check = t.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.halted, true); // $0.33 > $0.30
-  assert.strictEqual(check.trigger, "turn_spend");
-  assertAlmostEqual(check.turnSpentUsd, 0.33);
+test("turn limit: a projection exactly at the limit is allowed", () => {
+  const t = makeTracker({ turnLimitUsd: 0.75, perCallLimitUsd: 1 });
+  t.record(makeUsage(1000, 100, 0.5), 2);
+  // $1/MTok × 250k = $0.25: 0.50 + 0.25 = 0.75, not over.
+  const check = t.checkPreCall(2, 1, 250_000);
+  assert.strictEqual(check.allowed, true);
+  assert.strictEqual(check.reason, undefined);
 });
 
-test("BudgetTracker.checkAnomaly(): session scope trips at scopeMultiple × session limit, counting baselines", () => {
-  const t = makeTracker(undefined, {
-    sessionSpentUsd: 1.95,
-    sessionSpentTodayUsd: 1.95,
-    dailyOtherSessionsUsd: 0,
-  });
-  t.record(makeUsage(1000, 100, 0.10), 2);
-  const check = t.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.halted, true); // $2.05 > $2.00
-  assert.strictEqual(check.trigger, "session_scope");
-  assertAlmostEqual(check.sessionSpentUsd, 2.05);
-  assertAlmostEqual(check.sessionHaltUsd, 2.00);
+test("runaway limit: checkPreCall crosses when spend since the last progress plus the call exceeds it", () => {
+  const t = makeTracker({ runawayStallUsd: 0.10 });
+  t.record(makeUsage(10_000, 100, 0.08), 2);
+  // $0.03 estimated: 0.08 + 0.03 > 0.10; turn and session hold.
+  const check = t.checkPreCall(2, 3, 10_000);
+  assert.strictEqual(check.allowed, false);
+  assert.strictEqual(check.reason, "runaway_stall");
+  assertAlmostEqual(check.stallCostSoFar, 0.08);
+  assert.strictEqual(check.runawayStallUsd, 0.10);
 });
 
-test("BudgetTracker.checkAnomaly(): daily scope trips at scopeMultiple × daily limit and outranks session", () => {
-  const t = makeTracker(undefined, {
-    sessionSpentUsd: 3.0, // session also past its $2 halt
-    sessionSpentTodayUsd: 3.0,
-    dailyOtherSessionsUsd: 47.5,
-  });
-  const check = t.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.halted, true); // $50.50 > $50.00
-  assert.strictEqual(check.trigger, "daily_scope"); // outermost frames the halt
-  assertAlmostEqual(check.dailySpentUsd, 50.5);
-  assertAlmostEqual(check.dailyHaltUsd, 50.0);
+test("runaway limit: noteToolProgress() resets stallSpentUsd; turn spend keeps counting", () => {
+  const t = makeTracker({ runawayStallUsd: 0.10 });
+  t.record(makeUsage(10_000, 100, 0.08), 2);
+  assertAlmostEqual(t.stallSpentUsd, 0.08);
+  t.noteToolProgress();
+  assert.strictEqual(t.stallSpentUsd, 0);
+  t.record(makeUsage(10_000, 100, 0.02), 2);
+  assertAlmostEqual(t.stallSpentUsd, 0.02);
+  // The same $0.03 call that crossed before the mark now fits.
+  const check = t.checkPreCall(2, 3, 10_000);
+  assert.strictEqual(check.allowed, true);
+  assertAlmostEqual(check.stallCostSoFar, 0.02);
+  assertAlmostEqual(check.turnCostSoFar, 0.10);
 });
 
-test("BudgetTracker.checkAnomaly(): a lifetime-spanning session counts only today toward the daily halt", () => {
-  const t = makeTracker(undefined, {
-    sessionSpentUsd: 60, // huge lifetime → session_scope trips
-    sessionSpentTodayUsd: 0.5,
-    dailyOtherSessionsUsd: 1.0,
-  });
-  const check = t.checkAnomaly(2, ANOMALY);
-  assert.strictEqual(check.trigger, "session_scope");
-  assertAlmostEqual(check.dailySpentUsd, 1.5); // not 61
+test("reason ordering: the outermost crossed limit names the verdict (daily > session > turn > runaway > per-call)", () => {
+  // Every case: a $0.06 call ($6/MTok × 10k) after $0.30 of turn spend with
+  // no tool progress. Each step tightens one more outer limit.
+  const reasonWith = (
+    config: Partial<BudgetConfig>,
+  ): string | undefined => {
+    const t = makeTracker(config);
+    t.record(makeUsage(50_000, 500, 0.30), 2);
+    return t.checkPreCall(2, 6, 10_000).reason;
+  };
+  const perCall = { perCallLimitUsd: 0.05 };
+  const runaway = { ...perCall, runawayStallUsd: 0.20 };
+  const turn = { ...runaway, turnLimitUsd: 0.25 };
+  const session = { ...turn, sessionLimitUsd: 0.30 };
+  const daily = { ...session, dailyLimitUsd: 0.30 };
+  assert.strictEqual(reasonWith(perCall), "per_call_limit");
+  assert.strictEqual(reasonWith(runaway), "runaway_stall");
+  assert.strictEqual(reasonWith(turn), "turn_limit");
+  assert.strictEqual(reasonWith(session), "session_limit");
+  assert.strictEqual(reasonWith(daily), "daily_limit");
 });
 
 // Own enumerable properties, in order, are what JSON.stringify sees, so the
@@ -529,10 +564,13 @@ it("BudgetTracker keeps its own properties in order", () => {
     "_totalCost",
     "_totalTokensInput",
     "_totalTokensOutput",
+    "_costAtProgress",
   ]);
   assert.deepStrictEqual(tracker.config, {
     sessionLimitUsd: 1.00,
     perCallLimitUsd: 0.10,
     dailyLimitUsd: 25.00,
+    turnLimitUsd: 1000,
+    runawayStallUsd: 1000,
   });
 });

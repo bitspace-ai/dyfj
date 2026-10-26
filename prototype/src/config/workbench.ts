@@ -1,7 +1,7 @@
 /**
  * `WorkbenchConfig` + `loadConfig`: the daily-driver engine defaults that carry
  * a config-file layer (companion model, permission level, paid posture, budget
- * and anomaly envelopes, agent step limit).
+ * limits, agent step limit).
  *
  * Config is startup posture, NOT session state. The model for THIS turn, the
  * workspace, and the principal ride the request — not this file. Anything the
@@ -34,11 +34,10 @@ import {
 import {
   parseBooleanEnv,
   readMaxToolSteps,
-  readPositiveMultiple,
   readPositiveUsd,
+  RETIRED_ANOMALY_REPLACEMENT,
   validateLevel,
   validateMaxToolSteps,
-  validatePositiveMultiple,
   validatePositiveUsd,
   validateToolStepsWithinCeiling,
 } from "./values.ts";
@@ -79,16 +78,10 @@ export interface WorkbenchConfig {
   defaultPerCallBudgetUsd: number;
   /** Default max total USD spend across all sessions in a local day (startup posture). */
   defaultDailyBudgetUsd: number;
-  /**
-   * Runaway-anomaly hard-stop multiples. Unlike the envelopes (soft,
-   * confirmable, scope-persistent), the anomaly gate halts on ACTUAL recorded
-   * spend. An approval raises the tripped halt to twice the spend at approval
-   * for its scope: the turn halt lasts the turn, and the session and daily
-   * halts last the session and the local day. Multiples rather than dollar
-   * knobs so they scale when the envelopes are retuned.
-   */
-  anomalyTurnMultiple: number;
-  anomalyScopeMultiple: number;
+  /** Default max total USD spend in one turn (startup posture). */
+  defaultTurnBudgetUsd: number;
+  /** Default runaway limit: USD spend with no tool progress (startup posture). */
+  defaultRunawayStallUsd: number;
   /** Maximum model↔tool loop steps in one turn (startup posture). */
   maxToolSteps: number;
   /** The highest tool-step limit a session may set for itself. */
@@ -105,8 +98,8 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultSessionBudgetUsd: schemaNumberDefault("defaultSessionBudgetUsd"),
   defaultPerCallBudgetUsd: schemaNumberDefault("defaultPerCallBudgetUsd"),
   defaultDailyBudgetUsd: schemaNumberDefault("defaultDailyBudgetUsd"),
-  anomalyTurnMultiple: schemaNumberDefault("anomalyTurnMultiple"),
-  anomalyScopeMultiple: schemaNumberDefault("anomalyScopeMultiple"),
+  defaultTurnBudgetUsd: schemaNumberDefault("defaultTurnBudgetUsd"),
+  defaultRunawayStallUsd: schemaNumberDefault("defaultRunawayStallUsd"),
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
 };
@@ -182,18 +175,25 @@ export async function loadConfig(
         `${configLabel(path)} [budget].per_call_limit_usd`,
       );
     }
-    const fileTurnMultiple = readNumber(table, "anomaly", "turn_multiple");
-    if (fileTurnMultiple !== undefined) {
-      config.anomalyTurnMultiple = validatePositiveMultiple(
-        fileTurnMultiple,
-        `${configLabel(path)} [anomaly].turn_multiple`,
+    const fileTurnBudget = readNumber(table, "budget", "turn_limit_usd");
+    if (fileTurnBudget !== undefined) {
+      config.defaultTurnBudgetUsd = validatePositiveUsd(
+        fileTurnBudget,
+        `${configLabel(path)} [budget].turn_limit_usd`,
       );
     }
-    const fileScopeMultiple = readNumber(table, "anomaly", "scope_multiple");
-    if (fileScopeMultiple !== undefined) {
-      config.anomalyScopeMultiple = validatePositiveMultiple(
-        fileScopeMultiple,
-        `${configLabel(path)} [anomaly].scope_multiple`,
+    const fileStallBudget = readNumber(table, "budget", "runaway_stall_usd");
+    if (fileStallBudget !== undefined) {
+      config.defaultRunawayStallUsd = validatePositiveUsd(
+        fileStallBudget,
+        `${configLabel(path)} [budget].runaway_stall_usd`,
+      );
+    }
+    if (table.anomaly !== undefined) {
+      throw new Error(
+        `config: ${
+          configLabel(path)
+        } [anomaly] is no longer supported; ${RETIRED_ANOMALY_REPLACEMENT}`,
       );
     }
     const fileMaxToolSteps = readNumber(table, "agent", "max_tool_steps");
@@ -252,15 +252,15 @@ export async function loadConfig(
     schemaEnvVar("defaultDailyBudgetUsd"),
     config.defaultDailyBudgetUsd,
   );
-  config.anomalyTurnMultiple = readPositiveMultiple(
+  config.defaultTurnBudgetUsd = readPositiveUsd(
     env,
-    schemaEnvVar("anomalyTurnMultiple"),
-    config.anomalyTurnMultiple,
+    schemaEnvVar("defaultTurnBudgetUsd"),
+    config.defaultTurnBudgetUsd,
   );
-  config.anomalyScopeMultiple = readPositiveMultiple(
+  config.defaultRunawayStallUsd = readPositiveUsd(
     env,
-    schemaEnvVar("anomalyScopeMultiple"),
-    config.anomalyScopeMultiple,
+    schemaEnvVar("defaultRunawayStallUsd"),
+    config.defaultRunawayStallUsd,
   );
   config.maxToolSteps = readMaxToolSteps(
     env,

@@ -64,8 +64,8 @@ const MODELS: GoldenModelRow[] = [
     costOutput: 5000,
     capabilities: ["text"],
   },
-  // Cheap enough to pass the pre-call envelopes; the model server reports
-  // usage large enough that actual spend trips the anomaly hard stop.
+  // Cheap enough to pass the pre-call estimate; the model server reports
+  // usage large enough that actual spend passes the turn limit.
   {
     slug: METERED,
     displayName: "Golden Metered",
@@ -195,7 +195,7 @@ function goldenScript(request: ChatRequest): ModelReply {
           arguments: { path: "notes.txt" },
           usage: { promptTokens: 400_000, completionTokens: 1_000 },
         }
-        : { kind: "text", text: "The anomaly gate should have halted this." };
+        : { kind: "text", text: "The turn limit should have stopped this." };
     case "s9":
       return { kind: "hold", text: "Partial golden output" };
     case "s12":
@@ -369,15 +369,20 @@ const SCENARIOS: Scenario[] = [
         PRICED,
         "[golden:s6] This must not reach the model.",
       ]);
-      // Raw client, paid opt-in given, per-call limit raised on the loopback
-      // transport: only the session envelope is crossed, and the scripted
-      // approver declines it.
+      // Raw client, paid opt-in given, the per-call, turn and runaway limits
+      // raised and the session limit lowered on the loopback transport: only
+      // the session limit is crossed, and the scripted approver declines it.
       const sessionOnly = await rpcTurn(harness, {
         prompt: "[golden:s6] Session envelope only.",
         workspace: harness.workspace,
         routingOptions: { modelId: PRICED },
         approvePaidInference: true,
-        budget: { perCallLimitUsd: 100 },
+        budget: {
+          perCallLimitUsd: 100,
+          turnLimitUsd: 100,
+          runawayStallUsd: 100,
+          sessionLimitUsd: 1,
+        },
       });
       // Envelopes raised clear of the estimate, no paid opt-in: the paid
       // predicate (tier 1) reaches the consent gate, which fails closed.
@@ -385,7 +390,12 @@ const SCENARIOS: Scenario[] = [
         prompt: "[golden:s6] Paid consent not given.",
         workspace: harness.workspace,
         routingOptions: { modelId: PRICED },
-        budget: { sessionLimitUsd: 100, perCallLimitUsd: 100 },
+        budget: {
+          sessionLimitUsd: 100,
+          perCallLimitUsd: 100,
+          turnLimitUsd: 100,
+          runawayStallUsd: 100,
+        },
       });
       return {
         cli: { ...cli, stdout: parseJsonOrText(cli.stdout) },
@@ -399,8 +409,8 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
-    id: "07-anomaly-hard-stop",
-    title: "anomaly hard stop at the configured multiple",
+    id: "07-turn-limit-stop",
+    title: "turn limit stops a metered turn, non-interactive",
     async run(harness) {
       const run = await harness.cli(OPERATOR, [
         "exec",

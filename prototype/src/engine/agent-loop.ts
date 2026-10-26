@@ -36,7 +36,6 @@ import { summarizeError } from "../contract/mod.ts";
 import {
   BudgetCeilingDeclinedError,
   BudgetExceededError,
-  RunawayAnomalyHaltError,
 } from "../budget/mod.ts";
 import { ContextWindowOverflowError } from "../context/mod.ts";
 import {
@@ -134,6 +133,7 @@ export async function agentLoop(
   captureTurnState(state, result);
   result = abortedIfCancelled(turn, result);
   const seenToolCalls = new Set<string>();
+  const progressSeen = new Set<string>();
   while (
     !session.isNextWork &&
     !input.abortSignal?.aborted &&
@@ -143,6 +143,7 @@ export async function agentLoop(
   ) {
     showProgress(turn, result, streaming);
     const step = await runToolStep(turn, result, messages, seenToolCalls);
+    if (step !== "aborted") noteToolProgress(state, step, progressSeen);
     if (step === "aborted") {
       result = { ...result, stopReason: "aborted", toolCalls: undefined };
       break;
@@ -238,6 +239,42 @@ function abortedIfCancelled(
     return { ...result, stopReason: "aborted", toolCalls: undefined };
   }
   return result;
+}
+
+/** Tools whose success changes the workspace, so a repeated call is new work. */
+const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+
+/**
+ * Mark the step on the tracker when it made tool progress, so the runaway
+ * limit measures spend since then. A step makes progress when one of its
+ * calls is new this turn (by tool name and arguments) and the tool did not
+ * report it as an error. A write or edit that succeeded always counts, and
+ * clears the calls seen so far: re-running the tests after an edit is new
+ * work. Calls the tool rejects or refuses, and exact repeats, are not
+ * progress. A bash exit status or a file tool's "not found" reply is output,
+ * not an error, so it does not stop a new call from counting.
+ */
+function noteToolProgress(
+  state: TurnState,
+  step: ToolStep,
+  progressSeen: Set<string>,
+): void {
+  let progress = false;
+  for (const [index, call] of step.requestedToolCalls.entries()) {
+    const summary = step.stepResults[index];
+    if (summary === undefined || summary.isError) continue;
+    if (WRITE_TOOLS.has(call.name)) {
+      progressSeen.clear();
+      progress = true;
+      continue;
+    }
+    const signature = `${call.name}:${JSON.stringify(call.arguments)}`;
+    if (!progressSeen.has(signature)) {
+      progressSeen.add(signature);
+      progress = true;
+    }
+  }
+  if (progress) state.session.budget.noteToolProgress();
 }
 
 interface ToolStep {
@@ -699,16 +736,14 @@ export function hasHandoffLabels(text: string): boolean {
 /**
  * The failures the handoff call ends on with a notice: the provider's, a
  * request that cannot fit the window, and a per-call budget gate that stops
- * the call (a declined ceiling, a hard limit, the runaway-anomaly stop, or a
- * gate with no approver to ask). Anything else fails the turn as before.
+ * the call (a declined spend check, or one with no approver to ask). Anything else fails the turn as before.
  */
 function isHandoffFailure(err: unknown): boolean {
   return err instanceof ToolStepLimitConclusionError ||
     err instanceof ProviderContextExceededError ||
     err instanceof ContextWindowOverflowError ||
     err instanceof BudgetCeilingDeclinedError ||
-    err instanceof BudgetExceededError ||
-    err instanceof RunawayAnomalyHaltError;
+    err instanceof BudgetExceededError;
 }
 
 async function emitHandoff(

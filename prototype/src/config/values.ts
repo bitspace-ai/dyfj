@@ -15,21 +15,6 @@ export function validatePositiveUsd(value: number, source: string): number {
   return value;
 }
 
-// Strictly positive: a zero multiple would halt every paid call the moment any
-// spend exists — if the operator wants that, they should say so with a tiny
-// envelope, not a degenerate multiple. There is deliberately no disable knob.
-export function validatePositiveMultiple(
-  value: number,
-  source: string,
-): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(
-      `config: invalid multiple from ${source} (expected a positive number)`,
-    );
-  }
-  return value;
-}
-
 /**
  * The bound on every tool-step setting: the default limit, the configured
  * ceiling and a session's own limit are all integers from 1 through this.
@@ -120,15 +105,11 @@ export function readPositiveUsd(
   return value;
 }
 
-export function readPositiveMultiple(
-  env: Env,
-  envVar: string,
-  fallback: number,
-): number {
-  const raw = env.get(envVar);
-  if (raw === undefined || raw.trim() === "") return fallback;
-  // Number(), not parseFloat(): "2x" must fail loud, not silently become 2 —
-  // a mis-set hard-stop knob should never half-parse into a different stop.
-  const value = Number(raw.trim());
-  return validatePositiveMultiple(value, envVar);
-}
+/**
+ * The runaway-anomaly multiples were retired by BIT-785 in favour of the
+ * spend check's own limits. A config file that still has an [anomaly] table
+ * fails loud rather than being silently ignored.
+ */
+export const RETIRED_ANOMALY_REPLACEMENT =
+  "use [budget] turn_limit_usd and runaway_stall_usd " +
+  "(DYFJ_BUDGET_TURN_USD, DYFJ_BUDGET_RUNAWAY_STALL_USD) instead";

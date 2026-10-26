@@ -22,6 +22,15 @@ function clockOn(year: number, month: number, day: number): ManualClock {
   return new ManualClock({ start: new Date(year, month, day, 12).getTime() });
 }
 
+/** Turn and runaway figures far from their limits: these tests are about
+ * the stored scopes. */
+const turnBudget = {
+  turnCostSoFar: 0,
+  turnLimitUsd: 1000,
+  stallCostSoFar: 0,
+  runawayStallUsd: 1000,
+};
+
 function approving() {
   return mock.fn(
     (_warning: BudgetCeilingWarning): Promise<BudgetCeilingVerdict> =>
@@ -41,6 +50,7 @@ test("daily envelope: a confirmed overrun raises the envelope for its scope acro
     perCallLimitUsd: 1,
     dailyCostSoFar: 24.99,
     dailyLimitUsd: 25,
+    ...turnBudget,
     reason: "daily_limit",
   };
   // Turn 1, session A: confirm once.
@@ -79,6 +89,7 @@ test("daily envelope: session-scope raises persist per session id, not globally"
     perCallLimitUsd: 1,
     dailyCostSoFar: 5,
     dailyLimitUsd: 25,
+    ...turnBudget,
     reason: "session_limit",
   };
   const gate1 = createTurnBudgetCeilingGate(
@@ -102,15 +113,11 @@ test("daily envelope: session-scope raises persist per session id, not globally"
   assert.equal(confirm.mock.callCount(), 2);
 });
 
-test("scope-period ceiling confirmations: one daily confirm covers later larger projections in the same period", async () => {
-  // An agent-loop turn's later calls project past the level recorded at
-  // confirmation time; the confirmation must hold for the scope period.
+test("scope-period ceiling confirmations: a daily confirm holds across turns up to the level it raised, then asks again", async () => {
+  // A daily approval raises the daily limit to the projection plus one daily
+  // limit, kept for the local day; it is a level, not cover for the whole day.
   const store = new CeilingConfirmationStore(clockOn(2026, 6, 7));
   const confirm = approving();
-  const gate = createTurnBudgetCeilingGate(
-    confirm,
-    store.for("CONF-PERIOD-A"),
-  );
   const overDaily = (
     estimatedCost: number,
     dailyCostSoFar: number,
@@ -118,23 +125,30 @@ test("scope-period ceiling confirmations: one daily confirm covers later larger 
     allowed: false,
     estimatedCost,
     sessionCostSoFar: dailyCostSoFar,
-    sessionLimitUsd: 5,
+    sessionLimitUsd: 1000,
     perCallLimitUsd: 1,
     dailyCostSoFar,
     dailyLimitUsd: 0.05,
+    ...turnBudget,
     reason: "daily_limit",
   });
+  const gate = createTurnBudgetCeilingGate(
+    confirm,
+    store.for("CONF-PERIOD-A"),
+  );
+  // Projection $0.12 crosses $0.05: the daily mark becomes $0.17.
   await gate.ensureAllowed(overDaily(0.038, 0.082));
   assert.equal(confirm.mock.callCount(), 1);
-  // Later call in the same turn, larger projection: covered.
+  // Later call in the same turn, larger projection ($0.165): covered.
   await gate.ensureAllowed(overDaily(0.074, 0.091));
-  // Next turn, same day, even bigger: still covered.
+  assert.equal(confirm.mock.callCount(), 1);
+  // Next turn, same day, past the mark ($3.90 > $0.17): asks again.
   const nextTurnGate = createTurnBudgetCeilingGate(
     confirm,
     store.for("CONF-PERIOD-A"),
   );
   await nextTurnGate.ensureAllowed(overDaily(0.9, 3.0));
-  assert.equal(confirm.mock.callCount(), 1);
+  assert.equal(confirm.mock.callCount(), 2);
 });
 
 test("scope-period ceiling confirmations: per-call stays a per-event high-water: a bigger single call re-prompts", async () => {
@@ -152,6 +166,7 @@ test("scope-period ceiling confirmations: per-call stays a per-event high-water:
     perCallLimitUsd: 1,
     dailyCostSoFar: 0,
     dailyLimitUsd: 25,
+    ...turnBudget,
     reason: "per_call_limit",
   });
   await gate.ensureAllowed(overPerCall(1.2));
@@ -172,6 +187,7 @@ test("CeilingConfirmationStore: separate stores share no confirmations", async (
     perCallLimitUsd: 1,
     dailyCostSoFar: 5,
     dailyLimitUsd: 25,
+    ...turnBudget,
     reason: "session_limit",
   };
   await createTurnBudgetCeilingGate(

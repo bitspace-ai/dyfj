@@ -10,6 +10,7 @@ import {
   type UnixClientOptions,
 } from "../transport/mod.ts";
 import type { CliConfig } from "./args.ts";
+import { budgetOverride } from "./budget.ts";
 import type { ConnectFn } from "./io.ts";
 
 // ── Seam contract (shared with the server) ──────────────────────────
@@ -44,6 +45,8 @@ export interface TurnRequest {
   approvePaidInference?: boolean;
   /** The session's own tool-step limit; the runtime refuses one above its ceiling. */
   maxToolSteps?: number;
+  /** The session's own spend limits; honored on the loopback transport only. */
+  budget?: Record<string, number>;
 }
 
 export function buildTurnBody(
@@ -78,6 +81,10 @@ export function buildTurnBody(
   if (config.toolSteps !== undefined && config.runner === undefined) {
     body.maxToolSteps = config.toolSteps;
   }
+  const budget = config.runner === undefined
+    ? budgetOverride(config.budget)
+    : undefined;
+  if (budget !== undefined) body.budget = budget;
   return body;
 }
 

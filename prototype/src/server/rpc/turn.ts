@@ -6,7 +6,6 @@
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
-  runawayAnomalyApprovalRequest,
 } from "../../budget/mod.ts";
 import type { Env, PermissionLevel } from "../../config/mod.ts";
 import {
@@ -175,25 +174,6 @@ function clientApprover(ctx: RpcContext, activeTurn: TurnTicket): TurnApprover {
           };
         },
       ),
-    confirmRunawayAnomaly: (warning) =>
-      requestApproval(runawayAnomalyApprovalRequest(warning))
-        .then(
-          (response) => {
-            abortIfApprovalWasInterrupted(response);
-            rejectStaleApprovalAfterCancellation();
-            return toBudgetCeilingVerdict(
-              response,
-              "operator declined the anomaly halt",
-            );
-          },
-          (): BudgetCeilingVerdict => {
-            rejectStaleApprovalAfterCancellation();
-            return {
-              decision: "deny",
-              reason: "anomaly halt approval failed (no client approver?)",
-            };
-          },
-        ),
   };
 }
 

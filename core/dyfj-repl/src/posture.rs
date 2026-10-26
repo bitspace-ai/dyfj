@@ -39,7 +39,9 @@ fn render(
 ) -> (Vec<String>, Vec<String>) {
     match status {
         Ok(status) => (
-            vec![line_with_local_hash(status, session, socket, local_hash, dev)],
+            std::iter::once(line_with_local_hash(status, session, socket, local_hash, dev))
+                .chain(crate::budget::line(status, &session.budget))
+                .collect(),
             unresolved_pointer_warnings(status),
         ),
         Err(err) => (vec![runtime_line("posture: unavailable", &err.to_string(), socket)], Vec::new()),
