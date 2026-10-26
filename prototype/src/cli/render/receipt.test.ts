@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { turnResult as result } from "../../../testing/builders/turn-client.ts";
 import type { TurnResult } from "../turn-client.ts";
-import { formatReceipt } from "./receipt.ts";
+import { fakeIo } from "../../../testing/fakes/fake-io.ts";
+import { handleReplReceiptCommand } from "../commands/receipt.ts";
+import { formatReceipt, formatStepLines } from "./receipt.ts";
 
 describe("presentation", () => {
   it("[case 25 footer] formatReceipt reports ACP history omission provenance and counts", () => {
@@ -405,5 +407,87 @@ describe("presentation", () => {
       `expected formatReceipt(readOnly, false) to include "12→5 tok · cache 40 read ·"`,
     );
     assert.ok(!(formatReceipt(result(), false)).includes("cache"));
+  });
+  it("formatReceipt shows the share of input served from cache", () => {
+    const cached = result({
+      tokens: {
+        input: 1_000,
+        output: 5,
+        cacheRead: 8_800,
+        cacheWrite: 200,
+        totalCalls: 3,
+      },
+    });
+    assert.ok(
+      formatReceipt(cached, false).includes(
+        "cache 8,800 read, 200 write · cached 88% ·",
+      ),
+      formatReceipt(cached, false),
+    );
+  });
+});
+
+describe("/receipt steps", () => {
+  const steps = [
+    {
+      order: 1,
+      purpose: "initial" as const,
+      input: 312,
+      cacheRead: 0,
+      cacheWrite: 22_021,
+      output: 203,
+      costUsd: 0.0634,
+    },
+    {
+      order: 2,
+      purpose: "tool_followup" as const,
+      input: 1_204,
+      cacheRead: 22_333,
+      cacheWrite: 7_661,
+      output: 270,
+      costUsd: 0,
+    },
+  ];
+
+  const withSteps = result({
+    tokens: {
+      input: 1_516,
+      output: 473,
+      cacheRead: 22_333,
+      cacheWrite: 29_682,
+      totalCalls: 2,
+      steps,
+    },
+  });
+
+  it("prints one line per provider call, in call order", () => {
+    assert.deepStrictEqual(formatStepLines(steps), [
+      "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634",
+      "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0",
+    ]);
+    const fake = fakeIo();
+    assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, withSteps), true);
+    assert.deepStrictEqual(fake.stderr, [
+      "last turn, 2 provider calls:",
+      ...formatStepLines(steps),
+    ]);
+  });
+
+  it("says so when there is no per-step usage for the last turn", () => {
+    // Before the first turn, and from a runtime that sends no steps.
+    for (const last of [undefined, result()]) {
+      const fake = fakeIo();
+      assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, last), true);
+      assert.deepStrictEqual(fake.stderr, ["no per-step usage for the last turn"]);
+    }
+  });
+
+  it("answers anything but /receipt steps with its usage", () => {
+    for (const line of ["/receipt", "/receipt step", "/receipt steps 2"]) {
+      const fake = fakeIo();
+      assert.equal(handleReplReceiptCommand(line, fake.io, withSteps), true);
+      assert.deepStrictEqual(fake.stderr, ["usage: /receipt steps"]);
+    }
+    assert.equal(handleReplReceiptCommand("/receipts", fakeIo().io, withSteps), false);
   });
 });

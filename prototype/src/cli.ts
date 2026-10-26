@@ -48,6 +48,7 @@ import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
+import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -129,19 +130,18 @@ export async function runRepl(
           interactive,
         )
       ) continue;
-      if (await handleReplModelCommand(cmd, config, io, connect)) {
+      if (
+        await handleReplModelCommand(cmd, config, io, connect) ||
+        await handleReplFastCommand(cmd, config, io, connect)
+      ) {
         sessionState.lastReplCommand = cmd;
         continue;
       }
-      if (await handleReplFastCommand(cmd, config, io, connect)) {
-        sessionState.lastReplCommand = cmd;
-        continue;
-      }
-      if (await handleReplStepsCommand(cmd, config, io, connect)) {
-        sessionState.lastReplCommand = cmd;
-        continue;
-      }
-      if (await handleReplBudgetCommand(cmd, config, io, connect)) {
+      if (
+        handleReplReceiptCommand(cmd, io, sessionState.lastResult) ||
+        await handleReplStepsCommand(cmd, config, io, connect) ||
+        await handleReplBudgetCommand(cmd, config, io, connect)
+      ) {
         sessionState.lastReplCommand = cmd;
         continue;
       }
@@ -254,6 +254,7 @@ export async function runRepl(
         if ("cost" in result) {
           sessionState.sessionSpendUsd += result.cost.totalUsd;
         }
+        sessionState.lastResult = result;
         if (!sessionState.events) sessionState.events = [];
         sessionState.events.push(createCliSessionEvent({
           eventId: `evt_u_${eventNum}`,
@@ -372,6 +373,8 @@ export interface ReplSessionState {
   lastModelSlug?: string;
   lastReplCommand?: string;
   lastFriction?: FrictionPostResult;
+  /** The last completed turn, for `/receipt steps`. */
+  lastResult?: TurnResult;
   /** The in-process idea/packet registry of the `unix: false` path. */
   ideaRegistry?: IdeaPacketRegistry;
 }
@@ -604,8 +607,8 @@ export async function handleReplSessionCommand(
     sessionState.sessionSpendUsd = 0;
     sessionState.workspace = targetWorkspace;
     sessionState.events = [];
-    sessionState.lastModelSlug = undefined;
-    sessionState.lastReplCommand = undefined;
+    sessionState.lastModelSlug = sessionState.lastReplCommand = undefined;
+    sessionState.lastResult = undefined;
     io.err(`switched to session: ${targetId}`);
     return true;
   }

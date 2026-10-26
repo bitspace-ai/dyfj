@@ -61,6 +61,8 @@ pub struct Session {
     pub last_model: Option<String>,
     /// The last slash command, for friction context.
     pub last_command: Option<String>,
+    /// The last turn's per-call usage (`tokens.steps`), for `/receipt steps`.
+    pub last_steps: Option<Vec<Value>>,
 }
 
 impl Session {
@@ -116,6 +118,10 @@ impl Session {
         if let Some(slug) = receipt.pointer("/model/slug").and_then(Value::as_str) {
             self.last_model = Some(slug.to_string());
         }
+        self.last_steps = receipt
+            .pointer("/tokens/steps")
+            .and_then(Value::as_array)
+            .cloned();
         self.turns += 1;
     }
 
@@ -154,6 +160,7 @@ impl Session {
         self.turns = 0;
         self.last_model = None;
         self.last_command = None;
+        self.last_steps = None;
         self.model_pinned = false;
         self.model = self.default_model.clone();
         self.model_origin = ModelOrigin::Operator;
@@ -224,6 +231,17 @@ mod tests {
         assert!((session.spend_usd - 0.02).abs() < 1e-12);
         assert_eq!(session.turns, 2);
         assert_eq!(session.last_model.as_deref(), Some("z-ai/glm-5.2"));
+    }
+
+    /// BIT-717: each turn's per-call usage replaces the last one's; a turn
+    /// without it leaves none for `/receipt steps`.
+    #[test]
+    fn a_receipt_keeps_its_steps_until_the_next_turn() {
+        let mut session = Session::default();
+        session.record(&json!({"tokens": {"steps": [{"order": 1, "purpose": "initial"}]}}));
+        assert_eq!(session.last_steps.as_ref().map(Vec::len), Some(1));
+        session.record(&json!({"runner": {"profile": "fixture"}}));
+        assert_eq!(session.last_steps, None);
     }
 
     #[test]

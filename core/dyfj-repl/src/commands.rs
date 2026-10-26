@@ -45,6 +45,8 @@ pub enum Command {
     Steps(Option<u32>),
     /// `/budget [<limit> <usd>]`; `None` shows the limits.
     Budget(Option<(crate::budget::Limit, f64)>),
+    /// `/receipt steps`: the last turn's usage, per provider call.
+    ReceiptSteps,
     /// `/session`
     SessionShow,
     /// `/session list`
@@ -167,6 +169,10 @@ pub fn parse(input: &str) -> Option<Command> {
             },
             _ => Command::Usage(crate::budget::usage()),
         },
+        "/receipt" => match args.as_slice() {
+            ["steps"] => Command::ReceiptSteps,
+            _ => Command::Usage("usage: /receipt steps".into()),
+        },
         "/session" => match args.as_slice() {
             [] => Command::SessionShow,
             ["list"] => Command::SessionList,
@@ -277,6 +283,7 @@ commands (type them alone on a line; inside a paste they are prompt text):
   /fast [on|off]                                       toggle the fast speed tier
   /steps [N]                                           show or set the tool-step limit
   /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
+  /receipt steps                                       the last turn's usage, per provider call
   /session | /session list | /session switch <id>     show, list or resume sessions
   /friction <sev> [--escaped] <text...>                post a daily-driver friction
   /idea mark <label...> | /idea list                   mark or list ideas
@@ -340,11 +347,27 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         Command::Fast(target) => fast_toggle(client, session, target).await,
         Command::Steps(target) => steps(client, session, target).await,
         Command::Budget(target) => budget(client, session, target).await,
+        Command::ReceiptSteps => receipt_steps(session),
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
         Command::Friction { .. } | Command::IdeaMark(_) => unreachable!("dispatched by run"),
         Command::IdeaList => idea_list(client, session).await,
+    }
+}
+
+/// Print the last turn's per-call lines. A session has none before its first
+/// turn, after an external-runner turn, and from a runtime that predates them.
+fn receipt_steps(session: &Session) {
+    match session.last_steps.as_deref() {
+        Some(steps) if !steps.is_empty() => {
+            let plural = if steps.len() == 1 { "" } else { "s" };
+            eprintln!("last turn, {} provider call{plural}:", steps.len());
+            for line in crate::receipt::step_lines(steps) {
+                eprintln!("{line}");
+            }
+        }
+        _ => eprintln!("no per-step usage for the last turn"),
     }
 }
 
@@ -1472,6 +1495,10 @@ mod run_tests {
     #[test]
     fn parses_steps_within_the_bound() {
         use crate::commands::parse;
+        assert_eq!(parse("/receipt steps"), Some(Command::ReceiptSteps));
+        for line in ["/receipt", "/receipt step", "/receipt steps 2"] {
+            assert_eq!(parse(line), Some(Command::Usage("usage: /receipt steps".into())), "{line}");
+        }
         assert_eq!(parse("/steps"), Some(Command::Steps(None)));
         assert_eq!(parse("/steps 12"), Some(Command::Steps(Some(12))));
         for line in ["/steps 0", "/steps 65", "/steps x", "/steps -3", "/steps 1.5"] {

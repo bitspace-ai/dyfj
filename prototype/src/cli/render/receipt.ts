@@ -4,6 +4,7 @@ import {
   formatAutoApprovals,
   formatHistoryOmissionSummary,
 } from "../../contract/mod.ts";
+import type { TurnStepUsage } from "../../contract/mod.ts";
 import type { TurnResult } from "../turn-client.ts";
 
 function formatUsdShort(usd: number): string {
@@ -116,7 +117,9 @@ export function formatReceipt(
   const cache = cacheRead > 0 || cacheWrite > 0
     ? ` · cache ${formatTokenCount(cacheRead)} read${
       cacheWrite > 0 ? `, ${formatTokenCount(cacheWrite)} write` : ""
-    }`
+    } · cached ${
+      cachedPercent(result.tokens.input, cacheRead, cacheWrite)
+    }%`
     : "";
   const tokens = `${formatTokenCount(result.tokens.input)}→${
     formatTokenCount(result.tokens.output)
@@ -137,5 +140,30 @@ export function formatReceipt(
     : ` · ${formatHistoryOmissionSummary(result.historyOmission)}`;
   return dim(
     `— ${result.model.displayName} · ${cost}${session} · ${tokens} · ${toolSteps}${history} · ${result.route.reason}`,
+  );
+}
+
+/** The share of the turn's input served from cache, in whole percent. */
+function cachedPercent(
+  input: number,
+  cacheRead: number,
+  cacheWrite: number,
+): number {
+  const prompt = input + cacheRead + cacheWrite;
+  return prompt > 0 ? Math.round((cacheRead / prompt) * 100) : 0;
+}
+
+/**
+ * `/receipt steps`: one line per recorded agent-loop provider call of the
+ * last turn, in call order. `in` excludes cache traffic, as on the receipt line. The
+ * Rust REPL prints the same lines (`core/dyfj-repl/src/receipt.rs`).
+ */
+export function formatStepLines(steps: readonly TurnStepUsage[]): string[] {
+  return steps.map((step) =>
+    `  #${step.order} ${step.purpose} · ${formatTokenCount(step.input)} in · ${
+      formatTokenCount(step.cacheRead)
+    } read · ${formatTokenCount(step.cacheWrite)} write · ${
+      formatTokenCount(step.output)
+    } out · ${formatUsdShort(step.costUsd)}`
   );
 }
