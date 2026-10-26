@@ -26,7 +26,8 @@ README are tracked separately in its Revision history section.
   - Tool progress is a tool call that is new in the turn and that the tool
     did not report as an error, or a write or edit that succeeded. Calls the
     tool rejects (invalid arguments, an unknown tool, a refused or denied
-    call) and exact repeats are not progress. A bash command's exit status
+    call) and exact repeats since the last successful write or edit are not
+    progress. A bash command's exit status
     and a "not found" reply from a file tool are tool output, not tool errors,
     so a new call that returns them still counts; the loop's existing repeat
     detection and the turn limit bound those turns.
@@ -638,10 +639,12 @@ README are tracked separately in its Revision history section.
 - **Spend limits (BIT-785).** The default per-call limit is $0.50 (was
   $0.10) and the default session limit is $10.00 (was $1.00). A daily approval
   raises the daily limit by one more day's limit instead of lifting it for the
-  rest of the day. With no approver, a turn stopped by the runaway limit now
-  fails as a refused spend (`BudgetExceededError`), as the ceilings always
-  did, instead of with `RunawayAnomalyHaltError`. The prompt is titled "Spend
-  check"; its wire kind is still `budget_ceiling`.
+  rest of the day. With no approver, the runaway limit now refuses a call
+  with `BudgetExceededError`, as the ceilings always did, instead of with
+  `RunawayAnomalyHaltError`; like any spend refusal, a refused retry after a
+  length stop now delivers the truncated reply instead of failing the turn.
+  The prompt is titled "Spend check"; its wire kind is still
+  `budget_ceiling`.
 
 - **The executor transport is protocol version 2 (BIT-736).** Requests carry
   an `op` (`exec` or `attest`), and an exec request may carry a `binding`. A

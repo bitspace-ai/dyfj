@@ -79,7 +79,12 @@ async function spendTurn(
   } = {},
 ): Promise<SpendRun> {
   const root = await mkdtemp(join(tmpdir(), "spend-replay-"));
-  for (const file of files) await writeFile(join(root, file), `${file}\n`);
+  try {
+    for (const file of files) await writeFile(join(root, file), `${file}\n`);
+  } catch (err) {
+    await rm(root, { recursive: true });
+    throw err;
+  }
   const run = engineServices(exchanges, { models: [PRICED] });
   const ceilingPrompts: BudgetCeilingWarning[] = [];
   const interactive = options.interactive ?? true;
