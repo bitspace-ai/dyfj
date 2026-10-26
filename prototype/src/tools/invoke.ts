@@ -101,21 +101,52 @@ export async function invokeCommand<TResult = unknown>(
   policyContext: CommandPolicyContext = {},
   executionContext: Omit<CommandExecutionContext, "authzBasis"> = {},
 ): Promise<CommandInvocationResult<TResult>> {
-  const result = await runCommand<TResult>(
+  return (await invokeRecordingAsk<TResult>(
+    registry,
+    call,
+    confirmApproval,
+    policyContext,
+    executionContext,
+  )).result;
+}
+
+/** One invocation's result, and why the policy asked when it did. */
+interface RecordedInvocation<TResult> {
+  result: CommandInvocationResult<TResult>;
+  /**
+   * The policy's ask basis and reason, scrubbed and capped
+   * (`fixedOperatorReason`), whatever the approval's outcome. Only the
+   * `tool_call` event records it (BIT-796).
+   */
+  askReason?: string;
+}
+
+async function invokeRecordingAsk<TResult>(
+  registry: CommandRegistry,
+  call: CommandCall,
+  confirmApproval: ConfirmToolApproval,
+  policyContext: CommandPolicyContext,
+  executionContext: Omit<CommandExecutionContext, "authzBasis">,
+): Promise<RecordedInvocation<TResult>> {
+  const recorded = await runCommand<TResult>(
     registry,
     call,
     confirmApproval,
     policyContext,
     executionContext,
   );
-  if (!result.isError || result.recordedReason !== undefined) return result;
+  const result = recorded.result;
+  if (!result.isError || result.recordedReason !== undefined) return recorded;
   return {
-    ...result,
-    recordedReason: durableFailureReason(
-      registry.lookup(call.commandId),
-      call.arguments,
-      result.reason,
-    ),
+    ...recorded,
+    result: {
+      ...result,
+      recordedReason: durableFailureReason(
+        registry.lookup(call.commandId),
+        call.arguments,
+        result.reason,
+      ),
+    },
   };
 }
 
@@ -125,16 +156,18 @@ async function runCommand<TResult>(
   confirmApproval: ConfirmToolApproval,
   policyContext: CommandPolicyContext,
   executionContext: Omit<CommandExecutionContext, "authzBasis">,
-): Promise<CommandInvocationResult<TResult>> {
+): Promise<RecordedInvocation<TResult>> {
   const command = registry.lookup(call.commandId) as
     | CommandDefinition<TResult>
     | undefined;
   if (!command) {
     return {
-      decision: "deny",
-      authzBasis: "policy:deny:unknown-command",
-      isError: true,
-      reason: `unknown command: ${call.commandId}`,
+      result: {
+        decision: "deny",
+        authzBasis: "policy:deny:unknown-command",
+        isError: true,
+        reason: `unknown command: ${call.commandId}`,
+      },
     };
   }
 
@@ -150,14 +183,46 @@ async function runCommand<TResult>(
   );
   if (policy.decision === "deny") {
     return {
-      decision: "deny",
-      authzBasis: policy.authzBasis,
-      reason: policy.reason ?? "command denied",
-      isError: true,
+      result: {
+        decision: "deny",
+        authzBasis: policy.authzBasis,
+        reason: policy.reason ?? "command denied",
+        isError: true,
+      },
     };
   }
 
-  let authzBasis = policy.authzBasis;
+  const result = await runApproved(
+    command,
+    call,
+    confirmApproval,
+    policyContext,
+    executionContext,
+    policy.authzBasis,
+    policy.decision === "ask",
+    containment,
+  );
+  return policy.decision === "ask"
+    ? {
+      result,
+      askReason: fixedOperatorReason(
+        `${policy.authzBasis}: ${policy.reason ?? "no reason given"}`,
+      ),
+    }
+    : { result };
+}
+
+async function runApproved<TResult>(
+  command: CommandDefinition<TResult>,
+  call: CommandCall,
+  confirmApproval: ConfirmToolApproval,
+  policyContext: CommandPolicyContext,
+  executionContext: Omit<CommandExecutionContext, "authzBasis">,
+  policyBasis: string,
+  ask: boolean,
+  containment: ContainmentVerdict | undefined,
+): Promise<CommandInvocationResult<TResult>> {
+  let authzBasis = policyBasis;
   const grants = command.grantable === true
     ? policyContext.sessionGrants
     : undefined;
@@ -165,13 +230,10 @@ async function runCommand<TResult>(
   const grantKey = grants === undefined || scope === null
     ? undefined
     : sessionGrantKey(call, scope);
-  if (
-    policy.decision === "ask" && grantKey !== undefined &&
-    grants?.has(grantKey) === true
-  ) {
+  if (ask && grantKey !== undefined && grants?.has(grantKey) === true) {
     // The operator allowed this exact call for the rest of the session.
     authzBasis = "policy:allow:session-grant";
-  } else if (policy.decision === "ask") {
+  } else if (ask) {
     // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
     // an unapproved or channel-less call never executes. The arguments have
@@ -300,6 +362,7 @@ export function buildCommandToolCallEventPayload(
   result: CommandInvocationResult,
   context: Omit<CommandEventContext, "writeEvent">,
   command?: CommandDefinition,
+  askReason?: string,
 ): EventInsert {
   const isError = result.isError;
   const redacted = redactToolCall(command, call, result);
@@ -336,6 +399,11 @@ export function buildCommandToolCallEventPayload(
   });
   if (command?.eventContent !== undefined) {
     event.content = command.eventContent(isError, result);
+  } else if (askReason !== undefined) {
+    // Why the policy asked, whatever the approval's outcome: authz_basis
+    // keeps only the outcome (BIT-796). A command that defines its own event
+    // content keeps that content as it is.
+    event.content = `${event.content} (asked: ${askReason})`;
   }
   return event;
 }
@@ -348,7 +416,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
   policyContext: CommandPolicyContext = {},
 ): Promise<CommandInvocationResult<TResult>> {
   const spanId = context.spanId ?? generateSpanId();
-  const result = await invokeCommand<TResult>(
+  const { result, askReason } = await invokeRecordingAsk<TResult>(
     registry,
     call,
     confirmApproval,
@@ -363,6 +431,7 @@ export async function invokeCommandWithEvent<TResult = unknown>(
     result,
     { ...context, spanId },
     registry.lookup(call.commandId),
+    askReason,
   );
   await context.writeEvent(event);
   return result;

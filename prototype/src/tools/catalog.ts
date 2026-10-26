@@ -100,16 +100,22 @@ function workspaceTool(
  * bound to the engine's anchors for that root. Fails closed without them.
  */
 function workspaceFileTool(
-  define: (root: WorkspaceRoot) => CommandDefinition,
+  define: (
+    root: WorkspaceRoot,
+    opts: { dialExecutor?: ExecutorDialer; env?: Env },
+  ) => CommandDefinition,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot, rootAnchors }) => {
+  return ({ workspaceRoot, rootAnchors, dialExecutor, env }) => {
     if (workspaceRoot === undefined) return undefined;
     if (rootAnchors === undefined) {
       throw new Error(
         "tool catalog: the workspace file tools need root anchors",
       );
     }
-    return define(rootAnchors.root(workspaceRoot));
+    return define(rootAnchors.root(workspaceRoot), {
+      ...(dialExecutor === undefined ? {} : { dialExecutor }),
+      ...(env === undefined ? {} : { env }),
+    });
   };
 }
 

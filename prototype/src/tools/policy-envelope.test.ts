@@ -7,7 +7,9 @@ import { describe, it } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import type { ApprovalEnvelope } from "../config/approval-envelope.ts";
 import type { ContainmentVerdict } from "./builtin/containment.ts";
+import { defineEditFile, defineWriteFile } from "./builtin/file.ts";
 import { defineGit } from "./builtin/git.ts";
+import { RootAnchors } from "./builtin/root-anchors.ts";
 import type {
   CommandCall,
   CommandDefinition,
@@ -67,6 +69,7 @@ function contained(
         typeof call.arguments.timeoutSec === "number"
           ? call.arguments.timeoutSec * 1_000
           : 120_000,
+      deadlineArgument: "timeoutSec",
     },
     executor: (_call, context) => {
       seen.push(context);
@@ -155,10 +158,14 @@ describe("approval by the attested envelope", () => {
     assert.strictEqual(decide(GRANTED, {}).decision, "ask");
   });
 
-  it("asks for a deadline above the envelope's", () => {
+  it("refuses a deadline above the envelope's, with a reason the model can act on", () => {
     const result = decide(GRANTED, OPERATOR, { command: "true", timeoutSec: 121 });
-    assert.strictEqual(result.decision, "ask");
-    assert.strictEqual(result.authzBasis, "policy:ask:envelope-limit");
+    assert.strictEqual(result.decision, "deny");
+    assert.strictEqual(result.authzBasis, "policy:deny:envelope-limit");
+    assert.match(
+      result.reason ?? "",
+      /^timeoutSec 121 s is above the executor's limit of 120 s; call again with timeoutSec of at most 120$/,
+    );
     assert.strictEqual(decide(GRANTED, OPERATOR, { command: "true", timeoutSec: 120 }).decision, "allow");
   });
 
@@ -370,4 +377,64 @@ describe("invoking a contained command", () => {
     assert.strictEqual(result.decision, "deny");
     assert.strictEqual(result.authzBasis, "policy:deny:invalid-arguments");
   });
+});
+
+// BIT-796: contained, the write tools are covered by the envelope as bash is,
+// and keep asking without it.
+describe("the write tools under the attested envelope", () => {
+  const env = new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" });
+  const root = new RootAnchors().root("/work");
+  const tools = [
+    ["write_file", defineWriteFile, { path: "a.txt", content: "x" }],
+    ["edit_file", defineEditFile, { path: "a.txt", old_string: "x", new_string: "y" }],
+  ] as const;
+
+  for (const [id, define, args] of tools) {
+    const tool = define(root, { env });
+    const evaluate = (verdict: ContainmentVerdict, context: CommandPolicyContext) =>
+      evaluateCommandPolicy(
+        tool,
+        { ...call(args), commandId: id },
+        { ...context, containment: verdict },
+      );
+
+    it(`${id} declares containment on the executor route, and none natively`, () => {
+      assert.strictEqual(tool.containment?.route, "linux-isolated");
+      assert.strictEqual(define(new RootAnchors().root("/work")).containment, undefined);
+    });
+
+    it(`${id} runs without a prompt under a granted envelope on loopback, whatever the posture`, () => {
+      for (const posture of [STRICT, OPERATOR]) {
+        assert.deepStrictEqual(evaluate(GRANTED, posture), {
+          decision: "allow",
+          authzBasis: "policy:allow:attested-envelope",
+        });
+      }
+    });
+
+    it(`${id} asks without a grant, unattested, or off loopback`, () => {
+      assert.strictEqual(evaluate(UNGRANTED, STRICT).decision, "ask");
+      assert.strictEqual(evaluate(UNATTESTED, OPERATOR).decision, "ask");
+      assert.strictEqual(
+        evaluate(GRANTED, { permissionLevel: "operator", loopback: false }).decision,
+        "ask",
+      );
+    });
+
+    it(`${id} asks, not refuses, when a lower envelope deadline is below its fixed one`, () => {
+      const tight: ContainmentVerdict = {
+        status: "attested",
+        envelope: { ...ENVELOPE, commandTimeoutMs: 10_000 },
+        granted: true,
+      };
+      const result = evaluate(tight, OPERATOR);
+      assert.strictEqual(result.decision, "ask");
+      assert.strictEqual(result.authzBasis, "policy:ask:envelope-limit");
+    });
+
+    it(`${id}'s write deadline fits within the envelope's`, () => {
+      const asked = tool.containment?.callTimeoutMs?.({ ...call(args), commandId: id });
+      assert.ok(asked !== undefined && asked <= ENVELOPE.commandTimeoutMs);
+    });
+  }
 });

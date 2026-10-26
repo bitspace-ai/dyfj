@@ -10,7 +10,7 @@
  * The protocol is one request per connection, each message one line of JSON:
  *
  *   → {"v":2,"op":"exec","argv":[…],"cwd":…,"env":{…},"timeoutMs":…,
- *      "binding"?:…}
+ *      "binding"?:…,"stdin"?:…}
  *   ← {"v":2,"code":…,"signal":…,"stdout":…,"stderr":…,"timedOut":…,
  *      "termination"?:{…}}  or  {"v":2,"error":"…"}
  *
@@ -33,7 +33,8 @@ import type { BoundedResult, GroupStop } from "./bounded-process.ts";
 
 /**
  * Runs one process in the executor: argv, start directory, deadline, env,
- * and the attested instance the call is bound to, if any.
+ * the attested instance the call is bound to, if any, and text for its
+ * standard input, if any (which keeps that text out of argv, BIT-796).
  */
 export type ExecutorProcessRunner = (
   argv: readonly string[],
@@ -41,6 +42,7 @@ export type ExecutorProcessRunner = (
   timeoutMs: number,
   env: Record<string, string>,
   binding?: string,
+  stdin?: string,
 ) => Promise<BoundedResult>;
 
 /** The bash tool's runner shape (`BashRunner` in `exec.ts`). */
@@ -186,7 +188,7 @@ export function createExecutorProcessRunner(
 ): ExecutorProcessRunner {
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const maxReplyBytes = options.maxReplyBytes ?? DEFAULT_MAX_REPLY_BYTES;
-  return (argv, cwd, timeoutMs, env, binding) =>
+  return (argv, cwd, timeoutMs, env, binding, stdin) =>
     exchange(
       path,
       dial,
@@ -197,6 +199,7 @@ export function createExecutorProcessRunner(
         env,
         timeoutMs,
         ...(binding === undefined ? {} : { binding }),
+        ...(stdin === undefined ? {} : { stdin }),
       },
       timeoutMs + graceMs,
       maxReplyBytes,

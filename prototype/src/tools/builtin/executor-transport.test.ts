@@ -350,6 +350,17 @@ describe("the executor transport", () => {
       const run = createExecutorProcessRunner(s.path, dialExecutor);
       await run(["git", "--no-pager", "status"], "/work", 1_000, { PATH: "/usr/bin" });
       assert.deepStrictEqual(s.requests[0].argv, ["git", "--no-pager", "status"]);
+      assert.ok(!Object.hasOwn(s.requests[0], "stdin"), "no stdin unless given");
+    });
+
+    it("sends stdin as its own field, apart from the argv", async () => {
+      const { createExecutorProcessRunner } = await transportModule();
+      const s = await supervisor((_, socket) => answer(socket, OK));
+      const run = createExecutorProcessRunner(s.path, dialExecutor);
+      await run(["cat"], "/work", 1_000, {}, undefined, "canary-body\n");
+      assert.strictEqual(s.requests[0].stdin, "canary-body\n");
+      assert.deepStrictEqual(s.requests[0].argv, ["cat"]);
+      assert.ok(!Object.hasOwn(s.requests[0], "binding"));
     });
   });
 

@@ -24,7 +24,20 @@
  * failure as a tool result and can recover, rather than crashing the turn.
  */
 
-import type { CommandDefinition } from "../definition.ts";
+import { Buffer } from "node:buffer";
+import type { Env } from "../../config/mod.ts";
+import type { CommandDefinition, Containment } from "../definition.ts";
+import { createContainment } from "./containment.ts";
+import { executorSocket, undialable } from "./exec.ts";
+import type { ExecutorDialer } from "./executor-transport.ts";
+import { createExecutorProcessRunner } from "./executor-transport.ts";
+import { sanitizeOutputText } from "./file-access.ts";
+import {
+  CONTAINED_WRITE_MAX_BYTES,
+  CONTAINED_WRITE_TIMEOUT_MS,
+  type ContainedProcessRunner,
+  executeContainedWrite,
+} from "./file-write-contained.ts";
 import type { WorkspaceRoot } from "./root-anchors.ts";
 import { executeListFiles, executeReadFile } from "./file-read.ts";
 import { executeEditFile, executeWriteFile } from "./file-write.ts";
@@ -236,16 +249,61 @@ export function defineGlobFiles(
   };
 }
 
+/** The executor options of the write tools: as for bash and git. */
+export interface WriteToolOptions {
+  env?: Env;
+  dialExecutor?: ExecutorDialer;
+}
+
+/**
+ * The write tools' route. With an executor socket set, the write runs in the
+ * executor (`file-write-contained.ts`) and its approval comes from the
+ * attested envelope, as bash's does (BIT-796); without a dialer, every write
+ * is refused rather than made here.
+ */
+interface WriteRoute {
+  containment?: Containment;
+  run?: ContainedProcessRunner;
+  env?: Env;
+}
+
+function writeRoute(opts: WriteToolOptions): WriteRoute {
+  const socket = executorSocket(opts.env);
+  if (socket === undefined) return {};
+  return {
+    containment: createContainment(socket, opts.dialExecutor, {
+      defaultCommandTimeoutMs: CONTAINED_WRITE_TIMEOUT_MS,
+      callTimeoutMs: () => CONTAINED_WRITE_TIMEOUT_MS,
+    }),
+    run: opts.dialExecutor === undefined
+      ? undialable
+      : createExecutorProcessRunner(socket, opts.dialExecutor),
+    ...(opts.env === undefined ? {} : { env: opts.env }),
+  };
+}
+
+/** How the write tools' descriptions state approval, per route. */
+function writeApproval(route: WriteRoute): string {
+  return route.run === undefined
+    ? "Mutating — requires operator approval before it runs."
+    : "Mutating. The write runs in the isolated executor, and requires " +
+      "operator approval before it runs unless the operator granted the " +
+      "executor's attested envelope, the executor's containment is attested " +
+      "for the call, and the call is within the envelope's limits.";
+}
+
 export function defineWriteFile(
   workspace: WorkspaceRoot,
+  opts: WriteToolOptions = {},
 ): CommandDefinition<string> {
+  const route = writeRoute(opts);
   return {
     id: "write_file",
+    ...(route.containment === undefined ? {} : { containment: route.containment }),
     title: "Write File",
     description:
       "Write UTF-8 text to a file in the workspace, by path relative to the " +
-      "workspace root, creating or overwriting it. Mutating — requires " +
-      "operator approval before it runs.",
+      "workspace root, creating or overwriting it. " + writeApproval(route),
     inputSchema: {
       type: "object",
       required: ["path", "content"],
@@ -274,25 +332,39 @@ export function defineWriteFile(
       filesystem: "write",
       cost: "none",
     },
-    executor: (call) =>
-      executeWriteFile(
-        workspace,
-        String(call.arguments.path),
-        String(call.arguments.content),
-      ),
+    executor: (call, context) =>
+      route.run === undefined
+        ? executeWriteFile(
+          workspace,
+          String(call.arguments.path),
+          String(call.arguments.content),
+        )
+        : executeContainedWrite(
+          workspace,
+          route.run,
+          String(call.arguments.path),
+          String(call.arguments.content),
+          {
+            ...(route.env === undefined ? {} : { env: route.env }),
+            ...(context.binding === undefined ? {} : { binding: context.binding }),
+          },
+        ),
   };
 }
 
 export function defineEditFile(
   workspace: WorkspaceRoot,
+  opts: WriteToolOptions = {},
 ): CommandDefinition<string> {
+  const route = writeRoute(opts);
   return {
     id: "edit_file",
+    ...(route.containment === undefined ? {} : { containment: route.containment }),
     title: "Edit File",
     description:
       "Replace an exact text fragment in an existing file in the workspace, by " +
       "path relative to the workspace root. The old text must occur exactly " +
-      "once. Mutating — requires operator approval before it runs.",
+      "once. " + writeApproval(route),
     inputSchema: {
       type: "object",
       required: ["path", "old_string", "new_string"],
@@ -326,12 +398,29 @@ export function defineEditFile(
       filesystem: "write",
       cost: "none",
     },
-    executor: (call) =>
-      executeEditFile(
+    executor: (call, context) =>
+      route.run !== undefined &&
+        Buffer.byteLength(String(call.arguments.new_string), "utf8") >
+          CONTAINED_WRITE_MAX_BYTES
+        ? Promise.resolve(
+          `error: cannot edit ${sanitizeOutputText(String(call.arguments.path))}: ` +
+            `new_string is above the ${CONTAINED_WRITE_MAX_BYTES} bytes one write ` +
+            "in the isolated executor takes",
+        )
+        : executeEditFile(
         workspace,
         String(call.arguments.path),
         String(call.arguments.old_string),
         String(call.arguments.new_string),
+        undefined,
+        route.run === undefined ? undefined : {
+          write: (p, content) =>
+            executeContainedWrite(workspace, route.run!, p, content, {
+              ...(route.env === undefined ? {} : { env: route.env }),
+              ...(context.binding === undefined ? {} : { binding: context.binding }),
+            }),
+          maxBytes: CONTAINED_WRITE_MAX_BYTES,
+        },
       ),
   };
 }
