@@ -381,8 +381,17 @@ providerAdapterConformance({
           // System stays top-level; the seed prompt is unused once history
           // exists.
           assert.partialDeepStrictEqual(body.system[0], { text: "sys" });
+          // The first and last user turns carry the history's cache
+          // breakpoints: the previous request's end and this one's.
           assert.deepStrictEqual(body.messages, [
-            { role: "user", content: "what is this repo?" },
+            {
+              role: "user",
+              content: [{
+                type: "text",
+                text: "what is this repo?",
+                cache_control: { type: "ephemeral" },
+              }],
+            },
             // A text block, then one tool_use block per call (name sanitized).
             {
               role: "assistant",
@@ -407,7 +416,12 @@ providerAdapterConformance({
               role: "user",
               content: [
                 { type: "tool_result", tool_use_id: "tu-1", content: "A" },
-                { type: "tool_result", tool_use_id: "tu-2", content: "B" },
+                {
+                  type: "tool_result",
+                  tool_use_id: "tu-2",
+                  content: "B",
+                  cache_control: { type: "ephemeral" },
+                },
               ],
             },
           ]);
@@ -457,6 +471,7 @@ providerAdapterConformance({
               content:
                 "invalid arguments for read_file: missing required argument: path",
               is_error: true,
+              cache_control: { type: "ephemeral" },
             }],
           }),
         respond: reply,

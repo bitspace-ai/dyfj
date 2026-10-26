@@ -39,7 +39,18 @@
           "cacheRead": 0,
           "cacheWrite": 0,
           "reasoning": 0,
-          "totalCalls": 1
+          "totalCalls": 1,
+          "steps": [
+            {
+              "order": 1,
+              "purpose": "initial",
+              "input": 10,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "output": 5,
+              "costUsd": 0
+            }
+          ]
         },
         "context": {
           "sources": []

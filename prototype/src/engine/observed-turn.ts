@@ -68,6 +68,15 @@ export async function observedTurn(
       state.turnCostBasis,
       result.usage.cost.basis,
     );
+    state.stepUsage.push({
+      order: state.providerCallOrder,
+      purpose,
+      input: result.usage.input,
+      cacheRead: result.usage.cacheRead,
+      cacheWrite: result.usage.cacheWrite,
+      output: result.usage.output,
+      costUsd: result.usage.cost.total,
+    });
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "afterProviderResponse",
       sessionId: state.session.sessionId,

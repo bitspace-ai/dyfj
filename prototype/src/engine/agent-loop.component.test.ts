@@ -1416,7 +1416,45 @@ describe("a two-tool-step Claude Sonnet 5.5 turn", () => {
       ],
     );
   });
+  it("puts each call's usage on the receipt, matching its provider_call row", async () => {
+    const { loop } = await sonnetTurn();
+    const calls = (await rows(loop)).filter((row) =>
+      row.event_type === "provider_call"
+    );
+    const steps = loop.result!.tokens.steps!;
+    assert.deepStrictEqual(
+      steps.map((step) => [
+        step.order,
+        step.purpose,
+        String(step.input),
+        String(step.output),
+        // The events column holds six decimal places.
+        Number(step.costUsd.toFixed(6)),
+      ]),
+      calls.map((row) => [
+        Number(row.provider_call_order),
+        row.provider_call_purpose,
+        row.tokens_input,
+        row.tokens_output,
+        Number(row.cost_total),
+      ]),
+    );
+    const total = steps.reduce((sum, step) => sum + step.costUsd, 0);
+    assert.ok(Math.abs(total - loop.result!.cost.totalUsd) < 1e-9);
+  });
+
+  it("sends each follow-up with cache breakpoints on its history", async () => {
+    const { loop } = await sonnetTurn();
+    const marked = loop.run.transport.requests.map((request) =>
+      JSON.stringify(JSON.parse(request.body).messages)
+        .split('"cache_control"').length - 1
+    );
+    // The first request is the prompt alone; each follow-up marks the
+    // previous request's end and its own.
+    assert.deepStrictEqual(marked, [1, 2, 2]);
+  });
 });
+
 
 describe("bash calls that run without a prompt (BIT-707)", () => {
   const BASH = (id: string, command: string): ToolCall => ({
@@ -1687,4 +1725,66 @@ describe("the step-limit handoff behind the per-call budget gates", () => {
       false,
     );
   });
+});
+
+// ─── per-step usage on the receipt (BIT-717) ─────────────────────────────────
+
+/** OpenAI-compatible usage: `fresh` uncached prompt tokens, `cached` read. */
+function usage(fresh: number, cached: number, output: number) {
+  return {
+    prompt_tokens: fresh + cached,
+    completion_tokens: output,
+    prompt_tokens_details: { cached_tokens: cached },
+  };
+}
+
+test("the receipt lists each agent-loop call's usage in call order", async () => {
+  const { result } = await loopTurn([
+    chatReply({ toolCalls: [LIST("c1")], usage: usage(100, 0, 5) }),
+    chatReply({ toolCalls: [LIST("c2", "src")], usage: usage(30, 100, 6) }),
+    chatReply({ content: "done", usage: usage(20, 130, 7) }),
+  ]);
+  const step = (
+    order: number,
+    purpose: string,
+    input: number,
+    cacheRead: number,
+    output: number,
+  ) => ({ order, purpose, input, cacheRead, cacheWrite: 0, output, costUsd: 0 });
+  assert.deepStrictEqual(result!.tokens.steps, [
+    step(1, "initial", 100, 0, 5),
+    step(2, "tool_followup", 30, 100, 6),
+    step(3, "tool_followup", 20, 130, 7),
+  ]);
+  const sum = (key: "input" | "cacheRead" | "output") =>
+    result!.tokens.steps!.reduce((total, s) => total + s[key], 0);
+  assert.deepStrictEqual(
+    [sum("input"), sum("cacheRead"), sum("output")],
+    [result!.tokens.input, result!.tokens.cacheRead, result!.tokens.output],
+  );
+});
+
+test("a turn at the step limit lists its handoff call as a step", async () => {
+  const loop = toolReply([LIST("c")], HANDOFF_REPLY);
+  const { result } = await loopTurn([loop, loop, loop], {
+    prompt: "loop without stopping",
+    maxToolSteps: 2,
+  });
+  assert.deepStrictEqual(
+    result!.tokens.steps!.map((step) => [step.order, step.purpose]),
+    [[1, "initial"], [2, "tool_followup"], [3, "step_limit_handoff"]],
+  );
+});
+
+test("a forced conclusion is listed with its purpose", async () => {
+  // The whole second step repeats the first, so the loop forces a reply.
+  const { result } = await loopTurn([
+    toolReply([LIST("c1")]),
+    toolReply([LIST("c2")]),
+    chatReply({ content: "concluded" }),
+  ]);
+  assert.deepStrictEqual(
+    result!.tokens.steps!.map((step) => step.purpose),
+    ["initial", "tool_followup", "forced_conclusion"],
+  );
 });

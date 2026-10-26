@@ -12,6 +12,7 @@
 import {
   SESSION_ID_SHAPE,
   summarizeError,
+  type TurnStepUsage,
   type WorkbenchSessionEvent,
 } from "./contract/mod.ts";
 import { connectUnixClient, type UnixClient } from "./transport/mod.ts";
@@ -47,6 +48,7 @@ import {
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
+import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import {
   fetchSessionPosture,
   formatPostureLine,
@@ -137,6 +139,10 @@ export async function runRepl(
         continue;
       }
       if (await handleReplStepsCommand(cmd, config, io, connect)) {
+        sessionState.lastReplCommand = cmd;
+        continue;
+      }
+      if (handleReplReceiptCommand(cmd, io, sessionState.lastTurnSteps)) {
         sessionState.lastReplCommand = cmd;
         continue;
       }
@@ -249,6 +255,9 @@ export async function runRepl(
         if ("cost" in result) {
           sessionState.sessionSpendUsd += result.cost.totalUsd;
         }
+        sessionState.lastTurnSteps = "runner" in result
+          ? undefined
+          : result.tokens.steps;
         if (!sessionState.events) sessionState.events = [];
         sessionState.events.push(createCliSessionEvent({
           eventId: `evt_u_${eventNum}`,
@@ -367,6 +376,8 @@ export interface ReplSessionState {
   lastModelSlug?: string;
   lastReplCommand?: string;
   lastFriction?: FrictionPostResult;
+  /** The last turn's per-call usage, for `/receipt steps`. */
+  lastTurnSteps?: readonly TurnStepUsage[];
   /** The in-process idea/packet registry of the `unix: false` path. */
   ideaRegistry?: IdeaPacketRegistry;
 }
