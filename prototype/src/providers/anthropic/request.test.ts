@@ -183,20 +183,21 @@ describe("anthropic history cache breakpoints", () => {
     }
   });
 
-  it("mark a forced conclusion, which offers no tools", () => {
+  it("leave a forced conclusion, which offers no tools, unmarked", () => {
     const body = build(transcript(2), false);
     assert.equal(body.tools, undefined);
-    assert.deepEqual(marks(body), [[2, 0], [4, 0]]);
+    assert.deepEqual(marks(body), []);
+    assert.equal(breakpointCount(body), 1);
   });
 
-  it("mark a handoff request's closing text after the tool results", () => {
+  it("mark a user text block that follows the tool results", () => {
     const body = build([
       ...transcript(1),
-      { role: "user", content: "write the handoff" },
+      { role: "user", content: "one more thing" },
     ]);
     assert.deepEqual(body.messages[2].content, [
       { type: "tool_result", tool_use_id: "tu-1-0", content: "contents of tu-1-0" },
-      { type: "text", text: "write the handoff", cache_control: MARK },
+      { type: "text", text: "one more thing", cache_control: MARK },
     ]);
     assert.deepEqual(marks(body), [[0, 0], [2, 1]]);
   });

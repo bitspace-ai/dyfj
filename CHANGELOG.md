@@ -18,6 +18,9 @@ README are tracked separately in its Revision history section.
   - The Anthropic request now also marks the last user message and the user
     message that ended the previous request, so a follow-up can read the
     earlier history from the prompt cache (the provider's 5-minute cache).
+    A request that offers no tools, a forced conclusion or the step-limit
+    handoff, is not marked: its prefix differs, so nothing would read the
+    entry.
     With the system prompt's, that is at most three of the four breakpoints
     the API allows. Apart from the markers, the messages are the ones sent
     before; a marked prompt string goes out as one text block. The digest that decides whether thinking blocks are

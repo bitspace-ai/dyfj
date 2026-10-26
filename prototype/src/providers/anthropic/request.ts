@@ -341,7 +341,10 @@ export function buildAnthropicMessagesRequest(
       new PrefixDigest(system, tools),
     ),
   };
-  if (options.messages && options.messages.length > 0) {
+  // A request that offers no tools (a forced conclusion, the step-limit
+  // handoff) ends the turn, and its prefix differs from the tool-bearing
+  // requests' anyway, so a cache entry written for it would not be read.
+  if (tools && options.messages && options.messages.length > 0) {
     markHistoryCacheBreakpoints(body.messages);
   }
   if (tools) body.tools = tools;

@@ -5,16 +5,17 @@
 import type { TurnStepUsage } from "../../contract/mod.ts";
 import type { Io } from "../io.ts";
 import { formatStepLines } from "../render/receipt.ts";
+import type { TurnResult } from "../turn-client.ts";
 
 /**
- * `/receipt steps` prints the last turn's per-call lines. `steps` is
- * undefined before the first turn, after an external-runner turn, and from a
- * runtime that predates per-call usage.
+ * `/receipt steps` prints the last turn's per-call lines. There are none
+ * before the first turn, after an external-runner turn, and from a runtime
+ * that predates per-call usage.
  */
 export function handleReplReceiptCommand(
   line: string,
   io: Io,
-  steps: readonly TurnStepUsage[] | undefined,
+  last: TurnResult | undefined,
 ): boolean {
   const parts = line.trim().split(/\s+/);
   if (parts[0] !== "/receipt") return false;
@@ -22,6 +23,8 @@ export function handleReplReceiptCommand(
     io.err("usage: /receipt steps");
     return true;
   }
+  const steps: readonly TurnStepUsage[] | undefined =
+    last === undefined || "runner" in last ? undefined : last.tokens.steps;
   if (steps === undefined || steps.length === 0) {
     io.err("no per-step usage for the last turn");
     return true;

@@ -449,31 +449,45 @@ describe("/receipt steps", () => {
     },
   ];
 
+  const withSteps = result({
+    tokens: {
+      input: 1_516,
+      output: 473,
+      cacheRead: 22_333,
+      cacheWrite: 29_682,
+      totalCalls: 2,
+      steps,
+    },
+  });
+
   it("prints one line per provider call, in call order", () => {
     assert.deepStrictEqual(formatStepLines(steps), [
       "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634",
       "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0",
     ]);
     const fake = fakeIo();
-    assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, steps), true);
+    assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, withSteps), true);
     assert.deepStrictEqual(fake.stderr, [
       "last turn, 2 provider calls:",
       ...formatStepLines(steps),
     ]);
   });
 
-  it("says so when the last turn has no per-step usage", () => {
-    const fake = fakeIo();
-    assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, undefined), true);
-    assert.deepStrictEqual(fake.stderr, ["no per-step usage for the last turn"]);
+  it("says so when there is no per-step usage for the last turn", () => {
+    // Before the first turn, and from a runtime that sends no steps.
+    for (const last of [undefined, result()]) {
+      const fake = fakeIo();
+      assert.equal(handleReplReceiptCommand("/receipt steps", fake.io, last), true);
+      assert.deepStrictEqual(fake.stderr, ["no per-step usage for the last turn"]);
+    }
   });
 
   it("answers anything but /receipt steps with its usage", () => {
     for (const line of ["/receipt", "/receipt step", "/receipt steps 2"]) {
       const fake = fakeIo();
-      assert.equal(handleReplReceiptCommand(line, fake.io, steps), true);
+      assert.equal(handleReplReceiptCommand(line, fake.io, withSteps), true);
       assert.deepStrictEqual(fake.stderr, ["usage: /receipt steps"]);
     }
-    assert.equal(handleReplReceiptCommand("/receipts", fakeIo().io, steps), false);
+    assert.equal(handleReplReceiptCommand("/receipts", fakeIo().io, withSteps), false);
   });
 });
