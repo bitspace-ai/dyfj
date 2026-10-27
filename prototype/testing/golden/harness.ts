@@ -314,6 +314,10 @@ async function startEngineServer(
         DYFJ_SOCKET: socket,
         DYFJ_ROOT: dir,
         DYFJ_PRINCIPAL_ID: "golden-operator",
+        // The tool sandbox (BIT-662) runs only where srt can, so snapshots
+        // would differ by machine. The suite characterizes the prompting
+        // route; srt-sandbox.integration.test.ts covers the sandboxed one.
+        DYFJ_SANDBOX: "off",
         ...(profile.friction
           ? { DYFJ_FRICTION_ISSUE_ID: LINEAR_ISSUE_IDENTIFIER }
           : {}),

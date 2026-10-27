@@ -93,6 +93,8 @@ export interface BoundedRequest {
   cwd: string;
   env: Record<string, string>;
   timeoutMs: number;
+  /** Text written to the command's standard input, which is then closed. Absent, stdin is closed from the start. */
+  stdin?: string;
 }
 
 export interface BoundedOptions {
@@ -372,7 +374,7 @@ function started(child: ChildProcess): Promise<void> {
 }
 
 /**
- * Run one command with stdin closed and both output streams piped, bounded by
+ * Run one command with stdin closed (or fed `stdin`, then closed) and both output streams piped, bounded by
  * `timeoutMs` plus the stop grace and the drain bound. Throws only when the
  * command cannot be started.
  */
@@ -399,7 +401,7 @@ export async function runBounded(
     {
       cwd: request.cwd,
       env: request.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [request.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       // Own process group: the leader's pid is the group id the stop signals.
       detached: useGroup,
     },
@@ -407,6 +409,12 @@ export async function runBounded(
   await started(child);
   // Later errors (a failed kill) have no caller to tell.
   child.on("error", () => {});
+  if (request.stdin !== undefined) {
+    // A command that exits without reading its input closes the pipe; that
+    // EPIPE is the command's business, reported by its exit status.
+    child.stdin!.on("error", () => {});
+    child.stdin!.end(request.stdin);
+  }
   const group = useGroup && child.pid !== undefined &&
       isSignallableGroup(child.pid)
     ? child.pid

@@ -19,6 +19,7 @@ import type {
 } from "../contract/mod.ts";
 import type {
   CommandRegistry,
+  CommandSandbox,
   ExecutorDialer,
   RootAnchors,
 } from "../tools/mod.ts";
@@ -67,6 +68,8 @@ export interface NativeTurnPorts {
   rootAnchors: RootAnchors;
   /** Dials the executor socket for the `bash` tool; see `ToolCatalogPorts`. */
   dialExecutor?: ExecutorDialer;
+  /** The runtime's srt sandbox; see `ToolCatalogPorts`. */
+  sandbox?: CommandSandbox;
   /** The runtime policy memory recall is checked against; the base when absent. */
   policy?: RuntimePolicy;
 }

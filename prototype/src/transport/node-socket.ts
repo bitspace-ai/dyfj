@@ -195,3 +195,36 @@ export const nodeSocketHost: SocketHost = {
     });
   },
 };
+
+/**
+ * A loopback TCP listener on a free port that records whether anything
+ * connected, then closes the connection. The tool sandbox's boot probe
+ * (BIT-662) has a sandboxed command connect to it directly, around srt's
+ * proxy: the sandbox passes only when the connect is refused and the
+ * listener saw nothing.
+ */
+export async function listenLoopbackProbe(): Promise<{
+  readonly port: number;
+  accepted(): boolean;
+  close(): void;
+}> {
+  let accepted = false;
+  const server = net.createServer((socket) => {
+    accepted = true;
+    socket.destroy();
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    server.close();
+    throw new Error("the probe listener has no TCP port");
+  }
+  return {
+    port: address.port,
+    accepted: () => accepted,
+    close: () => server.close(),
+  };
+}

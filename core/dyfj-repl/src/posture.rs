@@ -222,6 +222,9 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     if let Some(level) = runtime.get("permissionLevel").and_then(Value::as_str) {
         parts.push(format!("permission {}", visible(level)));
     }
+    if let Some(sandbox) = sandbox_segment(runtime) {
+        parts.push(sandbox);
+    }
     // The session's own limit, when it set one, is what its turns run with.
     let steps = session
         .max_tool_steps
@@ -235,6 +238,19 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     }
     parts.push(socket.to_string());
     format!("posture: {}", parts.join(" · "))
+}
+
+/// The tool sandbox's segment (BIT-662): `sandbox <backend>` when its boot
+/// probe passed, otherwise `sandbox OFF (<reason>): commands ask`. `None` for
+/// a runtime that reports no sandbox. The runtime's `describeSandbox` prints
+/// the same text.
+fn sandbox_segment(runtime: &Value) -> Option<String> {
+    let sandbox = runtime.get("sandbox")?;
+    let field = |key: &str, fallback: &str| visible(sandbox.get(key).and_then(Value::as_str).unwrap_or(fallback));
+    Some(match sandbox.get("state").and_then(Value::as_str) {
+        Some("on") => format!("sandbox {}", field("backend", "unknown backend")),
+        _ => format!("sandbox OFF ({}): commands ask", field("reason", "no reason given")),
+    })
 }
 
 /// Lines naming the secret pointers that failed when the runtime started.
@@ -294,6 +310,28 @@ mod tests {
         assert!(unresolved_pointer_warnings(&json!({"runtime": {"unavailableSecrets": []}})).is_empty());
         let hostile = json!({"runtime": {"unavailableSecrets": [{"envVar": "X\u{1b}[2J", "reason": "r"}]}});
         assert!(!unresolved_pointer_warnings(&hostile)[0].contains('\u{1b}'));
+    }
+
+    #[test]
+    fn a_sandbox_that_is_on_is_named_with_its_backend() {
+        let status = json!({"runtime": {"permissionLevel": "operator", "sandbox": {"state": "on", "backend": "srt 0.0.81"}}});
+        let rendered = line(&status, &Session::default(), "/tmp/s.sock");
+        assert!(rendered.contains("permission operator · sandbox srt 0.0.81 ·"), "{rendered}");
+    }
+
+    #[test]
+    fn a_sandbox_switched_off_says_commands_ask() {
+        let status = json!({"runtime": {"sandbox": {"state": "off", "backend": "srt 0.0.81", "reason": "DYFJ_SANDBOX=off"}}});
+        let rendered = line(&status, &Session::default(), "/tmp/s.sock");
+        assert!(rendered.contains("sandbox OFF (DYFJ_SANDBOX=off): commands ask"), "{rendered}");
+    }
+
+    #[test]
+    fn a_runtime_without_a_sandbox_field_shows_no_sandbox_segment() {
+        let rendered = line(&json!({"runtime": {"permissionLevel": "strict"}}), &Session::default(), "/tmp/s.sock");
+        assert!(!rendered.contains("sandbox"), "{rendered}");
+        let hostile = json!({"runtime": {"sandbox": {"state": "off", "reason": "x\u{1b}[2J"}}});
+        assert!(!line(&hostile, &Session::default(), "/tmp/s.sock").contains('\u{1b}'));
     }
 
     #[test]

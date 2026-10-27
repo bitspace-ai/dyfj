@@ -28,6 +28,7 @@ import { Buffer } from "node:buffer";
 import type { Env } from "../../config/mod.ts";
 import type { CommandDefinition, Containment } from "../definition.ts";
 import { createContainment } from "./containment.ts";
+import { type CommandSandbox, sandboxContainment } from "./srt-sandbox.ts";
 import { executorSocket, undialable } from "./exec.ts";
 import type { ExecutorDialer } from "./executor-transport.ts";
 import { createExecutorProcessRunner } from "./executor-transport.ts";
@@ -253,23 +254,47 @@ export function defineGlobFiles(
 export interface WriteToolOptions {
   env?: Env;
   dialExecutor?: ExecutorDialer;
+  sandbox?: CommandSandbox;
 }
 
 /**
  * The write tools' route. With an executor socket set, the write runs in the
  * executor (`file-write-contained.ts`) and its approval comes from the
  * attested envelope, as bash's does (BIT-796); without a dialer, every write
- * is refused rather than made here.
+ * is refused rather than made here. Without a socket, when the srt sandbox's
+ * boot probe passed, the same write program runs in the sandbox (BIT-662),
+ * whose policy bounds what it can write.
  */
 interface WriteRoute {
   containment?: Containment;
   run?: ContainedProcessRunner;
   env?: Env;
+  /** Where the write runs, as results name it. */
+  where?: string;
 }
 
-function writeRoute(opts: WriteToolOptions): WriteRoute {
+function writeRoute(
+  workspace: WorkspaceRoot,
+  opts: WriteToolOptions,
+): WriteRoute {
   const socket = executorSocket(opts.env);
-  if (socket === undefined) return {};
+  if (socket === undefined) {
+    const sandbox = opts.sandbox;
+    if (sandbox === undefined || sandbox.status.state !== "on") return {};
+    return {
+      containment: sandboxContainment(sandbox),
+      run: (argv, cwd, timeoutMs, env, _binding, stdin) =>
+        sandbox.runArgv(argv, {
+          root: workspace.path,
+          cwd,
+          timeoutMs,
+          env,
+          stdin,
+        }),
+      ...(opts.env === undefined ? {} : { env: opts.env }),
+      where: "the sandbox",
+    };
+  }
   return {
     containment: createContainment(socket, opts.dialExecutor, {
       defaultCommandTimeoutMs: CONTAINED_WRITE_TIMEOUT_MS,
@@ -286,6 +311,11 @@ function writeRoute(opts: WriteToolOptions): WriteRoute {
 function writeApproval(route: WriteRoute): string {
   return route.run === undefined
     ? "Mutating — requires operator approval before it runs."
+    : route.where === "the sandbox"
+    ? "Mutating. The write runs in an OS sandbox whose only writable places " +
+      "are the workspace, srt's scratch directory, npm's log directory and " +
+      "what a commit on the session branch needs; it runs without a prompt under the operator posture on the local socket and " +
+      "otherwise requires operator approval."
     : "Mutating. The write runs in the isolated executor, and requires " +
       "operator approval before it runs unless the operator granted the " +
       "executor's attested envelope, the executor's containment is attested " +
@@ -296,7 +326,7 @@ export function defineWriteFile(
   workspace: WorkspaceRoot,
   opts: WriteToolOptions = {},
 ): CommandDefinition<string> {
-  const route = writeRoute(opts);
+  const route = writeRoute(workspace, opts);
   return {
     id: "write_file",
     ...(route.containment === undefined ? {} : { containment: route.containment }),
@@ -347,6 +377,7 @@ export function defineWriteFile(
           {
             ...(route.env === undefined ? {} : { env: route.env }),
             ...(context.binding === undefined ? {} : { binding: context.binding }),
+            ...(route.where === undefined ? {} : { where: route.where }),
           },
         ),
   };
@@ -356,7 +387,7 @@ export function defineEditFile(
   workspace: WorkspaceRoot,
   opts: WriteToolOptions = {},
 ): CommandDefinition<string> {
-  const route = writeRoute(opts);
+  const route = writeRoute(workspace, opts);
   return {
     id: "edit_file",
     ...(route.containment === undefined ? {} : { containment: route.containment }),
@@ -405,7 +436,7 @@ export function defineEditFile(
         ? Promise.resolve(
           `error: cannot edit ${sanitizeOutputText(String(call.arguments.path))}: ` +
             `new_string is above the ${CONTAINED_WRITE_MAX_BYTES} bytes one write ` +
-            "in the isolated executor takes",
+            `in ${route.where ?? "the isolated executor"} takes`,
         )
         : executeEditFile(
         workspace,
@@ -418,6 +449,7 @@ export function defineEditFile(
             executeContainedWrite(workspace, route.run!, p, content, {
               ...(route.env === undefined ? {} : { env: route.env }),
               ...(context.binding === undefined ? {} : { binding: context.binding }),
+              ...(route.where === undefined ? {} : { where: route.where }),
             }),
           maxBytes: CONTAINED_WRITE_MAX_BYTES,
         },

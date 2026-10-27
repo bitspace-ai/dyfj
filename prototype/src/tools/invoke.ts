@@ -16,7 +16,11 @@ import {
   type ConfirmToolApproval,
   type ContainmentVerdict,
 } from "./definition.ts";
-import { type CommandPolicyContext, evaluateCommandPolicy } from "./policy.ts";
+import {
+  type CommandPolicyContext,
+  evaluateCommandPolicy,
+  UNSANDBOXED_ASK_BASIS,
+} from "./policy.ts";
 import {
   fixedOperatorReason,
   operatorFailureReason,
@@ -71,7 +75,9 @@ export function sessionGrantKey(call: CommandCall, scope?: string): string {
  * A contained command's session grants are scoped to the attested executor
  * policy they were made under, so a grant does not carry over to another
  * policy. An unattested contained call is never granted for the session: it
- * has no policy to scope the grant to. A native command's key is unchanged.
+ * has no policy to scope the grant to. A sandboxed call's grant (one made
+ * under the strict posture, BIT-662) is scoped to the sandbox backend. A
+ * native command's key is unchanged.
  */
 function grantScope(
   verdict: ContainmentVerdict | undefined,
@@ -79,6 +85,8 @@ function grantScope(
   if (verdict === undefined) return undefined;
   return verdict.status === "attested"
     ? `contained:${verdict.envelope.policyDigest}`
+    : verdict.status === "sandboxed"
+    ? `sandboxed:${verdict.backend}`
     : null;
 }
 
@@ -223,7 +231,10 @@ async function runApproved<TResult>(
   containment: ContainmentVerdict | undefined,
 ): Promise<CommandInvocationResult<TResult>> {
   let authzBasis = policyBasis;
-  const grants = command.grantable === true
+  // An unsandboxed call (BIT-662) asks every time: it is never offered or
+  // matched as a session grant.
+  const grants = command.grantable === true &&
+      policyBasis !== UNSANDBOXED_ASK_BASIS
     ? policyContext.sessionGrants
     : undefined;
   const scope = grantScope(containment);

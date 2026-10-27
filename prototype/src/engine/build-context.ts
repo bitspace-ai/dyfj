@@ -304,6 +304,7 @@ async function buildCompanionContext(
     ...(ports.dialExecutor === undefined
       ? {}
       : { dialExecutor: ports.dialExecutor }),
+    ...(ports.sandbox === undefined ? {} : { sandbox: ports.sandbox }),
   };
   state.commandRegistry = buildToolCatalog(
     toolPorts,
