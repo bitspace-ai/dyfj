@@ -13,7 +13,8 @@
  * an asynchronous spawn (`runBounded`); a synchronous one would hang a
  * networked child.
  *
- * Boot fails closed. When srt is switched off (`DYFJ_SANDBOX=off`), the
+ * A boot failure turns off the sandbox's auto-approval; it never runs a
+ * command unconfined without a prompt. When srt is switched off (`DYFJ_SANDBOX=off`), the
  * platform is unsupported, a dependency is missing, srt's scratch directory
  * is not safely ours, or the probe does not see the outcomes it expects, the
  * sandbox is `off` with a reason. The tools then take the native route,
@@ -31,13 +32,14 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import process from "node:process";
 import {
   SandboxManager,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
 import { type Env, processEnv } from "../../config/mod.ts";
+import { configFilePath } from "../../config/toml.ts";
 import type { Containment } from "../definition.ts";
 import { type BoundedResult, runBounded } from "./bounded-process.ts";
 import {
@@ -280,8 +282,24 @@ export async function probeSandbox(
   const outside = join(parent, "outside");
   let listener: LoopbackProbe | undefined;
   try {
-    listener = await listenProbe();
     const run = { root, cwd: root, timeoutMs: 20_000, env };
+    // A control connect, outside the sandbox, shows this bash can make the
+    // connection at all; without it, a bash with no /dev/tcp support would
+    // pass the refusal check below without srt refusing anything.
+    const control = await listenProbe();
+    try {
+      const reached = await runBounded({
+        command: "bash",
+        args: ["-c", connectCommand(control.port)],
+        ...run,
+      });
+      if (reached.code !== 0 || !(await acceptedSoon(control))) {
+        return "the probe's control connect, outside the sandbox, did not succeed";
+      }
+    } finally {
+      control.close();
+    }
+    listener = await listenProbe();
     const inside = await sandbox.runShell("printf ok > inside", run);
     if (inside.code !== 0 || readFileSync(join(root, "inside"), "utf8") !== "ok") {
       return "the probe's write inside its directory did not succeed";
@@ -290,11 +308,10 @@ export async function probeSandbox(
     if (write.code === 0 || existsSync(outside)) {
       return "the probe's write outside its directory was not refused";
     }
-    const connect = await sandbox.runShell(
-      `exec 3<>/dev/tcp/127.0.0.1/${listener.port}`,
-      run,
-    );
-    if (connect.code === 0 || listener.accepted()) {
+    const connect = await sandbox.runShell(connectCommand(listener.port), run);
+    if (
+      connect.code === 0 || connect.timedOut || (await acceptedSoon(listener))
+    ) {
       return "the probe's direct connect was not refused";
     }
     return null;
@@ -308,6 +325,20 @@ export async function probeSandbox(
       // A probe directory left in the temp dir does not change the verdict.
     }
   }
+}
+
+/** A bash command that opens a TCP connection to `port` on loopback. */
+function connectCommand(port: number): string {
+  return `exec 3<>/dev/tcp/127.0.0.1/${port}`;
+}
+
+/** Whether `listener` has accepted a connection, allowing its accept event a moment to arrive. */
+async function acceptedSoon(listener: LoopbackProbe): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    if (listener.accepted()) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return listener.accepted();
 }
 
 /** The `DYFJ_SANDBOX` switch: only `off` is meaningful. */
@@ -352,7 +383,14 @@ export async function bootSandbox(
     return offSandbox(`srt failed to start: ${(error as Error).message}`);
   }
   const baseEnv = hostEnv(env);
-  const sandbox = createSandbox(srt, options, baseEnv);
+  // The runtime's own directory is DYFJ_ROOT when set, so it is denied by
+  // path as well as under the built-in `.dyfj` entry.
+  const runtimeDir = dirname(configFilePath(env));
+  const sandbox = createSandbox(
+    srt,
+    { ...options, denyRead: [...(options.denyRead ?? []), runtimeDir] },
+    baseEnv,
+  );
   const failure = await probeSandbox(sandbox, baseEnv, options.listenProbe)
     .catch((error) => `the probe could not run: ${(error as Error).message}`);
   if (failure !== null) {

@@ -580,7 +580,8 @@ export function defineGit(
         ? "Git runs in an OS sandbox: it and its hooks and helpers can write " +
           "only the workspace, srt's scratch directory, npm's log directory " +
           "and what a commit on the session branch needs, " +
-          "reach only the package-registry allowlist (never GitHub), and not " +
+          "reach only the npm registry and the domains the operator allowed " +
+          "(never GitHub), and not " +
           "read the credential paths on the sandbox's deny list. `add` and `commit` need a " +
           "linked git worktree: in a main checkout the sandbox denies writes " +
           "under .git. "

@@ -34,7 +34,8 @@ README are tracked separately in its Revision history section.
     `.git` is write-denied, and the git tool refuses `add` and `commit` there
     with a message to use a worktree. Reads of the standard tools'
     credential paths (`~/.ssh`, `~/.config/gh`, `~/.kube/config` and others)
-    and of `~/.dyfj` are denied, as is any path the operator adds under
+    and of the runtime's directory (`~/.dyfj`, and `DYFJ_ROOT` when set)
+    are denied, as is any path the operator adds under
     `[sandbox] deny_read`; that list adds to the built-in one and cannot
     remove from it. The network goes through srt's proxy, which
     allows `registry.npmjs.org` and any domain added under
@@ -53,9 +54,11 @@ README are tracked separately in its Revision history section.
     `operator`; under `strict` it asks unless the operator allowed that exact
     call for the rest of the session. bash's read-only
     allowlist applies only on the native route.
-  - Boot probe and fallback: at boot the runtime runs three commands in the
-    sandbox. A write inside a fresh directory must succeed, and a write
-    outside it and a direct connect to a local listener must be refused.
+  - Boot probe and fallback: at boot the runtime first connects to a local
+    listener outside the sandbox, to show this bash can connect at all, and
+    then runs three commands in the sandbox. A write inside a fresh directory
+    must succeed, and a write outside it and a direct connect to a local
+    listener must be refused.
     When `DYFJ_SANDBOX=off` is set, the platform or a dependency is missing,
     srt's scratch directory is not owned by the operator or is writable by
     group or others, or the probe fails, the sandbox is off and the tools

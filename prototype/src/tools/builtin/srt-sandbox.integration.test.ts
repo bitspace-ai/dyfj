@@ -84,8 +84,12 @@ async function bash(command: string, root = W): Promise<string> {
   );
 }
 
+// Seatbelt reports a refused write as "Operation not permitted"; bubblewrap's
+// read-only binds report "Read-only file system", and its hidden paths
+// "Permission denied".
 const refused = (out: string) =>
-  !out.startsWith("exit 0") && /Operation not permitted/.test(out);
+  !out.startsWith("exit 0") &&
+  /Operation not permitted|Read-only file system|Permission denied/.test(out);
 
 describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
   before(async () => {

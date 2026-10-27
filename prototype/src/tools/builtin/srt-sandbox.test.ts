@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
+import { listenLoopbackProbe } from "../../transport/mod.ts";
 import type { CommandCall } from "../definition.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import { invokeCommand } from "../invoke.ts";
@@ -227,7 +228,7 @@ describe("the boot", () => {
   it("a sandbox that does not wrap commands fails the boot probe", async () => {
     let reset = false;
     const sandbox = await bootSandbox({
-      listenProbe: fakeListener,
+      listenProbe: listenLoopbackProbe,
       env: new MapEnv({ PATH: process.env.PATH ?? "/usr/bin:/bin" }),
       srt: fakeSrt({ reset: () => { reset = true; return Promise.resolve(); } }),
       scratchDir: join(base, "scratch"),
@@ -239,6 +240,52 @@ describe("the boot", () => {
       /boot probe failed: .*did not wrap/,
     );
     assert.equal(reset, true);
+  });
+
+  it("the probe fails when bash cannot connect even outside the sandbox", async () => {
+    // Nothing listens on the fake listener's port, so the control connect
+    // fails, as it would for a bash without /dev/tcp; the sandbox's own
+    // refusal would otherwise be indistinguishable from that.
+    let wrapped = false;
+    const sandbox = await bootSandbox({
+      listenProbe: fakeListener,
+      env: new MapEnv({ PATH: process.env.PATH ?? "/usr/bin:/bin" }),
+      srt: fakeSrt({
+        wrapWithSandbox: (command) => {
+          wrapped = true;
+          return Promise.resolve(`true; ${command}`);
+        },
+      }),
+      scratchDir: join(base, "scratch"),
+      readLayout: layout(null),
+    });
+    assert.match(
+      (sandbox.status as { reason: string }).reason,
+      /boot probe failed: the probe's control connect, outside the sandbox, did not succeed/,
+    );
+    assert.equal(wrapped, false);
+  });
+
+  it("denies reads of the runtime's directory when DYFJ_ROOT moves it", async () => {
+    const elsewhere = join(base, "runtime-root");
+    const denied: unknown[][] = [];
+    await bootSandbox({
+      listenProbe: listenLoopbackProbe,
+      env: new MapEnv({
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        DYFJ_ROOT: elsewhere,
+      }),
+      srt: fakeSrt({
+        wrapWithSandbox: (command, _shell, config) => {
+          denied.push([...(config.filesystem?.denyRead ?? [])]);
+          return Promise.resolve(command);
+        },
+      }),
+      scratchDir: join(base, "scratch"),
+      readLayout: layout(null),
+    });
+    assert.ok(denied.length > 0, "the probe compiled a policy");
+    assert.ok(denied[0]!.includes(elsewhere), JSON.stringify(denied[0]));
   });
 
   it("refuses a scratch directory that others can write", () => {

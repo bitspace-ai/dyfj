@@ -367,10 +367,11 @@ function bashReach(route: BashRoute): string {
     ? ". The command runs in an OS sandbox: it can write only in the " +
       "workspace, srt's scratch directory ($TMPDIR), npm's log directory " +
       "(~/.npm/_logs) and what a commit on the " +
-      "session branch needs; it can reach only the package registries on the " +
-      "allowlist (never GitHub); and it cannot read the credential paths on " +
-      "the sandbox's deny list. Writes and connects outside that are refused with \"Operation " +
-      "not permitted\". npm's cache is under $TMPDIR. "
+      "session branch needs; it can reach only the npm registry and the " +
+      "domains the operator allowed (never GitHub); and it cannot read the " +
+      "credential paths on the sandbox's deny list. Writes and connects " +
+      "outside that are refused (on macOS, \"Operation not permitted\"). " +
+      "npm's cache is under $TMPDIR. "
     : ", but the command is NOT sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. ";
 }
