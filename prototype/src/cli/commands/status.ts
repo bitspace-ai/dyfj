@@ -53,7 +53,25 @@ export interface RuntimeStatusPayload {
     clients?: number;
     /** Turns not yet settled; absent on older servers. */
     inFlightTurns?: number;
+    /** The tool sandbox (BIT-662); absent on older servers. */
+    sandbox?: { state?: unknown; backend?: unknown; reason?: unknown };
   };
+}
+
+/**
+ * The sandbox segment the posture lines and `dyfj status` show, or null when
+ * the runtime reports none. The runtime's `describeSandbox` and the Rust
+ * REPL's posture line print the same text.
+ */
+export function formatSandbox(
+  sandbox: NonNullable<RuntimeStatusPayload["runtime"]>["sandbox"],
+): string | null {
+  if (sandbox === undefined || sandbox === null) return null;
+  const text = (value: unknown, fallback: string) =>
+    typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "?") : fallback;
+  return sandbox.state === "on"
+    ? `sandbox ${text(sandbox.backend, "unknown backend")}`
+    : `sandbox OFF (${text(sandbox.reason, "no reason given")}): commands ask`;
 }
 
 /** A fingerprint field for display: its first 12 characters (of the hex). */
@@ -208,6 +226,7 @@ export function formatRuntimeStatus(
       models.hosted ?? 0
     } hosted`,
     `permission: ${runtime.permissionLevel ?? "unknown"}`,
+    ...[formatSandbox(runtime.sandbox)].filter((line) => line !== null),
     `approve paid default: ${
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,

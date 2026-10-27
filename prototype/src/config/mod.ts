@@ -103,6 +103,11 @@ export {
 export { assertSecureMemoryUrl, memoryMcpNetGrant } from "./memory-url.ts";
 export { loadNetworkAllow, parseNetworkAllow } from "./network-config.ts";
 export {
+  loadSandboxConfig,
+  parseSandboxConfig,
+  type SandboxConfig,
+} from "./sandbox-config.ts";
+export {
   baseRuntimePolicy,
   CLI_NODE_PERMISSION_FLAGS,
   cliRuntimePolicy,

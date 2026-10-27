@@ -8,6 +8,7 @@
   "scripts": {
     "test:file": "bash -c 'test $# -gt 0 || { echo \"usage: npm run test:file -- <path>... [--filter <pattern>]\" >&2; exit 2; }; exec node scripts/run-unit-tests.ts \"$@\"' dyfj-test-file",
     "test:golden": "node testing/golden/run.ts",
+    "test:sandbox-acceptance": "node scripts/sandbox-acceptance.ts",
     "context-size-response": "node --env-file-if-exists=.env examples/context-size-response.ts",
     "model-response-modes": "node --env-file-if-exists=.env examples/model-response-modes.ts",
     "structured-output": "node --env-file-if-exists=.env examples/structured-output.ts",
@@ -20,6 +21,7 @@
   "dependencies": {
     "@agentclientprotocol/codex-acp": "1.11.0",
     "@agentclientprotocol/sdk": "1.8.0",
+    "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/server": "2.3.1",
     "mysql2": "3.24.6",

@@ -1,6 +1,9 @@
 /**
  * `write_file` and `edit_file`'s write, in the isolated machine's executor
- * (BIT-796). With an executor socket set, the write runs there and never in
+ * (BIT-796), or, without one, in the srt sandbox when its boot probe passed
+ * (BIT-662). There the sandbox's write policy (`srt-policy.ts`) bounds the
+ * write instead of the executor's mounts and Landlock rules; the rest of
+ * this comment describes the executor route. With an executor socket set, the write runs there and never in
  * the runtime: the executor's mounts and Landlock rules decide what it can
  * write, which is the workspace and its scratch space, as for bash. The
  * attested envelope can then cover the write as it covers bash
@@ -112,10 +115,10 @@ export function containedWriteArgv(p: string): string[] {
 }
 
 /** The tool result for the executor's status word. */
-function resultFor(p: string, result: BoundedResult): string {
+function resultFor(p: string, result: BoundedResult, where: string): string {
   const shown = sanitizeOutputText(p);
   if (result.timedOut || result.code !== 0) {
-    return `error: cannot write ${shown}: the isolated executor did not finish the write`;
+    return `error: cannot write ${shown}: ${where} did not finish the write`;
   }
   const status = result.stdout.trim();
   if (status === "ok") return `wrote ${shown}`;
@@ -137,8 +140,9 @@ export async function executeContainedWrite(
   run: ContainedProcessRunner,
   p: string,
   content: string,
-  opts: { env?: Env; binding?: string } = {},
+  opts: { env?: Env; binding?: string; where?: string } = {},
 ): Promise<string> {
+  const where = opts.where ?? "the isolated executor";
   let abs: string;
   try {
     abs = resolveWorkspacePath(workspace.path, p);
@@ -151,11 +155,11 @@ export async function executeContainedWrite(
   const size = Buffer.byteLength(content, "utf8");
   if (size > CONTAINED_WRITE_MAX_BYTES) {
     return `error: cannot write ${sanitizeOutputText(p)}: the content is ${size} bytes, ` +
-      `above the ${CONTAINED_WRITE_MAX_BYTES} bytes one write in the isolated executor takes`;
+      `above the ${CONTAINED_WRITE_MAX_BYTES} bytes one write in ${where} takes`;
   }
   if (Buffer.byteLength(JSON.stringify(content), "utf8") > MAX_ESCAPED_BYTES) {
     return `error: cannot write ${sanitizeOutputText(p)}: the content has too many ` +
-      "control characters to send to the isolated executor in one write";
+      `control characters to send to ${where} in one write`;
   }
   try {
     const root = await workspace.verify();
@@ -167,11 +171,11 @@ export async function executeContainedWrite(
       opts.binding,
       content,
     );
-    return resultFor(p, result);
+    return resultFor(p, result, where);
   } catch (err) {
     return `error: cannot write ${sanitizeOutputText(p)}: ${
       err instanceof Error && err.message.startsWith("executor unavailable")
-        ? "the isolated executor is unavailable"
+        ? `${where} is unavailable`
         : safeErrorReason(err)
     }`;
   }

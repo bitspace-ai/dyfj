@@ -110,11 +110,20 @@ export type ContainmentVerdict =
     /** Why the supervisor refused a grant that is present, if it did. */
     readonly grantRefusal?: string;
   }
-  | { readonly status: "unattested"; readonly reason: string };
+  | { readonly status: "unattested"; readonly reason: string }
+  /**
+   * The tool's commands run under the srt sandbox, whose boot probe passed
+   * (BIT-662; `builtin/srt-sandbox.ts`).
+   */
+  | { readonly status: "sandboxed"; readonly backend: string };
 
 /** A tool's link to the executor it runs in. */
 export interface Containment {
-  readonly route: "linux-isolated";
+  /**
+   * `linux-isolated`: the isolated machine's executor (BIT-736, frozen).
+   * `srt`: the srt sandbox in this runtime (BIT-662).
+   */
+  readonly route: "linux-isolated" | "srt";
   /** Attest now. Never throws; a failure is `unattested`. */
   attest(): Promise<ContainmentVerdict>;
   /**
@@ -131,6 +140,14 @@ export interface Containment {
    * above it asks instead (BIT-796).
    */
   readonly deadlineArgument?: string;
+  /**
+   * True when this call asks to run outside the sandbox (bash's
+   * `unsandboxed`, BIT-662). A declared read of a model-supplied argument
+   * (README Section 1) that can only turn an allow into a prompt or a
+   * refusal: such a call always asks, is never granted for the session, and
+   * is refused off loopback (`tools/policy.ts`).
+   */
+  escapesSandbox?(call: CommandCall): boolean;
 }
 
 export interface CommandDefinition<TResult = unknown> {

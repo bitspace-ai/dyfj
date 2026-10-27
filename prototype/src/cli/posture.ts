@@ -20,6 +20,7 @@ import { socketError } from "./render/errors.ts";
 import type { ModelRow } from "./commands/models.ts";
 import {
   LIVENESS_PROBE_TIMEOUT_MS,
+  formatSandbox,
   type RuntimeStatusPayload,
 } from "./commands/status.ts";
 
@@ -48,6 +49,8 @@ export interface SessionPosture {
   maxToolStepsCeiling?: number;
   /** The session's spend limits: its own, else the runtime's defaults. */
   budget?: SessionBudget;
+  /** The tool sandbox segment (BIT-662); absent from an older runtime. */
+  sandbox?: string;
 }
 
 /**
@@ -107,7 +110,16 @@ export function formatPostureLine(posture: SessionPosture): string {
     : ` · ${formatToolSteps(posture.maxToolSteps, posture.maxToolStepsCeiling)}`;
   return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
+    (posture.sandbox === undefined ? "" : `${posture.sandbox} · `) +
     `workspace instructions: ${workspace}${steps}`;
+}
+
+/** The posture's sandbox field, absent when the runtime reports no sandbox. */
+function sandboxField(
+  sandbox: NonNullable<RuntimeStatusPayload["runtime"]>["sandbox"],
+): { sandbox?: string } {
+  const segment = formatSandbox(sandbox);
+  return segment === null ? {} : { sandbox: segment };
 }
 
 /** "N tool steps (ceiling M)", without the ceiling an older runtime omits. */
@@ -186,6 +198,7 @@ export async function fetchSessionPosture(
         ...(runtime?.autostarted !== undefined
           ? { autostarted: runtime.autostarted }
           : {}),
+        ...sandboxField(runtime?.sandbox),
         ...sessionBudget(config, runtime),
       };
     } finally {

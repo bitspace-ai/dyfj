@@ -11,6 +11,74 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **The bash, git and file-write tools run their commands under Anthropic's
+  sandbox-runtime (srt) on the Mac, and under the operator posture a sandboxed
+  call runs without a prompt (BIT-662).** srt is a pinned dependency
+  (`@anthropic-ai/sandbox-runtime` 0.0.81), used as a library: the runtime
+  starts it once at boot and wraps each command with Seatbelt on macOS, or
+  bubblewrap and seccomp on Linux. The runtime process itself is not
+  sandboxed (macOS refuses a nested Seatbelt profile), so the BIT-663
+  code-level seams remain its boundary.
+  - What a sandboxed command can reach, per workspace: writes to the
+    workspace, srt's scratch directory (`/tmp/claude`, which is `$TMPDIR` in
+    the sandbox and holds npm's cache), `~/.npm/_logs`, and, in a linked git
+    worktree, what a commit on the session branch needs: the shared object
+    store, the worktree's own metadata, and the branch's ref, its lock and
+    its reflog. The git layout, the session branch included, is the one the
+    runtime found when it first ran a sandboxed command in that workspace;
+    it stays pinned for the runtime's lifetime, so retargeting `HEAD`, or
+    creating a `.git` pointer in a workspace that had no repository, does
+    not widen a later call's writes. Other branches' refs, other worktrees' metadata,
+    `packed-refs`, `rr-cache`, `.git/hooks`, `.git/config` and the four
+    gitdir pointer files are write-denied. In a main checkout the whole
+    `.git` is write-denied, and the git tool refuses `add` and `commit` there
+    with a message to use a worktree. Reads of the standard tools'
+    credential paths (`~/.ssh`, `~/.config/gh`, `~/.kube/config` and others)
+    and of `~/.dyfj` are denied, as is any path the operator adds under
+    `[sandbox] deny_read`; that list adds to the built-in one and cannot
+    remove from it. The network goes through srt's proxy, which
+    allows `registry.npmjs.org` and any domain added under
+    `[sandbox] allow_domains` in `~/.dyfj/config.toml`, and always denies
+    `github.com`, `githubusercontent.com` and their subdomains.
+  - The shared object store's packfiles and its `info` directory are
+    write-denied, so packed history cannot be deleted or replaced.
+  - Residuals: a sandboxed command can add, delete or overwrite loose (not
+    yet packed) objects in the shared object store, which every worktree
+    reads; it can retarget its own worktree's `HEAD`, and delete or recreate
+    the session branch's ref. A credential file that is not on the deny list is
+    readable, as it is to any process of the operator's uid. `/tmp/claude`
+    is shared by every sandboxed command of the operator's user.
+  - Approval: a sandboxed call is allowed with basis
+    `policy:allow:sandboxed` when the turn is on loopback and the posture is
+    `operator`; under `strict` it asks unless the operator allowed that exact
+    call for the rest of the session. bash's read-only
+    allowlist applies only on the native route.
+  - Boot probe and fallback: at boot the runtime runs three commands in the
+    sandbox. A write inside a fresh directory must succeed, and a write
+    outside it and a direct connect to a local listener must be refused.
+    When `DYFJ_SANDBOX=off` is set, the platform or a dependency is missing,
+    srt's scratch directory is not owned by the operator or is writable by
+    group or others, or the probe fails, the sandbox is off and the tools
+    take the native route, which prompts as it did before this change
+    (bash's read-only allowlist and session grants still apply). The
+    runtime's boot line, `dyfj status` and the posture line then show
+    `sandbox OFF (<reason>): commands ask`; when it is on they show
+    `sandbox srt 0.0.81`.
+  - The escape: on the sandboxed route, bash takes `unsandboxed: true` with a
+    required `reason`. That call runs on the native route, unsandboxed. It
+    always asks, whatever the posture, with the reason in the approval
+    prompt; it is never allowed for the rest of the session; and it is
+    refused without a reason or off loopback.
+  - The isolated machine's executor route (`DYFJ_EXECUTOR_SOCKET`) is
+    unchanged and takes precedence when it is set.
+  - `npm run test:sandbox-acceptance` in `prototype/` runs the dyfj
+    repository's own `npm ci` under the sandbox; it is opt-in because it
+    needs the network. `npm run test:fast` does not pass inside the sandbox
+    yet: on macOS the sandbox refuses to run the setuid `/bin/ps` that the
+    gate's lane supervision uses, and the gate sets its lanes' `TMPDIR` to
+    `/tmp`, which the sandbox cannot write. Until that is fixed, an agent
+    runs the gate through the prompted escape.
+
 - **In the isolated machine, a granted envelope also covers file writes, and
   bash refuses a `timeoutSec` above its 120 s default instead of asking
   (BIT-796).** Before this, a granted envelope covered only bash and git,

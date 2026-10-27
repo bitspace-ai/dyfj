@@ -4,6 +4,7 @@
 import {
   buildToolCatalog,
   type CommandDefinition,
+  type CommandSandbox,
   RootAnchors,
 } from "../../tools/mod.ts";
 import {
@@ -25,6 +26,8 @@ export interface WorkbenchToolSummary {
 export interface ToolsHandlerDeps {
   /** Boot-discovered external MCP commands available to this runtime. */
   externalMcpCommands?: readonly CommandDefinition[];
+  /** The runtime's sandbox, so a listing describes the route turns take. */
+  sandbox?: CommandSandbox;
 }
 
 function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
@@ -41,6 +44,7 @@ function projectCommand(command: CommandDefinition): WorkbenchToolSummary {
 export function listToolCatalog(
   params: unknown,
   externalMcpCommands: readonly CommandDefinition[] = [],
+  sandbox?: CommandSandbox,
 ): WorkbenchToolSummary[] {
   const record = asRecord(params);
   const workspaceRoot = typeof record.workspace === "string"
@@ -48,7 +52,7 @@ export function listToolCatalog(
     : undefined;
   // A listing never executes a tool, so throwaway anchors are enough here.
   return buildToolCatalog(
-    { rootAnchors: new RootAnchors() },
+    { rootAnchors: new RootAnchors(), ...(sandbox === undefined ? {} : { sandbox }) },
     { workspaceRoot },
     externalMcpCommands,
   )
@@ -59,7 +63,7 @@ export function listToolCatalog(
 export function buildToolsHandlers(deps: ToolsHandlerDeps): RpcHandlers {
   return {
     "tools/list": async (params) => ({
-      tools: listToolCatalog(params, deps.externalMcpCommands),
+      tools: listToolCatalog(params, deps.externalMcpCommands, deps.sandbox),
     }),
 
     "tools/inspect": async (params) => {
@@ -71,7 +75,11 @@ export function buildToolsHandlers(deps: ToolsHandlerDeps): RpcHandlers {
           "tools/inspect requires a string commandId",
         );
       }
-      const tool = listToolCatalog(params, deps.externalMcpCommands).find((
+      const tool = listToolCatalog(
+        params,
+        deps.externalMcpCommands,
+        deps.sandbox,
+      ).find((
         candidate,
       ) => candidate.id === commandId);
       if (tool === undefined) {

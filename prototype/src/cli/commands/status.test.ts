@@ -10,6 +10,7 @@ import type { CliConfig } from "../args.ts";
 import type { ConnectFn } from "../io.ts";
 import {
   formatRuntimeStatus,
+  formatSandbox,
   formatUnavailableSecrets,
   probeRuntimeLiveness,
   runStatus,
@@ -474,5 +475,37 @@ describe("dyfj status external MCP lines", () => {
     });
     assert.ok(rendered.includes("external MCP x[2J: ready"));
     assert.ok(!rendered.includes("\u001b"));
+  });
+});
+
+describe("the sandbox line (BIT-662)", () => {
+  it("names the backend when the sandbox is on", () => {
+    assert.equal(
+      formatSandbox({ state: "on", backend: "srt 0.0.81" }),
+      "sandbox srt 0.0.81",
+    );
+  });
+
+  it("says commands ask, and why, when it is off", () => {
+    assert.equal(
+      formatSandbox({ state: "off", backend: "srt 0.0.81", reason: "DYFJ_SANDBOX=off" }),
+      "sandbox OFF (DYFJ_SANDBOX=off): commands ask",
+    );
+  });
+
+  it("is absent for a runtime that reports no sandbox", () => {
+    assert.equal(formatSandbox(undefined), null);
+    const text = formatRuntimeStatus(cfg(), { runtime: { permissionLevel: "strict" } });
+    assert.doesNotMatch(text, /sandbox/);
+  });
+
+  it("dyfj status shows it under the permission line", () => {
+    const text = formatRuntimeStatus(cfg(), {
+      runtime: {
+        permissionLevel: "operator",
+        sandbox: { state: "off", backend: "srt 0.0.81", reason: "DYFJ_SANDBOX=off" },
+      },
+    });
+    assert.match(text, /permission: operator\nsandbox OFF \(DYFJ_SANDBOX=off\): commands ask/);
   });
 });

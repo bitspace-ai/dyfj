@@ -43,6 +43,7 @@ import {
 } from "../store/mod.ts";
 import {
   ensureSocketDir,
+  listenLoopbackProbe,
   nodeSocketHost,
   resolveSocketPath,
   type RpcHandlers,
@@ -56,6 +57,7 @@ import {
   loadConfig,
   loadMcpServersConfig,
   loadNetworkAllow,
+  loadSandboxConfig,
   loadSecretsConfig,
   type PermissionLevel,
   processEnv,
@@ -73,8 +75,11 @@ import {
   type TurnRuntime,
 } from "../engine/mod.ts";
 import {
+  bootSandbox,
   buildExternalMcpCommands,
   type CommandDefinition,
+  type CommandSandbox,
+  describeSandbox,
   formatExternalMcpDiagnostic,
   RootAnchors,
 } from "../tools/mod.ts";
@@ -210,6 +215,12 @@ export interface WorkbenchUnixServerOptions {
    * environment; the process env when omitted, as the boot leaves it.
    */
   env?: Env;
+  /**
+   * The tool sandbox, booted once by `main` (BIT-662). When it is on, turns'
+   * bash, git and write tools run their commands in it. Absent, they take
+   * the native route.
+   */
+  sandbox?: CommandSandbox;
 }
 
 function requireStore(options: WorkbenchUnixServerOptions): Store {
@@ -301,6 +312,9 @@ function buildHandlers(
   return {
     ...buildRuntimeHandlers({
       ...options,
+      ...(options.sandbox === undefined
+        ? {}
+        : { sandboxStatus: options.sandbox.status }),
       loadModels,
       activity: () => ({
         clients: lifetime.clients,
@@ -342,6 +356,7 @@ function composeTurnRuntime(
   acpSessions?: AcpSessionHandleMap,
   env?: Env,
   policy?: RuntimePolicy,
+  sandbox?: CommandSandbox,
 ): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
@@ -365,6 +380,7 @@ function composeTurnRuntime(
       rootAnchors,
       // Used only when an isolated machine's launcher set DYFJ_EXECUTOR_SOCKET.
       dialExecutor: nodeSocketHost.connect,
+      ...(sandbox === undefined ? {} : { sandbox }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
@@ -394,6 +410,7 @@ export async function serveWorkbenchUnix(
       acpSessions,
       options.env,
       options.policy,
+      options.sandbox,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -510,6 +527,17 @@ async function main(): Promise<void> {
     networkAllow: await loadNetworkAllow(),
     nameserverGrants: await readNameserverNetGrants(),
   });
+  // The tool sandbox, started and probed once. It never throws: a failure
+  // is an `off` sandbox, under which the tools prompt, and the line below
+  // and `runtime/status` say why.
+  const sandboxConfig = await loadSandboxConfig();
+  const sandbox = await bootSandbox({
+    listenProbe: listenLoopbackProbe,
+    env: processEnv,
+    allowDomains: sandboxConfig.allowDomains,
+    denyRead: sandboxConfig.denyRead,
+  });
+  console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
@@ -608,6 +636,7 @@ async function main(): Promise<void> {
       fingerprint,
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       externalMcp: externalMcpLines,
+      sandbox,
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.

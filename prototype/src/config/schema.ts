@@ -361,6 +361,15 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "string",
     kind: "value",
   },
+  // The tool sandbox switch (BIT-662): "off" keeps srt from starting, so the
+  // bash, git and write tools take the prompting route.
+  {
+    key: "sandbox",
+    envVar: "DYFJ_SANDBOX",
+    domain: "engine",
+    type: "string",
+    kind: "value",
+  },
   // ── engine: session/identity — declared, but NOT config (rides the connection) ──
   {
     key: "principalId",

@@ -16,6 +16,7 @@ import {
   type WorkbenchConfig,
 } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
+import type { SandboxStatus } from "../../tools/mod.ts";
 import {
   asRecord,
   RpcError,
@@ -89,6 +90,12 @@ export interface WorkbenchRuntimeStatus {
   clients?: number;
   /** Turns admitted and not yet settled, queued ones included. */
   inFlightTurns?: number;
+  /**
+   * The tool sandbox (BIT-662): `on` when srt's boot probe passed, `off`
+   * with the reason otherwise, when commands take the prompting route.
+   * Absent where no sandbox was booted (tests, in-process callers).
+   */
+  sandbox?: { state: "on" | "off"; backend: string; reason?: string };
 }
 
 /** What the runtime is doing right now, read at each call. */
@@ -126,6 +133,8 @@ export interface RuntimePosture {
   fingerprint?: CodeFingerprint;
   /** Open clients and in-flight turns; absent where nothing counts them. */
   activity?: () => RuntimeActivity;
+  /** The tool sandbox's status at boot. */
+  sandboxStatus?: SandboxStatus;
 }
 
 export interface RuntimeHandlerDeps extends RuntimePosture {
@@ -251,6 +260,9 @@ export function runtimeStatus(
       ? { fingerprint: { ...options.fingerprint } }
       : {}),
     ...(options.activity !== undefined ? options.activity() : {}),
+    ...(options.sandboxStatus !== undefined
+      ? { sandbox: { ...options.sandboxStatus } }
+      : {}),
   };
 }
 

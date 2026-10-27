@@ -27,6 +27,7 @@ import type {
 import type {
   CommandDefinition,
   ConfirmToolApproval,
+  CommandSandbox,
   ExecutorDialer,
   RootAnchors,
 } from "../tools/mod.ts";
@@ -293,6 +294,11 @@ export interface WorkbenchRuntimeServices {
    * the launcher set `DYFJ_EXECUTOR_SOCKET`. Built at the composition root.
    */
   dialExecutor?: ExecutorDialer;
+  /**
+   * The runtime's srt sandbox (BIT-662), booted once at the composition root.
+   * Absent, the tools take the native route.
+   */
+  sandbox?: CommandSandbox;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

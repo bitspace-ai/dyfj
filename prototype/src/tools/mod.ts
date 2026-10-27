@@ -82,6 +82,12 @@ export type {
   ExecutorDialer,
 } from "./builtin/executor-transport.ts";
 export {
+  bootSandbox,
+  type CommandSandbox,
+  describeSandbox,
+  type SandboxStatus,
+} from "./builtin/srt-sandbox.ts";
+export {
   buildMemoryContextSourceLines,
   buildSystemPrompt,
   loadIndexedMemories,

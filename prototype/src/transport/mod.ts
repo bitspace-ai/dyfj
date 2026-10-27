@@ -52,7 +52,7 @@ export type {
   ConnectionListener,
   SocketHost,
 } from "./connection.ts";
-export { nodeSocketHost } from "./node-socket.ts";
+export { listenLoopbackProbe, nodeSocketHost } from "./node-socket.ts";
 export { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 export { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
 export {

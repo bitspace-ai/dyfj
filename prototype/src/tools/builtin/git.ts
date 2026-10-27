@@ -27,11 +27,14 @@
  *   values, never options.
  *
  * `run.process` is an exec-class effect, so the no-exec invariant in
- * `evaluateCommandPolicy` routes every call through per-call operator approval.
- * This module does not change that invariant and must not be read as sandboxed
+ * `evaluateCommandPolicy` routes every native git call through per-call
+ * operator approval; on the native route this module is not sandboxed
  * execution. On the contained Linux target (`DYFJ_EXECUTOR_SOCKET` set), git
  * runs in the isolated executor instead (`containedRunner`), so repository
- * configuration executes there, not in the runtime.
+ * configuration executes there, not in the runtime. Otherwise, when the srt
+ * sandbox's boot probe passed (BIT-662), git and everything it runs (hooks,
+ * helpers) run inside that sandbox (`sandboxedRunner`), and the policy may
+ * allow the call without a prompt under the operator posture.
  *
  * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
  * git's whole process group, hooks and their children included, is stopped and
@@ -67,6 +70,11 @@ import {
 import { clipToUtf8Bytes } from "../../kernel/mod.ts";
 import type { CommandDefinition } from "../definition.ts";
 import { createContainment } from "./containment.ts";
+import {
+  type CommandSandbox,
+  MAIN_CHECKOUT_NOTE,
+  sandboxContainment,
+} from "./srt-sandbox.ts";
 import {
   resolveWorkspacePath,
   sanitizeOutputText,
@@ -416,6 +424,27 @@ function containedRunner(
 }
 
 /**
+ * The runner under the srt sandbox: git, its hooks and its helpers run with
+ * the workspace's sandbox policy (`srt-policy.ts`).
+ */
+function sandboxedRunner(
+  sandbox: CommandSandbox,
+  root: string,
+  source: Env | undefined,
+): GitRunner {
+  return (args, cwd, timeoutMs) =>
+    sandbox.runArgv(["git", ...args], {
+      root,
+      cwd,
+      timeoutMs,
+      env: gitEnv(source),
+    });
+}
+
+/** The subcommands that write under `.git`. */
+const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
+
+/**
  * Run one allowed git operation and return a single string carrying the exit
  * status and combined stdout/stderr. On the normal path the collected body is
  * clipped to a byte cap, with the status line and any notice added outside it.
@@ -502,20 +531,36 @@ export async function executeGit(
 
 export function defineGit(
   root: string,
-  opts: { env?: Env; dialExecutor?: ExecutorDialer } = {},
+  opts: { env?: Env; dialExecutor?: ExecutorDialer; sandbox?: CommandSandbox } =
+    {},
 ): CommandDefinition<string> {
   const socket = executorSocket(opts.env);
-  const runner = socket === undefined
-    ? undefined
-    : containedRunner(socket, opts.dialExecutor, opts.env);
+  const sandbox = socket === undefined && opts.sandbox?.status.state === "on"
+    ? opts.sandbox
+    : undefined;
+  const runner = socket !== undefined
+    ? containedRunner(socket, opts.dialExecutor, opts.env)
+    : sandbox !== undefined
+    ? (() => {
+      const run = sandboxedRunner(sandbox, root, opts.env);
+      return (
+        args: readonly string[],
+        cwd: string,
+        timeoutMs: number,
+        _binding?: string,
+      ) => run(args, cwd, timeoutMs);
+    })()
+    : undefined;
   // Its operations take no deadline from the model: each runs with the fixed
   // one, which the envelope's limit still checks.
-  const containment = socket === undefined
-    ? undefined
-    : createContainment(socket, opts.dialExecutor, {
+  const containment = socket !== undefined
+    ? createContainment(socket, opts.dialExecutor, {
       defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
       callTimeoutMs: () => DEFAULT_TIMEOUT_MS,
-    });
+    })
+    : sandbox !== undefined
+    ? sandboxContainment(sandbox)
+    : undefined;
   return {
     id: "git",
     ...(containment === undefined ? {} : { containment }),
@@ -531,6 +576,14 @@ export function defineGit(
       (runner === undefined
         ? "Note that git still runs repository " +
           "configuration: hooks and helpers execute, and can reach the network. "
+        : sandbox !== undefined
+        ? "Git runs in an OS sandbox: it and its hooks and helpers can write " +
+          "only the workspace, srt's scratch directory, npm's log directory " +
+          "and what a commit on the session branch needs, " +
+          "reach only the package-registry allowlist (never GitHub), and not " +
+          "read the credential paths on the sandbox's deny list. `add` and `commit` need a " +
+          "linked git worktree: in a main checkout the sandbox denies writes " +
+          "under .git. "
         : "Git runs in the isolated executor: hooks and helpers execute " +
           "there, with no network and no access to the runtime's credentials. ") +
       "A " +
@@ -539,6 +592,10 @@ export function defineGit(
       "git through bash: the approval names the exact operation and paths. " +
       (runner === undefined
         ? "Always requires explicit operator approval before it runs."
+        : sandbox !== undefined
+        ? "Runs without a prompt under the operator posture on the local " +
+          "socket; otherwise it " +
+          "requires operator approval."
         : "Requires operator approval before it runs, unless the operator " +
           "granted the isolated executor's attested envelope."),
     inputSchema: {
@@ -607,8 +664,21 @@ export function defineGit(
     // can print anything it can read, which the approver cannot pre-screen, so
     // the raw result stays out of the durable event log (CWE-532).
     redactResult: true,
-    executor: (call, context) =>
-      executeGit(root, {
+    executor: async (call, context) => {
+      // In a main checkout the sandbox denies every write under .git, so a
+      // sandboxed add or commit would fail with a bare git error. Say why
+      // instead, before running it.
+      if (
+        sandbox !== undefined &&
+        GIT_WRITE_SUBCOMMANDS.has(String(call.arguments.subcommand)) &&
+        (await sandbox.policy(root).catch(() => undefined))?.mainCheckout ===
+          true
+      ) {
+        return `error: refusing to run git ${
+          String(call.arguments.subcommand)
+        } in the sandbox: ${MAIN_CHECKOUT_NOTE.replace(/^note: /, "")}`;
+      }
+      return executeGit(root, {
         subcommand: call.arguments.subcommand,
         paths: call.arguments.paths,
         message: call.arguments.message,
@@ -617,6 +687,7 @@ export function defineGit(
       }, runner === undefined ? {} : {
         runner: (args, cwd, timeoutMs) =>
           runner(args, cwd, timeoutMs, context.binding),
-      }),
+      });
+    },
   };
 }

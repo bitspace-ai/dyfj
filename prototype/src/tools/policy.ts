@@ -66,6 +66,9 @@ export interface CommandPolicyContext {
   containment?: ContainmentVerdict;
 }
 
+/** The basis of an unsandboxed call's prompt; such a call is never granted for the session. */
+export const UNSANDBOXED_ASK_BASIS = "policy:ask:unsandboxed";
+
 export function evaluateCommandPolicy(
   command: CommandDefinition,
   call: CommandCall,
@@ -107,6 +110,12 @@ export function evaluateCommandPolicy(
   // (BIT-796); a fixed one asks. Without all three, a contained command asks (one whose default
   // decision is deny was already denied above): the read-only
   // classifier below never runs for it.
+  // The srt sandbox (BIT-662), evaluated here for the same reason: a
+  // sandboxed command never reaches a generic auto-allow path.
+  if (command.containment?.route === "srt") {
+    return evaluateSandboxedPolicy(command, call, context);
+  }
+
   if (command.containment !== undefined) {
     const verdict = context.containment;
     if (
@@ -246,5 +255,65 @@ export function evaluateCommandPolicy(
     decision: "ask",
     authzBasis: "policy:ask:default",
     reason: "command requires operator approval",
+  };
+}
+
+/**
+ * The verdict for a command on the srt route (BIT-662). It runs without a
+ * prompt when its sandbox is on (the boot probe passed), the turn is on
+ * loopback and the operator posture is set; under `strict` it asks (a
+ * session grant the operator gave still applies). As for the attested envelope, only process and filesystem effects
+ * at no cost are covered. Otherwise it asks; the read-only classifier never
+ * runs for it. A call that escapes the sandbox (bash's `unsandboxed`) runs on
+ * the native route, so it always asks, whatever the posture, and is refused
+ * where no operator can be asked or no reason was given.
+ */
+function evaluateSandboxedPolicy(
+  command: CommandDefinition,
+  call: CommandCall,
+  context: CommandPolicyContext,
+): CommandPolicyResult {
+  const verdict = context.containment;
+  if (command.containment?.escapesSandbox?.(call) === true) {
+    const reason = call.arguments.reason;
+    if (typeof reason !== "string" || reason.trim() === "") {
+      return {
+        decision: "deny",
+        authzBasis: "policy:deny:unsandboxed-without-reason",
+        reason: "unsandboxed: true requires a reason: say why the command " +
+          "cannot run in the sandbox",
+      };
+    }
+    if (context.loopback !== true) {
+      return {
+        decision: "deny",
+        authzBasis: "policy:deny:unsandboxed-headless",
+        reason: "unsandboxed commands run only with an operator present to " +
+          "approve them",
+      };
+    }
+    return {
+      decision: "ask",
+      authzBasis: UNSANDBOXED_ASK_BASIS,
+      reason: "command asks to run outside the sandbox",
+    };
+  }
+  if (
+    verdict?.status === "sandboxed" &&
+    context.loopback === true &&
+    context.permissionLevel === "operator" &&
+    command.permission.cost === "none" &&
+    command.permission.effects.every((effect) => ENVELOPE_EFFECTS.has(effect))
+  ) {
+    return { decision: "allow", authzBasis: "policy:allow:sandboxed" };
+  }
+  return {
+    decision: "ask",
+    authzBasis: "policy:ask:default",
+    reason: verdict?.status === "sandboxed"
+      ? "command requires operator approval (sandboxed calls run without " +
+        "a prompt only under the operator posture)"
+      : "command requires operator approval (the sandbox is not attested " +
+        "for this call)",
   };
 }

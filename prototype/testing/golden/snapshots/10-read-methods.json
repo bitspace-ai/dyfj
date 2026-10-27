@@ -156,7 +156,12 @@
             "contentHash": "sha256:<CONTENT-HASH>"
           },
           "clients": 1,
-          "inFlightTurns": 0
+          "inFlightTurns": 0,
+          "sandbox": {
+            "state": "off",
+            "backend": "srt 0.0.81",
+            "reason": "DYFJ_SANDBOX=off"
+          }
         }
       }
     },

@@ -22,6 +22,7 @@ import {
 import type { RootAnchors, WorkspaceRoot } from "./builtin/root-anchors.ts";
 import { defineBash } from "./builtin/exec.ts";
 import type { ExecutorDialer } from "./builtin/executor-transport.ts";
+import type { CommandSandbox } from "./builtin/srt-sandbox.ts";
 import type { Env } from "../config/mod.ts";
 import { defineGit } from "./builtin/git.ts";
 
@@ -58,6 +59,12 @@ export interface ToolCatalogPorts {
    * `DYFJ_EXECUTOR_SOCKET`; the process environment when absent.
    */
   env?: Env;
+  /**
+   * The runtime's srt sandbox (BIT-662). When it is on and no executor
+   * socket is set, the bash, git and write tools run their commands in it.
+   * Absent or off, they take the native route.
+   */
+  sandbox?: CommandSandbox;
 }
 
 /** Resolved settings that shape the builtin tools. */
@@ -85,13 +92,14 @@ export type ToolCatalogEntry = (
 function workspaceTool(
   define: (
     root: string,
-    opts: { dialExecutor?: ExecutorDialer; env?: Env },
+    opts: { dialExecutor?: ExecutorDialer; env?: Env; sandbox?: CommandSandbox },
   ) => CommandDefinition,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot, dialExecutor, env }) =>
+  return ({ workspaceRoot, dialExecutor, env, sandbox }) =>
     workspaceRoot === undefined ? undefined : define(workspaceRoot, {
       ...(dialExecutor === undefined ? {} : { dialExecutor }),
       ...(env === undefined ? {} : { env }),
+      ...(sandbox === undefined ? {} : { sandbox }),
     });
 }
 
@@ -102,10 +110,10 @@ function workspaceTool(
 function workspaceFileTool(
   define: (
     root: WorkspaceRoot,
-    opts: { dialExecutor?: ExecutorDialer; env?: Env },
+    opts: { dialExecutor?: ExecutorDialer; env?: Env; sandbox?: CommandSandbox },
   ) => CommandDefinition,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot, rootAnchors, dialExecutor, env }) => {
+  return ({ workspaceRoot, rootAnchors, dialExecutor, env, sandbox }) => {
     if (workspaceRoot === undefined) return undefined;
     if (rootAnchors === undefined) {
       throw new Error(
@@ -115,6 +123,7 @@ function workspaceFileTool(
     return define(rootAnchors.root(workspaceRoot), {
       ...(dialExecutor === undefined ? {} : { dialExecutor }),
       ...(env === undefined ? {} : { env }),
+      ...(sandbox === undefined ? {} : { sandbox }),
     });
   };
 }

@@ -12,9 +12,13 @@
  * config switched off (`GIT_SAFETY_ENV`); and a call that repeats exactly one
  * the operator allowed for the rest of the session.
  *
- * This module is the explicit danger boundary until a Rust exec/sandbox
- * enforcement floor replaces the TypeScript process runner; until then,
- * per-call human approval is the floor. The process runner is injectable so
+ * When the srt sandbox's boot probe passed (BIT-662) and no executor socket
+ * takes precedence, a call runs in the sandbox (`srt-sandbox.ts`), and the
+ * policy allows it without a prompt under the operator posture: the sandbox,
+ * not shell parsing, bounds it. A call with `unsandboxed: true` runs on the
+ * native runner after the operator approves it. Otherwise this
+ * module is the explicit danger boundary, and per-call human approval is the
+ * floor. The process runner is injectable so
  * tests exercise the output/timeout/truncation logic without spawning
  * a real process.
  *
@@ -31,7 +35,11 @@
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { type Env, processEnv } from "../../config/mod.ts";
-import type { CommandCall, CommandDefinition } from "../definition.ts";
+import type {
+  CommandCall,
+  CommandDefinition,
+  JsonSchemaObject,
+} from "../definition.ts";
 import {
   classifyReadOnlyBash,
   resolveFollowingLinks,
@@ -47,6 +55,12 @@ import {
   createExecutorRunner,
   type ExecutorDialer,
 } from "./executor-transport.ts";
+import {
+  type CommandSandbox,
+  MAIN_CHECKOUT_NOTE,
+  sandboxContainment,
+} from "./srt-sandbox.ts";
+import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
 
 export type BashResult = BoundedResult;
 
@@ -313,25 +327,174 @@ function readOnlyBashCall(root: string, call: CommandCall): boolean {
 
 const TITLE = "Run Bash Command";
 
-/** The approval prompt names the effective deadline, e.g. `(timeout 300 s)`. */
-function bashApprovalTitle(timeoutSec: unknown, maxSec: number): string {
-  const resolved = resolveBashTimeoutMs(timeoutSec, maxSec);
-  return "timeoutMs" in resolved
+/** How much of an unsandboxed call's `reason` the prompt title shows. */
+const MAX_TITLE_REASON = 300;
+
+/** Whether a call on the sandboxed route asks to run outside the sandbox. */
+function asksUnsandboxed(call: CommandCall): boolean {
+  return call.arguments.unsandboxed === true;
+}
+
+/**
+ * The approval prompt names the effective deadline, e.g. `(timeout 300 s)`,
+ * and, for an unsandboxed call, that it runs outside the sandbox and why.
+ */
+function bashApprovalTitle(call: CommandCall, maxSec: number): string {
+  const resolved = resolveBashTimeoutMs(call.arguments.timeoutSec, maxSec);
+  const title = "timeoutMs" in resolved
     ? `${TITLE} (timeout ${resolved.timeoutMs / 1_000} s)`
     : TITLE;
+  return asksUnsandboxed(call)
+    ? `${title} OUTSIDE THE SANDBOX, reason: ${
+      String(call.arguments.reason).slice(0, MAX_TITLE_REASON)
+    }`
+    : title;
 }
 
 // ── Command definition ───────────────────────────────────────────────────────
 
+/** Which runner a bash call goes through. */
+type BashRoute = "native" | "contained" | "sandboxed";
+
 /** What the command can reach, as the model is told it. */
-function bashReach(contained: boolean): string {
-  return contained
+function bashReach(route: BashRoute): string {
+  return route === "contained"
     ? ". The command runs in the isolated executor: its writes persist only " +
       "in the workspace (it also has private scratch space that is discarded " +
       "after the command), it has no network, and it cannot see the runtime's " +
       "credentials. "
+    : route === "sandboxed"
+    ? ". The command runs in an OS sandbox: it can write only in the " +
+      "workspace, srt's scratch directory ($TMPDIR), npm's log directory " +
+      "(~/.npm/_logs) and what a commit on the " +
+      "session branch needs; it can reach only the package registries on the " +
+      "allowlist (never GitHub); and it cannot read the credential paths on " +
+      "the sandbox's deny list. Writes and connects outside that are refused with \"Operation " +
+      "not permitted\". npm's cache is under $TMPDIR. "
     : ", but the command is NOT sandboxed — it can read and write anywhere on " +
       "the machine and reach the network, exactly as if the operator ran it. ";
+}
+
+/**
+ * A runner that runs each command in `sandbox`, with npm's cache moved under
+ * srt's scratch directory. A failed command in a main checkout gets a note
+ * saying that sandboxed commits need a linked worktree.
+ */
+function sandboxedBashRunner(
+  sandbox: CommandSandbox,
+  root: string,
+): BashRunner {
+  return async (command, cwd, timeoutMs, env) => {
+    const result = await sandbox.runShell(command, {
+      root,
+      cwd,
+      timeoutMs,
+      env: { ...env, npm_config_cache: SANDBOX_NPM_CACHE },
+    });
+    if (result.code !== 0 && /\.git\b/.test(result.stderr)) {
+      const policy = await sandbox.policy(root).catch(() => undefined);
+      if (policy?.mainCheckout === true) {
+        return {
+          ...result,
+          stderr: `${result.stderr}${
+            result.stderr.endsWith("\n") ? "" : "\n"
+          }${MAIN_CHECKOUT_NOTE}`,
+        };
+      }
+    }
+    return result;
+  };
+}
+
+/** bash's description, per route. */
+function bashDescription(route: BashRoute): string {
+  return (
+    "Run a shell command via `bash -c`. The working directory is the workspace " +
+    "root, or the workspace directory cwd names" +
+    bashReach(route) +
+    "Returns the exit status and combined stdout/stderr. " +
+    (route === "sandboxed"
+      ? "Runs without a prompt under the operator posture on the local " +
+        "socket; otherwise it " +
+        "requires operator approval, except for commands the operator " +
+        "allowed for the rest of the session. If a command fails only " +
+        "because the sandbox refuses it (\"Operation not permitted\", a " +
+        "refused connection, a 403 from the proxy) and it must run, call " +
+        "again with unsandboxed: true and a reason: it then runs NOT " +
+        "sandboxed, and the operator is asked every time. " +
+        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+        `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
+        "a command needs longer (a full test run, for example). A larger value is " +
+        "refused, not clamped. "
+      : route === "contained"
+      ? "Requires operator approval before it runs, unless the operator " +
+        "granted the isolated executor's attested envelope and the call's " +
+        "deadline is within the envelope's (then it runs without a " +
+        "prompt), and except for commands the operator allowed for the " +
+        "rest of the session. " +
+        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
+        "which is also the longest deadline a call may ask for here, so " +
+        "omit timeoutSec unless you want a command stopped sooner. A " +
+        "larger value is refused, not clamped. "
+      : "Requires operator approval before it runs, except for a small set " +
+        "of read-only commands (git status/diff/log/show, ls, cat, head, " +
+        "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
+        "the rest of the session. " +
+        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+        `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
+        "a command needs longer (a full test run, for example). A larger value is " +
+        "refused, not clamped. ") +
+    "Pass cwd rather than prefixing the command with cd."
+  );
+}
+
+/** bash's input schema: the escape's arguments exist only on the sandboxed route. */
+function bashInputSchema(route: BashRoute, maxSec: number): JsonSchemaObject {
+  return {
+    type: "object",
+    required: ["command"],
+    properties: {
+      command: {
+        type: "string",
+        description: "The shell command to run (executed as `bash -c`).",
+      },
+      cwd: {
+        type: "string",
+        description:
+          "Directory to run in, relative to the workspace root. It must be an " +
+          "existing directory inside the workspace. Default: the workspace root.",
+      },
+      timeoutSec: {
+        type: "integer",
+        minimum: 1,
+        maximum: maxSec,
+        description: route === "contained"
+          ? `Seconds before the command and its process tree are stopped. Default and ` +
+            `ceiling ${DEFAULT_TIMEOUT_SEC}; a larger value is refused.`
+          : `Seconds before the command and its process tree are stopped. Default ${DEFAULT_TIMEOUT_SEC}; ` +
+            `at most ${MAX_TIMEOUT_SEC} (the ceiling; a larger value is refused).`,
+      },
+      ...(route === "sandboxed"
+        ? {
+          unsandboxed: {
+            type: "boolean",
+            description:
+              "Run this command outside the sandbox, with the operator's " +
+              "full access. The operator is asked every time, and it is " +
+              "refused without a reason. Use it only for a command the " +
+              "sandbox refused.",
+          },
+          reason: {
+            type: "string",
+            description:
+              "Required with unsandboxed: why the command cannot run in " +
+              "the sandbox. The operator sees it in the approval prompt.",
+          },
+        }
+        : {}),
+    },
+    additionalProperties: false,
+  };
 }
 
 /** A runner for a socket set with no dialer to reach it: always refuses. */
@@ -342,17 +505,33 @@ export const undialable: (...args: unknown[]) => Promise<never> = () =>
 
 export function defineBash(
   root: string,
-  opts: { runner?: BashRunner; env?: Env; dialExecutor?: ExecutorDialer } =
-    {},
+  opts: {
+    runner?: BashRunner;
+    env?: Env;
+    dialExecutor?: ExecutorDialer;
+    sandbox?: CommandSandbox;
+  } = {},
 ): CommandDefinition<string> {
   // The supervisor of an isolated machine sets the socket when it starts the
   // runtime. With it, commands run in the executor and never here, whatever
   // runner was injected: without a dialer to reach it, every command is
-  // refused rather than run locally.
+  // refused rather than run locally. Without it, a sandbox whose boot probe
+  // passed runs every command (BIT-662); a sandbox that is off leaves the
+  // native route, where every call that is not read-only asks.
   const socket = executorSocket(opts.env);
   const contained = socket !== undefined;
-  const runner = !contained
+  const sandbox = !contained && opts.sandbox?.status.state === "on"
+    ? opts.sandbox
+    : undefined;
+  const route: BashRoute = contained
+    ? "contained"
+    : sandbox !== undefined
+    ? "sandboxed"
+    : "native";
+  const runner = route === "native"
     ? opts.runner
+    : route === "sandboxed"
+    ? sandboxedBashRunner(sandbox!, root)
     : opts.dialExecutor === undefined
     ? undialable
     : createExecutorRunner(socket!, opts.dialExecutor);
@@ -363,7 +542,9 @@ export function defineBash(
   const maxSec = contained ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
   // Contained, approval comes from the attested envelope (BIT-736), and the
   // read-only classifier is not used: it stays for the native route only.
-  const containment = !contained
+  const containment = route === "sandboxed"
+    ? { ...sandboxContainment(sandbox!), escapesSandbox: asksUnsandboxed }
+    : !contained
     ? undefined
     : createContainment(socket!, opts.dialExecutor, {
       defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
@@ -377,61 +558,14 @@ export function defineBash(
     id: "bash",
     ...(containment === undefined ? {} : { containment }),
     title: TITLE,
-    description:
-      "Run a shell command via `bash -c`. The working directory is the workspace " +
-      "root, or the workspace directory cwd names" +
-      bashReach(contained) +
-      "Returns the exit status and combined stdout/stderr. " +
-      (contained
-        ? "Requires operator approval before it runs, unless the operator " +
-          "granted the isolated executor's attested envelope and the call's " +
-          "deadline is within the envelope's (then it runs without a " +
-          "prompt), and except for commands the operator allowed for the " +
-          "rest of the session. " +
-          `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
-          "which is also the longest deadline a call may ask for here, so " +
-          "omit timeoutSec unless you want a command stopped sooner. A " +
-          "larger value is refused, not clamped. "
-        : "Requires operator approval before it runs, except for a small set " +
-          "of read-only commands (git status/diff/log/show, ls, cat, head, " +
-          "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
-          "the rest of the session. " +
-          `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
-          `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
-          "a command needs longer (a full test run, for example). A larger value is " +
-          "refused, not clamped. ") +
-      "Pass cwd rather than prefixing the command with cd.",
-    inputSchema: {
-      type: "object",
-      required: ["command"],
-      properties: {
-        command: {
-          type: "string",
-          description: "The shell command to run (executed as `bash -c`).",
-        },
-        cwd: {
-          type: "string",
-          description:
-            "Directory to run in, relative to the workspace root. It must be an " +
-            "existing directory inside the workspace. Default: the workspace root.",
-        },
-        timeoutSec: {
-          type: "integer",
-          minimum: 1,
-          maximum: maxSec,
-          description: contained
-            ? `Seconds before the command and its process tree are stopped. Default and ` +
-              `ceiling ${DEFAULT_TIMEOUT_SEC}; a larger value is refused.`
-            : `Seconds before the command and its process tree are stopped. Default ${DEFAULT_TIMEOUT_SEC}; ` +
-              `at most ${MAX_TIMEOUT_SEC} (the ceiling; a larger value is refused).`,
-        },
-      },
-      additionalProperties: false,
-    },
-    approvalTitle: (call) => bashApprovalTitle(call.arguments.timeoutSec, maxSec),
-    ...(contained
-      ? {}
-      : { readOnlyCall: (call: CommandCall) => readOnlyBashCall(root, call) }),
+    description: bashDescription(route),
+    inputSchema: bashInputSchema(route, maxSec),
+    approvalTitle: (call) => bashApprovalTitle(call, maxSec),
+    // The read-only classifier serves the native route only: on the other
+    // two, the boundary decides, not shell parsing.
+    ...(route === "native"
+      ? { readOnlyCall: (call: CommandCall) => readOnlyBashCall(root, call) }
+      : {}),
     // The prompt may offer "allow this exact command for the rest of the
     // session"; the grant matches command, cwd and timeoutSec exactly.
     grantable: true,
@@ -474,9 +608,21 @@ export function defineBash(
       const env = context.authzBasis === BASH_ALLOWLIST_BASIS
         ? { ...base, ...GIT_SAFETY_ENV }
         : base;
+      // An unsandboxed call runs on the native runner. The policy asked the
+      // operator for it (it is never auto-allowed or session-granted); this
+      // check keeps an executor reached any other way from running it.
+      const unsandboxed = route === "sandboxed" && asksUnsandboxed(call);
+      if (
+        unsandboxed &&
+        context.authzBasis !== "policy:allow:operator-approved"
+      ) {
+        return "error: an unsandboxed command runs only with the operator's approval";
+      }
       return executeBash(cwd.cwd, String(call.arguments.command), {
         timeoutMs: timeout.timeoutMs,
-        runner: contained && runner !== undefined
+        runner: unsandboxed
+          ? opts.runner
+          : contained && runner !== undefined
           ? (command, at, timeoutMs, env) =>
             runner(command, at, timeoutMs, env, context.binding)
           : runner,
