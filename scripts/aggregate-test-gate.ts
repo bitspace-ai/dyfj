@@ -13,6 +13,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { constants } from "node:os";
 import process from "node:process";
 import {
@@ -100,12 +101,68 @@ export const REQUIRED_CHECK_IDS: readonly string[] = [
   "receipt.schema",
 ];
 
+// The temp directory a test lane gets. Tests bind Unix sockets under it, and a
+// socket path holds at most 103 bytes on macOS (104 with its terminator), so
+// the long default there (`/var/folders/...`, about 49 bytes) cannot be used:
+// the lane keeps `/tmp`. A caller's `TMPDIR` is forwarded when its real path
+// leaves room for the longest socket path the lanes build under it
+// (`LANE_SOCKET_SUFFIX_RESERVE`: the integration lane's `dyfj-test-*`
+// directory, a test's own temp directory and a runtime socket inside it, with
+// margin). That is what lets a lane run in a sandbox that grants only its own
+// scratch directory as `TMPDIR` (BIT-806).
+export const FALLBACK_LANE_TMPDIR = "/tmp";
+export const SOCKET_PATH_LIMIT_BYTES = 103;
+export const LANE_SOCKET_SUFFIX_RESERVE = 72;
+
+export function laneTempDir(
+  tmpdir: string | undefined,
+  realpath: (path: string) => string = realpathSync,
+): string {
+  if (tmpdir === undefined || !tmpdir.startsWith("/")) {
+    return FALLBACK_LANE_TMPDIR;
+  }
+  let resolved: string;
+  try {
+    resolved = realpath(tmpdir);
+  } catch {
+    return FALLBACK_LANE_TMPDIR; // Not there, so not a directory to use.
+  }
+  // The path that is measured is the path that is returned: a short alias of
+  // a long directory (or a long alias of a short one) is judged, and handed to
+  // the lane, by where it really is, because that is what a socket path under
+  // it will be.
+  // `/` stays `/`: stripping its slash would leave an empty path.
+  const measured = resolved.replace(/\/+$/, "") || "/";
+  const bytes = new TextEncoder().encode(measured).length;
+  return bytes + LANE_SOCKET_SUFFIX_RESERVE <= SOCKET_PATH_LIMIT_BYTES
+    ? measured
+    : FALLBACK_LANE_TMPDIR;
+}
+
 export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "PATH",
   "HOME",
   "CARGO_HOME",
   "RUSTUP_HOME",
 ];
+
+// Names the unit, gate-orchestration and isolated-Dolt integration lanes also
+// receive: whether this is a CI run. Suites whose environment-dependent skips
+// must not apply under CI read them (`prototype/testing/unix-socket-bind.ts`,
+// `prototype/testing/nested-sandbox.ts`, BIT-806). Each lane's runner forwards
+// them on to its `node --test` child (`scripts/run-node-test-files.ts`,
+// `prototype/scripts/run-unit-tests.ts`,
+// `prototype/scripts/integration-child-environment.ts`).
+export const CI_ENVIRONMENT_NAMES: readonly string[] = ["CI", "GITHUB_ACTIONS"];
+
+function ciEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    CI_ENVIRONMENT_NAMES.flatMap((name) => {
+      const value = readOptionalEnv(name);
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+}
 
 // Subject and release-range bindings supplied by CI (or an operator) are the
 // only additional names forwarded into binding-aware lanes; children are
@@ -438,14 +495,21 @@ export function parseProcessList(text: string): ProcessEntry[] {
 
 function listProcesses(): Promise<ProcessEntry[] | undefined> {
   return new Promise((resolve) => {
-    execFile(
-      "ps",
-      LIST_PROCESSES_ARGS,
-      { env: safeEnvironment(), maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => {
-        resolve(error ? undefined : parseProcessList(stdout));
-      },
-    );
+    // A ps that cannot be spawned (srt refuses the setuid one with EPERM)
+    // throws here rather than reporting through the callback; either way the
+    // listing failed.
+    try {
+      execFile(
+        "ps",
+        LIST_PROCESSES_ARGS,
+        { env: safeEnvironment(), maxBuffer: 64 * 1024 * 1024 },
+        (error, stdout) => {
+          resolve(error ? undefined : parseProcessList(stdout));
+        },
+      );
+    } catch {
+      resolve(undefined);
+    }
   });
 }
 
@@ -553,6 +617,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
   const core = `${root}/core`;
   const binding = bindingEnvironment();
   const bound = readOptionalEnv(TEST_BOUND_ENV);
+  const tempDir = laneTempDir(readOptionalEnv("TMPDIR"));
   const subjectLane = (check: string): GateLane => ({
     label: check === "subject.resolve"
       ? "Subject resolution"
@@ -711,7 +776,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
         "scripts/ratchet-base.test.ts",
       ],
       cwd: root,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
     },
     {
       // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
@@ -734,7 +799,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["scripts/run-unit-tests.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.unit, bound),
     },
     {
@@ -856,7 +921,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
@@ -868,7 +933,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["testing/golden/run.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.golden, bound),
     },
   ];

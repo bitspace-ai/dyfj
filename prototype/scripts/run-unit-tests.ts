@@ -37,6 +37,10 @@ export const UNIT_LANE_ENVIRONMENT_NAMES: readonly string[] = [
   "TMPDIR",
   "TEMP",
   "TMP",
+  // Whether this is a CI run: a suite's environment-dependent skip must not
+  // apply there (`testing/unix-socket-bind.ts`).
+  "CI",
+  "GITHUB_ACTIONS",
 ];
 
 /**

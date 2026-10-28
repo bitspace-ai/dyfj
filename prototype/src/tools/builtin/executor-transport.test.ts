@@ -6,8 +6,11 @@
 import assert from "node:assert/strict";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
+import { unixSocketBindSkip } from "../../../testing/unix-socket-bind.ts";
 import { nodeSocketHost } from "../../transport/mod.ts";
 import {
   BASH_ALLOWLIST_BASIS,
@@ -22,12 +25,22 @@ const transportModule = () => import("./executor-transport.ts");
 // removes their directory before the root-level hooks run, among them the
 // gate's per-file handle check, which otherwise could look while the
 // recursive removal was still in flight.
-describe("the executor transport", () => {
+// The suite runs scripted socket servers. Where the sandbox refuses the bind it
+// skips with that reason, never under CI (`unix-socket-bind.ts`).
+const socketSkip = await unixSocketBindSkip();
+
+// node:test does not count the tests of a skipped suite, so one explicit
+// skipped test carries the reason into the run's skipped count.
+if (socketSkip !== undefined) {
+  it("runs against a real socket server", { skip: socketSkip }, () => {});
+}
+
+describe("the executor transport", { skip: socketSkip ?? false }, () => {
   let dir: string;
 
   before(async () => {
-    // Under /tmp, not the platform temp dir: a Unix socket path is short.
-    dir = await mkdtemp("/tmp/dyfj-exec-");
+    // The lane's TMPDIR, which the gate keeps short enough for socket paths.
+    dir = await mkdtemp(join(tmpdir(), "dyfj-exec-"));
   });
 
   // Every scripted supervisor, closed before the directory holding their

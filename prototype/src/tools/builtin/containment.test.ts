@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import {
   BEFORE_EXPIRY,
   executorPolicy,
 } from "../../../testing/fakes/executor-policy.ts";
+import { unixSocketBindSkip } from "../../../testing/unix-socket-bind.ts";
 import { nodeSocketHost } from "../../transport/mod.ts";
 import {
   checkAttestation,
@@ -96,14 +99,24 @@ describe("containment attestation", () => {
   }
 });
 
-describe("the containment of a tool", () => {
+// This suite runs a real socket server. Where the sandbox refuses the bind it
+// skips with that reason, never under CI (`unix-socket-bind.ts`).
+const socketSkip = await unixSocketBindSkip();
+
+// node:test does not count the tests of a skipped suite, so one explicit
+// skipped test carries the reason into the run's skipped count.
+if (socketSkip !== undefined) {
+  it("runs against a real socket server", { skip: socketSkip }, () => {});
+}
+
+describe("the containment of a tool", { skip: socketSkip ?? false }, () => {
   let dir: string;
   let server: Server;
   let path: string;
   let answer: (nonce: string) => any = () => ({});
 
   before(async () => {
-    dir = await mkdtemp("/tmp/dyfj-attest-");
+    dir = await mkdtemp(join(tmpdir(), "dyfj-attest-"));
     path = `${dir}/exec.sock`;
     server = createServer((socket) => {
       let buffer = "";

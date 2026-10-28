@@ -1022,6 +1022,30 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`npm run test:fast` runs inside the srt sandbox (BIT-806).** Three
+  causes. A lane runner's group stop could not list processes (macOS refuses
+  the setuid `ps` there) and killed its own lane, exit 137; when `ps` fails and
+  the gate is still the runner's parent, the stop now leaves the group to the
+  gate, whose teardown needs no `ps`, and it still kills the whole group when
+  the gate is gone. A `ps` that cannot be spawned at all counts as a failed
+  `ps`: inside srt, `execFile` throws that refusal (`spawn EPERM`)
+  synchronously, which used to crash the group-stop helper before either
+  fallback ran, and would have crashed the gate's sweep of stale lane
+  records. The gate pinned its lanes' `TMPDIR` to `/tmp`, which the
+  sandbox cannot write; it now forwards its own `TMPDIR`, as its real path,
+  when a socket path under it fits (103 bytes with a 72-byte reserve) and
+  falls back to `/tmp` otherwise. Tests that need a real sandbox or a Unix
+  socket bind skip with a stated reason when the sandbox refuses it, shown as
+  a `# SKIP` line and a skipped test in the run's count: a nested sandbox is
+  detected by `sandbox-exec`, and a refused bind (only the bind's own `EPERM`)
+  by a probe run in a child process. Under CI (`CI` or `GITHUB_ACTIONS`,
+  forwarded to the unit, gate-orchestration and isolated-Dolt integration
+  lanes) a refused bind or nested sandbox no longer skips, so a refusal fails
+  those tests; the nested-sandbox test still skips when srt's own
+  dependencies are missing. The descendant test fixtures in the gate's orchestration tests
+  now fail at a 15 s deadline when their descendant never becomes ready,
+  instead of hanging.
+
 - **A runtime that refuses to start over its configuration reports one line
   (BIT-766).** A config error, such as a default max tool steps above the
   tool-step ceiling, surfaced as a raw Node stack trace. The runtime entry now
