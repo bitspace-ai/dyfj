@@ -25,8 +25,8 @@ README are tracked separately in its Revision history section.
     like the session grants, and never written to the store, events,
     receipts or logs, so a restart loses it; the durable `tool_call` event
     is unchanged and still holds `[redacted]`. It is bounded to 64 sessions,
-    each holding at most 1,024 results and 2,000,000 characters of call ids
-    and result text, with the oldest session or result dropped first. A
+    each holding at most 1,024 results and 2,000,000 characters of keys,
+    clearance scopes and result text, with the oldest session or result dropped first. A
     result is keyed by its turn's trace id and its call id, and is returned
     only to a turn with the same clearance (transport, authentication and
     authorization basis) as the turn that recorded it.

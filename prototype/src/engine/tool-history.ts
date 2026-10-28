@@ -18,8 +18,8 @@
  * and kept in memory for the engine's lifetime: a restart loses it. It is
  * bounded: at most `MAX_TRACKED_SESSIONS` sessions, each holding at most
  * `MAX_ENTRIES_PER_SESSION` results and `MAX_CHARS_PER_SESSION` characters
- * of call ids and result text, with the oldest session or result dropped
- * first. A result is keyed by the trace id of the turn that ran it and its
+ * of keys, clearance scopes and result text, with the oldest session or
+ * result dropped first. A result is keyed by the trace id of the turn that ran it and its
  * call id, and is returned only to a caller in the clearance scope that
  * recorded it. A miss gets `withheldToolResult`.
  */
@@ -30,7 +30,7 @@ import type { WorkbenchAuthContext } from "../contract/mod.ts";
 export const MAX_TRACKED_SESSIONS = 64;
 /** Results one session may hold; the oldest is dropped first. */
 export const MAX_ENTRIES_PER_SESSION = 1024;
-/** Characters of key and result text one session may hold; oldest first. */
+/** Characters of key, scope and result one session may hold; oldest first. */
 export const MAX_CHARS_PER_SESSION = 2_000_000;
 
 /** One session's recorded results, read and written in one clearance scope. */
@@ -79,7 +79,7 @@ export class ToolHistoryStore implements ToolHistoryScopes {
   }
 
   #record(sessionId: string, scope: string, key: string, text: string) {
-    const chars = key.length + text.length;
+    const chars = key.length + scope.length + text.length;
     if (chars > MAX_CHARS_PER_SESSION) return;
     let session = this.#sessions.get(sessionId);
     if (session === undefined) {

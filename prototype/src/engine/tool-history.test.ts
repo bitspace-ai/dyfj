@@ -95,3 +95,10 @@ test("a call id reused by a later turn keeps each turn's result apart", () => {
   assert.equal(history.lookup("turn-1", "c1"), "first");
   assert.equal(history.lookup("turn-2", "c1"), "second");
 });
+
+test("the clearance scope counts toward the session's character budget", () => {
+  const store = new ToolHistoryStore();
+  const huge = { ...LOOPBACK, authnIssuerRef: "x".repeat(MAX_CHARS_PER_SESSION) };
+  store.toolHistory("s1", huge).record("t1", "c1", "");
+  assert.equal(store.toolHistory("s1", huge).lookup("t1", "c1"), undefined);
+});
