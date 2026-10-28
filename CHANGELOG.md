@@ -1028,17 +1028,18 @@ README are tracked separately in its Revision history section.
   the gate is still the runner's parent, the stop now leaves the group to the
   gate, whose teardown needs no `ps`, and it still kills the whole group when
   the gate is gone. The gate pinned its lanes' `TMPDIR` to `/tmp`, which the
-  sandbox cannot write; it now forwards its own `TMPDIR` when a socket path
-  under it fits (103 bytes with a 72-byte reserve) and falls back to `/tmp`
-  otherwise. Tests that need a real sandbox or a Unix socket bind skip with a
-  stated reason (`# SKIP` in the output) when the sandbox refuses it: a nested
-  sandbox is detected by `sandbox-exec`, and a refused bind by a probe run in a
-  child process. Under CI (`CI` or `GITHUB_ACTIONS`, forwarded to the unit lane
-  only) those suites run and a refusal fails them. A descendant that never
-  becomes ready now fails its lane at a 15 s deadline instead of waiting
-  forever. In one sandboxed run, `npm ci && npm run test:fast` passed 19 of 19
-  lanes (`test.unit` 4004 passed, 0 failed); an unsandboxed run passed 19 of 19
-  (4036 passed, 0 failed).
+  sandbox cannot write; it now forwards its own `TMPDIR`, as its real path,
+  when a socket path under it fits (103 bytes with a 72-byte reserve) and
+  falls back to `/tmp` otherwise. Tests that need a real sandbox or a Unix
+  socket bind skip with a stated reason when the sandbox refuses it, shown as
+  a `# SKIP` line and a skipped test in the run's count: a nested sandbox is
+  detected by `sandbox-exec`, and a refused bind (only the bind's own `EPERM`)
+  by a probe run in a child process. Under CI (`CI` or `GITHUB_ACTIONS`,
+  forwarded to the unit and gate-orchestration lanes) the socket-bind suites
+  run and a refusal fails them. The nested-sandbox check does not skip under
+  CI either, but the integration lane, where its one test runs, does not
+  receive `CI` yet. A descendant that never becomes ready now fails its lane
+  at a 15 s deadline instead of waiting forever.
 
 - **A runtime that refuses to start over its configuration reports one line
   (BIT-766).** A config error, such as a default max tool steps above the

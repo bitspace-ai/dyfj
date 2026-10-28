@@ -6,8 +6,9 @@
 //
 // `npm run test:fast` runs inside srt (BIT-806): the lane supervision no
 // longer needs the setuid `/bin/ps` that macOS refuses there, and the gate
-// hands its lanes the sandbox's own TMPDIR. `--with-test-fast` also runs it
-// here; its result is reported and does not change the exit status.
+// hands its lanes the sandbox's own TMPDIR when a socket path under it fits,
+// and /tmp otherwise. `--with-test-fast` also runs it here; its result is
+// reported and does not change the exit status.
 //
 // The worktree is detached at HEAD under the system temp directory and
 // removed afterwards; the repository gains no branch.

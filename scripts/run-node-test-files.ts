@@ -6,8 +6,10 @@
 // Usage (from the repository root):
 //   node scripts/run-node-test-files.ts --lane <name> <file>...
 //
-// The child gets PATH, HOME and the temp variables, and nothing else. Written to node: builtins only, like the shared runner, so
-// it adds nothing to the runtime.neutral ratchet.
+// The child gets PATH, HOME, the temp variables and the CI variables, and
+// nothing else (a CI variable reaches it only when the gate gave it to the
+// lane). Written to node: builtins only, like the shared runner, so it adds
+// nothing to the runtime.neutral ratchet.
 import process from "node:process";
 import {
   requireNode,
@@ -34,6 +36,10 @@ export const FORWARDED_ENVIRONMENT_NAMES: readonly string[] = [
   "TMPDIR",
   "TEMP",
   "TMP",
+  // Whether this is a CI run: a suite's environment-dependent skip must not
+  // apply there (`prototype/testing/unix-socket-bind.ts`).
+  "CI",
+  "GITHUB_ACTIONS",
 ];
 
 async function main(): Promise<number> {

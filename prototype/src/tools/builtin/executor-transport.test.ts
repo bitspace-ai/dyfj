@@ -29,6 +29,12 @@ const transportModule = () => import("./executor-transport.ts");
 // skips with that reason, never under CI (`unix-socket-bind.ts`).
 const socketSkip = await unixSocketBindSkip();
 
+// node:test does not count the tests of a skipped suite, so one explicit
+// skipped test carries the reason into the run's skipped count.
+if (socketSkip !== undefined) {
+  it("runs against a real socket server", { skip: socketSkip }, () => {});
+}
+
 describe("the executor transport", { skip: socketSkip ?? false }, () => {
   let dir: string;
 

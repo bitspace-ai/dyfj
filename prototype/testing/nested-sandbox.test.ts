@@ -11,14 +11,14 @@ const refused = () => ({
 
 describe("the nested-sandbox check", () => {
   it("names the reason when macOS refuses to nest a sandbox", () => {
-    const reason = nestedSandboxSkipReason("darwin", refused);
+    const reason = nestedSandboxSkipReason("darwin", refused, {});
     assert.match(reason ?? "", /already inside a sandbox/);
     assert.match(reason ?? "", /sandbox_apply: Operation not permitted/);
   });
 
   it("lets the test run when the probe sandbox starts", () => {
     assert.equal(
-      nestedSandboxSkipReason("darwin", () => ({ status: 0, stderr: "" })),
+      nestedSandboxSkipReason("darwin", () => ({ status: 0, stderr: "" }), {}),
       undefined,
     );
   });
@@ -31,7 +31,7 @@ describe("the nested-sandbox check", () => {
         { status: 71, stderr: "" },
       ]
     ) {
-      assert.equal(nestedSandboxSkipReason("darwin", () => outcome), undefined);
+      assert.equal(nestedSandboxSkipReason("darwin", () => outcome, {}), undefined);
     }
   });
 
@@ -43,6 +43,28 @@ describe("the nested-sandbox check", () => {
         }),
         undefined,
         platform,
+      );
+    }
+  });
+
+  it("never skips under CI: the test runs, and a refusal fails it", () => {
+    for (const env of [{ CI: "true" }, { CI: "1" }, { GITHUB_ACTIONS: "true" }]) {
+      let probed = false;
+      const reason = nestedSandboxSkipReason("darwin", () => {
+        probed = true;
+        return refused();
+      }, env);
+      assert.equal(reason, undefined, JSON.stringify(env));
+      assert.equal(probed, false, "no probe is needed under CI");
+    }
+  });
+
+  it("still skips when CI is set to a false value", () => {
+    for (const env of [{ CI: "" }, { CI: "false" }, { CI: "0" }, { GITHUB_ACTIONS: "false" }]) {
+      assert.match(
+        nestedSandboxSkipReason("darwin", refused, env) ?? "",
+        /already inside a sandbox/,
+        JSON.stringify(env),
       );
     }
   });

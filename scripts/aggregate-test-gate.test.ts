@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, symlinkSync } from "node:fs";
 import { connect } from "node:net";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
@@ -1859,12 +1859,36 @@ test("the TMPDIR length limit is exact", () => {
   assertEquals(laneTempDir(`${fits}a`, same), FALLBACK_LANE_TMPDIR);
 });
 
-test("the length that counts is the real path's, not the name given", () => {
+test("the length that counts is the real path's, and the real path is what comes back", () => {
   // `/tmp` is a symlink to a longer path on macOS; a name that resolves long
-  // falls back, and a long name that resolves short is forwarded.
+  // falls back. A long alias that resolves short is judged by where it really
+  // is, and the lane gets that path, not the alias.
   const long = `/private/${"d".repeat(40)}`;
   assertEquals(laneTempDir("/tmp/link", () => long), FALLBACK_LANE_TMPDIR);
-  assertEquals(laneTempDir(`/${"n".repeat(60)}`, () => "/tmp"), `/${"n".repeat(60)}`);
+  const alias = `/${"n".repeat(60)}`;
+  assertEquals(laneTempDir(alias, () => "/short"), "/short");
+  assertEquals(laneTempDir(`${alias}/`, () => "/short/"), "/short");
+});
+
+test("a long symlink alias of a short directory returns the directory, not the alias", async () => {
+  const base = realpathSync(tmpdir());
+  const target = await mkdtemp(join(base, "lt-"));
+  const alias = join(base, `${"a".repeat(70)}-alias`);
+  try {
+    symlinkSync(target, alias);
+    const viaAlias = laneTempDir(alias);
+    assertEquals(viaAlias === alias, false);
+    // The same answer as for the directory itself: its real path when a socket
+    // path under it fits, else the fallback.
+    assertEquals(viaAlias, laneTempDir(target));
+    assertEquals(
+      [FALLBACK_LANE_TMPDIR, realpathSync(target)].includes(viaAlias),
+      true,
+    );
+  } finally {
+    await rm(alias, { force: true });
+    await rm(target, { recursive: true, force: true });
+  }
 });
 
 test("a missing, relative or unset TMPDIR falls back to /tmp", () => {
@@ -1907,23 +1931,85 @@ const TEMP_DIR_LANES = [
   "Golden characterization suite (test.golden)",
 ];
 
-test("the unit lane, and only it, gets the CI variables", () => {
+const CI_LANE_LABELS = [
+  "Aggregate gate orchestration tests",
+  "Prototype unit test suite (test.unit)",
+];
+
+test("the unit lane and the orchestration lane, and only they, get the CI variables", () => {
   const saved = { CI: process.env.CI, GITHUB_ACTIONS: process.env.GITHUB_ACTIONS };
-  process.env.CI = "true";
-  process.env.GITHUB_ACTIONS = "true";
-  try {
-    for (const lane of productionLanes("/repo")) {
-      const names = Object.keys(lane.env ?? {});
-      const gets = names.includes("CI") && names.includes("GITHUB_ACTIONS");
-      assertEquals(
-        [lane.label, gets],
-        [lane.label, lane.label === "Prototype unit test suite (test.unit)"],
-      );
-    }
-  } finally {
+  const restore = () => {
     for (const [name, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+  };
+  try {
+    process.env.CI = "true";
+    process.env.GITHUB_ACTIONS = "true";
+    for (const lane of productionLanes("/repo")) {
+      const wants = CI_LANE_LABELS.includes(lane.label);
+      // `CI` reaches those two lanes and no other. `GITHUB_ACTIONS` must reach
+      // them too; the binding-aware lanes already receive it for the subject
+      // and range checks (`bindingEnvironment`), so it is not checked as
+      // absent elsewhere.
+      assertEquals([lane.label, lane.env?.CI], [lane.label, wants ? "true" : undefined]);
+      if (wants) assertEquals([lane.label, lane.env?.GITHUB_ACTIONS], [lane.label, "true"]);
+    }
+    // Unset in the gate's own environment: nothing is invented for the lane.
+    delete process.env.CI;
+    delete process.env.GITHUB_ACTIONS;
+    for (const lane of productionLanes("/repo")) {
+      assertEquals(
+        [lane.label, "CI" in (lane.env ?? {}), "GITHUB_ACTIONS" in (lane.env ?? {})],
+        [lane.label, false, false],
+      );
+    }
+  } finally {
+    restore();
+  }
+});
+
+// The lane env is not enough on its own: the orchestration lane's tests run in
+// a `node --test` child of the shared test-file runner, which forwards a fixed
+// list of names. This runs the runner for real, with the variables set.
+test("the node test-file runner forwards the CI variables to its tests, and no other", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-ci-forward-"));
+  try {
+    const file = join(dir, "env.test.ts");
+    await writeFile(
+      file,
+      [
+        `import assert from "node:assert/strict";`,
+        `import { test } from "node:test";`,
+        `test("the child's environment", () => {`,
+        `  assert.equal(process.env.CI, "true");`,
+        `  assert.equal(process.env.GITHUB_ACTIONS, "true");`,
+        `  assert.equal(process.env.DYFJ_NOT_FORWARDED, undefined);`,
+        `});`,
+        ``,
+      ].join("\n"),
+    );
+    const runner = fileURLToPath(
+      new URL("./run-node-test-files.ts", import.meta.url),
+    );
+    const base: Record<string, string> = { DYFJ_NOT_FORWARDED: "1" };
+    for (const name of ["PATH", "HOME", "TMPDIR"]) {
+      const value = process.env[name];
+      if (value !== undefined) base[name] = value;
+    }
+    const run = (env: Record<string, string>) =>
+      spawnSync("node", [runner, "--lane", "ci.forward", file], {
+        cwd: dir,
+        env,
+        encoding: "utf8",
+      });
+    const withCi = run({ ...base, CI: "true", GITHUB_ACTIONS: "true" });
+    assertEquals(withCi.status, 0);
+    assertStringIncludes(withCi.stdout, "ci.forward node --test: ok");
+    // The same file fails without the variables, so the check above can fail.
+    assertEquals(run(base).status === 0, false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });

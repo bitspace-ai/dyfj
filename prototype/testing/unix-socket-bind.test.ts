@@ -49,15 +49,30 @@ describe("the Unix-socket skip decision", () => {
     assert.deepEqual(bindOutcomeFromExit(1, ""), { ok: false, code: undefined });
   });
 
+  it("does not take a failure to make the probe's directory for a refused bind", () => {
+    // An EPERM from mkdtemp says nothing about binding a socket, so the suite
+    // runs and fails on it; only the bind's own EPERM (exit 10) skips.
+    const directory = bindOutcomeFromExit(12, "EPERM");
+    assert.deepEqual(directory, { ok: false, code: "mkdtemp:EPERM" });
+    assert.equal(unixSocketSkipReason(directory, {}), undefined);
+    assert.equal(
+      unixSocketSkipReason(bindOutcomeFromExit(12, ""), {}),
+      undefined,
+    );
+    assert.match(
+      unixSocketSkipReason(bindOutcomeFromExit(10, ""), {}) ?? "",
+      /may not bind a Unix socket/,
+    );
+  });
+
   it("probes this machine and reports a code on refusal", () => {
     const outcome = probeUnixSocketBind();
     assert.ok(outcome.ok || typeof outcome.code === "string" || outcome.code === undefined);
   });
 
-  it("reports a bind in a directory that does not exist as a failure that is not EPERM", () => {
+  it("reports a directory that cannot be made as a directory failure, which does not skip", () => {
     const outcome = probeUnixSocketBind("/nonexistent-dyfj-probe-dir");
-    assert.equal(outcome.ok, false);
-    assert.notEqual((outcome as { code?: string }).code, "EPERM");
+    assert.deepEqual(outcome, { ok: false, code: "mkdtemp:ENOENT" });
     assert.equal(unixSocketSkipReason(outcome, {}), undefined);
   });
 

@@ -127,9 +127,14 @@ export function laneTempDir(
   } catch {
     return FALLBACK_LANE_TMPDIR; // Not there, so not a directory to use.
   }
-  const bytes = new TextEncoder().encode(resolved.replace(/\/+$/, "")).length;
+  // The path that is measured is the path that is returned: a short alias of
+  // a long directory (or a long alias of a short one) is judged, and handed to
+  // the lane, by where it really is, because that is what a socket path under
+  // it will be.
+  const measured = resolved.replace(/\/+$/, "");
+  const bytes = new TextEncoder().encode(measured).length;
   return bytes + LANE_SOCKET_SUFFIX_RESERVE <= SOCKET_PATH_LIMIT_BYTES
-    ? tmpdir
+    ? measured
     : FALLBACK_LANE_TMPDIR;
 }
 
@@ -140,12 +145,11 @@ export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "RUSTUP_HOME",
 ];
 
-// Subject and release-range bindings supplied by CI (or an operator) are the
-// only additional names forwarded into binding-aware lanes; children are
-// still spawned with a cleared environment.
-// Names the unit lane alone also receives: whether this is a CI run. Suites
-// whose environment-dependent skips must not apply under CI read them
-// (`prototype/testing/unix-socket-bind.ts`, BIT-806).
+// Names the unit lane and the gate-orchestration lane also receive: whether
+// this is a CI run. Suites whose environment-dependent skips must not apply
+// under CI read them (`prototype/testing/unix-socket-bind.ts`, BIT-806). The
+// shared node-test runner forwards them on to its `node --test` child
+// (`scripts/run-node-test-files.ts`).
 export const CI_ENVIRONMENT_NAMES: readonly string[] = ["CI", "GITHUB_ACTIONS"];
 
 function ciEnvironment(): Record<string, string> {
@@ -157,6 +161,9 @@ function ciEnvironment(): Record<string, string> {
   );
 }
 
+// Subject and release-range bindings supplied by CI (or an operator) are the
+// only additional names forwarded into binding-aware lanes; children are
+// still spawned with a cleared environment.
 const bindingEnvironmentNames = [
   "DYFJ_GATE_SUBJECT",
   "DYFJ_GATE_RANGE_BASE",
@@ -759,7 +766,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
         "scripts/ratchet-base.test.ts",
       ],
       cwd: root,
-      env: { TMPDIR: tempDir },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
     },
     {
       // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
