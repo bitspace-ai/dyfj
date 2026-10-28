@@ -1030,7 +1030,8 @@ README are tracked separately in its Revision history section.
   the gate is gone. A `ps` that cannot be spawned at all counts as a failed
   `ps`: inside srt, `execFile` throws that refusal (`spawn EPERM`)
   synchronously, which used to crash the group-stop helper before either
-  fallback ran. The gate pinned its lanes' `TMPDIR` to `/tmp`, which the
+  fallback ran, and would have crashed the gate's sweep of stale lane
+  records. The gate pinned its lanes' `TMPDIR` to `/tmp`, which the
   sandbox cannot write; it now forwards its own `TMPDIR`, as its real path,
   when a socket path under it fits (103 bytes with a 72-byte reserve) and
   falls back to `/tmp` otherwise. Tests that need a real sandbox or a Unix

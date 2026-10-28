@@ -31,6 +31,7 @@ import {
   parseProcessList,
   planGate,
   productionLanes,
+  recoverOrphanedLaneGroups,
   REQUIRED_CHECK_IDS,
   runGate,
   SOCKET_PATH_LIMIT_BYTES,
@@ -250,6 +251,28 @@ test("recovery signals only a group that still carries the lane token", () => {
       { pid: 5, group: 5, command: "sh" },
     ],
   );
+});
+
+test("a ps that cannot be spawned leaves the stale lane records in place", async () => {
+  if (process.platform === "win32") return;
+  // A ps that is a symlink to itself fails exec with ELOOP, which Node throws
+  // synchronously, as it does the EPERM srt gives the setuid ps.
+  const bin = await mkdtemp(join(tmpdir(), "dyfj-noexec-ps-"));
+  const records = await mkdtemp(join(tmpdir(), "dyfj-lane-records-"));
+  const savedPath = process.env.PATH;
+  try {
+    symlinkSync(join(bin, "ps"), join(bin, "ps"));
+    await writeFile(join(records, "stale.json"), "{}");
+    process.env.PATH = bin;
+    const out = { log: () => {}, error: () => {} };
+    await recoverOrphanedLaneGroups(records, out);
+    process.env.PATH = savedPath;
+    await stat(join(records, "stale.json"));
+  } finally {
+    process.env.PATH = savedPath;
+    await rm(bin, { recursive: true, force: true });
+    await rm(records, { recursive: true, force: true });
+  }
 });
 
 test("aggregate lanes include the contract package tests", () => {

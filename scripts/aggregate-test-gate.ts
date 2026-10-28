@@ -495,14 +495,21 @@ export function parseProcessList(text: string): ProcessEntry[] {
 
 function listProcesses(): Promise<ProcessEntry[] | undefined> {
   return new Promise((resolve) => {
-    execFile(
-      "ps",
-      LIST_PROCESSES_ARGS,
-      { env: safeEnvironment(), maxBuffer: 64 * 1024 * 1024 },
-      (error, stdout) => {
-        resolve(error ? undefined : parseProcessList(stdout));
-      },
-    );
+    // A ps that cannot be spawned (srt refuses the setuid one with EPERM)
+    // throws here rather than reporting through the callback; either way the
+    // listing failed.
+    try {
+      execFile(
+        "ps",
+        LIST_PROCESSES_ARGS,
+        { env: safeEnvironment(), maxBuffer: 64 * 1024 * 1024 },
+        (error, stdout) => {
+          resolve(error ? undefined : parseProcessList(stdout));
+        },
+      );
+    } catch {
+      resolve(undefined);
+    }
   });
 }
 
