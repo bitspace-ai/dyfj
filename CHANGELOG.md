@@ -1040,8 +1040,9 @@ README are tracked separately in its Revision history section.
   detected by `sandbox-exec`, and a refused bind (only the bind's own `EPERM`)
   by a probe run in a child process. Under CI (`CI` or `GITHUB_ACTIONS`,
   forwarded to the unit, gate-orchestration and isolated-Dolt integration
-  lanes) the socket-bind suites and the nested-sandbox test run and a refusal
-  fails them. The descendant test fixtures in the gate's orchestration tests
+  lanes) a refused bind or nested sandbox no longer skips, so a refusal fails
+  those tests; the nested-sandbox test still skips when srt's own
+  dependencies are missing. The descendant test fixtures in the gate's orchestration tests
   now fail at a 15 s deadline when their descendant never becomes ready,
   instead of hanging.
 

@@ -6,9 +6,8 @@
 // Usage (from the repository root):
 //   node scripts/run-node-test-files.ts --lane <name> <file>...
 //
-// The child gets PATH, HOME, the temp variables and the CI variables, and
-// nothing else (a CI variable reaches it only when the gate gave it to the
-// lane). Written to node: builtins only, like the shared runner, so it adds
+// The child gets PATH, HOME, the temp variables and the CI variables present
+// in this runner's own environment, and nothing else. Written to node: builtins only, like the shared runner, so it adds
 // nothing to the runtime.neutral ratchet.
 import process from "node:process";
 import {

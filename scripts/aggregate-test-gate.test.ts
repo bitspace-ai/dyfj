@@ -260,16 +260,20 @@ test("a ps that cannot be spawned leaves the stale lane records in place", async
   const bin = await mkdtemp(join(tmpdir(), "dyfj-noexec-ps-"));
   const records = await mkdtemp(join(tmpdir(), "dyfj-lane-records-"));
   const savedPath = process.env.PATH;
+  const restorePath = () => {
+    if (savedPath === undefined) delete process.env.PATH;
+    else process.env.PATH = savedPath;
+  };
   try {
     symlinkSync(join(bin, "ps"), join(bin, "ps"));
     await writeFile(join(records, "stale.json"), "{}");
     process.env.PATH = bin;
     const out = { log: () => {}, error: () => {} };
     await recoverOrphanedLaneGroups(records, out);
-    process.env.PATH = savedPath;
+    restorePath();
     await stat(join(records, "stale.json"));
   } finally {
-    process.env.PATH = savedPath;
+    restorePath();
     await rm(bin, { recursive: true, force: true });
     await rm(records, { recursive: true, force: true });
   }
