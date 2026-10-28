@@ -710,11 +710,16 @@ async function groupGone(group: number, timeoutMs: number): Promise<boolean> {
 
 // A directory holding a `ps` that fails and notes each call in `<dir>/ps-called`;
 // returns a PATH with it first.
-function failingPsPath(dir: string): string {
+// With `holdUntil`, it first waits for that file to exist, so a test can act
+// between the call and the failure.
+function failingPsPath(dir: string, holdUntil?: string): string {
   mkdirSync(`${dir}/shim`);
+  const hold = holdUntil === undefined
+    ? ""
+    : `while [ ! -e "${holdUntil}" ]; do sleep 0.05; done\n`;
   writeFileSync(
     `${dir}/shim/ps`,
-    `#!/bin/sh\necho called >> "${dir}/ps-called"\nexit 1\n`,
+    `#!/bin/sh\necho called >> "${dir}/ps-called"\n${hold}exit 1\n`,
     { mode: 0o755 },
   );
   return `${dir}/shim:${process.env.PATH ?? ""}`;
@@ -851,6 +856,79 @@ test(
         } catch {
           // Already gone.
         }
+      }
+    });
+  },
+);
+
+test(
+  "a group stop that cannot list processes kills the group when its gate died after the stop started",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      // The runner's real parent is a stand-in gate. The `ps` the group stop
+      // calls waits for `gate-gone`, so the gate can be killed after the
+      // helper has started and before its listing fails: a gate that was alive
+      // when the helper started and is gone when it decides.
+      const gateProgram = `
+import { spawn } from "node:child_process";
+import { openSync, writeFileSync } from "node:fs";
+const [dir, runnerProgram, path] = process.argv.slice(1);
+const runner = spawn(
+  "node",
+  ["--input-type=module", "-e", runnerProgram, dir, "token-" + process.pid,
+    String(process.pid)],
+  {
+    env: { PATH: path, HOME: process.env.HOME ?? "", TMPDIR: process.env.TMPDIR ?? "" },
+    detached: true,
+    stdio: ["ignore", "ignore", openSync(dir + "/runner.stderr", "w")],
+  },
+);
+writeFileSync(dir + "/runner.pid", String(runner.pid));
+setTimeout(() => {}, 60000);
+`;
+      const gate = spawn(
+        "node",
+        [
+          "--input-type=module",
+          "-e",
+          gateProgram,
+          dir,
+          GROUP_STOP_RUNNER,
+          failingPsPath(dir, `${dir}/gate-gone`),
+        ],
+        { stdio: "ignore" },
+      );
+      let runnerGroup = 0;
+      try {
+        runnerGroup = Number(
+          await waitFor(() => readText(`${dir}/runner.pid`), 5_000, "the runner"),
+        );
+        // The group stop's helper is now inside its `ps`.
+        await waitFor(
+          () => psWasCalled(dir) ? true : undefined,
+          5_000,
+          "the group stop's ps call",
+        );
+        assert.ok(groupExists(runnerGroup), "the lane group is already gone");
+        gate.kill("SIGKILL");
+        await exitedWith(gate);
+        writeFileSync(`${dir}/gate-gone`, "");
+        assert.ok(
+          await groupGone(runnerGroup, 10_000),
+          "the group was left to a gate that is gone",
+        );
+        assert.match(
+          readText(`${dir}/runner.stderr`) ?? "",
+          /killing the whole lane group/,
+        );
+      } finally {
+        try {
+          process.kill(-runnerGroup, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+        gate.kill("SIGKILL");
       }
     });
   },

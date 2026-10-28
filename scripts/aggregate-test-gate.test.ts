@@ -513,7 +513,15 @@ test("orchestration lane covers the CI workflow hygiene tests", () => {
   ]);
   // Lane children start from a cleared environment: the temp root must be
   // set explicitly, never inherited (`laneTempDir` chooses it).
-  assertEquals(lane.env, { TMPDIR: laneTempDir(process.env.TMPDIR) });
+  // The lane gets TMPDIR and the CI variables that are present (`CI`,
+  // `GITHUB_ACTIONS`), built here the way the lane builds them.
+  const ci = Object.fromEntries(
+    ["CI", "GITHUB_ACTIONS"].flatMap((name) => {
+      const value = process.env[name];
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+  assertEquals(lane.env, { TMPDIR: laneTempDir(process.env.TMPDIR), ...ci });
 });
 
 test("fast lanes reuse the production lane definitions verbatim", () => {
@@ -1889,6 +1897,13 @@ test("a long symlink alias of a short directory returns the directory, not the a
     await rm(alias, { force: true });
     await rm(target, { recursive: true, force: true });
   }
+});
+
+test("a TMPDIR that is the root stays the root, not an empty path", () => {
+  assertEquals(laneTempDir("/", same), "/");
+  assertEquals(laneTempDir("//", same), "/");
+  // A name that resolves to the root is the root too.
+  assertEquals(laneTempDir("/tmp/up", () => "/"), "/");
 });
 
 test("a missing, relative or unset TMPDIR falls back to /tmp", () => {

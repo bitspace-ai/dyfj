@@ -131,7 +131,8 @@ export function laneTempDir(
   // a long directory (or a long alias of a short one) is judged, and handed to
   // the lane, by where it really is, because that is what a socket path under
   // it will be.
-  const measured = resolved.replace(/\/+$/, "");
+  // `/` stays `/`: stripping its slash would leave an empty path.
+  const measured = resolved.replace(/\/+$/, "") || "/";
   const bytes = new TextEncoder().encode(measured).length;
   return bytes + LANE_SOCKET_SUFFIX_RESERVE <= SOCKET_PATH_LIMIT_BYTES
     ? measured

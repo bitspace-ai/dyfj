@@ -4,8 +4,10 @@
 // registry-only allowlist and no ask callback, so nothing can prompt. It
 // needs the network, so it is not part of `npm test`.
 //
-// `npm run test:fast` runs inside srt (BIT-806): the lane supervision no
-// longer needs the setuid `/bin/ps` that macOS refuses there, and the gate
+// `npm run test:fast` runs inside srt (BIT-806): when macOS refuses the setuid
+// `/bin/ps` there and the gate is alive, a lane runner's group stop leaves the
+// lane group to the gate's teardown (which needs no `ps`) and the runner keeps
+// its exit code; with the gate gone it still kills the whole group. The gate
 // hands its lanes the sandbox's own TMPDIR when a socket path under it fits,
 // and /tmp otherwise. `--with-test-fast` also runs it here; its result is
 // reported and does not change the exit status.
