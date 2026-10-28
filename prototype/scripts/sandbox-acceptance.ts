@@ -4,12 +4,10 @@
 // registry-only allowlist and no ask callback, so nothing can prompt. It
 // needs the network, so it is not part of `npm test`.
 //
-// `npm run test:fast` does not pass inside srt yet: on macOS the sandbox
-// refuses to run the setuid `/bin/ps` that the gate's lane supervision uses,
-// and the gate sets its lanes' TMPDIR to /tmp, which the sandbox cannot
-// write (BIT-806). Until then an agent runs it with bash's prompted
-// `unsandboxed` escape. `--with-test-fast` also runs it here, to show where
-// it stands; its result is reported and does not change the exit status.
+// `npm run test:fast` runs inside srt (BIT-806): the lane supervision no
+// longer needs the setuid `/bin/ps` that macOS refuses there, and the gate
+// hands its lanes the sandbox's own TMPDIR. `--with-test-fast` also runs it
+// here; its result is reported and does not change the exit status.
 //
 // The worktree is detached at HEAD under the system temp directory and
 // removed afterwards; the repository gains no branch.
@@ -78,7 +76,7 @@ try {
         failed = true;
         break;
       }
-      console.log("(test:fast inside srt is a known gap, BIT-806; not counted)");
+      console.log("(test:fast failed inside srt; reported, not counted)");
     }
   }
 } finally {

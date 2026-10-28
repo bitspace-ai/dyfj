@@ -1022,6 +1022,24 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`npm run test:fast` runs inside the srt sandbox (BIT-806).** Three
+  causes. A lane runner's group stop could not list processes (macOS refuses
+  the setuid `ps` there) and killed its own lane, exit 137; when `ps` fails and
+  the gate is still the runner's parent, the stop now leaves the group to the
+  gate, whose teardown needs no `ps`, and it still kills the whole group when
+  the gate is gone. The gate pinned its lanes' `TMPDIR` to `/tmp`, which the
+  sandbox cannot write; it now forwards its own `TMPDIR` when a socket path
+  under it fits (103 bytes with a 72-byte reserve) and falls back to `/tmp`
+  otherwise. Tests that need a real sandbox or a Unix socket bind skip with a
+  stated reason (`# SKIP` in the output) when the sandbox refuses it: a nested
+  sandbox is detected by `sandbox-exec`, and a refused bind by a probe run in a
+  child process. Under CI (`CI` or `GITHUB_ACTIONS`, forwarded to the unit lane
+  only) those suites run and a refusal fails them. A descendant that never
+  becomes ready now fails its lane at a 15 s deadline instead of waiting
+  forever. In one sandboxed run, `npm ci && npm run test:fast` passed 19 of 19
+  lanes (`test.unit` 4004 passed, 0 failed); an unsandboxed run passed 19 of 19
+  (4036 passed, 0 failed).
+
 - **A runtime that refuses to start over its configuration reports one line
   (BIT-766).** A config error, such as a default max tool steps above the
   tool-step ceiling, surfaced as a raw Node stack trace. The runtime entry now

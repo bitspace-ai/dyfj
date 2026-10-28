@@ -13,6 +13,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { constants } from "node:os";
 import process from "node:process";
 import {
@@ -100,6 +101,38 @@ export const REQUIRED_CHECK_IDS: readonly string[] = [
   "receipt.schema",
 ];
 
+// The temp directory a test lane gets. Tests bind Unix sockets under it, and a
+// socket path holds at most 103 bytes on macOS (104 with its terminator), so
+// the long default there (`/var/folders/...`, about 49 bytes) cannot be used:
+// the lane keeps `/tmp`. A caller's `TMPDIR` is forwarded when its real path
+// leaves room for the longest socket path the lanes build under it
+// (`LANE_SOCKET_SUFFIX_RESERVE`: the integration lane's `dyfj-test-*`
+// directory, a test's own temp directory and a runtime socket inside it, with
+// margin). That is what lets a lane run in a sandbox that grants only its own
+// scratch directory as `TMPDIR` (BIT-806).
+export const FALLBACK_LANE_TMPDIR = "/tmp";
+export const SOCKET_PATH_LIMIT_BYTES = 103;
+export const LANE_SOCKET_SUFFIX_RESERVE = 72;
+
+export function laneTempDir(
+  tmpdir: string | undefined,
+  realpath: (path: string) => string = realpathSync,
+): string {
+  if (tmpdir === undefined || !tmpdir.startsWith("/")) {
+    return FALLBACK_LANE_TMPDIR;
+  }
+  let resolved: string;
+  try {
+    resolved = realpath(tmpdir);
+  } catch {
+    return FALLBACK_LANE_TMPDIR; // Not there, so not a directory to use.
+  }
+  const bytes = new TextEncoder().encode(resolved.replace(/\/+$/, "")).length;
+  return bytes + LANE_SOCKET_SUFFIX_RESERVE <= SOCKET_PATH_LIMIT_BYTES
+    ? tmpdir
+    : FALLBACK_LANE_TMPDIR;
+}
+
 export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "PATH",
   "HOME",
@@ -110,6 +143,20 @@ export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
 // Subject and release-range bindings supplied by CI (or an operator) are the
 // only additional names forwarded into binding-aware lanes; children are
 // still spawned with a cleared environment.
+// Names the unit lane alone also receives: whether this is a CI run. Suites
+// whose environment-dependent skips must not apply under CI read them
+// (`prototype/testing/unix-socket-bind.ts`, BIT-806).
+export const CI_ENVIRONMENT_NAMES: readonly string[] = ["CI", "GITHUB_ACTIONS"];
+
+function ciEnvironment(): Record<string, string> {
+  return Object.fromEntries(
+    CI_ENVIRONMENT_NAMES.flatMap((name) => {
+      const value = readOptionalEnv(name);
+      return value === undefined ? [] : [[name, value]];
+    }),
+  );
+}
+
 const bindingEnvironmentNames = [
   "DYFJ_GATE_SUBJECT",
   "DYFJ_GATE_RANGE_BASE",
@@ -553,6 +600,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
   const core = `${root}/core`;
   const binding = bindingEnvironment();
   const bound = readOptionalEnv(TEST_BOUND_ENV);
+  const tempDir = laneTempDir(readOptionalEnv("TMPDIR"));
   const subjectLane = (check: string): GateLane => ({
     label: check === "subject.resolve"
       ? "Subject resolution"
@@ -711,7 +759,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
         "scripts/ratchet-base.test.ts",
       ],
       cwd: root,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir },
     },
     {
       // TypeScript typecheck (decision D32): `tsc --noEmit` from the root npm
@@ -734,7 +782,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["scripts/run-unit-tests.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.unit, bound),
     },
     {
@@ -856,7 +904,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
@@ -868,7 +916,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["testing/golden/run.ts"],
       cwd: prototype,
-      env: { TMPDIR: "/tmp" },
+      env: { TMPDIR: tempDir },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.golden, bound),
     },
   ];

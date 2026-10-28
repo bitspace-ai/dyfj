@@ -682,40 +682,219 @@ process.exit(0);
   },
 );
 
+// --- Lane supervision without `ps` (BIT-806) ------------------------------
+//
+// Inside the srt sandbox on macOS the setuid `ps` is refused, so the lane's
+// process list is unavailable. These tests make that deterministic with a
+// `ps` that fails and records that it was called, and observe liveness only
+// with `kill(-group, 0)`, which needs no `ps`.
+
+// Whether any process is left in `group`.
+function groupExists(group: number): boolean {
+  try {
+    process.kill(-group, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+async function groupGone(group: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (groupExists(group)) {
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return true;
+}
+
+// A directory holding a `ps` that fails and notes each call in `<dir>/ps-called`;
+// returns a PATH with it first.
+function failingPsPath(dir: string): string {
+  mkdirSync(`${dir}/shim`);
+  writeFileSync(
+    `${dir}/shim/ps`,
+    `#!/bin/sh\necho called >> "${dir}/ps-called"\nexit 1\n`,
+    { mode: 0o755 },
+  );
+  return `${dir}/shim:${process.env.PATH ?? ""}`;
+}
+
+function psWasCalled(dir: string): boolean {
+  return readText(`${dir}/ps-called`) !== undefined;
+}
+
+// Runs `run` with this process's PATH replaced, as the gate takes the PATH it
+// hands a lane from its own environment.
+async function withPath(path: string, run: () => Promise<void>): Promise<void> {
+  const prior = process.env.PATH;
+  process.env.PATH = path;
+  try {
+    await run();
+  } finally {
+    if (prior === undefined) delete process.env.PATH;
+    else process.env.PATH = prior;
+  }
+}
+
 test(
-  "a group stop that cannot list processes kills the whole group and says so",
-  {
-    skip,
-  },
+  "the gate's group teardown kills a lane's grandchild with no ps",
+  { skip },
   async () => {
-    await withDir(async (dir, tokens) => {
-      const token = randomUUID();
-      tokens.add(token);
-      // A `ps` that always fails, first on the runner's PATH, which its
-      // helpers inherit.
-      mkdirSync(`${dir}/bin`);
-      writeFileSync(`${dir}/bin/ps`, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
-      const runner = startRunner("exit", dir, {
-        deadlineMs: 120_000,
-        backstopMs: 180_000,
-        token,
-      }, { path: `${dir}/bin:${process.env.PATH ?? ""}` });
-      let stderr = "";
-      runner.stderr!.setEncoding("utf8");
-      runner.stderr!.on("data", (chunk: string) => (stderr += chunk));
-      const grandchild = await grandchildPid(dir);
-      await waitFor(
-        () => tokenCarriers(token).length === 1 ? true : undefined,
-        5_000,
-        "the token carrier",
+    await withDir(async (dir) => {
+      // The leader leaves a TERM-ignoring grandchild in its group and exits
+      // at once, so only the gate's teardown can end the group.
+      const leader = `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+const [dir] = process.argv.slice(1);
+const child = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
+  stdio: "ignore",
+});
+writeFileSync(dir + "/grandchild.pid", String(child.pid));
+writeFileSync(dir + "/leader.pid", String(process.pid));
+process.exit(0);
+`;
+      let code = -1;
+      await withPath(failingPsPath(dir), async () => {
+        code = await runGate({
+          lanes: [{
+            label: "Stand-in lane that leaves a grandchild",
+            command: "node",
+            args: ["--input-type=module", "-e", leader, dir],
+          }],
+          out: quiet,
+        });
+      });
+      assert.equal(code, 0, "the lane's own result is unchanged");
+      const group = Number(readText(`${dir}/leader.pid`));
+      const grandchild = Number(readText(`${dir}/grandchild.pid`));
+      assert.ok(group > 1 && grandchild > 1, "the lane recorded its pids");
+      assert.ok(await groupGone(group, 5_000), "the lane group is not empty");
+      assert.throws(() => process.kill(grandchild, 0), "the grandchild survived");
+      assert.ok(!psWasCalled(dir), "the gate's teardown called ps");
+    });
+  },
+);
+
+// A stand-in runner that leaves a TERM-ignoring member in its group, stops
+// its own group and, if it is still there, exits 7. `parent` is the gate pid
+// it was told to expect.
+const GROUP_STOP_RUNNER = `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { stopOwnGroup } from ${JSON.stringify(SUPERVISION_URL)};
+const [dir, token, parent] = process.argv.slice(1);
+const sleeper = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
+  stdio: "ignore",
+});
+writeFileSync(dir + "/grandchild.pid", String(sleeper.pid));
+await stopOwnGroup({
+  deadlineMs: 120000, backstopMs: 180000, token, parentPid: Number(parent),
+});
+process.exit(7);
+`;
+
+function startGroupStopRunner(
+  dir: string,
+  token: string,
+  parent: number,
+): { runner: ChildProcess; stderr: () => string } {
+  const runner = spawn(
+    "node",
+    ["--input-type=module", "-e", GROUP_STOP_RUNNER, dir, token, String(parent)],
+    {
+      env: { ...childEnv(), PATH: failingPsPath(dir) },
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    },
+  );
+  let stderr = "";
+  runner.stderr!.setEncoding("utf8");
+  runner.stderr!.on("data", (chunk: string) => (stderr += chunk));
+  return { runner, stderr: () => stderr };
+}
+
+function exitedWith(
+  child: ChildProcess,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve({ code: child.exitCode, signal: child.signalCode });
+      return;
+    }
+    child.once("exit", (code, signal) => resolve({ code, signal }));
+  });
+}
+
+test(
+  "a group stop that cannot list processes leaves the group to a gate that is still there",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      // The runner's parent is the gate it expects (this process).
+      const { runner, stderr } = startGroupStopRunner(
+        dir,
+        randomUUID(),
+        process.pid,
       );
-      // The lane's work ends; the runner stops its group with no `ps`.
-      writeFileSync(`${dir}/release`, "");
-      await exited(runner);
-      await groupEmpties(runner.pid!, 10_000);
-      assert.ok(!alive(grandchild), "the grandchild survived");
-      assert.deepEqual(tokenCarriers(token), [], "the carrier survived");
-      assert.match(stderr, /could not list the lane's processes/);
+      try {
+        const { code, signal } = await exitedWith(runner);
+        assert.equal(signal, null, "the runner was killed by its own stop");
+        assert.equal(code, 7, "the runner kept its own exit code");
+        assert.doesNotMatch(stderr(), /killing the whole lane group/);
+        // The gate's teardown, not the runner, ends what is left.
+        assert.ok(groupExists(runner.pid!), "the stop killed the group");
+      } finally {
+        try {
+          process.kill(-runner.pid!, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    });
+  },
+);
+
+test(
+  "a group stop that cannot list processes kills the whole group when its gate is gone",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      // Pid 2 is not the runner's parent, as for a gate that has died.
+      const { runner, stderr } = startGroupStopRunner(dir, randomUUID(), 2);
+      await exitedWith(runner);
+      assert.ok(await groupGone(runner.pid!, 10_000), "the group survived");
+      assert.match(stderr(), /could not list the lane's processes/);
+    });
+  },
+);
+
+test(
+  "a gate lane whose runner cannot list processes keeps its exit code and leaves no group",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      let code = -1;
+      let group = 0;
+      await withPath(failingPsPath(dir), async () => {
+        const gate = runGate({
+          lanes: [{
+            label: "Stand-in test lane",
+            command: "node",
+            args: runnerArgs("exit", dir),
+            deadlineMs: 60_000,
+          }],
+          laneRecordDir: `${dir}/records`,
+          out: quiet,
+        });
+        await grandchildPid(dir);
+        group = (await laneRecord(dir)).group;
+        writeFileSync(`${dir}/release`, "");
+        code = await gate;
+      });
+      assert.equal(code, 0, "the runner's exit code was replaced");
+      assert.ok(await groupGone(group, 10_000), "the lane group survived");
     });
   },
 );

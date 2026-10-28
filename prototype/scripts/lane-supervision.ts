@@ -130,7 +130,12 @@ export function laneSupervision(
 // caller's own `ps` is not a member to wait for, and a carrier's own `ps`
 // counts as part of the carrier. It fails closed: if the last listing within
 // the grace failed, nothing says the group is empty, so it reports that on
-// stderr and KILLs the whole group, the leader and the caller included.
+// stderr and KILLs the whole group, the leader and the caller included. The
+// one exception is a runner whose gate is still its parent (`gateAlive`): the
+// gate reads the runner's exit code and then ends the lane group itself, with
+// no `ps` (a signal-0 probe and KILL), so a failed listing there leaves the
+// group to the gate and the runner keeps its own exit code. Inside the srt
+// sandbox on macOS the setuid `ps` is refused, so every listing fails.
 const GROUP_STOP_FUNCTIONS = `
 import { execFile } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -152,7 +157,7 @@ function processRows() {
     });
   });
 }
-async function stopGroup(group, grace, tokenArgument) {
+async function stopGroup(group, grace, tokenArgument, gateAlive = false) {
   const spared = new Set([group, process.pid]);
   try { process.kill(-group, "SIGTERM"); } catch { return; }
   async function members() {
@@ -170,8 +175,13 @@ async function stopGroup(group, grace, tokenArgument) {
         : [{ pid: r.pid, carrier: r.carrier || carriers.has(r.ppid) }]
     );
   }
+  const leaveToGate = () => process.stderr.write(
+    "dyfj: the group stop could not list the lane's processes; " +
+      "leaving the lane group to the gate\\n",
+  );
   const deadline = Date.now() + grace;
   let left = await members();
+  if (left === undefined && gateAlive) return leaveToGate();
   while (
     (left === undefined || left.some((m) => !m.carrier)) &&
     Date.now() < deadline
@@ -180,6 +190,7 @@ async function stopGroup(group, grace, tokenArgument) {
     left = await members();
   }
   if (left === undefined) {
+    if (gateAlive) return leaveToGate();
     process.stderr.write(
       "dyfj: the group stop could not list the lane's processes; " +
         "killing the whole lane group\\n",
@@ -240,16 +251,17 @@ watchParent();
 `;
 
 // Run by a short-lived same-group child, with the runner's pid, the grace in
-// ms and the lane token argument as script arguments: the group stop above.
+// ms, the lane token argument and whether the gate is still the runner's
+// parent ("1" or "0") as script arguments: the group stop above.
 // While the runner is alive it leads the group, so the group id cannot name
 // another group; once it has started, its whole job is to end the group,
 // whether or not its parent is still there, and it is bounded on its own: it
 // exits a fixed margin past the grace whatever `ps` does.
 const GROUP_STOP_PROGRAM = `${GROUP_STOP_FUNCTIONS}
 process.on("SIGTERM", () => {});
-const [runner, grace, tokenArgument] = process.argv.slice(1);
+const [runner, grace, tokenArgument, gateAlive] = process.argv.slice(1);
 setTimeout(() => process.exit(0), Number(grace) + 10_000).unref();
-await stopGroup(Number(runner), Number(grace), tokenArgument);
+await stopGroup(Number(runner), Number(grace), tokenArgument, gateAlive === "1");
 process.exit(0);
 `;
 
@@ -388,10 +400,14 @@ export async function stopOwnGroup(
     let stopper: ChildProcess;
     try {
       // Its stderr is the lane's: a failed listing is reported there.
+      // Checked here, with no `ps`: the gate is the runner's parent, or it is
+      // gone and nothing else will read the runner's exit or end its group.
+      const gateAlive = process.ppid === supervision.parentPid;
       stopper = startHelper(GROUP_STOP_PROGRAM, [
         String(process.pid),
         String(GROUP_STOP_GRACE_MS),
         laneTokenArgument(supervision.token),
+        gateAlive ? "1" : "0",
       ], "inherit");
     } catch {
       // Best effort: the gate's own teardown remains when it is alive.

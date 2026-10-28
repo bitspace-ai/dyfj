@@ -2,12 +2,19 @@
 // git faked. The real sandbox is exercised in `srt-sandbox.integration.test.ts`.
 
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
-import { listenLoopbackProbe } from "../../transport/mod.ts";
 import type { CommandCall } from "../definition.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import { invokeCommand } from "../invoke.ts";
@@ -41,6 +48,25 @@ const layout = (value: GitLayout | null) => () => Promise.resolve(value);
 /** A probe listener that never sees a connection. */
 const fakeListener = () =>
   Promise.resolve({ port: 9, accepted: () => false, close: () => {} });
+
+/** A probe listener that has already seen the control connection. */
+const acceptingListener = () =>
+  Promise.resolve({ port: 9, accepted: () => true, close: () => {} });
+
+/**
+ * A PATH whose `bash` exits 0 at once, for the boot tests that reach past the
+ * probe's control connect. That step runs the real `bash` against the
+ * listener's port, which needs a real listener, and a process in a sandbox
+ * may not be allowed to listen. These tests are about what happens after the
+ * control connect, so it is stood in for here; the failing control connect is
+ * still exercised for real ("the probe fails when bash cannot connect ...").
+ */
+function pathWithConnectingBash(): string {
+  const bin = join(base, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "bash"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`;
+}
 
 describe("the workspace policy", () => {
   it("a linked worktree may write its objects, its own metadata and only its branch's ref", async () => {
@@ -228,8 +254,8 @@ describe("the boot", () => {
   it("a sandbox that does not wrap commands fails the boot probe", async () => {
     let reset = false;
     const sandbox = await bootSandbox({
-      listenProbe: listenLoopbackProbe,
-      env: new MapEnv({ PATH: process.env.PATH ?? "/usr/bin:/bin" }),
+      listenProbe: acceptingListener,
+      env: new MapEnv({ PATH: pathWithConnectingBash() }),
       srt: fakeSrt({ reset: () => { reset = true; return Promise.resolve(); } }),
       scratchDir: join(base, "scratch"),
       readLayout: layout(null),
@@ -270,9 +296,9 @@ describe("the boot", () => {
     const elsewhere = join(base, "runtime-root");
     const denied: unknown[][] = [];
     await bootSandbox({
-      listenProbe: listenLoopbackProbe,
+      listenProbe: acceptingListener,
       env: new MapEnv({
-        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        PATH: pathWithConnectingBash(),
         DYFJ_ROOT: elsewhere,
       }),
       srt: fakeSrt({

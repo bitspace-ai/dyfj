@@ -34,6 +34,7 @@ import process from "node:process";
 import { after, before, describe, it } from "node:test";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
+import { nestedSandboxSkipReason } from "../../../testing/nested-sandbox.ts";
 import type { CommandCall } from "../definition.ts";
 import { RootAnchors } from "./root-anchors.ts";
 import { defineBash } from "./exec.ts";
@@ -45,9 +46,17 @@ import { listenLoopbackProbe } from "../../transport/mod.ts";
 const deps = SandboxManager.isSupportedPlatform()
   ? SandboxManager.checkDependencies()
   : { errors: [`unsupported platform (${process.platform})`] };
+// A test that starts its own sandbox cannot run inside another one: the reason
+// is the skip, so the run shows why these checks did not run.
+const nested = nestedSandboxSkipReason();
 const skip = deps.errors.length > 0
   ? `srt cannot run here: ${deps.errors.join("; ")}`
-  : false;
+  : nested ?? false;
+// node:test does not count the tests of a skipped suite, so one explicit
+// skipped test carries the reason into the run's "skipped" count.
+if (deps.errors.length === 0 && nested !== undefined) {
+  it("starts a sandbox of its own", { skip: nested }, () => {});
+}
 
 let base = "";
 let home = "";

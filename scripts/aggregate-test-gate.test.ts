@@ -14,13 +14,16 @@ import {
   defaultLaneRecordDir,
   DOCS_ONLY_LANE_LABELS,
   docsOnlyEligible,
+  FALLBACK_LANE_TMPDIR,
   FAST_LANE_LABELS,
   fastLanes,
   type GateLane,
   INHERITED_ENVIRONMENT_NAMES,
   LANE_DEADLINE_EXIT_CODE,
   LANE_DEADLINES_MS,
+  LANE_SOCKET_SUFFIX_RESERVE,
   laneDeadlineMs,
+  laneTempDir,
   type LaneOutcome,
   MAX_TEST_BOUND_SEC,
   orphanedLaneGroup,
@@ -30,7 +33,9 @@ import {
   productionLanes,
   REQUIRED_CHECK_IDS,
   runGate,
+  SOCKET_PATH_LIMIT_BYTES,
 } from "./aggregate-test-gate.ts";
+import { unixSocketBindSkip } from "../prototype/testing/unix-socket-bind.ts";
 import { test } from "node:test";
 import { MANDATORY_CHECK_IDS } from "./assurance-receipt.ts";
 import { fileURLToPath } from "node:url";
@@ -150,7 +155,7 @@ test("aggregate lanes include the test.unit suite", () => {
   assertEquals(lane.command, "node");
   assertEquals(lane.args, ["scripts/run-unit-tests.ts"]);
   assertEquals(lane.cwd, "/repo/prototype");
-  assertEquals(lane.env?.TMPDIR, "/tmp");
+  assertEquals(lane.env?.TMPDIR, laneTempDir(process.env.TMPDIR));
   if (!FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("test.unit must also run in the fast subset");
   }
@@ -506,9 +511,9 @@ test("orchestration lane covers the CI workflow hygiene tests", () => {
     "--lane",
     "gate.orchestration",
   ]);
-  // Lane children start from a cleared environment: the deterministic temp
-  // root must be set explicitly, never inherited.
-  assertEquals(lane.env, { TMPDIR: "/tmp" });
+  // Lane children start from a cleared environment: the temp root must be
+  // set explicitly, never inherited (`laneTempDir` chooses it).
+  assertEquals(lane.env, { TMPDIR: laneTempDir(process.env.TMPDIR) });
 });
 
 test("fast lanes reuse the production lane definitions verbatim", () => {
@@ -765,7 +770,7 @@ test("aggregate lanes include the golden characterization suite", async () => {
   // The runner and its tests run on Node (decision D32).
   assertEquals(lane.command, "node");
   assertEquals(lane.cwd, "/repo/prototype");
-  assertEquals(lane.env, { TMPDIR: "/tmp" });
+  assertEquals(lane.env, { TMPDIR: laneTempDir(process.env.TMPDIR) });
   assertEquals(lane.args, ["testing/golden/run.ts"]);
   if (FAST_LANE_LABELS.includes(lane.label)) {
     throw new Error("golden lane must not run in the fast subset");
@@ -840,7 +845,7 @@ test("isolated Dolt lane passes custom Rust toolchain roots to children", () => 
       throw new Error(`the gate does not forward ${name} to lanes`);
     }
   }
-  assertEquals(lane.env?.TMPDIR, "/tmp");
+  assertEquals(lane.env?.TMPDIR, laneTempDir(process.env.TMPDIR));
   assertEquals(
     integrationChildEnvironment(
       { SQLX_OFFLINE: "true" },
@@ -1170,6 +1175,20 @@ async function socketFreedWithin(
   }
 }
 
+// The descendant tests bind a real Unix socket. Where the sandbox refuses the
+// bind they skip with that reason, never under CI (`unix-socket-bind.ts`);
+// Windows lanes have no process groups to test.
+const socketSkip = await unixSocketBindSkip();
+const descendantSkip: string | false = process.platform === "win32"
+  ? "Windows lanes keep the leader-only path"
+  : socketSkip ?? false;
+
+// How long a lane leader waits for its descendant's ready file. A bind that
+// never happens fails the lane here (exit `READY_TIMEOUT_EXIT_CODE`) instead of
+// waiting forever.
+const READY_WAIT_MS = 15_000;
+const READY_TIMEOUT_EXIT_CODE = 97;
+
 // The lane descendant: it listens on the socket named by its first argument,
 // writes the ready file named by its second once it is listening, and waits.
 const DESCENDANT_PROGRAM = [
@@ -1181,7 +1200,7 @@ const DESCENDANT_PROGRAM = [
 ].join("\n");
 
 // POSIX process groups only; Windows lanes keep the leader-only path.
-test("interrupting a lane terminates its descendants, not just the leader", { skip: process.platform === "win32" }, async () => {
+test("interrupting a lane terminates its descendants, not just the leader", { skip: descendantSkip }, async () => {
   const directory = await mkdtemp(join(tmpdir(), "dyfj-gate-descendant-"));
   const socketPath = `${directory}/d.sock`;
   const readyPath = `${directory}/descendant.ready`;
@@ -1222,7 +1241,13 @@ test("interrupting a lane terminates its descendants, not just the leader", { sk
     });
     // Deterministic handshake: the descendant is running and listening
     // before the gate is interrupted.
-    await waitForPath(readyPath, 30_000);
+    try {
+      await waitForPath(readyPath, READY_WAIT_MS);
+    } catch (error) {
+      abortController.abort("SIGTERM");
+      await gate;
+      throw error;
+    }
     abortController.abort("SIGTERM");
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -1266,14 +1291,19 @@ async function withSurvivingDescendantLane(
     lane: GateLane,
     socketPath: string,
   ) => Promise<void>,
+  options: { descendantProgram?: string; readyWaitMs?: number } = {},
 ): Promise<void> {
+  const readyWaitMs = options.readyWaitMs ?? READY_WAIT_MS;
   const directory = await mkdtemp(join(tmpdir(), "dyfj-gate-outlived-"));
   const socketPath = `${directory}/d.sock`;
   const readyPath = `${directory}/descendant.ready`;
   const descendantScript = `${directory}/descendant.mjs`;
   const laneScript = `${directory}/lane.mjs`;
   try {
-    await writeFile(descendantScript, DESCENDANT_PROGRAM);
+    await writeFile(
+      descendantScript,
+      options.descendantProgram ?? DESCENDANT_PROGRAM,
+    );
     await writeFile(
       laneScript,
       [
@@ -1284,7 +1314,9 @@ async function withSurvivingDescendantLane(
         `  ${JSON.stringify(socketPath)},`,
         `  ${JSON.stringify(readyPath)},`,
         `], { stdio: "ignore" }).unref();`,
+        `const waitUntil = Date.now() + ${readyWaitMs};`,
         `while (!existsSync(${JSON.stringify(readyPath)})) {`,
+        `  if (Date.now() > waitUntil) process.exit(${READY_TIMEOUT_EXIT_CODE});`,
         `  await new Promise((resolve) => setTimeout(resolve, 10));`,
         `}`,
         `process.exit(${leaderExitCode});`,
@@ -1302,8 +1334,38 @@ async function withSurvivingDescendantLane(
   }
 }
 
+// A descendant that never becomes ready (a bind that never happens) fails the
+// lane at the leader's wait deadline. It needs no socket, so it runs wherever
+// the descendant tests above skip.
+test("a lane whose descendant never becomes ready fails at its wait deadline", { skip: process.platform === "win32" }, async () => {
+  const started = Date.now();
+  await withSurvivingDescendantLane(0, async (lane) => {
+    const errors: string[] = [];
+    const logs: string[] = [];
+    const code = await runGate({
+      lanes: [lane],
+      requiredCheckIds: ["demo.outlived"],
+      out: { log: (s) => logs.push(s), error: (s) => errors.push(s) },
+    });
+    assertEquals(code, READY_TIMEOUT_EXIT_CODE);
+    assertStringIncludes(errors.join("\n"), "outlived lane: failure");
+    assertStringIncludes(
+      errors.join("\n"),
+      `exit ${READY_TIMEOUT_EXIT_CODE}`,
+    );
+  }, {
+    // Sleeps and never writes the ready file.
+    descendantProgram: "setTimeout(() => {}, 30_000);",
+    readyWaitMs: 1_500,
+  });
+  const elapsed = Date.now() - started;
+  if (elapsed > 15_000) {
+    throw new Error(`the lane took ${elapsed} ms to fail; it should fail at its deadline`);
+  }
+});
+
 // POSIX process groups only; Windows lanes keep the leader-only path.
-test("a passing lane's surviving descendant is torn down with its group", { skip: process.platform === "win32" }, async () => {
+test("a passing lane's surviving descendant is torn down with its group", { skip: descendantSkip }, async () => {
   await withSurvivingDescendantLane(0, async (lane, socketPath) => {
     const logs: string[] = [];
     const errors: string[] = [];
@@ -1338,7 +1400,7 @@ test("a passing lane's surviving descendant is torn down with its group", { skip
 });
 
 // POSIX process groups only; Windows lanes keep the leader-only path.
-test("a failing lane's surviving descendant is torn down with its group", { skip: process.platform === "win32" }, async () => {
+test("a failing lane's surviving descendant is torn down with its group", { skip: descendantSkip }, async () => {
   await withSurvivingDescendantLane(7, async (lane, socketPath) => {
     const logs: string[] = [];
     const errors: string[] = [];
@@ -1769,5 +1831,99 @@ test("node --test parallelism does not read DENO_JOBS", () => {
   } finally {
     if (saved === undefined) delete process.env.DENO_JOBS;
     else process.env.DENO_JOBS = saved;
+  }
+});
+
+// --- The temp directory a lane gets (BIT-806) ------------------------------
+
+const same = (path: string) => path;
+
+test("a short TMPDIR, such as the sandbox's scratch directory, is forwarded", () => {
+  assertEquals(laneTempDir("/tmp/claude", same), "/tmp/claude");
+  assertEquals(laneTempDir("/private/tmp/claude", same), "/private/tmp/claude");
+});
+
+test("a TMPDIR too long for socket paths falls back to /tmp", () => {
+  // The macOS default, about 49 bytes, leaves no room for the socket paths
+  // the lanes build under it.
+  const macDefault = "/var/folders/zz/zyxvpxvq6csfxvn_n0000000000000/T";
+  assertEquals(laneTempDir(macDefault, same), FALLBACK_LANE_TMPDIR);
+  assertEquals(laneTempDir(`${macDefault}/`, same), FALLBACK_LANE_TMPDIR);
+});
+
+test("the TMPDIR length limit is exact", () => {
+  const room = SOCKET_PATH_LIMIT_BYTES - LANE_SOCKET_SUFFIX_RESERVE;
+  const fits = `/${"a".repeat(room - 1)}`;
+  assertEquals(fits.length, room);
+  assertEquals(laneTempDir(fits, same), fits);
+  assertEquals(laneTempDir(`${fits}a`, same), FALLBACK_LANE_TMPDIR);
+});
+
+test("the length that counts is the real path's, not the name given", () => {
+  // `/tmp` is a symlink to a longer path on macOS; a name that resolves long
+  // falls back, and a long name that resolves short is forwarded.
+  const long = `/private/${"d".repeat(40)}`;
+  assertEquals(laneTempDir("/tmp/link", () => long), FALLBACK_LANE_TMPDIR);
+  assertEquals(laneTempDir(`/${"n".repeat(60)}`, () => "/tmp"), `/${"n".repeat(60)}`);
+});
+
+test("a missing, relative or unset TMPDIR falls back to /tmp", () => {
+  assertEquals(laneTempDir(undefined, same), FALLBACK_LANE_TMPDIR);
+  assertEquals(laneTempDir("relative/tmp", same), FALLBACK_LANE_TMPDIR);
+  assertEquals(
+    laneTempDir("/tmp/claude", () => {
+      throw new Error("ENOENT");
+    }),
+    FALLBACK_LANE_TMPDIR,
+  );
+});
+
+test("the lanes get the TMPDIR laneTempDir chooses, and /tmp for a long one", async () => {
+  const prior = process.env.TMPDIR;
+  const dir = await mkdtemp(join(tmpdir(), "dyfj-lane-tmp-"));
+  try {
+    process.env.TMPDIR = dir;
+    for (const label of TEMP_DIR_LANES) {
+      const lane = productionLanes("/repo").find((l) => l.label === label);
+      // `dir` itself when it leaves room for socket paths, else `/tmp`.
+      assertEquals(lane?.env?.TMPDIR, laneTempDir(dir));
+    }
+    process.env.TMPDIR = `/var/folders/zz/${"z".repeat(30)}/T`;
+    for (const label of TEMP_DIR_LANES) {
+      const lane = productionLanes("/repo").find((l) => l.label === label);
+      assertEquals(lane?.env?.TMPDIR, FALLBACK_LANE_TMPDIR);
+    }
+  } finally {
+    if (prior === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prior;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+const TEMP_DIR_LANES = [
+  "Aggregate gate orchestration tests",
+  "Prototype unit test suite (test.unit)",
+  "Isolated Dolt integration lane",
+  "Golden characterization suite (test.golden)",
+];
+
+test("the unit lane, and only it, gets the CI variables", () => {
+  const saved = { CI: process.env.CI, GITHUB_ACTIONS: process.env.GITHUB_ACTIONS };
+  process.env.CI = "true";
+  process.env.GITHUB_ACTIONS = "true";
+  try {
+    for (const lane of productionLanes("/repo")) {
+      const names = Object.keys(lane.env ?? {});
+      const gets = names.includes("CI") && names.includes("GITHUB_ACTIONS");
+      assertEquals(
+        [lane.label, gets],
+        [lane.label, lane.label === "Prototype unit test suite (test.unit)"],
+      );
+    }
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
