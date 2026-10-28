@@ -14,7 +14,7 @@ import type {
   WorkbenchRuntimeResult,
 } from "./runtime-types.ts";
 import { buildConversationMessages } from "../context/mod.ts";
-import type { CommandDefinition } from "../tools/mod.ts";
+import { type CommandDefinition, REDACTED } from "../tools/mod.ts";
 import {
   type Env,
   type PermissionLevel,
@@ -28,6 +28,10 @@ import type {
   WorkbenchSessionEvent,
 } from "../contract/mod.ts";
 import type { SessionOwners, TurnTicket } from "./session-owner.ts";
+import {
+  type SessionToolHistory,
+  withheldToolResult,
+} from "./tool-history.ts";
 import { paidEscalationVerdict, type ResolvedTurn } from "./turn-request.ts";
 
 export type TurnRuntime = (
@@ -43,10 +47,20 @@ export type FetchSessionEvents = (
  * INSIDE the session's turn lock so the prior-event read happens after all earlier
  * same-session turns have settled — keeping the read-modify-append atomic per
  * session.
+ *
+ * A successful result the log holds only as the redaction sentinel is
+ * replayed from `toolHistory`, the in-memory copy of what the turn that ran
+ * it added to the model's transcript, when this caller's clearance recorded
+ * it. Otherwise
+ * the model is told the output is not available (BIT-812): before this, the
+ * rebuilt history replayed the bare sentinel and the model read it as output.
+ * Any successful result that is exactly the sentinel counts, so sessions
+ * recorded before the tool history existed get the line too.
  */
 async function buildResume(
   sessionId: string | undefined,
   fetchSessionEvents: FetchSessionEvents,
+  toolHistory: SessionToolHistory | undefined,
 ): Promise<
   Partial<
     Pick<
@@ -75,6 +89,11 @@ async function buildResume(
     onOmission: (omission) => {
       historyOmission = omission;
     },
+    replayToolResult: (event) =>
+      event.toolIsError === true || event.toolResult !== REDACTED
+        ? event.toolResult
+        : toolHistory?.lookup(event.traceId, event.toolCallId) ??
+          withheldToolResult(event.toolName),
   });
   return {
     sessionId,
@@ -218,6 +237,9 @@ export function executeTurn(
     const resume = await buildResume(
       resolved.sessionId,
       deps.fetchSessionEvents,
+      resolved.sessionId === undefined
+        ? undefined
+        : deps.owners.toolHistory(resolved.sessionId, deps.authContext),
     );
     // A turn that starts a new session runs under the id its owner was
     // registered with at admission; the runtime uses it rather than

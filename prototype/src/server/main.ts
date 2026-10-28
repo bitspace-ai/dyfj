@@ -377,6 +377,8 @@ function composeTurnRuntime(
       budgetScopes: owners,
       // ...and its "allow for the rest of the session" grants, in memory only.
       sessionGrants: owners,
+      // ...and the model's copy of its redacted tool results, in memory only.
+      toolHistory: owners,
       rootAnchors,
       // Used only when an isolated machine's launcher set DYFJ_EXECUTOR_SOCKET.
       dialExecutor: nodeSocketHost.connect,

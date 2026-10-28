@@ -46,6 +46,7 @@ import type { Clock } from "../kernel/mod.ts";
 import type { HttpTransport } from "../providers/mod.ts";
 import type { Store } from "../store/mod.ts";
 import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
+import type { ToolHistoryScopes } from "./tool-history.ts";
 
 export interface WorkbenchInvocation {
   mode: WorkbenchRuntimeMode;
@@ -284,6 +285,12 @@ export interface WorkbenchRuntimeServices {
    * grants: the same `SessionOwners`. Absent, the prompt offers no grant.
    */
   sessionGrants?: SessionGrantScopes;
+  /**
+   * Where a turn records the redacted tool results the model received, so
+   * its session's later turns can replay them: the same `SessionOwners`.
+   * Absent, nothing is recorded and later turns get the withheld line.
+   */
+  toolHistory?: ToolHistoryScopes;
   /**
    * The engine's workspace-root anchors, built once at the composition root
    * so a root's anchor lasts for the engine process, not one turn.

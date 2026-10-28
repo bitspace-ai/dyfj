@@ -17,12 +17,19 @@ import {
  * rather than a transcript that silently dropped it. Returns the most recent
  * `maxTurns` turns; whole turns are kept (no mid-turn truncation). The caller
  * appends the current user message and seeds the agent loop with the result.
+ * `replayToolResult`, when given, decides each replayed tool message's text
+ * from its event; without it the event's persisted result is replayed.
  */
 export function buildConversationMessages(
   events: WorkbenchSessionEvent[],
   options: {
     maxTurns?: number;
     onOmission?: (omission: HistoryOmissionProjection | undefined) => void;
+    replayToolResult?: (event: WorkbenchSessionEvent & {
+      toolCallId: string;
+      toolName: string;
+      toolResult: string;
+    }) => string;
   } = {},
 ): WorkbenchMessage[] {
   const maxTurns = options.maxTurns ?? 10;
@@ -127,7 +134,12 @@ export function buildConversationMessages(
         role: "tool",
         toolCallId: event.toolCallId,
         name: event.toolName,
-        content: event.toolResult,
+        content: options.replayToolResult?.({
+          ...event,
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          toolResult: event.toolResult,
+        }) ?? event.toolResult,
         // Replay the failure mark, so a resumed transcript serializes the
         // result as an error (Anthropic is_error) exactly like the live turn.
         ...(event.toolIsError ? { isError: true } : {}),

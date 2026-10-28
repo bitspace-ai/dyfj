@@ -43,6 +43,7 @@ import type { Clock } from "../kernel/mod.ts";
 import type { Env, RuntimePolicy } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
 import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
+import type { ToolHistoryScopes } from "./tool-history.ts";
 import type { WorkbenchValidationSummary } from "./runtime-types.ts";
 
 /** The ports a native turn's stages run against. */
@@ -51,6 +52,8 @@ export interface NativeTurnPorts {
   budgetScopes: BudgetScopes;
   /** The sessions' "allow for the rest of the session" grants; absent, none are offered. */
   sessionGrants?: SessionGrantScopes;
+  /** The sessions' in-memory tool history; absent, nothing is recorded. */
+  toolHistory?: ToolHistoryScopes;
   clock: Clock;
   env: Env;
   /**

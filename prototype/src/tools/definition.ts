@@ -189,7 +189,8 @@ export interface CommandDefinition<TResult = unknown> {
   grantable?: boolean;
   /**
    * Redact this command's RESULT from the durable tool_call event (the model
-   * still receives it in-turn). Set for tools whose output can carry secrets the
+   * still receives it in-turn, and on the session's later turns from the
+   * engine's in-memory tool history while the engine holds it). Set for tools whose output can carry secrets the
    * approver cannot pre-screen — e.g. bash printing env or file contents that
    * would otherwise persist into session/event history (CWE-532).
    */
