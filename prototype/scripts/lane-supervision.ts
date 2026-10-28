@@ -137,27 +137,35 @@ export function laneSupervision(
 // to the gate and the runner keeps its own exit code. The gate is probed with
 // signal 0 at the moment the stop decides, after the listing has failed, not
 // when the helper started: a gate that died in between is a gate that will
-// never end the group. Inside the srt
-// sandbox on macOS the setuid `ps` is refused, so every listing fails.
+// never end the group. Inside the srt sandbox on macOS the setuid `ps` is
+// refused when it is spawned, and `execFile` throws that refusal (`spawn
+// EPERM`) synchronously instead of calling back with an error; `processRows`
+// turns both into the same failed listing, so neither skips the fallbacks.
 const GROUP_STOP_FUNCTIONS = `
 import { execFile } from "node:child_process";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function processRows() {
   return new Promise((resolve) => {
-    execFile("ps", ["-A", "-ww", "-o", "pid=,ppid=,pgid=,stat=,command="], {
-      encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 * 1024,
-    }, (error, stdout) => {
-      if (error) return resolve(undefined);
-      resolve(stdout.split("\\n").flatMap((line) => {
-        const match = line.match(/^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s*(.*)$/);
-        if (!match) return [];
-        const [, pid, ppid, pgid, stat, command] = match;
-        return [{
-          pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid), stat,
-          command,
-        }];
-      }));
-    });
+    try {
+      execFile("ps", ["-A", "-ww", "-o", "pid=,ppid=,pgid=,stat=,command="], {
+        encoding: "utf8", timeout: 5000, maxBuffer: 64 * 1024 * 1024,
+      }, (error, stdout) => {
+        if (error) return resolve(undefined);
+        resolve(stdout.split("\\n").flatMap((line) => {
+          const match = line.match(/^\\s*(\\d+)\\s+(\\d+)\\s+(\\d+)\\s+(\\S+)\\s*(.*)$/);
+          if (!match) return [];
+          const [, pid, ppid, pgid, stat, command] = match;
+          return [{
+            pid: Number(pid), ppid: Number(ppid), pgid: Number(pgid), stat,
+            command,
+          }];
+        }));
+      });
+    } catch {
+      // The spawn itself was refused and threw (EPERM under srt): a listing
+      // that cannot start is a listing that failed.
+      resolve(undefined);
+    }
   });
 }
 function gateIsAlive(gatePid) {

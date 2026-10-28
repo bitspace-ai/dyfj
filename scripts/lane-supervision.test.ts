@@ -17,6 +17,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -725,6 +726,22 @@ function failingPsPath(dir: string, holdUntil?: string): string {
   return `${dir}/shim:${process.env.PATH ?? ""}`;
 }
 
+// A PATH whose `ps` cannot be spawned at all: the shim is a symlink to itself,
+// so `execve` fails with ELOOP. Node's `execFile` throws a spawn failure of
+// that kind synchronously instead of calling back with an error, which is what
+// srt's refusal of the setuid `ps` (EPERM) does inside the sandbox. A shim
+// that exits nonzero (`failingPsPath`) is the callback path and does not
+// cover this one. ELOOP stands in for EPERM because it fails the same way and
+// can be produced outside the sandbox.
+function unspawnablePsPath(dir: string): string {
+  mkdirSync(`${dir}/shim`);
+  symlinkSync("ps", `${dir}/shim/ps`);
+  return `${dir}/shim:${process.env.PATH ?? ""}`;
+}
+
+// What an uncaught exception in a helper program leaves on stderr.
+const CRASH_TRACE = /Error:|ELOOP|EPERM|node:internal|\n\s+at /;
+
 function psWasCalled(dir: string): boolean {
   return readText(`${dir}/ps-called`) !== undefined;
 }
@@ -804,12 +821,13 @@ function startGroupStopRunner(
   dir: string,
   token: string,
   parent: number,
+  psPath: (dir: string) => string = failingPsPath,
 ): { runner: ChildProcess; stderr: () => string } {
   const runner = spawn(
     "node",
     ["--input-type=module", "-e", GROUP_STOP_RUNNER, dir, token, String(parent)],
     {
-      env: { ...childEnv(), PATH: failingPsPath(dir) },
+      env: { ...childEnv(), PATH: psPath(dir) },
       detached: true,
       stdio: ["ignore", "ignore", "pipe"],
     },
@@ -847,6 +865,7 @@ test(
         const { code, signal } = await exitedWith(runner);
         assert.equal(signal, null, "the runner was killed by its own stop");
         assert.equal(code, 7, "the runner kept its own exit code");
+        assert.match(stderr(), /leaving the lane group to the gate/);
         assert.doesNotMatch(stderr(), /killing the whole lane group/);
         // The gate's teardown, not the runner, ends what is left.
         assert.ok(groupExists(runner.pid!), "the stop killed the group");
@@ -929,6 +948,113 @@ setTimeout(() => {}, 60000);
           // Already gone.
         }
         gate.kill("SIGKILL");
+      }
+    });
+  },
+);
+
+test(
+  "a group stop whose ps cannot be spawned leaves the group to a gate that is still there",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      const { runner, stderr } = startGroupStopRunner(
+        dir,
+        randomUUID(),
+        process.pid,
+        unspawnablePsPath,
+      );
+      try {
+        const { code, signal } = await exitedWith(runner);
+        assert.equal(signal, null, "the runner was killed by its own stop");
+        assert.equal(code, 7, "the runner kept its own exit code");
+        assert.match(stderr(), /leaving the lane group to the gate/);
+        assert.doesNotMatch(stderr(), CRASH_TRACE, "the helper crashed");
+        assert.doesNotMatch(stderr(), /killing the whole lane group/);
+        assert.ok(groupExists(runner.pid!), "the stop killed the group");
+      } finally {
+        try {
+          process.kill(-runner.pid!, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    });
+  },
+);
+
+test(
+  "a group stop whose ps cannot be spawned kills the whole group when its gate is gone",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      // Pid 2 is not the runner's parent, as for a gate that has died.
+      const { runner, stderr } = startGroupStopRunner(
+        dir,
+        randomUUID(),
+        2,
+        unspawnablePsPath,
+      );
+      try {
+        await exitedWith(runner);
+        assert.ok(await groupGone(runner.pid!, 10_000), "the group survived");
+        assert.match(stderr(), /killing the whole lane group/);
+        assert.doesNotMatch(stderr(), CRASH_TRACE, "the helper crashed");
+      } finally {
+        try {
+          process.kill(-runner.pid!, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
+      }
+    });
+  },
+);
+
+test(
+  "a carrier whose ps cannot be spawned still stops the lane group when its runner is gone",
+  { skip },
+  async () => {
+    await withDir(async (dir) => {
+      // The same shape as the carrier test above, observed with `kill(-g, 0)`:
+      // a runner leaves a TERM-ignoring member, starts its carrier and exits.
+      // The carrier's group stop cannot list processes and has no gate to
+      // leave the group to, so it must KILL the whole group.
+      const runnerProgram = `
+import { spawn } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { startTokenCarrier } from ${JSON.stringify(SUPERVISION_URL)};
+const [dir, token] = process.argv.slice(1);
+const sleeper = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
+  stdio: "ignore",
+});
+writeFileSync(dir + "/sleeper.pid", String(sleeper.pid));
+startTokenCarrier({
+  deadlineMs: 120000, backstopMs: 180000, token, parentPid: process.ppid,
+});
+process.exit(0);
+`;
+      const runner = spawn(
+        "node",
+        ["--input-type=module", "-e", runnerProgram, dir, randomUUID()],
+        {
+          env: { ...childEnv(), PATH: unspawnablePsPath(dir) },
+          detached: true,
+          stdio: "ignore",
+        },
+      );
+      try {
+        await exitedWith(runner);
+        assert.ok(
+          await groupGone(runner.pid!, 10_000),
+          "the carrier did not stop the lane group",
+        );
+      } finally {
+        try {
+          process.kill(-runner.pid!, "SIGKILL");
+        } catch {
+          // Already gone.
+        }
       }
     });
   },
