@@ -1035,11 +1035,10 @@ README are tracked separately in its Revision history section.
   a `# SKIP` line and a skipped test in the run's count: a nested sandbox is
   detected by `sandbox-exec`, and a refused bind (only the bind's own `EPERM`)
   by a probe run in a child process. Under CI (`CI` or `GITHUB_ACTIONS`,
-  forwarded to the unit and gate-orchestration lanes) the socket-bind suites
-  run and a refusal fails them. The nested-sandbox check does not skip under
-  CI either, but the integration lane, where its one test runs, does not
-  receive `CI` yet. A descendant that never becomes ready now fails its lane
-  at a 15 s deadline instead of waiting forever.
+  forwarded to the unit, gate-orchestration and isolated-Dolt integration
+  lanes) the socket-bind suites and the nested-sandbox test run and a refusal
+  fails them. A descendant that never becomes ready now fails its lane at a
+  15 s deadline instead of waiting forever.
 
 - **A runtime that refuses to start over its configuration reports one line
   (BIT-766).** A config error, such as a default max tool steps above the

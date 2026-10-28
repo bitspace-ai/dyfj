@@ -1934,9 +1934,10 @@ const TEMP_DIR_LANES = [
 const CI_LANE_LABELS = [
   "Aggregate gate orchestration tests",
   "Prototype unit test suite (test.unit)",
+  "Isolated Dolt integration lane",
 ];
 
-test("the unit lane and the orchestration lane, and only they, get the CI variables", () => {
+test("the unit, orchestration and integration lanes, and only they, get the CI variables", () => {
   const saved = { CI: process.env.CI, GITHUB_ACTIONS: process.env.GITHUB_ACTIONS };
   const restore = () => {
     for (const [name, value] of Object.entries(saved)) {
@@ -2012,4 +2013,20 @@ test("the node test-file runner forwards the CI variables to its tests, and no o
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// The lane env is not enough on its own: the integration runner starts its
+// `node --test` child, and the Dolt and Rust steps, with the environment
+// `integrationChildEnvironment` builds, which forwards a fixed list of names.
+test("the integration child sees the CI variables, and an unset one stays unset", () => {
+  const set: Record<string, string> = { CI: "true", GITHUB_ACTIONS: "true" };
+  const env = integrationChildEnvironment({}, (name) => set[name]);
+  assertEquals([env.CI, env.GITHUB_ACTIONS], ["true", "true"]);
+  const unset = integrationChildEnvironment({}, () => undefined);
+  assertEquals("CI" in unset || "GITHUB_ACTIONS" in unset, false);
+  // An explicit value of the runner's own still wins.
+  assertEquals(
+    integrationChildEnvironment({ CI: "explicit" }, (name) => set[name]).CI,
+    "explicit",
+  );
 });

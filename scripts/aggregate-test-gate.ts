@@ -145,11 +145,13 @@ export const INHERITED_ENVIRONMENT_NAMES: readonly string[] = [
   "RUSTUP_HOME",
 ];
 
-// Names the unit lane and the gate-orchestration lane also receive: whether
-// this is a CI run. Suites whose environment-dependent skips must not apply
-// under CI read them (`prototype/testing/unix-socket-bind.ts`, BIT-806). The
-// shared node-test runner forwards them on to its `node --test` child
-// (`scripts/run-node-test-files.ts`).
+// Names the unit, gate-orchestration and isolated-Dolt integration lanes also
+// receive: whether this is a CI run. Suites whose environment-dependent skips
+// must not apply under CI read them (`prototype/testing/unix-socket-bind.ts`,
+// `prototype/testing/nested-sandbox.ts`, BIT-806). Each lane's runner forwards
+// them on to its `node --test` child (`scripts/run-node-test-files.ts`,
+// `prototype/scripts/run-unit-tests.ts`,
+// `prototype/scripts/integration-child-environment.ts`).
 export const CI_ENVIRONMENT_NAMES: readonly string[] = ["CI", "GITHUB_ACTIONS"];
 
 function ciEnvironment(): Record<string, string> {
@@ -911,7 +913,7 @@ export function productionLanes(root = process.cwd()): GateLane[] {
       command: "node",
       args: ["scripts/isolated-dolt-integration.ts"],
       cwd: prototype,
-      env: { TMPDIR: tempDir },
+      env: { TMPDIR: tempDir, ...ciEnvironment() },
       deadlineMs: laneDeadlineMs(LANE_DEADLINES_MS.integration, bound),
     },
     // Golden characterization suite (`test.golden`): black-box snapshots of
