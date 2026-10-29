@@ -263,7 +263,9 @@ is its projection and the legacy `ToolDefinition` is deleted.
   conformance kit.
 - **Redaction** goes through one shared redactor in `tools/`, which applies
   schema-declared redaction. Any change to redaction policy is a behavior change
-  and out of scope for phase 1.
+  and out of scope for phase 1. A successful result the log holds only as the
+  sentinel is not replayed bare: a later turn gets the engine's in-memory
+  copy, or a line saying the output is not available (§5.7, BIT-812).
 
 ### 5.5 MCP client
 
@@ -300,7 +302,16 @@ This section implements AGENTS.md rules 2 and 3.
   - external-agent (ACP) handle and its idle lifecycle (replaces direct use of
     `acp-session-map` by callers);
   - budget scope (session-envelope accumulation);
-  - cancel signal for the in-flight turn.
+  - cancel signal for the in-flight turn;
+  - tool history (`engine/tool-history.ts`): a copy of each successful
+    result whose durable event holds only the redaction sentinel, as the
+    turn added it to the model's transcript, so the session's later turns can
+    replay it. Kept in memory for the engine's lifetime and never persisted,
+    so a restart loses it; bounded per session and in sessions tracked, oldest
+    dropped first; readable only in the clearance scope that recorded it. A declared exception to AGENTS.md rule 4: it is model
+    working context, not a projection, and replay cannot rebuild it because
+    the log never holds it. A miss (restart, eviction, other clearance)
+    replays a line saying the output is not available.
 
   Other code sends it messages (`startTurn`, `cancel`, `release`); nothing else
   mutates these. Behavior is frozen: busy/concurrency semantics stay identical,

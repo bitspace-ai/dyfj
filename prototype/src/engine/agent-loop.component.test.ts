@@ -48,6 +48,9 @@ import type {
   WorkbenchRuntimeInput,
 } from "./runtime-types.ts";
 import { SessionOwners } from "./session-owner.ts";
+import { executeTurn } from "./turn.ts";
+import { resolveTurnFromBody } from "./turn-request.ts";
+import { fetchWorkbenchSessionEvents } from "../store/mod.ts";
 
 type ToolCall = { id: string; name: string; arguments: unknown };
 
@@ -1787,4 +1790,125 @@ test("a forced conclusion is listed with its purpose", async () => {
     result!.tokens.steps!.map((step) => step.purpose),
     ["initial", "tool_followup", "forced_conclusion"],
   );
+});
+
+describe("redacted tool results on a later turn (BIT-812)", () => {
+  const TAP_LINES = [
+    "TAP version 13",
+    "ok 1 - parses a session id",
+    "not ok 2 - rejects an empty prompt",
+    "1..2",
+    "# pass 1",
+    "# fail 1",
+  ];
+  const AUTH = {
+    transport: "loopback",
+    authnStatus: "authenticated",
+    authnMechanism: "local_user",
+    authnIssuerRef: "local_os",
+    authzBasis: "user_consent",
+  } as const;
+  const APPROVE: ConfirmToolApproval = () =>
+    Promise.resolve({ decision: "approve" });
+
+  /** One native turn that runs bash printing TAP; its committed tool_call. */
+  async function bashTurn(toolHistory: SessionOwners | undefined) {
+    const committed: Record<string, unknown>[] = [];
+    const loop = await loopTurn([
+      toolReply([{
+        id: "c1",
+        name: "bash",
+        arguments: {
+          command: `printf '%s\\n' ${TAP_LINES.map((l) => `'${l}'`).join(" ")}`,
+        },
+      }]),
+      chatReply({ content: "done" }),
+    ], {
+      prompt: "run the tests",
+      authContext: AUTH,
+      approver: { confirmToolApproval: APPROVE },
+    }, (run) => {
+      if (toolHistory !== undefined) run.services.toolHistory = toolHistory;
+      run.services.store = patchStore(run.store, {
+        journal: {
+          commit: (batch, options) => {
+            for (const event of batch.events) {
+              if (event.event_type === "tool_call") {
+                committed.push({ ...event });
+              }
+            }
+            return run.store.journal.commit(batch, options);
+          },
+        },
+      });
+    });
+    assert.equal(loop.error, null, String(loop.error));
+    return { loop, committed };
+  }
+
+  /** The persisted fields that do not vary from run to run. */
+  const stable = (event: Record<string, unknown>) => {
+    const {
+      event_id: _id,
+      session_id: _session,
+      trace_id: _trace,
+      span_id: _span,
+      parent_span_id: _parent,
+      duration_ms: _duration,
+      ...rest
+    } = event;
+    return JSON.stringify(rest);
+  };
+
+  it("persists the same tool_call event with the store attached as without it", async () => {
+    const without = await bashTurn(undefined);
+    const withHistory = await bashTurn(new SessionOwners());
+    assert.equal(without.committed.length, 1);
+    assert.equal(withHistory.committed[0]?.tool_result, "[redacted]");
+    assert.equal(
+      stable(withHistory.committed[0]!),
+      stable(without.committed[0]!),
+    );
+  });
+
+  it("ordinary node --test TAP output reaches the model on the next turn", async () => {
+    const owners = new SessionOwners();
+    const { loop } = await bashTurn(owners);
+    const sessionId = loop.frames.find((f) => f.type === "sessionStart")
+      ?.sessionId;
+    assert.ok(sessionId);
+    const prior = await fetchWorkbenchSessionEvents({
+      sessionId,
+      events: loop.run.store.events,
+    });
+    let next: WorkbenchRuntimeInput | undefined;
+    const resolvedTurn = resolveTurnFromBody(
+      { prompt: "how many failed?", sessionId },
+      true,
+    );
+    if ("error" in resolvedTurn) throw new Error(resolvedTurn.error);
+    await quietly(() =>
+      executeTurn(resolvedTurn, {
+        owners,
+        env: new MapEnv({}),
+        authContext: AUTH,
+        loopback: true,
+        fetchSessionEvents: () => Promise.resolve(prior),
+        runRuntime: (input) => {
+          next = input;
+          return Promise.resolve(
+            { sessionId, model: { slug: "fixture" } } as never,
+          );
+        },
+      })
+    );
+    const replayed = next?.conversationMessages?.find((m) => m.role === "tool")
+      ?.content;
+    // What the bash tool gave the model in the turn that ran it.
+    const inTurn = ["exit 0", ...TAP_LINES].join("\n");
+    assert.ok(
+      loop.run.transport.requests[1]?.body.includes(JSON.stringify(inTurn)),
+    );
+    assert.equal(replayed, inTurn);
+  });
 });

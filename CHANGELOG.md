@@ -9,6 +9,39 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **On every turn after the one that ran them, bash, git, Linear, MCP and web
+  results reached the model as the bare text `[redacted]` (BIT-812).** Cause:
+  each turn rebuilds the model's history from the durable event log, and for
+  these `redactResult` commands the log's `tool_call` event holds only the
+  redaction sentinel, which the rebuild replayed as the result. The model
+  then reported test counts and outcomes it had never seen. The redaction
+  rule itself was not matching too broadly; the durable form was also the
+  model's history.
+  - The session owners now keep a copy of each such successful result, as
+    the turn that ran it added it to the model's transcript, and a later
+    turn replays that copy. It is kept in memory for the engine's lifetime,
+    like the session grants, and never written to the store, events,
+    receipts or logs, so a restart loses it; the durable `tool_call` event
+    is unchanged and still holds `[redacted]`. It is bounded to 64 sessions,
+    each holding at most 1,024 results and 2,000,000 characters of keys,
+    clearance scopes and result text, with the oldest session or result dropped first. A
+    result is keyed by its turn's trace id and its call id, and is returned
+    only to a turn with the same clearance (transport, authentication and
+    authorization basis) as the turn that recorded it.
+  - When the copy is not available (the engine restarted, the entry was
+    evicted, or the turn has other clearance), the model gets
+    `[tool output not available: the output of this <command> call is not
+    kept in session history (class: unpersisted command output). This text
+    is not the command's output. Rerun the command to see it.]` in place of
+    the bare sentinel. The line carries no byte count, so the sentinel's
+    no-length property holds. A session event whose result is exactly
+    `[redacted]` and not an error is treated as redacted, so older sessions
+    get the line too.
+  - The REPL never rendered persisted tool results, so it shows nothing new;
+    the session-events read still returns the durable `[redacted]`.
+
 ### Added
 
 - **The bash, git and file-write tools run their commands under Anthropic's

@@ -9,6 +9,10 @@
  * - `redactResult: true` replaces a successful result.
  *
  * The model still receives the unredacted call and result within the turn.
+ * A later turn rebuilds its history from these events, so the engine keeps
+ * the model's copy of a redacted result in memory (`engine/tool-history.ts`)
+ * and replays that, or a line saying the output is not available, in place
+ * of the sentinel (BIT-812).
  * What is redacted is policy, and policy changes are behavior changes: this
  * module applies the declarations, it does not decide them.
  */

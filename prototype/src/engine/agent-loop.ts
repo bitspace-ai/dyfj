@@ -484,6 +484,31 @@ async function invokeTool(
 }
 
 /**
+ * Keep a copy of each successful result whose durable event holds only the
+ * redaction sentinel, as this step adds it to the model's transcript, so the
+ * session's later turns can replay it (BIT-812). Memory only: see
+ * `tool-history.ts`.
+ */
+function recordRedactedResults(
+  turn: RoutedTurn,
+  stepResults: readonly ToolResultSummary[],
+): void {
+  const { state, ports } = turn;
+  if (ports.toolHistory === undefined) return;
+  const history = ports.toolHistory.toolHistory(
+    state.session.sessionId,
+    state.session.authContext,
+  );
+  for (const summary of stepResults) {
+    if (summary.isError) continue;
+    if (state.commandRegistry.lookup(summary.commandId)?.redactResult !== true) {
+      continue;
+    }
+    history.record(state.session.traceId, summary.callId, summary.result);
+  }
+}
+
+/**
  * One runtime-log line per failed tool call: the command, how long it took
  * and the operator reason, which is already echo-checked, scrubbed and capped. No
  * arguments and no result.
@@ -587,6 +612,7 @@ async function followUp(
       });
     }
   }
+  recordRedactedResults(turn, step.stepResults);
   messages.push(
     ...toolStepToMessages(
       result.text,

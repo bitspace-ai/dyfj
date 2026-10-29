@@ -19,6 +19,10 @@
  * - The session grants are the operator's "allow this exact call for the rest
  *   of the session" answers (BIT-707). The owners hold the grant store; a turn
  *   reaches its session's grants only through `sessionGrants`.
+ * - The tool history is an in-memory copy of the redacted tool results a
+ *   session's turns gave the model, so a later turn's rebuilt history shows
+ *   them (BIT-812). The owners hold the store for the engine's lifetime; a
+ *   turn reaches it only through `toolHistory`.
  * - A `TurnTicket` is one admitted turn's cancel signal. It exists from
  *   admission, before the turn holds the lock, so a cancel that arrives while
  *   the turn waits still lands. Other code changes it only by sending it a
@@ -31,6 +35,12 @@ import {
 import { generateULID } from "../kernel/mod.ts";
 import type { SessionGrants } from "../tools/mod.ts";
 import { SessionGrantStore } from "./session-grants.ts";
+import {
+  type SessionToolHistory,
+  type ToolHistoryScopes,
+  ToolHistoryStore,
+} from "./tool-history.ts";
+import type { WorkbenchAuthContext } from "../contract/mod.ts";
 
 /** One admitted turn's cancel signal and its cancellation window. */
 export class TurnTicket {
@@ -118,11 +128,13 @@ export interface SessionGrantScopes {
 }
 
 /** The engine's session owners, one per session with a turn in flight. */
-export class SessionOwners implements BudgetScopes, SessionGrantScopes {
+export class SessionOwners
+  implements BudgetScopes, SessionGrantScopes, ToolHistoryScopes {
   readonly #owners = new Map<string, SessionOwner>();
   #inFlightTurns = 0;
   readonly #confirmations: CeilingConfirmationStore;
   readonly #grants = new SessionGrantStore();
+  readonly #toolHistory = new ToolHistoryStore();
 
   /**
    * One per engine, so ceiling confirmations persist for their scope periods
@@ -145,6 +157,19 @@ export class SessionOwners implements BudgetScopes, SessionGrantScopes {
   /** The session's grants, kept across its turns for the engine's lifetime. */
   sessionGrants(sessionId: string): SessionGrants {
     return this.#grants.for(sessionId);
+  }
+
+  /**
+   * The session's redacted tool results as its turns added them to the
+   * model's transcript: kept in memory for the engine's lifetime, bounded
+   * with the oldest dropped first, lost on restart, and readable only in the
+   * clearance scope that recorded them.
+   */
+  toolHistory(
+    sessionId: string,
+    authContext: WorkbenchAuthContext | undefined,
+  ): SessionToolHistory {
+    return this.#toolHistory.toolHistory(sessionId, authContext);
   }
 
   /**

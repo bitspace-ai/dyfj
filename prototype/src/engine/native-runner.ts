@@ -79,6 +79,9 @@ export async function runWorkbenchRuntime(
     ...(services.sessionGrants === undefined
       ? {}
       : { sessionGrants: services.sessionGrants }),
+    ...(services.toolHistory === undefined
+      ? {}
+      : { toolHistory: services.toolHistory }),
     rootAnchors: services.rootAnchors,
     ...(services.dialExecutor === undefined
       ? {}

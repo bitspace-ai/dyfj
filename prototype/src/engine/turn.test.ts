@@ -8,6 +8,9 @@ import type {
   WorkbenchRuntimeResult,
 } from "./runtime-types.ts";
 import { SessionOwners } from "./session-owner.ts";
+import { buildCommandToolCallEventPayload } from "../tools/mod.ts";
+import { defineBash } from "../tools/builtin/exec.ts";
+import { withheldToolResult } from "./tool-history.ts";
 import {
   executeTurn,
   type ExecuteTurnDeps,
@@ -159,6 +162,122 @@ test("[case 4 boundary] threads incident omission facts into runtime without cha
     gapMarkers: 1,
     callsUnknown: true,
   });
+});
+
+// BIT-812: a bash result from an earlier turn reaches the model on the next
+// turn. The durable event is written exactly as `invokeCommandWithEvent`
+// writes it, so it holds only the redaction sentinel, and the next turn
+// rebuilds its history from that log.
+const TAP = [
+  "TAP version 13",
+  "# Subtest: parses a session id",
+  "ok 1 - parses a session id",
+  "# Subtest: rejects an empty prompt",
+  "not ok 2 - rejects an empty prompt",
+  "1..2",
+  "# tests 2",
+  "# pass 1",
+  "# fail 1",
+].join("\n");
+
+const LOOPBACK = {
+  transport: "loopback",
+  authnStatus: "authenticated",
+  authnMechanism: "local_user",
+  authnIssuerRef: "local",
+  authzBasis: "loopback-operator",
+} as const;
+
+async function priorBashTurn(): Promise<WorkbenchSessionEvent[]> {
+  const toolEvent = buildCommandToolCallEventPayload(
+    {
+      commandId: "bash",
+      callId: "toolu_01",
+      caller: { principalId: "workbench", principalType: "agent" },
+      arguments: { command: "node --test" },
+    },
+    {
+      decision: "allow",
+      authzBasis: "policy:allow:bash-allowlist",
+      isError: false,
+      result: TAP,
+    },
+    { sessionId: SESSION_ID, traceId: "trace", eventId: "tool-event" },
+    defineBash("/tmp"),
+  );
+  assert.strictEqual(toolEvent.tool_result, "[redacted]");
+  return await fetchWorkbenchSessionEvents({
+    sessionId: SESSION_ID,
+    events: eventsReturning([
+      {
+        event_id: "prompt-event",
+        event_type: "session_start",
+        trace_id: "trace",
+        principal_id: "operator",
+        content: "run the tests",
+        created_at: "2026-10-27 12:00:00",
+      },
+      {
+        ...toolEvent,
+        tool_is_error: "0",
+        created_at: "2026-10-27 12:00:01",
+      } as unknown as Record<string, string>,
+    ]),
+  });
+}
+
+/** The tool message the next turn's rebuilt history gives the model. */
+async function replayedToolResult(
+  owners: SessionOwners,
+  authContext: ExecuteTurnDeps["authContext"],
+): Promise<string | undefined> {
+  const events = await priorBashTurn();
+  let captured: WorkbenchRuntimeInput | undefined;
+  await captureStderr(() =>
+    executeTurn(
+      resolved({ prompt: "how many failed?", sessionId: SESSION_ID }),
+      deps({
+        owners,
+        authContext,
+        fetchSessionEvents: () => Promise.resolve(events),
+        runRuntime: (input) => {
+          captured = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    )
+  );
+  const message = captured?.conversationMessages?.find((m) =>
+    m.role === "tool"
+  );
+  return message?.content;
+}
+
+test("ordinary node --test TAP output from a prior turn reaches the model on the next turn", async () => {
+  const owners = new SessionOwners();
+  owners.toolHistory(SESSION_ID, LOOPBACK).record("trace", "toolu_01", TAP);
+  assert.strictEqual(await replayedToolResult(owners, LOOPBACK), TAP);
+});
+
+test("a turn with other clearance on the same session gets the withheld line, never the recorded text", async () => {
+  const owners = new SessionOwners();
+  owners.toolHistory(SESSION_ID, LOOPBACK).record("trace", "toolu_01", TAP);
+  const replayed = await replayedToolResult(owners, {
+    ...LOOPBACK,
+    transport: "remote",
+    authnMechanism: "api_key",
+  });
+  assert.strictEqual(replayed, withheldToolResult("bash"));
+  assert.ok(!replayed?.includes("# pass"));
+});
+
+test("a redacted result the engine no longer holds is replayed as unavailable, not as a bare sentinel", async () => {
+  // A fresh owners registry: what a restarted engine has.
+  const replayed = await replayedToolResult(new SessionOwners(), LOOPBACK);
+  assert.strictEqual(replayed, withheldToolResult("bash"));
+  assert.match(replayed ?? "", /not available/);
+  assert.match(replayed ?? "", /not the command's output/);
+  assert.match(replayed ?? "", /Rerun the command/);
 });
 
 test("a resumed turn reads its history only after the prior same-session turn settles", async () => {
