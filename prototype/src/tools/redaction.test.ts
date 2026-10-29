@@ -11,8 +11,13 @@ import {
   invokeCommandWithEvent,
 } from "./invoke.ts";
 import { buildToolCatalog } from "./catalog.ts";
-import { redactCommandResult } from "./redaction.ts";
+import { redactCommandResult, redactsArgumentsById } from "./redaction.ts";
 import { RootAnchors } from "./builtin/root-anchors.ts";
+import { buildExternalMcpCommands } from "./mcp/adapter.ts";
+import { defineWebCommands } from "./web/web.ts";
+import { parseMcpServersConfig } from "../config/mod.ts";
+import { buildLinearIssueCreationCommand } from "../extensions/linear/mod.ts";
+import saveIssueSchema from "../extensions/linear/linear-save-issue-schema.fixture.ts";
 
 function readCommand(
   overrides: Partial<CommandDefinition<string>> = {},
@@ -381,5 +386,110 @@ describe("a failed call's stored reason for a command with redacted arguments", 
       redactCommandResult(command, failed(reason), { path: "notes.md", content }),
       reason,
     );
+  });
+});
+
+describe("redactsArgumentsById", () => {
+  // The resume path decides from the command id alone, because a later turn's
+  // registry does not exist yet when it rebuilds the model's history. This
+  // builds the real catalog — builtin tools, the web capability, every
+  // discovered external MCP tool and the Linear extension's bounded
+  // create-issue command — and requires the rule and the declarations to agree
+  // in both directions, so neither can drift from the other.
+  it("equals `redactArguments` across the real catalog", async () => {
+    const builtin = buildToolCatalog({ rootAnchors: new RootAnchors() }, {
+      workspaceRoot: "/work",
+    }).list();
+    const web = defineWebCommands(
+      {
+        id: "tavily",
+        transport: "streamable_http",
+        url: "https://mcp.tavily.com/mcp",
+        minimumClearance: "loopback",
+        auth: { type: "bearer", secret: "tavily_key" },
+        tools: [
+          { name: "tavily_search", effect: "read", approval: "allow" },
+          { name: "tavily_extract", effect: "read", approval: "allow" },
+        ],
+        capabilities: {
+          searchTool: "tavily_search",
+          fetchTool: "tavily_extract",
+        },
+      },
+      "token",
+    );
+    const external = await buildExternalMcpCommands(
+      parseMcpServersConfig({
+        mcp: {
+          servers: [{
+            id: "notes",
+            transport: "streamable_http",
+            url: "https://mcp.example.com/mcp",
+            minimum_clearance: "loopback",
+            auth: { type: "bearer", secret: "notes_mcp" },
+            tools: [
+              { name: "get_note", effect: "read", approval: "allow" },
+              { name: "save_note", effect: "write_external", approval: "ask" },
+              {
+                name: "create_issue",
+                effect: "write_external",
+                approval: "ask",
+              },
+            ],
+            linear_issue_creation: {
+              team_id: "team_fixture_01",
+              projects: { "Synthetic Project": "project_fixture_01" },
+            },
+          }],
+        },
+      }, "/private/operator/.dyfj/config.toml"),
+      { notes_mcp: "secret-value" },
+      {
+        discover: () =>
+          Promise.resolve({
+            revision: "2026-07-28",
+            tools: [
+              {
+                name: "get_note",
+                inputSchema: { type: "object", properties: {} },
+              },
+              {
+                name: "save_note",
+                inputSchema: { type: "object", properties: {} },
+              },
+              { name: "create_issue", inputSchema: saveIssueSchema },
+            ],
+          }),
+        buildIssueCreationCommand: buildLinearIssueCreationCommand,
+        call: () => Promise.resolve({ content: [] }),
+      },
+    );
+    const catalog = [
+      ...builtin,
+      ...web,
+      ...external.commands,
+    ];
+    // The catalog this checks must actually contain each declaring kind, or it
+    // would pass by covering nothing.
+    const ids = catalog.map((command) => command.id);
+    for (const id of ["web_search", "web_fetch", "mcp.notes.get_note"]) {
+      assert.ok(ids.includes(id), `expected the catalog to include ${id}`);
+    }
+    assert.ok(
+      ids.some((id) => id.startsWith("mcp.") && id.endsWith(".create_issue")),
+      `expected the catalog to include the bounded create-issue command: ${
+        JSON.stringify(ids)
+      }`,
+    );
+    for (const command of catalog) {
+      const declared = command.redactArguments === true;
+      assert.strictEqual(
+        redactsArgumentsById(command.id),
+        declared,
+        `${command.id}: redactsArgumentsById says ${
+          redactsArgumentsById(command.id)
+        }, the command declares ${declared}`,
+      );
+    }
   });
 });

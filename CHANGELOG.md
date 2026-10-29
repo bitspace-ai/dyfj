@@ -11,6 +11,38 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **On every turn after the one that ran them, calls to a command that
+  declares `redactArguments` were replayed to the model with `[redacted]` as
+  each argument value (BIT-818).** That declaration covers `web_search`,
+  `web_fetch`, every external MCP tool and the bounded Linear create-issue
+  tool. Cause: the durable `tool_call` event holds the sentinel for those
+  arguments, and each turn rebuilds the model's history from that log, so the
+  model read its own earlier calls as having sent `url: "[redacted]"` and
+  could copy the pattern into new calls. This is the result case BIT-812
+  fixed, left uncovered for arguments.
+  - The session owners' in-memory tool history, which already kept a
+    redacted result, now also keeps the arguments the model sent for a call
+    whose command declares `redactArguments`. It is written by the step that
+    ran the call, refused and failed calls included, and keyed on the
+    declaration rather than on any tool's id. It shares the store's scope,
+    bounds and lifetime: 64 sessions, 1,024 entries and 2,000,000 characters
+    per session, oldest dropped first, memory only, readable only in the
+    clearance scope that recorded it, and lost on restart.
+  - The durable `tool_call` event is unchanged and still stores
+    `[redacted]`.
+  - A redacting call with no saved arguments — a restart, an evicted entry,
+    or a turn with other clearance — is replayed with the single argument
+    object `{"_withheld": "arguments not kept in session history"}`, not the
+    sentinel. The whole object is replaced rather than only the redacted
+    keys, so the transcript does not say which argument was sensitive.
+  - The decision is the command's, never the value's. A later turn rebuilds
+    its history before its own registry exists, so it keys on the command id
+    (`web_search`, `web_fetch`, `mcp.*`), and a test builds the real catalog
+    and requires that rule and the `redactArguments` declarations to agree in
+    both directions. A command that declares no argument redaction replays
+    the arguments it was given unchanged, `"[redacted]"` included when the
+    model really did send it.
+
 - **On every turn after the one that ran them, bash, git, Linear, MCP and web
   results reached the model as the bare text `[redacted]` (BIT-812).** Cause:
   each turn rebuilds the model's history from the durable event log, and for

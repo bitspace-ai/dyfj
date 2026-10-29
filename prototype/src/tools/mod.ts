@@ -53,6 +53,7 @@ export {
 } from "./failure-reason.ts";
 export {
   redactCommandArguments,
+  redactsArgumentsById,
   redactCommandResult,
   REDACTED,
   type RedactedToolCall,

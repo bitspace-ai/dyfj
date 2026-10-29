@@ -484,13 +484,16 @@ async function invokeTool(
 }
 
 /**
- * Keep a copy of each successful result whose durable event holds only the
- * redaction sentinel, as this step adds it to the model's transcript, so the
- * session's later turns can replay it (BIT-812). Memory only: see
- * `tool-history.ts`.
+ * Keep the model's copy of the evidence its durable events will hold only the
+ * redaction sentinel for, as this step adds it to the model's transcript, so
+ * the session's later turns can replay it: the result of a `redactResult`
+ * command (BIT-812), and the arguments of a call the command declares
+ * `redactArguments` for (BIT-818). Both are decided by the command's own
+ * declaration, never by its id. Memory only: see `tool-history.ts`.
  */
-function recordRedactedResults(
+function recordRedactedEvidence(
   turn: RoutedTurn,
+  toolCalls: readonly WorkbenchToolCall[],
   stepResults: readonly ToolResultSummary[],
 ): void {
   const { state, ports } = turn;
@@ -500,10 +503,21 @@ function recordRedactedResults(
     state.session.authContext,
   );
   for (const summary of stepResults) {
-    if (summary.isError) continue;
-    if (state.commandRegistry.lookup(summary.commandId)?.redactResult !== true) {
-      continue;
+    const command = state.commandRegistry.lookup(summary.commandId);
+    if (command?.redactArguments === true) {
+      // A refused or failed call is replayed too: its persisted arguments are
+      // redacted the same way, and the model reads the call it made.
+      const call = toolCalls.find((each) => each.id === summary.callId);
+      if (call !== undefined) {
+        history.recordArguments(
+          state.session.traceId,
+          summary.callId,
+          call.arguments,
+        );
+      }
     }
+    if (summary.isError) continue;
+    if (command?.redactResult !== true) continue;
     history.record(state.session.traceId, summary.callId, summary.result);
   }
 }
@@ -612,7 +626,7 @@ async function followUp(
       });
     }
   }
-  recordRedactedResults(turn, step.stepResults);
+  recordRedactedEvidence(turn, step.requestedToolCalls, step.stepResults);
   messages.push(
     ...toolStepToMessages(
       result.text,

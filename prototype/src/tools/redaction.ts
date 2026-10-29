@@ -152,6 +152,29 @@ export function durableFailureReason(
   );
 }
 
+/**
+ * Whether a command id belongs to a command that declares
+ * `redactArguments` (BIT-818), decided from the id alone.
+ *
+ * A later turn rebuilds the model's history before that turn's registry
+ * exists, so it cannot ask the command whether its arguments were redacted.
+ * The persisted value cannot decide it either: `[redacted]` is also a literal
+ * an ordinary command can legitimately receive. So the resume path keys on
+ * this rule instead, which covers every command that currently declares
+ * whole-call redaction: `web_search` and `web_fetch` from the web capability,
+ * and every external MCP tool — the Linear extension's bounded create-issue
+ * command included — which is registered as `mcp.<server>.<tool>`.
+ *
+ * It must stay equal to `redactArguments: true` across the catalog;
+ * `redaction.test.ts` builds the real catalog and checks both directions, so a
+ * new redacting command that this rule misses fails a test rather than
+ * replaying the sentinel to the model.
+ */
+export function redactsArgumentsById(commandId: string): boolean {
+  return commandId === "web_search" || commandId === "web_fetch" ||
+    commandId.startsWith("mcp.");
+}
+
 /** The arguments whose values the event redacts, by name. */
 function redactedArgumentValues(
   command: CommandDefinition | undefined,

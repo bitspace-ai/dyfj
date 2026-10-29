@@ -51,6 +51,13 @@ import { SessionOwners } from "./session-owner.ts";
 import { executeTurn } from "./turn.ts";
 import { resolveTurnFromBody } from "./turn-request.ts";
 import { fetchWorkbenchSessionEvents } from "../store/mod.ts";
+import {
+  createWebToolsSessionState,
+  defineWebCommands,
+} from "../tools/web/web.ts";
+import { ScriptedDnsResolver } from "../../testing/fakes/scripted-dns-resolver.ts";
+import { parseMcpServersConfig, type McpHttpServerConfig } from "../config/mod.ts";
+import { buildExternalMcpCommands } from "../tools/mcp/adapter.ts";
 
 type ToolCall = { id: string; name: string; arguments: unknown };
 
@@ -1910,5 +1917,233 @@ describe("redacted tool results on a later turn (BIT-812)", () => {
       loop.run.transport.requests[1]?.body.includes(JSON.stringify(inTurn)),
     );
     assert.equal(replayed, inTurn);
+  });
+});
+
+// BIT-818: a call whose command declares `redactArguments` is replayed to the
+// model on the next turn with the arguments the model actually sent. Its
+// durable event redacts them, so without a copy the rebuilt history shows
+// `url: "[redacted]"` and the model reads that as a precedent. The overlay is
+// keyed on the declaration, not on any tool's name: web_fetch, web_search,
+// every external MCP tool and the bounded Linear create-issue tool all carry it.
+describe("redacted tool arguments on a later turn (BIT-818)", () => {
+  const AUTH = {
+    transport: "loopback",
+    authnStatus: "authenticated",
+    authnMechanism: "local_user",
+    authnIssuerRef: "local_os",
+    authzBasis: "user_consent",
+  } as const;
+  const URL = "https://example.com/notes";
+  const NOTE = "the operator's own note";
+
+  /** A loopback web_fetch command over a scripted upstream MCP call. */
+  function webCommands(): CommandDefinition<string>[] {
+    const server: McpHttpServerConfig = {
+      id: "tavily",
+      transport: "streamable_http",
+      url: "https://mcp.tavily.com/mcp",
+      minimumClearance: "loopback",
+      auth: { type: "bearer", secret: "tavily_key" },
+      tools: [{ name: "tavily_extract", effect: "read", approval: "allow" }],
+      capabilities: { fetchTool: "tavily_extract" },
+    };
+    const publicHost = {
+      A: ["93.184.216.34"],
+      AAAA: ["2606:4700:4700::1111"],
+    };
+    return defineWebCommands(
+      server,
+      "test_token",
+      {
+        call: () =>
+          Promise.resolve({
+            content: [{ type: "text", text: "the notes page" }],
+          }),
+      },
+      createWebToolsSessionState(),
+      false,
+      { fetchSchema: undefined },
+      new ScriptedDnsResolver({
+        "example.com": publicHost,
+        "mcp.tavily.com": publicHost,
+      }),
+    );
+  }
+
+  /**
+   * One ordinary external MCP read tool, built by the real adapter so its
+   * `redactArguments` declaration is the adapter's own.
+   */
+  async function mcpCommands(): Promise<CommandDefinition<string>[]> {
+    const built = await buildExternalMcpCommands(
+      parseMcpServersConfig({
+        mcp: {
+          servers: [{
+            id: "notes",
+            transport: "streamable_http",
+            url: "https://mcp.example.com/mcp",
+            minimum_clearance: "loopback",
+            auth: { type: "bearer", secret: "notes_mcp" },
+            tools: [{ name: "save_note", effect: "read", approval: "allow" }],
+          }],
+        },
+      }, "/private/operator/.dyfj/config.toml"),
+      { notes_mcp: "secret-value" },
+      {
+        discover: () =>
+          Promise.resolve({
+            revision: "2026-07-28",
+            tools: [{
+              name: "save_note",
+              inputSchema: {
+                type: "object",
+                properties: { note: { type: "string" } },
+                required: ["note"],
+              },
+            }],
+          }),
+        call: () =>
+          Promise.resolve({
+            content: [{ type: "text", text: "note stored" }],
+          }),
+      },
+    );
+    return built.commands;
+  }
+
+  const FETCH = { id: "f1", name: "web_fetch", arguments: { url: URL } };
+  const NOTE_CALL = {
+    id: "n1",
+    name: "mcp.notes.save_note",
+    arguments: { note: NOTE },
+  };
+
+  /** One turn that runs these calls; the tool_call rows it committed. */
+  async function callTurn(
+    calls: ToolCall[],
+    toolHistory?: SessionOwners,
+    externalMcpCommands: readonly CommandDefinition[] = [],
+  ) {
+    const committed: Record<string, unknown>[] = [];
+    const loop = await loopTurn([toolReply(calls), chatReply({ content: "ok" })], {
+      prompt: "run them",
+      authContext: AUTH,
+      externalMcpCommands,
+    }, (run) => {
+      if (toolHistory !== undefined) run.services.toolHistory = toolHistory;
+      run.services.store = patchStore(run.store, {
+        journal: {
+          commit: (batch, options) => {
+            for (const event of batch.events) {
+              if (event.event_type === "tool_call") {
+                committed.push({ ...event });
+              }
+            }
+            return run.store.journal.commit(batch, options);
+          },
+        },
+      });
+    });
+    assert.equal(loop.error, null, String(loop.error));
+    const sessionId = loop.frames.find((f) => f.type === "sessionStart")
+      ?.sessionId;
+    assert.ok(sessionId);
+    return { loop, sessionId, committed };
+  }
+
+  /** The tool calls the next turn's rebuilt history gives the model. */
+  async function replayedCalls(
+    loop: LoopRun,
+    sessionId: string,
+    owners: SessionOwners,
+  ): Promise<Array<{ name: string; arguments: unknown }>> {
+    const prior = await fetchWorkbenchSessionEvents({
+      sessionId,
+      events: loop.run.store.events,
+    });
+    let next: WorkbenchRuntimeInput | undefined;
+    const resolvedTurn = resolveTurnFromBody(
+      { prompt: "what did it say?", sessionId },
+      true,
+    );
+    if ("error" in resolvedTurn) throw new Error(resolvedTurn.error);
+    await quietly(() =>
+      executeTurn(resolvedTurn, {
+        owners,
+        env: new MapEnv({}),
+        authContext: AUTH,
+        loopback: true,
+        fetchSessionEvents: () => Promise.resolve(prior),
+        runRuntime: (input) => {
+          next = input;
+          return Promise.resolve(
+            { sessionId, model: { slug: "fixture" } } as never,
+          );
+        },
+      })
+    );
+    return (next?.conversationMessages ?? []).flatMap((message) =>
+      message.role === "assistant"
+        ? (message.toolCalls ?? []).map((call) => ({
+          name: call.name,
+          arguments: call.arguments,
+        }))
+        : []
+    );
+  }
+
+  it("replays the call's original arguments on the next turn", async () => {
+    const owners = new SessionOwners();
+    const { loop, sessionId, committed } = await callTurn(
+      [FETCH, NOTE_CALL],
+      owners,
+      [...webCommands(), ...(await mcpCommands())],
+    );
+    // The durable events keep the policy: the arguments stay redacted there.
+    assert.deepStrictEqual(
+      committed.map((event) => event.tool_arguments),
+      ['{"url":"[redacted]"}', '{"note":"[redacted]"}'],
+    );
+
+    const replayed = await replayedCalls(loop, sessionId, owners);
+    assert.deepStrictEqual(replayed, [
+      { name: "web_fetch", arguments: { url: URL } },
+      { name: "mcp.notes.save_note", arguments: { note: NOTE } },
+    ]);
+  });
+
+  it("replays a non-redacting call's arguments unchanged, even a sentinel literal", async () => {
+    // `grep_files` declares no argument redaction, so the literal string it was
+    // given is the truth about the call and must come back as it was sent. The
+    // decision is the command's declaration, never the value.
+    const CALL = {
+      id: "g1",
+      name: "grep_files",
+      arguments: { pattern: "[redacted]" },
+    };
+    const { loop, sessionId, committed } = await callTurn([CALL]);
+    assert.equal(committed.length, 1);
+    assert.equal(committed[0]?.tool_arguments, '{"pattern":"[redacted]"}');
+    const replayed = await replayedCalls(loop, sessionId, new SessionOwners());
+    assert.deepStrictEqual(replayed, [
+      { name: "grep_files", arguments: { pattern: "[redacted]" } },
+    ]);
+  });
+
+  it("replays an argument object, never the sentinel, when the engine no longer holds the call", async () => {
+    // A fresh owners registry: what a restarted engine has.
+    const { loop, sessionId, committed } = await callTurn(
+      [FETCH, NOTE_CALL],
+      new SessionOwners(),
+      [...webCommands(), ...(await mcpCommands())],
+    );
+    assert.equal(committed.length, 2);
+    const replayed = await replayedCalls(loop, sessionId, new SessionOwners());
+    assert.deepStrictEqual(replayed.map((call) => call.arguments), [
+      { _withheld: "arguments not kept in session history" },
+      { _withheld: "arguments not kept in session history" },
+    ]);
+    assert.ok(!JSON.stringify(replayed).includes("[redacted]"));
   });
 });

@@ -70,6 +70,41 @@ test("the store tracks a bounded number of sessions, dropping the oldest", () =>
   );
 });
 
+test("arguments recorded for a call are read back in its session and clearance only", () => {
+  const store = new ToolHistoryStore();
+  store.toolHistory("s1", LOOPBACK).recordArguments("t1", "c1", {
+    url: "https://example.com/notes",
+  });
+  assert.deepStrictEqual(
+    store.toolHistory("s1", LOOPBACK).lookupArguments("t1", "c1"),
+    { url: "https://example.com/notes" },
+  );
+  assert.equal(
+    store.toolHistory("s1", REMOTE).lookupArguments("t1", "c1"),
+    undefined,
+  );
+  assert.equal(store.toolHistory("s2", LOOPBACK).lookupArguments("t1", "c1"), undefined);
+});
+
+test("a call's arguments and its result are kept on one entry", () => {
+  const history = new ToolHistoryStore().toolHistory("s1", LOOPBACK);
+  history.recordArguments("t1", "c1", { note: "kept" });
+  history.record("t1", "c1", "the result");
+  assert.deepStrictEqual(history.lookupArguments("t1", "c1"), { note: "kept" });
+  assert.equal(history.lookup("t1", "c1"), "the result");
+  // The other order keeps both too, and the entry is not double-counted.
+  history.record("t1", "c2", "the result");
+  history.recordArguments("t1", "c2", { note: "kept" });
+  assert.equal(history.lookup("t1", "c2"), "the result");
+  assert.deepStrictEqual(history.lookupArguments("t1", "c2"), { note: "kept" });
+});
+
+test("recorded arguments count toward the session's character budget", () => {
+  const history = new ToolHistoryStore().toolHistory("s1", LOOPBACK);
+  history.recordArguments("t1", "c1", { note: "x".repeat(MAX_CHARS_PER_SESSION) });
+  assert.equal(history.lookupArguments("t1", "c1"), undefined);
+});
+
 test("the withheld line says the output is unavailable and carries no length", () => {
   const line = withheldToolResult("bash");
   assert.match(line, /not available/);
