@@ -30,12 +30,18 @@ README are tracked separately in its Revision history section.
     clearance scope that recorded it, and lost on restart.
   - The durable `tool_call` event is unchanged and still stores
     `[redacted]`.
-  - On a miss (a restart, an evicted entry, or a turn with other clearance)
-    the call is replayed with the single argument object
-    `{"_withheld": "arguments not kept in session history"}`. The sentinel is
-    never replayed as an argument value. The whole object is withheld rather
-    than only the redacted keys, so the transcript does not say which
-    argument was sensitive.
+  - A redacting call with no saved arguments — a restart, an evicted entry,
+    or a turn with other clearance — is replayed with the single argument
+    object `{"_withheld": "arguments not kept in session history"}`, not the
+    sentinel. The whole object is replaced rather than only the redacted
+    keys, so the transcript does not say which argument was sensitive.
+  - The decision is the command's, never the value's. A later turn rebuilds
+    its history before its own registry exists, so it keys on the command id
+    (`web_search`, `web_fetch`, `mcp.*`), and a test builds the real catalog
+    and requires that rule and the `redactArguments` declarations to agree in
+    both directions. A command that declares no argument redaction replays
+    the arguments it was given unchanged, `"[redacted]"` included when the
+    model really did send it.
 
 - **On every turn after the one that ran them, bash, git, Linear, MCP and web
   results reached the model as the bare text `[redacted]` (BIT-812).** Cause:

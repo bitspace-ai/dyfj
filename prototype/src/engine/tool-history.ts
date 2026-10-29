@@ -188,21 +188,20 @@ function clearanceScope(authContext: WorkbenchAuthContext | undefined): string {
 }
 
 /**
- * What the model gets in place of a redacted result it can no longer be
- * shown. It says the output is unavailable and how to see it, so it cannot
- * be read as the command's output. It carries no length or content-derived
- * value, like the sentinel it replaces.
- */
-/**
- * What the model gets in place of arguments it can no longer be shown: an
- * object, never the sentinel, so nothing in the transcript can be read or
- * copied as a value the model actually sent. It says only that the arguments
- * are not in this session's history, and carries no content-derived fact.
+ * What the model gets in place of the arguments of a redacting call it can no
+ * longer be shown: an object rather than the bare sentinel, which labels the
+ * arguments as unavailable. It carries no content-derived fact.
  */
 export const WITHHELD_ARGUMENTS: Readonly<Record<string, string>> = {
   _withheld: "arguments not kept in session history",
 };
 
+/**
+ * What the model gets in place of a redacted result it can no longer be
+ * shown. It says the output is unavailable and how to see it, so it cannot be
+ * read as the command's output. It carries no length or content-derived value,
+ * like the sentinel it replaces.
+ */
 export function withheldToolResult(commandId: string): string {
   return `[tool output not available: the output of this ${commandId} call ` +
     "is not kept in session history (class: unpersisted command output). " +

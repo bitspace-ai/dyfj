@@ -2113,6 +2113,24 @@ describe("redacted tool arguments on a later turn (BIT-818)", () => {
     ]);
   });
 
+  it("replays a non-redacting call's arguments unchanged, even a sentinel literal", async () => {
+    // `grep_files` declares no argument redaction, so the literal string it was
+    // given is the truth about the call and must come back as it was sent. The
+    // decision is the command's declaration, never the value.
+    const CALL = {
+      id: "g1",
+      name: "grep_files",
+      arguments: { pattern: "[redacted]" },
+    };
+    const { loop, sessionId, committed } = await callTurn([CALL]);
+    assert.equal(committed.length, 1);
+    assert.equal(committed[0]?.tool_arguments, '{"pattern":"[redacted]"}');
+    const replayed = await replayedCalls(loop, sessionId, new SessionOwners());
+    assert.deepStrictEqual(replayed, [
+      { name: "grep_files", arguments: { pattern: "[redacted]" } },
+    ]);
+  });
+
   it("replays an argument object, never the sentinel, when the engine no longer holds the call", async () => {
     // A fresh owners registry: what a restarted engine has.
     const { loop, sessionId, committed } = await callTurn(

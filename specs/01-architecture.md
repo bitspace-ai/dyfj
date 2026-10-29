@@ -267,9 +267,11 @@ is its projection and the legacy `ToolDefinition` is deleted.
   sentinel is not replayed bare: a later turn gets the engine's in-memory
   copy, or a line saying the output is not available (§5.7, BIT-812). A call
   to a command that declares `redactArguments` is replayed the same way
-  (§5.7, BIT-818): the model gets the arguments it sent, or
-  `{"_withheld": "arguments not kept in session history"}`, never the
-  sentinel as a value.
+  (§5.7, BIT-818): the model gets the arguments it sent, or, when the engine
+  no longer holds them, `{"_withheld": "arguments not kept in session
+  history"}`. The decision is the command's declaration, keyed on its id
+  (`redactsArgumentsById`), not on the persisted value: a command that
+  declares no argument redaction replays what it was given unchanged.
 
 ### 5.5 MCP client
 
@@ -318,8 +320,8 @@ This section implements AGENTS.md rules 2 and 3.
     rule 4: it is model working context, not a projection, and replay cannot
     rebuild it because the log never holds it. A miss (restart, eviction,
     other clearance) replays a line saying the output is not available, and
-    for arguments the single object
-    `{"_withheld": "arguments not kept in session history"}`.
+    for the arguments of a command that declares `redactArguments` the single
+    object `{"_withheld": "arguments not kept in session history"}`.
 
   Other code sends it messages (`startTurn`, `cancel`, `release`); nothing else
   mutates these. Behavior is frozen: busy/concurrency semantics stay identical,

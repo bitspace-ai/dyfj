@@ -14,7 +14,11 @@ import type {
   WorkbenchRuntimeResult,
 } from "./runtime-types.ts";
 import { buildConversationMessages } from "../context/mod.ts";
-import { type CommandDefinition, REDACTED } from "../tools/mod.ts";
+import {
+  type CommandDefinition,
+  REDACTED,
+  redactsArgumentsById,
+} from "../tools/mod.ts";
 import {
   type Env,
   type PermissionLevel,
@@ -58,12 +62,13 @@ export type FetchSessionEvents = (
  * Any successful result that is exactly the sentinel counts, so sessions
  * recorded before the tool history existed get the line too.
  *
- * The arguments of a call whose durable event holds the sentinel are handled
- * the same way (BIT-818): the copy the model sent is replayed from
- * `toolHistory` when this caller's clearance recorded it, and otherwise
- * replaced by `WITHHELD_ARGUMENTS`. The sentinel is never replayed as an
- * argument value, because the model reads its own transcribed calls as
- * precedent and would copy it.
+ * The arguments of a call to a command that declares whole-call redaction
+ * (`redactsArgumentsById`) are handled the same way (BIT-818): the copy the
+ * model sent is replayed from `toolHistory` when this caller's clearance
+ * recorded it, and a redacting call with no saved arguments is replayed with
+ * `WITHHELD_ARGUMENTS` rather than the sentinel. The decision is the
+ * command's, never the value's: an ordinary command that legitimately
+ * received the literal `"[redacted]"` replays it unchanged.
  */
 async function buildResume(
   sessionId: string | undefined,
@@ -103,12 +108,11 @@ async function buildResume(
         : toolHistory?.lookup(event.traceId, event.toolCallId) ??
           withheldToolResult(event.toolName),
     replayToolArguments: (event) =>
-      // The registry is built after this point, so the reconstruction cannot
-      // ask a command whether it redacts. The sentinel in a persisted value is
-      // the only signal left, and a call that carries one is rebuilt from the
-      // model's copy or withheld whole — never partially, which would state
-      // which argument was sensitive.
-      Object.values(event.toolArguments).includes(REDACTED)
+      // The turn's registry is built after this point, so the decision is the
+      // id rule that mirrors `redactArguments` across the catalog. The
+      // arguments are replaced whole rather than key by key, which would state
+      // which one was sensitive.
+      redactsArgumentsById(event.toolName)
         ? toolHistory?.lookupArguments(event.traceId, event.toolCallId) ??
           WITHHELD_ARGUMENTS
         : event.toolArguments,
