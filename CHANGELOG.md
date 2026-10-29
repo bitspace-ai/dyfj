@@ -44,6 +44,15 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **DeepSeek V4.1 Flash 1017 and GLM 5.3 in the model catalog (BIT-816).**
+  `deepseek/deepseek-v4.1-flash-1017` (in $0.15 / out $0.60 / cache read
+  $0.003 per million, 1,048,576 context, 393,216 output) and `z-ai/glm-5.3`
+  (in $0.0699 / out $1.40 / cache read $0.0689, 1,048,576 context, 943,718
+  output) both route through OpenRouter and record its model-level listing.
+  Cache write is not published for either, so it is 0, as the `moonshotai/kimi-k3`
+  row does. Sources and the upstream price spreads are in
+  `schema/catalog/VERIFICATION-2026-10-28.md`.
+
 - **The bash, git and file-write tools run their commands under Anthropic's
   sandbox-runtime (srt) on the Mac, and under the operator posture a sandboxed
   call runs without a prompt (BIT-662).** srt is a pinned dependency
@@ -721,6 +730,25 @@ README are tracked separately in its Revision history section.
 
 ### Removed
 
+- **Ollama and the superseded catalog generations: 49 rows leave `models`
+  (BIT-816).** Rows taken out of view are deleted, not set to `active = FALSE`;
+  nothing in `schema/` declares a foreign key to `models`, and events name a
+  model by slug in a text column, so an older event keeps naming a slug no
+  longer in the catalog and the read paths tolerate it. Gone: every
+  `provider = 'ollama'` row (15, active or not — the built-in Ollama defaults
+  in `prototype/src/providers/registry/local-defaults.ts` with them), every
+  row already inactive (21), and the superseded generations still active on a
+  route that now carries a newer row of the same line (13: `claude-haiku-4-5-20251001`,
+  `claude-sonnet-5`, `deepseek/deepseek-chat`, `deepseek/deepseek-v3.1-terminus`,
+  the undated `deepseek/deepseek-v4.1-flash` (the 2026-09-10 snapshot, not
+  1017), `gemini-3.6-flash`, `gemini-3.7-flash`, `grok-4.3`, `x-ai/grok-4.3`,
+  `meta-llama/llama-3.3-70b-instruct`, `moonshotai/kimi-k2-0905`, `z-ai/glm-4.5`,
+  `z-ai/glm-4.5-air`). `gemini-antigravity/gemini-3.7-flash` stays: no 3.8 has
+  shipped on that route. The routing preference chain drops the entries that
+  named removed rows. Migration `020_models_deepseek_v4_1_flash_1017_and_glm_5_3.sql`
+  performs the same deletes on an existing database, and the seed no longer
+  carries the rows.
+
 - **The runaway anomaly gate and its multiples (BIT-785).**
   `budget/anomaly-gate.ts`, the `[anomaly]` config table (`turn_multiple`,
   `scope_multiple`) and `DYFJ_ANOMALY_TURN_MULTIPLE` /
@@ -776,6 +804,13 @@ README are tracked separately in its Revision history section.
   tooling moves to Node.
 
 ### Changed
+
+- **The built-in local defaults carry only the Qwen row (BIT-816).**
+  `defaultLocalWorkbenchModels()` returns `llama-cpp/qwen3.6-35b-a3b` alone.
+  It previously also carried the Ollama rows, which the catalog trim removed:
+  a built-in row is prepended when the catalog has no row for its slug — active
+  or inactive — so a removed Ollama slug would have been resurrected rather
+  than stay gone.
 
 - **Spend limits (BIT-785).** The default per-call limit is $0.50 (was
   $0.10) and the default session limit is $10.00 (was $1.00). A daily approval

@@ -115,8 +115,6 @@ export function selectWorkbenchModel(
     const selected = localModels.find((model) =>
       model.capabilities.includes("code")
     ) ??
-      localModels.find((model) => model.slug === "gemma4:e2b") ??
-      localModels.find((model) => model.slug === "gemma4") ??
       localModels[0];
     if (!selected) throw new WorkbenchModelNotFoundError("tier:0");
     return finalize(
@@ -134,25 +132,16 @@ export function selectWorkbenchModel(
 }
 
 // One preference chain for any "pick from this set" selection, so explicit
-// tier requests honor the same local ordering (Qwen 3.6 on llama.cpp,
-// then Qwen 3.6 on Ollama) as the default route instead of falling back to
-// list order.
+// tier requests honor the same local ordering as the default route instead of
+// falling back to list order. llama-cpp/qwen3.6-35b-a3b is the local default;
+// the Ollama rows it once ranked ahead of were removed from the catalog, so
+// what remains is that row and then whatever the caller passed.
 function preferredModelFrom(
   candidates: WorkbenchModel[],
 ): WorkbenchModel | undefined {
   return candidates.find((model) =>
     model.slug === "llama-cpp/qwen3.6-35b-a3b"
   ) ??
-    candidates.find((model) => model.slug === "qwen3.6:35b-a3b") ??
-    candidates.find((model) => model.slug === "llama-cpp/deepseek-r1-32b") ??
-    candidates.find((model) => model.slug === "muse-glimmer:30b") ??
-    candidates.find((model) =>
-      model.slug === "mistral-small:24b-instruct-2501-q4_K_M"
-    ) ??
-    candidates.find((model) => model.slug === "deepseek-r1:32b") ??
-    candidates.find((model) => model.slug === "laguna-xs-2.1") ??
-    candidates.find((model) => model.slug === "gemma4:26b") ??
-    candidates.find((model) => model.slug === "gemma4:e2b") ??
     candidates[0];
 }
 

@@ -127,7 +127,7 @@ DYFJ Budget — 2026-04-29 17:43
   Today:      $0.34 of $5.00     (6.8% used, 7 sessions)
   Last 7d:    $1.92               ($0.27/day avg)
   By tier:    T0 free · T1 $1.45 · T2 $0.47
-  By model:   gemini-2.5-flash $1.10 · claude-haiku-4-5 $0.35 · …
+  By model:   gemini-3.8-flash $1.10 · claude-haiku-5-5 $0.35 · …
 ```
 
 Minimum-viable version: read `events` + `models`, print the daily/7-day rollup. Iterates from there. The point is that "what have I spent?" is one keystroke away, not a Dolt SQL query.

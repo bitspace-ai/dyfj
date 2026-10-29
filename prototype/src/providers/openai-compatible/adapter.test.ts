@@ -73,7 +73,7 @@ describe("runWorkbenchTurn streaming", () => {
     await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "hello",
-      routing: { modelId: "laguna-xs-2.1" },
+      routing: { modelId: "llama-cpp/qwen3.6-35b-a3b" },
       models: defaultLocalWorkbenchModels(),
       fetchFn: transport.fetch,
     });

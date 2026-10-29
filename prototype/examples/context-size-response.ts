@@ -8,7 +8,7 @@ import { defaultLocalWorkbenchModels } from "../src/providers/mod.ts";
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
   console.log(
-    "usage: npm run context-size-response -- [prompt] [--model <slug>] [--base-url <url>] [--large-repeats <n>]\n\nCompares a small and a large context payload against a local OpenAI-compatible\nOllama endpoint. --model and --base-url default to DYFJ_WORKBENCH_MODEL and\nDYFJ_WORKBENCH_BASE_URL, then gemma4:e2b at http://localhost:11434/v1.",
+    "usage: npm run context-size-response -- [prompt] [--model <slug>] [--base-url <url>] [--large-repeats <n>]\n\nCompares a small and a large context payload against a local OpenAI-compatible\nllama.cpp endpoint. --model and --base-url default to DYFJ_WORKBENCH_MODEL and\nDYFJ_WORKBENCH_BASE_URL, then\nllama-cpp/qwen3.6-35b-a3b at http://localhost:8080/v1.",
   );
   process.exit(0);
 }
@@ -17,20 +17,16 @@ const prompt = firstPrompt(args) ??
   "Return exactly this text and nothing else: context changes model work.";
 const modelSlug = getArg(args, "--model") ??
   process.env.DYFJ_WORKBENCH_MODEL ??
-  "gemma4:e2b";
+  "llama-cpp/qwen3.6-35b-a3b";
 const baseUrl = getArg(args, "--base-url") ??
   process.env.DYFJ_WORKBENCH_BASE_URL ??
-  "http://localhost:11434/v1";
+  "http://localhost:8080/v1";
 const largeRepeats = Number(getArg(args, "--large-repeats") ?? "180");
+// The built-in local default (llama.cpp), so the provider matches the loopback
+// base URL. The catalog's Ollama rows were removed, so there is no Ollama row
+// to look up; --model and --base-url still override the endpoint.
 const model = {
-  // An Ollama diagnostic: start from the built-in Ollama row for this slug, or
-  // the Ollama Qwen row, so the provider matches the Ollama base URL.
-  ...(defaultLocalWorkbenchModels().find((row) =>
-    row.provider === "ollama" && row.slug === modelSlug
-  ) ??
-    defaultLocalWorkbenchModels().find((row) =>
-      row.slug === "qwen3.6:35b-a3b"
-    )!),
+  ...defaultLocalWorkbenchModels()[0],
   slug: modelSlug,
   displayName: modelSlug,
   baseUrl,
@@ -102,7 +98,7 @@ try {
 } catch (err) {
   console.error("Diagnostic failed.");
   console.error(
-    "Requires a local OpenAI-compatible Ollama endpoint, for example: ollama serve and ollama pull gemma4:e2b.",
+    "Requires the local OpenAI-compatible llama-server, for example: llama-server --alias llama-cpp/qwen3.6-35b-a3b.",
   );
   console.error((err as Error)?.message ?? String(err));
   process.exit(1);

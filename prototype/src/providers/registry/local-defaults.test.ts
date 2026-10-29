@@ -14,6 +14,7 @@ describe("defaultLocalWorkbenchModels", () => {
   it("provides a zero-cost Tier 0 local default served by llama.cpp", () => {
     const defaults = defaultLocalWorkbenchModels();
 
+    assert.strictEqual(defaults.length, 1);
     assert.partialDeepStrictEqual(defaults[0], {
       slug: "llama-cpp/qwen3.6-35b-a3b",
       provider: "llama-cpp",
@@ -41,67 +42,13 @@ describe("defaultLocalWorkbenchModels", () => {
     );
   });
 
-  it("provides zero-cost Tier 0 local fallback models", () => {
+  it("carries no Ollama row: the catalog trim removed every Ollama model", () => {
     const defaults = defaultLocalWorkbenchModels();
-    const laguna = defaults.find((m) => m.slug === "laguna-xs-2.1");
-    const muse = defaults.find((m) => m.slug === "muse-glimmer:30b");
-    const qwen36 = defaults.find((m) => m.slug === "qwen3.6:35b-a3b");
 
-    assert.ok(laguna !== undefined && laguna !== null);
-    assert.partialDeepStrictEqual(laguna, {
-      slug: "laguna-xs-2.1",
-      provider: "ollama",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      architecture: "moe",
-      totalParamsB: 33.4,
-      activeParamsB: 3.0,
-      recommendedQuant: "Q4_K_M",
-      residentRamGiB: 20.0,
-      reasoningEffortControl: false,
-    });
     assert.deepStrictEqual(
-      [
-        "text",
-        "code",
-        "reasoning",
-        "tools",
-        "thinking",
-        "long-context",
-      ].filter((item) => !laguna.capabilities.includes(item)),
+      defaults.filter((model) => model.provider === "ollama"),
       [],
     );
-
-    assert.ok(muse !== undefined && muse !== null);
-    assert.partialDeepStrictEqual(muse, {
-      slug: "muse-glimmer:30b",
-      provider: "ollama",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      architecture: "dense",
-      totalParamsB: 27.9,
-      activeParamsB: 27.9,
-      recommendedQuant: "Q4_K_M",
-      residentRamGiB: 23.0,
-      reasoningEffortControl: true,
-    });
-
-    assert.ok(qwen36 !== undefined && qwen36 !== null);
-    assert.partialDeepStrictEqual(qwen36, {
-      slug: "qwen3.6:35b-a3b",
-      provider: "ollama",
-      tier: 0,
-      costInput: 0,
-      costOutput: 0,
-      architecture: "moe",
-      totalParamsB: 36.0,
-      activeParamsB: 3.0,
-      recommendedQuant: "Q4_K_M",
-      residentRamGiB: 24.0,
-      reasoningEffortControl: false,
-    });
   });
 });
 
@@ -109,60 +56,35 @@ describe("withDefaultLocalWorkbenchModels", () => {
   it("overlays the measured local default when the registry lacks it", () => {
     const merged = withDefaultLocalWorkbenchModels([{
       ...models[0],
-      slug: "gemma4:26b",
-      displayName: "Gemma 4 latest",
+      slug: "local-stand-in",
+      displayName: "Local stand-in",
     }]);
 
-    assert.deepStrictEqual(merged.slice(0, 3).map((model) => model.slug), [
-      "llama-cpp/qwen3.6-35b-a3b",
-      "qwen3.6:35b-a3b",
-      "muse-glimmer:30b",
-    ]);
-    const slugs = merged.map((model) => model.slug);
-    assert.deepStrictEqual(
-      ["laguna-xs-2.1"].filter((item) => !slugs.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["deepseek-r1:32b"].filter((item) => !slugs.includes(item)),
-      [],
-    );
-    assert.deepStrictEqual(
-      ["mistral-small:24b-instruct-2501-q4_K_M"].filter((item) =>
-        !slugs.includes(item)
-      ),
-      [],
-    );
+    assert.strictEqual(merged[0].slug, "llama-cpp/qwen3.6-35b-a3b");
     assert.strictEqual(
-      merged.filter((model) => model.slug === "gemma4:26b").length,
+      merged.filter((model) => model.slug === "llama-cpp/qwen3.6-35b-a3b")
+        .length,
       1,
     );
-    assert.strictEqual(merged[merged.length - 1].displayName, "Gemma 4 latest");
+    assert.strictEqual(merged[merged.length - 1].displayName, "Local stand-in");
   });
 
   it("does not restore a built-in row the catalog lists as inactive", () => {
     const merged = withDefaultLocalWorkbenchModels(
-      [{ ...models[0], slug: "gemma4:26b" }],
-      ["qwen3.6:35b-a3b"],
+      [{ ...models[0], slug: "local-stand-in" }],
+      ["llama-cpp/qwen3.6-35b-a3b"],
     );
 
     const slugs = merged.map((model) => model.slug);
-    assert.strictEqual(slugs.includes("qwen3.6:35b-a3b"), false);
-    assert.deepStrictEqual(
-      ["muse-glimmer:30b"].filter((item) => !slugs.includes(item)),
-      [],
-    );
+    assert.strictEqual(slugs.includes("llama-cpp/qwen3.6-35b-a3b"), false);
   });
 
   it("does not duplicate the default when the registry already has it", () => {
-    const merged = withDefaultLocalWorkbenchModels(models);
+    const merged = withDefaultLocalWorkbenchModels(defaultLocalWorkbenchModels());
 
     assert.strictEqual(
-      merged.filter((model) => model.slug === "laguna-xs-2.1").length,
+      merged.filter((model) => model.slug === "llama-cpp/qwen3.6-35b-a3b")
+        .length,
       1,
     );
   });

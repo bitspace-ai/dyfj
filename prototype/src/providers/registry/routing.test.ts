@@ -24,16 +24,13 @@ describe("selectWorkbenchModel", () => {
     assert.strictEqual(selection.reason, "default");
   });
 
-  it("falls back to the Ollama Qwen 3.6 row when the llama.cpp row is absent", () => {
-    const selection = selectWorkbenchModel(
-      defaultLocalWorkbenchModels().filter((model) =>
-        model.provider !== "llama-cpp"
-      ),
-      {},
+  it("fails closed when no local row is present", () => {
+    assert.throws(
+      () => selectWorkbenchModel([], {}),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Model not found: tier:0"),
     );
-
-    assert.strictEqual(selection.selected.slug, "qwen3.6:35b-a3b");
-    assert.strictEqual(selection.selected.provider, "ollama");
   });
 
   it("falls back to next preferred local model when primary default is not available", () => {
@@ -46,10 +43,10 @@ describe("selectWorkbenchModel", () => {
 
   it("explicit model selection can select a local model by slug", () => {
     const selection = selectWorkbenchModel(defaultLocalWorkbenchModels(), {
-      modelId: "gemma4:e2b",
+      modelId: "llama-cpp/qwen3.6-35b-a3b",
     });
 
-    assert.strictEqual(selection.selected.provider, "ollama");
+    assert.strictEqual(selection.selected.provider, "llama-cpp");
     assert.strictEqual(selection.reason, "explicit_model_id");
   });
 
@@ -303,34 +300,34 @@ describe("explicit tier preference", () => {
   it("tier 0 honors the local preference chain over list order", () => {
     const tierZero: WorkbenchModel[] = [
       {
-        slug: "laguna-xs-2.1",
-        displayName: "Laguna XS 2.1",
-        provider: "ollama",
+        slug: "mlx-community/Qwen3.5-4B-8bit",
+        displayName: "Qwen3.5 4B MLX",
+        provider: "mlx-lm",
         api: "openai-completions",
-        baseUrl: "http://localhost:11434/v1",
-        tier: 0,
-        costInput: 0,
-        costOutput: 0,
-        capabilities: ["text"],
-      },
-      {
-        slug: "qwen3.6:35b-a3b",
-        displayName: "Qwen3.6 35B (MoE)",
-        provider: "ollama",
-        api: "openai-completions",
-        baseUrl: "http://localhost:11434/v1",
+        baseUrl: "http://127.0.0.1:18080/v1",
         tier: 0,
         costInput: 0,
         costOutput: 0,
         capabilities: ["text", "code", "reasoning"],
       },
+      {
+        slug: "llama-cpp/qwen3.6-35b-a3b",
+        displayName: "Qwen3.6 35B-A3B (llama.cpp)",
+        provider: "llama-cpp",
+        api: "openai-completions",
+        baseUrl: "http://localhost:8080/v1",
+        tier: 0,
+        costInput: 0,
+        costOutput: 0,
+        capabilities: ["text", "code", "reasoning", "tools"],
+      },
     ];
     const selection = selectWorkbenchModel(tierZero, { tier: 0 });
-    assert.strictEqual(selection.selected.slug, "qwen3.6:35b-a3b");
+    assert.strictEqual(selection.selected.slug, "llama-cpp/qwen3.6-35b-a3b");
     assert.strictEqual(selection.reason, "explicit_tier");
     assert.deepStrictEqual(selection.considered, [
-      "laguna-xs-2.1",
-      "qwen3.6:35b-a3b",
+      "mlx-community/Qwen3.5-4B-8bit",
+      "llama-cpp/qwen3.6-35b-a3b",
     ]);
   });
 });
