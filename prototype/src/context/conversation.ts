@@ -19,6 +19,8 @@ import {
  * appends the current user message and seeds the agent loop with the result.
  * `replayToolResult`, when given, decides each replayed tool message's text
  * from its event; without it the event's persisted result is replayed.
+ * `replayToolArguments`, when given, decides the arguments on each replayed
+ * call the same way; without it the event's persisted arguments are replayed.
  */
 export function buildConversationMessages(
   events: WorkbenchSessionEvent[],
@@ -30,6 +32,11 @@ export function buildConversationMessages(
       toolName: string;
       toolResult: string;
     }) => string;
+    replayToolArguments?: (event: WorkbenchSessionEvent & {
+      toolCallId: string;
+      toolName: string;
+      toolArguments: Record<string, unknown>;
+    }) => Record<string, unknown>;
   } = {},
 ): WorkbenchMessage[] {
   const maxTurns = options.maxTurns ?? 10;
@@ -127,7 +134,12 @@ export function buildConversationMessages(
         toolCalls: [{
           id: event.toolCallId,
           name: event.toolName,
-          arguments: event.toolArguments,
+          arguments: options.replayToolArguments?.({
+            ...event,
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            toolArguments: event.toolArguments,
+          }) ?? event.toolArguments,
         }],
       });
       pushMessage({

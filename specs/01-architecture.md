@@ -265,7 +265,11 @@ is its projection and the legacy `ToolDefinition` is deleted.
   schema-declared redaction. Any change to redaction policy is a behavior change
   and out of scope for phase 1. A successful result the log holds only as the
   sentinel is not replayed bare: a later turn gets the engine's in-memory
-  copy, or a line saying the output is not available (§5.7, BIT-812).
+  copy, or a line saying the output is not available (§5.7, BIT-812). A call
+  to a command that declares `redactArguments` is replayed the same way
+  (§5.7, BIT-818): the model gets the arguments it sent, or
+  `{"_withheld": "arguments not kept in session history"}`, never the
+  sentinel as a value.
 
 ### 5.5 MCP client
 
@@ -304,14 +308,18 @@ This section implements AGENTS.md rules 2 and 3.
   - budget scope (session-envelope accumulation);
   - cancel signal for the in-flight turn;
   - tool history (`engine/tool-history.ts`): a copy of each successful
-    result whose durable event holds only the redaction sentinel, as the
-    turn added it to the model's transcript, so the session's later turns can
-    replay it. Kept in memory for the engine's lifetime and never persisted,
-    so a restart loses it; bounded per session and in sessions tracked, oldest
-    dropped first; readable only in the clearance scope that recorded it. A declared exception to AGENTS.md rule 4: it is model
-    working context, not a projection, and replay cannot rebuild it because
-    the log never holds it. A miss (restart, eviction, other clearance)
-    replays a line saying the output is not available.
+    result whose durable event holds only the redaction sentinel, and of the
+    arguments the model sent for a call whose command declares
+    `redactArguments`, as the turn added them to the model's transcript, so
+    the session's later turns can replay them. Kept in memory for the
+    engine's lifetime and never persisted, so a restart loses it; bounded per
+    session and in sessions tracked, oldest dropped first; readable only in
+    the clearance scope that recorded it. A declared exception to AGENTS.md
+    rule 4: it is model working context, not a projection, and replay cannot
+    rebuild it because the log never holds it. A miss (restart, eviction,
+    other clearance) replays a line saying the output is not available, and
+    for arguments the single object
+    `{"_withheld": "arguments not kept in session history"}`.
 
   Other code sends it messages (`startTurn`, `cancel`, `release`); nothing else
   mutates these. Behavior is frozen: busy/concurrency semantics stay identical,

@@ -30,6 +30,7 @@ import type {
 import type { SessionOwners, TurnTicket } from "./session-owner.ts";
 import {
   type SessionToolHistory,
+  WITHHELD_ARGUMENTS,
   withheldToolResult,
 } from "./tool-history.ts";
 import { paidEscalationVerdict, type ResolvedTurn } from "./turn-request.ts";
@@ -56,6 +57,13 @@ export type FetchSessionEvents = (
  * rebuilt history replayed the bare sentinel and the model read it as output.
  * Any successful result that is exactly the sentinel counts, so sessions
  * recorded before the tool history existed get the line too.
+ *
+ * The arguments of a call whose durable event holds the sentinel are handled
+ * the same way (BIT-818): the copy the model sent is replayed from
+ * `toolHistory` when this caller's clearance recorded it, and otherwise
+ * replaced by `WITHHELD_ARGUMENTS`. The sentinel is never replayed as an
+ * argument value, because the model reads its own transcribed calls as
+ * precedent and would copy it.
  */
 async function buildResume(
   sessionId: string | undefined,
@@ -94,6 +102,16 @@ async function buildResume(
         ? event.toolResult
         : toolHistory?.lookup(event.traceId, event.toolCallId) ??
           withheldToolResult(event.toolName),
+    replayToolArguments: (event) =>
+      // The registry is built after this point, so the reconstruction cannot
+      // ask a command whether it redacts. The sentinel in a persisted value is
+      // the only signal left, and a call that carries one is rebuilt from the
+      // model's copy or withheld whole — never partially, which would state
+      // which argument was sensitive.
+      Object.values(event.toolArguments).includes(REDACTED)
+        ? toolHistory?.lookupArguments(event.traceId, event.toolCallId) ??
+          WITHHELD_ARGUMENTS
+        : event.toolArguments,
   });
   return {
     sessionId,

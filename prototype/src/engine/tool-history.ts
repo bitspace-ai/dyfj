@@ -33,10 +33,24 @@ export const MAX_ENTRIES_PER_SESSION = 1024;
 /** Characters of key, scope and result one session may hold; oldest first. */
 export const MAX_CHARS_PER_SESSION = 2_000_000;
 
-/** One session's recorded results, read and written in one clearance scope. */
+/** One session's recorded tool evidence, read and written in one clearance scope. */
 export interface SessionToolHistory {
   record(traceId: string, callId: string, text: string): void;
   lookup(traceId: string, callId: string): string | undefined;
+  /**
+   * Keep the arguments the model sent for a call whose durable event holds
+   * only the redaction sentinel (BIT-818).
+   */
+  recordArguments(
+    traceId: string,
+    callId: string,
+    args: Record<string, unknown>,
+  ): void;
+  /** The arguments the model sent, or undefined when this session lost them. */
+  lookupArguments(
+    traceId: string,
+    callId: string,
+  ): Record<string, unknown> | undefined;
 }
 
 /** Where a turn finds its session's tool history. */
@@ -49,7 +63,10 @@ export interface ToolHistoryScopes {
 
 interface Entry {
   scope: string;
-  text: string;
+  /** The result text the turn gave the model, when one was recorded. */
+  text?: string;
+  /** The arguments the model sent, as JSON, when redacted ones were recorded. */
+  args?: string;
   chars: number;
 }
 
@@ -68,20 +85,62 @@ export class ToolHistoryStore implements ToolHistoryScopes {
     const scope = clearanceScope(authContext);
     return {
       record: (traceId, callId, text) =>
-        this.#record(sessionId, scope, entryKey(traceId, callId), text),
+        this.#record(sessionId, scope, entryKey(traceId, callId), (prior) => ({
+          text,
+          ...(prior?.args === undefined ? {} : { args: prior.args }),
+        })),
       lookup: (traceId, callId) => {
         const entry = this.#sessions.get(sessionId)?.entries.get(
           entryKey(traceId, callId),
         );
         return entry?.scope === scope ? entry.text : undefined;
       },
+      recordArguments: (traceId, callId, args) => {
+        const json = JSON.stringify(args);
+        this.#record(sessionId, scope, entryKey(traceId, callId), (prior) => ({
+          args: json,
+          ...(prior?.text === undefined ? {} : { text: prior.text }),
+        }));
+      },
+      lookupArguments: (traceId, callId) => {
+        const entry = this.#sessions.get(sessionId)?.entries.get(
+          entryKey(traceId, callId),
+        );
+        if (entry?.scope !== scope || entry.args === undefined) return undefined;
+        try {
+          const parsed: unknown = JSON.parse(entry.args);
+          return typeof parsed === "object" && parsed !== null &&
+              !Array.isArray(parsed)
+            ? parsed as Record<string, unknown>
+            : undefined;
+        } catch {
+          return undefined;
+        }
+      },
     };
   }
 
-  #record(sessionId: string, scope: string, key: string, text: string) {
-    const chars = key.length + scope.length + text.length;
-    if (chars > MAX_CHARS_PER_SESSION) return;
+  /**
+   * Write one entry for a call, merging what a prior entry held for it: a
+   * call's arguments and its result are recorded by different steps of the
+   * same turn and both belong to the model's copy of that call.
+   */
+  #record(
+    sessionId: string,
+    scope: string,
+    key: string,
+    entryFor: (prior: Entry | undefined) => Omit<Entry, "scope" | "chars">,
+  ) {
     let session = this.#sessions.get(sessionId);
+    const held = session?.entries.get(key);
+    // Another clearance scope's entry for this call is not this caller's to
+    // build on: it is replaced, never merged.
+    const prior = held?.scope === scope ? held : undefined;
+    const body = entryFor(prior);
+    const text = body.text ?? "";
+    const args = body.args ?? "";
+    const chars = key.length + scope.length + text.length + args.length;
+    if (chars > MAX_CHARS_PER_SESSION) return;
     if (session === undefined) {
       if (this.#sessions.size >= MAX_TRACKED_SESSIONS) {
         const oldest = this.#sessions.keys().next().value;
@@ -90,12 +149,11 @@ export class ToolHistoryStore implements ToolHistoryScopes {
       session = { entries: new Map(), chars: 0 };
       this.#sessions.set(sessionId, session);
     }
-    const prior = session.entries.get(key);
-    if (prior !== undefined) {
+    if (held !== undefined) {
       session.entries.delete(key);
-      session.chars -= prior.chars;
+      session.chars -= held.chars;
     }
-    session.entries.set(key, { scope, text, chars });
+    session.entries.set(key, { scope, ...body, chars });
     session.chars += chars;
     for (const [oldest, entry] of session.entries) {
       if (
@@ -135,6 +193,16 @@ function clearanceScope(authContext: WorkbenchAuthContext | undefined): string {
  * be read as the command's output. It carries no length or content-derived
  * value, like the sentinel it replaces.
  */
+/**
+ * What the model gets in place of arguments it can no longer be shown: an
+ * object, never the sentinel, so nothing in the transcript can be read or
+ * copied as a value the model actually sent. It says only that the arguments
+ * are not in this session's history, and carries no content-derived fact.
+ */
+export const WITHHELD_ARGUMENTS: Readonly<Record<string, string>> = {
+  _withheld: "arguments not kept in session history",
+};
+
 export function withheldToolResult(commandId: string): string {
   return `[tool output not available: the output of this ${commandId} call ` +
     "is not kept in session history (class: unpersisted command output). " +
