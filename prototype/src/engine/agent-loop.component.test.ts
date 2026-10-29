@@ -51,6 +51,12 @@ import { SessionOwners } from "./session-owner.ts";
 import { executeTurn } from "./turn.ts";
 import { resolveTurnFromBody } from "./turn-request.ts";
 import { fetchWorkbenchSessionEvents } from "../store/mod.ts";
+import {
+  createWebToolsSessionState,
+  defineWebCommands,
+} from "../tools/web/web.ts";
+import { ScriptedDnsResolver } from "../../testing/fakes/scripted-dns-resolver.ts";
+import type { McpHttpServerConfig } from "../config/mod.ts";
 
 type ToolCall = { id: string; name: string; arguments: unknown };
 
@@ -1910,5 +1916,122 @@ describe("redacted tool results on a later turn (BIT-812)", () => {
       loop.run.transport.requests[1]?.body.includes(JSON.stringify(inTurn)),
     );
     assert.equal(replayed, inTurn);
+  });
+});
+
+// BIT-818: a web_fetch call from an earlier turn is replayed next turn with the
+// arguments the model actually sent. Its durable event redacts them, so
+// without an argument overlay the rebuilt history shows `url: "[redacted]"`
+// and the model reads that as a precedent.
+describe("redacted tool arguments on a later turn (BIT-818)", () => {
+  const AUTH = {
+    transport: "loopback",
+    authnStatus: "authenticated",
+    authnMechanism: "local_user",
+    authnIssuerRef: "local_os",
+    authzBasis: "user_consent",
+  } as const;
+  const URL = "https://example.com/notes";
+
+  /** A loopback web_fetch command over a scripted upstream MCP call. */
+  function webCommands(): CommandDefinition<string>[] {
+    const server: McpHttpServerConfig = {
+      id: "tavily",
+      transport: "streamable_http",
+      url: "https://mcp.tavily.com/mcp",
+      minimumClearance: "loopback",
+      auth: { type: "bearer", secret: "tavily_key" },
+      tools: [{ name: "tavily_extract", effect: "read", approval: "allow" }],
+      capabilities: { fetchTool: "tavily_extract" },
+    };
+    const publicHost = {
+      A: ["93.184.216.34"],
+      AAAA: ["2606:4700:4700::1111"],
+    };
+    return defineWebCommands(
+      server,
+      "test_token",
+      {
+        call: () =>
+          Promise.resolve({
+            content: [{ type: "text", text: "the notes page" }],
+          }),
+      },
+      createWebToolsSessionState(),
+      false,
+      { fetchSchema: undefined },
+      new ScriptedDnsResolver({
+        "example.com": publicHost,
+        "mcp.tavily.com": publicHost,
+      }),
+    );
+  }
+
+  /** One turn that runs web_fetch; the tool_call rows it committed. */
+  async function fetchTurn(toolHistory?: SessionOwners) {
+    const committed: Record<string, unknown>[] = [];
+    const loop = await loopTurn([
+      toolReply([{ id: "f1", name: "web_fetch", arguments: { url: URL } }]),
+      chatReply({ content: "read it" }),
+    ], {
+      prompt: "fetch the notes",
+      authContext: AUTH,
+      externalMcpCommands: webCommands(),
+    }, (run) => {
+      if (toolHistory !== undefined) run.services.toolHistory = toolHistory;
+      run.services.store = patchStore(run.store, {
+        journal: {
+          commit: (batch, options) => {
+            for (const event of batch.events) {
+              if (event.event_type === "tool_call") {
+                committed.push({ ...event });
+              }
+            }
+            return run.store.journal.commit(batch, options);
+          },
+        },
+      });
+    });
+    assert.equal(loop.error, null, String(loop.error));
+    const sessionId = loop.frames.find((f) => f.type === "sessionStart")
+      ?.sessionId;
+    assert.ok(sessionId);
+    return { loop, sessionId, committed };
+  }
+
+  it("replays the call's original arguments on the next turn", async () => {
+    const owners = new SessionOwners();
+    const { loop, sessionId, committed } = await fetchTurn(owners);
+    // The durable event keeps the policy: the argument is redacted there.
+    assert.equal(committed.length, 1);
+    assert.equal(committed[0]?.tool_arguments, '{"url":"[redacted]"}');
+
+    const prior = await fetchWorkbenchSessionEvents({
+      sessionId,
+      events: loop.run.store.events,
+    });
+    let next: WorkbenchRuntimeInput | undefined;
+    const resolvedTurn = resolveTurnFromBody(
+      { prompt: "what did it say?", sessionId },
+      true,
+    );
+    if ("error" in resolvedTurn) throw new Error(resolvedTurn.error);
+    await quietly(() =>
+      executeTurn(resolvedTurn, {
+        owners,
+        env: new MapEnv({}),
+        authContext: AUTH,
+        loopback: true,
+        fetchSessionEvents: () => Promise.resolve(prior),
+        runRuntime: (input) => {
+          next = input;
+          return Promise.resolve({ sessionId, model: { slug: "fixture" } } as never);
+        },
+      })
+    );
+    const call = next?.conversationMessages?.find((m) =>
+      m.role === "assistant" && (m.toolCalls?.length ?? 0) > 0
+    )?.toolCalls?.[0];
+    assert.deepStrictEqual(call?.arguments, { url: URL });
   });
 });
