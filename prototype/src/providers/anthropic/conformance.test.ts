@@ -17,6 +17,8 @@ const claude: WorkbenchModel = {
   tier: 1,
   costInput: 1,
   costOutput: 5,
+  costCacheRead: 0.1,
+  costCacheWrite: 1.25,
   capabilities: ["text", "code"],
 };
 
@@ -195,7 +197,8 @@ providerAdapterConformance({
             name: "memory.read",
             arguments: { slug: "x" },
           }],
-          // 1M of each at costInput=1/costOutput=5: 1 + 0.1 + 1.25 + 5.
+          // 1M of each at costInput=1/costOutput=5, cache read 0.1 and cache
+          // write 1.25 from the row: 1 + 0.1 + 1.25 + 5.
           usage: {
             input: 1_000_000,
             output: 1_000_000,

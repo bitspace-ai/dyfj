@@ -11,6 +11,35 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Anthropic cache traffic now prices at the model row's own catalog cache
+  rates (BIT-788).** Cache reads and 5-minute cache writes were charged at
+  fixed multiples of the row's input price — reads at 0.1x, writes at 1.25x —
+  and the row's `cost_cache_read` and `cost_cache_write` were ignored. The
+  published multipliers are not uniform: cache reads are 0.1x input on most
+  models and 0.05x on a few, so a fixed multiple prices every row it does not
+  fit. `claude-sonnet-5-5` is such a row: its catalog price is $0.10/MTok, and
+  the 0.1x rule charged $0.20/MTok, doubling every cache read on it. A turn
+  that reported both cache figures therefore had its cost, this turn's spend
+  and the session's spend misstated with it; the route a request took did not
+  change.
+  - The cost now reads `costCacheRead` and `costCacheWrite` from the row. A row
+    that declares neither prices cache traffic at its input rate. The call is
+    already answered when it is priced, so refusing there would discard the
+    record of spend already incurred; the fallback never understates a cache
+    read and can understate a cache write. Every Anthropic row in the catalog
+    declares both prices, so no shipped row takes the fallback.
+  - The four Anthropic catalog rows were re-checked against Anthropic's
+    pricing page. `claude-fable-5`, `claude-opus-5` and `claude-sonnet-5-5`
+    match, including `claude-sonnet-5-5` at $0.10/MTok cache read, so no
+    catalog value changed. `claude-haiku-5-5`'s stored prices match its higher
+    tier only: Anthropic prices it by prompt length, at $0.10/$0.50 in/out and
+    $0.01 cache read up to 100,000 prompt tokens and $0.50/$2.50 and $0.05
+    above it. The catalog stores the higher set, so a prompt under the
+    threshold is priced up to 5x too high. A row holds one number per field
+    and the tiering is not modelled.
+    `schema/catalog/VERIFICATION-2026-10-29.md` records the source, the fetch
+    date and every figure.
+
 - **On every turn after the one that ran them, calls to a command that
   declares `redactArguments` were replayed to the model with `[redacted]` as
   each argument value (BIT-818).** That declaration covers `web_search`,
