@@ -482,6 +482,25 @@ describe("/receipt steps", () => {
     }
   });
 
+  it("names the upstream that served each call, when the provider named one", () => {
+    // Two calls of one turn can land on different upstreams once a cache has
+    // already been primed on the first: the line has to say which served what.
+    const mixed = [
+      { ...steps[0]!, upstream: "Fireworks" },
+      { ...steps[1]!, upstream: "Together" },
+    ];
+    assert.deepStrictEqual(formatStepLines(mixed), [
+      "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634 · Fireworks",
+      "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0 · Together",
+    ]);
+  });
+
+  it("leaves the upstream off a call whose provider named none", () => {
+    assert.deepStrictEqual(formatStepLines([{ ...steps[0]!, upstream: undefined }]), [
+      "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634",
+    ]);
+  });
+
   it("answers anything but /receipt steps with its usage", () => {
     for (const line of ["/receipt", "/receipt step", "/receipt steps 2"]) {
       const fake = fakeIo();

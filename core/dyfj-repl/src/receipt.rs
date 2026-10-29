@@ -172,8 +172,16 @@ pub fn step_lines(steps: &[Value]) -> Vec<String> {
         .iter()
         .map(|step| {
             let purpose = step.get("purpose").and_then(Value::as_str).unwrap_or("call");
+            // The upstream that served this call, when the provider named one.
+            // Two calls of one turn can be served by different upstreams, and
+            // a prompt cache belongs to one of them.
+            let upstream = step
+                .get("upstream")
+                .and_then(Value::as_str)
+                .map(|name| format!(" · {}", visible(name)))
+                .unwrap_or_default();
             format!(
-                "  #{} {} · {} in · {} read · {} write · {} out · {}",
+                "  #{} {} · {} in · {} read · {} write · {} out · {}{}",
                 field(step, "order"),
                 visible(purpose),
                 count(field(step, "input")),
@@ -181,6 +189,7 @@ pub fn step_lines(steps: &[Value]) -> Vec<String> {
                 count(field(step, "cacheWrite")),
                 count(field(step, "output")),
                 usd(step.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0)),
+                upstream,
             )
         })
         .collect()
@@ -420,6 +429,29 @@ mod tests {
             vec![
                 "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634",
                 "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0",
+            ]
+        );
+    }
+
+    /// The upstream that served each call, or nothing when the provider named
+    /// none — the same rendering `formatStepLines` uses.
+    #[test]
+    fn step_lines_name_the_serving_upstream_when_one_is_reported() {
+        let steps = vec![
+            json!({"order": 1, "purpose": "initial", "input": 312, "cacheRead": 0,
+                   "cacheWrite": 22021, "output": 203, "costUsd": 0.0634,
+                   "upstream": "Fireworks"}),
+            json!({"order": 2, "purpose": "tool_followup", "input": 1204, "cacheRead": 22333,
+                   "cacheWrite": 7661, "output": 270, "costUsd": 0, "upstream": "Together"}),
+            json!({"order": 3, "purpose": "recovery", "input": 1, "cacheRead": 0,
+                   "cacheWrite": 0, "output": 2, "costUsd": 0}),
+        ];
+        assert_eq!(
+            step_lines(&steps),
+            vec![
+                "  #1 initial · 312 in · 0 read · 22,021 write · 203 out · $0.0634 · Fireworks",
+                "  #2 tool_followup · 1,204 in · 22,333 read · 7,661 write · 270 out · $0 · Together",
+                "  #3 recovery · 1 in · 0 read · 0 write · 2 out · $0",
             ]
         );
     }

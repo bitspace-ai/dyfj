@@ -158,6 +158,13 @@ export async function observedProviderCall(
               turn.unparsedToolCallMarkup.countIsLowerBound,
           }
           : {}),
+        // Who answered, as the call's own result reported it. A call that
+        // throws before returning a result records neither field; a result
+        // that names its upstream records it, whatever its finish reason.
+        ...(turn.upstream === undefined ? {} : {
+          upstream_provider: turn.upstream.upstreamProvider ?? null,
+          provider_generation_id: turn.upstream.providerGenerationId ?? null,
+        }),
         content: null,
         thinking: null,
         duration_ms: context.clock.now() - startedAt,

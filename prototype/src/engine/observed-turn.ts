@@ -76,6 +76,9 @@ export async function observedTurn(
       cacheWrite: result.usage.cacheWrite,
       output: result.usage.output,
       costUsd: result.usage.cost.total,
+      ...(result.upstream?.upstreamProvider === undefined
+        ? {}
+        : { upstream: result.upstream.upstreamProvider }),
     });
     await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
       type: "afterProviderResponse",

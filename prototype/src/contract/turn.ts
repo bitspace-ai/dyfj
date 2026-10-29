@@ -51,6 +51,13 @@ export interface TurnStepUsage {
   cacheWrite: number;
   output: number;
   costUsd: number;
+  /**
+   * The upstream that served this call, when the provider named one. Per call,
+   * because an aggregator may route two calls of one turn to different
+   * upstreams, and a prompt cache belongs to one upstream. Absent from a
+   * provider that reports none and from a runtime that predates it.
+   */
+  upstream?: string;
 }
 
 export interface NativeTurnReceipt {

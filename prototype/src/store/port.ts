@@ -93,6 +93,8 @@ export const SESSION_EVENT_COLUMNS = [
   "provider_call_order",
   "provider_call_purpose",
   "provider_error_class",
+  "upstream_provider",
+  "provider_generation_id",
   "unparsed_tool_call_count",
   "unparsed_tool_call_count_is_lower_bound",
   "runner_kind",
