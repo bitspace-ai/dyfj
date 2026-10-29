@@ -10,6 +10,10 @@ import {
   MAX_OPENAI_RESPONSE_READS,
 } from "../shared/response-bounds.ts";
 import { toolArgumentWithinBudget } from "../shared/text-tool-calls.ts";
+import {
+  type ProviderUpstreamEvidence,
+  readUpstreamEvidence,
+} from "./upstream.ts";
 
 export interface OpenAIToolCallDelta {
   index: number;
@@ -25,6 +29,8 @@ export interface OpenAIChatStreamEvent {
   toolCallDeltas?: OpenAIToolCallDelta[];
   finishReason?: string;
   usage?: OpenAIChatUsage;
+  /** Who served the call, when this frame reported it. */
+  upstream?: ProviderUpstreamEvidence;
 }
 
 export interface OpenAIChatUsage {
@@ -48,6 +54,18 @@ export interface OpenAIChatUsage {
 
 export const MAX_STRUCTURED_TOOL_CALLS = 128;
 export const MAX_STRUCTURED_TOOL_NAME_CHARACTERS = 64 * 1024;
+
+/**
+ * The `upstream` field a reader returns, omitted when the response named
+ * neither value — so an absent field never reaches the event row as `{}`.
+ */
+export function upstreamField(frame: {
+  id?: unknown;
+  provider?: unknown;
+}): { upstream?: ProviderUpstreamEvidence } {
+  const upstream = readUpstreamEvidence(frame);
+  return Object.keys(upstream).length > 0 ? { upstream } : {};
+}
 
 export async function readBoundedOpenAIText(
   response: Response,
@@ -98,10 +116,13 @@ export async function readOpenAIChatJson(
   usage?: OpenAIChatUsage;
   toolCalls?: WorkbenchToolCall[];
   toolCallCharacters: number;
+  upstream?: ProviderUpstreamEvidence;
   timings: WorkbenchCallTimings;
 }> {
   const json = await readBoundedOpenAIJson<{
     error?: unknown;
+    id?: unknown;
+    provider?: unknown;
     choices?: Array<{
       message?: {
         content?: string;
@@ -136,6 +157,7 @@ export async function readOpenAIChatJson(
     usage: json.usage,
     toolCalls: parseOpenAIToolCalls(rawToolCalls),
     toolCallCharacters,
+    ...upstreamField(json),
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       totalMs: Math.round(completed - requestStarted),

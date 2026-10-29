@@ -65,6 +65,18 @@ export interface WorkbenchSelection {
 
 export type { CostBasis };
 
+/**
+ * Who answered a provider call, when the provider names it: the upstream that
+ * served it, and the provider's own generation id for it. Both are
+ * provider-supplied text, sanitized and bounded before they leave the adapter.
+ */
+export interface ProviderUpstreamEvidence {
+  /** The upstream that served the call, as the provider named it. */
+  upstreamProvider?: string;
+  /** The provider's generation id for this call. */
+  providerGenerationId?: string;
+}
+
 export interface WorkbenchTurnResult {
   text: string;
   model: WorkbenchModel;
@@ -110,6 +122,13 @@ export interface WorkbenchTurnResult {
   timings: WorkbenchCallTimings;
   /** Present only when cancellation won before any provider request began. */
   requestDispatched?: false;
+  /**
+   * Who answered, when the provider named it: the upstream that served the
+   * call and the provider's generation id for it. Absent for a provider that
+   * reports neither, for an adapter that does not read them, and for a call
+   * that failed before a response arrived.
+   */
+  upstream?: ProviderUpstreamEvidence;
   /**
    * Safe metadata for textual tool-call markup left in the text that ran no
    * tool: function elements in complete blocks recovery did not run, plus

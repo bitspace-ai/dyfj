@@ -35,7 +35,12 @@ import {
   type OpenAIChatStreamEvent,
   type OpenAIChatUsage,
   parseToolArguments,
+  upstreamField,
 } from "./response.ts";
+import {
+  mergeUpstreamEvidence,
+  type ProviderUpstreamEvidence,
+} from "./upstream.ts";
 
 export function parseOpenAIChatStreamLine(
   line: string,
@@ -48,6 +53,8 @@ export function parseOpenAIChatStreamLine(
 
   const json = JSON.parse(data) as {
     error?: unknown;
+    id?: unknown;
+    provider?: unknown;
     choices?: Array<{
       delta?: {
         content?: string;
@@ -116,6 +123,7 @@ export function parseOpenAIChatStreamLine(
     toolCallDeltas,
     finishReason: choice?.finish_reason ?? undefined,
     usage: json.usage,
+    ...upstreamField(json),
   };
 }
 
@@ -143,6 +151,10 @@ export async function readOpenAIChatStream(
   aborted: boolean;
   finishReason?: string;
   usage?: OpenAIChatUsage;
+  /**
+   * Who served the call: the first frame that reported each value.
+   */
+  upstream?: ProviderUpstreamEvidence;
   // The OpenAI-compatible stream carries tool calls as indexed deltas, which
   // this reader accumulates — so a streamed turn can both stream text and
   // request tools (unlike the Anthropic/Google streaming readers).
@@ -161,6 +173,7 @@ export async function readOpenAIChatStream(
   let reasoningCharacters = 0;
   let finishReason: string | undefined;
   let usageState: StreamUsageState = {};
+  let upstream: ProviderUpstreamEvidence | undefined;
   let firstTokenAt: number | undefined;
   let receivedBytes = 0;
   let receivedChunks = 0;
@@ -176,6 +189,7 @@ export async function readOpenAIChatStream(
       presenter.append(event.textDelta);
     }
     toolCallAcc.apply(event.toolCallDeltas ?? []);
+    upstream = mergeUpstreamEvidence(upstream, event.upstream);
     if (event.finishReason) finishReason = event.finishReason;
     if (event.usage) {
       usageState = applyStreamUsage(usageState, event.usage, {
@@ -256,6 +270,7 @@ export async function readOpenAIChatStream(
     finishReason,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     usage: usageState.usage,
+    ...(upstream === undefined ? {} : { upstream }),
     timings: {
       responseHeadersMs: Math.round(headersReceived - requestStarted),
       timeToFirstTokenMs: firstTokenAt === undefined

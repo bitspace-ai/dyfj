@@ -234,6 +234,8 @@ export const EVENT_COLUMNS = [
   "provider_call_order",
   "provider_call_purpose",
   "provider_error_class",
+  "upstream_provider",
+  "provider_generation_id",
   "unparsed_tool_call_count",
   "unparsed_tool_call_count_is_lower_bound",
   "tool_name",
@@ -309,6 +311,8 @@ export const EVENT_COLUMN_SPECS: Readonly<
   provider_call_order: { kind: "int", nullable: true },
   provider_call_purpose: { kind: "enum", nullable: true },
   provider_error_class: { kind: "text", nullable: true },
+  upstream_provider: { kind: "text", nullable: true },
+  provider_generation_id: { kind: "text", nullable: true },
   unparsed_tool_call_count: { kind: "int", nullable: true },
   unparsed_tool_call_count_is_lower_bound: { kind: "boolean", nullable: true },
   tool_name: { kind: "text", nullable: true },
@@ -376,6 +380,8 @@ export interface EventRow {
   provider_call_order: number | null;
   provider_call_purpose: EventProviderCallPurpose | null;
   provider_error_class: string | null;
+  upstream_provider: string | null;
+  provider_generation_id: string | null;
   unparsed_tool_call_count: number | null;
   unparsed_tool_call_count_is_lower_bound: number | null;
   tool_name: string | null;
@@ -446,6 +452,8 @@ export interface EventInsert {
   provider_call_order?: number | null;
   provider_call_purpose?: EventProviderCallPurpose | null;
   provider_error_class?: string | null;
+  upstream_provider?: string | null;
+  provider_generation_id?: string | null;
   unparsed_tool_call_count?: number | null;
   unparsed_tool_call_count_is_lower_bound?: boolean | null;
   tool_name?: string | null;

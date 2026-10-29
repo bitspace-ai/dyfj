@@ -95,6 +95,14 @@ CREATE TABLE events (
     provider_call_order       INT UNSIGNED,
     provider_call_purpose     ENUM('initial', 'tool_followup', 'forced_conclusion', 'recovery', 'context_compression', 'step_limit_handoff'),
     provider_error_class      VARCHAR(64),
+    -- Which upstream actually served the call, and the provider's generation
+    -- id for it. `provider` above names the configured provider (an
+    -- aggregator stays "openrouter"); these two name what answered. NULL
+    -- means no usable value was kept for that call: the provider reported
+    -- none, or what it reported did not survive sanitizing. A call that
+    -- throws before returning a result keeps neither field.
+    upstream_provider         VARCHAR(64),
+    provider_generation_id    VARCHAR(128),
     unparsed_tool_call_count  INT UNSIGNED,
     unparsed_tool_call_count_is_lower_bound BOOLEAN,
 

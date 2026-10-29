@@ -354,6 +354,7 @@ async function executeOpenAICompatibleTurn(
       ? undefined
       : toolCalls,
     ...(unparsedToolCallMarkup ? { unparsedToolCallMarkup } : {}),
+    ...(result.upstream === undefined ? {} : { upstream: result.upstream }),
     timings,
   };
 }

@@ -155,8 +155,11 @@ function cachedPercent(
 
 /**
  * `/receipt steps`: one line per recorded agent-loop provider call of the
- * last turn, in call order. `in` excludes cache traffic, as on the receipt line. The
- * Rust REPL prints the same lines (`core/dyfj-repl/src/receipt.rs`).
+ * last turn, in call order. `in` excludes cache traffic, as on the receipt line.
+ * The line ends with the upstream that served the call, when the provider
+ * named one — two calls of one turn can be served by different upstreams, and
+ * a prompt cache belongs to one of them. The Rust REPL prints the same lines
+ * (`core/dyfj-repl/src/receipt.rs`).
  */
 export function formatStepLines(steps: readonly TurnStepUsage[]): string[] {
   return steps.map((step) =>
@@ -164,6 +167,8 @@ export function formatStepLines(steps: readonly TurnStepUsage[]): string[] {
       formatTokenCount(step.cacheRead)
     } read · ${formatTokenCount(step.cacheWrite)} write · ${
       formatTokenCount(step.output)
-    } out · ${formatUsdShort(step.costUsd)}`
+    } out · ${formatUsdShort(step.costUsd)}${
+      step.upstream === undefined ? "" : ` · ${step.upstream}`
+    }`
   );
 }

@@ -76,6 +76,26 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A `provider_call` event records which upstream served the call and the
+  provider's generation id for it (BIT-562).** An aggregator can serve the
+  same model from several upstreams, and a prompt cache belongs to one
+  upstream, so the same request routed elsewhere reads nothing and pays full
+  input price. The event's `provider` column names the configured provider
+  (an aggregator stays `openrouter`); the new `upstream_provider` and
+  `provider_generation_id` columns name what answered. The OpenAI-compatible
+  reader keeps the response's top-level `provider` and `id` when it reports
+  them — in the buffered response and in the streaming frames, taking each
+  value from the first frame that carries it — and ignores a value that is
+  absent or not a string. Both are bounded (64 and 128 bytes) and stripped of
+  control characters before they reach the row. They are null when no usable
+  value was kept: the provider named none, or what it named did not survive
+  sanitizing. A call that throws before returning a result records neither
+  field; a response that names its upstream records it, whatever its finish
+  reason.
+  `/receipt steps` appends the serving upstream to each call's line.
+  Recorded only: an upstream is not yet pinned, and cache-sensitive routing is
+  unchanged.
+
 - **DeepSeek V4.1 Flash 1017 and GLM 5.3 in the model catalog (BIT-816).**
   `deepseek/deepseek-v4.1-flash-1017` (in $0.15 / out $0.60 / cache read
   $0.003 per million, 1,048,576 context, 393,216 output) and `z-ai/glm-5.3`

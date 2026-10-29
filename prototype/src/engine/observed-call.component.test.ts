@@ -483,3 +483,86 @@ test("observedProviderCall defaults the provider session to the turn's session",
     SESSION_ID,
   );
 });
+
+test("observedProviderCall records the serving upstream and generation id a response names", async () => {
+  const h = harness();
+  const { request, transport } = callRequest(h, ROUTED, [{
+    respond: {
+      body: JSON.stringify({
+        id: "gen-1759000000-abcdefghijklmnop",
+        provider: "Fireworks",
+        choices: [{ message: { content: "served" }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 12, completion_tokens: 4 },
+      }),
+    },
+  }]);
+
+  await observedProviderCall(h.context, request);
+
+  transport.assertDone();
+  assert.deepStrictEqual(h.written.length, 1);
+  assert.partialDeepStrictEqual(h.written[0], {
+    event_type: "provider_call",
+    provider: "openrouter",
+    upstream_provider: "Fireworks",
+    provider_generation_id: "gen-1759000000-abcdefghijklmnop",
+  });
+});
+
+test("observedProviderCall records the upstream from a streamed frame", async () => {
+  const h = harness();
+  // The upstream rides the first frame; the usage frame that finishes the
+  // call carries no provider field, so the first value has to survive.
+  const { request, transport } = callRequest(h, ROUTED, [{
+    respond: {
+      body: [
+        'data: {"id":"gen-1759000000-streamed","provider":"Together",' +
+        '"choices":[{"index":0,"delta":{"content":"hi"}}]}',
+        'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        'data: {"choices":[{"index":0,"delta":{}}],' +
+        '"usage":{"prompt_tokens":12,"completion_tokens":4}}',
+        "data: [DONE]",
+        "",
+      ].join("\n\n"),
+    },
+  }]);
+  // Stream the call so the frames, not a buffered body, carry the upstream.
+  request.params.onTextDelta = () => {};
+
+  await observedProviderCall(h.context, request);
+
+  transport.assertDone();
+  assert.partialDeepStrictEqual(h.written[0], {
+    upstream_provider: "Together",
+    provider_generation_id: "gen-1759000000-streamed",
+  });
+});
+
+test("observedProviderCall records no upstream for a provider that names none", async () => {
+  const h = harness();
+  const { request, transport } = callRequest(h, LOCAL, [openAIReply("hi")]);
+
+  await observedProviderCall(h.context, request);
+
+  transport.assertDone();
+  const [event] = h.written;
+  assert.strictEqual(Object.hasOwn(event, "upstream_provider"), false);
+  assert.strictEqual(Object.hasOwn(event, "provider_generation_id"), false);
+});
+
+test("a failed call records neither an upstream nor a generation id", async () => {
+  const h = harness();
+  const { request, transport } = callRequest(h, ROUTED, [{
+    respond: { status: 500, body: "upstream exploded" },
+  }]);
+
+  await captureRejection(() => observedProviderCall(h.context, request));
+
+  transport.assertDone();
+  assert.deepStrictEqual(h.written.length, 1);
+  const [event] = h.written;
+  assert.strictEqual(event.event_type, "provider_call");
+  assert.strictEqual(event.stop_reason, "error");
+  assert.strictEqual(Object.hasOwn(event, "upstream_provider"), false);
+  assert.strictEqual(Object.hasOwn(event, "provider_generation_id"), false);
+});
