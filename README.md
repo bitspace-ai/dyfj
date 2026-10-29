@@ -418,15 +418,11 @@ llama-server -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
 Workbench reaches it through llama-server's OpenAI-compatible endpoint,
 `http://localhost:8080/v1`. The catalog's 32K context is the served limit;
 the GGUF supports a larger native context. `--jinja` explicitly enables the
-GGUF's chat template for OpenAI-style tool calls. The previous DeepSeek
-llama.cpp row remains inactive for rollback. Ollama stays supported: its
-separate `qwen3.6:35b-a3b` row on `http://localhost:11434/v1` is next in the
-preference order. A bare turn picks by that order, not by which server is
-running, so an Ollama user selects that row with `--model` or a companion
-default. The catalog also carries MLX-LM
-Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship
-inactive, so set a row's `active` flag in the `models` table before selecting
-it with `--model`.
+GGUF's chat template for OpenAI-style tool calls. The catalog trim removed the
+previous DeepSeek llama.cpp row and every Ollama row, so this is the only
+local default. The catalog no longer carries MLX-LM
+Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`), so one has to be
+added to the `models` table before selecting it with `--model`.
 
 Workbench also carries built-in rows for the local models above and adds them
 when the catalog has no row for them. A catalog row set inactive stays out of
@@ -1399,7 +1395,7 @@ npm run smoke                        # print the Node version
 ```
 
 Arguments after `--` reach the script, for example
-`npm run structured-output -- --model qwen3.6:35b-a3b`.
+`npm run structured-output -- --model llama-cpp/qwen3.6-35b-a3b`.
 
 The gate runs on Node (`node scripts/aggregate-test-gate.ts`, decision D32):
 it starts each lane as a plain `node`, `cargo` or `dolt` process, from a
@@ -1817,12 +1813,13 @@ curl -sS http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
-For Ollama:
+For any other local server, name its own model and endpoint (the catalog trim
+removed every Ollama row, so pick the slug you run):
 
 ```sh
-curl -sS http://127.0.0.1:11434/api/generate \
+curl -sS http://127.0.0.1:1234/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d '{"model":"gemma4:e2b","prompt":"pong","stream":false,"options":{"num_predict":1}}'
+  -d '{"model":"<your-model>","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
 This should return generated text. `/api/version`, `/api/tags`, and `/api/ps`

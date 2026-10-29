@@ -175,13 +175,11 @@ llama-server -m /path/to/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf \
   --ctx-size 32768 --parallel 1 --reasoning off --jinja
 ```
 
-`--jinja` explicitly enables the GGUF's chat template for OpenAI-style tool calls. The catalog declares the served 32K context, and the prior DeepSeek llama.cpp row remains inactive for rollback.
+`--jinja` explicitly enables the GGUF's chat template for OpenAI-style tool calls. The catalog declares the served 32K context. The previous DeepSeek llama.cpp row was removed by the catalog trim, so this is the only built-in local row and the only local default.
 
-The separate Ollama row `qwen3.6:35b-a3b` on `http://localhost:11434/v1` is next in the local preference order. A bare turn picks by that order, not by which server is running, so select the Ollama row with `--model` or a companion default when llama-server is not the one you run.
+The catalog no longer carries MLX-LM Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`), so one has to be added to the `models` table before selecting it with `--model`.
 
-The catalog also carries MLX-LM Server rows (`mlx_lm.server` on `http://127.0.0.1:18080/v1`); they ship inactive, so set a row's `active` flag in the `models` table before selecting it with `--model`.
-
-Workbench also carries built-in rows for the local models above and adds them when the catalog has no row for them. A catalog row set inactive stays out of routing and the model picker; the built-in row does not replace it.
+Workbench also carries a built-in row for the local default above and adds it when the catalog has no row for it. A catalog row set inactive stays out of routing and the model picker; the built-in row does not replace it. The catalog trim removed every Ollama row, so the local preference order is now that one built-in row and then whatever the caller passes.
 
 Agent-tool turns default to 32 steps. Every entrypoint accepts `DYFJ_MAX_TOOL_STEPS`; the UDS engine also loads `[agent].max_tool_steps` from `~/.dyfj/config.toml`. Values are integers from 1 through 64, and the environment value takes precedence. The final receipt reports `Tool steps: used/limit` and marks when the configured limit ended tool use. At the limit, the runtime makes a call that offers no tools and asks the model for a handoff (done, next, uncommitted state); if that call fails or a budget gate stops it, the turn ends on a runtime notice of its last tool calls. A session sets its own limit with `--tool-steps N` or `/steps N`, up to `[agent].max_tool_steps_ceiling` (`DYFJ_MAX_TOOL_STEPS_CEILING`, default 64); the runtime refuses a value above it.
 
@@ -520,14 +518,6 @@ curl -sS http://127.0.0.1:8080/v1/chat/completions \
   -d '{"model":"llama-cpp/qwen3.6-35b-a3b","messages":[{"role":"user","content":"pong"}],"max_tokens":1}'
 ```
 
-For Ollama:
-
-```sh
-curl -sS http://127.0.0.1:11434/api/generate \
-  -H 'content-type: application/json' \
-  -d '{"model":"gemma4:e2b","prompt":"pong","stream":false,"options":{"num_predict":1}}'
-```
-
 The response must include generated text. Health/list endpoints such as Ollama `/api/version`, `/api/tags`, and `/api/ps` do not prove the model runner can load.
 
 ## Layout
@@ -558,8 +548,8 @@ scripts in `package.json` that run on Node and print their usage with `--help`
 `model-response-modes`, `structured-output` and `structured-output-streaming`
 scripts are manual local-provider diagnostics.
 Pass their `--model` and `--base-url` options (after `--`) when testing the current local
-stack; their built-in values target Ollama `gemma4:e2b` rather than the
-registry's local default.
+stack; their built-in values target the registry's local default,
+`llama-cpp/qwen3.6-35b-a3b` on `http://localhost:8080/v1`.
 `verify-workbench-events` is the live event-sequence check, and `smoke` prints
 the Node version. The transport implementation lives in `src/transport/`,
 with the engine's method handlers in `src/server/rpc/`.

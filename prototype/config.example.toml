@@ -10,7 +10,7 @@
 # Model the engine uses when a turn doesn't specify one.
 # Omit (or leave blank) to use the registry's local default.
 # A frontier slug suits the companion — text chat is cheap.
-# default_model = "claude-opus-4-8"
+# default_model = "claude-opus-5"
 
 [permissions]
 # Command-policy posture:
