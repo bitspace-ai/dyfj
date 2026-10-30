@@ -31,6 +31,21 @@ README are tracked separately in its Revision history section.
     config alone, is refused. Every refusal is a `GitLayoutError`. The
     attribute sources are closed by `GIT_ATTR_SOURCE`, `core.attributesFile`
     and `GIT_ATTR_NOSYSTEM`; `$GIT_DIR/info/attributes` remains reachable.
+- **`[publish]` config for the publish tools (BIT-822).** `[publish]` in
+  `~/.dyfj/config.toml` declares the operator's pre-gate and gate commands as
+  argv arrays; absent, the section loads as nothing, and nothing here names a
+  private path. Loading refuses a template whose `argv[0]` is not a literal or
+  is on a denylist of shells, `env` ahead of a shell, and runtimes that
+  evaluate text (`node`, `python*`, `perl`, `ruby`); a control character; an
+  undeclared or unbalanced placeholder; a flag carrying a placeholder without
+  `=`; an element over 4096 bytes or a command over 8192 bytes; or a report
+  path without `{ticket}` in its final component, or naming `{report}`, or
+  carrying `..`. Filling a template refuses a value over 4096 bytes or with a
+  control character, an expanded element or command over the same limits, a
+  value that turns into a flag, an `argv[0]` or `env` chain that substitution
+  made refused, and a report path that a value gives a `..` segment. The
+  denylist matches basenames: it catches a shell string written where an argv
+  belongs, not every program that can run one. Nothing reads the section yet.
 - **The sandbox policy now write-denies the shared git dir's `config`,
   `config.worktree`, `hooks` and `info` (BIT-786).** A sandboxed command never
   needed to write them, and they are where a driver definition or hook would
