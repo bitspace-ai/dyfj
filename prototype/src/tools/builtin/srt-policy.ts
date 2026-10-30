@@ -250,6 +250,12 @@ export async function compileWorkspacePolicy(
         join(gitDir, "commondir"),
         join(gitDir, "gitdir"),
         join(gitDir, "config.worktree"),
+        // The shared config and the rest of the shared git dir: what a
+        // definition of a diff, filter or textconv driver would come from.
+        join(commonDir, "config"),
+        join(commonDir, "config.worktree"),
+        join(commonDir, "hooks"),
+        join(commonDir, "info"),
       );
       try {
         mkdirSync(join(commonDir, "rr-cache"), { mode: 0o755 });

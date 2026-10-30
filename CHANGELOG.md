@@ -9,6 +9,33 @@ README are tracked separately in its Revision history section.
 
 ## [Unreleased]
 
+### Added
+
+- **Host-side git layout reading for the publish tools (BIT-786).** The
+  publish tools run outside the sandbox on a worktree a sandboxed command may
+  have written to, so `readPublishGitLayout` reads the repository, git dir,
+  branch and commit with system config disabled and a fixed list of
+  program-naming keys overridden, and `publishChildEnv`/`publishGitEnvFor`
+  carry the same overrides to child processes as `GIT_CONFIG_COUNT` entries.
+  The operator's own `~/.gitconfig` is still read. Nothing calls this yet; the
+  publish tools that do follow in a later change.
+  - **Diff, filter and textconv drivers are not disabled, so the layout is
+    checked against the sandbox policy instead of trusted.** It must be one of
+    two shapes: a main checkout (`gitDir === commonDir === <workspace>/.git`,
+    write-denied) or a linked worktree (`gitDir` exactly
+    `<commonDir>/worktrees/<name>`, its `gitdir` file pointing back at
+    `<workspace>/.git`), with every path realpath'd. The shared config and
+    shared git dir must fall outside every write grant `compileWorkspacePolicy`
+    compiles, and the shared config must contain no `include`/`includeIf` key.
+    A repository with `extensions.worktreeConfig` on, read from the shared
+    config alone, is refused. Every refusal is a `GitLayoutError`. The
+    attribute sources are closed by `GIT_ATTR_SOURCE`, `core.attributesFile`
+    and `GIT_ATTR_NOSYSTEM`; `$GIT_DIR/info/attributes` remains reachable.
+- **The sandbox policy now write-denies the shared git dir's `config`,
+  `config.worktree`, `hooks` and `info` (BIT-786).** A sandboxed command never
+  needed to write them, and they are where a driver definition or hook would
+  come from.
+
 ### Fixed
 
 - **Anthropic cache traffic now prices at the model row's own catalog cache
