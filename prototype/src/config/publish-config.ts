@@ -24,6 +24,7 @@
  * declared here so the two cannot drift.
  */
 
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processEnv } from "./env.ts";
@@ -330,7 +331,15 @@ function readDuration(
  * gate's own output.
  */
 export function defaultPublishReportPath(): string {
-  return join(tmpdir(), "dyfj-publish", "{ticket}.log");
+  // Resolved: the report directory must resolve to itself, and macOS's temp
+  // directory is under /var, a symlink to /private/var.
+  let base = tmpdir();
+  try {
+    base = realpathSync(base);
+  } catch {
+    // An unresolvable temp directory is refused when the report is opened.
+  }
+  return join(base, "dyfj-publish", "{ticket}.log");
 }
 
 function readReportPath(value: unknown, where: string): string {

@@ -87,6 +87,7 @@ export async function runWorkbenchRuntime(
       ? {}
       : { dialExecutor: services.dialExecutor }),
     ...(services.sandbox === undefined ? {} : { sandbox: services.sandbox }),
+    ...(services.publish === undefined ? {} : { publish: services.publish }),
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     policy,

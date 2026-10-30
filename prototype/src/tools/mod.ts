@@ -70,12 +70,24 @@ export {
 } from "./invoke.ts";
 export {
   buildToolCatalog,
+  BUILTIN_GROUPS,
   BUILTIN_TOOLS,
   type ToolCatalogConfig,
   type ToolCatalogDependencies,
   type ToolCatalogEntry,
+  type ToolCatalogGroup,
   type ToolCatalogPorts,
+  type PublishCatalogPorts,
 } from "./catalog.ts";
+export {
+  findingLines,
+  FINDING_LINES,
+  FINDING_LINE_MAX,
+  HOST_EXECUTION_WARNING,
+  renderTicket,
+} from "./builtin/publish.ts";
+export { resolveImplementer } from "./builtin/publish-implementer.ts";
+export { PublishTickets, type PublishPhase, type PublishTicketView } from "./builtin/publish-tickets.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
 export { RootAnchors } from "./builtin/root-anchors.ts";
 export type {

@@ -31,6 +31,28 @@ README are tracked separately in its Revision history section.
     config alone, is refused. Every refusal is a `GitLayoutError`. The
     attribute sources are closed by `GIT_ATTR_SOURCE`, `core.attributesFile`
     and `GIT_ATTR_NOSYSTEM`; `$GIT_DIR/info/attributes` remains reachable.
+- **Publish tools, first slice (BIT-823): start, status and cancel, for a
+  host-side run of the operator's own gate.** With a `[publish]` section,
+  `publish/start` runs the pre-gate then the gate detached and returns a ticket
+  at once; `publish/status` reports the phase, the pinned
+  repository/branch/commit, the report path, and - when a phase stopped the run
+  - the reason and the first ten non-empty lines of the output it kept; it also
+  says when the report file itself could not be written, including on a run
+  whose phases both passed. `publish/cancel` stops the running phase's whole
+  process group. Without the section no publish tool is registered. This slice
+  has no push or pull request step of its own and registers no `publish/push`;
+  what the configured commands do is the operator's choice.
+  The default report path is now built from the resolved temp directory: on
+  macOS the temp directory is under `/var`, a symlink, and the report
+  directory check refused it, so no default report was ever written.
+  - **Starting a gate asks the operator every time.** The gate runs the
+    worktree's tests on the host, outside the sandbox — exactly the execution a
+    planted test file would be reaching for. The approval prompt carries a
+    static warning that the worktree's tests run on the host outside the
+    sandbox, plus the optional tracker identifier; it is never grantable for
+    the session, so a second start asks again. The prompt shows no commit - the
+    pins are reported by `publish/status` - and the push approval in the next
+    slice will bind the digest it binds as an argument re-checked against HEAD.
 - **Host-side process runner and gate phases for the publish tools
   (BIT-825).** Libraries only; the tools that call them follow in a later
   change.

@@ -3,9 +3,13 @@ import { realpathSync, rmSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import process from "node:process";
 import { after, describe, it } from "node:test";
 import { composeRuntimePolicy } from "../../config/mod.ts";
-import type { PublishConfig } from "../../config/publish-config.ts";
+import {
+  defaultPublishReportPath,
+  type PublishConfig,
+} from "../../config/publish-config.ts";
 import type { GitLayout } from "./publish-git.ts";
 import {
   pathFreeReason,
@@ -644,6 +648,34 @@ describe("publish phases: the report and the sandbox", () => {
     const { readFile } = await import("node:fs/promises");
     assert.match(await readFile(path, "utf8"), /earlier output dropped above/);
   });
+});
+
+describe("publish phases: the default report path", () => {
+  it(
+    "opens under the default path when the temp directory is behind a symlink",
+    { skip: process.platform === "win32" },
+    async () => {
+    // macOS's temp directory is under /var, a symlink to /private/var; a
+    // symlinked TMPDIR reproduces that on a POSIX host that honors TMPDIR.
+    const real = realpathSync(await mkdtemp(join(tmpdir(), "dyfj-publish-tmp-")));
+    const linked = `${real}-link`;
+    await symlink(real, linked);
+    const saved = process.env["TMPDIR"];
+    process.env["TMPDIR"] = linked;
+    try {
+      const path = defaultPublishReportPath().replace("{ticket}", "run");
+      assert.ok(path.startsWith(`${real}/`), "the default is built from the resolved path");
+      const report = new PublishReport(path, NOT_SANDBOX_WRITABLE);
+      await report.start();
+      await report.close();
+    } finally {
+      if (saved === undefined) delete process.env["TMPDIR"];
+      else process.env["TMPDIR"] = saved;
+      rmSync(linked, { force: true });
+      rmSync(real, { recursive: true, force: true });
+    }
+  },
+  );
 });
 
 describe("publish phases: the report directory", () => {

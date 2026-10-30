@@ -29,8 +29,15 @@ import type {
   ConfirmToolApproval,
   CommandSandbox,
   ExecutorDialer,
+  PublishCatalogPorts,
   RootAnchors,
 } from "../tools/mod.ts";
+
+/**
+ * What the engine hands the publish tools each turn: the operator's config and
+ * the runtime's registry (both process-wide), plus the turn's session id.
+ */
+export type PublishEnginePorts = Omit<PublishCatalogPorts, "sessionId">;
 import type {
   BudgetTallyMode,
   Env,
@@ -306,6 +313,12 @@ export interface WorkbenchRuntimeServices {
    * Absent, the tools take the native route.
    */
   sandbox?: CommandSandbox;
+  /**
+   * The publish tools' shared dependencies (BIT-786): the operator's
+   * `[publish]` config and the runtime's ticket registry. Absent - no
+   * `[publish]` section - leaves the publish tools unregistered.
+   */
+  publish?: PublishEnginePorts;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;
