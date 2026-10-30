@@ -93,6 +93,9 @@ describe("the workspace policy", () => {
       join(common, "refs/heads/agent/session.lock"),
       join(common, "logs/refs/heads/agent/session"),
     ]);
+    // The shared config and the rest of the shared git dir are denied as well:
+    // a definition of a diff, filter or textconv driver lives there, so it is
+    // not something a sandboxed command may write.
     assert.deepEqual(policy.filesystem.denyWrite, [
       join(common, "objects", "pack"),
       join(common, "objects", "info"),
@@ -100,6 +103,10 @@ describe("the workspace policy", () => {
       join(meta, "commondir"),
       join(meta, "gitdir"),
       join(meta, "config.worktree"),
+      join(common, "config"),
+      join(common, "config.worktree"),
+      join(common, "hooks"),
+      join(common, "info"),
     ]);
   });
 
