@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
 import { describe, it } from "node:test";
 import {
   DEFAULT_GATE_TIMEOUT_MS,
@@ -44,6 +46,10 @@ describe("publish config: an absent table", () => {
     // The one defaulted path is the tool's own scratch file.
     assert.match(defaultPublishReportPath(), /\{ticket\}/);
     assert.ok(!defaultPublishReportPath().includes("scripts"));
+    // The report directory must resolve to itself, so the default's parent
+    // is already a resolved path (macOS puts the temp directory behind /var).
+    const parent = dirname(dirname(defaultPublishReportPath()));
+    assert.strictEqual(realpathSync(parent), parent);
   });
 });
 

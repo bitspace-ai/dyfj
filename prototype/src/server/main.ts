@@ -51,18 +51,21 @@ import {
 } from "../transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
 import {
+  baseRuntimePolicy,
   type CodeFingerprint,
   codeFingerprint,
   type Env,
   loadConfig,
   loadMcpServersConfig,
   loadNetworkAllow,
+  loadPublishConfig,
   loadSandboxConfig,
   loadSecretsConfig,
   type PermissionLevel,
   processEnv,
   prototypeSourceDir,
   readNameserverNetGrants,
+  type PublishConfig,
   type RuntimePolicy,
   unavailableSecretPointers,
   type WorkbenchConfig,
@@ -81,6 +84,8 @@ import {
   type CommandSandbox,
   describeSandbox,
   formatExternalMcpDiagnostic,
+  PublishTickets,
+  resolveImplementer as resolvePublishImplementer,
   RootAnchors,
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
@@ -221,6 +226,33 @@ export interface WorkbenchUnixServerOptions {
    * the native route.
    */
   sandbox?: CommandSandbox;
+  /**
+   * The operator's `[publish]` section, loaded once at boot (BIT-786). Absent,
+   * the publish tools are not registered at all. The registry the tools share
+   * is built here, so a ticket outlives the turn that opened it.
+   */
+  publish?: PublishServerPorts;
+}
+
+/**
+ * The operator's `[publish]` section, parsed and validated once. Absent, the
+ * publish tools are not registered: this repository ships no default that
+ * would name a private path. A malformed section fails the boot loudly, like
+ * every other config section.
+ */
+async function bootPublish(): Promise<PublishServerPorts | undefined> {
+  const config = await loadPublishConfig();
+  if (config === null) return undefined;
+  // One registry per runtime, so a ticket and the gate it started outlive the
+  // turn that opened them.
+  console.error("dyfj runtime: publish tools enabled from [publish]");
+  return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
+}
+
+/** What the server holds for the publish tools across turns. */
+export interface PublishServerPorts {
+  config: PublishConfig;
+  tickets: PublishTickets;
 }
 
 function requireStore(options: WorkbenchUnixServerOptions): Store {
@@ -357,6 +389,8 @@ function composeTurnRuntime(
   env?: Env,
   policy?: RuntimePolicy,
   sandbox?: CommandSandbox,
+  publish?: PublishServerPorts,
+  storeForImplementer?: () => Store,
 ): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
@@ -383,6 +417,20 @@ function composeTurnRuntime(
       // Used only when an isolated machine's launcher set DYFJ_EXECUTOR_SOCKET.
       dialExecutor: nodeSocketHost.connect,
       ...(sandbox === undefined ? {} : { sandbox }),
+      ...(publish === undefined
+        ? {}
+        : {
+          publish: {
+            config: publish.config,
+            tickets: publish.tickets,
+            policy: policy ?? baseRuntimePolicy(),
+            resolveImplementer: (sessionId: string) =>
+              resolvePublishImplementer({
+                sessionId,
+                events: storeForImplementer!().events,
+              }),
+          },
+        }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
@@ -413,6 +461,8 @@ export async function serveWorkbenchUnix(
       options.env,
       options.policy,
       options.sandbox,
+      options.publish,
+      () => options.store!,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -540,6 +590,7 @@ async function main(): Promise<void> {
     denyRead: sandboxConfig.denyRead,
   });
   console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
+  const publish = await bootPublish();
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
@@ -639,6 +690,7 @@ async function main(): Promise<void> {
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       externalMcp: externalMcpLines,
       sandbox,
+      ...(publish === undefined ? {} : { publish }),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.

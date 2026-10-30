@@ -25,6 +25,7 @@ import type { ExecutorDialer } from "./builtin/executor-transport.ts";
 import type { CommandSandbox } from "./builtin/srt-sandbox.ts";
 import type { Env } from "../config/mod.ts";
 import { defineGit } from "./builtin/git.ts";
+import { definePublishTools } from "./builtin/publish.ts";
 
 /** Runtime capabilities a tool is backed by. Absent ones leave their tools out. */
 export interface ToolCatalogPorts {
@@ -65,6 +66,28 @@ export interface ToolCatalogPorts {
    * Absent or off, they take the native route.
    */
   sandbox?: CommandSandbox;
+  /**
+   * The publish tools' ports (BIT-786): the operator's `[publish]` config, the
+   * runtime's ticket registry, its spawn policy and the turn's session id.
+   * Absent - no `[publish]` section - leaves the publish tools unregistered.
+   */
+  publish?: PublishCatalogPorts;
+}
+
+/** What the publish tools need, resolved by the caller that passes them. */
+export interface PublishCatalogPorts {
+  config: import("../config/publish-config.ts").PublishConfig;
+  tickets: import("./builtin/publish-tickets.ts").PublishTickets;
+  policy: import("../config/runtime-policy.ts").RuntimePolicy;
+  sessionId: string;
+  /** The layout reader and command runner, injected by tests. */
+  readLayout?: (root: string) => Promise<
+    import("./builtin/publish-git.ts").GitLayout
+  >;
+  startCommand?: typeof import("./builtin/publish-run.ts").startPublishCommand;
+  resolveImplementer: (
+    sessionId: string,
+  ) => Promise<string | undefined>;
 }
 
 /** Resolved settings that shape the builtin tools. */
@@ -144,6 +167,47 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
 ];
 
 /**
+ * The publish tools (BIT-786), a group because one entry yields three commands
+ * sharing one ticket registry. Present only when the operator configured
+ * `[publish]` and the turn resolved a root with anchors to check it against:
+ * no config, no tools.
+ */
+function publishTools(
+  { workspaceRoot, rootAnchors, env, publish }: ToolCatalogDependencies,
+): readonly CommandDefinition[] {
+  if (publish === undefined || workspaceRoot === undefined) return [];
+  if (rootAnchors === undefined) {
+    throw new Error("tool catalog: the publish tools need root anchors");
+  }
+  return definePublishTools({
+    config: publish.config,
+    tickets: publish.tickets,
+    policy: publish.policy,
+    sessionId: publish.sessionId,
+    workspaceRoot,
+    rootAnchors,
+    ...(env === undefined ? {} : { env }),
+    ...(publish.readLayout === undefined
+      ? {}
+      : { readLayout: publish.readLayout }),
+    ...(publish.startCommand === undefined
+      ? {}
+      : { startCommand: publish.startCommand }),
+    resolveImplementer: publish.resolveImplementer,
+  });
+}
+
+/** Commands registered as a group: several from one dependency decision. */
+export type ToolCatalogGroup = (
+  deps: ToolCatalogDependencies,
+) => readonly CommandDefinition[];
+
+/** The builtin groups, registered after `BUILTIN_TOOLS`, in this order. */
+export const BUILTIN_GROUPS: readonly ToolCatalogGroup[] = [
+  publishTools,
+];
+
+/**
  * Build a command registry: the builtin tools `entries` define from `ports`
  * and `config`, then `extensions` in order. `extensions` are commands
  * contributed from outside the builtin set: the configured external MCP tools
@@ -155,12 +219,16 @@ export function buildToolCatalog(
   config: ToolCatalogConfig,
   extensions: readonly CommandDefinition[] = [],
   entries: readonly ToolCatalogEntry[] = BUILTIN_TOOLS,
+  groups: readonly ToolCatalogGroup[] = BUILTIN_GROUPS,
 ): CommandRegistry {
   const registry = createCommandRegistry();
   const deps: ToolCatalogDependencies = { ...ports, ...config };
   for (const entry of entries) {
     const command = entry(deps);
     if (command !== undefined) registry.register(command);
+  }
+  for (const group of groups) {
+    for (const command of group(deps)) registry.register(command);
   }
   for (const command of extensions) registry.register(command);
   return registry;
