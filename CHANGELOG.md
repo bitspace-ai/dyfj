@@ -31,6 +31,32 @@ README are tracked separately in its Revision history section.
     config alone, is refused. Every refusal is a `GitLayoutError`. The
     attribute sources are closed by `GIT_ATTR_SOURCE`, `core.attributesFile`
     and `GIT_ATTR_NOSYSTEM`; `$GIT_DIR/info/attributes` remains reachable.
+- **Host-side process runner and gate phases for the publish tools
+  (BIT-825).** Libraries only; the tools that call them follow in a later
+  change.
+  - `startPublishCommand` spawns one operator command through the spawn
+    guard, under a policy `publishPolicyFor` builds from the runtime's own
+    plus the configured `[publish]` binaries, in its own process group. It
+    keeps the last 256 KiB of output, decoding each stream so a character
+    split across reads survives, and stops the whole group on cancel or
+    timeout. A stopped run settles within a drain bound even when a process
+    that left the group still holds its output pipes: the pipes are destroyed,
+    that process is not killed, and the result, the failure reason and the
+    report say it may still be running.
+  - `runGates` runs the pre-gate then the gate for a ticket. It re-reads the
+    git layout before each phase and again after the gate exits, before the
+    ticket is marked ready: a repository, branch or commit that moved fails
+    the ticket. A cancelled or expired ticket is retained, so each phase
+    requires the ticket to still be in the phase about to start, checked
+    immediately before the command is spawned.
+  - The report file is created exclusively (0600, `O_EXCL`, `O_NOFOLLOW`) in
+    a directory that must be the runtime's own uid with no group or other
+    permission bits, must resolve to itself, and must be outside everything
+    the session's sandbox can write, including srt's scratch directory; a
+    directory it creates is 0700. It holds each phase's bounded, decoded
+    output under a header naming the phase, with a note when earlier output
+    was dropped, and is not filtered. A report that cannot be written is noted
+    on the ticket beside its verdict.
 - **Ticket registry and implementer lookup for the publish tools (BIT-824).**
   Libraries only; the phase runner and the tools that call them follow in
   later changes.
