@@ -31,6 +31,22 @@ README are tracked separately in its Revision history section.
     config alone, is refused. Every refusal is a `GitLayoutError`. The
     attribute sources are closed by `GIT_ATTR_SOURCE`, `core.attributesFile`
     and `GIT_ATTR_NOSYSTEM`; `$GIT_DIR/info/attributes` remains reachable.
+- **Ticket registry and implementer lookup for the publish tools (BIT-824).**
+  Libraries only; the phase runner and the tools that call them follow in
+  later changes.
+  - `PublishTickets` holds publish tickets in the runtime's memory, bounded
+    per session and in total, and never persists them. A ticket pins a copy of
+    the repository, branch and commit it was opened for. Only a running phase
+    can fail, a cancel hook is refused for a ticket that has left the
+    `pre-gate` and `gated` phases, and a hook that throws does not stop the
+    state change. TTL expiry runs across every session before the total bound
+    evicts anything.
+  - `resolveImplementer` returns the sorted, distinct list of model slugs that
+    ran a turn in a session, comma-joined, read from the session's own event
+    log by doubling the page until an answer comes back short. It returns no
+    value for a session that ran no model or whose list is over 256
+    characters, and throws for a log past the scan cap. Naming the family is
+    the operator gate's job.
 - **`[publish]` config for the publish tools (BIT-822).** `[publish]` in
   `~/.dyfj/config.toml` declares the operator's pre-gate and gate commands as
   argv arrays; absent, the section loads as nothing, and nothing here names a
