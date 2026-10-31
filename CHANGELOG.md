@@ -159,6 +159,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A publish gate's `git diff` runs again (BIT-834).** Every publish child
+  ran with `diff.external` set to an empty string, which git takes as a
+  program named "" rather than as no external diff, so any pre-gate or gate
+  that ran `git diff` died with `external diff died` after its tests passed.
+  The override is removed. An external diff driver is in the same class as the
+  diff, filter and textconv drivers the layout checks already cover: it can only
+  come from config the sandbox cannot write, or the operator's own global
+  config. A test runs a real `git diff` under the publish environment.
+
 - **Anthropic cache traffic now prices at the model row's own catalog cache
   rates (BIT-788).** Cache reads and 5-minute cache writes were charged at
   fixed multiples of the row's input price — reads at 0.1x, writes at 1.25x —

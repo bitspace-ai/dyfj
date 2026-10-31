@@ -116,7 +116,6 @@ describe("publish git hardening: the config block", () => {
         "credential.helper",
         "protocol.ext.allow",
         "uploadpack.allowFilter",
-        "diff.external",
       ]
     ) {
       assert.ok(keys.includes(required), `missing ${required}`);
@@ -125,6 +124,37 @@ describe("publish git hardening: the config block", () => {
     // the code.
     for (const [, , why] of PUBLISH_GIT_CONFIG) {
       assert.ok(why.length > 20, "every key states why it is neutralized");
+    }
+  });
+
+  it("leaves diff.external alone, so a child's git diff still runs", {
+    skip: !posix,
+  }, async () => {
+    // An empty `diff.external` made every gate's `git diff` die with "cannot
+    // run": git takes it as a program named "".
+    assert.ok(
+      !PUBLISH_GIT_CONFIG.some(([key]) => key === "diff.external"),
+      "diff.external must not be overridden",
+    );
+    const root = await mkdtemp(join(tmpdir(), "dyfj-publish-diff-"));
+    try {
+      git(["init", "--quiet", "--initial-branch=work", root]);
+      await writeFile(join(root, "a.txt"), "one\n");
+      git(["-C", root, "add", "a.txt"]);
+      git(["-C", root, "commit", "--quiet", "-m", "one"]);
+      await writeFile(join(root, "a.txt"), "two\n");
+      const out = execFileSync("git", ["-C", root, "diff"], {
+        env: {
+          ...process.env,
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          ...publishGitConfigEnv(),
+        },
+        encoding: "utf8",
+      });
+      assert.match(out, /^\+two$/m);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 

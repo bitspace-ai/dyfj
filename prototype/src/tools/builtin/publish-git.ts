@@ -53,6 +53,10 @@
  *   `GIT_ATTR_SOURCE` at the empty tree, `core.attributesFile=/dev/null`,
  *   `GIT_ATTR_NOSYSTEM`.
  *
+ *   `diff.external` is in the same class: it comes only from that config or
+ *   the operator's own global config, and git offers no value that disables
+ *   it, so it is not overridden.
+ *
  *   One residual remains, stated: `$GIT_DIR/info/attributes` is reachable by
  *   the same writes (the worktree's own git dir is in the grant, because
  *   commits need it) and is not closed by these checks. A name it assigned
@@ -159,12 +163,10 @@ export const PUBLISH_GIT_CONFIG: readonly (readonly [string, string, string])[] 
       "false",
       "no server-side partial-clone machinery is needed by any phase",
     ],
-    [
-      "diff.external",
-      "",
-      "an external diff driver is a program; an empty value makes git fail " +
-      "rather than run one",
-    ],
+    // `diff.external` is deliberately absent. Git has no value that switches
+    // it off: an empty one is taken as a program named "", and every child's
+    // `git diff` then dies. It is a driver like the ones above: it can only
+    // come from config the layout checks leave unwritable by the sandbox.
   ]);
 
 /**
