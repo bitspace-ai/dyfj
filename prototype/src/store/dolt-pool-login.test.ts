@@ -159,9 +159,13 @@ test("the turn boundary shows the message instead of a byte count", () => {
 });
 
 test("the pool the factory builds guards its statements", async () => {
+  // Port 1, not 3306: a developer machine often runs a real Dolt on 3306,
+  // which would refuse this fixture's user and turn the expected connection
+  // refusal into a refused login.
+  const unreachable = { ...configured, port: 1 };
   const pool = createDoltPool(
-    configured,
-    composeRuntimePolicy({ dolt: configured }),
+    unreachable,
+    composeRuntimePolicy({ dolt: unreachable }),
   );
   // No server is listening: the guarded pool's own execute is what runs, and
   // the failure it reports is a connection refusal, not a refused login.
