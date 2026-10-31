@@ -11,6 +11,27 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`publish/push` ships a gated ticket (BIT-786).** A ticket `publish/start`
+  brought to `ready` is pushed with the operator's `push` command and then has
+  its pull request opened with `open_pr`; a ticket left `pushed` by a failed
+  pull request retries only that step, never pushing the same commits twice.
+  The push is final — a push that fails moves the ticket to `failed` with
+  `failedPhase: "push"` — while a pull request that fails leaves it `pushed`
+  and retryable. The pull request URL `open_pr` prints is recorded on the ticket
+  and shown by `publish/status`. The tool calls `runPush` (BIT-830).
+  - **The approval binds the commit through the arguments.** The verdict carries
+    only the command id, call id, title and arguments, so the tool requires
+    `ticket`, `repository`, `branch`, `head` and `report`, each copied from
+    `publish/status`, and refuses the call unless every one equals the ticket's
+    pin exactly; for a `ready` ticket it also re-reads the layout and refuses a
+    repository, branch or commit that moved. A refusal before the approval prompt
+    raises no prompt, and the executor checks again afterwards because the ticket
+    and the layout can change while a prompt is open.
+  - **It asks every time and is never granted for the session.** The command
+    is not grantable, so the prompt offers no session grant, and its envelope
+    declares `write.external` with external network: it publishes to the remote.
+  - **Registered only when both `push` and `open_pr` are configured.** Without
+    the pair the publish group registers the same three tools as before.
 - **`[publish]` accepts optional `push` and `open_pr` commands (BIT-829).**
   Both are argv arrays held to the same rules as `pre_gate` and `gate` — a
   literal `argv[0]`, no refused program, no shell reached through `env`, only
