@@ -1105,6 +1105,11 @@ export async function runExternalAgentWorkbenchRuntime(
   } satisfies WorkbenchAuthContext;
   let workspace: string;
   let profile: AcpExecutionProfile;
+  const modelSlug = input.runner.profile === "codex-chatgpt"
+    ? input.routingOptions.modelId?.startsWith("codex-chatgpt/")
+      ? input.routingOptions.modelId
+      : "codex-chatgpt/gpt-6.1-terra"
+    : undefined;
   try {
     if (authContext.transport !== "loopback") {
       throw new DomainError(
@@ -1125,9 +1130,7 @@ export async function runExternalAgentWorkbenchRuntime(
       ? input.runner.profile === "fixture"
         ? fixtureProfile(workspace)
         : await codexChatGptProfile(workspace, {
-          modelName: input.routingOptions?.modelId?.startsWith("codex-chatgpt/")
-            ? input.routingOptions.modelId.slice("codex-chatgpt/".length)
-            : undefined,
+          modelName: modelSlug?.slice("codex-chatgpt/".length),
           fast: input.routingOptions?.fast,
         })
       : await dependencies.resolveProfile(input.runner.profile, workspace);
@@ -1557,6 +1560,7 @@ export async function runExternalAgentWorkbenchRuntime(
       runner: {
         kind: "external_agent",
         profile: profile.slug,
+        ...(modelSlug === undefined ? {} : { modelSlug }),
         protocol: "acp",
         protocolVersion: result.protocolVersion,
         externalStopReason: result.acpStopReason,

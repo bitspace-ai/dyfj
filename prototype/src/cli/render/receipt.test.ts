@@ -166,6 +166,7 @@ describe("presentation", () => {
       runner: {
         kind: "external_agent" as const,
         profile: "codex-chatgpt",
+        modelSlug: "codex-chatgpt/gpt-6.1-sol",
         protocol: "acp" as const,
         protocolVersion: 1,
         capabilities: [],
@@ -198,6 +199,12 @@ describe("presentation", () => {
       context: { sources: [] },
     } satisfies TurnResult;
     const formatted = formatReceipt(external, false);
+    assert.ok(
+      formatted.includes(
+        "codex-chatgpt/gpt-6.1-sol · acp v1 · local_stdio · subscription_oauth",
+      ),
+      formatted,
+    );
     assert.ok(
       formatted.includes("subscription quota (USD not reported)"),
       `expected ${

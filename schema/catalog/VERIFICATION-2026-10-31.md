@@ -55,9 +55,12 @@ follows the docs.
 does not publish a per-route output limit, so this is the only sourced number
 and it is **inferred** as route-effective.
 
-The docs-versus-repo disagreement on GPT-6.1 Sol's context is recorded here
-and not settled by a canary. A `dyfj exec` against the signed-in runner would
-settle it; nothing in this change did.
+The 2026-10-31 canaries reported usable context windows of **475,000** for
+`gpt-6.1-sol` and `gpt-6.1-terra`, and **258,400** for `gpt-6-astra` and
+`gpt-6-luna`. Each is exactly 95% of its row's 500,000 or 272,000 tokens.
+That 95% usable-window fraction is **inferred from the receipts**, not a
+provider statement. The canaries support Sol's documented 500,000-token
+window; the bundled catalog's 272,000 value was stale. No row values change.
 
 ## Observed — the adapter no longer blocks the generation
 
@@ -78,8 +81,9 @@ both probably moot at the pinned version: the docs say GPT-6.1 Terra needs
 Codex CLI 0.159.0 while the repo catalog at f2ac998 says 0.153.0, and
 `gpt-6-luna` declares `minimal_client_version` 0.155.0.
 
-No model was invoked to confirm any of this. These are published figures and a
-version constraint read from the registry, not a run.
+The minimum-client figures above are published requirements and a version
+constraint read from the registry. The 2026-10-31 context canaries exercised
+all four models through the signed-in runner.
 
 ## Observed — plans
 
@@ -143,11 +147,11 @@ the USD cost was not reported.
 
 ## What this does not establish
 
-- No model was invoked. These are transcribed published figures, a bundled
-  catalog file, and a version constraint read from the npm registry — not
-  invoices, not a canary run.
-- The route-effective context windows in the rows are the published Codex
-  figures. Whether the signed-in backend hands out exactly these is
-  unverified.
+- The canaries establish observed usable context windows for the signed-in
+  runner on 2026-10-31. The 95% relationship to the published Codex figures
+  is inferred; it does not establish a provider guarantee for every account
+  or later run.
+- Pricing and plan figures remain transcribed published information, not
+  measured invoices or usage limits.
 - Figures are point-in-time. This file is evidence for 2026-10-30 and
   2026-10-31.
