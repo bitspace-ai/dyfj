@@ -369,6 +369,169 @@ describe("invokeCommand approval (ask) flow", () => {
   });
 });
 
+describe("invokeCommand pre-flight check (BIT-826)", () => {
+  /** A mutation that asks: the shape a precheck exists to short-circuit. */
+  function askable(overrides: Partial<CommandDefinition<string>> = {}) {
+    return readCommand({
+      id: "write_file",
+      title: "Write File",
+      inputSchema: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+        additionalProperties: false,
+      },
+      permission: {
+        effects: ["write.filesystem", "emit.event"],
+        defaultDecision: "ask",
+        resources: ["file:write"],
+        network: "none",
+        filesystem: "write",
+        cost: "none",
+      },
+      executor: () => "ran",
+      ...overrides,
+    });
+  }
+
+  const writeCall = () => call({ path: "x" }, { commandId: "write_file" });
+
+  it("a refusal fails the call with its reason and raises no prompt", async () => {
+    let asked = false;
+    let ran = false;
+    const registry = createCommandRegistry([
+      askable({
+        precheck: () => Promise.resolve("this run cannot start: no branch"),
+        executor: () => {
+          ran = true;
+          return "ran";
+        },
+      }),
+    ]);
+    const result = await invokeCommand(registry, writeCall(), () => {
+      asked = true;
+      return Promise.resolve({ decision: "approve" });
+    });
+    assert.partialDeepStrictEqual(result, {
+      decision: "deny",
+      authzBasis: "policy:deny:precheck",
+      reason: "this run cannot start: no branch",
+      isError: true,
+    });
+    assert.strictEqual(asked, false, "the operator must not be prompted");
+    assert.strictEqual(ran, false);
+  });
+
+  it("a passing precheck proceeds to the prompt as it would with none", async () => {
+    let asked = false;
+    const registry = createCommandRegistry([
+      askable({ precheck: () => Promise.resolve(null) }),
+    ]);
+    const result = await invokeCommand(registry, writeCall(), () => {
+      asked = true;
+      return Promise.resolve({ decision: "approve" });
+    });
+    assert.deepStrictEqual(result, {
+      decision: "allow",
+      authzBasis: "policy:allow:operator-approved",
+      isError: false,
+      result: "ran",
+    });
+    assert.strictEqual(asked, true);
+  });
+
+  it("a precheck that throws is a refusal with a path-free reason", async () => {
+    let asked = false;
+    const registry = createCommandRegistry([
+      askable({
+        precheck: () =>
+          Promise.reject(new Error("cannot read /srv/fixture/private/repo")),
+      }),
+    ]);
+    const result = await invokeCommand(registry, writeCall(), () => {
+      asked = true;
+      return Promise.resolve({ decision: "approve" });
+    });
+    assert.strictEqual(result.decision, "deny");
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(result.authzBasis, "policy:deny:precheck");
+    assert.match(result.reason, /the pre-flight check failed/);
+    assert.ok(
+      !result.reason.includes("/srv/fixture"),
+      `the reason names a host path: ${result.reason}`,
+    );
+    assert.match(result.reason, /<path>/);
+    assert.strictEqual(asked, false);
+  });
+
+  it("records a refused call the way any other deny is recorded", async () => {
+    const events: EventInsert[] = [];
+    const registry = createCommandRegistry([
+      askable({ precheck: () => Promise.resolve("this run cannot start: no branch") }),
+    ]);
+    const result = await invokeCommandWithEvent(registry, writeCall(), {
+      sessionId: "01TESTSESSION00000000000000",
+      traceId: "0123456789abcdef0123456789abcdef",
+      eventId: "01TESTEVENT0000000000000000",
+      spanId: "0123456789abcdef",
+      writeEvent: (event) => {
+        events.push(event);
+      },
+    });
+    assert.strictEqual(events.length, 1, "one event, as for any refusal");
+    assert.partialDeepStrictEqual(events[0], {
+      event_type: "tool_call",
+      action: "deny",
+      resource: "command:write_file",
+      authz_basis: "policy:deny:precheck",
+      tool_name: "write_file",
+      tool_is_error: true,
+      tool_result: "this run cannot start: no branch",
+      content: "write_file denied: this run cannot start: no branch",
+    });
+    // The model's copy and the durable copy agree here: the reason is ours.
+    assert.strictEqual(
+      (result as { recordedReason?: string }).recordedReason,
+      "this run cannot start: no branch",
+    );
+  });
+
+  it("does not run the precheck for a call the policy already denied", async () => {
+    let checked = false;
+    const registry = createCommandRegistry([
+      askable({
+        precheck: () => {
+          checked = true;
+          return Promise.resolve(null);
+        },
+      }),
+    ]);
+    const result = await invokeCommand(
+      registry,
+      call({ path: "x", extra: 1 }, { commandId: "write_file" }),
+      () => Promise.resolve({ decision: "approve" }),
+    );
+    assert.strictEqual(result.authzBasis, "policy:deny:invalid-arguments");
+    assert.strictEqual(checked, false, "a denied call needs no precheck");
+  });
+
+  it("a command with no precheck behaves exactly as it did", async () => {
+    let asked = false;
+    const registry = createCommandRegistry([askable()]);
+    const result = await invokeCommand(registry, writeCall(), () => {
+      asked = true;
+      return Promise.resolve({ decision: "approve" });
+    });
+    assert.deepStrictEqual(result, {
+      decision: "allow",
+      authzBasis: "policy:allow:operator-approved",
+      isError: false,
+      result: "ran",
+    });
+    assert.strictEqual(asked, true);
+  });
+});
+
 describe("invokeCommand", () => {
   it("executes an allowed command and returns its authz basis", async () => {
     const registry = createCommandRegistry([readCommand()]);

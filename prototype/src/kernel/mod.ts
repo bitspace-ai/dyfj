@@ -31,7 +31,7 @@ export { type Clock, systemClock } from "./clock.ts";
 export { type FileStat, fileStat, hasVerifiableIdentity } from "./file-stat.ts";
 export { takeCodePointPrefix } from "./code-points.ts";
 export { generateSpanId, generateTraceId, generateULID } from "./ids.ts";
-export { hasDotPathComponent } from "./lexical-path.ts";
+export { hasDotPathComponent, pathFreeReason } from "./lexical-path.ts";
 export {
   containsSensitiveShape,
   SENSITIVE_PLACEHOLDER,

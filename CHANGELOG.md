@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`publish/start` refuses a run that cannot start before asking for
+  approval (BIT-826).** A command may now define a `precheck`, which the
+  invoker awaits before the permission decision; a refusal, or a precheck that
+  throws, fails the call as a deny (`policy:deny:precheck`) with no approval
+  prompt. A returned reason is the command's own text; a thrown error's message
+  gets best-effort host-path redaction. `publish/start` uses it to resolve the git
+  layout and the implementer first, with the same resolver its executor uses,
+  so a refused layout or a session with no implementer is reported without a
+  prompt. The executor still resolves again after approval, because the
+  layout can change while the prompt is open. `pathFreeReason` moved to the
+  kernel so both can share it.
 - **Host-side git layout reading for the publish tools (BIT-786).** The
   publish tools run outside the sandbox on a worktree a sandboxed command may
   have written to, so `readPublishGitLayout` reads the repository, git dir,
