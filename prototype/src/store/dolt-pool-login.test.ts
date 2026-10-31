@@ -6,7 +6,7 @@
  * every turn failed before the model call and the REPL printed only that
  * placeholder. The pool turns exactly that error into a `DomainError` built
  * from the runtime's resolved configuration, and every other failure is left
- * alone so it stays masked.
+ * alone, keeping its existing treatment at the turn boundary.
  */
 
 import assert from "node:assert/strict";

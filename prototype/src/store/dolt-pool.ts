@@ -74,8 +74,8 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
  * connections in place of the driver's own error, whose message repeats the
  * account name and whatever else the server chose to say. The message here is
  * built from the runtime's own resolved configuration: the user it names is
- * the one this process asked to log in as, and no password, host, path or
- * driver text is included.
+ * the one this process asked to log in as, and neither the password field
+ * nor the driver's text is included.
  *
  * The rejection is recognized by the driver's error code, never by matching
  * message text. Anything else — a refused connection, an unknown database, a
