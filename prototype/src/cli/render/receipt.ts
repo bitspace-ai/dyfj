@@ -84,7 +84,7 @@ export function formatReceipt(
       ? ""
       : ` · ${formatHistoryOmissionSummary(result.historyOmission)}`;
     return dim(
-      `— ${result.runner.profile} · ${result.runner.protocol}${
+      `— ${result.runner.modelSlug ?? result.runner.profile} · ${result.runner.protocol}${
         result.runner.protocolVersion === undefined
           ? " (not negotiated)"
           : ` v${result.runner.protocolVersion}`

@@ -327,6 +327,8 @@ export interface ExternalAgentTurnReceipt {
   runner: {
     kind: "external_agent";
     profile: string;
+    /** Full model slug selected by Workbench routing, when the runner has one. */
+    modelSlug?: string;
     protocol: "acp";
     protocolVersion?: number;
     externalStopReason?: ExternalAgentStopReason;

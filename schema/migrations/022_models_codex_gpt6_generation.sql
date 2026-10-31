@@ -22,6 +22,11 @@
 --   for Astra and Luna (per models.json). The API cards list 1,050,000 with
 --   128,000 max output; the cards' output figure is the only source for
 --   `max_output_tokens`, which Codex does not publish per route.
+--   The 2026-10-31 canaries reported usable windows of 475,000 for Sol and
+--   Terra and 258,400 for Astra and Luna. Each is exactly 95% of its row
+--   window (inferred usable-window fraction), consistent with Sol's
+--   documented 500,000 window rather than its bundled 272,000; no canary
+--   sent a prompt near either limit.
 --   The predecessor adapter pin (codex-acp 1.11.0 / @openai/codex 0.153.4)
 --   bundled only gpt-6-astra. codex-acp 2.5.0 depends on @openai/codex
 --   ^0.165.0, which is the release that added GPT-6.1 Terra, so the client-

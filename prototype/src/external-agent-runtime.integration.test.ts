@@ -1193,6 +1193,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           }),
       );
       assert.strictEqual(result.stopReason, "stop");
+      assert.strictEqual(result.runner.modelSlug, "codex-chatgpt/gpt-6.1-sol");
       assert.notStrictEqual(capturedEnv, undefined);
       assert.deepStrictEqual(JSON.parse(capturedEnv!.CODEX_CONFIG!), {
         model: "gpt-6.1-sol",

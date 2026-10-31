@@ -1070,14 +1070,26 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Codex ChatGPT receipts name the model (BIT-839).** The TypeScript CLI
+  receipt includes the routed model slug, such as
+  `codex-chatgpt/gpt-6.1-sol`, before the ACP protocol and access-route
+  evidence, and the Rust REPL's external-runner receipt line shows the same
+  slug in place of the profile. The runner result carries it as optional `modelSlug`; runners
+  without a model slug keep their profile label. Context documentation now
+  records the canaries supporting Sol's 500,000-token window, with the 95%
+  usable-window fraction labelled as inferred. Catalog row values are unchanged.
 - **The Codex ChatGPT route offers the GPT-6 generation (BIT-838).** The
   catalog carries four `codex-chatgpt/*` rows: `gpt-6-astra` and `gpt-6-luna`
   at a 272,000-token context window, `gpt-6.1-sol` and `gpt-6.1-terra` at
   500,000. Those contexts are taken from Codex's own catalog and docs rather
-  than the API model cards' 1,050,000, and GPT-6.1 Sol's is unresolved: the
-  docs give 500,000 and the bundled catalog 272,000; the
-  128,000 output limit is the cards' figure, which Codex does not publish per
-  route. Astra, Sol and Terra are tier 2 and Luna is tier 1; every row carries
+  than the API model cards' 1,050,000. The 2026-10-31 canaries reported
+  475,000 usable tokens for Sol and Terra and 258,400 for Astra and Luna,
+  exactly 95% of their row windows (an inferred usable-window fraction).
+  That is consistent with Sol's documented 500,000 window rather than the
+  bundled catalog's 272,000; no canary sent a prompt near either limit. The
+  128,000 output limit is the cards' figure, which
+  Codex does not publish per route. Astra, Sol and Terra are tier 2 and Luna
+  is tier 1; every row carries
   `fast-speed`. The superseded `codex-chatgpt/gpt-5.6-sol` and
   `codex-chatgpt/gpt-5.6-terra` rows are removed. `--runner codex-chatgpt`
   now bills as `codex-chatgpt/gpt-6.1-terra` / "GPT-6.1 Terra (Codex)", and an
