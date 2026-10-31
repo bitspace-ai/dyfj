@@ -417,7 +417,8 @@ function definePushTool(deps: PublishToolDeps): CommandDefinition {
       "Every argument must be copied from publish/status for that ticket: the " +
       "call is refused unless repository, branch, head and report equal the " +
       "ticket's pins exactly, because those arguments are what the operator " +
-      "approves. The pull request's title and body come from the commit. This " +
+      "approves. The operator's open_pr command sets the pull request's " +
+      "title and body; the model supplies neither. This " +
       "publishes to the remote, so it asks every time and is never granted " +
       "for a session.",
     inputSchema: {
