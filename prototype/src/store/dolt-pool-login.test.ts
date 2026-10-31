@@ -158,20 +158,20 @@ test("the turn boundary shows the message instead of a byte count", () => {
   assert.match(summarizeError(refusedLogin()), /^\[Error, \d+ bytes\]$/);
 });
 
-test("the pool the factory builds guards its statements", async () => {
-  // Port 1, not 3306: a developer machine often runs a real Dolt on 3306,
-  // which would refuse this fixture's user and turn the expected connection
-  // refusal into a refused login.
-  const unreachable = { ...configured, port: 1 };
-  const pool = createDoltPool(
-    unreachable,
-    composeRuntimePolicy({ dolt: unreachable }),
-  );
-  // No server is listening: the guarded pool's own execute is what runs, and
-  // the failure it reports is a connection refusal, not a refused login.
-  await assert.rejects(
-    () => pool.execute("SELECT 1"),
-    (error: unknown) => !(error instanceof DomainError),
-  );
-  await pool.end();
+test("the pool the factory builds is the guarded wrapper", async () => {
+  // Connections open lazily, so building the pool reaches no server. The
+  // driver's own pool is a PromisePool carrying its callback pool as `pool`;
+  // the guard returns a plain object with exactly the store's three methods.
+  // Returning the driver's pool unwrapped fails both checks.
+  const pool = createDoltPool(configured, composeRuntimePolicy({ dolt: configured }));
+  try {
+    assert.deepStrictEqual(Object.keys(pool).sort(), [
+      "end",
+      "execute",
+      "getConnection",
+    ]);
+    assert.strictEqual("pool" in pool, false);
+  } finally {
+    await pool.end();
+  }
 });
