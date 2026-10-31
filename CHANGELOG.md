@@ -1070,6 +1070,14 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The Codex ChatGPT route runs on adapter 2.5.0 (BIT-837).**
+  `@agentclientprotocol/codex-acp` moves from 1.11.0 to 2.5.0, which brings
+  `@openai/codex` from 0.153.4 to 0.165.0: the client whose bundled model
+  catalog includes the GPT-6 generation. The adapter carries its own
+  `@agentclientprotocol/sdk` 2.1.0; the runtime's own ACP client stays on
+  1.8.0. `CODEX_ACP_VERSION` and the README's pin follow, and the runtime still
+  refuses installed adapter metadata that declares any other version. The
+  catalog rows for the new models follow in a separate change.
 - **The built-in local defaults carry only the Qwen row (BIT-816).**
   `defaultLocalWorkbenchModels()` returns `llama-cpp/qwen3.6-35b-a3b` alone.
   It previously also carried the Ollama rows, which the catalog trim removed:

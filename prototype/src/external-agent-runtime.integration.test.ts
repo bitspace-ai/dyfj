@@ -850,7 +850,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await mkdir(`${packageRoot}/dist`, { recursive: true });
       await writeFile(
         `${packageRoot}/package.json`,
-        JSON.stringify({ version: "1.11.0" }),
+        JSON.stringify({ version: "2.5.0" }),
       );
       await writeFile(`${packageRoot}/dist/index.js`, "");
       const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
@@ -953,7 +953,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await mkdir(`${packageRoot}/dist`, { recursive: true });
       await writeFile(
         `${packageRoot}/package.json`,
-        JSON.stringify({ version: "1.11.0" }),
+        JSON.stringify({ version: "2.5.0" }),
       );
       await writeFile(`${packageRoot}/dist/index.js`, "");
       const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
@@ -1456,7 +1456,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           "utf8",
         ),
       );
-      assert.strictEqual(packageMetadata.version, "0.153.4");
+      assert.strictEqual(packageMetadata.version, "0.165.0");
     } finally {
       await rm(nodeDirectory, { recursive: true });
       await rm(home, { recursive: true });
@@ -1494,7 +1494,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await mkdir(planted, { recursive: true });
       await writeFile(
         `${planted}/package.json`,
-        JSON.stringify({ version: "1.11.0" }),
+        JSON.stringify({ version: "2.5.0" }),
       );
       await assert.rejects(
         () => codexAcpPackageRoot(prototypeRoot),
