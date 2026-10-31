@@ -248,7 +248,7 @@ The operator commands are:
 ```sh
 dyfj                      # streaming multi-turn REPL; autostarts the runtime
 dyfj exec "Summarize this repository"
-dyfj --model codex-chatgpt/gpt-5.6-terra --approve-paid --fast exec "Fast one-shot turn"
+dyfj --model codex-chatgpt/gpt-6.1-terra --approve-paid --fast exec "Fast one-shot turn"
 dyfj --runner fixture exec "Exercise the local ACP fixture"
 dyfj --runner codex-chatgpt --approve-paid exec "Inspect this repository"
 dyfj status

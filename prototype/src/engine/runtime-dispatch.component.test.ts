@@ -38,8 +38,8 @@ const ACP_FIXTURE: ModelSeed = {
 };
 
 const CODEX_SOL: ModelSeed = {
-  slug: "codex-chatgpt/gpt-5.6-sol",
-  display_name: "GPT-5.6 Sol (Codex)",
+  slug: "codex-chatgpt/gpt-6.1-sol",
+  display_name: "GPT-6.1 Sol (Codex)",
   provider: "codex-chatgpt",
   api: "acp",
   base_url: "local_stdio",
@@ -52,8 +52,8 @@ const CODEX_SOL: ModelSeed = {
 };
 
 const CODEX_TERRA: ModelSeed = {
-  slug: "codex-chatgpt/gpt-5.6-terra",
-  display_name: "GPT-5.6 Terra",
+  slug: "codex-chatgpt/gpt-6.1-terra",
+  display_name: "GPT-6.1 Terra",
   provider: "codex-chatgpt",
   api: "acp",
   base_url: "local_stdio",

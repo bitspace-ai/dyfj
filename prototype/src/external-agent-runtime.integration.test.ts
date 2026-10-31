@@ -1063,7 +1063,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.strictEqual(
         profile.environment.CODEX_CONFIG,
         JSON.stringify({
-          model: "gpt-5.6-terra",
+          model: "gpt-6.1-terra",
           model_reasoning_effort: "medium",
         }),
       );
@@ -1116,14 +1116,14 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         home,
         prototypeRoot: process.cwd(),
         nodePath,
-        modelName: "gpt-5.6-sol",
+        modelName: "gpt-6.1-sol",
         reasoningEffort: "medium",
         fast: true,
       });
       assert.deepStrictEqual(
         JSON.parse(fastSolProfile.environment.CODEX_CONFIG!),
         {
-          model: "gpt-5.6-sol",
+          model: "gpt-6.1-sol",
           model_reasoning_effort: "medium",
           service_tier: "fast",
         },
@@ -1161,7 +1161,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
             mode: "turn",
             prompt: "test",
             routingOptions: {
-              modelId: "codex-chatgpt/gpt-5.6-sol",
+              modelId: "codex-chatgpt/gpt-6.1-sol",
               fast: true,
             },
             runner: { kind: "acp", profile: "codex-chatgpt" },
@@ -1186,7 +1186,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.strictEqual(result.stopReason, "stop");
       assert.notStrictEqual(capturedEnv, undefined);
       assert.deepStrictEqual(JSON.parse(capturedEnv!.CODEX_CONFIG!), {
-        model: "gpt-5.6-sol",
+        model: "gpt-6.1-sol",
         model_reasoning_effort: "medium",
         service_tier: "fast",
       });

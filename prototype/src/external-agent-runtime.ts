@@ -477,7 +477,7 @@ export async function codexChatGptProfile(
     );
   }
   const codexConfig: Record<string, unknown> = {
-    model: options.modelName ?? "gpt-5.6-terra",
+    model: options.modelName ?? "gpt-6.1-terra",
     model_reasoning_effort: options.reasoningEffort ?? "medium",
   };
   if (options.fast === true) {
