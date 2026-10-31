@@ -159,6 +159,18 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A refused Dolt login at session open names the credential (BIT-809).** A
+  wrong `DOLT_USER` or `DOLT_PASSWORD` failed every turn before the model call
+  and reached the operator as `turn failed: [Error, 29 bytes]`, because the
+  driver's message is a foreign error and `summarizeError` correctly withholds
+  it. The Dolt pool now recognizes the driver's refused-login error by its
+  `code` (`ER_ACCESS_DENIED_ERROR`) or `errno` (`1045`) — never by matching
+  message text — and raises a `DoltLoginRefusedError`, a `DomainError`, in its
+  place from `execute`, from `getConnection`, and from a borrowed connection's
+  `execute`. Its message names the user from the pool's own resolved
+  configuration and points at `DOLT_USER` and `DOLT_PASSWORD`; it carries no
+  password, no secret value, no host path and no driver text. Every other
+  connection or query failure propagates unchanged and stays masked.
 - **Anthropic cache traffic now prices at the model row's own catalog cache
   rates (BIT-788).** Cache reads and 5-minute cache writes were charged at
   fixed multiples of the row's input price — reads at 0.1x, writes at 1.25x —
