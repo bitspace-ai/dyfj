@@ -6,8 +6,8 @@ import { DomainError } from "./contract/mod.ts";
  * Write a private runner file atomically. The content goes to a new file,
  * created exclusively under a random name beside the final one, so an
  * existing file is never followed or reused; it is then given its mode and
- * renamed into place. Any failure removes the temporary and reports the fixed
- * diagnostic, which does not disclose the path.
+ * renamed into place. Any failure makes a best-effort removal of the
+ * temporary and reports the fixed diagnostic, which does not disclose the path.
  */
 export async function writePrivateFile(
   path: string,
