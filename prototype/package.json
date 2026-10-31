@@ -22,7 +22,7 @@
     "@agentclientprotocol/codex-acp": "2.5.0",
     "@agentclientprotocol/sdk": "1.8.0",
     "@anthropic-ai/sandbox-runtime": "0.0.81",
-    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.3.1",
     "mysql2": "3.24.6",
     "smol-toml": "1.9.1",
