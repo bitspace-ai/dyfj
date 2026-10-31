@@ -53,9 +53,10 @@
  *   `GIT_ATTR_SOURCE` at the empty tree, `core.attributesFile=/dev/null`,
  *   `GIT_ATTR_NOSYSTEM`.
  *
- *   `diff.external` is in the same class: it comes only from that config or
- *   the operator's own global config, and git offers no value that disables
- *   it, so it is not overridden.
+ *   `diff.external` is in the same class, and git offers no value that
+ *   disables it, so it is not overridden. Its config sources are that config
+ *   and the operator's own global config; `GIT_EXTERNAL_DIFF` never reaches a
+ *   child, whose environment is an allowlist (`buildSafeBashEnv`).
  *
  *   One residual remains, stated: `$GIT_DIR/info/attributes` is reachable by
  *   the same writes (the worktree's own git dir is in the grant, because
@@ -164,9 +165,11 @@ export const PUBLISH_GIT_CONFIG: readonly (readonly [string, string, string])[] 
       "no server-side partial-clone machinery is needed by any phase",
     ],
     // `diff.external` is deliberately absent. Git has no value that switches
-    // it off: an empty one is taken as a program named "", and every child's
-    // `git diff` then dies. It is a driver like the ones above: it can only
-    // come from config the layout checks leave unwritable by the sandbox.
+    // it off: an empty one is taken as a program named "", and a child's
+    // `git diff` that reaches the external driver dies. Its config sources are
+    // the ones the layout checks keep unwritable by the sandbox, and the
+    // `GIT_EXTERNAL_DIFF` variable is not in the child environment's
+    // allowlist.
   ]);
 
 /**

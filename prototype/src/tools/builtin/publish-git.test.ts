@@ -130,7 +130,7 @@ describe("publish git hardening: the config block", () => {
   it("leaves diff.external alone, so a child's git diff still runs", {
     skip: !posix,
   }, async () => {
-    // An empty `diff.external` made every gate's `git diff` die with "cannot
+    // An empty `diff.external` made a gate's `git diff` die with "cannot
     // run": git takes it as a program named "".
     assert.ok(
       !PUBLISH_GIT_CONFIG.some(([key]) => key === "diff.external"),
@@ -144,11 +144,14 @@ describe("publish git hardening: the config block", () => {
       git(["-C", root, "commit", "--quiet", "-m", "one"]);
       await writeFile(join(root, "a.txt"), "two\n");
       const out = execFileSync("git", ["-C", root, "diff"], {
+        // The environment a publish child really gets, with an external
+        // diff variable in the source that the allowlist must drop.
         env: {
-          ...process.env,
-          GIT_CONFIG_NOSYSTEM: "1",
+          ...publishChildEnv({
+            get: (name) =>
+              name === "GIT_EXTERNAL_DIFF" ? "/bin/false" : process.env[name],
+          }),
           GIT_CONFIG_GLOBAL: "/dev/null",
-          ...publishGitConfigEnv(),
         },
         encoding: "utf8",
       });
