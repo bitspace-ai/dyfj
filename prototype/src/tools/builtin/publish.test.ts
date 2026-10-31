@@ -697,3 +697,319 @@ describe("publish tools: refused before the approval prompt", () => {
     assert.strictEqual(s.tickets.latest("session-1"), null);
   });
 });
+
+describe("publish tools: push", () => {
+  /** A config with both commands the push tool needs. */
+  function pushConfig(): PublishConfig {
+    return config({
+      push: ["git", "push", "origin", "{head}:refs/heads/{branch}"],
+      openPr: ["gh", "pr", "create", "--head", "{branch}"],
+    });
+  }
+
+  /** A ticket brought to the phase the test needs, pinned to the root. */
+  function ticketIn(
+    tickets: PublishTickets,
+    phase: "ready" | "pushed",
+    root = ROOT,
+  ): string {
+    const created = tickets.create({
+      sessionId: "session-1",
+      layout: layoutIn(root),
+      reportPathFor: (ticket) => join(ROOT, "reports", `${ticket}.log`),
+    });
+    const id = created.ticket;
+    tickets.markGated("session-1", id);
+    tickets.markReady("session-1", id);
+    if (phase === "pushed") {
+      tickets.markPushing("session-1", id, LAYOUT.head!);
+      tickets.markPushed("session-1", id);
+    }
+    return id;
+  }
+
+  /** The arguments a model copies from publish/status for that ticket. */
+  function argsFor(
+    tickets: PublishTickets,
+    ticket: string,
+  ): Record<string, unknown> {
+    const view = tickets.get("session-1", ticket)!;
+    return {
+      ticket,
+      repository: view.repository,
+      branch: view.branch!,
+      head: view.head!,
+      report: view.reportPath,
+    };
+  }
+
+  const pass = (output = "") => ({
+    code: 0,
+    timedOut: false,
+    cancelled: false,
+    output,
+    truncated: false,
+    pipesLeftOpen: false,
+  });
+
+  it("is registered only when push and open_pr are configured", () => {
+    const without = tools();
+    assert.ok(without.registry.lookup("publish/push") === undefined);
+    const withPush = tools({ config: pushConfig() });
+    const ids = withPush.registry.list().map((c) => c.id).sort();
+    assert.deepStrictEqual(ids, [
+      "publish/cancel",
+      "publish/push",
+      "publish/start",
+      "publish/status",
+    ]);
+  });
+
+  it("asks every time and is never grantable", () => {
+    const { registry } = tools({ config: pushConfig() });
+    const command = registry.lookup("publish/push")!;
+    assert.strictEqual(command.permission.defaultDecision, "ask");
+    assert.strictEqual(command.grantable, undefined);
+    const verdict = evaluateCommandPolicy(
+      command,
+      call("publish/push", {
+        ticket: "00000000-0000-0000-0000-000000000000",
+        repository: "/repo",
+        branch: "work",
+        head: LAYOUT.head!,
+        report: "/tmp/x.log",
+      }),
+      { permissionLevel: "operator", loopback: true },
+    );
+    assert.strictEqual(verdict.decision, "ask");
+  });
+
+  it("refuses an unknown ticket before asking", async () => {
+    const { registry } = tools({ config: pushConfig() });
+    let prompts = 0;
+    const result = await invokeCommand(
+      registry,
+      call("publish/push", {
+        ticket: "00000000-0000-0000-0000-000000000000",
+        repository: ROOT,
+        branch: "work",
+        head: LAYOUT.head!,
+        report: "/tmp/x.log",
+      }),
+      () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /^this push cannot run:/);
+    assert.strictEqual(prompts, 0);
+  });
+
+  it("refuses a ticket that is not ready or pushed, before asking", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const { registry } = tools({ config: pushConfig(), tickets });
+    const created = tickets.create({
+      sessionId: "session-1",
+      layout: layoutIn(ROOT),
+      reportPathFor: (ticket) => join(ROOT, "reports", `${ticket}.log`),
+    });
+    tickets.markGated("session-1", created.ticket);
+    let prompts = 0;
+    const result = await invokeCommand(
+      registry,
+      call("publish/push", {
+        ticket: created.ticket,
+        repository: created.repository,
+        branch: created.branch!,
+        head: created.head!,
+        report: created.reportPath,
+      }),
+      () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /phase gated/);
+    assert.strictEqual(prompts, 0);
+  });
+
+  it("refuses each argument that differs from the pin, before asking", async () => {
+    const argNames = ["repository", "branch", "head", "report"] as const;
+    const wrong: Record<(typeof argNames)[number], unknown> = {
+      repository: "/elsewhere",
+      branch: "chris/another-branch",
+      head: "f".repeat(40),
+      report: "/tmp/another.log",
+    };
+    for (const name of argNames) {
+      const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+      const runner = stubRunner([]);
+      const { registry } = tools({
+        config: pushConfig(),
+        tickets,
+        runner,
+      });
+      const ticket = ticketIn(tickets, "ready");
+      let prompts = 0;
+      const result = await invokeCommand(
+        registry,
+        call("publish/push", { ...argsFor(tickets, ticket), [name]: wrong[name] }),
+        () => {
+          prompts += 1;
+          return Promise.resolve({ decision: "approve" });
+        },
+      );
+      assert.strictEqual(result.isError, true, `${name} must be refused`);
+      assert.match(
+        result.isError ? result.reason : "",
+        new RegExp(`the ${name} argument does not match`),
+      );
+      assert.strictEqual(prompts, 0, `${name} must raise no prompt`);
+      assert.strictEqual(runner.calls.length, 0);
+    }
+  });
+
+  it("refuses a ready ticket whose layout moved, before asking", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const { registry } = tools({
+      config: pushConfig(),
+      tickets,
+      layout: { ...layoutIn(ROOT), head: "f".repeat(40) },
+      runner: stubRunner([]),
+    });
+    const ticket = ticketIn(tickets, "ready");
+    let prompts = 0;
+    const result = await invokeCommand(
+      registry,
+      call("publish/push", argsFor(tickets, ticket)),
+      () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /changed since the ticket/);
+    assert.strictEqual(prompts, 0);
+  });
+
+  it("refuses when the layout cannot be read, before asking", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const command = definePublishTools({
+      config: pushConfig(),
+      tickets,
+      policy: composeRuntimePolicy(),
+      sessionId: "session-1",
+      workspaceRoot: ROOT,
+      rootAnchors: new RootAnchors(),
+      readLayout: () => Promise.reject(new Error("the repository moved")),
+      resolveImplementer: async () => "claude-opus-5",
+    });
+    const registry = createCommandRegistry();
+    for (const entry of command) registry.register(entry);
+    const ticket = ticketIn(tickets, "ready");
+    let prompts = 0;
+    const result = await invokeCommand(
+      registry,
+      call("publish/push", argsFor(tickets, ticket)),
+      () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /could not be re-read/);
+    assert.strictEqual(prompts, 0);
+  });
+
+  it("pushes a ready ticket and opens its pull request", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const url = "https://github.com/example/repo/pull/7";
+    const runner = stubRunner([pass(), pass(url)]);
+    const { registry } = tools({ config: pushConfig(), tickets, runner });
+    const ticket = ticketIn(tickets, "ready");
+    const result = await invoke(registry, call("publish/push", argsFor(tickets, ticket)));
+    const text = textOf(result);
+    assert.match(text, /phase: pr-open/);
+    assert.match(text, new RegExp(`\\npr: ${url}$`));
+    assert.deepStrictEqual(
+      runner.calls.map((entry) => entry.argv[0]),
+      ["git", "gh"],
+    );
+    assert.strictEqual(tickets.get("session-1", ticket)?.prUrl, url);
+  });
+
+  it("refuses after approval when the layout moved during the prompt", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const runner = stubRunner([]);
+    let reads = 0;
+    const registry = createCommandRegistry();
+    for (
+      const entry of definePublishTools({
+        config: pushConfig(),
+        tickets,
+        policy: composeRuntimePolicy(),
+        sessionId: "session-1",
+        workspaceRoot: ROOT,
+        rootAnchors: new RootAnchors(),
+        readLayout: () => {
+          reads += 1;
+          return reads === 1
+            ? Promise.resolve(layoutIn(ROOT))
+            : Promise.reject(new Error("the repository moved"));
+        },
+        resolveImplementer: async () => "claude-opus-5",
+        startCommand: runner.start,
+      })
+    ) {
+      registry.register(entry);
+    }
+    const ticket = ticketIn(tickets, "ready");
+    let prompts = 0;
+    const result = await invokeCommand(
+      registry,
+      call("publish/push", argsFor(tickets, ticket)),
+      () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      },
+    );
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /could not be re-read/);
+    assert.strictEqual(prompts, 1);
+    assert.strictEqual(runner.calls.length, 0, "the push must not start");
+  });
+
+  it("retries only open_pr for a pushed ticket whose pull request failed", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const url = "https://github.com/example/repo/pull/9";
+    const runner = stubRunner([pass(url)]);
+    let reads = 0;
+    const registry = createCommandRegistry();
+    for (
+      const entry of definePublishTools({
+        config: pushConfig(),
+        tickets,
+        policy: composeRuntimePolicy(),
+        sessionId: "session-1",
+        workspaceRoot: ROOT,
+        rootAnchors: new RootAnchors(),
+        readLayout: () => {
+          reads += 1;
+          throw new Error("a pushed ticket needs no layout read");
+        },
+        resolveImplementer: async () => "claude-opus-5",
+        startCommand: runner.start,
+      })
+    ) {
+      registry.register(entry);
+    }
+    const ticket = ticketIn(tickets, "pushed");
+    tickets.notePrFailed("session-1", ticket, "the open_pr exited 1", "", false);
+    const result = await invoke(registry, call("publish/push", argsFor(tickets, ticket)));
+    assert.match(textOf(result), /phase: pr-open/);
+    assert.deepStrictEqual(runner.calls.map((entry) => entry.argv[0]), ["gh"]);
+    assert.strictEqual(reads, 0, "a pushed ticket re-reads no layout");
+  });
+});

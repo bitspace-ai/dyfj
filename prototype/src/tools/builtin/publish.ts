@@ -1,6 +1,7 @@
 /**
- * The publish tools (BIT-786, slice A): `publish/start`, `publish/status` and
- * `publish/cancel`.
+ * The publish tools (BIT-786): `publish/start`, `publish/status`,
+ * `publish/cancel` and, when the operator configured a push and a pull
+ * request, `publish/push`.
  *
  * Publishing ships a session branch, so it is deliberately a host-side tool
  * and never a sandboxed command: the sandbox denies the GitHub domains
@@ -12,10 +13,15 @@
  * execution of worktree code: it asks the operator every time, is never
  * grantable for a session, and its approval title carries that warning. The
  * title is STATIC - it names no commit; the pins a run resolved are shown by
- * `publish/status`. (An approval whose text is computed per call cannot bind a
- * digest anyway: the verdict carries only command id, call id, title and
- * arguments, so the next slice's push approval binds the commit by taking it as
- * an argument and re-checking it against HEAD at push time.)
+ * `publish/status`.
+ *
+ * `publish/push` ships a `ready` ticket: it pushes the gated commit with the
+ * operator's `push` command and opens the pull request with `open_pr`. Because
+ * an approval whose text is computed per call cannot bind a digest - the verdict
+ * carries only command id, call id, title and arguments - the push approval
+ * binds the commit by taking it as an ARGUMENT: every fact the operator must
+ * see (`repository`, `branch`, `head`, `report`) is required, copied from
+ * `publish/status`, and refused unless it equals the ticket's pin exactly.
  *
  * The gate takes 10-30 minutes by hand, which no tool call may hold open, so
  * `start` runs the pre-gate and the gate detached and returns at once with a
@@ -23,7 +29,8 @@
  *
  * - `publish/start`  - pin the layout, create a ticket, run pre-gate then gate;
  * - `publish/status` - the ticket's phase, the pinned facts and the report;
- * - `publish/cancel` - stop the run's process group.
+ * - `publish/cancel` - stop the run's process group;
+ * - `publish/push`   - push a gated commit, then open its pull request.
  *
  * Tickets live in the runtime's memory (`publish-tickets.ts`). A restart makes
  * `status` report `unknown` rather than guess from a file on disk.
@@ -51,8 +58,10 @@ import {
 } from "./publish-phase.ts";
 import {
   type GitLayout,
+  layoutsMatch,
   readPublishGitLayout,
 } from "./publish-git.ts";
+import { runPush } from "./publish-push.ts";
 import { type PublishCommandResult, startPublishCommand } from "./publish-run.ts";
 import {
   branchOf,
@@ -284,9 +293,189 @@ async function startPublishRun(
 }
 
 /**
- * `publish/start`, `publish/status` and `publish/cancel`, bound to one turn's
- * session and workspace. Registered only when `[publish]` is configured: no
- * command, no tool.
+ * What `publish/push` will act on, or the reason it cannot: resolved from the
+ * call's arguments and the ticket, and used by the precheck (before the
+ * approval prompt) and the executor (again, after it). The ticket and the
+ * layout can both change while a prompt is open, so the executor re-checks
+ * rather than trusting the precheck.
+ *
+ * Every argument the operator must see is compared with the ticket's pin here.
+ * The approval verdict carries only the command id, call id, title and
+ * arguments, so the arguments ARE what was approved: an argument that differs
+ * from the ticket means the operator approved something else.
+ */
+async function checkPushArguments(
+  deps: PublishToolDeps,
+  call: CommandCall,
+): Promise<
+  | { readonly view: PublishTicketView }
+  | { readonly refusal: string }
+> {
+  const ticket = call.arguments["ticket"];
+  if (typeof ticket !== "string") {
+    return { refusal: "no ticket was named" };
+  }
+  const view = deps.tickets.get(deps.sessionId, ticket);
+  if (view === null) {
+    return {
+      refusal: `this runtime holds no ticket ${ticket}; a ticket does not ` +
+        "survive a restart, so start a new run with publish/start",
+    };
+  }
+  if (view.phase !== "ready" && view.phase !== "pushed") {
+    return {
+      refusal: `ticket ${ticket} is in phase ${view.phase}; only a ticket in ` +
+        "ready or pushed can be pushed or have its pull request opened",
+    };
+  }
+  // Each pinned fact, as publish/status reported it. A mismatch is a refusal,
+  // never a correction: the operator approved the arguments.
+  const pinned: readonly (readonly [string, string | null])[] = [
+    ["repository", view.repository],
+    ["branch", view.branch],
+    ["head", view.head],
+    ["report", view.reportPath],
+  ];
+  for (const [name, expected] of pinned) {
+    const given = call.arguments[name];
+    const text = typeof given === "string" ? given : "";
+    // A null pin (a detached head, an unborn branch) has no argument that
+    // could equal it, so the call cannot describe what it would push.
+    if (expected === null || text !== expected) {
+      return {
+        refusal: `the ${name} argument does not match ticket ${ticket}'s pin; ` +
+          `copy every argument from publish/status`,
+      };
+    }
+  }
+  if (view.phase !== "ready") return { view };
+  // A `ready` ticket is about to push, so the live layout must still be the
+  // one the gate passed on.
+  const readLayout = deps.readLayout ?? readPublishGitLayout;
+  let live: GitLayout;
+  try {
+    live = await readLayout(view.repository);
+  } catch (error) {
+    return {
+      refusal: `the layout could not be re-read (${pathFreeReason(error)})`,
+    };
+  }
+  if (!layoutsMatch(live, view.layout)) {
+    return {
+      refusal: "the repository, branch or commit changed since the ticket was " +
+        "created",
+    };
+  }
+  return { view };
+}
+
+/**
+ * `publish/push`'s executor: check the arguments again, then ship the ticket.
+ * `runPush` owns every refusal that concerns the ticket's phase or the pins it
+ * re-reads itself; this check is the approval's binding, and each of its
+ * refusals leaves the ticket as it was.
+ */
+async function pushTicket(
+  deps: PublishToolDeps,
+  call: CommandCall,
+): Promise<string> {
+  const checked = await checkPushArguments(deps, call);
+  if ("refusal" in checked) throw new CommandExecutionError(checked.refusal);
+  const result = await runPush(
+    {
+      config: deps.config,
+      tickets: deps.tickets,
+      policy: deps.policy,
+      sessionId: deps.sessionId,
+      ...(deps.readLayout === undefined ? {} : { readLayout: deps.readLayout }),
+      ...(deps.startCommand === undefined
+        ? {}
+        : { startCommand: deps.startCommand }),
+    },
+    checked.view.ticket,
+  );
+  return renderTicket(result, {
+    outputHead: result.phase === "failed" || result.reason !== undefined,
+  });
+}
+
+/**
+ * `publish/push`, bound to one turn's deps. Separate from
+ * `definePublishTools` because it is registered only when the operator
+ * configured both a push and a pull request, not for every `[publish]` table.
+ */
+function definePushTool(deps: PublishToolDeps): CommandDefinition {
+  const push: CommandDefinition = {
+    id: "publish/push",
+    title:
+      "Push a gated commit and open its pull request (publishes to the remote)",
+    description:
+      "Push a publish ticket's gated commit with the operator's push command, " +
+      "then open its pull request with open_pr. A ticket in phase ready is " +
+      "pushed and then has its pull request opened; a ticket in phase pushed " +
+      "whose pull request step failed retries only open_pr, never the push. " +
+      "Every argument must be copied from publish/status for that ticket: the " +
+      "call is refused unless repository, branch, head and report equal the " +
+      "ticket's pins exactly, because those arguments are what the operator " +
+      "approves. The operator's open_pr command sets the pull request's " +
+      "title and body; the model supplies neither. This " +
+      "publishes to the remote, so it asks every time and is never granted " +
+      "for a session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ticket: {
+          type: "string",
+          pattern: "^[0-9a-fA-F-]{36}$",
+          description: "Ticket id from publish/status; the ticket to ship.",
+        },
+        repository: {
+          type: "string",
+          description: "The ticket's repository, copied from publish/status.",
+        },
+        branch: {
+          type: "string",
+          description: "The ticket's branch, copied from publish/status.",
+        },
+        head: {
+          type: "string",
+          pattern: "^[0-9a-f]{40}$",
+          description: "The ticket's commit, copied from publish/status.",
+        },
+        report: {
+          type: "string",
+          description: "The ticket's report path, copied from publish/status.",
+        },
+      },
+      required: ["ticket", "repository", "branch", "head", "report"],
+      additionalProperties: false,
+    },
+    permission: {
+      effects: ["run.process", "write.external", "emit.event"],
+      defaultDecision: "ask",
+      resources: ["publish:push"],
+      network: "external",
+      filesystem: "none",
+      cost: "none",
+    },
+    executor: (call) => pushTicket(deps, call),
+    // Refuse before the approval prompt when the call cannot ship anything: a
+    // refusal here raises no prompt. The executor checks again after approval.
+    precheck: async (call) => {
+      const checked = await checkPushArguments(deps, call);
+      return "refusal" in checked
+        ? `this push cannot run: ${checked.refusal}`
+        : null;
+    },
+  };
+  return push;
+}
+
+/**
+ * `publish/start`, `publish/status`, `publish/cancel` and, with a configured
+ * push and pull request, `publish/push`, bound to one turn's session and
+ * workspace. Registered only when `[publish]` is configured: no command, no
+ * tool.
  */
 export function definePublishTools(
   deps: PublishToolDeps,
@@ -423,7 +612,13 @@ export function definePublishTools(
     },
   };
 
-  return [start, status, cancel];
+  const tools: CommandDefinition[] = [start, status, cancel];
+  // Both commands this tool runs: a push with no pull request would leave a
+  // published branch nobody opened a review for.
+  if (deps.config.push !== undefined && deps.config.openPr !== undefined) {
+    tools.push(definePushTool(deps));
+  }
+  return tools;
 }
 
 /** Re-exported so a caller can type a phase result without the module path. */

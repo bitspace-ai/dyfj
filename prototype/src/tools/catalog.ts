@@ -167,10 +167,11 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
 ];
 
 /**
- * The publish tools (BIT-786), a group because one entry yields three commands
- * sharing one ticket registry. Present only when the operator configured
- * `[publish]` and the turn resolved a root with anchors to check it against:
- * no config, no tools.
+ * The publish tools (BIT-786), a group because one entry yields three or four
+ * commands sharing one ticket registry: `publish/push` is registered only when
+ * push and open_pr are both configured. Present only when the operator
+ * configured `[publish]` and the turn resolved a root with anchors to check it
+ * against: no config, no tools.
  */
 function publishTools(
   { workspaceRoot, rootAnchors, env, publish }: ToolCatalogDependencies,
