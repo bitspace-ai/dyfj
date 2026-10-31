@@ -902,7 +902,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           CARGO_HOME: `${home}/.dyfj/runner-homes/codex-chatgpt/home/.cargo`,
           CODEX_PATH: await realpath(codexPath),
           NO_BROWSER: "1",
-          INITIAL_AGENT_MODE: "read-only",
+          INITIAL_AGENT_MODE: "workspace-write",
           PATH: `${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin`,
         },
       });
