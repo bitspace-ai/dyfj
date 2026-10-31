@@ -165,8 +165,8 @@ interface AcpRouteModel {
 
 /** The fixed descriptor an explicit Codex ChatGPT runner request bills as. */
 const EXPLICIT_CODEX_CHATGPT_ROUTE: AcpRouteModel = {
-  displayName: "GPT-5.6 Terra (Codex)",
-  slug: "codex-chatgpt/gpt-5.6-terra",
+  displayName: "GPT-6.1 Terra (Codex)",
+  slug: "codex-chatgpt/gpt-6.1-terra",
   tier: 2,
   routingReason: "explicit_runner",
 };

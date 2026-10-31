@@ -1070,6 +1070,21 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The Codex ChatGPT route offers the GPT-6 generation (BIT-838).** The
+  catalog carries four `codex-chatgpt/*` rows: `gpt-6-astra` and `gpt-6-luna`
+  at a 272,000-token context window, `gpt-6.1-sol` and `gpt-6.1-terra` at
+  500,000. Those contexts are taken from Codex's own catalog and docs rather
+  than the API model cards' 1,050,000, and GPT-6.1 Sol's is unresolved: the
+  docs give 500,000 and the bundled catalog 272,000; the
+  128,000 output limit is the cards' figure, which Codex does not publish per
+  route. Astra, Sol and Terra are tier 2 and Luna is tier 1; every row carries
+  `fast-speed`. The superseded `codex-chatgpt/gpt-5.6-sol` and
+  `codex-chatgpt/gpt-5.6-terra` rows are removed. `--runner codex-chatgpt`
+  now bills as `codex-chatgpt/gpt-6.1-terra` / "GPT-6.1 Terra (Codex)", and an
+  unset model name on the runner falls back to `gpt-6.1-terra`. The
+  `gemini-antigravity` provider is removed from the ACP subscription-provider
+  list and from the modality documentation, along with its
+  `gemini-antigravity/gemini-3.7-flash` catalog row.
 - **The Codex ChatGPT route runs on adapter 2.5.0 (BIT-837).**
   `@agentclientprotocol/codex-acp` moves from 1.11.0 to 2.5.0, which brings
   `@openai/codex` from 0.153.4 to 0.165.0: the client whose bundled model

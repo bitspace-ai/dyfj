@@ -42,7 +42,7 @@ export interface CliConfig {
    */
   approvePaid?: boolean;
   /**
-   * Fast speed tier for supported models (e.g. gpt-5.6 series in Codex).
+   * Fast speed tier for supported models (e.g. the gpt-6 series in Codex).
    * Requests the fast service tier for prioritized generation throughput.
    */
   fast?: boolean;

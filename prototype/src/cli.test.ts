@@ -985,17 +985,17 @@ describe("REPL /model", () => {
     const { io, stderr } = fakeIo();
     const config = cfg();
     await handleReplModelCommand(
-      "/model codex-chatgpt/gpt-5.6-terra --fast",
+      "/model codex-chatgpt/gpt-6.1-terra --fast",
       config,
       io,
       fakeConnect([{
-        slug: "codex-chatgpt/gpt-5.6-terra",
+        slug: "codex-chatgpt/gpt-6.1-terra",
         tier: 2,
         local: false,
         capabilities: ["fast-speed"],
       }]),
     );
-    assert.strictEqual(config.model, "codex-chatgpt/gpt-5.6-terra");
+    assert.strictEqual(config.model, "codex-chatgpt/gpt-6.1-terra");
     assert.strictEqual(config.fast, true);
     assert.ok(
       stderr.join("\n").includes("⚡ fast"),
@@ -1021,14 +1021,14 @@ describe("REPL /model", () => {
 
   it("/model switches to unsupported model and auto-disables fast speed tier", async () => {
     const { io, stderr } = fakeIo();
-    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra", fast: true });
+    const config = cfg({ model: "codex-chatgpt/gpt-6.1-terra", fast: true });
     await handleReplModelCommand(
       "/model claude-opus-4-8",
       config,
       io,
       fakeConnect([
         {
-          slug: "codex-chatgpt/gpt-5.6-terra",
+          slug: "codex-chatgpt/gpt-6.1-terra",
           tier: 2,
           local: false,
           capabilities: ["fast-speed"],
@@ -1048,14 +1048,14 @@ describe("REPL /model", () => {
 
   it("/model rejects specifying both --fast and --no-fast", async () => {
     const { io, stderr } = fakeIo();
-    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra" });
+    const config = cfg({ model: "codex-chatgpt/gpt-6.1-terra" });
     const handled = await handleReplModelCommand(
-      "/model codex-chatgpt/gpt-5.6-terra --fast --no-fast",
+      "/model codex-chatgpt/gpt-6.1-terra --fast --no-fast",
       config,
       io,
       fakeConnect([
         {
-          slug: "codex-chatgpt/gpt-5.6-terra",
+          slug: "codex-chatgpt/gpt-6.1-terra",
           tier: 2,
           local: false,
           capabilities: ["fast-speed"],
@@ -1233,13 +1233,13 @@ describe("REPL /fast command", () => {
 
   it("/fast toggles fast speed tier on a supported model", async () => {
     const { io, stderr } = fakeIo();
-    const config = cfg({ model: "codex-chatgpt/gpt-5.6-terra" });
+    const config = cfg({ model: "codex-chatgpt/gpt-6.1-terra" });
     const handled = await handleReplFastCommand(
       "/fast",
       config,
       io,
       fakeConnect([{
-        slug: "codex-chatgpt/gpt-5.6-terra",
+        slug: "codex-chatgpt/gpt-6.1-terra",
         tier: 2,
         local: false,
         capabilities: ["fast-speed"],
@@ -2991,14 +2991,14 @@ describe("session posture", () => {
     );
     assert.strictEqual(
       formatPostureLine({
-        slug: "codex-chatgpt/gpt-5.6-terra",
+        slug: "codex-chatgpt/gpt-6.1-terra",
         tier: 2,
         local: false,
         approvePaidSession: true,
         fast: true,
         permissionLevel: "strict",
       }),
-      "posture: codex-chatgpt/gpt-5.6-terra · tier 2 · hosted · ⚡ fast · paid approved (session) · permission strict · workspace instructions: unknown",
+      "posture: codex-chatgpt/gpt-6.1-terra · tier 2 · hosted · ⚡ fast · paid approved (session) · permission strict · workspace instructions: unknown",
     );
   });
 
@@ -3099,11 +3099,11 @@ describe("session posture", () => {
 
   it("fetchSessionPosture carries the fast option when set", async () => {
     const posture = await fetchSessionPosture(
-      cfg({ model: "codex-chatgpt/gpt-5.6-terra", fast: true }),
+      cfg({ model: "codex-chatgpt/gpt-6.1-terra", fast: true }),
       postureConnect(
         { permissionLevel: "operator" },
         [{
-          slug: "codex-chatgpt/gpt-5.6-terra",
+          slug: "codex-chatgpt/gpt-6.1-terra",
           tier: 2,
           local: false,
           capabilities: ["fast-speed"],
@@ -3111,7 +3111,7 @@ describe("session posture", () => {
       ),
     );
     assert.partialDeepStrictEqual(posture, {
-      slug: "codex-chatgpt/gpt-5.6-terra",
+      slug: "codex-chatgpt/gpt-6.1-terra",
       fast: true,
     });
   });

@@ -74,8 +74,8 @@ describe("selectWorkbenchModel", () => {
 
   it("uses a configured default model across local, subscription, and hosted routes on a bare turn", () => {
     const subscriptionModel: WorkbenchModel = {
-      slug: "codex-chatgpt/gpt-5.6-sol",
-      displayName: "GPT-5.6 Sol (Codex ChatGPT)",
+      slug: "codex-chatgpt/gpt-6.1-sol",
+      displayName: "GPT-6.1 Sol (Codex ChatGPT)",
       provider: "codex-chatgpt",
       api: "acp",
       baseUrl: "http://127.0.0.1:0",
@@ -93,11 +93,11 @@ describe("selectWorkbenchModel", () => {
     const subscription = selectWorkbenchModel(
       [...models, subscriptionModel],
       {},
-      "codex-chatgpt/gpt-5.6-sol",
+      "codex-chatgpt/gpt-6.1-sol",
     );
     assert.strictEqual(
       subscription.selected.slug,
-      "codex-chatgpt/gpt-5.6-sol",
+      "codex-chatgpt/gpt-6.1-sol",
     );
     assert.strictEqual(subscription.reason, "default_config");
 
@@ -108,8 +108,8 @@ describe("selectWorkbenchModel", () => {
 
   it("validates fast speed tier option against model capabilities", () => {
     const fastCapableModel: WorkbenchModel = {
-      slug: "codex-chatgpt/gpt-5.6-terra",
-      displayName: "GPT-5.6 Terra (Codex ChatGPT)",
+      slug: "codex-chatgpt/gpt-6.1-terra",
+      displayName: "GPT-6.1 Terra (Codex ChatGPT)",
       provider: "codex-chatgpt",
       api: "acp",
       baseUrl: "http://127.0.0.1:0",
@@ -126,9 +126,9 @@ describe("selectWorkbenchModel", () => {
     // Fast option succeeds on fast-capable model
     const selection = selectWorkbenchModel(
       [...models, fastCapableModel],
-      { modelId: "codex-chatgpt/gpt-5.6-terra", fast: true },
+      { modelId: "codex-chatgpt/gpt-6.1-terra", fast: true },
     );
-    assert.strictEqual(selection.selected.slug, "codex-chatgpt/gpt-5.6-terra");
+    assert.strictEqual(selection.selected.slug, "codex-chatgpt/gpt-6.1-terra");
 
     // Fast option throws on unsupported model
     assert.throws(

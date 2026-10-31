@@ -46,8 +46,8 @@ const ACP_FIXTURE: ModelSeed = {
 };
 
 const CODEX_TERRA: ModelSeed = {
-  slug: "codex-chatgpt/gpt-5.6-terra",
-  display_name: "GPT-5.6 Terra",
+  slug: "codex-chatgpt/gpt-6.1-terra",
+  display_name: "GPT-6.1 Terra",
   provider: "codex-chatgpt",
   api: "acp",
   base_url: "local_stdio",
@@ -155,11 +155,11 @@ test("resolveRoute asks paid consent for an explicit Codex ChatGPT runner agains
   const banner = confirm.mock.calls[0].arguments[0];
   assert.ok(
     banner.includes(
-      "Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)",
+      "Model:           GPT-6.1 Terra (Codex) (codex-chatgpt/gpt-6.1-terra)",
     ),
     `expected ${
       JSON.stringify(banner)
-    } to include "Model:           GPT-5.6 Terra (Codex) (codex-chatgpt/gpt-5.6-terra)"`,
+    } to include "Model:           GPT-6.1 Terra (Codex) (codex-chatgpt/gpt-6.1-terra)"`,
   );
   assert.ok(
     banner.includes("Tier:            2"),
@@ -305,11 +305,11 @@ test("resolveRoute asks paid consent for a selected tier-2 ACP model with its se
   const banner = confirm.mock.calls[0].arguments[0];
   assert.ok(
     banner.includes(
-      "Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)",
+      "Model:           GPT-6.1 Terra (codex-chatgpt/gpt-6.1-terra)",
     ),
     `expected ${
       JSON.stringify(banner)
-    } to include "Model:           GPT-5.6 Terra (codex-chatgpt/gpt-5.6-terra)"`,
+    } to include "Model:           GPT-6.1 Terra (codex-chatgpt/gpt-6.1-terra)"`,
   );
   assert.ok(
     banner.includes("Route:           explicit_model_id"),

@@ -431,10 +431,6 @@ describe("getModelAccessModality", () => {
     assert.strictEqual(modality("grok-build", "acp"), "subscription-oauth");
     assert.strictEqual(modality("cursor-agent", ""), "subscription-oauth");
     assert.strictEqual(
-      modality("gemini-antigravity", "http://localhost:11434/v1"),
-      "subscription-oauth",
-    );
-    assert.strictEqual(
       modality("codex-chatgpt", "https://remote-proxy.example.com"),
       "custom-hosted",
     );
