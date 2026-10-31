@@ -55,7 +55,19 @@ export interface RuntimeStatusPayload {
     inFlightTurns?: number;
     /** The tool sandbox (BIT-662); absent on older servers. */
     sandbox?: { state?: unknown; backend?: unknown; reason?: unknown };
+    /** The Dolt store's state (BIT-832); absent on older servers. */
+    store?: { state?: unknown; user?: unknown };
   };
+}
+
+/**
+ * A field of server text as it may be printed: control characters replaced, a
+ * non-string rendered as the caller's fallback.
+ */
+function sanitizeField(value: unknown, fallback: string): string {
+  return typeof value === "string"
+    ? value.replace(/[\u0000-\u001f\u007f]/g, "?")
+    : fallback;
 }
 
 /**
@@ -67,11 +79,33 @@ export function formatSandbox(
   sandbox: NonNullable<RuntimeStatusPayload["runtime"]>["sandbox"],
 ): string | null {
   if (sandbox === undefined || sandbox === null) return null;
-  const text = (value: unknown, fallback: string) =>
-    typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "?") : fallback;
+  const text = sanitizeField;
   return sandbox.state === "on"
     ? `sandbox ${text(sandbox.backend, "unknown backend")}`
     : `sandbox OFF (${text(sandbox.reason, "no reason given")}): commands ask`;
+}
+
+/**
+ * The Dolt store's line, or null when the runtime reports no store (an older
+ * server). The refused line names the account and how to fix it; it carries
+ * no password and no driver text, which is what the probe reports and all it
+ * reports.
+ */
+export function formatStore(
+  store: NonNullable<RuntimeStatusPayload["runtime"]>["store"],
+): string | null {
+  if (store === undefined || store === null) return null;
+  if (store.state === "ok") return "dolt ok";
+  if (store.state === "refused") {
+    const user = typeof store.user === "string" && store.user.length > 0
+      ? sanitizeField(store.user, "")
+      : "";
+    return user === ""
+      ? `dolt REFUSED the login: check DOLT_USER and DOLT_PASSWORD`
+      : `dolt REFUSED the login for user "${user}": check DOLT_USER and ` +
+        "DOLT_PASSWORD";
+  }
+  return "dolt unreachable: is the Dolt server running?";
 }
 
 /** A fingerprint field for display: its first 12 characters (of the hex). */
@@ -227,6 +261,7 @@ export function formatRuntimeStatus(
     } hosted`,
     `permission: ${runtime.permissionLevel ?? "unknown"}`,
     ...[formatSandbox(runtime.sandbox)].filter((line) => line !== null),
+    ...[formatStore(runtime.store)].filter((line) => line !== null),
     `approve paid default: ${
       runtime.approvePaidDefault === true ? "yes" : "no"
     }`,

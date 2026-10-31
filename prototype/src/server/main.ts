@@ -36,8 +36,10 @@ import {
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
+  probeStoreStatus,
   type SessionLastRun,
   type Store,
+  type StoreStatus,
   type WorkbenchProjectSessions,
   type WorkbenchSessionSummary,
 } from "../store/mod.ts";
@@ -232,6 +234,12 @@ export interface WorkbenchUnixServerOptions {
    * is built here, so a ticket outlives the turn that opened it.
    */
   publish?: PublishServerPorts;
+  /**
+   * The Dolt store's health for `runtime/status`: one `SELECT 1` through the
+   * runtime's own pool. Absent, the status reports no store segment, which is
+   * what every store-less caller (tests over `MemoryStore`) wants.
+   */
+  storeProbe?: () => Promise<StoreStatus>;
 }
 
 /**
@@ -347,6 +355,9 @@ function buildHandlers(
       ...(options.sandbox === undefined
         ? {}
         : { sandboxStatus: options.sandbox.status }),
+      ...(options.storeProbe === undefined
+        ? {}
+        : { storeProbe: options.storeProbe }),
       loadModels,
       activity: () => ({
         clients: lifetime.clients,
@@ -605,7 +616,8 @@ async function main(): Promise<void> {
 
   // The runtime's one store over one Dolt pool. Connections open on first use,
   // so the boot does not wait for (or require) a running sql-server.
-  const store = new DoltStore(createDoltPool(doltConnection, policy));
+  const pool = createDoltPool(doltConnection, policy);
+  const store = new DoltStore(pool);
 
   // Boot-time column check: a reachable database that predates a migration in
   // schema/migrations/ fails the boot loudly, naming the missing columns. A
@@ -690,6 +702,9 @@ async function main(): Promise<void> {
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       externalMcp: externalMcpLines,
       sandbox,
+      // Bound to the pool this runtime's store already holds, not to a second
+      // connection config: one account, one pool, one answer.
+      storeProbe: () => probeStoreStatus(pool),
       ...(publish === undefined ? {} : { publish }),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
