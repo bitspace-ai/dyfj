@@ -11,6 +11,16 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **`[publish]` accepts optional `push` and `open_pr` commands (BIT-829).**
+  Both are argv arrays held to the same rules as `pre_gate` and `gate` — a
+  literal `argv[0]`, no refused program, no shell reached through `env`, only
+  the declared placeholders, no control characters, and the element and byte
+  limits — and `PublishConfig` carries them as `push` and `openPr` only when
+  they are configured. The two go together: a section with one and not the
+  other is refused at load with a message naming the missing key, because the
+  pair is one step the operator meant to configure. An absent pair changes
+  nothing. Nothing reads the keys yet; the tool that does follows in a later
+  change.
 - **`publish/start` refuses a run that cannot start before asking for
   approval (BIT-826).** A command may now define a `precheck`, which the
   invoker awaits before the permission decision; a refusal, or a precheck that

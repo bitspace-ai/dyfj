@@ -5,6 +5,11 @@
  *   [publish]
  *   pre_gate = ["./scripts/pre-gate", "--range", "{range}"]
  *   gate     = ["./scripts/gate", "--range", "{range}", "--report", "{report}"]
+ *   push     = ["git", "push", "origin", "{head}:refs/heads/{branch}"]
+ *   open_pr  = ["gh", "pr", "create", "--head", "{branch}"]
+ *
+ * `push` and `open_pr` are optional, but they are configured together: one
+ * without the other is a mistake at load, not a step silently skipped later.
  *
  * Every command is an ARGV ARRAY, never a shell string: the tool builds the
  * argv itself and substitutes the placeholders below into single elements, so
@@ -82,6 +87,10 @@ export interface PublishConfig {
    * `expired`; a head change invalidates it sooner.
    */
   ticketTtlMs: number;
+  /** Publish the head, if the operator configured a push step. */
+  push?: PublishArgv;
+  /** Open the pull request, if the operator configured one. */
+  openPr?: PublishArgv;
 }
 
 /** Default gate deadline: 40 minutes, well past a hand run's 10-30. */
@@ -158,6 +167,8 @@ const PUBLISH_KEYS: ReadonlySet<string> = new Set([
   "report_path",
   "gate_timeout_ms",
   "ticket_ttl_ms",
+  "push",
+  "open_pr",
 ]);
 
 const PLACEHOLDER_REF = /\{([^{}]*)\}/gu;
@@ -413,6 +424,17 @@ export function parsePublishConfig(
         `${configLabel(where)}`,
     );
   }
+  const push = readOptionalArgv(values, "push", where);
+  const openPr = readOptionalArgv(values, "open_pr", where);
+  // Both or neither: a push with no pull request, or the reverse, is a step
+  // the operator meant to configure and did not.
+  if ((push === undefined) !== (openPr === undefined)) {
+    const missing = push === undefined ? "push" : "open_pr";
+    throw new Error(
+      `config: publish.${missing} is required when the other of push and ` +
+        `open_pr is set; configure both or neither in ${configLabel(where)}`,
+    );
+  }
   return Object.freeze({
     preGate: parsePublishArgv(values["pre_gate"], "pre_gate", where),
     gate: parsePublishArgv(values["gate"], "gate", where),
@@ -431,7 +453,20 @@ export function parsePublishConfig(
       MIN_TICKET_TTL_MS,
       MAX_TICKET_TTL_MS,
     ),
+    ...(push === undefined ? {} : { push }),
+    ...(openPr === undefined ? {} : { openPr }),
   });
+}
+
+/** An optional command: absent stays absent, present is parsed like the rest. */
+function readOptionalArgv(
+  values: Record<string, unknown>,
+  key: string,
+  where: string,
+): PublishArgv | undefined {
+  const value = values[key];
+  if (value === undefined) return undefined;
+  return parsePublishArgv(value, key, where);
 }
 
 /**
