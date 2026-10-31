@@ -1348,6 +1348,16 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The Codex ChatGPT route no longer offers ChatGPT app tools (BIT-840).**
+  With a ChatGPT sign-in, Codex's defaults turn on its `apps` and `plugins`
+  features, which exposed every app connected to the signed-in account as a
+  tool in a Workbench session: 618 tools in one session, among them mail,
+  banking, GitHub merges and deploys, acting outside the runtime's own
+  approvals. The runtime now writes the dedicated Codex home's `config.toml`
+  on every launch with both features off, and passes the same switches in
+  each session's configuration. A session on this route listed 13 tools and
+  no app tools afterwards. The home is Workbench's own; nothing an operator
+  writes to that `config.toml` is kept.
 - **The docs give each process its own Dolt user instead of `root`.**
   `schema/README.md` has a new "Dolt users" section. It lists three users:
   - `dyfj_runtime` for the runtime: it may read and append to `events` but
