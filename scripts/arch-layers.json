@@ -149,6 +149,8 @@
     "prototype/src/acp-child-io.ts": "runners/acp",
     "prototype/src/acp-fixture-command.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
+    "prototype/src/codex-home-config.ts": "runners/acp",
+    "prototype/src/private-file.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
     "prototype/src/cli.ts": "cli"
   }

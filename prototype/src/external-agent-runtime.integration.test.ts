@@ -1065,7 +1065,15 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         JSON.stringify({
           model: "gpt-6.1-terra",
           model_reasoning_effort: "medium",
+          features: { apps: false, plugins: false },
         }),
+      );
+      // The dedicated Codex home carries the same switches, read at startup.
+      const codexConfigToml = `${profile.environment.CODEX_HOME}/config.toml`;
+      assert.strictEqual((await stat(codexConfigToml)).mode! & 0o777, 0o600);
+      assert.strictEqual(
+        await readFile(codexConfigToml, "utf8"),
+        "[features]\napps = false\nplugins = false\n",
       );
       assert.strictEqual(profile.toolchainDirectoryCount, 2);
       if (process.platform === "darwin") {
@@ -1125,6 +1133,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         {
           model: "gpt-6.1-sol",
           model_reasoning_effort: "medium",
+          features: { apps: false, plugins: false },
           service_tier: "fast",
         },
       );
@@ -1188,6 +1197,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.deepStrictEqual(JSON.parse(capturedEnv!.CODEX_CONFIG!), {
         model: "gpt-6.1-sol",
         model_reasoning_effort: "medium",
+        features: { apps: false, plugins: false },
         service_tier: "fast",
       });
     } finally {

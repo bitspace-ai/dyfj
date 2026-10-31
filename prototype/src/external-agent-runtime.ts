@@ -9,14 +9,12 @@ import {
 } from "./kernel/mod.ts";
 import { processEnv, type RuntimePolicy } from "./config/mod.ts";
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
   mkdir,
   open,
   realpath,
-  rename,
   rm,
   stat,
 } from "node:fs/promises";
@@ -77,6 +75,11 @@ import {
   type WorkbenchRuntimeRequest,
   workspaceRootForTransport,
 } from "./contract/mod.ts";
+import {
+  CODEX_DISABLED_FEATURES,
+  CODEX_HOME_CONFIG_TOML,
+} from "./codex-home-config.ts";
+import { writePrivateFile } from "./private-file.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -122,6 +125,7 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
 }
 
 export const CODEX_ACP_VERSION = "2.5.0";
+
 const CODEX_CHATGPT_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_ADAPTER_PACKAGE_METADATA_BYTES = 65_536;
 
@@ -311,39 +315,6 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-/**
- * Write a private runner file atomically. The content goes to a new file,
- * created exclusively under a random name beside the final one, so an
- * existing file is never followed or reused; it is then given its mode and
- * renamed into place. Any failure removes the temporary and reports the fixed
- * diagnostic, which does not disclose the path.
- */
-async function writePrivateFile(
-  path: string,
-  content: string,
-  mode: number,
-  diagnostic: string,
-): Promise<void> {
-  const temporary = `${path}-${randomUUID()}`;
-  let created = false;
-  try {
-    const file = await open(temporary, "wx", 0o600);
-    created = true;
-    try {
-      await file.writeFile(content);
-    } finally {
-      await file.close();
-    }
-    await chmod(temporary, mode);
-    await rename(temporary, path);
-  } catch {
-    if (created) {
-      // The rename may already have consumed the temporary path.
-      await rm(temporary, { force: true }).catch(() => {});
-    }
-    throw new DomainError(diagnostic);
-  }
-}
 
 export interface CodexChatGptProfileOptions {
   home?: string;
@@ -476,9 +447,19 @@ export async function codexChatGptProfile(
       "Codex ACP private shell profile is unavailable",
     );
   }
+  await writePrivateFile(
+    join(codexHome, "config.toml"),
+    CODEX_HOME_CONFIG_TOML,
+    0o600,
+    "Codex ACP private configuration is unavailable",
+  );
   const codexConfig: Record<string, unknown> = {
     model: options.modelName ?? "gpt-6.1-terra",
     model_reasoning_effort: options.reasoningEffort ?? "medium",
+    // The same switches again for each session, which the adapter passes
+    // per thread. Both layers are set because which of them Codex honours
+    // was not isolated; the canary observed no app tools with both.
+    features: { ...CODEX_DISABLED_FEATURES },
   };
   if (options.fast === true) {
     codexConfig.service_tier = "fast";
