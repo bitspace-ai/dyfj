@@ -77,6 +77,10 @@ import {
   type WorkbenchRuntimeRequest,
   workspaceRootForTransport,
 } from "./contract/mod.ts";
+import {
+  CODEX_DISABLED_FEATURES,
+  CODEX_HOME_CONFIG_TOML,
+} from "./codex-home-config.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -123,25 +127,6 @@ export function fixtureProfile(workspace: string): AcpExecutionProfile {
 
 export const CODEX_ACP_VERSION = "2.5.0";
 
-/**
- * Codex features this route turns off. With a ChatGPT sign-in, Codex's
- * defaults expose every app connected to that account as a tool (mail,
- * banking, GitHub merges, deploys), and plugins can add more. None of that
- * belongs in a Workbench coding session, and those tools act outside the
- * runtime's own approvals, so the dedicated Codex home never offers them.
- */
-const CODEX_DISABLED_FEATURES = { apps: false, plugins: false } as const;
-
-/**
- * The dedicated Codex home's `config.toml`, rewritten on every launch so the
- * app-server reads the disabled features at startup, before any session's
- * own configuration applies. The home is Workbench's alone; nothing an
- * operator writes there is kept.
- */
-export const CODEX_HOME_CONFIG_TOML = "[features]\n" +
-  Object.entries(CODEX_DISABLED_FEATURES)
-    .map(([key, value]) => `${key} = ${String(value)}\n`)
-    .join("");
 const CODEX_CHATGPT_PROMPT_TIMEOUT_MS = 30 * 60_000;
 const MAX_ADAPTER_PACKAGE_METADATA_BYTES = 65_536;
 
@@ -505,9 +490,7 @@ export async function codexChatGptProfile(
   const codexConfig: Record<string, unknown> = {
     model: options.modelName ?? "gpt-6.1-terra",
     model_reasoning_effort: options.reasoningEffort ?? "medium",
-    // The same switches again for each session, which the adapter passes
-    // per thread. Both layers are set; which of them Codex honours was not
-    // isolated, so neither is removed.
+    // Per-session copy of the switches; which layer Codex honours is untested.
     features: { ...CODEX_DISABLED_FEATURES },
   };
   if (options.fast === true) {
