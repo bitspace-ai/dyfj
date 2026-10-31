@@ -201,6 +201,23 @@ describe("publish push: a ready ticket ships", () => {
     assert.strictEqual(view.prUrl, PR_URL);
   });
 
+  it("skips a standalone URL that is not a pull request", async () => {
+    const { run } = setup({
+      script: [ok(), ok(`${PR_URL}\nhttps://docs.example.test/help\n`)],
+    });
+    const view = await run;
+    assert.strictEqual(view.prUrl, PR_URL);
+  });
+
+  it("does not take a non-pull-request URL as the pull request", async () => {
+    const { run } = setup({
+      script: [ok(), ok("https://docs.example.test/help\n")],
+    });
+    const view = await run;
+    assert.strictEqual(view.phase, "pushed");
+    assert.strictEqual(view.prUrl, undefined);
+  });
+
   it("pushes the commit the pins still name, and starts nothing else", async () => {
     const { calls, run } = setup({ script: [ok(), ok(PR_URL)] });
     await run;
@@ -317,6 +334,36 @@ describe("publish push: a failed pull request is retryable", () => {
     assert.strictEqual(second.reason, undefined);
     // The push ran once; the pull request was attempted twice.
     assert.deepStrictEqual(calls.map((call) => call[0]), ["git", "gh", "gh"]);
+  });
+
+  it("lets only one of two concurrent retries open the pull request", async () => {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const created = gated(tickets);
+    tickets.markPushing("s1", created.ticket, HEAD);
+    tickets.markPushed("s1", created.ticket);
+    let starts = 0;
+    let release: (result: PublishCommandResult) => void = () => {};
+    const deps = {
+      config: config(),
+      tickets,
+      policy: composeRuntimePolicy(),
+      sessionId: "s1",
+      readLayout: () => Promise.resolve(layout()),
+      startCommand: (() => {
+        starts += 1;
+        return {
+          result: new Promise<PublishCommandResult>((resolve) => {
+            release = resolve;
+          }),
+          cancel: () => {},
+        };
+      }) as never,
+    };
+    const first = runPush(deps, created.ticket);
+    await assert.rejects(runPush(deps, created.ticket), CommandExecutionError);
+    release(ok(PR_URL));
+    assert.strictEqual((await first).phase, "pr-open");
+    assert.strictEqual(starts, 1);
   });
 
   it("leaves the ticket pushed when open_pr prints no URL", async () => {

@@ -5,18 +5,20 @@
  *
  * - **The pin is checked once, before the push.** A ticket is pushed at most
  *   once, so the commit is re-read and compared with the ticket's before the
- *   push starts, and `markPushing` refuses a head that moved in the meantime.
+ *   push starts, and `markPushing` refuses a head that differs from the pin.
  *   `open_pr` is not re-checked: the push already happened, and the commit that
  *   is now published is the one the ticket pins.
  * - **A failed push is final, a failed pull request is not.** Pushing stopped
  *   the run, so the ticket goes `failed` with `failedPhase: "push"`. A pull
  *   request that failed leaves the ticket `pushed`: the commits are published,
  *   and a second call retries only that step rather than pushing twice.
- * - **Every stop is the ticket's, not an exception's.** A command that cannot
- *   start, a non-zero exit, a deadline and a cancel are each recorded on the
- *   ticket with the head of the output kept. Only the refusals that can start
- *   nothing at all - an unknown ticket, a ticket in the wrong phase, no
- *   configured commands - throw.
+ * - **A command's failure is the ticket's, a refusal is an exception.** A
+ *   command that cannot start, a non-zero exit, a deadline and a cancel are
+ *   each recorded on the ticket with the head of the output kept. The refusals
+ *   that start nothing - an unknown ticket, a ticket in the wrong phase, no
+ *   configured commands, pins that no longer match or cannot be read, a pull
+ *   request another call is already opening - throw and leave the ticket as
+ *   it was.
  *
  * This module registers no tool: a later slice wraps `runPush` in
  * `publish/push`, and the approval that binds the commit belongs there.
@@ -47,8 +49,12 @@ import type { PublishTicketView } from "./publish-tickets.ts";
 /** A push is minutes, not the gates' half hour; past this it is stopped. */
 export const PUSH_TIMEOUT_MS = 120_000;
 
-/** A pull request URL, as `gh` prints one: the only thing taken from output. */
-const PR_URL = /^https:\/\/[^\s]{1,500}$/u;
+/**
+ * A pull request URL, as `gh` prints one (`https://<host>/<owner>/<repo>/pull/<n>`):
+ * the only thing taken from output.
+ */
+const PR_URL =
+  /^https:\/\/[^\s/]{1,253}\/[^\s/]{1,100}\/[^\s/]{1,100}\/pull\/[1-9][0-9]{0,9}$/u;
 
 /**
  * What a phase that stopped leaves on the ticket: the reason, and the head of
@@ -74,7 +80,7 @@ function findings(stop: PhaseStop): { head: string; truncated: boolean } {
   };
 }
 
-/** The last line of `open_pr`'s output that is a pull request URL. */
+/** The last trimmed line of `open_pr`'s output that matches `PR_URL`. */
 function prUrlIn(output: string): string | undefined {
   const lines = output.split("\n").map((line) => line.trim());
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -206,6 +212,12 @@ export async function runPush(
     live = settled;
   }
 
+  if (!tickets.claimPr(sessionId, live.ticket)) {
+    throw new CommandExecutionError(
+      `ticket ${live.ticket} cannot open its pull request now: another call ` +
+        `is already opening it, or the ticket left the pushed phase`,
+    );
+  }
   const opened = await runPhase(config.openPr, "open_pr");
   if ("reason" in opened) {
     const failed = findings(opened);
