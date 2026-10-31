@@ -6,8 +6,9 @@
  * commit resolved host-side when it was created. The registry stores that pin
  * and `markPushing` refuses a head that moved; comparing the live layout
  * against the pin before each phase is the phase runner's job. The push transitions (`markPushing`, `markPushed`, `markPrOpen`,
- * `markDenied`) exist for the next slice and are reached by no registered tool
- * today.
+ * `markDenied`, `markPushFailed`, `notePrFailed`) are reached by no registered
+ * tool: `runPush` (`publish-push.ts`) drives them, and the tool that calls it
+ * is a later slice.
  *
  * In memory only, deliberately. After a runtime restart a ticket is gone and
  * `publish/status` says `unknown` rather than guessing: the gate report on
@@ -59,9 +60,11 @@ export interface PublishTicketView {
   /** Where the gate's combined output is written. */
   reportPath: string;
   /** Which phase's failure this is, once `phase` is `failed`. */
-  failedPhase?: "pre-gate" | "gate";
+  failedPhase?: "pre-gate" | "gate" | "push";
   /** Why it failed, as one operator-facing line. */
   reason?: string;
+  /** The pull request `open_pr` reported, once one is open. */
+  prUrl?: string;
   /** The first output kept, for a report. */
   outputHead?: string;
   truncatedOutput: boolean;
@@ -82,6 +85,8 @@ export interface PublishTicketView {
 interface TicketRecord extends PublishTicketView {
   /** The run in flight, when a phase is running. */
   cancelHook?: () => void;
+  /** True while one call's `open_pr` runs, so a second cannot start another. */
+  prInFlight?: boolean;
 }
 
 /** One registry, owned by the composition root for the runtime's lifetime. */
@@ -281,8 +286,9 @@ export class PublishTickets {
   }
 
   /**
-   * A push is approved and in flight (slice B, unregistered today). A head
-   * that moved since the gate expireds the ticket instead.
+   * A push is approved and in flight (`runPush` drives this; no tool is
+   * registered for it yet). A head that moved since the gate expireds the
+   * ticket instead.
    */
   markPushing(
     sessionId: string,
@@ -308,9 +314,80 @@ export class PublishTickets {
     return this.#settle(sessionId, ticket, "pushing", "pushed");
   }
 
-  /** The pull request is open. */
-  markPrOpen(sessionId: string, ticket: string): PublishTicketView | null {
-    return this.#settle(sessionId, ticket, "pushed", "pr-open");
+  /**
+   * The push stopped the run. Final: a ticket is pushed at most once, so there
+   * is no phase to return to and no second attempt to approve.
+   */
+  markPushFailed(
+    sessionId: string,
+    ticket: string,
+    reason: string,
+    outputHead: string,
+    truncatedOutput: boolean,
+  ): PublishTicketView | null {
+    const record = this.#live(sessionId, ticket);
+    if (record === null || record.phase !== "pushing") return null;
+    record.cancelHook = undefined;
+    record.phase = "failed";
+    record.failedPhase = "push";
+    record.reason = reason;
+    record.outputHead = outputHead;
+    record.truncatedOutput = truncatedOutput;
+    record.endedAtMs = this.#now();
+    return viewOf(record);
+  }
+
+  /**
+   * Claim the pull request step of a `pushed` ticket for one caller. False
+   * when the ticket is not pushed or another call's `open_pr` is running: two
+   * concurrent retries must not both open a pull request.
+   */
+  claimPr(sessionId: string, ticket: string): boolean {
+    const record = this.#live(sessionId, ticket);
+    if (record === null || record.phase !== "pushed") return false;
+    if (record.prInFlight === true) return false;
+    record.prInFlight = true;
+    return true;
+  }
+
+  /**
+   * `open_pr` failed. The ticket stays `pushed` - the push did happen, and a
+   * ticket that said otherwise would invite pushing the same commits twice -
+   * so a later call retries only the pull request.
+   */
+  notePrFailed(
+    sessionId: string,
+    ticket: string,
+    reason: string,
+    outputHead: string,
+    truncatedOutput: boolean,
+  ): PublishTicketView | null {
+    const record = this.#live(sessionId, ticket);
+    if (record === null || record.phase !== "pushed") return null;
+    delete record.prInFlight;
+    record.reason = reason;
+    record.outputHead = outputHead;
+    record.truncatedOutput = truncatedOutput;
+    return viewOf(record);
+  }
+
+  /**
+   * The pull request is open, and this is the URL it reported. The reason an
+   * earlier `notePrFailed` left is cleared: the failure it described is over.
+   */
+  markPrOpen(
+    sessionId: string,
+    ticket: string,
+    prUrl: string,
+  ): PublishTicketView | null {
+    const record = this.#live(sessionId, ticket);
+    if (record === null || record.phase !== "pushed") return null;
+    delete record.prInFlight;
+    record.phase = "pr-open";
+    record.prUrl = prUrl;
+    delete record.reason;
+    record.endedAtMs = this.#now();
+    return viewOf(record);
   }
 
   /**
@@ -370,7 +447,12 @@ export class PublishTickets {
     const now = this.#now();
     let changed = 0;
     for (const record of tickets.values()) {
-      if (record.phase === "expired" || record.phase === "pr-open") continue;
+      // A push in flight or done is a fact about GitHub, not a pending
+      // approval: relabelling it expired would hide that commits went out.
+      if (
+        record.phase === "expired" || record.phase === "pr-open" ||
+        record.phase === "pushing" || record.phase === "pushed"
+      ) continue;
       if (now - record.createdAtMs <= this.#ttlMs) continue;
       // A ticket that expires takes its running gate with it: a run whose
       // approval can never be used must not keep a process tree alive.
@@ -431,7 +513,7 @@ export function branchOf(layout: GitLayout): string | null {
 }
 
 function viewOf(record: TicketRecord): PublishTicketView {
-  const { cancelHook: _cancel, ...rest } = record;
+  const { cancelHook: _cancel, prInFlight: _claim, ...rest } = record;
   return { ...rest, layout: { ...rest.layout } };
 }
 

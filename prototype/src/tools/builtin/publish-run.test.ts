@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import process from "node:process";
 import { describe, it } from "node:test";
 import { composeRuntimePolicy } from "../../config/mod.ts";
-import { startPublishCommand } from "./publish-run.ts";
+import { publishPolicyFor, startPublishCommand } from "./publish-run.ts";
 
 const posix = process.platform !== "win32";
 
@@ -27,6 +27,37 @@ child.unref();
 process.stdout.write("escapee " + child.pid + "\\n");
 setTimeout(() => {}, 30000);
 `;
+
+describe("publish run: the policy the operator configured", () => {
+  it("grants the gate programs and the optional push and open_pr programs", () => {
+    const base = composeRuntimePolicy();
+    const push = ["git", "push"];
+    const openPr = ["gh", "pr", "create"];
+    const granted = publishPolicyFor(base, {
+      preGate: ["./pre-gate"],
+      gate: ["./gate"],
+      reportPath: "/tmp/{ticket}.log",
+      gateTimeoutMs: 60_000,
+      ticketTtlMs: 60_000,
+      push,
+      openPr,
+    });
+    for (const program of ["./pre-gate", "./gate", "git", "gh"]) {
+      assert.ok(granted.run.includes(program), `${program} must be granted`);
+    }
+    // The runtime's own policy is kept, not replaced.
+    assert.deepStrictEqual(granted.run.slice(0, base.run.length), base.run);
+    // A config with neither step grants neither.
+    const plain = publishPolicyFor(base, {
+      preGate: ["./pre-gate"],
+      gate: ["./gate"],
+      reportPath: "/tmp/{ticket}.log",
+      gateTimeoutMs: 60_000,
+      ticketTtlMs: 60_000,
+    });
+    assert.deepStrictEqual(plain.run, [...base.run, "./pre-gate", "./gate"]);
+  });
+});
 
 describe("publish run: a stopped run settles", () => {
   for (const how of ["timeout", "cancel"] as const) {
