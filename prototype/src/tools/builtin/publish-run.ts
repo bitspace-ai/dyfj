@@ -76,7 +76,8 @@ const DRAIN_MS = 1_000;
 
 /**
  * The policy a publish command starts under: the runtime's own, plus the
- * binaries the operator's `[publish]` section names.
+ * binaries the operator's `[publish]` section names - the pre-gate, the gate,
+ * and the optional push and pull-request commands.
  *
  * This is the same trust class as `[secrets].command` (`config/secrets-config.ts`):
  * an executable the operator wrote into their own config, not a path any model
@@ -88,7 +89,12 @@ export function publishPolicyFor(
   policy: RuntimePolicy,
   config: PublishConfig,
 ): RuntimePolicy {
-  const added = [config.preGate[0], config.gate[0]].filter(
+  const added = [
+    config.preGate[0],
+    config.gate[0],
+    config.push?.[0],
+    config.openPr?.[0],
+  ].filter(
     (entry): entry is string => entry !== undefined && entry !== "",
   );
   const run = [...policy.run];

@@ -8,7 +8,7 @@
  *   the layout is read again host-side and compared with the ticket's. A
  *   different git dir, commondir, branch or commit fails the ticket and starts
  *   nothing more: a gate that ran against one commit must not vouch for
- *   another. (The push, in the next slice, re-checks the commit again.)
+ *   another. (The push re-checks the commit again; `publish-push.ts`.)
  * - **The detached run has no unhandled rejection path.** Substitution, a
  *   command that cannot start and a command handle that rejects are each
  *   turned into the ticket's `failed` phase; a report that cannot be written
@@ -118,9 +118,13 @@ export function findingLines(output: string, truncated: boolean): string {
   return [...notes, ...head].join("\n");
 }
 
-/** Why a finished phase stopped the run, as one operator-facing line. */
+/**
+ * Why a finished phase stopped the run, as one operator-facing line. The phase
+ * is a plain label so a caller outside the gated phases (the push, `open_pr`)
+ * can name its own.
+ */
 export function failureReason(
-  phase: PublishPhaseName,
+  phase: string,
   result: PublishCommandResult,
 ): string {
   const survivors = result.pipesLeftOpen
@@ -300,7 +304,7 @@ export function sandboxWriteCheck(
 }
 
 /** The placeholder values one phase's argv is filled from. */
-function valuesFor(
+export function valuesFor(
   view: PublishTicketView,
   issue: string | undefined,
   implementer: string,
@@ -322,7 +326,7 @@ function valuesFor(
  * when they still match, or the reason the phase must not start. Read
  * host-side, from the root the ticket pinned.
  */
-async function recheckPins(
+export async function recheckPins(
   readLayout: (root: string) => Promise<GitLayout>,
   created: PublishTicketView,
   what: string,
@@ -347,7 +351,7 @@ async function recheckPins(
 }
 
 /** The argv one phase starts with, bounded again on what is actually started. */
-function phaseArgv(
+export function phaseArgv(
   template: readonly string[],
   values: PublishValues,
   what: string,

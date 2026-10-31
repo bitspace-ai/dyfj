@@ -422,6 +422,27 @@ describe("publish tools: the report head", () => {
     assert.ok(tail.length <= 301);
     assert.match(tail, /…$/);
   });
+
+  it("shows the pull request URL once one is open", () => {
+    const { tickets } = tools();
+    const view = tickets.create({
+      sessionId: "s1",
+      layout: LAYOUT,
+      reportPathFor: (ticket) => `/tmp/${ticket}.log`,
+    });
+    tickets.markGated("s1", view.ticket);
+    tickets.markReady("s1", view.ticket);
+    tickets.markPushing("s1", view.ticket, LAYOUT.head ?? "");
+    tickets.markPushed("s1", view.ticket);
+    assert.ok(!renderTicket(view).includes("pr: "));
+    const url = "https://github.com/example/repo/pull/7";
+    const open = tickets.markPrOpen("s1", view.ticket, url)!;
+    const rendered = renderTicket(open);
+    assert.match(rendered, new RegExp(`\\npr: ${url}$`));
+    // Directly after the report line, as the ticket's own facts are ordered.
+    const lines = rendered.split("\n");
+    assert.match(lines[lines.indexOf(`pr: ${url}`) - 1]!, /^report: /);
+  });
 });
 
 describe("publish tools: refusal paths", () => {

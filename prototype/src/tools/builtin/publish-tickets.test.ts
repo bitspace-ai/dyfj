@@ -11,6 +11,9 @@ import type { GitLayout } from "./publish-git.ts";
 /** The commit the fixture branch is on, as a definite id for the head checks. */
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 
+/** The pull request URL the push fixtures report. */
+const PR_URL = "https://github.com/example/repo/pull/1";
+
 const LAYOUT: GitLayout = {
   gitDir: "/repo/.git/worktrees/bit-786",
   commonDir: "/repo/.git",
@@ -42,6 +45,15 @@ function create(
     layout: overrides.layout ?? LAYOUT,
     reportPathFor: (ticket) => `/tmp/report-${ticket}.log`,
   });
+}
+
+/** A ticket past the gates, in `pushing`. */
+function pushing(tickets: PublishTickets) {
+  const view = create(tickets);
+  tickets.markGated("s1", view.ticket);
+  tickets.markReady("s1", view.ticket);
+  tickets.markPushing("s1", view.ticket, HEAD);
+  return view;
 }
 
 describe("publish tickets: creation", () => {
@@ -174,11 +186,114 @@ describe("publish tickets: the head is the approval", () => {
     assert.strictEqual(tickets.markPushing("s1", view.ticket, HEAD), null);
     assert.strictEqual(tickets.markPushing("s1", view.ticket, HEAD), null);
     assert.strictEqual(tickets.markPushed("s1", view.ticket)?.phase, "pushed");
-    assert.strictEqual(tickets.markPrOpen("s1", view.ticket)?.phase, "pr-open");
+    assert.strictEqual(
+      tickets.markPrOpen("s1", view.ticket, PR_URL)?.phase,
+      "pr-open",
+    );
+  });
+});
+
+describe("publish tickets: the push and the pull request", () => {
+  it("records a failed push as its own phase, and it is final", () => {
+    const { tickets } = registry();
+    const view = pushing(tickets);
+    const failed = tickets.markPushFailed(
+      "s1",
+      view.ticket,
+      "the push exited 128",
+      "! [rejected] main -> main (non-fast-forward)",
+      false,
+    );
+    assert.strictEqual(failed?.phase, "failed");
+    assert.strictEqual(failed?.failedPhase, "push");
+    assert.strictEqual(failed?.reason, "the push exited 128");
+    assert.match(failed?.outputHead ?? "", /rejected/);
+    assert.ok(failed?.endedAtMs !== undefined);
+    // A ticket is pushed at most once: no second attempt, no dead-end phase.
+    assert.strictEqual(tickets.markPushing("s1", view.ticket, HEAD), null);
+    assert.strictEqual(tickets.markPushed("s1", view.ticket), null);
+  });
+
+  it("refuses a push failure for a ticket that is not pushing", () => {
+    const { tickets } = registry();
+    const view = create(tickets);
+    assert.strictEqual(
+      tickets.markPushFailed("s1", view.ticket, "late", "", false),
+      null,
+    );
+    tickets.markGated("s1", view.ticket);
+    tickets.markReady("s1", view.ticket);
+    // `ready`, not `pushing`: nothing started, so there is no push to fail.
+    assert.strictEqual(
+      tickets.markPushFailed("s1", view.ticket, "late", "", false),
+      null,
+    );
+    assert.strictEqual(tickets.get("s1", view.ticket)?.phase, "ready");
+  });
+
+  it("leaves a failed pull request retryable, with only the reason recorded", () => {
+    const { tickets } = registry();
+    const view = pushing(tickets);
+    tickets.markPushed("s1", view.ticket);
+    const noted = tickets.notePrFailed(
+      "s1",
+      view.ticket,
+      "the open_pr exited 1",
+      "a pull request already exists for this branch",
+      false,
+    );
+    assert.strictEqual(noted?.phase, "pushed");
+    assert.strictEqual(noted?.failedPhase, undefined);
+    assert.strictEqual(noted?.reason, "the open_pr exited 1");
+    assert.match(noted?.outputHead ?? "", /already exists/);
+  });
+
+  it("refuses a pull request failure for a ticket that is not pushed", () => {
+    const { tickets } = registry();
+    const view = pushing(tickets);
+    assert.strictEqual(tickets.notePrFailed("s1", view.ticket, "no", "", false), null);
+    // A ticket already at `pr-open` has nothing left to retry.
+    tickets.markPushed("s1", view.ticket);
+    tickets.markPrOpen("s1", view.ticket, PR_URL);
+    assert.strictEqual(tickets.notePrFailed("s1", view.ticket, "no", "", false), null);
+    assert.strictEqual(tickets.get("s1", view.ticket)?.phase, "pr-open");
+  });
+
+  it("clears the failure reason once the pull request opens", () => {
+    const { tickets } = registry();
+    const view = pushing(tickets);
+    tickets.markPushed("s1", view.ticket);
+    tickets.notePrFailed("s1", view.ticket, "the open_pr exited 1", "", false);
+    const open = tickets.markPrOpen("s1", view.ticket, PR_URL);
+    assert.strictEqual(open?.phase, "pr-open");
+    assert.strictEqual(open?.prUrl, PR_URL);
+    assert.strictEqual(open?.reason, undefined);
+  });
+
+  it("refuses to open a pull request for a ticket that is not pushed", () => {
+    const { tickets } = registry();
+    const view = create(tickets);
+    assert.strictEqual(tickets.markPrOpen("s1", view.ticket, PR_URL), null);
   });
 });
 
 describe("publish tickets: lifetime", () => {
+  it("never expires a ticket whose push is in flight or done", () => {
+    const { tickets, advance } = registry({ ttlMs: 5_000 });
+    const inFlight = pushing(tickets);
+    const done = pushing(tickets);
+    tickets.markPushed("s1", done.ticket);
+    advance(5_001);
+    tickets.expireStale();
+    assert.strictEqual(tickets.get("s1", inFlight.ticket)?.phase, "pushing");
+    assert.strictEqual(tickets.get("s1", done.ticket)?.phase, "pushed");
+    // The push that was in flight can still settle.
+    assert.strictEqual(
+      tickets.markPushed("s1", inFlight.ticket)?.phase,
+      "pushed",
+    );
+  });
+
   it("expires a ticket past its TTL, reporting why", () => {
     const { tickets, advance } = registry({ ttlMs: 5_000 });
     const view = create(tickets);

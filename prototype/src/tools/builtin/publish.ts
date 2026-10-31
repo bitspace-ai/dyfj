@@ -104,6 +104,7 @@ export function renderTicket(
     `head: ${view.head ?? "(no commit)"}`,
     `report: ${view.reportPath}`,
   ];
+  if (view.prUrl !== undefined) lines.push(`pr: ${view.prUrl}`);
   if (view.reportError !== undefined) {
     lines.push(`report incomplete: ${view.reportError}`);
   }
