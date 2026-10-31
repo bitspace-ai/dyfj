@@ -1073,7 +1073,8 @@ README are tracked separately in its Revision history section.
 - **Codex ChatGPT receipts name the model (BIT-839).** The TypeScript CLI
   receipt includes the routed model slug, such as
   `codex-chatgpt/gpt-6.1-sol`, before the ACP protocol and access-route
-  evidence. The runner result carries it as optional `modelSlug`; runners
+  evidence, and the Rust REPL's external-runner receipt line shows the same
+  slug in place of the profile. The runner result carries it as optional `modelSlug`; runners
   without a model slug keep their profile label. Context documentation now
   records the canaries supporting Sol's 500,000-token window, with the 95%
   usable-window fraction labelled as inferred. Catalog row values are unchanged.
