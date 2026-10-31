@@ -11,6 +11,7 @@ import type { ConnectFn } from "../io.ts";
 import {
   formatRuntimeStatus,
   formatSandbox,
+  formatStore,
   formatUnavailableSecrets,
   probeRuntimeLiveness,
   runStatus,
@@ -507,5 +508,73 @@ describe("the sandbox line (BIT-662)", () => {
       },
     });
     assert.match(text, /permission: operator\nsandbox OFF \(DYFJ_SANDBOX=off\): commands ask/);
+  });
+});
+
+describe("the dolt store line (BIT-832)", () => {
+  it("says ok when the probe reached the store", () => {
+    assert.equal(formatStore({ state: "ok" }), "dolt ok");
+  });
+
+  it("names the user a refused login named, and how to fix it", () => {
+    assert.equal(
+      formatStore({ state: "refused", user: "workbench" }),
+      'dolt REFUSED the login for user "workbench": check DOLT_USER and DOLT_PASSWORD',
+    );
+  });
+
+  it("leaves the user out when there is none", () => {
+    assert.equal(
+      formatStore({ state: "refused" }),
+      "dolt REFUSED the login: check DOLT_USER and DOLT_PASSWORD",
+    );
+  });
+
+  it("points at the server when the store is unreachable", () => {
+    assert.equal(
+      formatStore({ state: "unreachable" }),
+      "dolt unreachable: is the Dolt server running?",
+    );
+  });
+
+  it("is absent for a runtime that reports no store", () => {
+    assert.equal(formatStore(undefined), null);
+    assert.doesNotMatch(
+      formatRuntimeStatus(cfg(), { runtime: { permissionLevel: "strict" } }),
+      /dolt/,
+    );
+  });
+
+  it("strips control characters from the user", () => {
+    assert.equal(
+      formatStore({ state: "refused", user: "work\u001b[2Jbench" }),
+      'dolt REFUSED the login for user "work?[2Jbench": check DOLT_USER and DOLT_PASSWORD',
+    );
+  });
+
+  it("shows no password and no driver text", () => {
+    // The probe carries neither, so a server that leaked one cannot print it.
+    const line = formatStore({
+      state: "refused",
+      user: "workbench",
+      password: "hunter2-do-not-print",
+    } as never) ?? "";
+    assert.ok(!line.includes("hunter2"));
+    assert.ok(!/access denied/i.test(line));
+    assert.ok(!line.includes("ER_ACCESS_DENIED_ERROR"));
+  });
+
+  it("dyfj status shows it under the sandbox line", () => {
+    const text = formatRuntimeStatus(cfg(), {
+      runtime: {
+        permissionLevel: "operator",
+        sandbox: { state: "on", backend: "srt 0.0.81" },
+        store: { state: "unreachable" },
+      },
+    });
+    assert.match(
+      text,
+      /sandbox srt 0\.0\.81\ndolt unreachable: is the Dolt server running\?/,
+    );
   });
 });

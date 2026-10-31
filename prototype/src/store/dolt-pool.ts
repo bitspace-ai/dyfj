@@ -79,8 +79,8 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
  *
  * The rejection is recognized by the driver's error code, never by matching
  * message text. Anything else — a refused connection, an unknown database, a
- * failed query — is passed through unchanged and stays a masked foreign error
- * at the turn boundary.
+ * failed query — propagates unchanged and keeps its existing treatment at the
+ * turn boundary; a failure that is already a `DomainError` stays visible.
  */
 export class DoltLoginRefusedError extends DomainError {
   /** The Dolt user the login was refused for, when the pool knew it. */

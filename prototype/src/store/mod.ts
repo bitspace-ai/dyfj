@@ -67,6 +67,11 @@ export {
   type Projector,
 } from "./projectors.ts";
 export { createDoltPool, type DoltPool } from "./dolt-pool.ts";
+export {
+  createStoreProbe,
+  STORE_PROBE_TIMEOUT_MS,
+  type StoreStatus,
+} from "./store-status.ts";
 export { DoltStore } from "./dolt.ts";
 export {
   BOOT_COLUMN_CHECK_TIMEOUT_MS,

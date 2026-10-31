@@ -17,6 +17,7 @@ import {
 } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
 import type { SandboxStatus } from "../../tools/mod.ts";
+import type { StoreStatus } from "../../store/mod.ts";
 import {
   asRecord,
   RpcError,
@@ -96,6 +97,11 @@ export interface WorkbenchRuntimeStatus {
    * Absent where no sandbox was booted (tests, in-process callers).
    */
   sandbox?: { state: "on" | "off"; backend: string; reason?: string };
+  /**
+   * The Dolt store's state, read by the probe at each call: absent where no
+   * probe is wired, so an older posture reports nothing about the store.
+   */
+  store?: { state: StoreStatus["state"]; user?: string };
 }
 
 /** What the runtime is doing right now, read at each call. */
@@ -135,6 +141,11 @@ export interface RuntimePosture {
   activity?: () => RuntimeActivity;
   /** The tool sandbox's status at boot. */
   sandboxStatus?: SandboxStatus;
+  /**
+   * The store's state at each `runtime/status`, run through the runtime's own
+   * pool. Absent where there is no store to ask.
+   */
+  storeProbe?: () => Promise<StoreStatus>;
 }
 
 export interface RuntimeHandlerDeps extends RuntimePosture {
@@ -204,6 +215,7 @@ function resolveDefaultTurnModel(
 export function runtimeStatus(
   options: RuntimePosture,
   models: WorkbenchModel[],
+  store?: StoreStatus,
 ): WorkbenchRuntimeStatus {
   const defaultCompanionModel = options.engineConfig?.defaultCompanionModel ??
     options.defaultCompanionModel ??
@@ -263,7 +275,17 @@ export function runtimeStatus(
     ...(options.sandboxStatus !== undefined
       ? { sandbox: { ...options.sandboxStatus } }
       : {}),
+    ...(store === undefined ? {} : { store: storePayload(store) }),
   };
+}
+
+/** The store segment as `runtime/status` reports it: the state, and a user. */
+function storePayload(
+  store: StoreStatus,
+): { state: StoreStatus["state"]; user?: string } {
+  return store.state === "refused" && store.user !== undefined
+    ? { state: store.state, user: store.user }
+    : { state: store.state };
 }
 
 /**
@@ -291,7 +313,13 @@ export function buildRuntimeHandlers(deps: RuntimeHandlerDeps): RpcHandlers {
 
     "runtime/status": async () => {
       const models = await deps.loadModels();
-      return { runtime: runtimeStatus(deps, models) };
+      // The probe never rejects and races its query against a timer, so a
+      // store that is down or refusing the login is reported rather than
+      // awaited. No probe wired: no store segment at all.
+      const store = deps.storeProbe === undefined
+        ? undefined
+        : await deps.storeProbe();
+      return { runtime: runtimeStatus(deps, models, store) };
     },
 
     "runtime/stop": async (params) => {

@@ -389,3 +389,40 @@ test("runtime/stop with ifSoleClient calls onShutdown in the same synchronous st
   assert.strictEqual(shutdownCalled, true);
   await pending;
 });
+
+test("runtime/status reports the store when a probe is wired", async () => {
+  const { runtime } = await callRpc(
+    handlers({ storeProbe: () => Promise.resolve({ state: "ok" }) }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert.deepStrictEqual(runtime.store, { state: "ok" });
+});
+
+test("runtime/status reports a refused login's user and nothing else", async () => {
+  const { runtime } = await callRpc(
+    handlers({
+      storeProbe: () =>
+        Promise.resolve({ state: "refused", user: "workbench" }),
+    }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert.deepStrictEqual(runtime.store, {
+    state: "refused",
+    user: "workbench",
+  });
+});
+
+test("runtime/status reports an unreachable store", async () => {
+  const { runtime } = await callRpc(
+    handlers({ storeProbe: () => Promise.resolve({ state: "unreachable" }) }),
+    "runtime/status",
+  ) as { runtime: Record<string, unknown> };
+  assert.deepStrictEqual(runtime.store, { state: "unreachable" });
+});
+
+test("runtime/status omits the store when no probe is wired", async () => {
+  const { runtime } = await callRpc(handlers(), "runtime/status") as {
+    runtime: Record<string, unknown>;
+  };
+  assert.ok(!("store" in runtime), "expected no store segment");
+});

@@ -161,6 +161,9 @@
             "state": "off",
             "backend": "srt 0.0.81",
             "reason": "DYFJ_SANDBOX=off"
+          },
+          "store": {
+            "state": "ok"
           }
         }
       }
