@@ -41,7 +41,7 @@ import {
 } from "../../config/publish-config.ts";
 import type { Env } from "../../config/mod.ts";
 import type { RuntimePolicy } from "../../config/runtime-policy.ts";
-import { clipToUtf8Bytes } from "../../kernel/mod.ts";
+import { clipToUtf8Bytes, pathFreeReason } from "../../kernel/mod.ts";
 import {
   type GitLayout,
   layoutsMatch,
@@ -92,19 +92,10 @@ export interface PublishPhaseDeps {
  * An exception's message with host paths removed, for a reason a model and the
  * durable log both read. A spawn error names the command and, for a command
  * outside the run policy, the path it resolved to; a gate's failure is about
- * the phase, not about where the runtime keeps things.
+ * the phase, not about where the runtime keeps things. One implementation, in
+ * the kernel (`pathFreeReason`), shared with the precheck a command may define.
  */
-export function pathFreeReason(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message
-    // Absolute POSIX paths, longest first, with anything trailing that looks
-    // like one (a path may hold spaces, so a run of non-space text is taken).
-    .replace(/\/(?:[^\s'"`,;:]+\/?)+/gu, "<path>")
-    // Windows drive paths and UNC shares.
-    .replace(/[A-Za-z]:\\[^\s'"`,;]*/gu, "<path>")
-    .replace(/\\\\[^\s'"`,;]*/gu, "<path>")
-    .slice(0, 300);
-}
+export { pathFreeReason };
 
 /**
  * The report's findings: the first non-empty lines of the output the run kept,

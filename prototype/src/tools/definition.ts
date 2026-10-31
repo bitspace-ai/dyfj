@@ -188,6 +188,19 @@ export interface CommandDefinition<TResult = unknown> {
    */
   grantable?: boolean;
   /**
+   * A pre-flight check that runs before the approval prompt. When it returns
+   * a non-null string, the engine treats the call as denied with that reason
+   * and never shows the prompt. Returns `null` when the call may proceed to
+   * the policy check and, if asked, the approval prompt.
+   *
+   * A returned reason is shown to the model and kept in the durable event as
+   * written, so it must be the command's own path-free text; a thrown error's
+   * message is reduced with `pathFreeReason` instead. The check is a point in
+   * time: a refusal it detects raises no prompt, and the executor must still
+   * re-check whatever can change while a prompt is open.
+   */
+  precheck?: (call: CommandCall) => Promise<string | null>;
+  /**
    * Redact this command's RESULT from the durable tool_call event (the model
    * still receives it in-turn, and on the session's later turns from the
    * engine's in-memory tool history while the engine holds it). Set for tools whose output can carry secrets the

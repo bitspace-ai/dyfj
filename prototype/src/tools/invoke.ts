@@ -5,7 +5,12 @@
  * redactor.
  */
 
-import { generateSpanId, generateULID, utf8SafePrefix } from "../kernel/mod.ts";
+import {
+  generateSpanId,
+  generateULID,
+  pathFreeReason,
+  utf8SafePrefix,
+} from "../kernel/mod.ts";
 import { type EventInsert, toolCallEvent } from "../store/mod.ts";
 import {
   type CommandCall,
@@ -198,6 +203,29 @@ async function runCommand<TResult>(
         isError: true,
       },
     };
+  }
+
+  // Pre-flight check: run before the approval prompt, so a refusal it detects
+  // raises no prompt (BIT-826). A precheck that throws is a
+  // refusal, not an escaped exception: its message can carry host detail, so
+  // it is reduced the way a durable failure reason is.
+  if (command.precheck !== undefined) {
+    let refusal: string | null;
+    try {
+      refusal = await command.precheck(call);
+    } catch (error) {
+      refusal = `the pre-flight check failed: ${pathFreeReason(error)}`;
+    }
+    if (refusal !== null) {
+      return {
+        result: {
+          decision: "deny",
+          authzBasis: "policy:deny:precheck",
+          reason: refusal,
+          isError: true,
+        },
+      };
+    }
   }
 
   const result = await runApproved(

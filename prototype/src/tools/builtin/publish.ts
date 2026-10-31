@@ -145,6 +145,58 @@ function placeholdersFor(
   };
 }
 
+/** The pins a run needs, or the reason it cannot start at all. */
+type StartPins =
+  | { readonly layout: GitLayout; readonly implementer: string }
+  | { readonly refusal: string };
+
+/**
+ * Resolve what a run needs before it can start: the session workspace as an
+ * anchored root, the git layout read from it host-side, and the implementing
+ * models from the runtime's own record. One resolver, used by the precheck
+ * (before the approval prompt) and the executor (again, after it): the layout
+ * can change while a prompt is open, so the executor re-checks rather than
+ * trusting the precheck.
+ *
+ * It creates nothing and writes nothing: no ticket, no process, no file. Every
+ * refusal is a path-free sentence, never an exception's raw message.
+ */
+async function resolveStartPins(deps: PublishToolDeps): Promise<StartPins> {
+  const readLayout = deps.readLayout ?? readPublishGitLayout;
+  // The root is the one this turn resolved and anchored, never a path read out
+  // of the worktree.
+  const root = await deps.rootAnchors.verify(deps.workspaceRoot);
+  let layout: GitLayout;
+  try {
+    layout = await readLayout(root);
+  } catch (error) {
+    // A root that is not a checkout the runtime can read is the model's
+    // problem to report, not a runtime fault.
+    return {
+      refusal: "the session workspace cannot be resolved as a git checkout: " +
+        pathFreeReason(error),
+    };
+  }
+  if (layout.head === null || layout.branchRef === null) {
+    return {
+      refusal: "the session workspace is not on a branch with a commit to gate",
+    };
+  }
+  // The operator's gate picks a different-family reviewer from this list, so it
+  // is read from the runtime's own event log rather than the worktree. An
+  // unresolvable answer refuses the run: a gate told nothing about who
+  // implemented cannot pick a different reviewer.
+  const implementer = await deps.resolveImplementer(deps.sessionId);
+  if (implementer === undefined || implementer === "") {
+    return {
+      refusal: "this session's implementing models cannot be resolved from " +
+        "its own record, so {implementer} would be empty; publish/start " +
+        "refuses rather than hand the gate an unknown implementer",
+    };
+  }
+  return { layout, implementer };
+}
+
 /**
  * `publish/start`'s executor: resolve the pins host-side, create the ticket,
  * then run the phases detached. The workspace and implementer are checked
@@ -159,38 +211,12 @@ async function startPublishRun(
     throw new CommandExecutionError("issue must be a tracker identifier");
   }
   const readLayout = deps.readLayout ?? readPublishGitLayout;
-  // The root is the one this turn resolved and anchored, never a path read out
-  // of the worktree.
-  const root = await deps.rootAnchors.verify(deps.workspaceRoot);
-  let layout: GitLayout;
-  try {
-    layout = await readLayout(root);
-  } catch (error) {
-    // A root that is not a checkout the runtime can read is the model's
-    // problem to report, not a runtime fault.
-    throw new CommandExecutionError(
-      `the session workspace cannot be resolved as a git checkout: ${
-        pathFreeReason(error)
-      }`,
-    );
-  }
-  if (layout.head === null || layout.branchRef === null) {
-    throw new CommandExecutionError(
-      "the session workspace is not on a branch with a commit to gate",
-    );
-  }
-  // The operator's gate picks a different-family reviewer from this list, so it
-  // is read from the runtime's own event log rather than the worktree. An
-  // unresolvable answer refuses the run: a gate told nothing about who
-  // implemented cannot pick a different reviewer.
-  const implementer = await deps.resolveImplementer(deps.sessionId);
-  if (implementer === undefined || implementer === "") {
-    throw new CommandExecutionError(
-      "this session's implementing models cannot be resolved from its own " +
-        "record, so {implementer} would be empty; publish/start refuses rather " +
-        "than hand the gate an unknown implementer",
-    );
-  }
+  // Checked again here even though the precheck ran first: the layout can
+  // change while the approval prompt is open, and this is the pass a started
+  // run is pinned to.
+  const pins = await resolveStartPins(deps);
+  if ("refusal" in pins) throw new CommandExecutionError(pins.refusal);
+  const { layout, implementer } = pins;
   const created = deps.tickets.create({
     sessionId: deps.sessionId,
     layout,
@@ -303,6 +329,15 @@ export function definePublishTools(
       cost: "none",
     },
     executor: (call) => startPublishRun(deps, call),
+    // Refuse before the approval prompt when the run cannot start: the same
+    // resolution the executor does, so a refusal it detects raises no prompt.
+    // The executor resolves again after approval.
+    precheck: async () => {
+      const pins = await resolveStartPins(deps);
+      return "refusal" in pins
+        ? `this run cannot start: ${pins.refusal}`
+        : null;
+    },
   };
 
   const status: CommandDefinition = {

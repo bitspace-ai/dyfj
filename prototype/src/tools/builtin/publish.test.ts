@@ -597,3 +597,82 @@ describe("publish tools: an untrusted layout refuses before anything runs", () =
     }
   });
 });
+
+describe("publish tools: refused before the approval prompt", () => {
+  /** A registry whose layout reads and implementer answer are scripted. */
+  function scripted(options: {
+    readLayout: () => Promise<GitLayout>;
+    implementer?: string | undefined;
+  }) {
+    const tickets = new PublishTickets({ ttlMs: 3_600_000 });
+    const runner = stubRunner([]);
+    const registry = createCommandRegistry();
+    for (
+      const command of definePublishTools({
+        config: config(),
+        tickets,
+        policy: composeRuntimePolicy(),
+        sessionId: "session-1",
+        workspaceRoot: ROOT,
+        rootAnchors: new RootAnchors(),
+        readLayout: options.readLayout,
+        resolveImplementer: async () =>
+          "implementer" in options ? options.implementer : "claude-opus-5",
+        startCommand: runner.start,
+      })
+    ) {
+      registry.register(command);
+    }
+    let prompts = 0;
+    const start = () =>
+      invokeCommand(registry, call("publish/start"), () => {
+        prompts += 1;
+        return Promise.resolve({ decision: "approve" });
+      });
+    return { start, tickets, runner, prompts: () => prompts };
+  }
+
+  it("refuses a layout that cannot be read without asking", async () => {
+    const s = scripted({
+      readLayout: () => Promise.reject(new Error("extensions.worktreeConfig is on")),
+    });
+    const result = await s.start();
+    assert.strictEqual(result.isError, true);
+    assert.match(result.isError ? result.reason : "", /cannot start/);
+    assert.strictEqual(s.prompts(), 0);
+    assert.strictEqual(s.tickets.latest("session-1"), null);
+  });
+
+  it("refuses a session with no implementer without asking", async () => {
+    const s = scripted({
+      readLayout: async () => layoutIn(ROOT),
+      implementer: undefined,
+    });
+    const result = await s.start();
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(s.prompts(), 0);
+  });
+
+  it("still asks on every start that can begin", async () => {
+    const s = scripted({ readLayout: async () => layoutIn(ROOT) });
+    await s.start();
+    await s.start();
+    assert.strictEqual(s.prompts(), 2);
+  });
+
+  it("refuses after approval when the layout changed during the prompt", async () => {
+    let reads = 0;
+    const s = scripted({
+      readLayout: async () => {
+        reads += 1;
+        if (reads === 1) return layoutIn(ROOT);
+        throw new Error("the repository moved");
+      },
+    });
+    const result = await s.start();
+    assert.strictEqual(result.isError, true);
+    assert.strictEqual(s.prompts(), 1);
+    assert.strictEqual(s.runner.calls.length, 0);
+    assert.strictEqual(s.tickets.latest("session-1"), null);
+  });
+});
