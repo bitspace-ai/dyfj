@@ -96,10 +96,10 @@ describe("publish config: the table", () => {
     assert.throws(
       () =>
         parsePublishConfig(
-          table({ pre_gate: ["true"], gate: ["true"], push: ["true"] }),
+          table({ pre_gate: ["true"], gate: ["true"], pusher: ["true"] }),
           WHERE,
         ),
-      /unknown key publish\.push/,
+      /unknown key publish\.pusher/,
     );
   });
 
@@ -155,6 +155,79 @@ describe("publish config: the table", () => {
         new RegExp(`publish\\.${key}`),
       );
     }
+  });
+});
+
+describe("publish config: the push and pull request commands", () => {
+  const both = { pre_gate: ["true"], gate: ["true"] };
+
+  it("parses both commands when both are configured", () => {
+    const config = parsePublishConfig(
+      table({
+        ...both,
+        push: ["git", "push", "origin", "{head}:refs/heads/{branch}"],
+        open_pr: ["gh", "pr", "create", "--head={branch}"],
+      }),
+      WHERE,
+    );
+    assert.ok(config !== null);
+    assert.deepStrictEqual(config.push, [
+      "git",
+      "push",
+      "origin",
+      "{head}:refs/heads/{branch}",
+    ]);
+    assert.deepStrictEqual(config.openPr, [
+      "gh",
+      "pr",
+      "create",
+      "--head={branch}",
+    ]);
+  });
+
+  it("refuses either one alone, naming the missing key", () => {
+    assert.throws(
+      () =>
+        parsePublishConfig(table({ ...both, push: ["git", "push"] }), WHERE),
+      /publish\.open_pr is required/,
+    );
+    assert.throws(
+      () =>
+        parsePublishConfig(
+          table({ ...both, open_pr: ["gh", "pr", "create"] }),
+          WHERE,
+        ),
+      /publish\.push is required/,
+    );
+  });
+
+  it("holds push to the same argv rules, naming the key", () => {
+    for (
+      const push of [
+        // a shell where an argv belongs
+        ["bash", "-c", "git push origin HEAD"],
+        // a placeholder nobody declared
+        ["git", "push", "{nope}"],
+        // a control character
+        ["git", "push", "oops\n"],
+      ]
+    ) {
+      assert.throws(
+        () =>
+          parsePublishConfig(
+            table({ ...both, push, open_pr: ["gh", "pr", "create"] }),
+            WHERE,
+          ),
+        /publish\.push/,
+      );
+    }
+  });
+
+  it("leaves the config without them when neither is configured", () => {
+    const config = parsePublishConfig(table(both), WHERE);
+    assert.ok(config !== null);
+    assert.ok(!("push" in config));
+    assert.ok(!("openPr" in config));
   });
 });
 
