@@ -1085,8 +1085,9 @@ README are tracked separately in its Revision history section.
   than the API model cards' 1,050,000. The 2026-10-31 canaries reported
   475,000 usable tokens for Sol and Terra and 258,400 for Astra and Luna,
   exactly 95% of their row windows (an inferred usable-window fraction).
-  This supports Sol's documented 500,000 window; the bundled catalog's
-  272,000 was stale. The 128,000 output limit is the cards' figure, which
+  That is consistent with Sol's documented 500,000 window rather than the
+  bundled catalog's 272,000; no canary sent a prompt near either limit. The
+  128,000 output limit is the cards' figure, which
   Codex does not publish per route. Astra, Sol and Terra are tier 2 and Luna
   is tier 1; every row carries
   `fast-speed`. The superseded `codex-chatgpt/gpt-5.6-sol` and

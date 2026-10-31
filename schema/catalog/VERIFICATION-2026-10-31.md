@@ -59,8 +59,9 @@ The 2026-10-31 canaries reported usable context windows of **475,000** for
 `gpt-6.1-sol` and `gpt-6.1-terra`, and **258,400** for `gpt-6-astra` and
 `gpt-6-luna`. Each is exactly 95% of its row's 500,000 or 272,000 tokens.
 That 95% usable-window fraction is **inferred from the receipts**, not a
-provider statement. The canaries support Sol's documented 500,000-token
-window; the bundled catalog's 272,000 value was stale. No row values change.
+provider statement. The reported figures are consistent with Sol's documented
+500,000-token window rather than the bundled catalog's 272,000; no canary
+sent a prompt near either limit. No row values change.
 
 ## Observed — the adapter no longer blocks the generation
 

@@ -49,12 +49,12 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
         // External-agent receipts carry their own cost semantics. That route
         // is deferred for the daily driver, so this front-end names it rather
         // than rendering half of it.
-        // The routed model's slug when the runner reports one, so the line
-        // says which model answered; otherwise the runner profile.
+        // The model slug Workbench selected for the runner, when the runtime
+        // reports one as a string; otherwise the runner profile.
         let runner = receipt
             .pointer("/runner/modelSlug")
-            .or_else(|| receipt.pointer("/runner/profile"))
             .and_then(Value::as_str)
+            .or_else(|| receipt.pointer("/runner/profile").and_then(Value::as_str))
             .unwrap_or("external runner");
         return format!("— {} · external runner receipt", visible(runner));
     }
@@ -240,6 +240,8 @@ mod tests {
         );
         let without = json!({"runner": {"profile": "codex-chatgpt"}});
         assert_eq!(line(&without, 0.0), "— codex-chatgpt · external runner receipt");
+        let null_slug = json!({"runner": {"profile": "codex-chatgpt", "modelSlug": null}});
+        assert_eq!(line(&null_slug, 0.0), "— codex-chatgpt · external runner receipt");
     }
 
     #[test]
