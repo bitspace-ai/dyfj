@@ -159,6 +159,16 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A publish gate's `git diff` runs again (BIT-834).** Every publish child
+  ran with `diff.external` set to an empty string, which git takes as a
+  program named "" rather than as no external diff, so a pre-gate or gate
+  whose `git diff` reached the external driver died with `external diff died`
+  after its tests passed. The override is removed. An external diff driver is
+  in the same class as the diff, filter and textconv drivers the layout checks
+  already cover: its config sources are config the sandbox cannot write and
+  the operator's own global config, and `GIT_EXTERNAL_DIFF` is not in a
+  child's environment allowlist. A test runs a real `git diff` in the
+  environment a publish child gets.
 - **A refused Dolt login at session open names the credential (BIT-809).** A
   wrong `DOLT_USER` or `DOLT_PASSWORD` failed every turn before the model call
   and reached the operator as `turn failed: [Error, 29 bytes]`, because the
@@ -168,9 +178,10 @@ README are tracked separately in its Revision history section.
   message text — and raises a `DoltLoginRefusedError`, a `DomainError`, in its
   place from `execute`, from `getConnection`, and from a borrowed connection's
   `execute`. Its message names the user from the pool's own resolved
-  configuration and points at `DOLT_USER` and `DOLT_PASSWORD`; it carries no
-  password, no secret value, no host path and no driver text. Every other
-  connection or query failure propagates unchanged and stays masked.
+  configuration and points at `DOLT_USER` and `DOLT_PASSWORD`; it carries
+  neither the password field nor the driver's text. Every other connection or
+  query failure propagates unchanged and keeps its existing treatment at the
+  turn boundary.
 - **Anthropic cache traffic now prices at the model row's own catalog cache
   rates (BIT-788).** Cache reads and 5-minute cache writes were charged at
   fixed multiples of the row's input price — reads at 0.1x, writes at 1.25x —
