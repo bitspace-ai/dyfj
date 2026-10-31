@@ -313,9 +313,9 @@ export function buildRuntimeHandlers(deps: RuntimeHandlerDeps): RpcHandlers {
 
     "runtime/status": async () => {
       const models = await deps.loadModels();
-      // The probe bounds itself (never rejects, never past its timeout), so a
-      // store that is down or refusing the login is reported, not awaited
-      // forever. No probe wired: no store segment at all.
+      // The probe never rejects and races its query against a timer, so a
+      // store that is down or refusing the login is reported rather than
+      // awaited. No probe wired: no store segment at all.
       const store = deps.storeProbe === undefined
         ? undefined
         : await deps.storeProbe();

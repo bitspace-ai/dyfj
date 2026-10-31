@@ -68,7 +68,7 @@ export {
 } from "./projectors.ts";
 export { createDoltPool, type DoltPool } from "./dolt-pool.ts";
 export {
-  probeStoreStatus,
+  createStoreProbe,
   STORE_PROBE_TIMEOUT_MS,
   type StoreStatus,
 } from "./store-status.ts";

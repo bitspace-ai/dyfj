@@ -36,7 +36,7 @@ import {
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
-  probeStoreStatus,
+  createStoreProbe,
   type SessionLastRun,
   type Store,
   type StoreStatus,
@@ -235,8 +235,8 @@ export interface WorkbenchUnixServerOptions {
    */
   publish?: PublishServerPorts;
   /**
-   * The Dolt store's health for `runtime/status`: one `SELECT 1` through the
-   * runtime's own pool. Absent, the status reports no store segment, which is
+   * The Dolt store's health for `runtime/status`: a `SELECT 1` through the
+   * runtime's own pool, at most one outstanding. Absent, the status reports no store segment, which is
    * what every store-less caller (tests over `MemoryStore`) wants.
    */
   storeProbe?: () => Promise<StoreStatus>;
@@ -704,7 +704,7 @@ async function main(): Promise<void> {
       sandbox,
       // Bound to the pool this runtime's store already holds, not to a second
       // connection config: one account, one pool, one answer.
-      storeProbe: () => probeStoreStatus(pool),
+      storeProbe: createStoreProbe(pool),
       ...(publish === undefined ? {} : { publish }),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the

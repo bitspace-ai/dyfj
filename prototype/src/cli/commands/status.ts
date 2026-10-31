@@ -61,8 +61,8 @@ export interface RuntimeStatusPayload {
 }
 
 /**
- * A field of server text as it may be printed: control characters replaced, a
- * non-string rendered as the caller's fallback.
+ * A field of server text as it may be printed: ASCII control characters
+ * replaced, a non-string rendered as the caller's fallback.
  */
 function sanitizeField(value: unknown, fallback: string): string {
   return typeof value === "string"

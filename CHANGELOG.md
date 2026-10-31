@@ -16,9 +16,10 @@ README are tracked separately in its Revision history section.
   `runtime/status` now runs one `SELECT 1` through the runtime's own guarded
   pool and reports `store: { state }` as `ok`, `refused` (with the configured
   user the pool's `DoltLoginRefusedError` names) or `unreachable` (any other
-  failure, or no answer within 1500 ms). The probe never rejects and never
-  holds the call past that bound, and it reports no driver text or error
-  message. `dyfj status` prints `dolt ok`, `dolt REFUSED the login for user
+  failure, or no answer before a 1500 ms timer fires). The probe never
+  rejects, keeps at most one query outstanding (a call made while a timed-out
+  query is still pending waits on that query again rather than starting
+  another), and reports no driver text or error message. `dyfj status` prints `dolt ok`, `dolt REFUSED the login for user
   "<user>": check DOLT_USER and DOLT_PASSWORD`, or `dolt unreachable: is the
   Dolt server running?`, and prints no Dolt line for a server that reports
   no store.
