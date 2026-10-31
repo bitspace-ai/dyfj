@@ -631,12 +631,9 @@ describe("publish phases: the report and the sandbox", () => {
     const check = sandboxWriteCheck(layout());
     assert.strictEqual(await check(join(ROOT, "reports")), true);
     assert.strictEqual(await check("/tmp/claude/reports"), true);
-    const outside = realpathSync(await mkdtemp(join(tmpdir(), "dyfj-publish-out-")));
-    try {
-      assert.strictEqual(await check(outside), false);
-    } finally {
-      rmSync(outside, { recursive: true, force: true });
-    }
+    // Not under tmpdir(): inside the sandbox that is srt's scratch, which is
+    // writable. A path that need not exist is resolved through its ancestors.
+    assert.strictEqual(await check("/usr/share/dyfj-not-a-write-grant"), false);
   });
 
   it("says in the report when a phase's output was cut", async () => {
