@@ -533,7 +533,7 @@ The accepted reply shapes are:
 
 - `{"kind":"text","text":"A reply."}`. Optional `finish` is `"stop"`
   (the default) or `"length"`; empty text is valid, including at a length finish.
-- `{"kind":"tool","tool":"file.read","arguments":{"path":"a.txt"}}`.
+- `{"kind":"tool","tool":"read_file","arguments":{"path":"a.txt"}}`.
   The registry tool ID must have been offered in the request; otherwise the
   script returns HTTP 500.
 - `{"kind":"tool","wireName":"unoffered_tool","arguments":{}}`.
