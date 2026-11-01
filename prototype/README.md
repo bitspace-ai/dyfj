@@ -486,6 +486,68 @@ both cases and the update path. Before the move to `node:test`, the runner's wri
 on `testing/golden/snapshots` enforced the same rule. Any suite argument other than `--update` is refused, because nothing could pass it
 on.
 
+### Disposable runtime
+
+From `prototype/`, `node scripts/scratch-runtime.ts up` starts a foreground
+instance and prints its state-file path once it answers liveness. Keep that
+terminal open; copy the path into `scratch_state` in another terminal:
+
+```sh
+scratch_state=/tmp/dyfj_s_EXAMPLE/state.json  # use the printed path
+node scripts/scratch-runtime.ts env --state "$scratch_state"
+node scripts/scratch-runtime.ts exec --state "$scratch_state" 'Say hello.'
+node scripts/scratch-runtime.ts evidence --state "$scratch_state"
+node scripts/scratch-runtime.ts down --state "$scratch_state"
+```
+
+`exec` launches the product's `dyfj exec --json` and records its reply and full
+receipt for `evidence` and `down` (the latest invocation). `down` prints the commands, reply, receipt and boot commit after the
+recorded processes (the supervisor, Dolt and the engine) stop and the
+temporary root is removed. It does not track `exec`'s CLI children, so run
+`down` only after every `exec` has returned. Before
+signalling a process, `down` requires the state file to be owned by the current
+user with mode `0600`, and checks that the PID's command line matches an
+invocation of `scratch-runtime.ts up`. That check does not tell two checkouts
+apart. It prints
+an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
+terminal also attempts to stop the instance and remove its root. A startup failure
+attempts the same cleanup. Exported variables point at deleted paths after shutdown; use them
+inside a separate shell.
+
+For direct CLI use, `env` prints quoted shell exports. Start a shell with
+`env -i PATH="$PATH" /bin/sh`, apply those exports there, then use
+`node src/cli/main.ts exec --json 'Say hello.'` or the checkout's `dyfj`
+launcher as usual. Read the full `receipt` field from the JSON result.
+Bare `/receipt` is unavailable in both existing REPLs; `/receipt steps` only
+shows per-call usage for a turn run in that REPL. Direct invocations are not captured by the
+recording helper; retain their output separately.
+
+`up --script replies.json` accepts a nonempty JSON array of loopback model
+replies, consumed in order with the last reply repeated:
+
+```json
+[{"kind":"text","text":"A deterministic reply.","usage":{"promptTokens":10,"completionTokens":5}}]
+```
+
+Replies may also be `{"kind":"tool","tool":"file.read","arguments":{...}}`
+(using an offered registry tool ID), or `{"kind":"hold","text":"Waiting"}`
+for cancellation. A `--script` path, even an empty one, is read and its
+replies validated before boot; a missing or malformed script fails. The default is the fixed
+text `Scratch reply.`. The only active model is `scratch-local`, with zero
+cost and a loopback endpoint; real-model behavior and paid routes require
+maintainer runtime verification. The runtime and CLI children start with an
+explicitly built environment that carries no operator credentials; the `up`
+supervisor process itself keeps the environment of the shell that started it.
+
+The boot path lives in `scripts/disposable-runtime.ts`, shared with the golden
+harness: isolated Dolt and catalog seed, model server, Linear MCP fake, engine
+profiles, and CLI launches. For this command the Dolt repository, temporary
+HOME, configuration, workspace, temp files and socket all live under its fresh
+root. Each Dolt fixture child uses `<fixture-root>/home` as HOME. The state
+file is owner-readable/writable and carries the supervisor PID, child PIDs,
+socket, CLI environment and boot commit. The lifecycle isolation test runs in
+the existing integration lane (`scripts/scratch-runtime.integration.test.ts`).
+
 The root aggregate gate runs the schema, Rust, isolated-Dolt integration, and
 golden characterization lanes in addition to this prototype unit suite. The integration
 lane runs every `*.integration.test.ts`: product files under `node --test` with the
