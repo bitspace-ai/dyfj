@@ -69,10 +69,10 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     assertAlmostEqual(result.usage.cost.total, 0.077175, 5e-6);
   });
 
-  it("meters Meta Muse Spark 1.2 on OpenRouter with exact rates", async () => {
+  it("meters Meta Muse Spark 1.3 on OpenRouter with exact rates", async () => {
     const museModel: WorkbenchModel = {
-      slug: "meta/muse-spark-1.2",
-      displayName: "Meta Muse Spark 1.2",
+      slug: "meta/muse-spark-1.3",
+      displayName: "Meta Muse Spark 1.3",
       provider: "openrouter",
       api: "openai-completions",
       baseUrl: "https://openrouter.ai/api/v1",
@@ -99,22 +99,22 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "hello",
-      routing: { modelId: "meta/muse-spark-1.2" },
+      routing: { modelId: "meta/muse-spark-1.3" },
       models: [museModel],
       getEnv,
       fetchFn: transport.fetch,
     });
 
     transport.assertDone();
-    assert.strictEqual(result.model.slug, "meta/muse-spark-1.2");
+    assert.strictEqual(result.model.slug, "meta/muse-spark-1.3");
     // 0.2M in * 1.25 + 0.01M out * 4.25 = 0.25 + 0.0425 = 0.2925
     assertAlmostEqual(result.usage.cost.total, 0.2925, 5e-6);
   });
 
-  it("meters Grok 4.6 on OpenRouter with pass-through rates", async () => {
+  it("meters Grok 4.7 on OpenRouter with pass-through rates", async () => {
     const grokOrModel: WorkbenchModel = {
-      slug: "x-ai/grok-4.6",
-      displayName: "Grok 4.6 (OpenRouter)",
+      slug: "x-ai/grok-4.7",
+      displayName: "Grok 4.7 (OpenRouter)",
       provider: "openrouter",
       api: "openai-completions",
       baseUrl: "https://openrouter.ai/api/v1",
@@ -142,14 +142,14 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
     const result = await runWorkbenchTurn({
       systemPrompt: "system",
       prompt: "hello",
-      routing: { modelId: "x-ai/grok-4.6" },
+      routing: { modelId: "x-ai/grok-4.7" },
       models: [grokOrModel],
       getEnv,
       fetchFn: transport.fetch,
     });
 
     transport.assertDone();
-    assert.strictEqual(result.model.slug, "x-ai/grok-4.6");
+    assert.strictEqual(result.model.slug, "x-ai/grok-4.7");
     // 0.05M in * 2.0 + 0.01M out * 6.0 = 0.10 + 0.06 = 0.16
     assertAlmostEqual(result.usage.cost.total, 0.16, 5e-6);
   });
