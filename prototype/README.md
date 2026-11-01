@@ -502,7 +502,9 @@ node scripts/scratch-runtime.ts down --state "$scratch_state"
 
 `exec` launches the product's `dyfj exec --json` and records its reply and full
 receipt for `evidence` and `down` (the latest invocation). `down` prints the commands, reply, receipt and boot commit after the
-instance and its children stop and the temporary root is removed. Before
+recorded processes (the supervisor, Dolt and the engine) stop and the
+temporary root is removed. It does not track `exec`'s CLI children, so run
+`down` only after every `exec` has returned. Before
 signalling a process, `down` requires the state file to be owned by the current
 user with mode `0600`, and checks that the PID's command line matches an
 invocation of `scratch-runtime.ts up`. That check does not tell two checkouts
@@ -529,7 +531,8 @@ replies, consumed in order with the last reply repeated:
 
 Replies may also be `{"kind":"tool","tool":"file.read","arguments":{...}}`
 (using an offered registry tool ID), or `{"kind":"hold","text":"Waiting"}`
-for cancellation. Malformed scripts fail before boot. The default is the fixed
+for cancellation. A `--script` path, even an empty one, is read and its
+replies validated before boot; a missing or malformed script fails. The default is the fixed
 text `Scratch reply.`. The only active model is `scratch-local`, with zero
 cost and a loopback endpoint; real-model behavior and paid routes require
 maintainer runtime verification. The runtime and CLI children start with an

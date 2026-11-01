@@ -1,13 +1,18 @@
 import { test } from "node:test";
-import { deepEqual, equal, throws } from "node:assert/strict";
+import { deepEqual, equal, rejects, throws } from "node:assert/strict";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   assertPrivateStateFile,
   assertRuntimeCommand,
   jsonScript,
+  loadScript,
   shellExports,
 } from "./scratch-runtime.ts";
+
+test("an empty --script path is refused, not replaced by the default", async () => {
+  await rejects(loadScript(""));
+});
 
 test("shutdown refuses a PID whose command is not this runtime's up", () => {
   const script = fileURLToPath(

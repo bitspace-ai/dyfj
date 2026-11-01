@@ -132,12 +132,16 @@ async function loadState(path: string, forShutdown: boolean): Promise<State> {
   }
   return state;
 }
-async function up(scriptFile?: string): Promise<void> {
-  const script = jsonScript(
-    scriptFile
+/** The default reply, or the replies in `scriptFile`, validated before boot. */
+export async function loadScript(scriptFile?: string): Promise<ModelScript> {
+  return jsonScript(
+    scriptFile !== undefined
       ? JSON.parse(await readFile(scriptFile, "utf8"))
       : [{ kind: "text", text: "Scratch reply." }],
   );
+}
+async function up(scriptFile?: string): Promise<void> {
+  const script = await loadScript(scriptFile);
   let root: string | undefined;
   const controller = new AbortController();
   const stop = () => controller.abort();
