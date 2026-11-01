@@ -2753,4 +2753,5 @@ Document revisions only. Code and behavior changes are tracked in
   every rule, including cross-family review. Fast-lane changes may be
   reviewed by any model family, may be verified by the implementer on a
   disposable runtime instance, and may be merged by the maintainer in
-  batches.
+  batches. The coordinator may make a small fix itself when staging an
+  implementer would cost more than the fix.

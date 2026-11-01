@@ -13,7 +13,10 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
   On the standard lane the reviewer is a different model family from the
   implementer, without exception. On the fast lane any family may review.
 - **Coordinator:** sequences work, stages tasks, verifies claims against
-  their sources, and adjudicates review findings. Never implements.
+  their sources, and adjudicates review findings. Implements only a small
+  fix, and only when staging an implementer for it would cost more than
+  making the fix. That fix follows the implementer's rules, and the
+  maintainer adjudicates its review findings.
 - **Maintainer:** performs the acts no agent performs: acceptance testing,
   accepting a review, merging to `main`, changing scope, operational
   deletion (branches, worktrees, data, daemons, or files outside the
@@ -93,8 +96,9 @@ records that on the issue and continues on the standard lane.
 9. When blocked on a decision only the maintainer can make, post the
    options with consequences and one recommendation, then stop.
 10. _Fast lane:_ the maintainer may accept and merge fast-lane pull
-    requests in batches, on the gate's status line and the recorded runtime
-    evidence, and acceptance-test the batch rather than each change.
+    requests in batches, on each change's aggregate gate status line
+    (rule 4), its adjudicated review and its recorded runtime evidence, and
+    acceptance-test the batch rather than each change.
     Merging stays the maintainer's act.
 
 ## Why
