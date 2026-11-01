@@ -11,6 +11,12 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Disposable runtime instances (BIT-847).** `prototype/scripts/scratch-runtime.ts`
+  starts and stops an isolated Dolt-backed runtime with a scripted loopback
+  model, prints its CLI environment, and records an `exec` reply and receipt
+  with commands and commit for a teardown evidence block. The golden harness
+  shares its boot path. Dolt fixture children use an isolated HOME.
+
 - **`dyfj status` reports the Dolt store's state (BIT-832).** A refused
   login or an unreachable server used to show only when a turn failed.
   `runtime/status` now runs one `SELECT 1` through the runtime's own guarded

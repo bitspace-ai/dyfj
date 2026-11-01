@@ -2755,3 +2755,7 @@ Document revisions only. Code and behavior changes are tracked in
   disposable runtime instance, and may be merged by the maintainer in
   batches. The coordinator may make a small fix itself when staging an
   implementer would cost more than the fix.
+- 2026-11-01 - `prototype/README.md` documents the disposable runtime command,
+  its scripted loopback model and recorded CLI evidence. Fast-lane runtime
+  verification in `docs/agents/rooms.md` names the command and keeps maintainer
+  verification for real-model behavior and paid routes.

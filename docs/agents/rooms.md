@@ -87,12 +87,14 @@ records that on the issue and continues on the standard lane.
 8. The interactive runtime under test is driven by the maintainer, not by
    an agent. An agent that needs a runtime step writes a labelled,
    self-contained prompt for the maintainer and records what comes back.
-   _Fast lane:_ the implementer may drive a disposable runtime instance
-   itself: a scratch Dolt database and scratch configuration, on a local
-   model or within the configured spend limits, never the operator's live
-   database or sessions. The implementer records the commands and the
-   output as evidence on the issue. Where no disposable instance is
-   available, rule 8 applies as written.
+   _Fast lane:_ the implementer may drive the disposable runtime with
+   `node scripts/scratch-runtime.ts` from `prototype/` (`up`, `env`, `exec`,
+   `down`; see `prototype/README.md`, Disposable runtime). It uses a scratch
+   Dolt fixture, scratch configuration and a scripted loopback model. The
+   implementer records the commands, reply, receipt and commit as evidence
+   on the issue; `exec` captures them and `down` prints the evidence block.
+   For changes the loopback model cannot exercise, including real-model
+   behavior and paid routes, rule 8 applies as written.
 9. When blocked on a decision only the maintainer can make, post the
    options with consequences and one recommendation, then stop.
 10. _Fast lane:_ the maintainer may accept and merge fast-lane pull

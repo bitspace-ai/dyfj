@@ -5,7 +5,7 @@
 // and runs unchanged on either (decision D32).
 import { Buffer } from "node:buffer";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import process from "node:process";
 import mysql from "mysql2/promise";
 
 export interface IsolatedDoltFixture {
+  pid: number;
   root: string;
   database: string;
   port: number;
@@ -23,6 +24,8 @@ export interface IsolatedDoltFixture {
 export interface IsolatedDoltFixtureOptions {
   repoRoot: string;
   prefix?: string;
+  /** Keep all disposable data under this instance root. */
+  parent?: string;
   signal?: AbortSignal;
   afterReady?: (fixture: Omit<IsolatedDoltFixture, "cleanup">) => Promise<void>;
 }
@@ -106,9 +109,16 @@ function spawnChild(
   args: string[],
   options: { cwd: string; stdin: "ignore" | "pipe"; output: "ignore" | "pipe" },
 ): Child {
+  const home = join(options.cwd, "home");
   const child = spawn(command, args, {
     cwd: options.cwd,
-    env: fixtureEnvironment(),
+    env: {
+      ...fixtureEnvironment(),
+      HOME: home,
+      TMPDIR: home,
+      TMP: home,
+      TEMP: home,
+    },
     stdio: [options.stdin, options.output, options.output],
   });
   const status = new Promise<number | null>((resolve, reject) => {
@@ -428,12 +438,13 @@ export async function startIsolatedDoltFixture(
   options: IsolatedDoltFixtureOptions,
 ): Promise<IsolatedDoltFixture> {
   const root = await mkdtemp(
-    join(tmpdir(), options.prefix ?? "dyfj_fixture_"),
+    join(options.parent ?? tmpdir(), options.prefix ?? "dyfj_fixture_"),
   );
   let child: Child | undefined;
   let cleaned = false;
   try {
     throwIfAborted(options.signal);
+    await mkdir(join(root, "home"));
     await runChecked("dolt", [
       "init",
       "--name",
@@ -451,6 +462,7 @@ export async function startIsolatedDoltFixture(
     const server = await startSqlServer(root, database, options.signal);
     child = server.child;
     const fixture = {
+      pid: child.process.pid!,
       root,
       database,
       port: server.port,
