@@ -11,6 +11,12 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Scripted model reasoning and finish reasons (BIT-852).** The loopback model
+  supports reasoning text and token counts in streamed and buffered replies,
+  text replies ending with `stop` or `length`, and explicit tool wire names
+  even when the request offers no tools. Disposable-runtime JSON scripts accept
+  the same fields.
+
 - **Disposable runtime instances (BIT-847).** `prototype/scripts/scratch-runtime.ts`
   starts and stops an isolated Dolt-backed runtime with a scripted loopback
   model, prints its CLI environment, and records an `exec` reply and receipt
