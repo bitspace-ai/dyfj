@@ -143,6 +143,20 @@ export function formatReceipt(
   );
 }
 
+/**
+ * The one-line notice for a turn that ended at the output cap with an empty
+ * reply — a reasoning model spent its whole output budget on reasoning.
+ * Returns `undefined` when there is nothing to say.
+ */
+export function lengthStopEmptyNotice(
+  result: TurnResult,
+): string | undefined {
+  if (result.stopReason !== "length" || result.text.length > 0) {
+    return undefined;
+  }
+  return "turn stopped at the output limit";
+}
+
 /** The share of the turn's input served from cache, in whole percent. */
 function cachedPercent(
   input: number,

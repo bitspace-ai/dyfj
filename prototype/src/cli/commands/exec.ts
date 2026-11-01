@@ -5,7 +5,7 @@ import { promptMidTurnApproval } from "../approval.ts";
 import type { CliConfig } from "../args.ts";
 import type { ConnectFn, Io, TurnInterruptSource } from "../io.ts";
 import { socketError } from "../render/errors.ts";
-import { formatReceipt } from "../render/receipt.ts";
+import { formatReceipt, lengthStopEmptyNotice } from "../render/receipt.ts";
 import { createTurnOutputHandlers } from "../render/turn-output.ts";
 import {
   createTurnSpinner,
@@ -119,6 +119,10 @@ export async function runExec(
       }
       if (result.stopReason === "aborted") {
         handlers.onEvent({ type: "turnAborted" });
+      }
+      const lengthNotice = lengthStopEmptyNotice(result);
+      if (lengthNotice !== undefined) {
+        io.err(lengthNotice);
       }
       io.err(formatReceipt(result, config.color));
     }
