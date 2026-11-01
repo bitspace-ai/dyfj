@@ -178,6 +178,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Disposable runtime lifecycle (BIT-847).** Startup cleanup covers temporary
+  root preparation, and state and evidence files are explicitly set to mode
+  `0600` independently of the invoking shell's umask.
+
 - **A publish gate's `git diff` runs again (BIT-834).** Every publish child
   ran with `diff.external` set to an empty string, which git takes as a
   program named "" rather than as no external diff, so a pre-gate or gate

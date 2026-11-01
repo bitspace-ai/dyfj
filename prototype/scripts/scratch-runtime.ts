@@ -2,6 +2,7 @@
 import { spawnSync } from "node:child_process";
 import type { Stats } from "node:fs";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   open,
@@ -11,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { ModelScript } from "../testing/servers/model-server.ts";
 import {
@@ -92,6 +94,23 @@ export function assertPrivateStateFile(
   }
 }
 
+export function assertRuntimeCommand(command: string): void {
+  const script = fileURLToPath(import.meta.url);
+  const matches = [process.execPath, "node"].some((node) =>
+    [script, "scripts/scratch-runtime.ts", "./scripts/scratch-runtime.ts"]
+      .some((path) => {
+        const prefix = `${node} ${path} up`;
+        const value = command.trim();
+        return value === prefix ||
+          value.startsWith(`${prefix} --script `) &&
+            value.length > `${prefix} --script `.length;
+      })
+  );
+  if (!matches) {
+    throw new Error("PID is not this runtime supervisor running up");
+  }
+}
+
 async function loadState(path: string, forShutdown: boolean): Promise<State> {
   const file = await open(path, "r");
   let state: State;
@@ -119,14 +138,15 @@ async function up(scriptFile?: string): Promise<void> {
       ? JSON.parse(await readFile(scriptFile, "utf8"))
       : [{ kind: "text", text: "Scratch reply." }],
   );
-  const root = await mkdtemp("/tmp/dyfj_s_");
-  await mkdir(`${root}/tmp`);
+  let root: string | undefined;
   const controller = new AbortController();
   const stop = () => controller.abort();
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
   let runtime: Awaited<ReturnType<typeof startDisposableRuntime>> | undefined;
   try {
+    root = await mkdtemp("/tmp/dyfj_s_");
+    await mkdir(`${root}/tmp`);
     runtime = await startDisposableRuntime({
       models: [MODEL],
       script,
@@ -161,6 +181,7 @@ async function up(scriptFile?: string): Promise<void> {
       await writeFile(`${root}/state.json`, JSON.stringify(state, null, 2), {
         mode: 0o600,
       });
+      await chmod(`${root}/state.json`, 0o600);
       process.stdout.write(`${root}/state.json\n`);
       await new Promise<void>((resolve) => {
         controller.signal.addEventListener("abort", () => resolve(), {
@@ -173,7 +194,9 @@ async function up(scriptFile?: string): Promise<void> {
     try {
       await runtime?.close();
     } finally {
-      await rm(root, { recursive: true, force: true });
+      if (root !== undefined) {
+        await rm(root, { recursive: true, force: true });
+      }
       process.off("SIGTERM", stop);
       process.off("SIGINT", stop);
     }
@@ -229,6 +252,7 @@ async function exec(state: State, prompt: string): Promise<void> {
   const evidence = `Commit: ${state.commit}\nCommands:\n${commands}\n` +
     `Reply:\n${turn.text}\nReceipt (exec --json):\n${turn.receipt}\n`;
   await writeFile(`${state.root}/evidence.txt`, evidence, { mode: 0o600 });
+  await chmod(`${state.root}/evidence.txt`, 0o600);
   process.stdout.write(result);
 }
 async function down(state: State): Promise<void> {
@@ -240,6 +264,13 @@ async function down(state: State): Promise<void> {
     evidence = `Commit: ${state.commit}\n` +
       "No recorded turn; use scratch-runtime exec to capture evidence.\n";
   }
+  const supervisor = spawnSync("ps", ["-o", "command=", "-p", `${state.pid}`], {
+    encoding: "utf8",
+  });
+  if (supervisor.error || supervisor.status !== 0) {
+    throw new Error("cannot verify runtime supervisor command");
+  }
+  assertRuntimeCommand(supervisor.stdout);
   process.kill(state.pid, "SIGTERM");
   const deadline = Date.now() + 30_000;
   const alive = (pid: number) => {

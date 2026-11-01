@@ -1,10 +1,32 @@
 import { test } from "node:test";
 import { deepEqual, equal, throws } from "node:assert/strict";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import {
   assertPrivateStateFile,
+  assertRuntimeCommand,
   jsonScript,
   shellExports,
 } from "./scratch-runtime.ts";
+
+test("shutdown refuses a PID whose command is not this runtime's up", () => {
+  const script = fileURLToPath(
+    new URL("./scratch-runtime.ts", import.meta.url),
+  );
+  assertRuntimeCommand(`${process.execPath} ${script} up`);
+  assertRuntimeCommand("node scripts/scratch-runtime.ts up\n");
+  assertRuntimeCommand("node scripts/scratch-runtime.ts up --script r.json");
+  for (const command of [
+    "node unrelated.ts",
+    "node scripts/scratch-runtime.ts down",
+    "node scripts/scratch-runtime.ts upper",
+    "node /other/scripts/scratch-runtime.ts up",
+    "echo node scripts/scratch-runtime.ts up",
+    "",
+  ]) {
+    throws(() => assertRuntimeCommand(command), /runtime supervisor/);
+  }
+});
 
 test("shutdown requires the current owner and mode 0600", () => {
   assertPrivateStateFile({ uid: 501, mode: 0o100600 }, 501);

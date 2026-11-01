@@ -504,7 +504,8 @@ node scripts/scratch-runtime.ts down --state "$scratch_state"
 receipt for `evidence` and `down` (the latest invocation). `down` prints the commands, reply, receipt and boot commit after the
 instance and its children stop and the temporary root is removed. Before
 signalling a process, `down` requires the state file to be owned by the current
-user with mode `0600`. It prints
+user with mode `0600` and checks that the PID's command is this script running
+`up`. It prints
 an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
 terminal also stops the instance and removes its root. Startup failures clean
 up too. Exported variables point at deleted paths after shutdown; use them
@@ -536,7 +537,7 @@ The boot path lives in `scripts/disposable-runtime.ts`, shared with the golden
 harness: isolated Dolt and catalog seed, model server, Linear MCP fake, engine
 profiles, and CLI launches. For this command the Dolt repository, temporary
 HOME, configuration, workspace, temp files and socket all live under its fresh
-root. Each Dolt fixture child uses its fixture directory as HOME. The state
+root. Each Dolt fixture child uses `<fixture-root>/home` as HOME. The state
 file is owner-readable/writable and carries the supervisor PID, child PIDs,
 socket, CLI environment and boot commit. The lifecycle isolation test runs in
 the existing integration lane (`scripts/scratch-runtime.integration.test.ts`).
