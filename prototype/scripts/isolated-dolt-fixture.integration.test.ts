@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { connect } from "node:net";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -56,6 +56,24 @@ function assertNotFound(path: string): Promise<void> {
 }
 
 describe("isolated Dolt fixture", () => {
+  it("disables Dolt metrics in the fixture HOME, so no background writer races cleanup", async () => {
+    const fixture = await withDeadline((signal) =>
+      startIsolatedDoltFixture({ repoRoot, signal })
+    );
+    try {
+      const config = JSON.parse(
+        await readFile(`${fixture.root}/home/.dolt/config_global.json`, "utf8"),
+      );
+      assert.equal(config["metrics.disabled"], "true");
+      const events = await readdir(`${fixture.root}/home/.dolt/eventsData`)
+        .catch(() => [] as string[]);
+      assert.deepEqual(events.filter((name) => name.endsWith(".devts")), []);
+    } finally {
+      await fixture.cleanup();
+    }
+    await assert.rejects(stat(fixture.root), { code: "ENOENT" });
+  });
+
   it("interrupts a readiness probe stalled after TCP accept", async () => {
     const listener = await startMuteListener({
       hostname: "127.0.0.1",

@@ -5,7 +5,14 @@
 // and runs unchanged on either (decision D32).
 import { Buffer } from "node:buffer";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -444,7 +451,13 @@ export async function startIsolatedDoltFixture(
   let cleaned = false;
   try {
     throwIfAborted(options.signal);
-    await mkdir(join(root, "home"));
+    // Dolt otherwise leaves a detached `dolt send-metrics` process writing
+    // into HOME after each command, which races the root's removal.
+    await mkdir(join(root, "home", ".dolt"), { recursive: true });
+    await writeFile(
+      join(root, "home", ".dolt", "config_global.json"),
+      JSON.stringify({ "metrics.disabled": "true" }),
+    );
     await runChecked("dolt", [
       "init",
       "--name",
