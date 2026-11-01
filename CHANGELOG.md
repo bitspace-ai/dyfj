@@ -1070,6 +1070,17 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **The Codex ChatGPT route can edit its workspace without asking
+  (BIT-842).** The runtime now starts codex-acp in its `workspace-write` mode
+  instead of `read-only`: ordinary edits inside the session workspace
+  (`--workspace`, or the client's working directory) need no approval
+  prompt, protected paths such as `.git` stay read-only, and writes outside
+  the workspace and network access are refused unless the model escalates and
+  the operator approves. A session on this route wrote inside a linked
+  worktree freely, and was refused writing outside it, touching the
+  worktree's `.git` pointer, creating a git tag and reaching the network. The
+  mode is pinned by a test, because codex-acp maps an unknown mode to its
+  `agent` default, in which Codex approves its own actions.
 - **Codex ChatGPT receipts name the model (BIT-839).** The TypeScript CLI
   receipt includes the routed model slug, such as
   `codex-chatgpt/gpt-6.1-sol`, before the ACP protocol and access-route

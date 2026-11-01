@@ -470,7 +470,13 @@ export async function codexChatGptProfile(
     CODEX_PATH: codexPath,
     CARGO_HOME: cargoHome,
     NO_BROWSER: "1",
-    INITIAL_AGENT_MODE: "read-only",
+    // codex-acp's workspace-write mode: ordinary edits inside the session
+    // workspace need no approval, protected paths such as `.git` stay
+    // read-only, and anything else is refused unless the model escalates and
+    // the operator approves. The value must be exact: codex-acp maps an
+    // unknown mode to its "agent" default, in which Codex approves its own
+    // actions.
+    INITIAL_AGENT_MODE: "workspace-write",
     PATH: childPath,
     CODEX_CONFIG: JSON.stringify(codexConfig),
   };
