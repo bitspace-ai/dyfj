@@ -98,9 +98,9 @@ test("historical replay plus migrations selects Qwen, omits the superseded row, 
 });
 
 const sonnet55 = "claude-sonnet-5-5";
-const kimiK3 = "moonshotai/kimi-k3";
+const kimiK31Pro = "moonshotai/kimi-k3.1-pro";
 const hostedMigration =
-  "migrations/015_models_claude_sonnet_5_5_and_kimi_k3.sql";
+  "migrations/023_models_openrouter_refresh.sql";
 const expectedHostedRows = [
   [
     sonnet55,
@@ -113,11 +113,11 @@ const expectedHostedRows = [
     128000,
   ],
   [
-    kimiK3,
+    kimiK31Pro,
     "openrouter",
-    "0.304000",
-    "11.936000",
-    "0.210000",
+    "2.000000",
+    "10.000000",
+    "0.200000",
     "0.000000",
     1048576,
     943718,
@@ -130,7 +130,7 @@ async function assertHostedRows(
 ): Promise<void> {
   const rows = await queryRows(
     repository,
-    `SELECT slug, provider, cost_input, cost_output, cost_cache_read, cost_cache_write, context_window, max_output_tokens, active FROM models WHERE slug IN ('${sonnet55}', '${kimiK3}') ORDER BY slug`,
+    `SELECT slug, provider, cost_input, cost_output, cost_cache_read, cost_cache_write, context_window, max_output_tokens, active FROM models WHERE slug IN ('${sonnet55}', '${kimiK31Pro}') ORDER BY slug`,
     undefined,
   );
   const actual = rows.map((row) => [
@@ -154,7 +154,7 @@ async function assertHostedRows(
   }
 }
 
-test("fresh catalog carries Sonnet 5.5 and Kimi K3", async () => {
+test("fresh catalog carries Sonnet 5.5 and Kimi K3.1 Pro", async () => {
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
   await withSchemaRepository(
@@ -166,7 +166,7 @@ test("fresh catalog carries Sonnet 5.5 and Kimi K3", async () => {
   );
 });
 
-test("historical replay plus migrations adds Sonnet 5.5 and Kimi K3 and preserves operator deactivation", async () => {
+test("historical replay plus migrations adds Sonnet 5.5 and Kimi K3.1 Pro and preserves operator deactivation", async () => {
   const plan = await readSchemaApplyPlan(schemaDir);
   assertSchemaApplyPlan(plan);
   if (!plan.migrations.includes(hostedMigration)) {
@@ -182,7 +182,7 @@ test("historical replay plus migrations adds Sonnet 5.5 and Kimi K3 and preserve
       await runChecked("dolt", [
         "sql",
         "-q",
-        `UPDATE models SET active = FALSE WHERE slug IN ('${sonnet55}', '${kimiK3}')`,
+        `UPDATE models SET active = FALSE WHERE slug IN ('${sonnet55}', '${kimiK31Pro}')`,
       ], {
         cwd: repository,
         label: "disable hosted models in disposable catalog",
@@ -569,3 +569,141 @@ test("historical replay plus migrations adds the trimmed-in rows and removes the
     },
   );
 });
+
+// Current OpenRouter prices and limits must agree on fresh and migrated installs.
+const refreshMigration = "migrations/023_models_openrouter_refresh.sql";
+const refreshRows = [
+  ["deepseek/deepseek-v4-pro-0813", 2, "0.115000", "4.000000", "0.110000", 1048576, 943718],
+  ["meta/muse-spark-1.3", 2, "1.250000", "4.250000", "0.150000", 1048576, 943718],
+  ["minimax/minimax-m3", 2, "0.300000", "1.200000", "0.060000", 1048576, 512000],
+  ["mistralai/mistral-small-2603", 1, "0.150000", "0.600000", "0.015000", 262144, 209715],
+  ["moonshotai/kimi-k3.1-pro", 2, "2.000000", "10.000000", "0.200000", 1048576, 943718],
+  ["qwen/qwen3-coder-next", 1, "0.120000", "0.800000", "0.070000", 262144, 235929],
+  ["x-ai/grok-4.7", 2, "2.000000", "6.000000", "0.500000", 500000, 450000],
+];
+const refreshRemoved = [
+  "moonshotai/kimi-k3",
+  "deepseek/deepseek-r1",
+  "x-ai/grok-4.6",
+  "meta/muse-spark-1.2",
+  "minimax/minimax-m1",
+  "mistralai/mistral-small-3.2-24b-instruct",
+  "qwen/qwen3-coder",
+  "qwen/qwen3-coder-plus",
+  "qwen/qwen3-max",
+  "minimax/minimax-01",
+  "tencent/hunyuan-a13b-instruct",
+];
+const refreshSlugsSql = refreshRows.map(([slug]) => `'${slug}'`).join(", ");
+
+async function assertOpenRouterRefresh(repository: string, active: number): Promise<void> {
+  const rows = await queryRows(
+    repository,
+    `SELECT slug, provider, tier, cost_input, cost_output, cost_cache_read, cost_cache_write, context_window, max_output_tokens, architecture, total_params_b, active_params_b, recommended_quant, resident_ram_gib, active FROM models WHERE slug IN (${refreshSlugsSql}) ORDER BY slug`,
+    undefined,
+  );
+  const actual = rows.map((row) => [
+    row.slug, Number(row.tier), String(row.cost_input), String(row.cost_output),
+    String(row.cost_cache_read), Number(row.context_window), Number(row.max_output_tokens),
+    row.provider, String(row.cost_cache_write), row.architecture, row.total_params_b,
+    row.active_params_b, row.recommended_quant, row.resident_ram_gib, Number(row.active),
+  ]);
+  const expected = refreshRows.map((row) => [
+    ...row, "openrouter", "0.000000", null, null, null, null, null, active,
+  ]);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`Expected refreshed rows ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+  for (const slug of refreshRemoved) await assertSlugAbsent(repository, slug);
+}
+
+const qwenNext = "qwen/qwen3-next-80b-a3b-instruct";
+
+async function assertQwenNextPresent(repository: string): Promise<void> {
+  const rows = await queryRows(repository,
+    `SELECT slug FROM models WHERE slug = '${qwenNext}'`, undefined);
+  if (rows.length !== 1) throw new Error("Qwen3 Next 80B Instruct must remain in the catalog");
+}
+
+test("fresh catalog carries all seven OpenRouter replacements and retains Qwen3 Next", async () => {
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+  await withSchemaRepository(schemaDir, [...plan.current, ...plan.catalog],
+    "fresh OpenRouter refresh", undefined, async (repository) => {
+      await assertOpenRouterRefresh(repository, 1);
+      await assertQwenNextPresent(repository);
+    });
+});
+
+test("migration 023 transfers predecessor deactivation to its replacement and removes the predecessor", async () => {
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+  const migrationIndex = plan.migrations.indexOf(refreshMigration);
+  if (migrationIndex < 0) throw new Error(`Missing ${refreshMigration}`);
+  const predecessor = "moonshotai/kimi-k3";
+  await withSchemaRepository(schemaDir,
+    [...plan.history, ...plan.migrations.slice(0, migrationIndex)],
+    "migrated OpenRouter predecessor deactivation", undefined, async (repository) => {
+      const before = await queryRows(repository,
+        `SELECT slug FROM models WHERE slug = '${predecessor}'`, undefined);
+      if (before.length !== 1) throw new Error("Kimi predecessor must exist before migration 023");
+      await assertSlugAbsent(repository, kimiK31Pro);
+      await runChecked("dolt", ["sql", "-q",
+        `UPDATE models SET active = FALSE WHERE slug = '${predecessor}'`],
+        { cwd: repository, label: "disable predecessor in disposable catalog" });
+      await runChecked("dolt", ["sql"], {
+        cwd: repository,
+        input: await readFile(new URL(refreshMigration, schemaDir), "utf8"),
+        label: `apply schema/${refreshMigration}`,
+      });
+      const after = await queryRows(repository,
+        `SELECT slug, active FROM models WHERE slug = '${kimiK31Pro}'`, undefined);
+      if (after.length !== 1 || Number(after[0]?.active) !== 0) {
+        throw new Error(`Expected inactive Kimi replacement, got ${JSON.stringify(after)}`);
+      }
+      await assertSlugAbsent(repository, predecessor);
+    });
+});
+
+for (const qwenNextPresent of [false, true]) {
+  test(`migration 023 refreshes OpenRouter rows idempotently and preserves operator deactivation with Qwen3 Next ${qwenNextPresent ? "present" : "absent"}`, async () => {
+    const plan = await readSchemaApplyPlan(schemaDir);
+    assertSchemaApplyPlan(plan);
+    const migrationIndex = plan.migrations.indexOf(refreshMigration);
+    if (migrationIndex < 0) throw new Error(`Missing ${refreshMigration}`);
+    const migrationSql = await readFile(new URL(refreshMigration, schemaDir), "utf8");
+    const assertQwenNextState = qwenNextPresent
+      ? assertQwenNextPresent
+      : (repository: string) => assertSlugAbsent(repository, qwenNext);
+    await withSchemaRepository(schemaDir,
+      [...plan.history, ...plan.migrations.slice(0, migrationIndex)],
+      "migrated OpenRouter refresh", undefined, async (repository) => {
+        // Historical replay does not seed this fresh-catalog-only row.
+        await assertSlugAbsent(repository, qwenNext);
+        if (qwenNextPresent) {
+          await runChecked("dolt", ["sql", "-q",
+            `INSERT INTO models (slug, display_name, provider, api, tier, context_window, max_output_tokens, capabilities)
+             VALUES ('${qwenNext}', 'Qwen3 Next 80B Instruct', 'openrouter', 'openai-completions', 1, 131072, 32768, '["text"]')`],
+            { cwd: repository, label: "seed existing Qwen3 Next row in disposable catalog" });
+        }
+        await assertQwenNextState(repository);
+        await runChecked("dolt", ["sql"], {
+          cwd: repository,
+          input: migrationSql,
+          label: `apply schema/${refreshMigration}`,
+        });
+        await assertOpenRouterRefresh(repository, 1);
+        await assertQwenNextState(repository);
+        await runChecked("dolt", ["sql", "-q",
+          `UPDATE models SET active = FALSE WHERE slug IN (${refreshSlugsSql})`],
+          { cwd: repository, label: "disable refreshed models in disposable catalog" });
+        await runChecked("dolt", ["sql"], {
+          cwd: repository,
+          input: migrationSql,
+          label: `reapply schema/${refreshMigration}`,
+        });
+        await assertOpenRouterRefresh(repository, 0);
+        await assertQwenNextState(repository);
+      });
+  });
+}

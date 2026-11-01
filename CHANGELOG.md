@@ -1070,6 +1070,13 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **OpenRouter catalog refresh (BIT-843).** Replace seven model rows with
+  current slugs, model-level prices and token limits; remove four additional
+  retired or superseded rows, retain Qwen3 Next 80B Instruct, and record the
+  captured prices and upstream spreads. Migration 023 leaves the Qwen3 Next
+  row as it is, present or absent. It preserves replacement deactivation on
+  reapplication and carries disabled predecessors' state to their replacements.
+
 - **The Codex ChatGPT route can edit its workspace without asking
   (BIT-842).** The runtime now starts codex-acp in its `workspace-write` mode
   instead of `read-only`: ordinary edits inside the session workspace

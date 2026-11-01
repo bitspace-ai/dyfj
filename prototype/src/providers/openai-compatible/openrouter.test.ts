@@ -16,15 +16,15 @@ import {
 } from "../mod.ts";
 
 const kimi: WorkbenchModel = {
-  slug: "moonshotai/kimi-k3",
-  displayName: "Kimi K3",
+  slug: "moonshotai/kimi-k3.1-pro",
+  displayName: "Kimi K3.1 Pro",
   provider: "openrouter",
   api: "openai-completions",
   baseUrl: "https://openrouter.ai/api/v1",
   tier: 2,
-  costInput: 0.304,
-  costOutput: 11.936,
-  costCacheRead: 0.21,
+  costInput: 2.0,
+  costOutput: 10.0,
+  costCacheRead: 0.2,
   capabilities: ["text", "code", "reasoning"],
 };
 const gpt: WorkbenchModel = {
@@ -79,7 +79,7 @@ describe("OpenRouter routing preferences", () => {
     await run(kimi, transport);
     const body = JSON.parse(transport.requests[0].body);
     assert.deepStrictEqual(body.provider, {
-      max_price: { prompt: 0.304, completion: 11.936 },
+      max_price: { prompt: 2.0, completion: 10.0 },
     });
   });
 
@@ -98,7 +98,7 @@ describe("OpenRouter billed cost", () => {
   it("records the cost OpenRouter billed in place of the catalog estimate", async () => {
     const transport = json({
       ...done,
-      // The catalog estimate for these tokens is $0.0002544.
+      // The catalog estimate for these tokens is $0.000390.
       usage: { prompt_tokens: 100, completion_tokens: 19, cost: 0.0000260667 },
     });
     const result = await run(kimi, transport);
@@ -138,7 +138,7 @@ describe("OpenRouter billed cost", () => {
       usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
     });
     const result = await run(kimi, transport);
-    assertAlmostEqual(result.usage.cost.total, 0.304 + 11.936, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 2.0 + 10.0, 5e-6);
     assert.strictEqual(result.usage.cost.basis, "catalog_estimate");
   });
 
@@ -148,7 +148,7 @@ describe("OpenRouter billed cost", () => {
       usage: { prompt_tokens: 1_000_000, completion_tokens: 0, cost: "free" },
     });
     const result = await run(kimi, transport);
-    assertAlmostEqual(result.usage.cost.total, 0.304, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 2.0, 5e-6);
     assert.strictEqual(result.usage.cost.basis, "catalog_estimate");
   });
 
@@ -173,7 +173,7 @@ describe("OpenRouter billed cost", () => {
     }]);
     const result = await run(kimi, transport, true);
     assert.strictEqual(result.usage.cost.basis, "catalog_estimate");
-    assert.ok(result.usage.cost.total > 0.304);
+    assert.ok(result.usage.cost.total > 2.0);
   });
 
   it("estimates when a later frame raised the completion count without a cost", async () => {
@@ -196,7 +196,7 @@ describe("OpenRouter billed cost", () => {
     }]);
     const result = await run(kimi, transport, true);
     assert.strictEqual(result.usage.cost.basis, "catalog_estimate");
-    assertAlmostEqual(result.usage.cost.total, 0.304 + 11.936, 5e-6);
+    assertAlmostEqual(result.usage.cost.total, 2.0 + 10.0, 5e-6);
   });
 
   it("does not read a cost field from another provider as billed", async () => {
@@ -226,7 +226,7 @@ describe("OpenRouter price-cap refusal", () => {
     assert.strictEqual(error.kind, "price_cap_refused");
     assert.match(
       error.message,
-      /^openrouter: no upstream at or below \$0\.304 \/ \$11\.936 per M for moonshotai\/kimi-k3 /,
+      /^openrouter: no upstream at or below \$2 \/ \$10 per M for moonshotai\/kimi-k3\.1-pro /,
     );
     assert.ok(!error.message.includes(OPENROUTER_MAX_PRICE_REFUSED.foreignText));
     assert.strictEqual(transport.requests.length, 1);
