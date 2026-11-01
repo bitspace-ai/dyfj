@@ -66,7 +66,10 @@ describe("isolated Dolt fixture", () => {
       );
       assert.equal(config["metrics.disabled"], "true");
       const events = await readdir(`${fixture.root}/home/.dolt/eventsData`)
-        .catch(() => [] as string[]);
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return [] as string[];
+          throw error;
+        });
       assert.deepEqual(events.filter((name) => name.endsWith(".devts")), []);
     } finally {
       await fixture.cleanup();
