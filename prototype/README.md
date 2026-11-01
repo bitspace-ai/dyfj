@@ -507,8 +507,8 @@ signalling a process, `down` requires the state file to be owned by the current
 user with mode `0600` and checks that the PID's command is this script running
 `up`. It prints
 an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
-terminal also stops the instance and removes its root. Startup failures clean
-up too. Exported variables point at deleted paths after shutdown; use them
+terminal also stops the instance and removes its root. A startup failure
+attempts the same cleanup. Exported variables point at deleted paths after shutdown; use them
 inside a separate shell.
 
 For direct CLI use, `env` prints quoted shell exports. Start a shell with
@@ -531,7 +531,9 @@ Replies may also be `{"kind":"tool","tool":"file.read","arguments":{...}}`
 for cancellation. Malformed scripts fail before boot. The default is the fixed
 text `Scratch reply.`. The only active model is `scratch-local`, with zero
 cost and a loopback endpoint; real-model behavior and paid routes require
-maintainer runtime verification. The instance holds no operator credentials.
+maintainer runtime verification. The runtime and CLI children start with an
+explicitly built environment that carries no operator credentials; the `up`
+supervisor process itself keeps the environment of the shell that started it.
 
 The boot path lives in `scripts/disposable-runtime.ts`, shared with the golden
 harness: isolated Dolt and catalog seed, model server, Linear MCP fake, engine
