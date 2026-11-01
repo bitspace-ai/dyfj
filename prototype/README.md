@@ -504,8 +504,9 @@ node scripts/scratch-runtime.ts down --state "$scratch_state"
 receipt for `evidence` and `down` (the latest invocation). `down` prints the commands, reply, receipt and boot commit after the
 instance and its children stop and the temporary root is removed. Before
 signalling a process, `down` requires the state file to be owned by the current
-user with mode `0600` and checks that the PID's command is this script running
-`up`. It prints
+user with mode `0600`, and checks that the PID's command line matches an
+invocation of `scratch-runtime.ts up`. That check does not tell two checkouts
+apart. It prints
 an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
 terminal also stops the instance and removes its root. A startup failure
 attempts the same cleanup. Exported variables point at deleted paths after shutdown; use them
