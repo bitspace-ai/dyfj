@@ -144,6 +144,22 @@ async function realTempDir(): Promise<string> {
   return await realpath(await tempDir());
 }
 
+/**
+ * `tempDir`, owned by the statement that creates it: `await using dir = await
+ * temporaryDir("dyfj-repl-")` removes the directory when that scope exits.
+ */
+async function temporaryDir(
+  prefix?: string,
+): Promise<{ path: string; [Symbol.asyncDispose](): Promise<void> }> {
+  const path = await tempDir(prefix);
+  return {
+    path,
+    [Symbol.asyncDispose]: async () => {
+      await rm(path, { recursive: true, force: true });
+    },
+  };
+}
+
 /** Whether a symlink at `path` pointing at `target` could be made. */
 async function symlinked(target: string, path: string): Promise<boolean> {
   return await symlink(target, path).then(() => true, () => false);
@@ -1089,9 +1105,12 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       } finally {
         // Release the piped stderr so the child's stream is not left open.
         proc.child.stderr?.destroy();
-        await stopSpawned(proc);
-        await reapPidsAndCommandsContaining([proc.child.pid ?? 0], sock);
-        await safeRemove(home);
+        try {
+          await stopSpawned(proc);
+          await reapPidsAndCommandsContaining([proc.child.pid ?? 0], sock);
+        } finally {
+          await safeRemove(home);
+        }
       }
     },
   );
@@ -1157,12 +1176,15 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       } finally {
         // Release the piped stderr so the child's stream is not left open.
         proc.child.stderr?.destroy();
-        await stopSpawned(proc);
-        await reapPidsAndCommandsContaining(
-          [proc.child.pid ?? 0, spawnedPid ?? 0],
-          sock,
-        );
-        await safeRemove(home);
+        try {
+          await stopSpawned(proc);
+          await reapPidsAndCommandsContaining(
+            [proc.child.pid ?? 0, spawnedPid ?? 0],
+            sock,
+          );
+        } finally {
+          await safeRemove(home);
+        }
       }
     },
   );
@@ -1210,26 +1232,35 @@ describe("start lock rate-limits repeated background autostart attempts", () => 
       } finally {
         // Release the piped stderr so the child's stream is not left open.
         proc.child.stderr?.destroy();
-        await stopSpawned(proc);
-        await stopSpawned(dummy);
-        await reapPidsAndCommandsContaining(
-          [proc.child.pid ?? 0, dummy.child.pid ?? 0],
-          sock,
-        );
-        await safeRemove(home);
+        try {
+          await stopSpawned(proc);
+          await stopSpawned(dummy);
+          await reapPidsAndCommandsContaining(
+            [proc.child.pid ?? 0, dummy.child.pid ?? 0],
+            sock,
+          );
+        } finally {
+          await safeRemove(home);
+        }
       }
     },
   );
 });
 
 describe("interactive REPL front-end selection", () => {
-  // A stand-in for the Rust REPL: executable, never run in dry-run mode.
-  async function fakeReplBin(): Promise<string> {
-    const dir = await tempDir("dyfj-repl-");
-    const bin = `${dir}/dyfj-repl`;
+  // A stand-in for the Rust REPL: executable, never run in dry-run mode. Its
+  // directory lives until the case exits.
+  async function fakeReplBin(): Promise<
+    { bin: string; [Symbol.asyncDispose](): Promise<void> }
+  > {
+    await using owned = new AsyncDisposableStack();
+    const dir = owned.use(await temporaryDir("dyfj-repl-"));
+    const bin = `${dir.path}/dyfj-repl`;
     await writeFile(bin, "#!/bin/sh\nexit 0\n");
     await chmod(bin, 0o755);
-    return bin;
+    // Setup succeeded: the caller now owns the directory.
+    const stack = owned.move();
+    return { bin, [Symbol.asyncDispose]: () => stack.disposeAsync() };
   }
 
   // Runs the launcher under a pseudo-terminal, as an interactive session is,
@@ -1277,7 +1308,8 @@ describe("interactive REPL front-end selection", () => {
   }
 
   it("routes a bare session with REPL flags to the Rust REPL", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     const { code, out } = await launch(
       { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
       ["--model", "z-ai/glm-5.2", "--approve-paid", "--socket", "/tmp/r.sock"],
@@ -1292,7 +1324,8 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("keeps the TypeScript REPL off a terminal, whatever DYFJ_REPL says", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     // Off a terminal DYFJ_REPL is not read, so even an invalid value passes.
     for (const mode of ["", "rust", "invalid"]) {
       const { code, out } = await launch({
@@ -1315,7 +1348,8 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("leaves subcommands and prompts alone whatever DYFJ_REPL says", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     for (const mode of ["rust", "invalid"]) {
       for (const args of [["status"], ["-p", "hi"], ["--help"]]) {
         // On a terminal, so the exemption is what keeps these off the Rust
@@ -1332,7 +1366,8 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("hands a REPL flag whose value starts with -- to the TypeScript REPL", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     const { code, out } = await launch(
       { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
       ["--model", "--fast"],
@@ -1343,9 +1378,9 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("execs the Rust REPL with its flags, --socket as DYFJ_SOCKET and the runtime log as DYFJ_RUNTIME_LOG", async () => {
-    const dir = await tempDir("dyfj-repl-");
-    const bin = `${dir}/dyfj-repl`;
-    const record = `${dir}/record`;
+    await using dir = await temporaryDir("dyfj-repl-");
+    const bin = `${dir.path}/dyfj-repl`;
+    const record = `${dir.path}/record`;
     await writeFile(
       bin,
       `#!/bin/sh\nprintf '%s\\n' "sock=$DYFJ_SOCKET" "log=$DYFJ_RUNTIME_LOG" "$@" > '${record}'\n`,
@@ -1385,7 +1420,8 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     const routings: Record<string, string>[] = [
       { DYFJ_WORKBENCH_TIER: "1" },
       { DYFJ_WORKBENCH_HINT: "code" },
@@ -1419,7 +1455,8 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("DYFJ_REPL=rust refuses a session the Rust REPL cannot take", async () => {
-    const bin = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const bin = repl.bin;
     const tsOnly = await launch(
       { DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
       ["--tier", "1"],
@@ -1444,13 +1481,17 @@ describe("interactive REPL front-end selection", () => {
 
   // A checkout laid out as the launcher expects (prototype/ beside core/),
   // with the real client sources, a stand-in built REPL binary and stand-ins
-  // for the sources it is built from.
+  // for the sources it is built from. Its directory lives until the case
+  // exits.
   async function checkoutWithBuiltRepl(): Promise<{
     launcher: string;
     core: string;
     bin: string;
+    [Symbol.asyncDispose](): Promise<void>;
   }> {
-    const root = await realTempDir();
+    await using owned = new AsyncDisposableStack();
+    const dir = owned.use(await temporaryDir());
+    const root = await realpath(dir.path);
     const prototype = `${root}/prototype`;
     const core = `${root}/core`;
     await mkdir(`${prototype}/scripts`, { recursive: true });
@@ -1477,14 +1518,23 @@ describe("interactive REPL front-end selection", () => {
     const older = new Date(Date.now() - 120_000);
     for (const source of sources) await utimes(source, older, older);
     await utimes(bin, built, built);
-    return { launcher: `${prototype}/scripts/dyfj-launcher.sh`, core, bin };
+    // Setup succeeded: the caller now owns the directory.
+    const stack = owned.move();
+    return {
+      launcher: `${prototype}/scripts/dyfj-launcher.sh`,
+      core,
+      bin,
+      [Symbol.asyncDispose]: () => stack.disposeAsync(),
+    };
   }
 
   it("warns when the built Rust REPL binary is older than its sources, and builds nothing", async () => {
-    const { launcher, core } = await checkoutWithBuiltRepl();
+    await using checkout = await checkoutWithBuiltRepl();
+    const { launcher, core } = checkout;
     const { utimes } = await import("node:fs/promises");
     // A cargo on PATH that records any call: the launcher must not run it.
-    const tools = await tempDir("dyfj-cargo-");
+    await using toolsDir = await temporaryDir("dyfj-cargo-");
+    const tools = toolsDir.path;
     await writeFile(`${tools}/cargo`, `#!/bin/sh\ntouch '${tools}/called'\n`);
     await chmod(`${tools}/cargo`, 0o755);
     const env = { PATH: `${tools}:${process.env.PATH ?? ""}` };
@@ -1522,11 +1572,13 @@ describe("interactive REPL front-end selection", () => {
   });
 
   it("does not judge a REPL binary the operator chose with DYFJ_REPL_BIN", async () => {
-    const { launcher, core } = await checkoutWithBuiltRepl();
+    await using checkout = await checkoutWithBuiltRepl();
+    const { launcher, core } = checkout;
     const { utimes } = await import("node:fs/promises");
     const newer = new Date();
     await utimes(`${core}/dyfj-repl/src/main.rs`, newer, newer);
-    const chosen = await fakeReplBin();
+    await using repl = await fakeReplBin();
+    const chosen = repl.bin;
     const { code, out } = await launch(
       { DYFJ_REPL_BIN: chosen },
       [],
