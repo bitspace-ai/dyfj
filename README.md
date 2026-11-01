@@ -2748,3 +2748,9 @@ Document revisions only. Code and behavior changes are tracked in
   contained Linux target: an OrbStack isolated machine where the runtime,
   executor and agent CLIs run as separate uids under bubblewrap, Landlock and a
   per-uid firewall compiled from the effective policy, with its residuals.
+- 2026-11-01 - `docs/agents/rooms.md` splits changes into a standard lane and
+  a fast lane by blast radius. Changes that touch a protected surface keep
+  every rule, including cross-family review. Fast-lane changes may be
+  reviewed by any model family, may be verified by the implementer on a
+  disposable runtime instance, and may be merged by the maintainer in
+  batches.

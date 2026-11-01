@@ -9,8 +9,9 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
 - **Implementer:** claims one tracker issue, works in a fresh branch cut
   from `origin/main`, carries it to an open pull request, and stops.
 - **Reviewer:** reads the branch's full range against `main` before merge
-  is proposed. The reviewer is a different model family from the
-  implementer, on every branch, without exception.
+  is proposed, in a session that shares no context with the implementer.
+  On the standard lane the reviewer is a different model family from the
+  implementer, without exception. On the fast lane any family may review.
 - **Coordinator:** sequences work, stages tasks, verifies claims against
   their sources, and adjudicates review findings. Never implements.
 - **Maintainer:** performs the acts no agent performs: acceptance testing,
@@ -26,6 +27,33 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
   rules. An agent that believes one of these is needed prepares it
   and stops. Claiming one happened when it did not is the highest-severity
   process violation here.
+
+## Lanes
+
+Every change runs on one of two lanes. The lane decides how much review and
+maintainer attention the change costs, and it is set by blast radius.
+
+- **Standard lane:** every rule below applies as written. A change is on
+  the standard lane when it touches any protected surface:
+  - `schema/`, migrations, or the event-log write and replay path;
+  - permissions, the sandbox, egress, or spawn and environment limits;
+  - spend limits, budget checks, pricing, or the model catalog;
+  - redaction, secrets, or credential handling;
+  - the publish tools or the gate (`scripts/aggregate-test-gate.ts` and
+    its lanes);
+  - `AGENTS.md`, README Section 1, `specs/`, this file, `.github/`, or
+    dependency versions;
+  - anything security-shaped (AGENTS.md, Public/Private Boundary).
+- **Fast lane:** a change that touches no protected surface, such as REPL
+  and shell UX, messages and help text, docs outside the protected files,
+  and fixes confined to unprotected modules. The Reviewer seat and rules 8
+  and 10 have fast-lane forms; everything else applies as written.
+
+The coordinator or maintainer sets the lane when the issue is staged, and
+records it on the issue. When the lane is unrecorded or in doubt, the change
+is on the standard lane. A lane can be raised during the work and never
+lowered: an implementer whose change comes to touch a protected surface
+records that on the issue and continues on the standard lane.
 
 ## Rules
 
@@ -56,8 +84,18 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
 8. The interactive runtime under test is driven by the maintainer, not by
    an agent. An agent that needs a runtime step writes a labelled,
    self-contained prompt for the maintainer and records what comes back.
+   _Fast lane:_ the implementer may drive a disposable runtime instance
+   itself: a scratch Dolt database and scratch configuration, on a local
+   model or within the configured spend limits, never the operator's live
+   database or sessions. The implementer records the commands and the
+   output as evidence on the issue. Where no disposable instance is
+   available, rule 8 applies as written.
 9. When blocked on a decision only the maintainer can make, post the
    options with consequences and one recommendation, then stop.
+10. _Fast lane:_ the maintainer may accept and merge fast-lane pull
+    requests in batches, on the gate's status line and the recorded runtime
+    evidence, and acceptance-test the batch rather than each change.
+    Merging stays the maintainer's act.
 
 ## Why
 
@@ -65,3 +103,10 @@ These rules exist because of incidents, not theory. An autonomous lane once
 accepted its own review receipt; an implementer once reported a red gate as
 green because a pipe masked the exit code and called the failing lanes
 pre-existing without checking. Each rule above closes one of those holes.
+
+The lanes exist because each rule costs maintainer attention on every
+change, whatever its size, and that attention is the scarcest resource in
+this repository. The standard lane spends it where a wrong change is
+expensive. The fast lane keeps the invariants those incidents taught: no
+agent accepts its own review, the gate's own status line is reported, and
+only the maintainer merges.
