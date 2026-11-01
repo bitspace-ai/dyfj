@@ -216,10 +216,9 @@ export function formatTimingLine(timings: WorkbenchCallTimings): string {
 }
 
 /**
- * The `Stop:` line for a turn that hit its per-call output cap. A `length`
- * stop names the limit with the output token count, plus the reasoning token
- * count when there is one, so `0 out, N reasoning` shows a reply spent
- * entirely on reasoning. Any other reason renders nothing.
+ * The `Stop:` line for a turn that reported a `length` stop. It names the
+ * output limit with the turn's total output tokens, plus its total reasoning
+ * tokens when there are any. Any other reason renders nothing.
  */
 function formatStopLine(
   stopReason: WorkbenchReceiptInput["stopReason"],

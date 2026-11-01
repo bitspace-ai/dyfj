@@ -144,9 +144,9 @@ export function formatReceipt(
 }
 
 /**
- * The one-line notice for a turn that ended at the output cap with an empty
- * reply — a reasoning model spent its whole output budget on reasoning.
- * Returns `undefined` when there is nothing to say.
+ * The one-line notice for a turn that reported a `length` stop with empty
+ * reply text, which otherwise shows no reply and no explanation. Returns
+ * `undefined` when there is nothing to say.
  */
 export function lengthStopEmptyNotice(
   result: TurnResult,

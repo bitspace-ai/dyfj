@@ -675,9 +675,8 @@ fn turn_close(result: &Value, wrote_any: bool) -> TurnClose {
     }
 }
 
-/// A length stop with no reply: the turn ended at the output cap while the
-/// model spent its whole budget on reasoning, and nothing else says why. The
-/// REPL prints one line for it rather than nothing.
+/// A turn that reported a length stop with empty reply text otherwise shows
+/// no reply and no explanation. The REPL prints one line saying why.
 fn length_stopped_empty(result: &Value) -> bool {
     result.get("stopReason").and_then(Value::as_str) == Some("length")
         && result.get("text").and_then(Value::as_str).unwrap_or("").is_empty()
@@ -790,8 +789,8 @@ mod tests {
         assert!(wrote_any);
     }
 
-    /// A length stop with no reply means the output cap bound while the model
-    /// spent its budget on reasoning: that is the one line the REPL prints.
+    /// A length stop with empty reply text is the case the REPL prints one
+    /// line for.
     #[test]
     fn a_length_stop_with_no_text_prints_the_output_limit_line() {
         let empty_length = serde_json::json!({"stopReason": "length", "text": ""});
