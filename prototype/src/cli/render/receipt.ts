@@ -157,6 +157,15 @@ export function lengthStopEmptyNotice(
   return "turn stopped at the output limit";
 }
 
+/** Write `lengthStopEmptyNotice` for `result`, when it has one. */
+export function writeLengthStopNotice(
+  result: TurnResult,
+  write: (line: string) => void,
+): void {
+  const notice = lengthStopEmptyNotice(result);
+  if (notice !== undefined) write(notice);
+}
+
 /** The share of the turn's input served from cache, in whole percent. */
 function cachedPercent(
   input: number,

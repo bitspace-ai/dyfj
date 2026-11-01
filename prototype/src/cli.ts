@@ -32,7 +32,7 @@ import { promptMidTurnApproval } from "./cli/approval.ts";
 import type { CliConfig } from "./cli/args.ts";
 import type { ConnectFn, Io, TurnInterruptSource } from "./cli/io.ts";
 import { socketError } from "./cli/render/errors.ts";
-import { formatReceipt, lengthStopEmptyNotice } from "./cli/render/receipt.ts";
+import { formatReceipt, writeLengthStopNotice } from "./cli/render/receipt.ts";
 import { createTurnOutputHandlers } from "./cli/render/turn-output.ts";
 import {
   createTurnSpinner,
@@ -241,13 +241,8 @@ export async function runRepl(
         } else {
           output.finish();
         }
-        if (result.stopReason === "aborted") {
-          handlers.onEvent({ type: "turnAborted" });
-        }
-        const lengthNotice = lengthStopEmptyNotice(result);
-        if (lengthNotice !== undefined) {
-          io.err(lengthNotice);
-        }
+        if (result.stopReason === "aborted") handlers.onEvent({ type: "turnAborted" });
+        writeLengthStopNotice(result, (line) => io.err(line));
         sessionState.sessionId = result.sessionId;
         sessionState.lastModelSlug = "model" in result
           ? result.model.slug

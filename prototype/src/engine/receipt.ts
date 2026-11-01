@@ -217,9 +217,9 @@ export function formatTimingLine(timings: WorkbenchCallTimings): string {
 
 /**
  * The `Stop:` line for a turn that hit its per-call output cap. A `length`
- * stop names the limit and, when the output was all reasoning tokens, says so
- * — the case where the turn ends with an empty reply and nothing else reports
- * why. Any other reason renders nothing.
+ * stop names the limit with the output token count, plus the reasoning token
+ * count when there is one, so `0 out, N reasoning` shows a reply spent
+ * entirely on reasoning. Any other reason renders nothing.
  */
 function formatStopLine(
   stopReason: WorkbenchReceiptInput["stopReason"],
