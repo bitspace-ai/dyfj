@@ -510,7 +510,7 @@ user with mode `0600`, and checks that the PID's command line matches an
 invocation of `scratch-runtime.ts up`. That check does not tell two checkouts
 apart. It prints
 an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
-terminal also stops the instance and removes its root. A startup failure
+terminal also attempts to stop the instance and remove its root. A startup failure
 attempts the same cleanup. Exported variables point at deleted paths after shutdown; use them
 inside a separate shell.
 
