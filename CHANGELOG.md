@@ -180,6 +180,11 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Isolated Dolt fixture teardown (BIT-854).** Dolt children run with
+  `DOLT_DISABLE_EVENT_FLUSH`, so no detached event flush writes into the
+  fixture HOME while its root is removed. A failed removal lists what is still
+  under `home/.dolt`.
+
 - **Forced conclusions end tool use (BIT-601).** The agent loop drops and
   logs structured tool calls returned by any forced no-tools conclusion,
   without executing them or requesting approval.
