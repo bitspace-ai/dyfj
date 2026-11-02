@@ -27,17 +27,31 @@ const usage = z.object({
   promptTokens: z.number().int().nonnegative(),
   completionTokens: z.number().int().nonnegative(),
 });
-const replies = z.array(z.discriminatedUnion("kind", [
+const reasoning = {
+  reasoning: z.string().optional(),
+  reasoningTokens: z.number().int().nonnegative().optional(),
+};
+const toolReply = z.object({
+  kind: z.literal("tool"),
+  arguments: z.record(z.string(), z.unknown()),
+  usage: usage.optional(),
+  ...reasoning,
+});
+const replies = z.array(z.union([
   z.object({
     kind: z.literal("text"),
     text: z.string(),
     usage: usage.optional(),
+    ...reasoning,
+    finish: z.enum(["stop", "length"]).optional(),
   }),
-  z.object({
-    kind: z.literal("tool"),
+  toolReply.extend({
     tool: z.string().min(1),
-    arguments: z.record(z.string(), z.unknown()),
-    usage: usage.optional(),
+    wireName: z.never().optional(),
+  }),
+  toolReply.extend({
+    wireName: z.string().min(1),
+    tool: z.never().optional(),
   }),
   z.object({ kind: z.literal("hold"), text: z.string() }),
 ])).min(1);

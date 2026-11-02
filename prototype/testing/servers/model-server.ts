@@ -8,9 +8,9 @@
  * black-box.
  *
  * A script sees each request body and returns one reply:
- * - `text`: a plain completion.
- * - `tool`: a single structured tool call, named by its registry id; the wire
- *   name is looked up in the request's offered tools.
+ * - `text`: a completion with optional reasoning, usage and finish reason.
+ * - `tool`: a single structured tool call, named by an offered registry id
+ *   or by an explicit wire name, with optional reasoning and usage.
  * - `hold`: stream some text, then keep the stream open until the client
  *   aborts the request (for cancellation tests).
  *
@@ -39,14 +39,21 @@ export interface ReplyUsage {
   completionTokens: number;
 }
 
+interface ReplyDetails {
+  reasoning?: string;
+  reasoningTokens?: number;
+  usage?: ReplyUsage;
+}
+
 export type ModelReply =
-  | { kind: "text"; text: string; usage?: ReplyUsage }
-  | {
+  | (ReplyDetails & { kind: "text"; text: string; finish?: "stop" | "length" })
+  | (ReplyDetails & {
     kind: "tool";
-    tool: string;
     arguments: Record<string, unknown>;
-    usage?: ReplyUsage;
-  }
+  } & (
+    | { tool: string; wireName?: never }
+    | { wireName: string; tool?: never }
+  ))
   | { kind: "hold"; text: string };
 
 export type ModelScript = (request: ChatRequest) => ModelReply;
@@ -66,11 +73,14 @@ function sse(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
-function usageJson(usage: ReplyUsage) {
+function usageJson(usage: ReplyUsage, reasoningTokens?: number) {
   return {
     prompt_tokens: usage.promptTokens,
     completion_tokens: usage.completionTokens,
     total_tokens: usage.promptTokens + usage.completionTokens,
+    ...(reasoningTokens !== undefined
+      ? { completion_tokens_details: { reasoning_tokens: reasoningTokens } }
+      : {}),
   };
 }
 
@@ -111,8 +121,8 @@ function streamedReply(request: ChatRequest, reply: ModelReply): Response {
     ? [
       sse({ choices: [{ index: 0, delta: { content: reply.text } }] }),
       sse({
-        choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-        usage: usageJson(usage),
+        choices: [{ index: 0, delta: {}, finish_reason: reply.finish ?? "stop" }],
+        usage: usageJson(usage, reply.reasoningTokens),
       }),
     ]
     : [
@@ -125,7 +135,9 @@ function streamedReply(request: ChatRequest, reply: ModelReply): Response {
               id: "call_golden_1",
               type: "function",
               function: {
-                name: wireToolName(request, reply.tool),
+                name: reply.tool !== undefined
+                  ? wireToolName(request, reply.tool)
+                  : reply.wireName,
                 arguments: JSON.stringify(reply.arguments),
               },
             }],
@@ -134,9 +146,15 @@ function streamedReply(request: ChatRequest, reply: ModelReply): Response {
       }),
       sse({
         choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
-        usage: usageJson(usage),
+        usage: usageJson(usage, reply.reasoningTokens),
       }),
     ];
+  if (reply.reasoning !== undefined) {
+    // `reasoning_content` is read by parseOpenAIChatStreamLine in the adapter.
+    frames.unshift(sse({
+      choices: [{ index: 0, delta: { reasoning_content: reply.reasoning } }],
+    }));
+  }
   frames.push("data: [DONE]\n\n");
   return new Response(frames.join(""), {
     headers: { "content-type": "text/event-stream" },
@@ -147,13 +165,16 @@ function bufferedReply(request: ChatRequest, reply: ModelReply): Response {
   if (reply.kind === "hold") {
     throw new Error("hold replies require a streamed request");
   }
-  const usage = usageJson(reply.usage ?? DEFAULT_USAGE);
+  const usage = usageJson(reply.usage ?? DEFAULT_USAGE, reply.reasoningTokens);
+  const reasoning = reply.reasoning !== undefined
+    ? { reasoning_content: reply.reasoning }
+    : {};
   if (reply.kind === "text") {
     return Response.json({
       choices: [{
         index: 0,
-        message: { role: "assistant", content: reply.text },
-        finish_reason: "stop",
+        message: { role: "assistant", ...reasoning, content: reply.text },
+        finish_reason: reply.finish ?? "stop",
       }],
       usage,
     });
@@ -163,12 +184,15 @@ function bufferedReply(request: ChatRequest, reply: ModelReply): Response {
       index: 0,
       message: {
         role: "assistant",
+        ...reasoning,
         content: null,
         tool_calls: [{
           id: "call_golden_1",
           type: "function",
           function: {
-            name: wireToolName(request, reply.tool),
+            name: reply.tool !== undefined
+              ? wireToolName(request, reply.tool)
+              : reply.wireName,
             arguments: JSON.stringify(reply.arguments),
           },
         }],
@@ -177,6 +201,13 @@ function bufferedReply(request: ChatRequest, reply: ModelReply): Response {
     }],
     usage,
   });
+}
+
+/** Render the scripted wire response independently of the HTTP listener. */
+export function modelResponse(request: ChatRequest, reply: ModelReply): Response {
+  return request.stream === true
+    ? streamedReply(request, reply)
+    : bufferedReply(request, reply);
 }
 
 export async function startModelServer(
@@ -195,9 +226,7 @@ export async function startModelServer(
         const body = await request.json() as ChatRequest;
         requests.push(body);
         const reply = script(body);
-        return body.stream === true
-          ? streamedReply(body, reply)
-          : bufferedReply(body, reply);
+        return modelResponse(body, reply);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return new Response(`model script error: ${message}`, { status: 500 });
