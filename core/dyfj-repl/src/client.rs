@@ -40,6 +40,13 @@ pub enum StreamFrame {
     Unknown,
 }
 
+/// Whether a frame tagged `tagged` belongs to the turn `expected`. A frame
+/// with no tag comes from a runtime older than the tag and is taken as the
+/// current turn's, as it always was.
+pub fn for_turn(tagged: Option<&str>, expected: &str) -> bool {
+    tagged.is_none_or(|id| id == expected)
+}
+
 /// Our answer to a server-initiated `approval` request.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
@@ -83,7 +90,9 @@ impl Verdict {
 
 /// What the reader task hands to the main loop.
 pub enum Incoming {
-    Stream(StreamFrame),
+    /// A stream frame, with the turn id the runtime tagged it with. A runtime
+    /// older than the tag sends none.
+    Stream { frame: StreamFrame, turn_id: Option<String> },
     /// A server request we must answer. Dropping the responder without a
     /// verdict schedules an attempt to send a denial — delivery still depends
     /// on the socket, which the writer cannot guarantee, and nothing is sent
@@ -560,9 +569,26 @@ mod tests {
         dispatch(msg, &pending, &write, &tx, &watch::channel(false).1).await;
 
         match rx.try_recv() {
-            Ok(Incoming::Stream(StreamFrame::Delta { text })) => assert_eq!(text, "hi"),
+            Ok(Incoming::Stream { frame: StreamFrame::Delta { text }, turn_id: None }) => {
+                assert_eq!(text, "hi")
+            }
             _ => panic!("a stream notification must reach the main loop"),
         }
+    }
+
+    #[tokio::test]
+    async fn dispatch_keeps_the_turn_id_a_frame_carries() {
+        let (client_side, _server_side) = tokio::net::UnixStream::pair().unwrap();
+        let (_read, write) = client_side.into_split();
+        let write = Arc::new(Mutex::new(write));
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, mut rx) = mpsc::channel(4);
+        let msg = json!({"jsonrpc":"2.0","method":"stream","params":{"t":"delta","text":"hi","turnId":"old"}});
+        dispatch(msg, &pending, &write, &tx, &watch::channel(false).1).await;
+        let Ok(Incoming::Stream { turn_id, .. }) = rx.try_recv() else { panic!("stream") };
+        assert!(!for_turn(turn_id.as_deref(), "current"));
+        assert!(for_turn(turn_id.as_deref(), "old"));
+        assert!(for_turn(None, "current"), "an untagged frame is from an older runtime");
     }
 }
 
@@ -634,8 +660,9 @@ async fn dispatch(
         // A notification from the server.
         (Some("stream"), None) => {
             let params = msg.get("params").cloned().unwrap_or(Value::Null);
+            let turn_id = params.get("turnId").and_then(Value::as_str).map(str::to_owned);
             if let Ok(frame) = serde_json::from_value::<StreamFrame>(params) {
-                let _ = tx.send(Incoming::Stream(frame)).await;
+                let _ = tx.send(Incoming::Stream { frame, turn_id }).await;
             }
         }
         // A request from the server that we must answer. The id is echoed

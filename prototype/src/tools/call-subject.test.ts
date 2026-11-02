@@ -6,6 +6,7 @@ import {
   toolResultStatus,
 } from "./call-subject.ts";
 import type { CommandDefinition } from "./definition.ts";
+import { describeTimeout } from "./builtin/bounded-process.ts";
 
 /** A definition with only what these rules read. */
 function command(
@@ -102,4 +103,27 @@ test("an error reply that echoes a redacted argument is withheld", () => {
   )!;
   assert.ok(!status.includes("the secret body text"), status);
   assert.match(status, /withheld/);
+});
+
+// The headers the executor really writes, not hand-copied ones: a parser
+// written against a remembered form (`timed out after 30s`) shows a timed-out
+// check as a success.
+test("every timeout header describeTimeout writes is a result status", () => {
+  const headers = [
+    describeTimeout(3000),
+    describeTimeout(3000, { group: "stopped", exited: true, outputClosed: true }),
+    describeTimeout(3000, { group: "survived", exited: false, outputClosed: false }),
+    describeTimeout(3000, { group: "unavailable", exited: true, outputClosed: false }),
+  ];
+  for (const header of headers) {
+    assert.equal(toolResultStatus(bash, {}, `${header}\npartial output`), header);
+  }
+});
+
+test("a git status line after the subdirectory notice is still the status", () => {
+  const git = command({ subcommand: { type: "string" } });
+  const notice = "note: the workspace is a subdirectory of this repository, so this " +
+    "commit records every staged change in it, including paths outside the workspace.";
+  assert.equal(toolResultStatus(git, {}, `${notice}\nexit 1\nnothing to commit`), "exit 1");
+  assert.equal(toolResultStatus(git, {}, "note: something\nnot a status"), undefined);
 });

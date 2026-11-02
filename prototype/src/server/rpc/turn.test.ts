@@ -773,3 +773,17 @@ test("no client approver -> fail-closed deny", async () => {
   }, client()) as { verdict: { decision: string } };
   assert.deepStrictEqual(verdict.decision, "deny");
 });
+
+test("stream frames name the requested turn so late activity cannot describe a later turn", async () => {
+  const turnId = "123e4567-e89b-42d3-a456-426614174000";
+  const ctx = client();
+  await callRpc(handlers(async (input) => {
+    input.frames?.onTextDelta?.("reply");
+    await input.frames?.onRuntimeEvent?.({ type: "turnCompleted", sessionId: "s", traceId: "t" });
+    return result({ text: "reply" });
+  }), "turn", { prompt: "hi", turnId }, ctx);
+  assert.deepStrictEqual(ctx.streamed, [
+    { t: "delta", text: "reply", turnId },
+    { t: "event", event: { type: "turnCompleted", sessionId: "s", traceId: "t" }, turnId },
+  ]);
+});

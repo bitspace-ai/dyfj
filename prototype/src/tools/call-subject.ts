@@ -70,8 +70,13 @@ export function toolResultStatus(
   result: unknown,
 ): string | undefined {
   if (command === undefined || typeof result !== "string") return undefined;
-  const head = result.split("\n", 1)[0].trim();
+  const [head, second] = result.split("\n", 2).map((line) => line.trim());
   if (EXIT_STATUS.test(head)) return head;
+  // `git commit` from a workspace below the repository root writes one
+  // runtime notice line ahead of the status.
+  if (head.startsWith("note: ") && second !== undefined && EXIT_STATUS.test(second)) {
+    return second;
+  }
   if (command.redactResult === true || !head.startsWith("error:")) {
     return undefined;
   }

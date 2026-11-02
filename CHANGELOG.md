@@ -24,11 +24,27 @@ README are tracked separately in its Revision history section.
   exit 1`); the started line is left to the status line on a terminal, so
   each call is one line in scrollback. Every turn closes, before its receipt,
   with an evidence summary from the runtime's tool frames rather than the
-  model's account: calls by outcome, wall time, files the file tools wrote,
-  each command with its exit status, and the calls that went wrong; a turn
-  with no tool calls says the reply is the model's own account. `/evidence`
-  lists every call of the last turn. Durations over a second read as seconds.
-  The TypeScript client's tool lines name the subject and status too.
+  model's account: calls by outcome, with a `bash` or `git` call that exited
+  non-zero or timed out counted as a failed command (`2 commands failed (exit
+  7; timed out after 3000ms)`), wall time, files the file tools wrote, each
+  command with its exit status, the calls that went wrong, and the files no
+  command exited 0 after. It never calls a command a passing check, and it
+  ends by saying it does not check the reply's claims; a turn with no tool
+  calls says the reply is the model's own account. `/evidence` lists every
+  call of the last turn with when it started and ended, and works while the
+  runtime is disconnected. On the external-agent (ACP) route the status line
+  names the agent's tool call in progress and a line marks each one's end.
+  A turn the runtime settles as cancelled ends with `turn cancelled`.
+  Durations over a second read as seconds. The TypeScript client's tool lines
+  name the subject and status too. `prototype/testing/probes/long-turn/`
+  holds a scripted turn and a pty driver that run all of this against a
+  disposable runtime.
+
+- **Stream frames carry the turn they belong to.** A `stream` notification
+  now includes the `turnId` the `turn` request named. The Rust REPL drops a
+  frame tagged with another turn's id, so a late frame from a turn the
+  operator abandoned is no longer shown under the next turn. Untagged frames
+  from an older runtime are rendered as before.
 
 - **Tool frames say what a call acted on and how a command exited.**
   `toolCallStarted` and `toolCallCompleted` carry an optional `subject`, the
@@ -36,7 +52,8 @@ README are tracked separately in its Revision history section.
   arguments are never the subject; a command that redacts every argument has
   none), single-lined, scrubbed and capped at 120 bytes. A completed call
   that ran without a tool error carries an optional `resultStatus` when its
-  result opens with a command's exit status or a tool's `error:` reply,
+  result opens with a command's exit status (for `git`, also after its
+  one-line subdirectory notice) or a tool's `error:` reply,
   reduced as the log reduces a failure reason; a redacted result contributes
   only the runtime-written exit status line. `isError` is unchanged: a
   non-zero exit or a `not found` reply is still output the model reads, and

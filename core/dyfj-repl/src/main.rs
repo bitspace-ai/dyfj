@@ -22,7 +22,7 @@ mod submission;
 mod terminal;
 
 use anyhow::{Context, Result};
-use client::{Client, Incoming, StreamFrame, Verdict};
+use client::{Client, Incoming, StreamFrame, Verdict, for_turn};
 use serde_json::{Value, json};
 use session::Session;
 use submission::{MAX_INPUT_CHARACTERS, Submission, classify};
@@ -244,6 +244,7 @@ async fn main() -> Result<()> {
                 &mut interrupts,
                 &mut exit,
                 &mut log,
+                session.last_evidence.as_deref(),
                 &mut link::backoff(),
             )
             .await;
@@ -436,7 +437,7 @@ async fn run_turn(
                 // fallback below keys on whether anything was written — decide
                 // that after draining, or a streamed answer prints once from
                 // the receipt and again from the queue.
-                flush_queued_frames(incoming, &mut wrote_any, session, &mut view);
+                flush_queued_frames(incoming, &turn_id, &mut wrote_any, session, &mut view);
                 view.status.clear();
 
                 match outcome {
@@ -464,6 +465,9 @@ async fn run_turn(
                         if length_stopped_empty(&result) {
                             eprintln!("turn stopped at the output limit");
                         }
+                        if let Some(line) = cancelled_line(&result, wrote_any) {
+                            eprintln!("{line}");
+                        }
                         view.close(session);
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
@@ -483,7 +487,11 @@ async fn run_turn(
             // Something arrived from the runtime while the turn runs.
             message = incoming.recv() => {
                 match message {
-                    Some(Incoming::Stream(frame)) => {
+                    // A frame from a turn abandoned earlier is not this
+                    // turn's activity.
+                    Some(Incoming::Stream { turn_id: tagged, .. })
+                        if !for_turn(tagged.as_deref(), &turn_id) => {}
+                    Some(Incoming::Stream { frame, .. }) => {
                         adopt_announced_session(&frame, session);
                         render(frame, &mut wrote_any, &mut view);
                     }
@@ -638,20 +646,21 @@ fn give_up_or_cancel(
 
 /// Render everything currently queued when a turn completes.
 ///
-/// In practice these are the tail of the answer that just finished: `select!`
-/// can take the `turn` response while frames remain in the channel, so leaving
-/// them drops the end of the reply. Nothing establishes that, though — frames
-/// carry no turn id, so a delayed frame from an abandoned earlier turn would
-/// be rendered here too.
+/// These are the tail of the answer that just finished: `select!` can take
+/// the `turn` response while frames remain in the channel, so leaving them
+/// drops the end of the reply. A delayed frame tagged with another turn's id
+/// is dropped instead.
 fn flush_queued_frames(
     incoming: &mut mpsc::Receiver<Incoming>,
+    turn_id: &str,
     wrote_any: &mut bool,
     session: &mut Session,
     view: &mut TurnView,
 ) {
     while let Ok(message) = incoming.try_recv() {
         match message {
-            Incoming::Stream(frame) => {
+            Incoming::Stream { turn_id: tagged, .. } if !for_turn(tagged.as_deref(), turn_id) => {}
+            Incoming::Stream { frame, .. } => {
                 // The turn may have failed with the disconnect before its
                 // `sessionStart` was taken from the queue.
                 adopt_announced_session(&frame, session);
@@ -681,10 +690,8 @@ fn runtime_error(context: &str, message: &str) -> String {
 ///
 /// Only what is already queued is dropped. A frame the abandoned turn emits
 /// later, while the REPL waits at the prompt, is discarded there
-/// (`link::await_prompt`). Frames are not tagged with a turn, though, so one
-/// that arrives after the next turn has started still renders in that turn.
-/// Closing that gap needs a turn identifier on the frame, which the protocol
-/// does not carry.
+/// (`link::await_prompt`); one that arrives after the next turn has started
+/// carries the abandoned turn's id, and that turn drops it.
 fn discard_abandoned_frames(incoming: &mut mpsc::Receiver<Incoming>) {
     while let Ok(message) = incoming.try_recv() {
         if let Incoming::Approval { respond, .. } = message {
@@ -724,6 +731,16 @@ fn turn_close(result: &Value, wrote_any: bool) -> TurnClose {
 
 /// A turn that reported a length stop with empty reply text otherwise shows
 /// no reply and no explanation. The REPL prints one line saying why.
+/// The line for a turn the runtime settled as cancelled, so the record says
+/// so and any streamed text above reads as cut short.
+fn cancelled_line(result: &Value, wrote_any: bool) -> Option<&'static str> {
+    (result.get("stopReason").and_then(Value::as_str) == Some("aborted")).then_some(if wrote_any {
+        "turn cancelled; the reply above was cut short"
+    } else {
+        "turn cancelled"
+    })
+}
+
 fn length_stopped_empty(result: &Value) -> bool {
     result.get("stopReason").and_then(Value::as_str) == Some("length")
         && result.get("text").and_then(Value::as_str).unwrap_or("").is_empty()
@@ -856,6 +873,12 @@ mod tests {
 
         let aborted = serde_json::json!({"stopReason": "aborted", "text": ""});
         assert!(!super::length_stopped_empty(&aborted));
+        assert_eq!(super::cancelled_line(&aborted, false), Some("turn cancelled"));
+        assert_eq!(
+            super::cancelled_line(&aborted, true),
+            Some("turn cancelled; the reply above was cut short")
+        );
+        assert_eq!(super::cancelled_line(&normal, true), None);
     }
 
     /// A replacement that streams sets the flag again, so the receipt fallback
@@ -1361,7 +1384,7 @@ fn render(frame: StreamFrame, wrote_any: &mut bool, view: &mut TurnView) {
         // from this frame.
         StreamFrame::Event { event } => {
             let now = Instant::now();
-            view.ledger.observe(&event);
+            view.ledger.observe(&event, view.status.elapsed(now).as_secs());
             view.status.observe_event(&event, now);
             // Supersession abandons what was already shown. Clearing
             // `wrote_any` matters as much as the marker: leaving it set would

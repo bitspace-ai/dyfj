@@ -355,7 +355,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         Command::Steps(target) => steps(client, session, target).await,
         Command::Budget(target) => budget(client, session, target).await,
         Command::ReceiptSteps => receipt_steps(session),
-        Command::Evidence => evidence(session),
+        Command::Evidence => print_evidence(session.last_evidence.as_deref()),
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
@@ -380,9 +380,10 @@ fn receipt_steps(session: &Session) {
 }
 
 /// Print every tool call of the last turn, from the runtime's frames rather
-/// than the model's account of them.
-fn evidence(session: &Session) {
-    match session.last_evidence.as_deref() {
+/// than the model's account of them. It needs no runtime, so it also answers
+/// while the REPL waits for a disconnected one.
+pub fn print_evidence(calls: Option<&[String]>) {
+    match calls {
         None => eprintln!("no turn has run in this REPL yet"),
         Some([]) => eprintln!("the last turn ran no tools"),
         Some(calls) => {
@@ -391,7 +392,11 @@ fn evidence(session: &Session) {
             for line in calls {
                 eprintln!("{line}");
             }
-            eprintln!("✓ ok · ! ran, but its result reports a problem · ✗ failed · ⊘ not approved");
+            eprintln!(
+                "[start→end] seconds into the turn · ✓ ok · ! ran, but its result reports a problem \
+                 (for a command: a non-zero exit or a timeout) · ✗ failed · ⊘ not approved"
+            );
+            eprintln!("this is the runtime's record of the calls; it does not check the reply's claims");
         }
     }
 }
@@ -640,7 +645,7 @@ async fn request_answering_approvals(
                     }
                 }
                 // No turn is running, so a stray frame has nothing to render into.
-                Some(Incoming::Stream(_)) => {}
+                Some(Incoming::Stream { .. }) => {}
                 None => return (&mut pending).await,
             },
         }

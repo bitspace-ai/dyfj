@@ -80,7 +80,8 @@
             "sessionId": "<ULID:1>",
             "traceId": "<TRACE:1>",
             "mode": "turn"
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -92,7 +93,8 @@
             "type": "inputReceived",
             "sessionId": "<ULID:1>",
             "promptLength": 35
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -104,7 +106,8 @@
             "type": "contextBuilt",
             "sessionId": "<ULID:1>",
             "sourceCount": 0
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -118,7 +121,8 @@
             "modelSlug": "golden-local",
             "tier": 0,
             "reason": "explicit_model_id"
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -131,7 +135,8 @@
             "sessionId": "<ULID:1>",
             "modelSlug": "golden-local",
             "estimatedInputCount": 328
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -139,7 +144,8 @@
         "method": "stream",
         "params": {
           "t": "delta",
-          "text": "Partial golden output"
+          "text": "Partial golden output",
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -154,7 +160,8 @@
             "inputCount": 328,
             "outputCount": 6,
             "totalMs": "<DURATION>"
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       },
       {
@@ -167,7 +174,8 @@
             "sessionId": "<ULID:1>",
             "traceId": "<TRACE:1>",
             "turnId": "<UUID:1>"
-          }
+          },
+          "turnId": "<UUID:1>"
         }
       }
     ]

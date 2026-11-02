@@ -1129,14 +1129,17 @@ The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 for `dyfj stop`; the narrow operator-approved `friction/post` method;
 `ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
 `turn/cancel` methods
-(intermediate text deltas and runtime events arrive as `stream` notifications;
-the receipt is the result). A tool call's `toolCallStarted` and
+(intermediate text deltas and runtime events arrive as `stream` notifications,
+each tagged with the request's `turnId` when it named one, so a client can drop
+a late frame from a turn it abandoned; the receipt is the result). A tool
+call's `toolCallStarted` and
 `toolCallCompleted` events carry a `subject` when the call has one the durable
 log keeps (the first non-redacted string argument in schema order, such as a
 path or a command, one line of at most 120 bytes; none for a command that
 redacts every argument), and a completed call that ran without a tool error
 carries a `resultStatus` when its result opens with a command's exit status
-(`exit 1`, a signal, a timeout) or a tool's `error:` reply (reduced as the log
+(`exit 1`, a signal, a timeout; for `git`, also after its one-line
+subdirectory notice) or a tool's `error:` reply (reduced as the log
 reduces a failure reason; for a command whose result the log redacts, only
 the exit status). `runtime/liveness` is the cheap probe `dyfj status`
 and the launcher's first probe send first; it loads no models and queries no
@@ -1879,9 +1882,13 @@ prompt, which the TypeScript REPL cannot do. It covers turns, approvals,
 Ctrl-C cancellation, a live status line naming what a running turn waits on
 (the model, or a tool call and its subject) with a clock, tool lines that name
 what each call acted on and mark with `!` a call whose result reports a
-problem (a non-zero exit, a tool's `error:` reply), an evidence summary from
-the runtime's tool frames before each receipt (files the file tools wrote,
-commands and their exit status, calls that went wrong, or that no tools ran),
+problem (a non-zero exit, a timeout, a tool's `error:` reply), an evidence
+summary from the runtime's tool frames before each receipt (failed commands
+counted as failures, files the file tools wrote, commands and their exit
+status, files no command exited 0 after, calls that went wrong, or that no
+tools ran, and a line saying the record does not check the reply's claims),
+ACP tool calls on the external-agent route named in the status line and as a
+line when each ends,
 a per-turn receipt line with the turn's cost, the session's
 spend as the runtime's envelope counts it, and prompt-cache tokens, a reason on
 each failed tool call's `✗` line,

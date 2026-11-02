@@ -104,6 +104,18 @@ impl StatusLine {
                 self.enter(Phase::Tool { label: activity::call_label(event) }, now);
             }
             Some("toolCallCompleted") => self.enter(Phase::Runtime, now),
+            Some("agentProgress") => {
+                let running = event.get("kind").and_then(Value::as_str) == Some("tool_call")
+                    && !matches!(
+                        event.get("status").and_then(Value::as_str),
+                        Some("completed" | "failed")
+                    );
+                let label = match activity::agent_progress_title(event) {
+                    Some(title) if running => format!("external agent: {title}"),
+                    _ => "external agent".to_string(),
+                };
+                self.enter(Phase::Tool { label }, now);
+            }
             _ => {}
         }
     }
@@ -302,5 +314,19 @@ mod tests {
         let mut line = StatusLine::new(true, t0);
         line.cancelling();
         assert!(line.text(t0).unwrap().ends_with("cancelling; Ctrl-C again stops waiting"));
+    }
+
+    #[test]
+    fn an_external_agent_call_in_progress_is_named() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        line.observe_event(
+            &json!({"type": "agentProgress", "kind": "tool_call", "title": "Run npm test", "status": "in_progress"}),
+            t0,
+        );
+        assert_eq!(
+            line.text(t0 + secs(4)).as_deref(),
+            Some("… running external agent: Run npm test 4s · Ctrl-C cancels")
+        );
     }
 }

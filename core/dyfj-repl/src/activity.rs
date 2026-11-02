@@ -104,6 +104,20 @@ pub fn describe(event: &Value) -> Option<String> {
         "unparsedToolCallMarkupDetected" => {
             Some("· the model wrote tool-call markup that ran no tools".into())
         }
+        // The external-agent (ACP) route reports its tool calls only as
+        // titled progress patches, with no call id. A call's end is a line;
+        // the status line names the one in progress.
+        "agentProgress" => {
+            if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
+                return None;
+            }
+            let mark = match event.get("status").and_then(Value::as_str) {
+                Some("completed") => "✓",
+                Some("failed") => "✗",
+                _ => return None,
+            };
+            Some(format!("  {mark} {} (external agent)", agent_progress_title(event)?))
+        }
         // Bookkeeping the operator does not need narrated. Observed on a live
         // runtime: sessionStart, inputReceived, contextBuilt, modelSelected,
         // beforeProviderRequest, afterProviderResponse, turnCompleted.
@@ -160,6 +174,26 @@ fn result_status(event: &Value) -> Option<&str> {
         .filter(|status| !status.is_empty())
 }
 
+/// A status as a summary shows it: a timeout's header without the kill
+/// details the call's own line already gave.
+pub fn short_status(status: &str) -> String {
+    let status = match status.split_once(" (killed") {
+        Some((head, _)) if status.starts_with("timed out after ") => head,
+        _ => status,
+    };
+    bounded(status, 40)
+}
+
+/// The title of an ACP tool-call progress frame, or its name.
+pub fn agent_progress_title(event: &Value) -> Option<String> {
+    event
+        .get("title")
+        .or_else(|| event.get("name"))
+        .and_then(Value::as_str)
+        .filter(|title| !title.trim().is_empty())
+        .map(|title| bounded(title, MAX_SUBJECT_CHARS))
+}
+
 /// The longest subject a line shows, in characters. The runtime caps it at
 /// 120 bytes; this holds for any runtime, and keeps a line on one row.
 const MAX_SUBJECT_CHARS: usize = 80;
@@ -206,8 +240,8 @@ pub fn completed_call(event: &Value) -> String {
                 line.push_str(&format!(": {}", bounded_reason(reason)));
             }
         }
-        // `exit 0` confirms a command passed; anything else is why the mark
-        // is not a ✓.
+        // A command's exit status, shown as reported; anything but `exit 0`
+        // is why the mark is not a ✓.
         Outcome::Ok | Outcome::Reported => {
             if let Some(status) = result_status(event) {
                 line.push_str(&format!(" · {}", bounded_reason(status)));
@@ -534,5 +568,31 @@ mod tests {
     #[test]
     fn reports_the_step_limit_because_it_explains_a_short_turn() {
         assert!(describe(&json!({"type": "toolStepLimitReached"})).is_some());
+    }
+
+    /// The header `describeTimeout` writes, as the probe turn produced it.
+    #[test]
+    fn a_timeout_status_is_shortened_for_the_summary() {
+        use super::short_status;
+        assert_eq!(
+            short_status("timed out after 3000ms (killed; output shown up to the deadline)"),
+            "timed out after 3000ms"
+        );
+        assert_eq!(short_status("timed out after 3000ms (killed)"), "timed out after 3000ms");
+        assert_eq!(short_status("exit 7"), "exit 7");
+    }
+
+    /// ACP progress names a call by title only; its end is one line.
+    #[test]
+    fn external_agent_tool_calls_end_with_a_line() {
+        let progress = |status: &str| {
+            describe(&json!({
+                "type": "agentProgress", "kind": "tool_call", "title": "Run npm test", "status": status
+            }))
+        };
+        assert_eq!(progress("in_progress"), None);
+        assert_eq!(progress("completed").as_deref(), Some("  ✓ Run npm test (external agent)"));
+        assert_eq!(progress("failed").as_deref(), Some("  ✗ Run npm test (external agent)"));
+        assert_eq!(describe(&json!({"type": "agentProgress", "kind": "thought"})), None);
     }
 }

@@ -518,6 +518,15 @@ For direct CLI use, `env` prints quoted shell exports. Start a shell with
 `env -i PATH="$PATH" /bin/sh`, apply those exports there, then use
 `node src/cli/main.ts exec --json 'Say hello.'` or the checkout's `dyfj`
 launcher as usual. Read the full `receipt` field from the JSON result.
+
+`testing/probes/long-turn/` drives the Rust REPL through one long scripted turn
+on a disposable runtime: a file write, a 35-second command that exits 7, a
+command that times out, a reply that claims everything passed, then a second
+prompt the model holds until Ctrl-C. Build the REPL (`cargo build -p
+dyfj-repl` in `core/`), then from `prototype/` run
+`python3 testing/probes/long-turn/drive.py <transcript>` and
+`python3 testing/probes/long-turn/render.py <transcript>`. Its `README.md`
+lists what to look for. It is a manual probe, not a gate lane.
 Bare `/receipt` is unavailable in both existing REPLs; `/receipt steps` only
 shows per-call usage for a turn run in that REPL. Direct invocations are not captured by the
 recording helper; retain their output separately.

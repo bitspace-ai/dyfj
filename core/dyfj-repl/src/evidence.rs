@@ -6,6 +6,10 @@
 //! ran, on what, and how each ended. This collects them for one turn and
 //! closes the turn with a short summary beside the answer, so the claim and
 //! the evidence are on screen together. `/evidence` prints every call.
+//!
+//! The record never certifies the reply. A command that exited 0 is shown as
+//! exiting 0, not as a check that passed: which command was a check, and
+//! whether it checked the claim, is the operator's call.
 
 use crate::activity::{self, Outcome};
 use serde_json::Value;
@@ -21,12 +25,20 @@ struct Call {
     status: Option<String>,
     /// The completed line, as the live view rendered it.
     line: Option<String>,
+    /// Seconds into the turn when the call started and when it completed.
+    started_at: Option<u64>,
+    ended_at: Option<u64>,
 }
 
 /// The tools that write files, whose subject is the path they wrote. Other
 /// tools (bash, git) can change files too, which is why the summary says
 /// these were the file tools.
 const FILE_WRITERS: [&str; 2] = ["write_file", "edit_file"];
+
+/// The tools whose result opens with a process exit status. A non-zero exit
+/// or a timeout is output the model reads, not a tool error; the summary
+/// counts it as a failed command.
+const COMMANDS: [&str; 2] = ["bash", "git"];
 
 /// How many items one summary line lists before it counts the rest.
 const MAX_LISTED: usize = 5;
@@ -39,8 +51,9 @@ pub struct Ledger {
 }
 
 impl Ledger {
-    /// Fold one runtime event into the record.
-    pub fn observe(&mut self, event: &Value) {
+    /// Fold one runtime event into the record. `at` is the seconds since
+    /// the turn began.
+    pub fn observe(&mut self, event: &Value, at: u64) {
         let text = |key: &str| event.get(key).and_then(Value::as_str).map(str::to_string);
         match event.get("type").and_then(Value::as_str) {
             Some("toolStepStarted") => {
@@ -55,6 +68,8 @@ impl Ledger {
                 outcome: None,
                 status: None,
                 line: None,
+                started_at: Some(at),
+                ended_at: None,
             }),
             Some("toolCallCompleted") => {
                 let id = text("callId").unwrap_or_default();
@@ -74,6 +89,8 @@ impl Ledger {
                             outcome: None,
                             status: None,
                             line: None,
+                            started_at: None,
+                            ended_at: None,
                         });
                         self.calls.len() - 1
                     }
@@ -82,6 +99,7 @@ impl Ledger {
                 call.outcome = Some(activity::outcome(event));
                 call.status = text("resultStatus").filter(|s| !s.is_empty());
                 call.line = Some(activity::completed_call(event));
+                call.ended_at = Some(at);
             }
             Some("unparsedToolCallMarkupDetected") => self.unparsed_markup = true,
             _ => {}
@@ -106,8 +124,30 @@ impl Ledger {
             self.calls.iter().filter(|call| call.outcome == wanted).count()
         };
         let mut tally = vec![format!("{} ok", count(Some(Outcome::Ok)))];
+        // A command that exited non-zero or timed out failed, whatever the
+        // reply says; another tool's `error:` reply reported a problem.
+        let failed_commands: Vec<String> = self
+            .calls
+            .iter()
+            .filter(|call| is_command(call) && call.outcome == Some(Outcome::Reported))
+            .map(|call| call.status.as_deref().map(activity::short_status).unwrap_or_default())
+            .collect();
+        if !failed_commands.is_empty() {
+            tally.push(format!(
+                "{} failed ({})",
+                plural(failed_commands.len(), "command"),
+                failed_commands.join("; ")
+            ));
+        }
+        let reported = self
+            .calls
+            .iter()
+            .filter(|call| !is_command(call) && call.outcome == Some(Outcome::Reported))
+            .count();
+        if reported > 0 {
+            tally.push(format!("{reported} reported a problem"));
+        }
         for (outcome, label) in [
-            (Some(Outcome::Reported), "reported a problem"),
             (Some(Outcome::Failed), "failed"),
             (Some(Outcome::NotApproved), "not approved"),
             (None, "reported no completion"),
@@ -143,15 +183,16 @@ impl Ledger {
         let commands: Vec<String> = self
             .calls
             .iter()
-            .filter(|call| call.name == "bash" && call.outcome.is_some())
+            .filter(|call| is_command(call) && call.outcome.is_some())
             .map(|call| {
                 let result = match (call.outcome, &call.status) {
                     (Some(Outcome::NotApproved), _) => "not approved".to_string(),
                     (Some(Outcome::Failed), _) => "failed".to_string(),
-                    (_, Some(status)) => activity::bounded(status, 40),
+                    (_, Some(status)) => activity::short_status(status),
                     (_, None) => "no exit status".to_string(),
                 };
-                format!("{} → {result}", subject_or_unnamed(call))
+                let name = if call.name == "bash" { String::new() } else { format!("{} ", call.name) };
+                format!("{name}{} → {result}", subject_or_unnamed(call))
             })
             .collect();
         if !commands.is_empty() {
@@ -165,7 +206,7 @@ impl Ledger {
                 matches!(
                     call.outcome,
                     Some(Outcome::Reported | Outcome::Failed | Outcome::NotApproved) | None
-                ) && call.name != "bash"
+                ) && !is_command(call)
             })
             .map(|call| match &call.line {
                 Some(line) => line.clone(),
@@ -178,22 +219,67 @@ impl Ledger {
         if !problems.is_empty() {
             lines.push(format!("    problems: {}", listed_with(&problems, "; ")));
         }
+        let unchecked = self.written_after_last_clean_exit();
+        if !unchecked.is_empty() {
+            lines.push(format!(
+                "    no command exited 0 after these writes: {}",
+                listed(&unchecked)
+            ));
+        }
+        lines.push(
+            "    this is the runtime's record of the calls; it does not check the reply's claims"
+                .into(),
+        );
         if self.calls.len() > 1 {
             lines.push("    /evidence lists every call".into());
         }
         lines
     }
 
-    /// Every call, one line each, for `/evidence`.
+    /// Files the file tools wrote after the last command that exited 0, or
+    /// every file written when none did. Saying nothing when a command did
+    /// exit 0 afterwards is deliberate: the record cannot tell whether that
+    /// command checked the write.
+    fn written_after_last_clean_exit(&self) -> Vec<String> {
+        let last_clean = self.calls.iter().rposition(|call| {
+            is_command(call)
+                && call.outcome == Some(Outcome::Ok)
+                && call.status.as_deref() == Some("exit 0")
+        });
+        let after = last_clean.map_or(0, |index| index + 1);
+        dedup(
+            self.calls[after..]
+                .iter()
+                .filter(|call| {
+                    FILE_WRITERS.contains(&call.name.as_str()) && call.outcome == Some(Outcome::Ok)
+                })
+                .map(subject_or_unnamed)
+                .collect(),
+        )
+    }
+
+    /// Every call, one line each, for `/evidence`: when it ran, in seconds
+    /// into the turn, and how it ended.
     pub fn every_call(&self) -> Vec<String> {
         self.calls
             .iter()
-            .map(|call| match &call.line {
-                Some(line) => format!("  {line}"),
-                None => format!("  … {} reported no completion", label(call)),
+            .map(|call| {
+                let when = match (call.started_at, call.ended_at) {
+                    (Some(start), Some(end)) if end > start => format!("[{start}s→{end}s] "),
+                    (Some(at), _) | (None, Some(at)) => format!("[{at}s] "),
+                    (None, None) => String::new(),
+                };
+                match &call.line {
+                    Some(line) => format!("  {when}{line}"),
+                    None => format!("  {when}… {} reported no completion", label(call)),
+                }
             })
             .collect()
     }
+}
+
+fn is_command(call: &Call) -> bool {
+    COMMANDS.contains(&call.name.as_str())
 }
 
 fn label(call: &Call) -> String {
@@ -246,7 +332,7 @@ mod tests {
     fn ledger(events: &[Value]) -> Ledger {
         let mut ledger = Ledger::default();
         for event in events {
-            ledger.observe(event);
+            ledger.observe(event, 0);
         }
         ledger
     }
@@ -289,6 +375,8 @@ mod tests {
                 "· evidence: 3 calls in 3 steps: 2 ok, 1 reported a problem · 4.1s",
                 "    file tools wrote: notes.md",
                 "    problems: ! read_file missing.txt (5ms) · error: cannot read missing.txt: not found",
+                "    no command exited 0 after these writes: notes.md",
+                "    this is the runtime's record of the calls; it does not check the reply's claims",
                 "    /evidence lists every call",
             ]
         );
@@ -307,7 +395,7 @@ mod tests {
         let summary = ledger.summary(65_000);
         assert_eq!(
             summary[0],
-            "· evidence: 3 calls: 1 ok, 1 reported a problem, 1 not approved · 1m05s"
+            "· evidence: 3 calls: 1 ok, 1 command failed (exit 1), 1 not approved · 1m05s"
         );
         assert_eq!(
             summary[1],
@@ -335,15 +423,16 @@ mod tests {
             vec![
                 "· evidence: 1 call: 0 ok, 1 reported no completion · 10.0s",
                 "    problems: … grep_files TODO reported no completion",
+                "    this is the runtime's record of the calls; it does not check the reply's claims",
             ]
         );
-        assert_eq!(ledger.every_call(), vec!["  … grep_files TODO reported no completion"]);
+        assert_eq!(ledger.every_call(), vec!["  [0s] … grep_files TODO reported no completion"]);
     }
 
     #[test]
     fn a_completion_without_its_start_is_still_recorded() {
         let ledger = ledger(&[completed("c9", "read_file", "a.ts", json!({}))]);
-        assert_eq!(ledger.every_call(), vec!["  ✓ read_file a.ts (5ms)"]);
+        assert_eq!(ledger.every_call(), vec!["  [0s] ✓ read_file a.ts (5ms)"]);
     }
 
     #[test]
@@ -359,5 +448,58 @@ mod tests {
         events.push(completed("again", "write_file", "f0.md", json!({})));
         let summary = ledger(&events).summary(1_000);
         assert_eq!(summary[1], "    file tools wrote: f0.md, f1.md, f2.md, f3.md, f4.md and 3 more");
+    }
+
+    /// The acceptance probe's turn: a write, a command that exits 7 after a
+    /// 35 s wait, a command that times out, then a reply claiming everything
+    /// passed. Both commands are failures, nothing says a check passed, and
+    /// the write is named as unchecked.
+    #[test]
+    fn the_probe_turn_records_both_failures_and_no_pass() {
+        let mut ledger = Ledger::default();
+        let timeout = "timed out after 3000ms (killed; output shown up to the deadline)";
+        for (event, at) in [
+            (started("c1", "list_files", "."), 0),
+            (completed("c1", "list_files", ".", json!({})), 0),
+            (started("c2", "write_file", "notes.txt"), 0),
+            (completed("c2", "write_file", "notes.txt", json!({})), 1),
+            (started("c3", "bash", "sleep 35; exit 7"), 1),
+            (completed("c3", "bash", "sleep 35; exit 7", json!({"resultStatus": "exit 7"})), 36),
+            (started("c4", "bash", "sleep 10; npm test"), 36),
+            (completed("c4", "bash", "sleep 10; npm test", json!({"resultStatus": timeout})), 39),
+        ] {
+            ledger.observe(&event, at);
+        }
+        let summary = ledger.summary(39_000);
+        assert_eq!(
+            summary,
+            vec![
+                "· evidence: 4 calls: 2 ok, 2 commands failed (exit 7; timed out after 3000ms) · 39.0s",
+                "    file tools wrote: notes.txt",
+                "    commands: sleep 35; exit 7 → exit 7; sleep 10; npm test → timed out after 3000ms",
+                "    no command exited 0 after these writes: notes.txt",
+                "    this is the runtime's record of the calls; it does not check the reply's claims",
+                "    /evidence lists every call",
+            ]
+        );
+        let text = summary.join("\n");
+        assert!(!text.contains("passed") && !text.contains("verified"), "{text}");
+        assert_eq!(ledger.every_call()[2], "  [1s→36s] ! bash sleep 35; exit 7 (5ms) · exit 7");
+    }
+
+    /// A command that exits 0 after a write is not called a check, and the
+    /// write is no longer listed as unchecked.
+    #[test]
+    fn a_clean_exit_after_a_write_is_shown_but_not_certified() {
+        let ledger = ledger(&[
+            started("c1", "edit_file", "a.rs"),
+            completed("c1", "edit_file", "a.rs", json!({})),
+            started("c2", "git", "status"),
+            completed("c2", "git", "status", json!({"resultStatus": "exit 0"})),
+        ]);
+        let summary = ledger.summary(1_000);
+        assert_eq!(summary[0], "· evidence: 2 calls: 2 ok · 1.0s");
+        assert_eq!(summary[2], "    commands: git status → exit 0");
+        assert!(!summary.iter().any(|line| line.contains("no command exited 0")));
     }
 }
