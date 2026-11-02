@@ -225,8 +225,10 @@ test("agent loop honors a configured small step limit and asks for a no-tools ha
 });
 
 test("an in-process caller cannot run past the configured tool-step ceiling", async () => {
-  const loop = toolReply([LIST("c")], HANDOFF_REPLY);
-  const { run, result } = await loopTurn(Array(6).fill(loop), {
+  const steps = Array.from({ length: 6 }, (_, index) =>
+    toolReply([LIST(`c${index}`, "./".repeat(index + 1))], HANDOFF_REPLY)
+  );
+  const { run, result } = await loopTurn(steps, {
     prompt: "loop without stopping",
     // An in-process entrypoint spreads the boundary's env defaults, as
     // examples/verify-workbench-events.ts does, then asks for more steps.
@@ -294,6 +296,37 @@ test("agent loop forces a conclusion when the model repeats prior tool calls", a
     frames.some((f) => f.type === "toolStepLimitReached"),
     false,
   );
+});
+
+test("a forced conclusion after repeated calls runs no tools and raises no approval", async () => {
+  const approvals: string[] = [];
+  const repeat = toolReply([LIST("c")]);
+  const loop = await loopTurn([
+    repeat,
+    repeat,
+    toolReply([LIST("ignored-read"), WRITE("ignored-write", "b.txt")], "done"),
+    chatReply({ content: "unused: the conclusion must be final" }),
+  ], {
+    approver: {
+      confirmToolApproval: (request) => {
+        approvals.push(request.callId);
+        return Promise.resolve({ decision: "approve" });
+      },
+    },
+  });
+  assert.strictEqual(loop.error, null);
+  assert.deepStrictEqual(approvals, []);
+  for (const type of ["toolCallStarted", "toolCallCompleted"] as const) {
+    assert.deepStrictEqual(
+      loop.frames.flatMap((frame) => frame.type === type ? [frame.callId] : []),
+      ["c", "c"],
+    );
+  }
+  assert.deepStrictEqual(loop.run.transport.requests.length, 3);
+  assert.deepStrictEqual(requestBody(loop.run.transport.requests[2]).tools, undefined);
+  assert.deepStrictEqual(loop.result?.agent?.toolStepsUsed, 2);
+  assert.deepStrictEqual(loop.result?.stopReason, "stop");
+  assert.deepStrictEqual(loop.result?.text, "done");
 });
 
 // ─── a denied approval ends tool use for the turn ────────────────────────────

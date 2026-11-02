@@ -30,9 +30,10 @@ import type {
 function toolReply(
   id: string,
   usage: { prompt_tokens: number; completion_tokens: number; cost?: number },
+  path = ".",
 ): ScriptedExchange {
   return chatReply({
-    toolCalls: [{ id, name: "list_files", arguments: { path: "." } }],
+    toolCalls: [{ id, name: "list_files", arguments: { path } }],
     usage,
   });
 }
@@ -211,8 +212,8 @@ test("rejects an over-budget follow-up call before invoking the provider (tier 1
 // Estimates are ~0 (input nearly free), so the turn limit is checked against
 // ACTUAL recorded spend: a $0.30 turn limit stops the turn once its actual
 // spend passes $0.30; each call records $0.12.
-// The runaway limit is set out of the way: these calls repeat one tool call,
-// which is no tool progress.
+// Distinct path arguments keep the loop running to the spend check; the
+// runaway limit is set out of the way so only accumulated spend is tested.
 const TURN_LIMIT = {
   defaultTurnBudgetUsd: 0.30,
   defaultRunawayStallUsd: 100,
@@ -223,9 +224,9 @@ const TWELVE_CENTS = { prompt_tokens: 10, completion_tokens: 12 };
 test("stops a multi-call turn on ACTUAL accumulated spend, failing closed without a handler", async () => {
   const { run, frames } = await gatedTurn(
     [
-      toolReply("c1", TWELVE_CENTS),
-      toolReply("c2", TWELVE_CENTS),
-      toolReply("c3", TWELVE_CENTS),
+      toolReply("c1", TWELVE_CENTS, "./"),
+      toolReply("c2", TWELVE_CENTS, "././"),
+      toolReply("c3", TWELVE_CENTS, "./././"),
       chatReply({ content: "never reached", usage: TWELVE_CENTS }),
     ],
     PER_TOKEN,
@@ -249,14 +250,14 @@ test("an approval raises the turn limit to twice the spend at approval, so the n
   );
   const { run, result } = await gatedTurn(
     [
-      toolReply("c1", TWELVE_CENTS), // pre-check: $0
-      toolReply("c2", TWELVE_CENTS), // pre-check: $0.12
-      toolReply("c3", TWELVE_CENTS), // pre-check: $0.24
-      toolReply("c4", TWELVE_CENTS), // pre-check: $0.36 → prompt 1, limit → $0.72
-      toolReply("c5", TWELVE_CENTS), // pre-check: $0.48, no prompt
-      toolReply("c6", TWELVE_CENTS), // pre-check: $0.60, no prompt
-      toolReply("c7", TWELVE_CENTS), // pre-check: $0.72, no prompt
-      toolReply("c8", TWELVE_CENTS), // pre-check: $0.84 → prompt 2, limit → $1.68
+      toolReply("c1", TWELVE_CENTS, "./"), // pre-check: $0
+      toolReply("c2", TWELVE_CENTS, "././"), // pre-check: $0.12
+      toolReply("c3", TWELVE_CENTS, "./././"), // pre-check: $0.24
+      toolReply("c4", TWELVE_CENTS, "././././"), // pre-check: $0.36 → prompt 1, limit → $0.72
+      toolReply("c5", TWELVE_CENTS, "./././././"), // pre-check: $0.48, no prompt
+      toolReply("c6", TWELVE_CENTS, "././././././"), // pre-check: $0.60, no prompt
+      toolReply("c7", TWELVE_CENTS, "./././././././"), // pre-check: $0.72, no prompt
+      toolReply("c8", TWELVE_CENTS, "././././././././"), // pre-check: $0.84 → prompt 2, limit → $1.68
       chatReply({ content: "done", usage: TWELVE_CENTS }),
     ],
     PER_TOKEN,

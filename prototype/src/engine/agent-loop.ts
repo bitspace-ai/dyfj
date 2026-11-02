@@ -149,10 +149,6 @@ export async function agentLoop(
       break;
     }
     result = await followUp(turn, result, messages, step, streaming);
-    // A concluding call sent because a tool call was not approved is the
-    // last word of the turn: whatever tool call it still carries is dropped,
-    // so a model that ignores the instruction cannot raise another approval.
-    if (step.approvalDenied) result = withoutToolCalls(session, result);
     captureTurnState(state, result);
     result = abortedIfCancelled(turn, result);
   }
@@ -645,7 +641,7 @@ async function followUp(
     transcriptEstimateText(systemPrompt, messages),
   );
   streaming.streamedText = false;
-  return await recoveredTurn(
+  const followUpResult = await recoveredTurn(
     turn,
     {
       ...callParams(turn, systemPrompt, messages),
@@ -660,6 +656,17 @@ async function followUp(
     { modelSlug: turn.route.selected.slug, estimatedInputCount },
     forceConclude ? "forced_conclusion" : "tool_followup",
   );
+  // A forced conclusion is the last word of the turn, even when the model
+  // still requests tools. Drop those calls before the loop can run them.
+  return forceConclude
+    ? withoutToolCalls(
+      session,
+      followUpResult,
+      step.approvalDenied
+        ? "after a tool call was not approved"
+        : "in a forced conclusion",
+    )
+    : followUpResult;
 }
 
 /**

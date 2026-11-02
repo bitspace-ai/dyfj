@@ -180,6 +180,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Forced conclusions end tool use (BIT-601).** The agent loop drops and
+  logs structured tool calls returned by any forced no-tools conclusion,
+  without executing them or requesting approval.
+
 - **Disposable runtime lifecycle (BIT-847).** Startup cleanup covers temporary
   root preparation, and state and evidence files are explicitly set to mode
   `0600` independently of the invoking shell's umask.
