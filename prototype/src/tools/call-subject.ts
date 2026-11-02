@@ -56,13 +56,22 @@ export function toolCallSubject(
 const EXIT_STATUS = /^(exit -?\d+|exit by signal [A-Z0-9]+|timed out after \d+ms \(killed[^)]*\))$/;
 
 /**
+ * The status a redacted `error:` reply is shown as. A command replies
+ * `error: …` instead of an exit status when it never ran: its runner threw,
+ * its working directory was refused, or its arguments failed validation. The
+ * reply may carry redacted content, so none of it is shown.
+ */
+export const DID_NOT_RUN_STATUS = "did not run";
+
+/**
  * The status of a call that completed without a tool error: the exit status
  * of a command, or the `error: …` line a tool replied with. None for any
  * other result.
  *
- * For a command whose result the log redacts, only an exit status line
- * qualifies. Otherwise an `error:` line is reduced the way the log reduces a
- * failure reason, so a reply that echoes a redacted argument is withheld.
+ * For a command whose result the log redacts, an exit status line is the
+ * status, and an `error:` reply is `DID_NOT_RUN_STATUS`. Otherwise an
+ * `error:` line is reduced the way the log reduces a failure reason, so a
+ * reply that echoes a redacted argument is withheld.
  */
 export function toolResultStatus(
   command: CommandDefinition | undefined,
@@ -77,9 +86,8 @@ export function toolResultStatus(
   if (head.startsWith("note: ") && second !== undefined && EXIT_STATUS.test(second)) {
     return second;
   }
-  if (command.redactResult === true || !head.startsWith("error:")) {
-    return undefined;
-  }
+  if (!head.startsWith("error:")) return undefined;
+  if (command.redactResult === true) return DID_NOT_RUN_STATUS;
   return sanitizeBoundaryText(
     durableFailureReason(command, args, head),
     TOOL_STATUS_MAX_BYTES,

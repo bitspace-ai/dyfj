@@ -1141,7 +1141,8 @@ carries a `resultStatus` when its result opens with a command's exit status
 (`exit 1`, a signal, a timeout; for `git`, also after its one-line
 subdirectory notice) or a tool's `error:` reply (reduced as the log
 reduces a failure reason; for a command whose result the log redacts, only
-the exit status). `runtime/liveness` is the cheap probe `dyfj status`
+the exit status, or the fixed `did not run` when it replied `error: …` and
+never ran). `runtime/liveness` is the cheap probe `dyfj status`
 and the launcher's first probe send first; it loads no models and queries no
 Dolt state. `runtime/status` also reports the runtime's code `fingerprint`, its
 open `clients` and its `inFlightTurns`, and `runtime/stop` with
@@ -1884,11 +1885,12 @@ Ctrl-C cancellation, a live status line naming what a running turn waits on
 what each call acted on and mark with `!` a call whose result reports a
 problem (a non-zero exit, a timeout, a tool's `error:` reply), an evidence
 summary from the runtime's tool frames before each receipt (failed commands
-counted as failures, files the file tools wrote, commands and their exit
-status, files no command exited 0 after, calls that went wrong, or that no
-tools ran, and a line saying the record does not check the reply's claims),
-ACP tool calls on the external-agent route named in the status line and as a
-line when each ends,
+counted as failures, a command whose exit status was not reported marked `?`
+and never counted as ok, files the file tools wrote, commands and their exit
+status, files no command reported exit 0 after, calls that went wrong, or that
+no tools ran, and a line saying the record does not check the reply's claims),
+ACP tool calls on the external-agent route named in the status line, as a
+line when each ends, and in the evidence as the agent reported them,
 a per-turn receipt line with the turn's cost, the session's
 spend as the runtime's envelope counts it, and prompt-cache tokens, a reason on
 each failed tool call's `✗` line,
@@ -2783,3 +2785,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-01 - "Build the core" lists the Rust REPL's status line, subject and
   `!` tool lines, evidence summary and `/evidence`; the JSON-RPC seam section
   describes the tool frames' `subject` and `resultStatus`.
+- 2026-11-02 - "Build the core" says a command with no reported exit status
+  is marked `?` and never counted as ok, and that ACP tool calls are in the
+  evidence; the JSON-RPC seam section names the `did not run` status.

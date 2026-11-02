@@ -37,7 +37,7 @@ Look for:
 - a `(status) … running bash sleep 35; … 34s` line before the exit 7 line:
   the wait had a named subject and a clock;
 - `· evidence: 4 calls in 4 steps: 2 ok, 2 commands failed (exit 7; timed
-  out after 3000ms)`, `no command exited 0 after these writes: notes.txt`,
+  out after 3000ms)`, `no command reported exit 0 after these writes: notes.txt`,
   and `it does not check the reply's claims`; nothing in the record says a
   check passed or the work was verified;
 - `/evidence` listing all four calls with start and end seconds;

@@ -26,14 +26,17 @@ README are tracked separately in its Revision history section.
   with an evidence summary from the runtime's tool frames rather than the
   model's account: calls by outcome, with a `bash` or `git` call that exited
   non-zero or timed out counted as a failed command (`2 commands failed (exit
-  7; timed out after 3000ms)`), wall time, files the file tools wrote, each
-  command with its exit status, the calls that went wrong, and the files no
-  command exited 0 after. It never calls a command a passing check, and it
+  7; timed out after 3000ms)`) and a command whose exit status was not
+  reported, as an older runtime's are not, counted as `reported no exit
+  status` and marked `?` rather than as ok, wall time, files the file tools
+  wrote, each command with its exit status, the calls that went wrong, and
+  the files no command reported exit 0 after. It never calls a command a passing check, and it
   ends by saying it does not check the reply's claims; a turn with no tool
   calls says the reply is the model's own account. `/evidence` lists every
   call of the last turn with when it started and ended, and works while the
   runtime is disconnected. On the external-agent (ACP) route the status line
-  names the agent's tool call in progress and a line marks each one's end.
+  names the agent's tool call in progress and a line marks each one's end,
+  and the evidence records those calls, marked as the agent's own report.
   A turn the runtime settles as cancelled ends with `turn cancelled`.
   Durations over a second read as seconds. The TypeScript client's tool lines
   name the subject and status too. `prototype/testing/probes/long-turn/`
@@ -54,8 +57,11 @@ README are tracked separately in its Revision history section.
   that ran without a tool error carries an optional `resultStatus` when its
   result opens with a command's exit status (for `git`, also after its
   one-line subdirectory notice) or a tool's `error:` reply,
-  reduced as the log reduces a failure reason; a redacted result contributes
-  only the runtime-written exit status line. `isError` is unchanged: a
+  reduced as the log reduces a failure reason. A redacted result contributes
+  only the runtime-written exit status line, or the fixed `did not run` when
+  the command replied `error: …` instead (its runner threw, its working
+  directory was refused, or its arguments failed validation); the reply's
+  text is never shown. `isError` is unchanged: a
   non-zero exit or a `not found` reply is still output the model reads, and
   the runaway-spend check still treats it so.
 

@@ -394,7 +394,7 @@ pub fn print_evidence(calls: Option<&[String]>) {
             }
             eprintln!(
                 "[start→end] seconds into the turn · ✓ ok · ! ran, but its result reports a problem \
-                 (for a command: a non-zero exit or a timeout) · ✗ failed · ⊘ not approved"
+                 (for a command: a non-zero exit or a timeout) · ✗ failed · ⊘ not approved · ? exit status not reported"
             );
             eprintln!("this is the runtime's record of the calls; it does not check the reply's claims");
         }

@@ -81,8 +81,22 @@ test("a command's exit status is its result status, even when the result is reda
 });
 
 test("a redacted result contributes nothing but its exit status", () => {
-  assert.equal(toolResultStatus(bash, {}, "error: cannot run command: secret"), undefined);
   assert.equal(toolResultStatus(bash, {}, "exit 1 and then the output"), undefined);
+  assert.equal(toolResultStatus(bash, {}, "the output\nexit 0"), undefined);
+});
+
+// A command whose runner threw, whose cwd was refused, or whose arguments
+// failed validation replies `error: …` and never ran. Read as no status, the
+// call showed as a success. The reply may echo redacted content, so the
+// status is fixed text.
+test("a redacted error reply is a fixed status that says the command did not run", () => {
+  for (const reply of [
+    "error: cannot run command: spawn EACCES secret-token",
+    "error: cwd is outside the workspace: /private/secret",
+    "error: empty command",
+  ]) {
+    assert.equal(toolResultStatus(bash, {}, reply), "did not run");
+  }
 });
 
 test("a tool's error reply is its result status", () => {

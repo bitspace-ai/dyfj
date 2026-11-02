@@ -139,7 +139,15 @@ pub enum Outcome {
     Failed,
     /// Not approved, so it did not run.
     NotApproved,
+    /// A command that completed without reporting its exit status, as a
+    /// runtime from before `resultStatus` does. A non-zero exit or a timeout
+    /// looks the same, so this is not counted as a success.
+    Unknown,
 }
+
+/// The tools whose result opens with a process exit status. A non-zero exit
+/// or a timeout is output the model reads, not a tool error.
+pub const COMMANDS: [&str; 2] = ["bash", "git"];
 
 impl Outcome {
     pub fn mark(self) -> &'static str {
@@ -148,6 +156,7 @@ impl Outcome {
             Outcome::Reported => "!",
             Outcome::Failed => "✗",
             Outcome::NotApproved => "⊘",
+            Outcome::Unknown => "?",
         }
     }
 }
@@ -160,9 +169,12 @@ pub fn outcome(event: &Value) -> Outcome {
     if event.get("isError").and_then(Value::as_bool) == Some(true) {
         return Outcome::Failed;
     }
+    let name = event.get("commandId").and_then(Value::as_str).unwrap_or_default();
     match result_status(event) {
         Some(status) if status != "exit 0" => Outcome::Reported,
-        _ => Outcome::Ok,
+        Some(_) => Outcome::Ok,
+        None if COMMANDS.contains(&name) => Outcome::Unknown,
+        None => Outcome::Ok,
     }
 }
 
@@ -247,6 +259,7 @@ pub fn completed_call(event: &Value) -> String {
                 line.push_str(&format!(" · {}", bounded_reason(status)));
             }
         }
+        Outcome::Unknown => line.push_str(" · exit status not reported"),
         Outcome::NotApproved => {}
     }
     line
@@ -440,11 +453,11 @@ mod tests {
     fn a_successful_call_shows_no_reason() {
         assert_eq!(
             describe(&json!({
-                "type": "toolCallCompleted", "commandId": "bash",
+                "type": "toolCallCompleted", "commandId": "list_files",
                 "isError": false, "durationMs": 4, "failureReason": "stale"
             }))
             .as_deref(),
-            Some("  ✓ bash (4ms)")
+            Some("  ✓ list_files (4ms)")
         );
     }
 
@@ -580,6 +593,34 @@ mod tests {
         );
         assert_eq!(short_status("timed out after 3000ms (killed)"), "timed out after 3000ms");
         assert_eq!(short_status("exit 7"), "exit 7");
+    }
+
+    /// A runtime from before `resultStatus` reports no exit status for any
+    /// command, so a non-zero exit or a timeout is indistinguishable from a
+    /// clean exit. That is not a success.
+    #[test]
+    fn a_command_without_an_exit_status_is_not_shown_as_ok() {
+        let line = describe(&json!({
+            "type": "toolCallCompleted", "commandId": "bash", "subject": "npm test",
+            "isError": false, "durationMs": 3200
+        }));
+        assert_eq!(line.as_deref(), Some("  ? bash npm test (3.2s) · exit status not reported"));
+        // Other tools have no exit status to report.
+        let read = describe(&json!({
+            "type": "toolCallCompleted", "commandId": "read_file", "subject": "a.ts",
+            "isError": false, "durationMs": 5
+        }));
+        assert_eq!(read.as_deref(), Some("  ✓ read_file a.ts (5ms)"));
+    }
+
+    /// A command that never started, as a current runtime reports it.
+    #[test]
+    fn a_command_that_did_not_run_is_a_problem() {
+        let line = describe(&json!({
+            "type": "toolCallCompleted", "commandId": "git", "subject": "status",
+            "isError": false, "durationMs": 2, "resultStatus": "did not run"
+        }));
+        assert_eq!(line.as_deref(), Some("  ! git status (2ms) · did not run"));
     }
 
     /// ACP progress names a call by title only; its end is one line.

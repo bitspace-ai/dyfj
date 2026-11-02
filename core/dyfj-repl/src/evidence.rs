@@ -10,8 +10,12 @@
 //! The record never certifies the reply. A command that exited 0 is shown as
 //! exiting 0, not as a check that passed: which command was a check, and
 //! whether it checked the claim, is the operator's call.
+//!
+//! On the external-agent (ACP) route the agent's tool calls arrive as
+//! progress frames, which the agent reports and the runtime relays. They are
+//! recorded too, marked as the agent's report.
 
-use crate::activity::{self, Outcome};
+use crate::activity::{self, COMMANDS, Outcome};
 use serde_json::Value;
 
 /// One tool call of the turn, as its frames reported it.
@@ -28,17 +32,30 @@ struct Call {
     /// Seconds into the turn when the call started and when it completed.
     started_at: Option<u64>,
     ended_at: Option<u64>,
+    /// An external agent's call, known by its title only.
+    external: bool,
+}
+
+impl Call {
+    fn started(name: String, subject: Option<String>, started_at: Option<u64>) -> Self {
+        Call {
+            id: String::new(),
+            name,
+            subject,
+            outcome: None,
+            status: None,
+            line: None,
+            started_at,
+            ended_at: None,
+            external: false,
+        }
+    }
 }
 
 /// The tools that write files, whose subject is the path they wrote. Other
 /// tools (bash, git) can change files too, which is why the summary says
 /// these were the file tools.
 const FILE_WRITERS: [&str; 2] = ["write_file", "edit_file"];
-
-/// The tools whose result opens with a process exit status. A non-zero exit
-/// or a timeout is output the model reads, not a tool error; the summary
-/// counts it as a failed command.
-const COMMANDS: [&str; 2] = ["bash", "git"];
 
 /// How many items one summary line lists before it counts the rest.
 const MAX_LISTED: usize = 5;
@@ -63,13 +80,11 @@ impl Ledger {
             }
             Some("toolCallStarted") => self.calls.push(Call {
                 id: text("callId").unwrap_or_default(),
-                name: text("commandId").unwrap_or_else(|| "tool".into()),
-                subject: text("subject").filter(|s| !s.trim().is_empty()),
-                outcome: None,
-                status: None,
-                line: None,
-                started_at: Some(at),
-                ended_at: None,
+                ..Call::started(
+                    text("commandId").unwrap_or_else(|| "tool".into()),
+                    text("subject").filter(|s| !s.trim().is_empty()),
+                    Some(at),
+                )
             }),
             Some("toolCallCompleted") => {
                 let id = text("callId").unwrap_or_default();
@@ -84,13 +99,11 @@ impl Ledger {
                     None => {
                         self.calls.push(Call {
                             id,
-                            name: text("commandId").unwrap_or_else(|| "tool".into()),
-                            subject: text("subject").filter(|s| !s.trim().is_empty()),
-                            outcome: None,
-                            status: None,
-                            line: None,
-                            started_at: None,
-                            ended_at: None,
+                            ..Call::started(
+                                text("commandId").unwrap_or_else(|| "tool".into()),
+                                text("subject").filter(|s| !s.trim().is_empty()),
+                                None,
+                            )
                         });
                         self.calls.len() - 1
                     }
@@ -101,9 +114,49 @@ impl Ledger {
                 call.line = Some(activity::completed_call(event));
                 call.ended_at = Some(at);
             }
+            Some("agentProgress") => self.observe_agent_call(event, at),
             Some("unparsedToolCallMarkupDetected") => self.unparsed_markup = true,
             _ => {}
         }
+    }
+
+    /// An ACP tool-call progress frame. It carries no call id, so a frame is
+    /// matched to the latest unfinished call with the same title; a call
+    /// first seen at its end is recorded from that frame alone.
+    fn observe_agent_call(&mut self, event: &Value, at: u64) {
+        if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
+            return;
+        }
+        let Some(title) = activity::agent_progress_title(event) else {
+            return;
+        };
+        let open = self.calls.iter().rposition(|call| {
+            call.external && call.outcome.is_none() && call.subject.as_deref() == Some(&title)
+        });
+        let outcome = match event.get("status").and_then(Value::as_str) {
+            Some("completed") => Outcome::Ok,
+            Some("failed") => Outcome::Failed,
+            _ => {
+                if open.is_none() {
+                    self.calls.push(Call {
+                        external: true,
+                        ..Call::started("agent".into(), Some(title), Some(at))
+                    });
+                }
+                return;
+            }
+        };
+        let index = open.unwrap_or_else(|| {
+            self.calls.push(Call {
+                external: true,
+                ..Call::started("agent".into(), Some(title.clone()), None)
+            });
+            self.calls.len() - 1
+        });
+        let call = &mut self.calls[index];
+        call.outcome = Some(outcome);
+        call.line = Some(format!("{} {title} (external agent)", outcome.mark()));
+        call.ended_at = Some(at);
     }
 
     /// The summary that closes the turn: one header line, then a line each for
@@ -138,6 +191,14 @@ impl Ledger {
                 plural(failed_commands.len(), "command"),
                 failed_commands.join("; ")
             ));
+        }
+        let unknown = self
+            .calls
+            .iter()
+            .filter(|call| call.outcome == Some(Outcome::Unknown))
+            .count();
+        if unknown > 0 {
+            tally.push(format!("{} reported no exit status", plural(unknown, "command")));
         }
         let reported = self
             .calls
@@ -189,7 +250,7 @@ impl Ledger {
                     (Some(Outcome::NotApproved), _) => "not approved".to_string(),
                     (Some(Outcome::Failed), _) => "failed".to_string(),
                     (_, Some(status)) => activity::short_status(status),
-                    (_, None) => "no exit status".to_string(),
+                    (_, None) => "exit status not reported".to_string(),
                 };
                 let name = if call.name == "bash" { String::new() } else { format!("{} ", call.name) };
                 format!("{name}{} → {result}", subject_or_unnamed(call))
@@ -222,9 +283,12 @@ impl Ledger {
         let unchecked = self.written_after_last_clean_exit();
         if !unchecked.is_empty() {
             lines.push(format!(
-                "    no command exited 0 after these writes: {}",
+                "    no command reported exit 0 after these writes: {}",
                 listed(&unchecked)
             ));
+        }
+        if self.calls.iter().any(|call| call.external) {
+            lines.push("    external agent calls are as the agent reported them".into());
         }
         lines.push(
             "    this is the runtime's record of the calls; it does not check the reply's claims"
@@ -236,10 +300,11 @@ impl Ledger {
         lines
     }
 
-    /// Files the file tools wrote after the last command that exited 0, or
-    /// every file written when none did. Saying nothing when a command did
-    /// exit 0 afterwards is deliberate: the record cannot tell whether that
-    /// command checked the write.
+    /// Files the file tools wrote after the last command that reported exit
+    /// 0, or every file written when none did. Saying nothing when a command
+    /// did exit 0 afterwards is deliberate: the record cannot tell whether
+    /// that command checked the write. A command whose exit status was not
+    /// reported may have exited 0, which is why the line says "reported".
     fn written_after_last_clean_exit(&self) -> Vec<String> {
         let last_clean = self.calls.iter().rposition(|call| {
             is_command(call)
@@ -285,6 +350,7 @@ fn is_command(call: &Call) -> bool {
 fn label(call: &Call) -> String {
     let name = activity::bounded(&call.name, 80);
     match &call.subject {
+        Some(subject) if call.external => format!("{subject} (external agent)"),
         Some(subject) => format!("{name} {}", activity::bounded(subject, 80)),
         None => name,
     }
@@ -375,7 +441,7 @@ mod tests {
                 "· evidence: 3 calls in 3 steps: 2 ok, 1 reported a problem · 4.1s",
                 "    file tools wrote: notes.md",
                 "    problems: ! read_file missing.txt (5ms) · error: cannot read missing.txt: not found",
-                "    no command exited 0 after these writes: notes.md",
+                "    no command reported exit 0 after these writes: notes.md",
                 "    this is the runtime's record of the calls; it does not check the reply's claims",
                 "    /evidence lists every call",
             ]
@@ -477,7 +543,7 @@ mod tests {
                 "· evidence: 4 calls: 2 ok, 2 commands failed (exit 7; timed out after 3000ms) · 39.0s",
                 "    file tools wrote: notes.txt",
                 "    commands: sleep 35; exit 7 → exit 7; sleep 10; npm test → timed out after 3000ms",
-                "    no command exited 0 after these writes: notes.txt",
+                "    no command reported exit 0 after these writes: notes.txt",
                 "    this is the runtime's record of the calls; it does not check the reply's claims",
                 "    /evidence lists every call",
             ]
@@ -500,6 +566,64 @@ mod tests {
         let summary = ledger.summary(1_000);
         assert_eq!(summary[0], "· evidence: 2 calls: 2 ok · 1.0s");
         assert_eq!(summary[2], "    commands: git status → exit 0");
-        assert!(!summary.iter().any(|line| line.contains("no command exited 0")));
+        assert!(!summary.iter().any(|line| line.contains("no command reported exit 0")));
+    }
+
+    /// An older runtime sends no `resultStatus`. Its commands are counted
+    /// as unknown, never as ok, and the write is not said to be unchecked
+    /// by a command whose exit is unknown.
+    #[test]
+    fn commands_from_a_runtime_without_exit_statuses_are_unknown() {
+        let ledger = ledger(&[
+            started("c1", "write_file", "a.rs"),
+            completed("c1", "write_file", "a.rs", json!({})),
+            started("c2", "bash", "npm test"),
+            completed("c2", "bash", "npm test", json!({})),
+        ]);
+        let summary = ledger.summary(1_000);
+        assert_eq!(
+            summary[0],
+            "· evidence: 2 calls: 1 ok, 1 command reported no exit status · 1.0s"
+        );
+        assert_eq!(summary[2], "    commands: npm test → exit status not reported");
+        assert_eq!(summary[3], "    no command reported exit 0 after these writes: a.rs");
+        assert_eq!(ledger.every_call()[1], "  [0s] ? bash npm test (5ms) · exit status not reported");
+    }
+
+    /// An external agent's tool calls arrive as progress frames with a
+    /// title and no call id. They are calls this turn made, as the agent
+    /// reported them.
+    #[test]
+    fn external_agent_tool_calls_are_recorded() {
+        let progress = |title: &str, status: &str| {
+            json!({"type": "agentProgress", "kind": "tool_call", "title": title, "status": status})
+        };
+        let mut ledger = Ledger::default();
+        for (event, at) in [
+            (progress("Run npm test", "pending"), 0),
+            (progress("Run npm test", "in_progress"), 1),
+            (progress("Run npm test", "failed"), 9),
+            (progress("Edit a.rs", "in_progress"), 10),
+            (progress("Edit a.rs", "completed"), 11),
+            (progress("Read b.rs", "in_progress"), 12),
+            (json!({"type": "agentProgress", "kind": "thought"}), 12),
+        ] {
+            ledger.observe(&event, at);
+        }
+        let summary = ledger.summary(13_000);
+        assert_eq!(
+            summary[0],
+            "· evidence: 3 calls: 1 ok, 1 failed, 1 reported no completion · 13.0s"
+        );
+        assert!(summary.iter().any(|line| line
+            == "    external agent calls are as the agent reported them"));
+        assert_eq!(
+            ledger.every_call(),
+            vec![
+                "  [0s→9s] ✗ Run npm test (external agent)",
+                "  [10s→11s] ✓ Edit a.rs (external agent)",
+                "  [12s] … Read b.rs (external agent) reported no completion",
+            ]
+        );
     }
 }
