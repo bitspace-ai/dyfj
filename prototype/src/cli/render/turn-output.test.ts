@@ -42,6 +42,36 @@ describe("formatRuntimeEvent", () => {
     assert.strictEqual(formatRuntimeEvent({ type: "modelSelected" }), null);
   });
 
+  it("names what a call acted on and how a command exited", () => {
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "toolCallStarted",
+        commandId: "bash",
+        subject: "npm test",
+      }),
+      "tool: bash npm test started",
+    );
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "toolCallCompleted",
+        commandId: "bash",
+        subject: "npm test",
+        isError: false,
+        durationMs: 40,
+        resultStatus: "exit 1",
+      }),
+      "tool: bash npm test finished (40ms) · exit 1",
+    );
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "toolCallStarted",
+        commandId: "read_file",
+        subject: "a\u001b[2J.ts",
+      }),
+      "tool: read_file a[2J.ts started",
+    );
+  });
+
   it("marks an aborted turn", () => {
     assert.strictEqual(
       formatRuntimeEvent({ type: "turnAborted" }),

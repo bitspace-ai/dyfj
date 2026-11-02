@@ -63,6 +63,8 @@ pub struct Session {
     pub last_command: Option<String>,
     /// The last turn's per-call usage (`tokens.steps`), for `/receipt steps`.
     pub last_steps: Option<Vec<Value>>,
+    /// The last turn's tool calls, one rendered line each, for `/evidence`.
+    pub last_evidence: Option<Vec<String>>,
 }
 
 impl Session {
@@ -161,6 +163,7 @@ impl Session {
         self.last_model = None;
         self.last_command = None;
         self.last_steps = None;
+        self.last_evidence = None;
         self.model_pinned = false;
         self.model = self.default_model.clone();
         self.model_origin = ModelOrigin::Operator;

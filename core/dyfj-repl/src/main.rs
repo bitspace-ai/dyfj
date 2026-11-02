@@ -10,10 +10,12 @@ mod budget;
 mod client;
 mod commands;
 mod dev_control;
+mod evidence;
 #[cfg(test)]
 mod fake_runtime;
 mod link;
 mod posture;
+mod progress;
 mod receipt;
 mod session;
 mod submission;
@@ -24,7 +26,8 @@ use client::{Client, Incoming, StreamFrame, Verdict};
 use serde_json::{Value, json};
 use session::Session;
 use submission::{MAX_INPUT_CHARACTERS, Submission, classify};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
+use std::time::{Duration, Instant};
 use terminal::{Ask, ReadOutcome};
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::{mpsc, oneshot};
@@ -400,16 +403,27 @@ async fn run_turn(
 ) -> TurnEnd {
     let turn_id = new_turn_id();
     let body = session.turn_body(prompt, &turn_id);
+    // Both streams: the line is drawn on stderr, but whether it may be drawn
+    // depends on where streamed text left the cursor on stdout.
+    let terminal = std::io::stderr().is_terminal() && std::io::stdout().is_terminal();
+    let mut view = TurnView::new(terminal, Instant::now());
 
     // Acknowledge the submission before anything else. The first event of a
     // turn can be seconds away — context assembly, then a provider round trip
     // — and until it arrives the operator has no evidence their input was
-    // taken at all. On a turn that calls tools this is the only output for a
-    // while, so it earns its line.
-    println!("· working…");
+    // taken at all. On a terminal the status line does this, with a clock;
+    // elsewhere a line earns its place.
+    if view.status.enabled() {
+        view.status.draw(Instant::now());
+    } else {
+        println!("· working…");
+    }
 
     let pending = client.request("turn", body);
     tokio::pin!(pending);
+    // Redraws the status line, so a long wait shows its clock moving.
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut wrote_any = false;
     let mut cancelling = false;
@@ -422,7 +436,8 @@ async fn run_turn(
                 // fallback below keys on whether anything was written — decide
                 // that after draining, or a streamed answer prints once from
                 // the receipt and again from the queue.
-                flush_queued_frames(incoming, &mut wrote_any, session);
+                flush_queued_frames(incoming, &mut wrote_any, session, &mut view);
+                view.status.clear();
 
                 match outcome {
                     Ok(result) => {
@@ -446,26 +461,36 @@ async fn run_turn(
                         for warning in close.warnings {
                             eprintln!("{warning}");
                         }
+                        view.close(session);
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
-                    Err(_) if client.is_closed() => return interrupted(wrote_any),
+                    Err(_) if client.is_closed() => return interrupted(wrote_any, &mut view, session),
                     Err(err) => {
                         eprintln!("\n{}", runtime_error("turn failed", &err.to_string()));
                         if wrote_any {
                             println!();
                         }
+                        view.close(session);
                     }
                 }
                 return TurnEnd::Settled;
             }
+            // Nothing arrived this second: move the clock.
+            _ = tick.tick() => view.status.draw(Instant::now()),
             // Something arrived from the runtime while the turn runs.
             message = incoming.recv() => {
                 match message {
                     Some(Incoming::Stream(frame)) => {
                         adopt_announced_session(&frame, session);
-                        render(frame, &mut wrote_any);
+                        render(frame, &mut wrote_any, &mut view);
                     }
                     Some(Incoming::Approval { params, respond }) => {
+                        // The question owns the terminal until it is answered.
+                        view.status.clear();
+                        if view.status.needs_newline() {
+                            println!();
+                        }
+                        view.status.printed_line();
                         // Answered inline, on purpose. An earlier version
                         // spawned this so the loop could keep polling the
                         // turn, which created two worse problems: an approval
@@ -488,7 +513,9 @@ async fn run_turn(
                         // until answered, because the read cannot be
                         // abandoned; that answer goes nowhere.
                         match approval::ask_while_connected(client, input, &params).await {
-                            approval::Asked::Disconnected => return interrupted(wrote_any),
+                            approval::Asked::Disconnected => {
+                                return interrupted(wrote_any, &mut view, session);
+                            }
                             approval::Asked::Answered(approval::Outcome::Verdict(verdict)) => {
                                 let _ = respond.send(verdict);
                             }
@@ -500,6 +527,8 @@ async fn run_turn(
                                     &turn_id,
                                     incoming,
                                     wrote_any,
+                                    &mut view,
+                                    session,
                                 ) {
                                     return TurnEnd::Settled;
                                 }
@@ -507,7 +536,7 @@ async fn run_turn(
                         }
                     }
                     // The reader ends only when the connection does.
-                    None => return interrupted(wrote_any),
+                    None => return interrupted(wrote_any, &mut view, session),
                 }
             }
             // Ctrl-C during a turn. Cancellation is cooperative: ask the
@@ -516,7 +545,15 @@ async fn run_turn(
             // abandons the wait — the operator has asked twice, and a turn
             // that ignores a cancel should not hold the prompt.
             _ = interrupts.recv() => {
-                if give_up_or_cancel(&mut cancelling, client, &turn_id, incoming, wrote_any) {
+                if give_up_or_cancel(
+                    &mut cancelling,
+                    client,
+                    &turn_id,
+                    incoming,
+                    wrote_any,
+                    &mut view,
+                    session,
+                ) {
                     return TurnEnd::Settled;
                 }
             }
@@ -548,11 +585,13 @@ fn adopt_announced_session(frame: &StreamFrame, session: &mut Session) {
 /// Report a turn the runtime's disconnection cut short. It is not retried:
 /// the runtime may have acted on part of it, and only the operator can judge
 /// whether to ask again.
-fn interrupted(wrote_any: bool) -> TurnEnd {
+fn interrupted(wrote_any: bool, view: &mut TurnView, session: &mut Session) -> TurnEnd {
+    view.status.clear();
     if wrote_any {
         println!();
     }
     eprintln!("turn interrupted: the runtime disconnected before it finished; it was not retried");
+    view.close(session);
     TurnEnd::Disconnected
 }
 
@@ -564,23 +603,30 @@ fn interrupted(wrote_any: bool) -> TurnEnd {
 /// frames, answers approvals and catches the next interrupt; awaiting would
 /// block all three until the runtime answers, and a runtime that never
 /// answers would make the second Ctrl-C unreachable.
+#[allow(clippy::too_many_arguments)]
 fn give_up_or_cancel(
     cancelling: &mut bool,
     client: &Client,
     turn_id: &str,
     incoming: &mut mpsc::Receiver<Incoming>,
     wrote_any: bool,
+    view: &mut TurnView,
+    session: &mut Session,
 ) -> bool {
+    view.status.clear();
     if *cancelling {
         eprintln!("\ngiving up on the turn; it may still be running");
         if wrote_any {
             println!();
         }
         discard_abandoned_frames(incoming);
+        view.close(session);
         return true;
     }
     *cancelling = true;
+    view.status.cancelling();
     eprintln!("\ncancelling…");
+    view.status.printed_line();
     if let Err(err) = client.send_without_waiting("turn/cancel", json!({"turnId": turn_id})) {
         eprintln!("{}", runtime_error("cancel could not be sent", &err.to_string()));
     }
@@ -598,6 +644,7 @@ fn flush_queued_frames(
     incoming: &mut mpsc::Receiver<Incoming>,
     wrote_any: &mut bool,
     session: &mut Session,
+    view: &mut TurnView,
 ) {
     while let Ok(message) = incoming.try_recv() {
         match message {
@@ -605,7 +652,7 @@ fn flush_queued_frames(
                 // The turn may have failed with the disconnect before its
                 // `sessionStart` was taken from the queue.
                 adopt_announced_session(&frame, session);
-                render(frame, wrote_any);
+                render(frame, wrote_any, view);
             }
             // An approval arriving as the turn ends has no operator watching
             // for it, and the runtime is blocked on an answer. Deny.
@@ -735,6 +782,7 @@ mod tests {
         super::render(
             crate::client::StreamFrame::Delta { text: "stale answer".into() },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         assert!(wrote_any, "a delta marks the turn as having written");
 
@@ -744,6 +792,7 @@ mod tests {
                 event: serde_json::json!({"type": crate::activity::SUPERSEDING_RETRY}),
             },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         assert!(
             !wrote_any,
@@ -760,12 +809,14 @@ mod tests {
         super::render(
             crate::client::StreamFrame::Delta { text: "partial handoff".into() },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         super::render(
             crate::client::StreamFrame::Event {
                 event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "notice"}),
             },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         assert!(!wrote_any);
         // A handoff the model wrote is the reply as streamed.
@@ -775,6 +826,7 @@ mod tests {
                 event: serde_json::json!({"type": "toolStepLimitHandoff", "source": "model"}),
             },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         assert!(wrote_any);
     }
@@ -789,10 +841,12 @@ mod tests {
                 event: serde_json::json!({"type": crate::activity::SUPERSEDING_RETRY}),
             },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         super::render(
             crate::client::StreamFrame::Delta { text: "fresh answer".into() },
             &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
         );
         assert!(wrote_any);
     }
@@ -807,6 +861,7 @@ mod tests {
                     event: serde_json::json!({"type": "toolCallStarted", "commandId": "bash"}),
                 },
                 &mut wrote_any,
+            &mut super::TurnView::new(false, std::time::Instant::now()),
             );
             assert_eq!(wrote_any, started);
         }
@@ -1208,8 +1263,45 @@ mod tests {
     }
 }
 
+/// What one turn shows besides its answer: the live status line, and the
+/// record of its tool calls that closes it.
+struct TurnView {
+    status: progress::StatusLine,
+    ledger: evidence::Ledger,
+}
+
+impl TurnView {
+    fn new(terminal: bool, now: Instant) -> Self {
+        TurnView {
+            status: progress::StatusLine::new(terminal, now),
+            ledger: evidence::Ledger::default(),
+        }
+    }
+
+    /// Print the evidence summary and keep every call for `/evidence`.
+    fn close(&mut self, session: &mut Session) {
+        self.status.clear();
+        let elapsed = self.status.elapsed(Instant::now()).as_millis() as i64;
+        for line in self.ledger.summary(elapsed) {
+            eprintln!("{line}");
+        }
+        session.last_evidence = Some(self.ledger.every_call());
+    }
+
+    /// Start a whole line of progress: erase the status line, and end any
+    /// streamed text the cursor is still on.
+    fn line(&mut self, line: &str) {
+        self.status.clear();
+        if self.status.needs_newline() {
+            println!();
+        }
+        println!("{line}");
+        self.status.printed_line();
+    }
+}
+
 /// Render one stream frame as it arrives.
-fn render(frame: StreamFrame, wrote_any: &mut bool) {
+fn render(frame: StreamFrame, wrote_any: &mut bool, view: &mut TurnView) {
     match frame {
         StreamFrame::Delta { text } => {
             // An empty delta displays nothing, so it must not count as having
@@ -1218,32 +1310,42 @@ fn render(frame: StreamFrame, wrote_any: &mut bool) {
             if text.is_empty() {
                 return;
             }
+            view.status.clear();
             // Sanitised for the same reason approval text is. Model output
             // reaches the terminal verbatim otherwise, and an escape sequence
             // in a streamed answer could change terminal state before a later
             // approval is displayed — sanitising only the approval would be
             // guarding the door after the wall. Newlines and tabs are kept:
             // they are the answer's formatting, not terminal control.
-            print!("{}", approval::visible_text(&text));
+            let shown = approval::visible_text(&text);
+            print!("{shown}");
             let _ = std::io::stdout().flush();
+            view.status.observe_text(&shown, Instant::now());
             *wrote_any = true;
         }
         StreamFrame::Error { message } => {
-            eprintln!("\n{}", runtime_error("error", &message))
+            view.status.clear();
+            eprintln!("\n{}", runtime_error("error", &message));
+            view.status.printed_line();
         }
         // Progress. On a provider that buffers its tool-offering calls these
         // are the only sign a turn is alive, so they are shown rather than
         // discarded. The terminal outcome comes from the `turn` response, not
         // from this frame.
         StreamFrame::Event { event } => {
+            let now = Instant::now();
+            view.ledger.observe(&event);
+            view.status.observe_event(&event, now);
             // Supersession abandons what was already shown. Clearing
             // `wrote_any` matters as much as the marker: leaving it set would
             // suppress the receipt fallback, so a buffered replacement would
             // never print and the abandoned attempt would remain as the
             // visible answer.
             if event.get("type").and_then(Value::as_str) == Some(activity::SUPERSEDING_RETRY) {
+                view.status.clear();
                 println!();
-                println!("{}", activity::SUPERSEDED_MARKER);
+                view.status.printed_line();
+                view.line(activity::SUPERSEDED_MARKER);
                 *wrote_any = false;
                 return;
             }
@@ -1253,14 +1355,21 @@ fn render(frame: StreamFrame, wrote_any: &mut bool) {
             if event.get("type").and_then(Value::as_str) == Some("toolStepLimitHandoff")
                 && event.get("source").and_then(Value::as_str) == Some("notice")
             {
-                if *wrote_any {
+                if *wrote_any && !view.status.needs_newline() {
                     println!();
                 }
                 *wrote_any = false;
             }
-            if let Some(line) = activity::describe(&event) {
-                println!("{line}");
+            // On a terminal the status line names a running call, and the
+            // completed line follows; a started line as well would double
+            // every call in scrollback.
+            let started = event.get("type").and_then(Value::as_str) == Some("toolCallStarted");
+            if let Some(line) = activity::describe(&event)
+                && !(started && view.status.enabled())
+            {
+                view.line(&line);
             }
+            view.status.draw(now);
         }
         StreamFrame::Done { .. } => {}
         // A frame kind this client does not know. Ignored rather than fatal,

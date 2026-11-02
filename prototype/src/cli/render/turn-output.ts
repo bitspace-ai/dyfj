@@ -108,6 +108,17 @@ export function handleTurnRuntimeEvent(
   if (line !== null) io.err(line);
 }
 
+/** The command id and, when the frame carries one, what the call acted on. */
+function toolCallLabel(event: Record<string, unknown>): string {
+  const commandId = typeof event.commandId === "string"
+    ? event.commandId
+    : "tool";
+  const subject = typeof event.subject === "string"
+    ? sanitizeBoundaryText(event.subject, 120).trim()
+    : "";
+  return subject === "" ? commandId : `${commandId} ${subject}`;
+}
+
 export function formatRuntimeEvent(
   event: Record<string, unknown>,
 ): string | null {
@@ -142,20 +153,18 @@ export function formatRuntimeEvent(
       "no tools were executed from it";
   }
   if (event.type === "toolCallStarted") {
-    const commandId = typeof event.commandId === "string"
-      ? event.commandId
-      : "tool";
-    return `tool: ${commandId} started`;
+    return `tool: ${toolCallLabel(event)} started`;
   }
   if (event.type === "toolCallCompleted") {
     const commandId = typeof event.commandId === "string"
       ? event.commandId
       : "tool";
+    const label = toolCallLabel(event);
     // A refused call never ran: say so, and show no duration (the time on it
     // is the approval wait). This client may have no terminal, so nobody is
     // said to have declined.
     if (event.verdict === "approval_denied") {
-      return `  ⊘ ${commandId} not approved`;
+      return `  ⊘ ${label} not approved`;
     }
     const duration = typeof event.durationMs === "number"
       ? ` (${event.durationMs}ms)`
@@ -169,9 +178,15 @@ export function formatRuntimeEvent(
         typeof event.failureReason === "string" && event.failureReason !== ""
       ? `: ${sanitizeBoundaryText(event.failureReason, 160)}`
       : "";
-    return `tool: ${commandId} ${
+    // A command's exit status, or a tool's error reply: output the model
+    // reads, so the call finished, but not necessarily well.
+    const status = event.isError !== true &&
+        typeof event.resultStatus === "string" && event.resultStatus !== ""
+      ? ` · ${sanitizeBoundaryText(event.resultStatus, 160)}`
+      : "";
+    return `tool: ${label} ${
       event.isError === true ? "failed" : "finished"
-    }${duration}${reason}${reconciliation}`;
+    }${duration}${reason}${status}${reconciliation}`;
   }
   if (event.type === "memoryRecallNegotiated") {
     const era = event.era === "modern" || event.era === "legacy"

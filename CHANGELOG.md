@@ -11,6 +11,37 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A running turn is legible from the Rust REPL, and a finished one shows
+  its evidence.** A long turn used to look like a stall: one `· working…`
+  line, then nothing during a provider call or a slow command. On a terminal
+  the REPL now keeps a status line under the turn, redrawn every second, that
+  says what it waits on and for how long (`… waiting on <model> 47s · turn
+  1m12s · step 3 · 5 calls`, `… running bash npm test 2m05s`), and adds `no
+  runtime event for <time>` after 30 s of silence. It is never drawn over
+  streamed text and is erased before any other output. Tool lines name what
+  each call acted on (`✓ read_file src/a.ts (5ms)`) and mark with `!` a call
+  that ran but whose result reports a problem (`! bash npm test (3.2s) ·
+  exit 1`); the started line is left to the status line on a terminal, so
+  each call is one line in scrollback. Every turn closes, before its receipt,
+  with an evidence summary from the runtime's tool frames rather than the
+  model's account: calls by outcome, wall time, files the file tools wrote,
+  each command with its exit status, and the calls that went wrong; a turn
+  with no tool calls says the reply is the model's own account. `/evidence`
+  lists every call of the last turn. Durations over a second read as seconds.
+  The TypeScript client's tool lines name the subject and status too.
+
+- **Tool frames say what a call acted on and how a command exited.**
+  `toolCallStarted` and `toolCallCompleted` carry an optional `subject`, the
+  first string argument the durable `tool_call` event keeps (redacted
+  arguments are never the subject; a command that redacts every argument has
+  none), single-lined, scrubbed and capped at 120 bytes. A completed call
+  that ran without a tool error carries an optional `resultStatus` when its
+  result opens with a command's exit status or a tool's `error:` reply,
+  reduced as the log reduces a failure reason; a redacted result contributes
+  only the runtime-written exit status line. `isError` is unchanged: a
+  non-zero exit or a `not found` reply is still output the model reads, and
+  the runaway-spend check still treats it so.
+
 - **Disposable runtime instances (BIT-847).** `prototype/scripts/scratch-runtime.ts`
   starts and stops an isolated Dolt-backed runtime with a scripted loopback
   model, prints its CLI environment, and records an `exec` reply and receipt
@@ -179,6 +210,9 @@ README are tracked separately in its Revision history section.
   come from.
 
 ### Fixed
+
+- **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
+  recorded turn" notice `down` prints, instead of failing with a raw `ENOENT`.
 
 - **Forced conclusions end tool use (BIT-601).** The agent loop drops and
   logs structured tool calls returned by any forced no-tools conclusion,

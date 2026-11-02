@@ -37,43 +37,8 @@ pub fn describe(event: &Value) -> Option<String> {
                 None => Some(format!("· step {step}")),
             }
         }
-        "toolCallStarted" => {
-            let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
-            Some(format!("  → {}", crate::approval::visible(name)))
-        }
-        "toolCallCompleted" => {
-            let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
-            // The call was not approved, so it did not run. The frame does
-            // not say whether the operator declined or the prompt produced no
-            // decision, so this line claims neither. No duration: the time on
-            // it is the wait, not execution.
-            if event.get("verdict").and_then(Value::as_str) == Some("approval_denied") {
-                return Some(format!(
-                    "  ⊘ {} not approved",
-                    crate::approval::visible(name)
-                ));
-            }
-            // isError is reported per call; a failed tool is the thing an
-            // operator most needs to see in a long turn.
-            let mark = if event.get("isError").and_then(Value::as_bool) == Some(true) {
-                "✗"
-            } else {
-                "✓"
-            };
-            let name = crate::approval::visible(name);
-            let line = match event.get("durationMs").and_then(Value::as_i64) {
-                Some(ms) => format!("  {mark} {name} ({ms}ms)"),
-                None => format!("  {mark} {name}"),
-            };
-            // Why it failed, when the runtime says: a ✗ with only a duration
-            // left the operator guessing.
-            match event.get("failureReason").and_then(Value::as_str) {
-                Some(reason) if mark == "✗" && !reason.is_empty() => {
-                    Some(format!("{line}: {}", bounded_reason(reason)))
-                }
-                _ => Some(line),
-            }
-        }
+        "toolCallStarted" => Some(format!("  → {}", call_label(event))),
+        "toolCallCompleted" => Some(format!("  {}", completed_call(event))),
         "toolStepLimitReached" => match event.get("maxSteps").and_then(Value::as_i64) {
             Some(max) => Some(format!(
                 "· tool step limit reached ({max} steps); asking the model for a handoff"
@@ -146,17 +111,142 @@ pub fn describe(event: &Value) -> Option<String> {
     }
 }
 
+/// How a completed call turned out, as its line marks it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// Ran, and reported nothing wrong.
+    Ok,
+    /// Ran without a tool error, but its result says something went wrong: a
+    /// command's non-zero exit, a timeout, or a tool's `error:` reply. The
+    /// model reads these as output, so the runtime does not count them as
+    /// failures, and a model can go on to report success over one.
+    Reported,
+    /// The tool itself failed.
+    Failed,
+    /// Not approved, so it did not run.
+    NotApproved,
+}
+
+impl Outcome {
+    pub fn mark(self) -> &'static str {
+        match self {
+            Outcome::Ok => "✓",
+            Outcome::Reported => "!",
+            Outcome::Failed => "✗",
+            Outcome::NotApproved => "⊘",
+        }
+    }
+}
+
+/// The outcome a `toolCallCompleted` frame reports.
+pub fn outcome(event: &Value) -> Outcome {
+    if event.get("verdict").and_then(Value::as_str) == Some("approval_denied") {
+        return Outcome::NotApproved;
+    }
+    if event.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Outcome::Failed;
+    }
+    match result_status(event) {
+        Some(status) if status != "exit 0" => Outcome::Reported,
+        _ => Outcome::Ok,
+    }
+}
+
+/// The `resultStatus` a frame carries, when it carries a non-empty one.
+fn result_status(event: &Value) -> Option<&str> {
+    event
+        .get("resultStatus")
+        .and_then(Value::as_str)
+        .filter(|status| !status.is_empty())
+}
+
+/// The longest subject a line shows, in characters. The runtime caps it at
+/// 120 bytes; this holds for any runtime, and keeps a line on one row.
+const MAX_SUBJECT_CHARS: usize = 80;
+
+/// The tool's name and, when the runtime sends one, what it acted on: the
+/// path, pattern or command. Ten `read_file` lines that do not say which file
+/// tell the operator almost nothing.
+pub fn call_label(event: &Value) -> String {
+    let name = event.get("commandId").and_then(Value::as_str).unwrap_or("tool");
+    let name = crate::approval::visible(name);
+    match event.get("subject").and_then(Value::as_str) {
+        Some(subject) if !subject.trim().is_empty() => {
+            format!("{name} {}", bounded(subject, MAX_SUBJECT_CHARS))
+        }
+        _ => name,
+    }
+}
+
+/// A completed call's line, without indentation: mark, label, duration, and
+/// the status or failure reason that explains the mark.
+pub fn completed_call(event: &Value) -> String {
+    let outcome = outcome(event);
+    let label = call_label(event);
+    // The call was not approved, so it did not run. The frame does not say
+    // whether the operator declined or the prompt produced no decision, so
+    // this line claims neither. No duration: the time on it is the wait, not
+    // execution.
+    if outcome == Outcome::NotApproved {
+        return format!("⊘ {label} not approved");
+    }
+    let mut line = format!("{} {label}", outcome.mark());
+    if let Some(ms) = event.get("durationMs").and_then(Value::as_i64) {
+        line.push_str(&format!(" ({})", duration(ms)));
+    }
+    match outcome {
+        // Why it failed, when the runtime says: a ✗ with only a duration left
+        // the operator guessing.
+        Outcome::Failed => {
+            if let Some(reason) = event
+                .get("failureReason")
+                .and_then(Value::as_str)
+                .filter(|reason| !reason.is_empty())
+            {
+                line.push_str(&format!(": {}", bounded_reason(reason)));
+            }
+        }
+        // `exit 0` confirms a command passed; anything else is why the mark
+        // is not a ✓.
+        Outcome::Ok | Outcome::Reported => {
+            if let Some(status) = result_status(event) {
+                line.push_str(&format!(" · {}", bounded_reason(status)));
+            }
+        }
+        Outcome::NotApproved => {}
+    }
+    line
+}
+
+/// A duration as an operator reads it: milliseconds under a second, then
+/// tenths of a second, then minutes and seconds.
+pub fn duration(ms: i64) -> String {
+    let ms = ms.max(0);
+    if ms < 1_000 {
+        format!("{ms}ms")
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    } else {
+        format!("{}m{:02}s", ms / 60_000, (ms % 60_000) / 1_000)
+    }
+}
+
 /// The longest failure reason a ✗ line shows, in characters. The runtime
 /// already caps it at 160 bytes; this holds for any runtime.
 const MAX_REASON_CHARS: usize = 160;
 
 /// A runtime-supplied reason, made terminal-safe and cut to one short line.
 fn bounded_reason(reason: &str) -> String {
-    let visible = crate::approval::visible(reason);
-    if visible.chars().count() <= MAX_REASON_CHARS {
+    bounded(reason, MAX_REASON_CHARS)
+}
+
+/// Runtime-supplied text made terminal-safe and cut to `max` characters.
+pub fn bounded(text: &str, max: usize) -> String {
+    let visible = crate::approval::visible(text);
+    if visible.chars().count() <= max {
         return visible;
     }
-    let mut cut: String = visible.chars().take(MAX_REASON_CHARS).collect();
+    let mut cut: String = visible.chars().take(max).collect();
     cut.push('…');
     cut
 }
@@ -290,7 +380,7 @@ mod tests {
                 "failureReason": "upstream error: Error: Could not find issue \"BIT-99999\""
             }))
             .as_deref(),
-            Some("  ✗ mcp.linear.save_comment (1700ms): upstream error: Error: Could not find issue \"BIT-99999\"")
+            Some("  ✗ mcp.linear.save_comment (1.7s): upstream error: Error: Could not find issue \"BIT-99999\"")
         );
     }
 
@@ -306,8 +396,8 @@ mod tests {
         .expect("a line");
         assert!(!rendered.contains('\u{1b}'), "{rendered:?}");
         assert!(!rendered.contains('\n'), "{rendered:?}");
-        assert!(rendered.starts_with("  ✗ web_fetch (30000ms): timed out "), "{rendered:?}");
-        assert!(rendered.chars().count() <= "  ✗ web_fetch (30000ms): ".chars().count() + 161, "{rendered:?}");
+        assert!(rendered.starts_with("  ✗ web_fetch (30.0s): timed out "), "{rendered:?}");
+        assert!(rendered.chars().count() <= "  ✗ web_fetch (30.0s): ".chars().count() + 161, "{rendered:?}");
         assert!(rendered.ends_with('…'), "{rendered:?}");
     }
 
@@ -361,6 +451,79 @@ mod tests {
     fn warns_that_tool_markup_ran_nothing() {
         let rendered = describe(&json!({"type": "unparsedToolCallMarkupDetected"}));
         assert!(rendered.is_some(), "the operator must be told nothing ran");
+    }
+
+    /// A call names what it acted on, so ten reads are ten different files.
+    #[test]
+    fn a_call_line_names_its_subject() {
+        assert_eq!(
+            describe(&json!({"type": "toolCallStarted", "commandId": "read_file", "subject": "src/a.ts"}))
+                .as_deref(),
+            Some("  → read_file src/a.ts")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "read_file", "subject": "src/a.ts",
+                "isError": false, "durationMs": 4
+            }))
+            .as_deref(),
+            Some("  ✓ read_file src/a.ts (4ms)")
+        );
+    }
+
+    /// A command that exits non-zero ran without a tool error, so the runtime
+    /// does not call it a failure. It is still not a ✓: a model that ran the
+    /// tests and saw them fail can say they pass, and this line is what
+    /// contradicts it.
+    #[test]
+    fn a_non_zero_exit_is_marked_as_a_reported_problem() {
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash", "subject": "npm test",
+                "isError": false, "durationMs": 3200, "resultStatus": "exit 1"
+            }))
+            .as_deref(),
+            Some("  ! bash npm test (3.2s) · exit 1")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "bash", "subject": "npm test",
+                "isError": false, "durationMs": 3200, "resultStatus": "exit 0"
+            }))
+            .as_deref(),
+            Some("  ✓ bash npm test (3.2s) · exit 0")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "toolCallCompleted", "commandId": "read_file", "subject": "missing.txt",
+                "isError": false, "durationMs": 5,
+                "resultStatus": "error: cannot read missing.txt: not found"
+            }))
+            .as_deref(),
+            Some("  ! read_file missing.txt (5ms) · error: cannot read missing.txt: not found")
+        );
+    }
+
+    #[test]
+    fn a_subject_is_made_safe_and_bounded() {
+        let line = describe(&json!({
+            "type": "toolCallStarted", "commandId": "bash",
+            "subject": format!("echo \u{1b}[2J{}", "y".repeat(300))
+        }))
+        .expect("a line");
+        assert!(!line.contains('\u{1b}'), "{line:?}");
+        assert!(line.ends_with('…'), "{line:?}");
+        assert!(line.chars().count() <= "  → bash ".chars().count() + 81, "{line:?}");
+    }
+
+    #[test]
+    fn durations_read_as_an_operator_reads_them() {
+        use super::duration;
+        assert_eq!(duration(999), "999ms");
+        assert_eq!(duration(1_000), "1.0s");
+        assert_eq!(duration(59_949), "59.9s");
+        assert_eq!(duration(61_000), "1m01s");
+        assert_eq!(duration(-5), "0ms");
     }
 
     #[test]
