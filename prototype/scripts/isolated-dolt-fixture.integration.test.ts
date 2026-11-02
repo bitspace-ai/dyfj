@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { connect } from "node:net";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  doltChildEnvironment,
   startIsolatedDoltFixture,
   waitForSql,
 } from "./isolated-dolt-fixture.ts";
@@ -75,6 +77,23 @@ describe("isolated Dolt fixture", () => {
       await fixture.cleanup();
     }
     await assert.rejects(stat(fixture.root), { code: "ENOENT" });
+  });
+
+  it("runs Dolt children with HOME inside the root and the event flush off", () => {
+    const env = doltChildEnvironment("fixture-root");
+    assert.equal(env.HOME, join("fixture-root", "home"));
+    assert.equal(env.TMPDIR, join("fixture-root", "home"));
+    assert.equal(env.DOLT_DISABLE_EVENT_FLUSH, "1");
+  });
+
+  it("removes its root on every cleanup across repeated cycles", async () => {
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const fixture = await withDeadline((signal) =>
+        startIsolatedDoltFixture({ repoRoot, signal })
+      );
+      await fixture.cleanup();
+      await assertNotFound(fixture.root);
+    }
   });
 
   it("interrupts a readiness probe stalled after TCP accept", async () => {

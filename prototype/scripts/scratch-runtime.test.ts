@@ -75,6 +75,31 @@ test("JSON scripts repeat replies and reject malformed tool calls", () => {
   );
 });
 
+test("JSON scripts accept reasoning, finish and direct wire names", () => {
+  const replies = [
+    {
+      kind: "text", text: "", reasoning: "Thinking", reasoningTokens: 5,
+      finish: "length", usage: { promptTokens: 10, completionTokens: 5 },
+    },
+    { kind: "text", text: "done", finish: "stop" },
+    { kind: "tool", tool: "file.read", arguments: {}, reasoning: "Read it", reasoningTokens: 0 },
+    { kind: "tool", wireName: "unoffered.tool!", arguments: {}, reasoning: "Call it", reasoningTokens: 2 },
+  ];
+  const script = jsonScript(replies);
+  deepEqual(replies.map(() => script({})), replies);
+  for (const reply of [
+    { kind: "tool", tool: "", arguments: {} },
+    { kind: "tool", wireName: "", arguments: {} },
+    { kind: "tool", arguments: {} },
+    { kind: "tool", tool: "file.read", wireName: "file_read", arguments: {} },
+    { kind: "text", text: "", finish: "tool_calls" },
+    { kind: "text", text: "", reasoningTokens: -1 },
+    { kind: "tool", tool: "file.read", arguments: {}, reasoningTokens: 1.5 },
+  ]) {
+    throws(() => jsonScript([reply]));
+  }
+});
+
 test("exports quote shell metacharacters without evaluating them", () => {
   equal(
     shellExports({ HOME: "/tmp/a'b$(false)`false`" }),

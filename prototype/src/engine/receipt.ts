@@ -43,6 +43,11 @@ export interface WorkbenchReceiptInput {
   /** Reported or abort-estimated reasoning/thinking tokens (else 0). */
   totalReasoningTokens?: number;
   totalCalls: number;
+  /**
+   * How the turn ended. A `length` stop renders a `Stop:` line naming the
+   * output limit; any other reason renders nothing.
+   */
+  stopReason?: "stop" | "length" | "tool_use" | "error" | "aborted";
   contextBudget?: PackedContextSummary;
   contextProfile?: AskContextProfile;
   timings?: WorkbenchCallTimings;
@@ -148,6 +153,12 @@ export function buildWorkbenchReceipt(input: WorkbenchReceiptInput): string {
         `session grant ${auto.sessionGrant})`,
     );
   }
+  const stopLine = formatStopLine(
+    input.stopReason,
+    input.totalTokensOutput,
+    input.totalReasoningTokens ?? 0,
+  );
+  if (stopLine !== undefined) lines.push(stopLine);
   if ((input.skippedEventWrites ?? 0) > 0) {
     lines.push(
       `WARNING: ${input.skippedEventWrites} event write(s) failed — ` +
@@ -202,6 +213,23 @@ export function formatTimingLine(timings: WorkbenchCallTimings): string {
   }
   parts.push(`total ${timings.totalMs}ms`);
   return `Timings: ${parts.join(", ")}`;
+}
+
+/**
+ * The `Stop:` line for a turn that reported a `length` stop. It names the
+ * output limit with the turn's total output tokens, plus its total reasoning
+ * tokens when there are any. Any other reason renders nothing.
+ */
+function formatStopLine(
+  stopReason: WorkbenchReceiptInput["stopReason"],
+  outputTokens: number,
+  reasoningTokens: number,
+): string | undefined {
+  if (stopReason !== "length") return undefined;
+  const reasoning = reasoningTokens > 0
+    ? `, ${reasoningTokens} reasoning`
+    : "";
+  return `Stop:    output limit reached (${outputTokens} out${reasoning})`;
 }
 
 export function formatContextBudgetLine(budget: PackedContextSummary): string {

@@ -529,9 +529,36 @@ replies, consumed in order with the last reply repeated:
 [{"kind":"text","text":"A deterministic reply.","usage":{"promptTokens":10,"completionTokens":5}}]
 ```
 
-Replies may also be `{"kind":"tool","tool":"file.read","arguments":{...}}`
-(using an offered registry tool ID), or `{"kind":"hold","text":"Waiting"}`
-for cancellation. A `--script` path, even an empty one, is read and its
+The accepted reply shapes are:
+
+- `{"kind":"text","text":"A reply."}`. Optional `finish` is `"stop"`
+  (the default) or `"length"`; empty text is valid, including at a length finish.
+- `{"kind":"tool","tool":"read_file","arguments":{"path":"a.txt"}}`.
+  The registry tool ID must have been offered in the request; otherwise the
+  script returns HTTP 500.
+- `{"kind":"tool","wireName":"unoffered_tool","arguments":{}}`.
+  Use exactly one nonempty `tool` or `wireName`. An explicit wire name is sent
+  unchanged, even when the request offered no tools.
+- `{"kind":"hold","text":"Waiting"}` keeps a streamed response open for
+  cancellation; it requires a streamed request.
+
+Both `text` and `tool` accept optional `reasoning` (a string),
+`reasoningTokens` (a nonnegative integer), and `usage` (nonnegative integer
+`promptTokens` and `completionTokens`, defaulting to 10 and 5). Reasoning is
+sent before content in a streamed reply, using `reasoning_content`, and as
+`message.reasoning_content` in a buffered reply. The reasoning token count
+is emitted as `usage.completion_tokens_details.reasoning_tokens`; it does
+not add to the completion count. Without these optional fields, existing
+scripts produce the same wire responses.
+
+For example, this reply spends its entire completion on reasoning and ends
+at the output cap:
+
+```json
+[{"kind":"text","text":"","reasoning":"Still thinking.","reasoningTokens":5,"finish":"length","usage":{"promptTokens":10,"completionTokens":5}}]
+```
+
+A `--script` path, even an empty one, is read and its
 replies validated before boot; a missing or malformed script fails. The default is the fixed
 text `Scratch reply.`. The only active model is `scratch-local`, with zero
 cost and a loopback endpoint; real-model behavior and paid routes require

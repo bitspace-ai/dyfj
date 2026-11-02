@@ -4,7 +4,7 @@ import { turnResult as result } from "../../../testing/builders/turn-client.ts";
 import type { TurnResult } from "../turn-client.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import { handleReplReceiptCommand } from "../commands/receipt.ts";
-import { formatReceipt, formatStepLines } from "./receipt.ts";
+import { formatReceipt, formatStepLines, lengthStopEmptyNotice } from "./receipt.ts";
 
 describe("presentation", () => {
   it("[case 25 footer] formatReceipt reports ACP history omission provenance and counts", () => {
@@ -221,6 +221,21 @@ describe("presentation", () => {
       formatted.includes("ctx 1,250/8,192"),
       `expected ${JSON.stringify(formatted)} to include "ctx 1,250/8,192"`,
     );
+  });
+
+  it("lengthStopEmptyNotice reports a length stop that produced no reply", () => {
+    assert.equal(
+      lengthStopEmptyNotice(
+        result({ stopReason: "length", text: "" }),
+      ),
+      "turn stopped at the output limit",
+    );
+    // A length stop that still produced text, and a normal stop, say nothing.
+    assert.equal(
+      lengthStopEmptyNotice(result({ stopReason: "length", text: "partial" })),
+      undefined,
+    );
+    assert.equal(lengthStopEmptyNotice(result({ stopReason: "stop", text: "" })), undefined);
   });
 
   it("formatReceipt names the model and token counts", () => {

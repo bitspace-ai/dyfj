@@ -42,6 +42,20 @@ README are tracked separately in its Revision history section.
   non-zero exit or a `not found` reply is still output the model reads, and
   the runaway-spend check still treats it so.
 
+- **A turn that stops at the output limit says so (BIT-811).** A reasoning
+  model that spent its whole per-call output budget on reasoning ended its
+  turn with an empty reply and nothing reported why, though `dyfj exec --json`
+  did show `stopReason: "length"`. The human-readable receipt now adds a
+  `Stop:    output limit reached (0 out, 10 reasoning)` line for a `length`
+  stop, and both REPLs print `turn stopped at the output limit` when a turn
+  ends at the limit with no reply.
+
+- **Scripted model reasoning and finish reasons (BIT-852).** The loopback model
+  supports reasoning text and token counts in streamed and buffered replies,
+  text replies ending with `stop` or `length`, and explicit tool wire names
+  even when the request offers no tools. Disposable-runtime JSON scripts accept
+  the same fields.
+
 - **Disposable runtime instances (BIT-847).** `prototype/scripts/scratch-runtime.ts`
   starts and stops an isolated Dolt-backed runtime with a scripted loopback
   model, prints its CLI environment, and records an `exec` reply and receipt
@@ -213,6 +227,11 @@ README are tracked separately in its Revision history section.
 
 - **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
   recorded turn" notice `down` prints, instead of failing with a raw `ENOENT`.
+
+- **Isolated Dolt fixture teardown (BIT-854).** Dolt children run with
+  `DOLT_DISABLE_EVENT_FLUSH`, so no detached event flush writes into the
+  fixture HOME while its root is removed. A failed removal lists what is still
+  under `home/.dolt`.
 
 - **Forced conclusions end tool use (BIT-601).** The agent loop drops and
   logs structured tool calls returned by any forced no-tools conclusion,

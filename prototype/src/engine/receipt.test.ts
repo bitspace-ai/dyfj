@@ -186,6 +186,45 @@ test("buildWorkbenchReceipt: reports reasoning tokens only when the provider rep
   );
 });
 
+const LENGTH_STOP = {
+  ...BASE_RECEIPT,
+  stopReason: "length" as const,
+};
+
+test("buildWorkbenchReceipt: a reasoning-only length stop names the output limit", () => {
+  // The report's motivating case: the model spent its whole output budget on
+  // reasoning, so the turn ended with an empty reply and nothing said why.
+  const receipt = buildWorkbenchReceipt({
+    ...LENGTH_STOP,
+    totalTokensOutput: 0,
+    totalReasoningTokens: 10,
+  });
+  assert.ok(
+    receipt.includes("Stop:    output limit reached (0 out, 10 reasoning)"),
+    JSON.stringify(receipt),
+  );
+});
+
+test("buildWorkbenchReceipt: a length stop with output still names the limit", () => {
+  const receipt = buildWorkbenchReceipt({
+    ...LENGTH_STOP,
+    totalTokensOutput: 50,
+    totalReasoningTokens: 0,
+  });
+  assert.ok(
+    receipt.includes("Stop:    output limit reached (50 out)"),
+    JSON.stringify(receipt),
+  );
+});
+
+test("buildWorkbenchReceipt: a normal stop adds no stop line", () => {
+  const receipt = buildWorkbenchReceipt({
+    ...BASE_RECEIPT,
+    stopReason: "stop",
+  });
+  assert.ok(!receipt.includes("Stop:"), JSON.stringify(receipt));
+});
+
 test("buildWorkbenchReceipt: includes model call timing breakdown when available", () => {
   const receipt = buildWorkbenchReceipt(BASE_RECEIPT);
 
