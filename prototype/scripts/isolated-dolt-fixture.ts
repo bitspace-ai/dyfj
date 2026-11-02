@@ -111,21 +111,52 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new FixtureSetupAbortedError();
 }
 
+/**
+ * The environment every Dolt child of a fixture rooted at `root` runs with.
+ * HOME and the temp directories stay inside the root. Dolt forks a detached
+ * process to flush its usage events as each command exits, even with
+ * `metrics.disabled` set, and that process writes into HOME after the command
+ * has returned, racing the root's removal. `DOLT_DISABLE_EVENT_FLUSH` turns
+ * that fork off.
+ */
+export function doltChildEnvironment(root: string): Record<string, string> {
+  const home = join(root, "home");
+  return {
+    ...fixtureEnvironment(),
+    HOME: home,
+    TMPDIR: home,
+    TMP: home,
+    TEMP: home,
+    DOLT_DISABLE_EVENT_FLUSH: "1",
+  };
+}
+
+/**
+ * Remove the fixture root. When removal fails, the error lists what is still
+ * under `home/.dolt`, where Dolt's own late writes land, or says it could not
+ * be read.
+ */
+async function removeRoot(root: string): Promise<void> {
+  try {
+    await rm(root, { recursive: true });
+  } catch (error) {
+    const left = await readdir(join(root, "home", ".dolt"), { recursive: true })
+      .then((names) => names.join(", "), () => "unreadable");
+    throw new Error(
+      `isolated Dolt fixture root not removed; left under home/.dolt: ${left}`,
+      { cause: error },
+    );
+  }
+}
+
 function spawnChild(
   command: string,
   args: string[],
   options: { cwd: string; stdin: "ignore" | "pipe"; output: "ignore" | "pipe" },
 ): Child {
-  const home = join(options.cwd, "home");
   const child = spawn(command, args, {
     cwd: options.cwd,
-    env: {
-      ...fixtureEnvironment(),
-      HOME: home,
-      TMPDIR: home,
-      TMP: home,
-      TEMP: home,
-    },
+    env: doltChildEnvironment(options.cwd),
     stdio: [options.stdin, options.output, options.output],
   });
   const status = new Promise<number | null>((resolve, reject) => {
@@ -451,8 +482,7 @@ export async function startIsolatedDoltFixture(
   let cleaned = false;
   try {
     throwIfAborted(options.signal);
-    // Dolt otherwise leaves a detached `dolt send-metrics` process writing
-    // into HOME after each command, which races the root's removal.
+    // Dolt's usage metrics stay off in the fixture HOME.
     await mkdir(join(root, "home", ".dolt"), { recursive: true });
     await writeFile(
       join(root, "home", ".dolt", "config_global.json"),
@@ -488,14 +518,14 @@ export async function startIsolatedDoltFixture(
       cleanup: async () => {
         if (cleaned) return;
         if (child) await stopChild(child);
-        await rm(root, { recursive: true });
+        await removeRoot(root);
         cleaned = true;
       },
     };
   } catch (error) {
     if (child) await stopChild(child);
     try {
-      await rm(root, { recursive: true });
+      await removeRoot(root);
     } catch (cleanupError) {
       throw new AggregateError(
         [error, cleanupError],
