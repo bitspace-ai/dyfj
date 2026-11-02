@@ -11,6 +11,14 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A turn that stops at the output limit says so (BIT-811).** A reasoning
+  model that spent its whole per-call output budget on reasoning ended its
+  turn with an empty reply and nothing reported why, though `dyfj exec --json`
+  did show `stopReason: "length"`. The human-readable receipt now adds a
+  `Stop:    output limit reached (0 out, 10 reasoning)` line for a `length`
+  stop, and both REPLs print `turn stopped at the output limit` when a turn
+  ends at the limit with no reply.
+
 - **Scripted model reasoning and finish reasons (BIT-852).** The loopback model
   supports reasoning text and token counts in streamed and buffered replies,
   text replies ending with `stop` or `length`, and explicit tool wire names

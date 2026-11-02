@@ -143,6 +143,29 @@ export function formatReceipt(
   );
 }
 
+/**
+ * The one-line notice for a turn that reported a `length` stop with empty
+ * reply text, which otherwise shows no reply and no explanation. Returns
+ * `undefined` when there is nothing to say.
+ */
+export function lengthStopEmptyNotice(
+  result: TurnResult,
+): string | undefined {
+  if (result.stopReason !== "length" || result.text.length > 0) {
+    return undefined;
+  }
+  return "turn stopped at the output limit";
+}
+
+/** Write `lengthStopEmptyNotice` for `result`, when it has one. */
+export function writeLengthStopNotice(
+  result: TurnResult,
+  write: (line: string) => void,
+): void {
+  const notice = lengthStopEmptyNotice(result);
+  if (notice !== undefined) write(notice);
+}
+
 /** The share of the turn's input served from cache, in whole percent. */
 function cachedPercent(
   input: number,

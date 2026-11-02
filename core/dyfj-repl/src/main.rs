@@ -446,6 +446,9 @@ async fn run_turn(
                         for warning in close.warnings {
                             eprintln!("{warning}");
                         }
+                        if length_stopped_empty(&result) {
+                            eprintln!("turn stopped at the output limit");
+                        }
                         eprintln!("{}", receipt::line(&result, session.spend_usd));
                     }
                     Err(_) if client.is_closed() => return interrupted(wrote_any),
@@ -672,6 +675,13 @@ fn turn_close(result: &Value, wrote_any: bool) -> TurnClose {
     }
 }
 
+/// A turn that reported a length stop with empty reply text otherwise shows
+/// no reply and no explanation. The REPL prints one line saying why.
+fn length_stopped_empty(result: &Value) -> bool {
+    result.get("stopReason").and_then(Value::as_str) == Some("length")
+        && result.get("text").and_then(Value::as_str).unwrap_or("").is_empty()
+}
+
 /// The runtime validates `turnId` against a UUID shape and rejects anything
 /// else, so this is a protocol requirement rather than a formatting choice. It
 /// also routes `turn/cancel` by this id: a repeated id would let a cancel land
@@ -777,6 +787,23 @@ mod tests {
             &mut wrote_any,
         );
         assert!(wrote_any);
+    }
+
+    /// A length stop with empty reply text is the case the REPL prints one
+    /// line for.
+    #[test]
+    fn a_length_stop_with_no_text_prints_the_output_limit_line() {
+        let empty_length = serde_json::json!({"stopReason": "length", "text": ""});
+        assert!(super::length_stopped_empty(&empty_length));
+
+        let with_text = serde_json::json!({"stopReason": "length", "text": "partial"});
+        assert!(!super::length_stopped_empty(&with_text));
+
+        let normal = serde_json::json!({"stopReason": "stop", "text": ""});
+        assert!(!super::length_stopped_empty(&normal));
+
+        let aborted = serde_json::json!({"stopReason": "aborted", "text": ""});
+        assert!(!super::length_stopped_empty(&aborted));
     }
 
     /// A replacement that streams sets the flag again, so the receipt fallback

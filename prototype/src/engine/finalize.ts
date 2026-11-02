@@ -537,6 +537,7 @@ function turnReceipt(state: TurnState, ports: NativeTurnPorts): string {
     totalCacheWriteTokens: state.cacheWriteTokens,
     totalReasoningTokens: state.reasoningTokens,
     totalCalls: summary.totalCalls,
+    stopReason: state.finalStopReason,
     contextBudget: state.contextBudget,
     contextProfile: state.contextProfile,
     timings: state.callTimings,
