@@ -105,16 +105,20 @@ impl StatusLine {
             }
             Some("toolCallCompleted") => self.enter(Phase::Runtime, now),
             Some("agentProgress") => {
-                let running = event.get("kind").and_then(Value::as_str) == Some("tool_call")
-                    && !matches!(
-                        event.get("status").and_then(Value::as_str),
-                        Some("completed" | "failed")
-                    );
-                let label = match activity::agent_progress_title(event) {
-                    Some(title) if running => format!("external agent: {title}"),
-                    _ => "external agent".to_string(),
-                };
-                self.enter(Phase::Tool { label }, now);
+                let tool_call = event.get("kind").and_then(Value::as_str) == Some("tool_call");
+                let ended = matches!(
+                    event.get("status").and_then(Value::as_str),
+                    Some("completed" | "failed")
+                );
+                match (tool_call, ended) {
+                    // The agent's call ended; nothing runs until its next frame.
+                    (true, true) => self.enter(Phase::Runtime, now),
+                    (true, false) => {
+                        let title = activity::agent_progress_title(event);
+                        self.enter(Phase::Tool { label: format!("external agent: {title}") }, now);
+                    }
+                    (false, _) => self.enter(Phase::Tool { label: "external agent".into() }, now),
+                }
             }
             _ => {}
         }
@@ -328,5 +332,30 @@ mod tests {
             line.text(t0 + secs(4)).as_deref(),
             Some("… running external agent: Run npm test 4s · Ctrl-C cancels")
         );
+    }
+
+    #[test]
+    fn an_untitled_external_agent_call_is_still_named() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        line.observe_event(&json!({"type": "agentProgress", "kind": "tool_call", "status": "pending"}), t0);
+        assert_eq!(
+            line.text(t0 + secs(1)).as_deref(),
+            Some("… running external agent: external tool 1s · Ctrl-C cancels")
+        );
+    }
+
+    /// Once the agent's call ends, nothing is running until the next frame.
+    #[test]
+    fn a_finished_external_agent_call_stops_running() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        for status in ["in_progress", "completed"] {
+            line.observe_event(
+                &json!({"type": "agentProgress", "kind": "tool_call", "title": "Run npm test", "status": status}),
+                t0,
+            );
+        }
+        assert_eq!(line.text(t0 + secs(2)).as_deref(), Some("… runtime working 2s · Ctrl-C cancels"));
     }
 }

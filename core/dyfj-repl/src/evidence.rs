@@ -127,9 +127,7 @@ impl Ledger {
         if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
             return;
         }
-        let Some(title) = activity::agent_progress_title(event) else {
-            return;
-        };
+        let title = activity::agent_progress_title(event);
         let open = self.calls.iter().rposition(|call| {
             call.external && call.outcome.is_none() && call.subject.as_deref() == Some(&title)
         });
@@ -244,9 +242,10 @@ impl Ledger {
         let commands: Vec<String> = self
             .calls
             .iter()
-            .filter(|call| is_command(call) && call.outcome.is_some())
+            .filter(|call| is_command(call))
             .map(|call| {
                 let result = match (call.outcome, &call.status) {
+                    (None, _) => "reported no completion".to_string(),
                     (Some(Outcome::NotApproved), _) => "not approved".to_string(),
                     (Some(Outcome::Failed), _) => "failed".to_string(),
                     (_, Some(status)) => activity::short_status(status),
@@ -625,5 +624,18 @@ mod tests {
                 "  [12s] … Read b.rs (external agent) reported no completion",
             ]
         );
+    }
+
+    /// A command cut short by a cancel is named with the other commands.
+    #[test]
+    fn a_command_that_never_completed_is_listed() {
+        let ledger = ledger(&[started("c1", "bash", "npm test")]);
+        assert_eq!(ledger.summary(1_000)[1], "    commands: npm test → reported no completion");
+    }
+
+    #[test]
+    fn an_untitled_external_agent_call_is_recorded() {
+        let ledger = ledger(&[json!({"type": "agentProgress", "kind": "tool_call", "status": "completed"})]);
+        assert_eq!(ledger.every_call(), vec!["  [0s] ✓ external tool (external agent)"]);
     }
 }

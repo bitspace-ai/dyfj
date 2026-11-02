@@ -25,9 +25,10 @@ const writeFile = command({
   path: { type: "string" },
   content: { type: "string", redact: true },
 });
-const bash = command({ command: { type: "string" }, cwd: { type: "string" } }, {
-  redactResult: true,
-});
+const bash = {
+  ...command({ command: { type: "string" }, cwd: { type: "string" } }, { redactResult: true }),
+  id: "bash",
+} as CommandDefinition;
 
 test("the subject is the first logged string argument in schema order", () => {
   assert.equal(
@@ -99,6 +100,16 @@ test("a redacted error reply is a fixed status that says the command did not run
   }
 });
 
+// Only a command's result opens with a runtime-written exit status. A file
+// whose first line reads `exit 1` is content, not a status.
+test("an exit status line is a status only for bash and git", () => {
+  const readFile = { ...command({ path: { type: "string" } }), id: "read_file" } as CommandDefinition;
+  assert.equal(toolResultStatus(readFile, {}, "exit 1\nthe rest of the file"), undefined);
+  assert.equal(toolResultStatus(readFile, {}, "note: x\nexit 1"), undefined);
+  const git = { ...bash, id: "git" } as CommandDefinition;
+  assert.equal(toolResultStatus(git, {}, "note: run from a subdirectory\nexit 1"), "exit 1");
+});
+
 test("a tool's error reply is its result status", () => {
   const readFile = command({ path: { type: "string" } });
   assert.equal(
@@ -135,7 +146,7 @@ test("every timeout header describeTimeout writes is a result status", () => {
 });
 
 test("a git status line after the subdirectory notice is still the status", () => {
-  const git = command({ subcommand: { type: "string" } });
+  const git = { ...command({ subcommand: { type: "string" } }), id: "git" } as CommandDefinition;
   const notice = "note: the workspace is a subdirectory of this repository, so this " +
     "commit records every staged change in it, including paths outside the workspace.";
   assert.equal(toolResultStatus(git, {}, `${notice}\nexit 1\nnothing to commit`), "exit 1");

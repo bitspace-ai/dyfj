@@ -53,6 +53,7 @@ export function toolCallSubject(
 // The status lines `executeBash` writes ahead of a command's output: they are
 // the runtime's words, not the command's, so they carry nothing the redacted
 // result could have held.
+const EXIT_STATUS_COMMANDS: ReadonlySet<string> = new Set(["bash", "git"]);
 const EXIT_STATUS = /^(exit -?\d+|exit by signal [A-Z0-9]+|timed out after \d+ms \(killed[^)]*\))$/;
 
 /**
@@ -80,11 +81,15 @@ export function toolResultStatus(
 ): string | undefined {
   if (command === undefined || typeof result !== "string") return undefined;
   const [head, second] = result.split("\n", 2).map((line) => line.trim());
-  if (EXIT_STATUS.test(head)) return head;
-  // `git commit` from a workspace below the repository root writes one
-  // runtime notice line ahead of the status.
-  if (head.startsWith("note: ") && second !== undefined && EXIT_STATUS.test(second)) {
-    return second;
+  // Only a command's result opens with a runtime-written exit status;
+  // another tool's first line is content, whatever it reads.
+  if (EXIT_STATUS_COMMANDS.has(command.id)) {
+    if (EXIT_STATUS.test(head)) return head;
+    // `git commit` from a workspace below the repository root writes one
+    // runtime notice line ahead of the status.
+    if (head.startsWith("note: ") && second !== undefined && EXIT_STATUS.test(second)) {
+      return second;
+    }
   }
   if (!head.startsWith("error:")) return undefined;
   if (command.redactResult === true) return DID_NOT_RUN_STATUS;

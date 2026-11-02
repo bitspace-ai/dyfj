@@ -1137,7 +1137,7 @@ call's `toolCallStarted` and
 log keeps (the first non-redacted string argument in schema order, such as a
 path or a command, one line of at most 120 bytes; none for a command that
 redacts every argument), and a completed call that ran without a tool error
-carries a `resultStatus` when its result opens with a command's exit status
+carries a `resultStatus` when its result opens with a `bash` or `git` exit status
 (`exit 1`, a signal, a timeout; for `git`, also after its one-line
 subdirectory notice) or a tool's `error:` reply (reduced as the log
 reduces a failure reason; for a command whose result the log redacts, only
@@ -2788,3 +2788,5 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-02 - "Build the core" says a command with no reported exit status
   is marked `?` and never counted as ok, and that ACP tool calls are in the
   evidence; the JSON-RPC seam section names the `did not run` status.
+- 2026-11-02 - The JSON-RPC seam section says only a `bash` or `git` result's
+  first line is read as an exit status.

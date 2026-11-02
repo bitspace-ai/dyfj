@@ -17,7 +17,9 @@ README are tracked separately in its Revision history section.
   the REPL now keeps a status line under the turn, redrawn every second, that
   says what it waits on and for how long (`… waiting on <model> 47s · turn
   1m12s · step 3 · 5 calls`, `… running bash npm test 2m05s`), and adds `no
-  runtime event for <time>` after 30 s of silence. It is never drawn over
+  runtime event for <time>` after 30 s of silence that began after the
+  current wait did (during a plain long wait, the wait's clock already shows
+  it). It is never drawn over
   streamed text and is erased before any other output. Tool lines name what
   each call acted on (`✓ read_file src/a.ts (5ms)`) and mark with `!` a call
   that ran but whose result reports a problem (`! bash npm test (3.2s) ·
@@ -30,12 +32,14 @@ README are tracked separately in its Revision history section.
   reported, as an older runtime's are not, counted as `reported no exit
   status` and marked `?` rather than as ok, wall time, files the file tools
   wrote, each command with its exit status, the calls that went wrong, and
-  the files no command reported exit 0 after. It never calls a command a passing check, and it
+  the files no command reported exit 0 after; a command cut short is listed
+  as `reported no completion`. It never calls a command a passing check, and it
   ends by saying it does not check the reply's claims; a turn with no tool
   calls says the reply is the model's own account. `/evidence` lists every
   call of the last turn with when it started and ended, and works while the
   runtime is disconnected. On the external-agent (ACP) route the status line
-  names the agent's tool call in progress and a line marks each one's end,
+  names the agent's tool call in progress (`external tool` when it has no
+  title or name) and a line marks each one's end,
   and the evidence records those calls, marked as the agent's own report.
   A turn the runtime settles as cancelled ends with `turn cancelled`.
   Durations over a second read as seconds. The TypeScript client's tool lines
@@ -55,7 +59,7 @@ README are tracked separately in its Revision history section.
   arguments are never the subject; a command that redacts every argument has
   none), single-lined, scrubbed and capped at 120 bytes. A completed call
   that ran without a tool error carries an optional `resultStatus` when its
-  result opens with a command's exit status (for `git`, also after its
+  result opens with a `bash` or `git` exit status (for `git`, also after its
   one-line subdirectory notice) or a tool's `error:` reply,
   reduced as the log reduces a failure reason. A redacted result contributes
   only the runtime-written exit status line, or the fixed `did not run` when

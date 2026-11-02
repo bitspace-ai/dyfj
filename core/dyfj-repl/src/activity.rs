@@ -116,7 +116,7 @@ pub fn describe(event: &Value) -> Option<String> {
                 Some("failed") => "✗",
                 _ => return None,
             };
-            Some(format!("  {mark} {} (external agent)", agent_progress_title(event)?))
+            Some(format!("  {mark} {} (external agent)", agent_progress_title(event)))
         }
         // Bookkeeping the operator does not need narrated. Observed on a live
         // runtime: sessionStart, inputReceived, contextBuilt, modelSelected,
@@ -196,14 +196,16 @@ pub fn short_status(status: &str) -> String {
     bounded(status, 40)
 }
 
-/// The title of an ACP tool-call progress frame, or its name.
-pub fn agent_progress_title(event: &Value) -> Option<String> {
+/// The title of an ACP tool-call progress frame, or its name, or
+/// `external tool` when it carries neither: both are optional, and a call
+/// without them still needs a line.
+pub fn agent_progress_title(event: &Value) -> String {
     event
         .get("title")
         .or_else(|| event.get("name"))
         .and_then(Value::as_str)
         .filter(|title| !title.trim().is_empty())
-        .map(|title| bounded(title, MAX_SUBJECT_CHARS))
+        .map_or_else(|| "external tool".into(), |title| bounded(title, MAX_SUBJECT_CHARS))
 }
 
 /// The longest subject a line shows, in characters. The runtime caps it at
@@ -635,5 +637,13 @@ mod tests {
         assert_eq!(progress("completed").as_deref(), Some("  ✓ Run npm test (external agent)"));
         assert_eq!(progress("failed").as_deref(), Some("  ✗ Run npm test (external agent)"));
         assert_eq!(describe(&json!({"type": "agentProgress", "kind": "thought"})), None);
+    }
+
+    /// The contract makes `title` and `name` optional. A call with neither
+    /// still ends with a line.
+    #[test]
+    fn an_untitled_external_agent_call_still_ends_with_a_line() {
+        let line = describe(&json!({"type": "agentProgress", "kind": "tool_call", "status": "failed"}));
+        assert_eq!(line.as_deref(), Some("  ✗ external tool (external agent)"));
     }
 }
