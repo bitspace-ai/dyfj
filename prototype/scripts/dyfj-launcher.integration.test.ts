@@ -1732,3 +1732,62 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
     assert.equal(log?.startsWith("//"), false);
   });
 });
+
+describe("an autostart that cannot succeed says why", () => {
+  /** A real autostart (`dyfj sessions`) under a private HOME. */
+  async function autostart(
+    home: string,
+    socket: string,
+  ): Promise<{ code: number | null; err: string; ms: number }> {
+    const started = Date.now();
+    const { code, stderr } = await output(BASH, [LAUNCHER, "sessions"], {
+      env: {
+        HOME: home,
+        DYFJ_SOCKET: socket,
+        DYFJ_LAUNCHER_DRY_RUN: "",
+        DYFJ_SANDBOX: "off",
+        // Nothing listens on port 1, so the boot's column check fails fast
+        // and the runtime goes on to bind.
+        DOLT_HOST: "127.0.0.1",
+        DOLT_PORT: "1",
+      },
+      stdout: "ignore",
+    });
+    return { code, err: stderr, ms: Date.now() - started };
+  }
+
+  it("relays the runtime's failed-to-start line as soon as it exits", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/home`);
+      // A regular file where the socket goes: the runtime refuses to bind.
+      await writeFile(`${dir}/x.sock`, "");
+      const { code, err, ms } = await autostart(`${dir}/home`, `${dir}/x.sock`);
+      assert.notEqual(code, 0);
+      includes(err, "the runtime exited before it answered");
+      includes(err, "refusing to bind");
+      includes(err, "exists and is not a socket");
+      refutes(err.includes("is not answering"));
+      // The probe loop alone runs for 15 s or more before giving up.
+      assert.ok(ms < 15_000, `took ${ms} ms`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a socket path too long for the platform before spawning", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/home`);
+      const socket = `${dir}/${"s".repeat(120)}.sock`;
+      const { code, err } = await autostart(`${dir}/home`, socket);
+      assert.notEqual(code, 0);
+      includes(err, `is ${Buffer.byteLength(socket)} bytes`);
+      includes(err, "DYFJ_SOCKET");
+      refutes(err.includes("starting it"));
+      refutes(err.includes("is not answering"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it, mock } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import { loadConfig } from "../config/mod.ts";
+import { DomainError } from "../contract/mod.ts";
+import { nodeSocketHost } from "../transport/mod.ts";
 import {
   CONFIG_ERROR_EXIT_CODE,
   configErrorLine,
@@ -63,14 +65,42 @@ describe("runtime entry guard", () => {
     );
   });
 
-  it("rethrows an error that is not a config error, with its stack", async () => {
+  it("reports a DomainError as one failed-to-start line, without a stack", async () => {
+    const p = ports();
+    await runRuntimeEntry(
+      () => Promise.reject(new DomainError("Dolt is not answering\n  at x")),
+      p.ports,
+    );
+    assert.deepEqual(p.said, [
+      "dyfj runtime: failed to start: Dolt is not answering at x",
+    ]);
+    assert.equal(p.setExitCode.mock.calls[0].arguments[0], CONFIG_ERROR_EXIT_CODE);
+  });
+
+  it("reports the real too-long socket bind as one line", async () => {
+    const p = ports();
+    await runRuntimeEntry(
+      () => nodeSocketHost.listen(`/tmp/${"s".repeat(200)}`).then(() => {}),
+      p.ports,
+    );
+    assert.equal(p.said.length, 1);
+    assert.match(
+      p.said[0],
+      /^dyfj runtime: failed to start: The socket path \/tmp\/s+ is 205 bytes/,
+    );
+    assert.equal(p.setExitCode.mock.callCount(), 1);
+  });
+
+  it("names any other error, then rethrows it with its stack", async () => {
     const p = ports();
     const failure = new Error("socket exploded");
     await assert.rejects(
       runRuntimeEntry(() => Promise.reject(failure), p.ports),
       (error) => error === failure,
     );
-    assert.deepEqual(p.said, []);
+    assert.deepEqual(p.said, [
+      "dyfj runtime: failed to start: [Error, 15 bytes]; its stack trace follows",
+    ]);
     assert.equal(p.setExitCode.mock.callCount(), 0);
   });
 

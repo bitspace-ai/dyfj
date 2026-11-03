@@ -276,9 +276,9 @@ impl LogTail {
         }
     }
 
-    /// The last line reporting an error among the complete lines written since
-    /// the previous call, sanitised and capped, unless it is the line shown
-    /// last time.
+    /// The runtime's failed-boot line, else the last line reporting an error,
+    /// among the complete lines written since the previous call, sanitised and
+    /// capped, unless it is the line shown last time.
     pub fn new_error_line(&mut self) -> Option<String> {
         let meta = std::fs::metadata(&self.path).ok()?;
         // A different file at the path, or one shorter than where we stopped,
@@ -300,10 +300,8 @@ impl LogTail {
         let complete = bytes.iter().rposition(|&b| b == b'\n')? + 1;
         self.offset = start + complete as u64;
         let text = String::from_utf8_lossy(&bytes[..complete]);
-        let line = text
-            .lines()
-            .rev()
-            .find(|line| line.to_lowercase().contains("error"))
+        let line = boot_failure_line(&text)
+            .or_else(|| text.lines().rev().find(|line| line.to_lowercase().contains("error")))
             .map(|line| cap(visible(line.trim()).trim()))?;
         if self.shown.as_ref() == Some(&line) {
             return None;
@@ -311,6 +309,23 @@ impl LogTail {
         self.shown = Some(line.clone());
         Some(line)
     }
+}
+
+/// The runtime's own reason for a failed boot: its last `dyfj runtime:
+/// failed to start:` or `dyfj runtime: config:` line, without the `dyfj
+/// runtime: ` prefix. None when there is none, or when that line only names
+/// an error class and promises the stack trace that follows it, whose first
+/// line says more.
+fn boot_failure_line(text: &str) -> Option<&str> {
+    const PREFIX: &str = "dyfj runtime: ";
+    let line = text.lines().rev().find(|line| {
+        line.starts_with("dyfj runtime: failed to start: ")
+            || line.starts_with("dyfj runtime: config:")
+    })?;
+    if line.trim_end().ends_with("its stack trace follows") {
+        return None;
+    }
+    line.strip_prefix(PREFIX)
 }
 
 fn cap(line: &str) -> String {
@@ -849,6 +864,42 @@ mod tests {
         assert_eq!(tail.new_error_line(), None, "a repeat of the shown line stays quiet");
         writeln!(file, "error: port in use").unwrap();
         assert_eq!(tail.new_error_line().as_deref(), Some("error: port in use"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The runtime's own one-line reason for a failed boot wins over a later
+    /// line that merely mentions an error, and loses its `dyfj runtime: `
+    /// prefix; one that only promises a stack trace defers to the stack.
+    #[test]
+    fn the_log_tail_prefers_the_runtimes_failed_to_start_line() {
+        let (path, mut file) = temp_log();
+        let mut tail = LogTail::from_end(&path);
+        writeln!(file, "dyfj runtime: sandbox OFF (DYFJ_SANDBOX=off): commands ask").unwrap();
+        writeln!(
+            file,
+            "dyfj runtime: failed to start: refusing to bind: /tmp/x.sock exists and is not a socket"
+        )
+        .unwrap();
+        writeln!(file, "warning: ErrorHandler registered twice").unwrap();
+        assert_eq!(
+            tail.new_error_line().as_deref(),
+            Some("failed to start: refusing to bind: /tmp/x.sock exists and is not a socket")
+        );
+
+        writeln!(file, "dyfj runtime: failed to start: [Error, 9 bytes]; its stack trace follows")
+            .unwrap();
+        writeln!(file, "Error: listen EINVAL: invalid argument /tmp/y.sock").unwrap();
+        writeln!(file, "    at Server.listen (node:net:2641:5)").unwrap();
+        assert_eq!(
+            tail.new_error_line().as_deref(),
+            Some("Error: listen EINVAL: invalid argument /tmp/y.sock")
+        );
+
+        writeln!(file, "dyfj runtime: config: [agent].max_tool_steps must be 1-64").unwrap();
+        assert_eq!(
+            tail.new_error_line().as_deref(),
+            Some("config: [agent].max_tool_steps must be 1-64")
+        );
         let _ = std::fs::remove_file(&path);
     }
 

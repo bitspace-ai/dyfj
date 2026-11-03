@@ -3,6 +3,10 @@
 // the package to transport/. A socket is push-style (events); the ports are pull-style, so
 // each connection keeps a queue and pauses the socket while a chunk waits.
 //
+// A path too long for the platform is refused before node:net sees it, and a
+// failed bind is reported as `RuntimeListenError` (socket-failure.ts), so
+// both say what to change instead of surfacing the platform's error.
+//
 // Every socket opens with allowHalfOpen: true, at both ends. With the default,
 // a socket ends its own write side when the other side sends FIN, so a reply
 // to a request that arrived just before the FIN is lost.
@@ -13,6 +17,7 @@ import type {
   ConnectionListener,
   SocketHost,
 } from "./connection.ts";
+import { assertSocketPathFits, listenFailure } from "./socket-failure.ts";
 
 class NodeConnection implements ByteConnection {
   readonly #socket: net.Socket;
@@ -151,6 +156,12 @@ export const nodeSocketHost: SocketHost = {
         reject(abortReason(signal));
         return;
       }
+      try {
+        assertSocketPathFits(path);
+      } catch (error) {
+        reject(error);
+        return;
+      }
       const socket = net.createConnection({ path, allowHalfOpen: true });
       let aborted = false;
       let onAbort: (() => void) | undefined;
@@ -183,10 +194,17 @@ export const nodeSocketHost: SocketHost = {
 
   listen(path) {
     return new Promise<ConnectionListener>((resolve, reject) => {
+      try {
+        assertSocketPathFits(path);
+      } catch (error) {
+        reject(error);
+        return;
+      }
       const server = net.createServer({ allowHalfOpen: true });
-      server.once("error", reject);
+      const failed = (error: unknown) => reject(listenFailure(path, error));
+      server.once("error", failed);
       server.listen(path, () => {
-        server.removeListener("error", reject);
+        server.removeListener("error", failed);
         // Later errors have no caller to tell; the listener is already
         // handed out and a failed accept ends it.
         server.on("error", () => {});

@@ -1128,7 +1128,18 @@ dyfj start
 
 The socket path resolves from `DYFJ_SOCKET`, else
 `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock` (the
-parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the
+parent directory is created mode 0700). A Unix socket path is limited to 103
+bytes on macOS and 107 on Linux; the launcher, the runtime and the client each
+refuse a longer one with a message that gives its length, the limit and how to
+choose another, instead of a bind failure. A runtime that cannot boot (a socket
+it cannot bind, an invalid config, or any other `DomainError`) prints one
+`dyfj runtime: failed to start: <reason>` line, or `dyfj runtime: config:
+<reason>`, and exits non-zero; an unrecognized failure prints the same line
+with only the error's class and size, then its stack trace. When an
+autostarted runtime exits before it answers, the launcher stops waiting and
+prints that reason (`dyfj: the runtime exited before it answered: ...`) with
+the log path; it still says `runtime is not answering` only when the runtime
+is running but never answered. The engine-free `dyfj` CLI reaches the
 read methods over the socket:
 
 ```sh
@@ -1931,7 +1942,8 @@ for an interactive session on a terminal and fails if it cannot run there;
 piped or redirected input, subcommands, `-p` prompts and `--help` are
 unaffected by `DYFJ_REPL`. The launcher passes the Rust REPL this socket's
 autostart log path as `DYFJ_RUNTIME_LOG`, so it can show why a runtime it is
-waiting for failed to start.
+waiting for failed to start: the runtime's `failed to start:` or `config:`
+line when there is one, else the log's last line that mentions an error.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration
@@ -2807,3 +2819,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-03 - "Set up the prototype" says how an unusable Dolt store is
   reported: the runtime boots, and status and turns name the refused user,
   the unanswering endpoint or the missing database, and the fix.
+- 2026-11-03 - The JSON-RPC seam section states the socket-path limit, the
+  runtime's one-line boot failure, and that the launcher relays it when an
+  autostarted runtime exits; the Rust REPL note says which log line it shows.

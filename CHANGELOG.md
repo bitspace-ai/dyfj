@@ -265,6 +265,24 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A runtime that cannot boot says why, and the launcher relays it.** A
+  socket path longer than macOS's 104-byte `sun_path` made the runtime die
+  with an uncaught `listen EINVAL` stack trace in the autostart log, the
+  client report `[Error, N bytes]`, and the launcher probe for about 20 s
+  before saying only `runtime is not answering — check <log>`. The launcher
+  now refuses such a path before spawning (`The socket path <path> is 122
+  bytes; this system allows at most 103. Choose a shorter socket path with
+  --socket or DYFJ_SOCKET ...`), and the runtime and the client report the
+  same for a path that reaches them. A socket the runtime cannot bind for
+  another reason (a missing directory, permission, a file in the way) names
+  the path and the cause. Any boot failure whose message Workbench wrote is
+  now one `dyfj runtime: failed to start: <reason>` line with no stack trace;
+  when an autostarted runtime exits before it answers, the launcher stops
+  waiting at once and prints `dyfj: the runtime exited before it answered:
+  <reason>` and the log path. The Rust REPL, waiting for a runtime that
+  failed to restart, shows that same line in preference to the log's last
+  line that mentions an error.
+
 - **A Dolt store Workbench cannot use says why.** A
   stopped `dolt sql-server`, a wrong `DOLT_HOST`/`DOLT_PORT` or an unknown
   `DOLT_DATABASE` used to fail a turn with a misleading `Model not found:

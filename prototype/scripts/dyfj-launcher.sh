@@ -375,6 +375,46 @@ inspect_start_lock_in_flight() {
   return 1
 }
 
+# The longest Unix socket path this platform binds: sun_path less its NUL.
+max_socket_path_bytes() {
+  case "$(uname -s 2>/dev/null)" in
+    Linux) printf '107' ;;
+    *) printf '103' ;;
+  esac
+}
+
+# Refuses (returns 1, with the reason) a socket path the runtime could never
+# bind, before anything is spawned or logged: the runtime would only die with
+# `listen EINVAL`, and the launcher would wait it out as "not answering". The
+# wording matches the runtime's own SocketPathTooLongError.
+check_socket_path_length() {
+  local sock="$1" bytes limit
+  bytes="$(LC_ALL=C; printf '%s' "${#sock}")"
+  limit="$(max_socket_path_bytes)"
+  if [[ "$bytes" -gt "$limit" ]]; then
+    echo "dyfj: The socket path ${sock} is ${bytes} bytes; this system allows at most ${limit}. Choose a shorter socket path with --socket or DYFJ_SOCKET (for example under /tmp), or shorten the HOME or XDG_RUNTIME_DIR it is derived from" >&2
+    return 1
+  fi
+}
+
+# The runtime's own reason for a failed boot, from the last autostart block of
+# the log: its last `dyfj runtime: failed to start:` or `dyfj runtime: config:`
+# line, without the prefix, with control characters removed and capped. The
+# runtime writes those lines from messages Workbench composed (a DomainError,
+# or only an error's class and size), never a driver's text, so they are safe
+# to relay; nothing else in the log is read out.
+runtime_boot_failure() {
+  local log="$1"
+  [[ -r "$log" ]] || return 0
+  awk '
+    /^── dyfj autostart at / { cause = "" }
+    /^dyfj runtime: (failed to start: |config: )/ { cause = $0 }
+    END { if (cause != "") print cause }
+  ' "$log" 2>/dev/null |
+    sed -e 's/^dyfj runtime: failed to start: //' -e 's/^dyfj runtime: //' |
+    LC_ALL=C tr -d '\000-\010\013-\037\177' | head -c 600 || true
+}
+
 ensure_runtime() {
   local start_lock probe_status=0
   start_lock="$(runtime_start_lock_path 2>/dev/null || true)"
@@ -388,6 +428,7 @@ ensure_runtime() {
   prepare_rustup_home || return 1
   local sock log
   sock="$(resolve_socket_path)"
+  check_socket_path_length "$sock" || return 1
   if ! log="$(runtime_log_path)"; then
     echo "dyfj: autostart needs an absolute HOME for its log directory; set HOME or run 'dyfj start' yourself" >&2
     return 1
@@ -475,12 +516,25 @@ ensure_runtime() {
     echo "dyfj: a runtime start for ${sock} is already in flight (log: ${log}); waiting for it" >&2
   fi
 
-  local i
+  local i cause
   for i in $(seq 1 50); do
     if probe_runtime "$@"; then
       rm -f "$start_lock" 2>/dev/null || true
       echo "dyfj: runtime ready" >&2
       return 0
+    fi
+    # The runtime this call spawned has exited: it will never answer, and
+    # its log already says why.
+    if [[ "$acquired_lock" == "1" ]] && ! kill -0 "$spawn_pid" 2>/dev/null; then
+      rm -f "$start_lock" 2>/dev/null || true
+      cause="$(runtime_boot_failure "$log")"
+      if [[ -n "$cause" ]]; then
+        echo "dyfj: the runtime exited before it answered: ${cause}" >&2
+        echo "dyfj: its full output is in ${log}" >&2
+      else
+        echo "dyfj: the runtime exited before it answered; its output is in ${log}, or run 'dyfj start' in the foreground to see it" >&2
+      fi
+      return 1
     fi
     sleep 0.3
   done
