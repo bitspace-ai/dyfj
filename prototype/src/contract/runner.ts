@@ -34,3 +34,12 @@ export interface AcpPermissionSelection {
   optionId: string | null;
   source?: "operator" | "policy";
 }
+
+/**
+ * Why a `codex-chatgpt` turn is refused in an untrusted workspace, and how to
+ * trust it. Reporting only: the trust decision is the operator's setting.
+ */
+export const CODEX_WORKSPACE_TRUST_REQUIRED =
+  "codex-chatgpt requires explicit workspace trust: it runs with the " +
+  "workspace's instructions. Set DYFJ_TRUST_WORKSPACE_INSTRUCTIONS=1 in the " +
+  "runtime's environment (prototype/.env), restart the runtime, then retry";

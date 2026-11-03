@@ -510,7 +510,8 @@ export class BudgetExceededError extends DomainError {
       `Budget exceeded [${reason}]: ` +
         `estimated $${estimatedCost.toFixed(6)}, ` +
         `limit $${limitUsd.toFixed(6)}, ` +
-        `${scopeSoFarLabel(reason)} $${scopeCostSoFar.toFixed(6)}`,
+        `${scopeSoFarLabel(reason)} $${scopeCostSoFar.toFixed(6)}. ` +
+        `To go past it, ${budgetRaiseHint(reason)}`,
     );
     this.reason = reason;
     this.estimatedCost = estimatedCost;
@@ -518,6 +519,27 @@ export class BudgetExceededError extends DomainError {
     this.scopeCostSoFar = scopeCostSoFar;
     this.name = "BudgetExceededError";
   }
+}
+
+/** Each limit's launch flag and REPL `/budget` name. */
+const LIMIT_CONTROLS: Record<BudgetLimitReason, [string, string]> = {
+  per_call_limit: ["--budget-per-call", "per-call"],
+  runaway_stall: ["--budget-runaway", "runaway"],
+  turn_limit: ["--budget-turn", "turn"],
+  session_limit: ["--budget-session", "session"],
+  daily_limit: ["--budget-day", "day"],
+};
+
+/**
+ * How the operator raises the limit `reason` names: the session's flag and
+ * REPL command, or the configured default. Reporting only; the limit itself
+ * is decided elsewhere.
+ */
+export function budgetRaiseHint(reason: BudgetLimitReason): string {
+  const [flag, name] = LIMIT_CONTROLS[reason];
+  return `raise this session's limit with ${flag} <usd> (or /budget ${name} ` +
+    "<usd> in the REPL), or the default under [budget] in " +
+    "~/.dyfj/config.toml";
 }
 
 function scopeSoFarLabel(reason: BudgetLimitReason): string {

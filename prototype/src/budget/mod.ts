@@ -30,6 +30,7 @@ export {
 export {
   budgetCeilingApprovalRequest,
   BudgetCeilingDeclinedError,
+  budgetRaiseHint,
   type BudgetCeilingVerdict,
   type BudgetCeilingWarning,
   BudgetExceededError,

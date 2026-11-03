@@ -40,7 +40,13 @@ test("resolveTurnFromBody selects the Codex ChatGPT runner only for a trusted lo
     resolveTurnFromBody({ prompt: "hi", runner: "codex-chatgpt" }, true, {
       trustWorkspaceInstructions: false,
     }),
-    { status: 403, error: "codex-chatgpt requires explicit workspace trust" },
+    {
+      status: 403,
+      error: "codex-chatgpt requires explicit workspace trust: it runs " +
+        "with the workspace's instructions. Set " +
+        "DYFJ_TRUST_WORKSPACE_INSTRUCTIONS=1 in the runtime's environment " +
+        "(prototype/.env), restart the runtime, then retry",
+    },
   );
   match(
     resolveTurnFromBody({ prompt: "hi", runner: "codex-chatgpt" }, false, {
@@ -224,6 +230,8 @@ test("paidEscalationVerdict denies a loopback caller that did not opt in", () =>
     decision: "deny",
     reason: PAID_ESCALATION_NOT_APPROVED,
   });
+  // The refusal says how to give the consent it lacked.
+  assert.match(PAID_ESCALATION_NOT_APPROVED, /--approve-paid/);
   assert.deepStrictEqual(paidEscalationVerdict(true, true), {
     decision: "approve",
   });

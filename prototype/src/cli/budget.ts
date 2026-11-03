@@ -26,6 +26,24 @@ export const BUDGET_FLAGS: Record<string, BudgetLimitName> = {
   "--budget-runaway": "runaway",
 };
 
+/**
+ * The launch flag for each limit as the runtime names it on the wire (a spend
+ * approval's `crossedScopes`), or undefined for a name this client does not
+ * know.
+ */
+export function flagForLimitReason(reason: unknown): string | undefined {
+  const flags: Record<string, string> = {
+    per_call_limit: "--budget-per-call",
+    runaway_stall: "--budget-runaway",
+    turn_limit: "--budget-turn",
+    session_limit: "--budget-session",
+    daily_limit: "--budget-day",
+  };
+  return typeof reason === "string" && Object.hasOwn(flags, reason)
+    ? flags[reason]
+    : undefined;
+}
+
 /** The runtime refuses a limit above this (a fat-finger guard). */
 export const MAX_BUDGET_USD = 1000;
 

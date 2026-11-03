@@ -6,6 +6,7 @@
  */
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
 import {
+  CODEX_WORKSPACE_TRUST_REQUIRED,
   type PaidEscalationVerdict,
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
@@ -43,7 +44,8 @@ export function isValidTurnId(value: unknown): value is string {
 export const PAID_ESCALATION_REMOTE_DENIED =
   "paid inference is not available to remote callers";
 export const PAID_ESCALATION_NOT_APPROVED =
-  "paid inference was not approved for this turn";
+  "paid inference was not approved for this turn; to allow it, rerun with " +
+  "--approve-paid (in the REPL, /model <slug> --approve-paid)";
 
 export function paidEscalationVerdict(
   loopback: boolean,
@@ -237,7 +239,7 @@ export function resolveTurnFromBody(
     options.trustWorkspaceInstructions !== true
   ) {
     return {
-      error: "codex-chatgpt requires explicit workspace trust",
+      error: CODEX_WORKSPACE_TRUST_REQUIRED,
       status: 403,
     };
   }

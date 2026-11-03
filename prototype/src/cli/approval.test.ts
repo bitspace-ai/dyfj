@@ -317,6 +317,26 @@ describe("promptMidTurnApproval", () => {
     assert.strictEqual(asked, false);
   });
 
+  it("a non-interactive spend approval names the flag that raises the crossed limit", async () => {
+    const { io } = fakeIo([]);
+    const verdict = await promptMidTurnApproval(io, {
+      kind: "budget_ceiling",
+      message: "Projected spend crosses the turn limit",
+      crossedScopes: ["turn_limit", "daily_limit", "not-a-scope"],
+    }, false);
+    assert.deepStrictEqual(verdict, {
+      decision: "deny",
+      reason: "approval needs an interactive terminal; run the turn from " +
+        "one to answer it, or raise the limit with --budget-turn <usd> " +
+        "or --budget-day <usd>",
+    });
+    // A tool approval keeps its reason: it is what the model is told.
+    assert.deepStrictEqual(
+      await promptMidTurnApproval(io, { kind: "tool" }, false),
+      { decision: "deny", reason: "approval needs an interactive terminal" },
+    );
+  });
+
   it("a pre-BIT-785 runaway_anomaly request is still asked as a spend approval", async () => {
     const { io, stderr } = fakeIo(["y"]);
     const verdict = await promptMidTurnApproval(io, {

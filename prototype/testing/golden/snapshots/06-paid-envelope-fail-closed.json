@@ -11,9 +11,9 @@
       ],
       "code": 1,
       "stdout": {
-        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal"
+        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise the limit with --budget-turn <usd> or --budget-runaway <usd> or --budget-per-call <usd>"
       },
-      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal\n"
+      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise the limit with --budget-turn <usd> or --budget-runaway <usd> or --budget-per-call <usd>\n"
     },
     "rpcSessionEnvelopeOnly": {
       "response": {
@@ -151,7 +151,7 @@
       "response": {
         "error": {
           "code": -32603,
-          "message": "Paid inference consent declined: paid inference was not approved for this turn"
+          "message": "Paid inference consent declined: paid inference was not approved for this turn; to allow it, rerun with --approve-paid (in the REPL, /model <slug> --approve-paid)"
         }
       },
       "received": [
@@ -202,7 +202,7 @@
               "sessionId": "<ULID:2>",
               "traceId": "<TRACE:2>",
               "errorName": "PaidEscalationDeclinedError",
-              "errorMessage": "Paid inference consent declined: paid inference was not approved for this turn"
+              "errorMessage": "Paid inference consent declined: paid inference was not approved for this turn; to allow it, rerun with --approve-paid (in the REPL, /model <slug> --approve-paid)"
             }
           }
         },
@@ -211,7 +211,7 @@
           "id": 1,
           "error": {
             "code": -32603,
-            "message": "Paid inference consent declined: paid inference was not approved for this turn"
+            "message": "Paid inference consent declined: paid inference was not approved for this turn; to allow it, rerun with --approve-paid (in the REPL, /model <slug> --approve-paid)"
           }
         }
       ],

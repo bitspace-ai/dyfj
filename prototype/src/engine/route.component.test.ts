@@ -126,7 +126,8 @@ test("resolveRoute rejects an explicit Codex ChatGPT runner without workspace tr
       ),
     (error: unknown) =>
       error instanceof DomainError &&
-      error.message.includes("codex-chatgpt requires explicit workspace trust"),
+      error.message.includes("codex-chatgpt requires explicit workspace trust") &&
+      error.message.includes("DYFJ_TRUST_WORKSPACE_INSTRUCTIONS=1"),
   );
   assert.equal(confirm.mock.callCount(), 0);
 });

@@ -5,6 +5,7 @@
  */
 
 import type { ToolApprovalVerdict } from "../transport/mod.ts";
+import { flagForLimitReason } from "./budget.ts";
 import type { Io } from "./io.ts";
 
 const MAX_ACP_PERMISSION_OPTIONS = 16;
@@ -109,7 +110,9 @@ export async function promptMidTurnApproval(
   if (!interactive) {
     return {
       decision: "deny",
-      reason: "approval needs an interactive terminal",
+      reason: r.kind === "budget_ceiling" || r.kind === "runaway_anomaly"
+        ? spendApprovalUnavailable(r.crossedScopes)
+        : "approval needs an interactive terminal",
     };
   }
   // A runtime from before BIT-785 may still send `runaway_anomaly`; it is a
@@ -154,6 +157,28 @@ export async function promptMidTurnApproval(
     return { decision: "approve", scope: "session" };
   }
   return { decision: "deny", reason: "operator declined" };
+}
+
+/**
+ * Why a spend approval was declined without a terminal, and how to proceed:
+ * answer it from one, or raise the limits it crosses (only the known limit
+ * names on the wire are named).
+ */
+function spendApprovalUnavailable(crossedScopes: unknown): string {
+  const flags = Array.isArray(crossedScopes)
+    ? [
+      ...new Set(
+        crossedScopes.flatMap((scope) => {
+          const flag = flagForLimitReason(scope);
+          return flag === undefined ? [] : [`${flag} <usd>`];
+        }),
+      ),
+    ]
+    : [];
+  return "approval needs an interactive terminal; run the turn from one to " +
+    `answer it, or raise the limit with ${
+      flags.length > 0 ? flags.join(" or ") : "its --budget-* flag"
+    }`;
 }
 
 function formatApprovalArgs(args: unknown): string {

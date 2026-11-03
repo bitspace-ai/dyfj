@@ -19,6 +19,7 @@ export type {
   AcpPermissionSelection,
   Runner,
 } from "./runner.ts";
+export { CODEX_WORKSPACE_TRUST_REQUIRED } from "./runner.ts";
 export * from "./runtime.ts";
 export type { WorkbenchSessionEvent } from "./session-event.ts";
 export * from "./turn.ts";

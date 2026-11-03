@@ -24,21 +24,31 @@ export const DEFAULT_ACP_SHUTDOWN_TIMEOUT_MS = 8_000;
 export class AcpSessionBusyError extends DomainError {
   override readonly name = "AcpSessionBusyError";
   constructor() {
-    super("session busy");
+    super(
+      "External-agent session busy: another turn is already running on " +
+        "this session. Wait for it to finish (or cancel it), then retry.",
+    );
   }
 }
 
 export class AcpSessionCapacityError extends DomainError {
   override readonly name = "AcpSessionCapacityError";
   constructor() {
-    super("ACP session capacity reached");
+    super(
+      "External-agent session capacity reached: too many live agent " +
+        "sessions. End a session you no longer need, or restart the " +
+        "runtime (`dyfj stop`, then start it), then retry.",
+    );
   }
 }
 
 export class AcpSessionShutdownError extends DomainError {
   override readonly name = "AcpSessionShutdownError";
   constructor() {
-    super("ACP session map is shut down");
+    super(
+      "External-agent sessions are shut down because the runtime is " +
+        "stopping. Start it again with `dyfj start`, then retry.",
+    );
   }
 }
 

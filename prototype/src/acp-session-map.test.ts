@@ -1098,3 +1098,12 @@ describe("AcpSessionHandleMap lifecycle", () => {
     }
   });
 });
+
+describe("session-map failures reaching the operator", () => {
+  it("busy, capacity and shutdown each name the next step", () => {
+    assert.match(new AcpSessionBusyError().message, /wait|finish/i);
+    assert.match(new AcpSessionBusyError().message, /retry/);
+    assert.match(new AcpSessionCapacityError().message, /restart|end a session/i);
+    assert.match(new AcpSessionShutdownError().message, /start it again|dyfj start/);
+  });
+});

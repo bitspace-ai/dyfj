@@ -265,6 +265,24 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Spend, paid-model and runner refusals say how to proceed.** These
+  refusals named the condition and stopped: `Budget exceeded [turn_limit]:
+  ...`, `Budget ceiling confirmation declined: approval needs an interactive
+  terminal` (what a `dyfj exec` without a terminal got whenever its turn
+  would cross a limit), `Paid inference consent declined: paid inference was not
+  approved for this turn`, `codex-chatgpt requires explicit workspace trust`,
+  `Model "…" does not support fast speed tier`, and the external-agent
+  session's `session busy`, `ACP session capacity reached` and `ACP session
+  map is shut down`, and an unavailable workspace. Each now ends with the next
+  step: the `--budget-*` flag (and `/budget` command) for the limit
+  concerned, or the `[budget]` default; for a spend approval without a
+  terminal, the flags for the limits it crosses, as the runtime named them;
+  `--approve-paid` (in the REPL, `/model <slug> --approve-paid`);
+  `DYFJ_TRUST_WORKSPACE_INSTRUCTIONS=1` and a runtime restart; dropping
+  `--fast`; waiting, ending a session or restarting the runtime; checking the
+  workspace path. A tool approval without a terminal keeps its reason, which
+  is what the model is told. What each policy decides is unchanged.
+
 - **A config.toml parse error names its line and column, not the file's
   contents.** `dyfj start`, the runtime's boot line and the launcher relayed
   the TOML parser's whole message, which quotes the lines around the error,

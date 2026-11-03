@@ -147,14 +147,16 @@ describe("selectWorkbenchModel", () => {
     );
     assert.strictEqual(
       errWithControl.message,
-      'Model "bad slugwith ctrl" does not support fast speed tier',
+      'Model "bad slugwith ctrl" does not support fast speed tier. Drop ' +
+        "--fast (or turn it off with /fast off in the REPL), or choose a " +
+        "model that supports it",
     );
 
     const oversized = "a".repeat(200);
     const errOversized = new WorkbenchModelFastSpeedUnsupportedError(oversized);
     assert.ok(
-      errOversized.message.length < 200,
-      `expected message length < 200, got ${errOversized.message.length}`,
+      errOversized.message.length < 300,
+      `expected message length < 300, got ${errOversized.message.length}`,
     );
     assert.strictEqual(errOversized.message.startsWith('Model "'), true);
     assert.ok(!errOversized.message.includes(oversized));

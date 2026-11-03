@@ -456,7 +456,9 @@ describe("provider error own properties", () => {
     [
       new WorkbenchModelFastSpeedUnsupportedError("s"),
       ["slug", "name"],
-      'Model "s" does not support fast speed tier',
+      'Model "s" does not support fast speed tier. Drop --fast (or turn ' +
+        "it off with /fast off in the REPL), or choose a model that " +
+        "supports it",
     ],
     [
       new HostedInferenceRequiresProviderError("s"),

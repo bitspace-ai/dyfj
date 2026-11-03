@@ -12,9 +12,9 @@
       ],
       "code": 1,
       "stdout": {
-        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal"
+        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise the limit with --budget-turn <usd>"
       },
-      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal\n"
+      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise the limit with --budget-turn <usd>\n"
     }
   },
   "rows": {

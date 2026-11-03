@@ -64,6 +64,7 @@ import {
 import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   type AcpRunnerSelection,
+  CODEX_WORKSPACE_TRUST_REQUIRED,
   DomainError,
   type ExternalAgentWorkbenchRuntimeResult,
   formatHistoryOmissionSummary,
@@ -1126,9 +1127,7 @@ export async function runExternalAgentWorkbenchRuntime(
       input.runner.profile === "codex-chatgpt" &&
       input.trustWorkspaceInstructions !== true
     ) {
-      throw new DomainError(
-        "codex-chatgpt requires explicit workspace trust",
-      );
+      throw new DomainError(CODEX_WORKSPACE_TRUST_REQUIRED);
     }
     assertAcpPromptWithinLimit(input.prompt);
     workspace = await resolveWorkspace(input, authContext, store.sessions);
