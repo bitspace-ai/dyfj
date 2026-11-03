@@ -10,7 +10,9 @@
         "[golden:s6] This must not reach the model."
       ],
       "code": 1,
-      "stdout": "",
+      "stdout": {
+        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal"
+      },
       "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal\n"
     },
     "rpcSessionEnvelopeOnly": {

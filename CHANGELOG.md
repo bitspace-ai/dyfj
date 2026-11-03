@@ -288,6 +288,12 @@ README are tracked separately in its Revision history section.
   the log, with ASCII control characters other than tab and newline removed,
   including after `runtime is not answering`.
 
+- **A failed `dyfj exec --json` turn is a JSON document.** A consumer
+  reading stdout got an empty document and had to scrape stderr for the
+  reason. A failed `--json` turn now prints `{"error": "<reason>"}` on stdout
+  (the stderr line without its `dyfj: ` prefix), keeps the stderr line, and
+  still exits 1. Golden scenarios 06 and 07 record the new stdout.
+
 - **A turn that fails on an error Workbench did not write says so, and what
   to do.** Any foreign error at the turn seam (a driver's, a dependency's, a
   lost stream channel) reached `dyfj exec` and the REPL as `[Error, N bytes]`

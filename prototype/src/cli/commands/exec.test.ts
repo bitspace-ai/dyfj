@@ -610,6 +610,31 @@ describe("runExec over the socket", () => {
     assert.ok(warningIndex < receiptIndex);
   });
 
+  it("--json reports a failed turn as a JSON error object on stdout, beside the stderr line", async () => {
+    // A consumer reading stdout as JSON used to get an empty document; the
+    // reason was on stderr only.
+    const { io, stdout, stderr } = fakeIo();
+    const code = await runExec(
+      "hi",
+      cfg({ unix: true }),
+      io,
+      true,
+      () => {
+        throw new DomainError(
+          'Dolt refused the login for user "root"; check DOLT_USER',
+        );
+      },
+    );
+    assert.strictEqual(code, 1);
+    assert.deepStrictEqual(JSON.parse(stdout.join("")), {
+      error: 'Dolt refused the login for user "root"; check DOLT_USER',
+    });
+    assert.ok(
+      stderr.join("\n").includes('Dolt refused the login for user "root"'),
+      stderr.join("\n"),
+    );
+  });
+
   it("an unreachable socket points the operator at dyfj start", async () => {
     const { io, stderr } = fakeIo();
     const code = await runExec(

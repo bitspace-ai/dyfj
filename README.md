@@ -1227,7 +1227,9 @@ cancellation is the terminal outcome after the active provider or tool operation
 settles, the turn stops without stopping the runtime; a REPL allows another turn
 on the same session, while a one-shot exits with its interrupted receipt. An
 independent provider or protocol error that settles first remains an error
-rather than being masked. `--json` stays buffered/raw. Remote reach can layer on
+rather than being masked. `--json` stays buffered/raw; a failed `--json` turn
+prints `{"error": "<the stderr line without its dyfj: prefix>"}` on stdout as
+well as the line on stderr, and exits 1. Remote reach can layer on
 the same contract through a tailnet transport.
 
 `--runner fixture` selects the deterministic external-agent test path instead of
