@@ -1,7 +1,8 @@
 // The ACP runner's errors, and the mapping of a JSON-RPC error an agent
-// answered with to one of them. Every message is written here; an agent's
-// own error text never reaches one.
+// answered with to one of them. That mapping leaves the agent's own error
+// text out of the message it builds.
 
+import { RequestError } from "@agentclientprotocol/sdk";
 import { sanitizeBoundaryText } from "./kernel/mod.ts";
 import { DomainError } from "./contract/mod.ts";
 
@@ -12,10 +13,11 @@ export interface AcpAgentIdentity {
 }
 
 /**
- * A failure of the ACP runner. Every message is written here, from fixed text
- * and bounded runner values (a phase, a JSON-RPC code, the profile slug), so
- * it crosses the turn boundary as a `DomainError` instead of `[Error, N
- * bytes]`; an agent's own error text is never placed in one.
+ * A failure of the ACP runner. It crosses the turn boundary as a
+ * `DomainError`, with its message as written, instead of `[Error, N bytes]`.
+ * The class does not check where a message came from: each caller builds it,
+ * from fixed text and bounded runner values (a phase, a JSON-RPC code, the
+ * profile slug) or, for a failed spawn, sanitized subprocess diagnostics.
  */
 export class AcpRunnerError extends DomainError {
   public readonly phase:
@@ -81,7 +83,10 @@ const MAX_PROFILE_SLUG_BYTES = 64;
 
 /**
  * The runner error for a JSON-RPC error the agent answered a request with, or
- * undefined when `error` is not one. `auth_required` becomes
+ * undefined when `error` is not one. Only the SDK's `RequestError`, which it
+ * rejects a request with when the response carries an error, counts: a local
+ * error that happens to carry a numeric `code` (an `AbortError`'s 20, say) is
+ * not the agent's answer. `auth_required` becomes
  * `AcpAuthenticationRequiredError`; any other code is named, and the agent's
  * message, which can carry anything its service said, is left out.
  */
@@ -90,9 +95,9 @@ export function agentRequestFailure(
   phase: "session" | "prompt",
   profile: AcpAgentIdentity,
 ): DomainError | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
   if (error instanceof DomainError) return error;
-  const code = (error as { code?: unknown }).code;
+  if (!(error instanceof RequestError)) return undefined;
+  const code: unknown = error.code;
   if (typeof code !== "number" || !Number.isSafeInteger(code)) return undefined;
   if (code === ACP_AUTH_REQUIRED) {
     return new AcpAuthenticationRequiredError(profile);

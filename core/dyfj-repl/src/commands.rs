@@ -407,7 +407,8 @@ fn error_line(context: &str, err: &anyhow::Error) {
 
 /// The notice for a `models/list` answer served from the built-in local rows
 /// because the runtime could not load its catalog, or `None` for a loaded
-/// catalog. A model missing from such a list is a symptom of the store.
+/// catalog. Such a list cannot say whether a model missing from it exists in
+/// the catalog.
 pub fn catalog_notice(listed: &Value) -> Option<String> {
     let reason = listed.get("catalogUnavailable").and_then(Value::as_str)?;
     Some(format!(

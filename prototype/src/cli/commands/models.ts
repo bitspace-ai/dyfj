@@ -67,8 +67,8 @@ export async function runModels(
     return 1;
   }
   const { models } = listed;
-  // A list of built-in rows served because the catalog failed: a model the
-  // operator expected is missing because of the store, not the catalog.
+  // A list of built-in rows served because the catalog failed: it cannot say
+  // whether a model the operator expected exists in the catalog.
   if (listed.catalogUnavailable !== undefined) {
     io.err(
       "dyfj: the model catalog could not be loaded, so only the built-in " +

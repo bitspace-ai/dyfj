@@ -1165,8 +1165,8 @@ The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
 `events/query`, `ideas/list`, `ideas/get`, `packets/list`, `packets/get`,
 `tools/list`, and `tools/inspect` (`models/list` adds `catalogUnavailable`, the
-store's failure, when it can list only the built-in local models; `dyfj models`
-and the Rust REPL print it); `runtime/stop`, which shuts the runtime down
+catalog loader's summarized failure, when it can list only the built-in local
+models; `dyfj models` and the Rust REPL print it); `runtime/stop`, which shuts the runtime down
 for `dyfj stop`; the narrow operator-approved `friction/post` method;
 `ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
 `turn/cancel` methods

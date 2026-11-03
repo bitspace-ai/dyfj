@@ -299,12 +299,14 @@ README are tracked separately in its Revision history section.
   without its text, and its own errors (`ACP prompt timed out`, a protocol
   limit) now cross the turn boundary as their messages.
 
-- **A model list served from the built-in rows says why.** When the runtime
+- **A model list served from the built-in rows says so.** When the runtime
   cannot load its catalog, `models/list` still lists the built-in local
-  models and now carries `catalogUnavailable` with the store's failure.
-  `dyfj models` prints it on stderr, and the Rust REPL prints it before
-  refusing a `--model`, `/model` or resumed model as unknown, which it used
-  to do with no hint that the store was the cause.
+  models and now carries `catalogUnavailable`, the loader's failure as
+  summarized for the wire: the store's own message for a failure the Dolt
+  pool names, otherwise only the error's class and size. `dyfj models`
+  prints it on stderr, and the Rust REPL prints it before refusing a
+  `--model`, `/model` or resumed model as unknown, which it used to do with
+  no hint that the catalog had not loaded.
 
 - **A runtime that cannot boot says why, and the launcher relays it.** A
   socket path longer than macOS's 104-byte `sun_path` made the runtime die

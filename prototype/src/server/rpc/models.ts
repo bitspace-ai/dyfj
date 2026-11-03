@@ -33,7 +33,8 @@ export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
     (async (): Promise<PickerCatalog> => ({ models: await deps.loadModels() }));
   return {
     // `catalogUnavailable` is present only over a fallback catalog, so a
-    // client can say that a missing model is a symptom of the store.
+    // client can say that the list is incomplete, and why the catalog failed
+    // as far as its summary says.
     "models/list": async () => {
       const catalog = await loadCatalog();
       return {
