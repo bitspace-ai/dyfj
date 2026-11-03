@@ -175,6 +175,8 @@ const table = (t: Record<string, unknown>) => () => t;
       )) as Error).message;
     assert.match(message, /cannot read config\.toml \(EACCES\)/);
     assert.ok(!message.includes("/x/y"));
+    // And what to do about it.
+    assert.match(message, /make it a regular file you can read/);
   });
 
   test("loadConfig: a non-NotFound read error surfaces as a config error", async () => {

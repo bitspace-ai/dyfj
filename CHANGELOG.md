@@ -265,6 +265,25 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The launcher says when the dependencies are not installed.** A checkout
+  whose `node_modules` was missing, or stale after a pull changed the pins,
+  printed Node's `ERR_MODULE_NOT_FOUND` stack trace for the first import
+  that failed. The launcher now runs `prototype/scripts/dependency-check.ts`
+  (Node built-ins only) after its Node version check and prints, for example,
+  `dyfj: the dependency ulid is not installed, so the client and runtime
+  cannot load; run npm ci in <repository root>, then retry`, or names the
+  installed and pinned versions of a mismatched package.
+
+- **An autostart that fails without a stated reason shows the log's last
+  lines.** `dyfj start` reported a config file it could not read (for example
+  a directory at `~/.dyfj/config.toml`) as `could not start local runtime:
+  [Error, 40 bytes]`, and the launcher only pointed at the log. `dyfj start`
+  now relays the config error's own line, which also says what to do (`make
+  it a regular file you can read, or move it aside to run on the defaults`),
+  and the launcher and the Rust REPL relay that line. When the log states no
+  reason, the launcher prints its last 20 lines since the autostart, control
+  characters removed, including after `runtime is not answering`.
+
 - **A runtime that cannot boot says why, and the launcher relays it.** A
   socket path longer than macOS's 104-byte `sun_path` made the runtime die
   with an uncaught `listen EINVAL` stack trace in the autostart log, the

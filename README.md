@@ -369,7 +369,11 @@ back any release younger than three days; npm reads it for the whole
 workspace and ignores an `.npmrc` inside a member. After any pull or merge
 that changes `package-lock.json`, run `npm ci` at the repository root again,
 in every checkout. That includes the checkout a `dyfj` on your `PATH` runs
-from. The gate fails until you do (see the npm install precondition below).
+from. The gate fails until you do (see the npm install precondition below),
+and so does the `dyfj` launcher: before it runs Node it checks that every
+dependency `prototype/package.json` pins is installed at that version, and
+otherwise names the first missing or mismatched package and says to run
+`npm ci` there, instead of letting Node fail with `ERR_MODULE_NOT_FOUND`.
 
 The last line enables the repository's git hooks, which keep AI-tool
 attribution out of history (see `AGENTS.md`, Documentation Discipline):
@@ -1138,8 +1142,13 @@ it cannot bind, an invalid config, or any other `DomainError`) prints one
 with only the error's class and size, then its stack trace. When an
 autostarted runtime exits before it answers, the launcher stops waiting and
 prints that reason (`dyfj: the runtime exited before it answered: ...`) with
-the log path; it still says `runtime is not answering` only when the runtime
-is running but never answered. The engine-free `dyfj` CLI reaches the
+the log path. `dyfj start` reports a config file it cannot read the same way
+(`config: cannot read config.toml (EISDIR); ...`). When the log states no
+reason, only an error's class and size, the launcher prints the log's last 20
+lines since the autostart instead, control characters removed; it does the
+same after `runtime is not answering`, which it says only when the runtime is
+running but never answered. The launcher passes the log's path to both
+clients as `DYFJ_RUNTIME_LOG`. The engine-free `dyfj` CLI reaches the
 read methods over the socket:
 
 ```sh

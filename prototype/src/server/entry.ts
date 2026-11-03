@@ -17,12 +17,11 @@
  * own once stderr has drained and nothing else keeps the event loop alive.
  */
 
+import { configErrorText } from "../config/mod.ts";
 import { DomainError, summarizeError } from "../contract/mod.ts";
 
 /** Exit status of a runtime that refused to start over its configuration. */
 export const CONFIG_ERROR_EXIT_CODE = 1;
-
-const CONFIG_ERROR_PREFIX = "config:";
 
 /** What every failed-boot line after a config error starts with. */
 export const FAILED_TO_START_PREFIX = "dyfj runtime: failed to start: ";
@@ -38,9 +37,8 @@ function oneLine(text: string): string {
  * the report stays one line.
  */
 export function configErrorLine(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  if (!error.message.startsWith(CONFIG_ERROR_PREFIX)) return undefined;
-  return `dyfj runtime: ${oneLine(error.message)}`;
+  const text = configErrorText(error);
+  return text === undefined ? undefined : `dyfj runtime: ${text}`;
 }
 
 export interface RuntimeEntryPorts {

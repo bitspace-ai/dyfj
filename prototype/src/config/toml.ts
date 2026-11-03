@@ -62,6 +62,18 @@ function errorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/**
+ * The one-line text of a config error, or undefined when `error` is not one.
+ * Config validators and `readConfigFile` throw an `Error` whose message
+ * starts with `config:` and is path-free and written here, so it is safe to
+ * relay; line breaks inside it collapse to single spaces.
+ */
+export function configErrorText(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  if (!error.message.startsWith("config:")) return undefined;
+  return error.message.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
+
 export async function readConfigFile(
   path: string,
   readTextFile: (path: string) => Promise<string>,
@@ -76,7 +88,8 @@ export async function readConfigFile(
     throw new Error(
       `config: cannot read ${configLabel(path)} (${
         errorCode(err) ?? (err as Error).name
-      })`,
+      }); make it a regular file you can read, or move it aside to run on ` +
+        "the defaults",
     );
   }
   try {

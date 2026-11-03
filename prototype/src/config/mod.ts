@@ -55,6 +55,7 @@ export {
   type PermissionLevel,
 } from "./schema.ts";
 export {
+  configErrorText,
   configFilePath,
   type LoadConfigDeps,
   type TomlParser,

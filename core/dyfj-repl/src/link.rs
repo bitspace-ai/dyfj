@@ -312,20 +312,21 @@ impl LogTail {
 }
 
 /// The runtime's own reason for a failed boot: its last `dyfj runtime:
-/// failed to start:` or `dyfj runtime: config:` line, without the `dyfj
-/// runtime: ` prefix. None when there is none, or when that line only names
-/// an error class and promises the stack trace that follows it, whose first
-/// line says more.
+/// failed to start:`, `dyfj runtime: config:` or `dyfj: could not start
+/// local runtime:` line (the last from `dyfj start`), without the `dyfj
+/// runtime: ` or `dyfj: ` prefix. None when there is none, or when that line
+/// only names an error's class and size, whose stack trace says more.
 fn boot_failure_line(text: &str) -> Option<&str> {
-    const PREFIX: &str = "dyfj runtime: ";
     let line = text.lines().rev().find(|line| {
         line.starts_with("dyfj runtime: failed to start: ")
             || line.starts_with("dyfj runtime: config:")
+            || line.starts_with("dyfj: could not start local runtime: ")
     })?;
-    if line.trim_end().ends_with("its stack trace follows") {
+    let end = line.trim_end();
+    if end.ends_with("its stack trace follows") || end.ends_with("bytes]") {
         return None;
     }
-    line.strip_prefix(PREFIX)
+    line.strip_prefix("dyfj runtime: ").or_else(|| line.strip_prefix("dyfj: "))
 }
 
 fn cap(line: &str) -> String {
@@ -893,6 +894,16 @@ mod tests {
         assert_eq!(
             tail.new_error_line().as_deref(),
             Some("Error: listen EINVAL: invalid argument /tmp/y.sock")
+        );
+
+        writeln!(
+            file,
+            "dyfj: could not start local runtime: config: cannot read config.toml (EISDIR)"
+        )
+        .unwrap();
+        assert_eq!(
+            tail.new_error_line().as_deref(),
+            Some("could not start local runtime: config: cannot read config.toml (EISDIR)")
         );
 
         writeln!(file, "dyfj runtime: config: [agent].max_tool_steps must be 1-64").unwrap();

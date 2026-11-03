@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
 import { describe, it } from "node:test";
+import { readTextFile } from "../../config/mod.ts";
+import { readConfigFile } from "../../config/toml.ts";
+import { DomainError } from "../../contract/mod.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
 import { runStart, type StartRuntimeFn } from "./start.ts";
@@ -55,6 +59,39 @@ describe("runtime lifecycle commands", () => {
       `expected stderr.join("\\n") to include "leaves the runtime running"`,
     );
     assert.ok(!(stderr.join("\n")).includes("foreground process"));
+  });
+
+  it("runStart relays a config error's own path-free line, not its size", async () => {
+    // A config.toml the runtime cannot read: here, a directory in its place.
+    const dir = await mkdtemp("/tmp/dyfj_st_");
+    try {
+      const { io, stderr } = fakeIo();
+      const starter: StartRuntimeFn = async () => {
+        await readConfigFile(dir, readTextFile, () => ({}));
+        return 0;
+      };
+      assert.strictEqual(await runStart(cfg(), io, starter), 1);
+      const text = stderr.join("\n");
+      assert.match(
+        text,
+        /dyfj: could not start local runtime: config: cannot read .* \(EISDIR\)/,
+      );
+      assert.ok(!text.includes("bytes]"), text);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("runStart relays a DomainError's message", async () => {
+    const { io, stderr } = fakeIo();
+    const starter: StartRuntimeFn = () =>
+      Promise.reject(new DomainError("Dolt is not answering at 127.0.0.1:1"));
+    assert.strictEqual(await runStart(cfg(), io, starter), 1);
+    assert.ok(
+      stderr.join("\n").includes(
+        "could not start local runtime: Dolt is not answering at 127.0.0.1:1",
+      ),
+    );
   });
 
   it("runStart fails with a precise fallback command", async () => {
