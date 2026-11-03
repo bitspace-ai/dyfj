@@ -59,8 +59,9 @@ require_node() {
   return 1
 }
 
-# Fails with the cause and the fix unless every dependency the prototype pins
-# is installed at its pinned version: a missing or stale node_modules would
+# Fails with the cause and the fix unless each of the prototype's
+# `dependencies` is installed, at its pinned version when the pin is an exact
+# x.y.z (scripts/dependency-check.ts): a missing or stale node_modules would
 # otherwise surface as Node's ERR_MODULE_NOT_FOUND stack trace.
 require_dependencies() {
   local check

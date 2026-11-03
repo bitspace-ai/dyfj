@@ -22,6 +22,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -1734,12 +1735,22 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
 });
 
 describe("an autostart that cannot succeed says why", () => {
+  /** A loopback port that was just free: bound, then released. */
+  async function freedLoopbackPort(): Promise<number> {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return port;
+  }
+
   /** A real autostart (`dyfj sessions`) under a private HOME. */
   async function autostart(
     home: string,
     socket: string,
     extraEnv: Record<string, string> = {},
   ): Promise<{ code: number | null; err: string; ms: number }> {
+    const doltPort = await freedLoopbackPort();
     const started = Date.now();
     const { code, stderr } = await output(BASH, [LAUNCHER, "sessions"], {
       env: {
@@ -1747,10 +1758,10 @@ describe("an autostart that cannot succeed says why", () => {
         DYFJ_SOCKET: socket,
         DYFJ_LAUNCHER_DRY_RUN: "",
         DYFJ_SANDBOX: "off",
-        // Nothing listens on port 1, so the boot's column check fails fast
-        // and the runtime goes on to bind.
+        // A port this test just released has no listener, so the boot's
+        // column check fails fast and the runtime goes on to bind.
         DOLT_HOST: "127.0.0.1",
-        DOLT_PORT: "1",
+        DOLT_PORT: String(doltPort),
         ...extraEnv,
       },
       stdout: "ignore",

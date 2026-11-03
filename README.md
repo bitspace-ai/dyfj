@@ -370,9 +370,10 @@ workspace and ignores an `.npmrc` inside a member. After any pull or merge
 that changes `package-lock.json`, run `npm ci` at the repository root again,
 in every checkout. That includes the checkout a `dyfj` on your `PATH` runs
 from. The gate fails until you do (see the npm install precondition below),
-and so does the `dyfj` launcher: before it runs Node it checks that every
-dependency `prototype/package.json` pins is installed at that version, and
-otherwise names the first missing or mismatched package and says to run
+and so does the `dyfj` launcher: before it runs Node it checks that each package
+under `dependencies` in `prototype/package.json` is installed, at the pinned
+version when the pin is an exact `x.y.z`, and otherwise names the first
+missing or mismatched package and says to run
 `npm ci` there, instead of letting Node fail with `ERR_MODULE_NOT_FOUND`.
 
 The last line enables the repository's git hooks, which keep AI-tool
