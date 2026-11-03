@@ -4,6 +4,7 @@ import {
   methods,
   ndJsonStream,
   PROTOCOL_VERSION,
+  RequestError,
 } from "@agentclientprotocol/sdk";
 import { spawn } from "node:child_process";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
@@ -146,6 +147,10 @@ const app = agent({ name: "dyfj-acp-fixture" })
     if (process.env.ACP_FIXTURE_MODE === "session_new_mute") {
       await new Promise(() => {});
     }
+    // What the pinned codex-acp adapter answers when its sign-in is gone.
+    if (process.env.ACP_FIXTURE_MODE === "session_new_auth_required") {
+      throw RequestError.authRequired();
+    }
     if (process.env.ACP_FIXTURE_MODE === "session_new_early_update") {
       await context.notify(methods.client.session.update, {
         sessionId: "bogus-session",
@@ -240,6 +245,17 @@ const app = agent({ name: "dyfj-acp-fixture" })
         }
       }
       if (prompt.includes("FIXTURE_EARLY_EXIT")) process.exit(17);
+      // The pinned codex-acp adapter's answers to a failed turn: -32000 when
+      // the sign-in expired, -32603 with the service's own text otherwise.
+      if (prompt.includes("FIXTURE_AUTH_EXPIRED")) {
+        throw RequestError.authRequired();
+      }
+      if (prompt.includes("FIXTURE_TURN_FAILED")) {
+        throw RequestError.internalError(
+          undefined,
+          "upstream said: token sk-fixture-do-not-relay rejected",
+        );
+      }
       if (prompt.includes("FIXTURE_MUTE")) await new Promise(() => {});
       if (prompt.includes("FIXTURE_ENV")) {
         const blocked = [

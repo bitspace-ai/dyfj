@@ -405,15 +405,27 @@ fn error_line(context: &str, err: &anyhow::Error) {
     eprintln!("{context}: {}", visible(&err.to_string()));
 }
 
-/// The model rows from `models/list`, or `None` after reporting why not.
+/// The notice for a `models/list` answer served from the built-in local rows
+/// because the runtime could not load its catalog, or `None` for a loaded
+/// catalog. A model missing from such a list is a symptom of the store.
+pub fn catalog_notice(listed: &Value) -> Option<String> {
+    let reason = listed.get("catalogUnavailable").and_then(Value::as_str)?;
+    Some(format!(
+        "the model catalog could not be loaded, so only the built-in local models are listed: {}",
+        visible(reason)
+    ))
+}
+
+/// The model rows from `models/list`, or `None` after reporting why not. A
+/// list served from the built-in fallback rows is reported first.
 async fn list_models(client: &Client) -> Option<Vec<Value>> {
     match client.request("models/list", json!({})).await {
-        Ok(v) => Some(
-            v.get("models")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-        ),
+        Ok(v) => {
+            if let Some(notice) = catalog_notice(&v) {
+                eprintln!("{notice}");
+            }
+            Some(v.get("models").and_then(Value::as_array).cloned().unwrap_or_default())
+        }
         Err(err) => {
             error_line("could not list models", &err);
             None
@@ -1116,6 +1128,25 @@ mod tests {
         assert_eq!(model_refusal(&rows, "z-ai/glm-5.2"), None);
         assert!(model_refusal(&rows, "free/thing").unwrap().contains("unpriced"));
         assert!(model_refusal(&rows, "nope").unwrap().contains("unknown model"));
+    }
+
+    /// A list served from the built-in rows because the catalog failed says
+    /// so, with the runtime's reason; a loaded catalog carries no notice.
+    #[test]
+    fn a_fallback_model_list_names_why_the_catalog_failed() {
+        let fallback = serde_json::json!({
+            "models": [],
+            "catalogUnavailable": "Dolt is not answering at 127.0.0.1:1 (connection refused)\u{1b}[2J",
+        });
+        let notice = super::catalog_notice(&fallback).expect("a notice");
+        assert!(
+            notice.starts_with(
+                "the model catalog could not be loaded, so only the built-in local models are listed: Dolt is not answering"
+            ),
+            "{notice:?}"
+        );
+        assert!(!notice.contains('\u{1b}'), "{notice:?}");
+        assert_eq!(super::catalog_notice(&serde_json::json!({"models": []})), None);
     }
     use crate::session::Session;
 

@@ -85,3 +85,32 @@ test("models/list marks access modality server-side", async () => {
     ["frontier-x", "frontier-hosted"],
   ]);
 });
+
+test("models/list says why when it lists only the built-in fallback rows", async () => {
+  const result = await callRpc(
+    buildModelsHandlers({
+      loadModels: () => Promise.resolve([]),
+      loadCatalog: () =>
+        Promise.resolve({
+          models: [
+            { slug: "local-x", tier: 0, costInput: 0, costOutput: 0 },
+          ] as unknown as WorkbenchModel[],
+          unavailable: "Dolt is not answering at 127.0.0.1:1 (connection refused)",
+        }),
+    }),
+    "models/list",
+  ) as { models: unknown[]; catalogUnavailable?: string };
+  assert.equal(result.models.length, 1);
+  assert.equal(
+    result.catalogUnavailable,
+    "Dolt is not answering at 127.0.0.1:1 (connection refused)",
+  );
+});
+
+test("models/list carries no catalog notice when the catalog loaded", async () => {
+  const result = await callRpc(
+    buildModelsHandlers({ loadModels: () => Promise.resolve([]) }),
+    "models/list",
+  ) as Record<string, unknown>;
+  assert.ok(!("catalogUnavailable" in result));
+});

@@ -30,6 +30,7 @@ import {
 } from "./acp-client.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import { composeRuntimePolicy, type RuntimePolicy } from "./config/mod.ts";
+import { DomainError, summarizeError } from "./contract/mod.ts";
 
 /** The base run policy plus `commands`, for tests that start other binaries. */
 function allowing(...commands: string[]): RuntimePolicy {
@@ -1574,5 +1575,65 @@ describe("startAcpSession", () => {
     } finally {
       await removeTempPath(pidFile).catch(() => {});
     }
+  });
+});
+
+describe("an agent's own failure reaches the operator with a next step", () => {
+  // The pinned codex-acp adapter answers a turn whose ChatGPT sign-in has
+  // expired with JSON-RPC -32000 (`RequestError.authRequired()`), after
+  // `authentication/status` still said `chat-gpt`; the fixture answers the
+  // same way.
+  const codexLike = () =>
+    fixtureProfile({
+      requiredAuthentication: "chat-gpt",
+      accessRoute: "subscription_oauth",
+      costBasis: "subscription_quota",
+      environment: fixtureEnvironment({ ACP_FIXTURE_AUTH_STATUS: "chat-gpt" }),
+    });
+
+  it("an expired ChatGPT sign-in on prompt says how to sign in again", async () => {
+    const error = await assertRejectsWithFields(
+      runAcpAgent({ profile: codexLike(), prompt: "FIXTURE_AUTH_EXPIRED" }),
+      { name: "AcpAuthenticationRequiredError", phase: "authenticate" },
+    );
+    assert.ok(error instanceof DomainError);
+    assert.match(error.message, /sign-in is missing or has expired/);
+    assert.match(error.message, /npm run codex-chatgpt-login/);
+    assert.equal(summarizeError(error), error.message);
+  });
+
+  it("an agent that requires sign-in at session/new says so", async () => {
+    const error = await assertRejectsWithFields(
+      runAcpAgent({
+        profile: fixtureProfile({
+          environment: fixtureEnvironment({
+            ACP_FIXTURE_MODE: "session_new_auth_required",
+          }),
+        }),
+        prompt: "unused",
+      }),
+      { name: "AcpAuthenticationRequiredError", phase: "authenticate" },
+    );
+    assert.match(error.message, /requires authentication/);
+    assert.match(error.message, /fixture/);
+  });
+
+  it("any other agent error names its JSON-RPC code, never its text", async () => {
+    const error = await captureRejection(() =>
+      runAcpAgent({ profile: fixtureProfile(), prompt: "FIXTURE_TURN_FAILED" })
+    );
+    const summary = summarizeError(error);
+    assert.match(summary, /reported that the turn failed \(JSON-RPC -32603\)/);
+    assert.ok(!summary.includes("sk-fixture"), summary);
+  });
+
+  it("a runner error is summarized as its message, not a byte count", async () => {
+    const error = await captureRejection(() =>
+      runAcpAgent({
+        profile: fixtureProfile({ promptTimeoutMs: 50 }),
+        prompt: "FIXTURE_MUTE",
+      })
+    );
+    assert.match(summarizeError(error), /^ACP prompt timed out/);
   });
 });

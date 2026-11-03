@@ -1164,7 +1164,9 @@ dyfj sessions
 The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
 `events/query`, `ideas/list`, `ideas/get`, `packets/list`, `packets/get`,
-`tools/list`, and `tools/inspect`; `runtime/stop`, which shuts the runtime down
+`tools/list`, and `tools/inspect` (`models/list` adds `catalogUnavailable`, the
+store's failure, when it can list only the built-in local models; `dyfj models`
+and the Rust REPL print it); `runtime/stop`, which shuts the runtime down
 for `dyfj stop`; the narrow operator-approved `friction/post` method;
 `ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
 `turn/cancel` methods
@@ -1415,6 +1417,13 @@ stream-drain waits each have deadlines. A process-group termination failure is
 thrown directly when no earlier primary failure exists; otherwise it is attached
 as that primary error's cause. Stderr-drain cancellation destroys the owned
 stream and suppresses late stream errors.
+
+A sign-in that expires after that check still passes it; the adapter then
+answers the prompt with ACP's `auth_required` error (JSON-RPC -32000), and the
+turn fails with `The Codex runner's ChatGPT sign-in is missing or has expired.
+Sign its home in again with cd prototype && npm run codex-chatgpt-login, then
+retry the turn`. Any other JSON-RPC error the agent returns is reported by its
+code only (`reported that the turn failed (JSON-RPC -32603)`), never its text.
 
 Useful validation tasks:
 
@@ -2837,3 +2846,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-03 - The JSON-RPC seam section states the socket-path limit, the
   runtime's one-line boot failure, and that the launcher relays it when an
   autostarted runtime exits; the Rust REPL note says which log line it shows.
+- 2026-11-03 - The Codex route section says how an expired sign-in and other
+  agent errors are reported; the JSON-RPC seam section names `models/list`'s
+  `catalogUnavailable`.

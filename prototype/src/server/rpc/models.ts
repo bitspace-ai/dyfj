@@ -12,19 +12,41 @@ import {
 } from "../../providers/mod.ts";
 import type { RpcHandlers } from "../../transport/mod.ts";
 
+/**
+ * The catalog as the picker sees it: the models, and, when the catalog could
+ * not be loaded and `models` are the built-in local rows, the summarized
+ * reason.
+ */
+export interface PickerCatalog {
+  models: WorkbenchModel[];
+  unavailable?: string;
+}
+
 export interface ModelsHandlerDeps {
   loadModels: () => Promise<WorkbenchModel[]>;
+  /** Preferred over `loadModels` when given: it also says why it fell back. */
+  loadCatalog?: () => Promise<PickerCatalog>;
 }
 
 export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
+  const loadCatalog = deps.loadCatalog ??
+    (async (): Promise<PickerCatalog> => ({ models: await deps.loadModels() }));
   return {
-    "models/list": async () => ({
-      models: (await deps.loadModels()).map((model) => ({
-        ...model,
-        routable: modelHasCatalogPricing(model),
-        local: isLocalWorkbenchModel(model),
-        modality: getModelAccessModality(model),
-      })),
-    }),
+    // `catalogUnavailable` is present only over a fallback catalog, so a
+    // client can say that a missing model is a symptom of the store.
+    "models/list": async () => {
+      const catalog = await loadCatalog();
+      return {
+        models: catalog.models.map((model) => ({
+          ...model,
+          routable: modelHasCatalogPricing(model),
+          local: isLocalWorkbenchModel(model),
+          modality: getModelAccessModality(model),
+        })),
+        ...(catalog.unavailable === undefined
+          ? {}
+          : { catalogUnavailable: catalog.unavailable }),
+      };
+    },
   };
 }

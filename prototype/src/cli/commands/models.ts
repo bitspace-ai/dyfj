@@ -1,5 +1,6 @@
 /** `dyfj models`: list the runtime's model catalog. */
 
+import { sanitizeBoundaryText } from "../../kernel/mod.ts";
 import { connectUnixClient } from "../../transport/mod.ts";
 import type { CliConfig } from "../args.ts";
 import type { ConnectFn, Io } from "../io.ts";
@@ -19,24 +20,34 @@ export interface ModelRow {
 export async function fetchModelSlugs(
   config: CliConfig,
   connect: ConnectFn = connectUnixClient,
-): Promise<{ slugs: string[]; models: ModelRow[] } | { error: string }> {
+): Promise<
+  | { slugs: string[]; models: ModelRow[]; catalogUnavailable?: string }
+  | { error: string }
+> {
   try {
     const signal = AbortSignal.timeout(LIVENESS_PROBE_TIMEOUT_MS);
     const client = await connect(config.socket, undefined, signal);
     try {
-      const { models } = await client.request(
+      const { models, catalogUnavailable } = await client.request(
         "models/list",
         undefined,
         signal,
       ) as {
         models: ModelRow[];
+        catalogUnavailable?: unknown;
       };
       const slugs = models
         .map((m) => m.slug)
         .filter((slug): slug is string =>
           typeof slug === "string" && slug.length > 0
         );
-      return { slugs, models };
+      return {
+        slugs,
+        models,
+        ...(typeof catalogUnavailable === "string"
+          ? { catalogUnavailable: sanitizeBoundaryText(catalogUnavailable, 600) }
+          : {}),
+      };
     } finally {
       client.close();
     }
@@ -56,6 +67,14 @@ export async function runModels(
     return 1;
   }
   const { models } = listed;
+  // A list of built-in rows served because the catalog failed: a model the
+  // operator expected is missing because of the store, not the catalog.
+  if (listed.catalogUnavailable !== undefined) {
+    io.err(
+      "dyfj: the model catalog could not be loaded, so only the built-in " +
+        `local models are listed: ${listed.catalogUnavailable}`,
+    );
+  }
   const slugWidth = models.reduce(
     (w, m) => Math.max(w, (m.slug ?? "").length),
     0,
