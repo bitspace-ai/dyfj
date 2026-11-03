@@ -160,6 +160,18 @@ impl Ledger {
     /// The summary that closes the turn: one header line, then a line each for
     /// what the file tools wrote, the commands run and the calls that went
     /// wrong, when there are any. `elapsed_ms` is the turn's wall time.
+    /// The summary for a turn that failed: there is no reply, so a turn with
+    /// no tool calls says only that none ran before the failure.
+    pub fn failed_summary(&self, elapsed_ms: i64) -> Vec<String> {
+        if self.calls.is_empty() {
+            return vec![format!(
+                "· evidence: no tools ran before the turn failed · {}",
+                activity::duration(elapsed_ms)
+            )];
+        }
+        self.summary(elapsed_ms)
+    }
+
     pub fn summary(&self, elapsed_ms: i64) -> Vec<String> {
         let elapsed = activity::duration(elapsed_ms);
         if self.calls.is_empty() {
@@ -466,6 +478,21 @@ mod tests {
             summary[1],
             "    commands: npm test → exit 1; cargo build → exit 0; rm -rf build → not approved"
         );
+    }
+
+    /// A failed turn has no reply to vouch for: with no tool calls it says
+    /// only that none ran, and with calls it keeps their record.
+    #[test]
+    fn a_failed_turn_does_not_speak_of_a_reply() {
+        assert_eq!(
+            Ledger::default().failed_summary(800),
+            vec!["· evidence: no tools ran before the turn failed · 800ms"]
+        );
+        let ran = ledger(&[
+            started("a", "read_file", "x"),
+            completed("a", "read_file", "x", json!({})),
+        ]);
+        assert_eq!(ran.failed_summary(800), ran.summary(800));
     }
 
     #[test]

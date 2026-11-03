@@ -9,6 +9,7 @@ import {
   DomainError,
   MAX_REASON_FIELD_BYTES,
   type PaidEscalationVerdict,
+  summarizeError,
 } from "../contract/mod.ts";
 import {
   BudgetCeilingDeclinedError,
@@ -162,6 +163,65 @@ export class WorkspaceContextUnavailableError extends DomainError {
   }
 }
 
+/**
+ * A turn failed on an error this codebase did not write: a driver's, a
+ * dependency's, or a throw of something that is not an Error. Its message
+ * never crosses the wire (see `summarizeError`), so the operator is told
+ * that it is unclassified, its class and size, and what to do next. The seam
+ * that throws this logs `describeErrorForLog` first.
+ */
+export class UnexpectedTurnError extends DomainError {
+  constructor(cause: unknown) {
+    super(
+      `The turn failed on an unclassified error (${
+        summarizeError(cause).replace(/^\[(.*)\]$/, "$1")
+      }); its message is withheld. The runtime log records its class and ` +
+        "code. Retry the turn; if it fails again, run `dyfj status` to " +
+        "check the store and the runtime",
+      { cause },
+    );
+    this.name = "UnexpectedTurnError";
+  }
+}
+
+/** A short error field (`code`, `errno`, `syscall`) when it is a literal. */
+function literalField(error: object, name: string): string | undefined {
+  const value = (error as Record<string, unknown>)[name];
+  if (typeof value === "string" && /^[A-Za-z0-9_]{1,40}$/.test(value)) {
+    return value;
+  }
+  return typeof value === "number" && Number.isSafeInteger(value)
+    ? String(value)
+    : undefined;
+}
+
+/**
+ * A foreign error as the runtime log may carry it: the class label and its
+ * `code`, `errno` and `syscall` when they are well-formed literals, then the
+ * same for one level of `cause`. Never its message, which can embed a
+ * rejected payload or a credential: the same discipline as `[turn-error]`.
+ */
+export function describeErrorForLog(error: unknown): string {
+  const describe = (candidate: unknown): string => {
+    const label = classifyErrorKind(candidate);
+    const fields = typeof candidate === "object" && candidate !== null
+      ? ["code", "errno", "syscall"].flatMap((name) => {
+        const value = literalField(candidate, name);
+        return value === undefined ? [] : [`${name}=${value}`];
+      })
+      : [];
+    return fields.length === 0 ? label : `${label} (${fields.join(", ")})`;
+  };
+  try {
+    const cause = error instanceof Error ? error.cause : undefined;
+    return cause === undefined
+      ? describe(error)
+      : `${describe(error)}; cause: ${describe(cause)}`;
+  } catch {
+    return "unknown";
+  }
+}
+
 // Every DomainError subclass this codebase defines, paired with a fixed
 // string literal — one WE wrote, never one read off an instance — that
 // classifyErrorKind returns for it. `instanceof DomainError` alone is not
@@ -191,6 +251,7 @@ const KNOWN_DOMAIN_ERROR_CLASSES: ReadonlyArray<
   [ToolStepLimitConclusionError, "ToolStepLimitConclusionError"],
   [StepLimitHandoffIncompleteError, "StepLimitHandoffIncompleteError"],
   [WorkspaceContextUnavailableError, "WorkspaceContextUnavailableError"],
+  [UnexpectedTurnError, "UnexpectedTurnError"],
   [RpcError, "RpcError"],
   [WorkbenchModelNotFoundError, "WorkbenchModelNotFoundError"],
   [

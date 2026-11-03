@@ -18,6 +18,38 @@ function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   };
 }
 
+describe("the runtime log", () => {
+  const log = "/tmp/dyfj-logs/runtime-workbench-1.log";
+
+  it("is named when the runtime sent the operator there and the launcher said where it is", () => {
+    const s = socketError(
+      new RpcError(
+        RpcErrorCode.internalError,
+        "The turn failed on an unclassified error (Error, 29 bytes); its " +
+          "message is withheld. The runtime log records its class and code.",
+      ),
+      cfg(),
+      log,
+    );
+    assert.ok(s.endsWith(` (runtime log: ${log})`), s);
+  });
+
+  it("is not added to a failure that does not mention it", () => {
+    const s = socketError(
+      new RpcError(RpcErrorCode.internalError, "Budget exceeded: turn limit"),
+      cfg(),
+      log,
+    );
+    assert.strictEqual(s, "dyfj: Budget exceeded: turn limit");
+  });
+
+  it("is named exactly when the runtime hung up mid-request", () => {
+    const s = socketError(new PeerClosedError(), cfg(), log);
+    assert.ok(s.includes(`its output is in ${log}`), s);
+    assert.ok(!s.includes("~/.dyfj/log/"), s);
+  });
+});
+
 describe("a runtime that went away", () => {
   it("names the socket and what to check when the runtime hung up", () => {
     const s = socketError(new PeerClosedError(), cfg());

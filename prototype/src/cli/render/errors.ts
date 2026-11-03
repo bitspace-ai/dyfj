@@ -1,5 +1,6 @@
 /** How a failed runtime call is reported on the terminal. */
 
+import { processEnv } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
 import { PeerClosedError, RpcError } from "../../transport/mod.ts";
 import type { CliConfig } from "../args.ts";
@@ -32,12 +33,28 @@ export function isTimeoutError(error: unknown): boolean {
   return false;
 }
 
-export function socketError(error: unknown, config: CliConfig): string {
+/**
+ * The runtime does not know where its autostart log is; the launcher does,
+ * and passes it as `DYFJ_RUNTIME_LOG`. A failure that sends the operator to
+ * the runtime log names that file when it is known.
+ */
+function withRuntimeLog(line: string, runtimeLog: string | undefined): string {
+  return runtimeLog !== undefined && runtimeLog.length > 0 &&
+      line.includes("runtime log")
+    ? `${line} (runtime log: ${runtimeLog})`
+    : line;
+}
+
+export function socketError(
+  error: unknown,
+  config: CliConfig,
+  runtimeLog: string | undefined = processEnv.get("DYFJ_RUNTIME_LOG"),
+): string {
   if (isTimeoutError(error)) {
     return `dyfj: runtime at ${config.socket} is unresponsive (timed out)`;
   }
   if (error instanceof RpcError) {
-    return `dyfj: ${error.message}`;
+    return withRuntimeLog(`dyfj: ${error.message}`, runtimeLog);
   }
   const code = typeof error === "object" && error !== null
     ? (error as { code?: unknown }).code
@@ -47,9 +64,11 @@ export function socketError(error: unknown, config: CliConfig): string {
     code === "ECONNRESET"
   ) {
     return `dyfj: the runtime at ${config.socket} closed the connection ` +
-      "before it answered: it stopped or crashed. Run `dyfj status`; an " +
-      "autostarted runtime's output is in ~/.dyfj/log/, and `dyfj start` " +
-      "shows it in the foreground";
+      "before it answered: it stopped or crashed. Run `dyfj status`; " +
+      (runtimeLog !== undefined && runtimeLog.length > 0
+        ? `its output is in ${runtimeLog}`
+        : "an autostarted runtime's output is in ~/.dyfj/log/") +
+      ", and `dyfj start` shows it in the foreground";
   }
   if (code === "EACCES" || code === "EPERM") {
     return `dyfj: permission denied opening the runtime socket ` +

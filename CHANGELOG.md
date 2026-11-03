@@ -288,6 +288,22 @@ README are tracked separately in its Revision history section.
   the log, with ASCII control characters other than tab and newline removed,
   including after `runtime is not answering`.
 
+- **A turn that fails on an error Workbench did not write says so, and what
+  to do.** Any foreign error at the turn seam (a driver's, a dependency's, a
+  lost stream channel) reached `dyfj exec` and the REPL as `[Error, N bytes]`
+  with no next step, and the runtime log as a bare `[turn-error] Error`. The
+  `turn` handler now raises `UnexpectedTurnError`: `The turn failed on an
+  unclassified error (Error, N bytes); its message is withheld. The runtime
+  log records its class and code. Retry the turn; if it fails again, run dyfj
+  status ...`, and logs `[turn-error] Error (code=…, errno=…, syscall=…)` with
+  those fields only when they are well-formed literals, never the message.
+  When the launcher says where the runtime log is (`DYFJ_RUNTIME_LOG`), both
+  clients append `(runtime log: <path>)` to a failure that points at the log,
+  and the TypeScript client names that file for a runtime that hung up
+  mid-request instead of `~/.dyfj/log/`. After a failed turn the Rust REPL says `no tools ran before
+  the turn failed` instead of calling a reply that never came the model's own
+  account.
+
 - **A runtime that goes away mid-request is named as such.** A runtime that
   stopped or crashed during `dyfj exec` (plain or `--json`) left the client
   printing `[Error, 17 bytes]`. A request the other end hangs up on now fails
