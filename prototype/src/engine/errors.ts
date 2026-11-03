@@ -175,8 +175,8 @@ export class UnexpectedTurnError extends DomainError {
     super(
       `The turn failed on an unclassified error (${
         summarizeError(cause).replace(/^\[(.*)\]$/, "$1")
-      }); its message is withheld. The runtime log records its class and ` +
-        "code. Retry the turn; if it fails again, run `dyfj status` to " +
+      }); its message is withheld. The runtime log records its class, and ` +
+        "its code when it has one. Retry the turn; if it fails again, run `dyfj status` to " +
         "check the store and the runtime",
       { cause },
     );
@@ -197,8 +197,9 @@ function literalField(error: object, name: string): string | undefined {
 
 /**
  * A foreign error as the runtime log may carry it: the class label and its
- * `code`, `errno` and `syscall` when they are well-formed literals, then the
- * same for one level of `cause`. Never its message, which can embed a
+ * `code`, `errno` and `syscall` when they are well-formed literals, then,
+ * when `error` is an `Error`, the same for one level of its `cause`. Never
+ * its message, which can embed a
  * rejected payload or a credential: the same discipline as `[turn-error]`.
  */
 export function describeErrorForLog(error: unknown): string {

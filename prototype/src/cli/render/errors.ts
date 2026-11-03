@@ -2,6 +2,7 @@
 
 import { processEnv } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
+import { sanitizeBoundaryText } from "../../kernel/mod.ts";
 import { PeerClosedError, RpcError } from "../../transport/mod.ts";
 import type { CliConfig } from "../args.ts";
 
@@ -33,14 +34,24 @@ export function isTimeoutError(error: unknown): boolean {
   return false;
 }
 
+/** The most of the runtime log's path that is printed, in UTF-8 bytes. */
+const MAX_RUNTIME_LOG_PATH_BYTES = 1_024;
+
 /**
  * The runtime does not know where its autostart log is; the launcher does,
- * and passes it as `DYFJ_RUNTIME_LOG`. A failure that sends the operator to
- * the runtime log names that file when it is known.
+ * and passes it as `DYFJ_RUNTIME_LOG`. Its value is made safe to print
+ * (control characters removed, length capped), or undefined when unset.
  */
+function runtimeLogPath(runtimeLog: string | undefined): string | undefined {
+  if (runtimeLog === undefined) return undefined;
+  const path = sanitizeBoundaryText(runtimeLog, MAX_RUNTIME_LOG_PATH_BYTES)
+    .trim();
+  return path.length > 0 ? path : undefined;
+}
+
+/** A failure that sends the operator to the runtime log names that file. */
 function withRuntimeLog(line: string, runtimeLog: string | undefined): string {
-  return runtimeLog !== undefined && runtimeLog.length > 0 &&
-      line.includes("runtime log")
+  return runtimeLog !== undefined && line.includes("runtime log")
     ? `${line} (runtime log: ${runtimeLog})`
     : line;
 }
@@ -48,8 +59,9 @@ function withRuntimeLog(line: string, runtimeLog: string | undefined): string {
 export function socketError(
   error: unknown,
   config: CliConfig,
-  runtimeLog: string | undefined = processEnv.get("DYFJ_RUNTIME_LOG"),
+  runtimeLogValue: string | undefined = processEnv.get("DYFJ_RUNTIME_LOG"),
 ): string {
+  const runtimeLog = runtimeLogPath(runtimeLogValue);
   if (isTimeoutError(error)) {
     return `dyfj: runtime at ${config.socket} is unresponsive (timed out)`;
   }
@@ -64,16 +76,18 @@ export function socketError(
     code === "ECONNRESET"
   ) {
     return `dyfj: the runtime at ${config.socket} closed the connection ` +
-      "before it answered: it stopped or crashed. Run `dyfj status`; " +
-      (runtimeLog !== undefined && runtimeLog.length > 0
+      "before it answered: it may have stopped or crashed. Run " +
+      "`dyfj status`; " +
+      (runtimeLog !== undefined
         ? `its output is in ${runtimeLog}`
         : "an autostarted runtime's output is in ~/.dyfj/log/") +
       ", and `dyfj start` shows it in the foreground";
   }
   if (code === "EACCES" || code === "EPERM") {
     return `dyfj: permission denied opening the runtime socket ` +
-      `${config.socket}; it belongs to another user or its directory is ` +
-      "not yours. Use your own socket with --socket or DYFJ_SOCKET";
+      `${config.socket}; the socket or its directory may belong to another ` +
+      "user or not grant you access. Use your own socket with --socket or " +
+      "DYFJ_SOCKET";
   }
   const message = error instanceof Error ? error.message : String(error);
   if (

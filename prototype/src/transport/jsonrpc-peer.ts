@@ -31,7 +31,8 @@ import {
 
 /**
  * The other end closed the connection while a request still waited for its
- * answer: on a client, the runtime stopped or crashed mid-request.
+ * answer. On a client this usually means the runtime stopped or crashed
+ * mid-request, but the connection's end alone does not say so.
  */
 export class PeerClosedError extends DomainError {
   constructor() {

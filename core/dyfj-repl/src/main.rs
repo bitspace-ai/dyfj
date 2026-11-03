@@ -937,7 +937,7 @@ mod tests {
     /// and the posture line.
     #[test]
     fn an_unclassified_turn_failure_names_the_runtime_log_when_the_launcher_said_where_it_is() {
-        let unclassified = "The turn failed on an unclassified error (Error, 29 bytes); its message is withheld. The runtime log records its class and code.";
+        let unclassified = "The turn failed on an unclassified error (Error, 29 bytes); its message is withheld. The runtime log records its class, and its code when it has one.";
         let line = super::turn_failure_line(unclassified, Some("/h/.dyfj/log/runtime-workbench-1.log"));
         assert!(line.starts_with("turn failed: The turn failed"), "{line:?}");
         assert!(line.ends_with(" (runtime log: /h/.dyfj/log/runtime-workbench-1.log)"), "{line:?}");

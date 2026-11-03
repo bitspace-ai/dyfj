@@ -26,7 +26,8 @@ describe("the runtime log", () => {
       new RpcError(
         RpcErrorCode.internalError,
         "The turn failed on an unclassified error (Error, 29 bytes); its " +
-          "message is withheld. The runtime log records its class and code.",
+          "message is withheld. The runtime log records its class, and its " +
+          "code when it has one.",
       ),
       cfg(),
       log,
@@ -48,11 +49,26 @@ describe("the runtime log", () => {
     assert.ok(s.includes(`its output is in ${log}`), s);
     assert.ok(!s.includes("~/.dyfj/log/"), s);
   });
+
+  it("has its control characters removed before it is printed", () => {
+    const hostile = "/tmp/run.log\n\u001b[2Jdyfj: forged line";
+    for (
+      const s of [
+        socketError(new PeerClosedError(), cfg(), hostile),
+        socketError(new RpcError(-32000, "see the runtime log"), cfg(), hostile),
+      ]
+    ) {
+      assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(s), JSON.stringify(s));
+      assert.ok(s.includes("/tmp/run.log"), s);
+    }
+  });
 });
 
 describe("a runtime that went away", () => {
   it("names the socket and what to check when the runtime hung up", () => {
-    const s = socketError(new PeerClosedError(), cfg());
+    // No runtime log known: "" stands for an unset DYFJ_RUNTIME_LOG, so the
+    // ambient environment cannot change the fallback this checks.
+    const s = socketError(new PeerClosedError(), cfg(), "");
     assert.match(
       s,
       /^dyfj: the runtime at \/tmp\/dyfj-test\.sock closed the connection before it answered/,

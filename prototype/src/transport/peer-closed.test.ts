@@ -16,26 +16,29 @@ import { nodeSocketHost } from "./node-socket.ts";
 
 test("a pending request fails with PeerClosedError when the other end closes", async () => {
   const dir = mkdtempSync(join("/tmp", "dyfj_pc_"));
-  const listener = await nodeSocketHost.listen(`${dir}/p.sock`);
   try {
-    const accepted = listener.accept();
-    const client = new JsonRpcPeer(
-      await nodeSocketHost.connect(`${dir}/p.sock`),
-    );
-    void client.run();
-    const server = await accepted;
-    const pending = client.request("turn", {});
-    // The far end reads the request and hangs up, as a killed runtime does.
-    await server?.read();
-    server?.close();
-    await assert.rejects(pending, (error: unknown) => {
-      assert.ok(error instanceof PeerClosedError, String(error));
-      assert.ok(error instanceof DomainError);
-      return true;
-    });
-    client.close();
+    const listener = await nodeSocketHost.listen(`${dir}/p.sock`);
+    try {
+      const accepted = listener.accept();
+      const client = new JsonRpcPeer(
+        await nodeSocketHost.connect(`${dir}/p.sock`),
+      );
+      void client.run();
+      const server = await accepted;
+      const pending = client.request("turn", {});
+      // The far end reads the request and hangs up, as a killed runtime does.
+      await server?.read();
+      server?.close();
+      await assert.rejects(pending, (error: unknown) => {
+        assert.ok(error instanceof PeerClosedError, String(error));
+        assert.ok(error instanceof DomainError);
+        return true;
+      });
+      client.close();
+    } finally {
+      await listener.close();
+    }
   } finally {
-    await listener.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });
