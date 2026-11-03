@@ -1,5 +1,6 @@
 /** `dyfj start`: run the local runtime in the foreground (or autostarted). */
 
+import { configErrorText } from "../../config/mod.ts";
 import { summarizeError } from "../../contract/mod.ts";
 import type { CliConfig } from "../args.ts";
 import type { Io } from "../io.ts";
@@ -33,7 +34,14 @@ export async function runStart(
   try {
     return await startRuntime(config, { autostarted });
   } catch (error) {
-    io.err(`dyfj: could not start local runtime: ${summarizeError(error)}`);
+    // A config error's own line names the file and the fault. Any other
+    // error is summarized: a DomainError's message is relayed, anything
+    // else is reduced to its class and size.
+    io.err(
+      `dyfj: could not start local runtime: ${
+        configErrorText(error) ?? summarizeError(error)
+      }`,
+    );
     io.err(
       `dyfj: fallback command: cd prototype && DYFJ_SOCKET=${
         shellQuote(config.socket)

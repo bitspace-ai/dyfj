@@ -370,6 +370,13 @@ workspace and ignores an `.npmrc` inside a member. After any pull or merge
 that changes `package-lock.json`, run `npm ci` at the repository root again,
 in every checkout. That includes the checkout a `dyfj` on your `PATH` runs
 from. The gate fails until you do (see the npm install precondition below).
+Before it starts the client or the runtime, the `dyfj` launcher checks that
+each package under `dependencies` in `prototype/package.json` has a readable
+installed manifest, at the pinned version when the pin is an exact `x.y.z`.
+Otherwise it names the first missing or mismatched package and says to run
+`npm ci` there, instead of letting Node fail with `ERR_MODULE_NOT_FOUND`. It
+checks those direct dependencies only, not that `node_modules` matches
+`package-lock.json`.
 
 The last line enables the repository's git hooks, which keep AI-tool
 attribution out of history (see `AGENTS.md`, Documentation Discipline):
@@ -1128,7 +1135,25 @@ dyfj start
 
 The socket path resolves from `DYFJ_SOCKET`, else
 `$XDG_RUNTIME_DIR/dyfj/workbench.sock`, else `~/.dyfj/run/workbench.sock` (the
-parent directory is created mode 0700). The engine-free `dyfj` CLI reaches the
+parent directory is created mode 0700). A Unix socket path is limited to 103
+bytes on macOS and 107 on Linux; the launcher, the runtime and the client each
+refuse a longer one with a message that gives its length, the limit and how to
+choose another, instead of a bind failure. A runtime that cannot boot (a socket
+it cannot bind, an invalid config, or any other `DomainError`) prints one
+`dyfj runtime: failed to start: <reason>` line, or `dyfj runtime: config:
+<reason>`, and sets a non-zero exit status; an unrecognized failure prints the same line
+with only the error's class and size, then its stack trace. When an
+autostarted runtime exits before it answers, the launcher stops waiting and
+prints that reason (`dyfj: the runtime exited before it answered: ...`) with
+the log path. `dyfj start` reports a config file it cannot read the same way
+(`config: cannot read config.toml (EISDIR); ...`). When the log states no
+reason, only an error's class and size, the launcher prints the log's last 20
+lines since the autostart instead, with ASCII control characters other than
+tab and newline removed. It notices the exit only for a runtime it spawned
+itself; otherwise, including while it waits on another invocation's start, it
+says `runtime is not answering` once its probes run out, and prints the same
+lines. The launcher passes the log's path to both
+clients as `DYFJ_RUNTIME_LOG`. The engine-free `dyfj` CLI reaches the
 read methods over the socket:
 
 ```sh
@@ -1931,7 +1956,9 @@ for an interactive session on a terminal and fails if it cannot run there;
 piped or redirected input, subcommands, `-p` prompts and `--help` are
 unaffected by `DYFJ_REPL`. The launcher passes the Rust REPL this socket's
 autostart log path as `DYFJ_RUNTIME_LOG`, so it can show why a runtime it is
-waiting for failed to start.
+waiting for failed to start. From each batch of new log lines it shows the
+runtime's `failed to start:` or `config:` line when the batch has one, else
+the batch's last line that mentions an error.
 See [`core/README.md`](core/README.md).
 
 ### MCP integration
@@ -2807,3 +2834,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-03 - "Set up the prototype" says how an unusable Dolt store is
   reported: the runtime boots, and status and turns name the refused user,
   the unanswering endpoint or the missing database, and the fix.
+- 2026-11-03 - The JSON-RPC seam section states the socket-path limit, the
+  runtime's one-line boot failure, and that the launcher relays it when an
+  autostarted runtime exits; the Rust REPL note says which log line it shows.

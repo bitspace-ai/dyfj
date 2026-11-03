@@ -5,6 +5,7 @@
 
 import { lstatSync, rmSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { DomainError } from "../contract/mod.ts";
 import type { SocketHost } from "./connection.ts";
 import { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
 import type { RpcHandlers } from "./jsonrpc.ts";
@@ -62,8 +63,9 @@ export async function assertSocketBindable(
     throw err;
   }
   if (!isSocket) {
-    throw new Error(
-      `refusing to bind: ${socketPath} exists and is not a socket`,
+    throw new DomainError(
+      `refusing to bind: ${socketPath} exists and is not a socket ` +
+        "(move it aside, or choose another path with --socket or DYFJ_SOCKET)",
     );
   }
   let live;
@@ -75,7 +77,7 @@ export async function assertSocketBindable(
     return;
   }
   live.close();
-  throw new Error(
+  throw new DomainError(
     `refusing to bind: a live runtime is already serving on ${socketPath} ` +
       `(inspect with: dyfj status; stop it before starting another)`,
   );

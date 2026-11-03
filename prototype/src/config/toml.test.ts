@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-import { configFilePath } from "./toml.ts";
+import { configErrorText, configFilePath } from "./toml.ts";
 
 const env = (map: Record<string, string> = {}) => new MapEnv(map);
 
@@ -32,3 +32,12 @@ const FAKE_HOME = ["", "home", "x"].join("/");
     );
   });
 }
+
+test("configErrorText strips control characters from a config error", () => {
+  const text = configErrorText(
+    new Error("config: bad value \u001b[2J\u0007in\nconfig.toml"),
+  );
+  assert.ok(text !== undefined);
+  assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(text), JSON.stringify(text));
+  assert.match(text, /^config: bad value \[2J ?in config\.toml$/);
+});

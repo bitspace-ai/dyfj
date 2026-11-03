@@ -59,6 +59,17 @@ require_node() {
   return 1
 }
 
+# Fails with the cause and the fix unless each of the prototype's
+# `dependencies` is installed, at its pinned version when the pin is an exact
+# x.y.z (scripts/dependency-check.ts): a missing or stale node_modules would
+# otherwise surface as Node's ERR_MODULE_NOT_FOUND stack trace.
+require_dependencies() {
+  local check
+  check="$(prototype_root)/scripts/dependency-check.ts"
+  [[ -f "$check" ]] || return 0
+  node "$check"
+}
+
 # Runs the client on Node with the client's flags, for the parse check and the
 # status probe; neither starts a process.
 run_node_client() {
@@ -375,6 +386,52 @@ inspect_start_lock_in_flight() {
   return 1
 }
 
+# The longest Unix socket path this platform binds: sun_path less its NUL.
+max_socket_path_bytes() {
+  case "$(uname -s 2>/dev/null)" in
+    Linux) printf '107' ;;
+    *) printf '103' ;;
+  esac
+}
+
+# Refuses (returns 1, with the reason) a socket path the runtime could never
+# bind, before anything is spawned or logged: the runtime would only die with
+# `listen EINVAL`, and the launcher would wait it out as "not answering". The
+# wording matches the runtime's own SocketPathTooLongError.
+check_socket_path_length() {
+  local sock="$1" bytes limit
+  bytes="$(LC_ALL=C; printf '%s' "${#sock}")"
+  limit="$(max_socket_path_bytes)"
+  if [[ "$bytes" -gt "$limit" ]]; then
+    echo "dyfj: The socket path ${sock} is ${bytes} bytes; this system allows at most ${limit}. Choose a shorter socket path with --socket or DYFJ_SOCKET (for example under /tmp), or shorten the HOME or XDG_RUNTIME_DIR it is derived from" >&2
+    return 1
+  fi
+}
+
+# The runtime's own reason for a failed boot, from the last autostart block of
+# the log: its last `dyfj runtime: failed to start:`, `dyfj runtime: config:`
+# or `dyfj: could not start local runtime:` line, without the prefix, with
+# control characters removed and capped. The runtime writes those lines from
+# messages Workbench composed (a DomainError or a config error), never a
+# driver's text, so they are safe to relay. A line that names only an error's
+# class and size states no cause, and is skipped; the caller then shows the
+# log's last lines instead (report_runtime_log_tail).
+runtime_boot_failure() {
+  local log="$1"
+  [[ -r "$log" ]] || return 0
+  awk '
+    /^── dyfj autostart at / { cause = "" }
+    /^dyfj runtime: (failed to start: |config: )/ { cause = $0 }
+    /^dyfj: could not start local runtime: / { cause = $0 }
+    END {
+      if (cause != "" && cause !~ /(its stack trace follows|bytes\])$/) print cause
+    }
+  ' "$log" 2>/dev/null |
+    sed -e 's/^dyfj runtime: failed to start: //' -e 's/^dyfj runtime: //' \
+      -e 's/^dyfj: could not start local runtime: //' |
+    LC_ALL=C tr -d '\000-\010\013-\037\177' | head -c 600 || true
+}
+
 ensure_runtime() {
   local start_lock probe_status=0
   start_lock="$(runtime_start_lock_path 2>/dev/null || true)"
@@ -388,6 +445,7 @@ ensure_runtime() {
   prepare_rustup_home || return 1
   local sock log
   sock="$(resolve_socket_path)"
+  check_socket_path_length "$sock" || return 1
   if ! log="$(runtime_log_path)"; then
     echo "dyfj: autostart needs an absolute HOME for its log directory; set HOME or run 'dyfj start' yourself" >&2
     return 1
@@ -475,19 +533,53 @@ ensure_runtime() {
     echo "dyfj: a runtime start for ${sock} is already in flight (log: ${log}); waiting for it" >&2
   fi
 
-  local i
+  local i cause
   for i in $(seq 1 50); do
     if probe_runtime "$@"; then
       rm -f "$start_lock" 2>/dev/null || true
       echo "dyfj: runtime ready" >&2
       return 0
     fi
+    # The runtime this call spawned has exited: it will never answer, and
+    # its log already says why.
+    if [[ "$acquired_lock" == "1" ]] && ! kill -0 "$spawn_pid" 2>/dev/null; then
+      rm -f "$start_lock" 2>/dev/null || true
+      cause="$(runtime_boot_failure "$log")"
+      if [[ -n "$cause" ]]; then
+        echo "dyfj: the runtime exited before it answered: ${cause}" >&2
+        echo "dyfj: its full output is in ${log}" >&2
+      else
+        echo "dyfj: the runtime exited before it answered without stating why; its last output, from ${log}:" >&2
+        report_runtime_log_tail "$log"
+      fi
+      return 1
+    fi
     sleep 0.3
   done
   # No seconds figure in the message: the loop is 50 probes with 0.3s gaps,
   # but each probe has its own startup cost, so wall time is not a constant.
-  echo "dyfj: runtime is not answering — check ${log} or run 'dyfj start' in the foreground" >&2
+  echo "dyfj: runtime is not answering — check ${log} or run 'dyfj start' in the foreground; its last output:" >&2
+  report_runtime_log_tail "$log"
   return 1
+}
+
+# The last lines the runtime wrote since the last autostart marker, at most
+# 20 and each cut to 300 bytes, indented, on stderr, with ASCII control
+# characters other than tab and newline removed. Only the log's last 400
+# lines are read, so a long log costs no more than a short one. The log is
+# the operator's own (owner-only) file and this is what they would read
+# there, bounded so a stack trace cannot flood the terminal.
+report_runtime_log_tail() {
+  local log="$1"
+  [[ -r "$log" ]] || return 0
+  tail -n 400 "$log" 2>/dev/null | awk '
+    /^── dyfj autostart at / { n = 0; next }
+    { ring[n % 20] = $0; n++ }
+    END {
+      first = n > 20 ? n - 20 : 0
+      for (i = first; i < n; i++) print "  " substr(ring[i % 20], 1, 300)
+    }
+  ' 2>/dev/null | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2 || true
 }
 
 prototype_root() {
@@ -772,6 +864,7 @@ main() {
   # fallback behavior.
   resolve_socket_path >/dev/null
   require_node || exit 1
+  require_dependencies || exit 1
   local route="node" autostart
   local repl_bin repl_status=0
   if dev_route_applies; then
@@ -874,7 +967,12 @@ main() {
       if [[ "$LAUNCHER_SUBCOMMAND" == "start" ]]; then
         DYFJ_PROTOTYPE_ROOT="$proto" exec node "${proto}/src/cli/main.ts" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       fi
-      DYFJ_PROTOTYPE_ROOT="$proto" exec node "${CLI_NODE_FLAGS[@]}" "${proto}/src/cli/main.ts" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
+      # Where this socket's autostart log is, so a failure that sends the
+      # operator to the runtime log can name it; empty when HOME cannot place
+      # one.
+      local runtime_log
+      runtime_log="$(runtime_log_path)" || runtime_log=""
+      DYFJ_PROTOTYPE_ROOT="$proto" DYFJ_RUNTIME_LOG="$runtime_log" exec node "${CLI_NODE_FLAGS[@]}" "${proto}/src/cli/main.ts" ${CLIENT_ARGS[@]+"${CLIENT_ARGS[@]}"}
       ;;
     *)
       echo "dyfj launcher: unknown route '$route'" >&2

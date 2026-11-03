@@ -5,18 +5,31 @@
  * not a Node stack trace. The guard recognises an `Error` whose message starts
  * with `config:`, the prefix most config validators write (the tool-step
  * ceiling check is the one tested end to end), and reports it as one stderr
- * line and a non-zero exit status. Any error it does not recognise is
- * rethrown unchanged, with its stack.
+ * line and a non-zero exit status. A `DomainError` (a store, socket or other
+ * failure whose message Workbench wrote) is reported the same way, as
+ * `dyfj runtime: failed to start: <message>`. Any other error gets a
+ * `failed to start` line carrying only its summarized label, so the launcher
+ * and the REPL can relay one line, and is then rethrown unchanged, with its
+ * stack.
  *
  * The guard sets the exit status and returns; it never calls `process.exit`,
  * which can cut off a stderr line still buffered on a pipe. Node exits on its
  * own once stderr has drained and nothing else keeps the event loop alive.
  */
 
+import { configErrorText } from "../config/mod.ts";
+import { DomainError, summarizeError } from "../contract/mod.ts";
+
 /** Exit status of a runtime that refused to start over its configuration. */
 export const CONFIG_ERROR_EXIT_CODE = 1;
 
-const CONFIG_ERROR_PREFIX = "config:";
+/** What every failed-boot line after a config error starts with. */
+export const FAILED_TO_START_PREFIX = "dyfj runtime: failed to start: ";
+
+/** `text` on one line: line breaks collapse to single spaces. */
+function oneLine(text: string): string {
+  return text.replace(/\s*[\r\n]+\s*/g, " ").trim();
+}
 
 /**
  * The single stderr line for a config error, or `undefined` when `error` is
@@ -24,9 +37,8 @@ const CONFIG_ERROR_PREFIX = "config:";
  * the report stays one line.
  */
 export function configErrorLine(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  if (!error.message.startsWith(CONFIG_ERROR_PREFIX)) return undefined;
-  return `dyfj runtime: ${error.message.replace(/\s*[\r\n]+\s*/g, " ").trim()}`;
+  const text = configErrorText(error);
+  return text === undefined ? undefined : `dyfj runtime: ${text}`;
 }
 
 export interface RuntimeEntryPorts {
@@ -37,9 +49,9 @@ export interface RuntimeEntryPorts {
 }
 
 /**
- * Runs the runtime's boot. A config error becomes one stderr line and a
- * non-zero exit status, set without exiting; anything else is rethrown with
- * its stack.
+ * Runs the runtime's boot. A config error or a `DomainError` becomes one
+ * stderr line and a non-zero exit status, set without exiting; anything else
+ * is named on one line and rethrown with its stack.
  */
 export async function runRuntimeEntry(
   boot: () => Promise<void>,
@@ -49,8 +61,19 @@ export async function runRuntimeEntry(
     await boot();
   } catch (error) {
     const line = configErrorLine(error);
-    if (line === undefined) throw error;
-    ports.say(line);
-    ports.setExitCode(CONFIG_ERROR_EXIT_CODE);
+    if (line !== undefined) {
+      ports.say(line);
+      ports.setExitCode(CONFIG_ERROR_EXIT_CODE);
+      return;
+    }
+    if (error instanceof DomainError) {
+      ports.say(FAILED_TO_START_PREFIX + oneLine(summarizeError(error)));
+      ports.setExitCode(CONFIG_ERROR_EXIT_CODE);
+      return;
+    }
+    ports.say(
+      `${FAILED_TO_START_PREFIX}${summarizeError(error)}; its stack trace follows`,
+    );
+    throw error;
   }
 }

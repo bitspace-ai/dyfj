@@ -22,6 +22,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -1730,5 +1731,173 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
     // with /.dyfj/log/ and not //.
     assert.equal(log?.startsWith("/.dyfj/log/"), true);
     assert.equal(log?.startsWith("//"), false);
+  });
+});
+
+describe("an autostart that cannot succeed says why", () => {
+  /** A loopback port that was just free: bound, then released. */
+  async function freedLoopbackPort(): Promise<number> {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return port;
+  }
+
+  /** A real autostart (`dyfj sessions`) under a private HOME. */
+  async function autostart(
+    home: string,
+    socket: string,
+    extraEnv: Record<string, string> = {},
+  ): Promise<{ code: number | null; err: string; ms: number }> {
+    const doltPort = await freedLoopbackPort();
+    const started = Date.now();
+    const { code, stderr } = await output(BASH, [LAUNCHER, "sessions"], {
+      env: {
+        HOME: home,
+        DYFJ_SOCKET: socket,
+        DYFJ_LAUNCHER_DRY_RUN: "",
+        DYFJ_SANDBOX: "off",
+        // A port this test just released has no listener unless another
+        // process took it since, so the boot's column check fails fast and
+        // the runtime goes on to bind.
+        DOLT_HOST: "127.0.0.1",
+        DOLT_PORT: String(doltPort),
+        ...extraEnv,
+      },
+      stdout: "ignore",
+    });
+    return { code, err: stderr, ms: Date.now() - started };
+  }
+
+  it("relays the runtime's failed-to-start line as soon as it exits", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/home`);
+      // A regular file where the socket goes: the runtime refuses to bind.
+      await writeFile(`${dir}/x.sock`, "");
+      const { code, err, ms } = await autostart(`${dir}/home`, `${dir}/x.sock`);
+      assert.notEqual(code, 0);
+      includes(err, "the runtime exited before it answered");
+      includes(err, "refusing to bind");
+      includes(err, "exists and is not a socket");
+      refutes(err.includes("is not answering"));
+      // The probe loop alone runs for 15 s or more before giving up.
+      assert.ok(ms < 15_000, `took ${ms} ms`);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("relays a config file the runtime cannot read, with what to do", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      // A directory where config.toml goes: the read fails EISDIR. DYFJ_ROOT
+      // names its directory, as the gate's own environment may set it.
+      await mkdir(`${dir}/home`);
+      await mkdir(`${dir}/root/config.toml`, { recursive: true });
+      const { code, err } = await autostart(`${dir}/home`, `${dir}/x.sock`, {
+        DYFJ_ROOT: `${dir}/root`,
+      });
+      assert.notEqual(code, 0);
+      includes(err, "the runtime exited before it answered: config: cannot read config.toml (EISDIR)");
+      includes(err, "make it a regular file you can read");
+      refutes(err.includes("bytes]"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("shows the log's last lines when the runtime exits without stating why", async () => {
+    // A stand-in tree: the client stub answers the launcher's parse check
+    // and probes as "not running", and its `start` dies the way an uncaught
+    // error does, with a stack trace and no failed-to-start line.
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/p/scripts`, { recursive: true });
+      await mkdir(`${dir}/p/src/cli`, { recursive: true });
+      await mkdir(`${dir}/home`);
+      await writeFile(`${dir}/p/scripts/dyfj-launcher.sh`, await readFile(LAUNCHER));
+      await writeFile(
+        `${dir}/p/src/cli/main.ts`,
+        [
+          'const args = process.argv.slice(2);',
+          'if (args.includes("--parse-check")) process.exit(0);',
+          'if (args.includes("start")) {',
+          '  console.error("Error: boom\\x1b[2J at boot");',
+          '  console.error("    at main (main.ts:1:1)");',
+          '  process.exit(1);',
+          '}',
+          'process.exit(1);',
+          '',
+        ].join("\n"),
+      );
+      const { code, stderr } = await output(
+        BASH,
+        [`${dir}/p/scripts/dyfj-launcher.sh`, "sessions"],
+        {
+          env: {
+            HOME: `${dir}/home`,
+            DYFJ_SOCKET: `${dir}/x.sock`,
+            DYFJ_LAUNCHER_DRY_RUN: "",
+          },
+          stdout: "ignore",
+        },
+      );
+      assert.notEqual(code, 0);
+      includes(stderr, "the runtime exited before it answered without stating why");
+      includes(stderr, "  Error: boom");
+      includes(stderr, "    at main (main.ts:1:1)");
+      refutes(stderr.includes("\x1b"));
+      refutes(stderr.includes("is not answering"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("names a missing dependency and says to run npm ci, instead of a module stack trace", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/p/scripts`, { recursive: true });
+      await writeFile(`${dir}/p/scripts/dyfj-launcher.sh`, await readFile(LAUNCHER));
+      await writeFile(
+        `${dir}/p/scripts/dependency-check.ts`,
+        await readFile(new URL("./dependency-check.ts", import.meta.url)),
+      );
+      await writeFile(
+        `${dir}/p/package.json`,
+        JSON.stringify({
+          type: "module",
+          dependencies: { "dyfj-not-installed": "1.0.0" },
+        }),
+      );
+      const { code, stderr } = await output(
+        BASH,
+        [`${dir}/p/scripts/dyfj-launcher.sh`, "sessions"],
+        { env: { HOME: `${dir}/home`, DYFJ_SOCKET: `${dir}/x.sock` } },
+      );
+      assert.equal(code, 1);
+      includes(stderr, "dyfj-not-installed is not installed");
+      includes(stderr, `run \`npm ci\` in ${await realpath(dir)}`);
+      refutes(stderr.includes("ERR_MODULE_NOT_FOUND"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a socket path too long for the platform before spawning", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/home`);
+      const socket = `${dir}/${"s".repeat(120)}.sock`;
+      const { code, err } = await autostart(`${dir}/home`, socket);
+      assert.notEqual(code, 0);
+      includes(err, `is ${Buffer.byteLength(socket)} bytes`);
+      includes(err, "DYFJ_SOCKET");
+      refutes(err.includes("starting it"));
+      refutes(err.includes("is not answering"));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

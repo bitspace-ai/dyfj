@@ -40,6 +40,17 @@ which runs as plain `node` and starts the runtime as plain
 `node src/server/main.ts`; the root README's "Egress, spawn and environment
 limits" section says why.
 
+The launcher refuses a socket path longer than the platform allows before it
+spawns the runtime. While it waits for a runtime it autostarted, it checks that
+the process is still alive; once it has exited, the launcher prints the
+runtime's last `dyfj runtime: failed to start:` (or `config:`) line from the
+autostart log and the log path, instead of probing until it gives up with
+`runtime is not answering`. The runtime's entry guard (`src/server/entry.ts`)
+writes that line for a config error or any `DomainError`; the node:net adapter
+raises `SocketPathTooLongError` (`src/transport/socket-failure.ts`) for a
+socket path too long to bind or connect to, and `RuntimeListenError` for a
+socket it cannot bind.
+
 A runtime the launcher autostarted belongs to the `dyfj` invocations that use
 it: it stops on its own 10 s after its last client disconnects, through the same
 shutdown as `dyfj stop` (warm ACP sessions and their children are closed, then
