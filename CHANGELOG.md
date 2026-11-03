@@ -288,6 +288,14 @@ README are tracked separately in its Revision history section.
   the log, with ASCII control characters other than tab and newline removed,
   including after `runtime is not answering`.
 
+- **A runtime that goes away mid-request is named as such.** A runtime that
+  stopped or crashed during `dyfj exec` (plain or `--json`) left the client
+  printing `[Error, 17 bytes]`. A request the other end hangs up on now fails
+  with `PeerClosedError`, and the client prints `the runtime at <socket>
+  closed the connection before it answered: it stopped or crashed. Run dyfj
+  status ...`; a reset or broken pipe on the socket reads the same, and a
+  socket the client may not open says `permission denied`.
+
 - **An external agent's failure says what to do.** A `codex-chatgpt` turn
   whose ChatGPT sign-in had expired reached the CLI and the REPL as `[Error,
   51 bytes]`: the adapter's `auth_required` answer to the prompt was

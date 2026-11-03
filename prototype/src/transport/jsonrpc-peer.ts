@@ -23,7 +23,22 @@ import {
   RpcErrorCode,
   type RpcHandlers,
 } from "./jsonrpc.ts";
-import { MAX_ERROR_SUMMARY_BYTES, summarizeError } from "../contract/mod.ts";
+import {
+  DomainError,
+  MAX_ERROR_SUMMARY_BYTES,
+  summarizeError,
+} from "../contract/mod.ts";
+
+/**
+ * The other end closed the connection while a request still waited for its
+ * answer: on a client, the runtime stopped or crashed mid-request.
+ */
+export class PeerClosedError extends DomainError {
+  constructor() {
+    super("the other end closed the connection before it answered");
+    this.name = "PeerClosedError";
+  }
+}
 
 export interface JsonRpcPeerOptions {
   /** Incoming requests (and matching notifications) are dispatched here. */
@@ -151,7 +166,7 @@ export class JsonRpcPeer {
       // decoder — it does not, on its own, surface the truncation.
       this.#feed(decoder.decode());
     } finally {
-      this.#failPending(new Error("connection closed"));
+      this.#failPending(new PeerClosedError());
     }
   }
 

@@ -53,7 +53,15 @@ export type {
   SocketHost,
 } from "./connection.ts";
 export { listenLoopbackProbe, nodeSocketHost } from "./node-socket.ts";
-export { JsonRpcPeer, type JsonRpcPeerOptions } from "./jsonrpc-peer.ts";
+export {
+  JsonRpcPeer,
+  type JsonRpcPeerOptions,
+  PeerClosedError,
+} from "./jsonrpc-peer.ts";
+export {
+  RuntimeListenError,
+  SocketPathTooLongError,
+} from "./socket-failure.ts";
 export { ensureSocketDir, resolveSocketPath } from "./uds-path.ts";
 export {
   connectUnixClient,

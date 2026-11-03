@@ -1153,7 +1153,9 @@ tab and newline removed. It notices the exit only for a runtime it spawned
 itself; otherwise, including while it waits on another invocation's start, it
 says `runtime is not answering` once its probes run out, and prints the same
 lines. The launcher passes the log's path to both
-clients as `DYFJ_RUNTIME_LOG`. The engine-free `dyfj` CLI reaches the
+clients as `DYFJ_RUNTIME_LOG`. A runtime that stops or crashes while a client
+waits on it is reported as `the runtime at <socket> closed the connection
+before it answered`, with what to check. The engine-free `dyfj` CLI reaches the
 read methods over the socket:
 
 ```sh
