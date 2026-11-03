@@ -70,6 +70,23 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
 }
 
 /**
+ * Where the pool connects, as the operator configured it: the values a
+ * store-failure message may name. `userDefaulted` is set when `DOLT_USER` was
+ * not set and the runtime fell back to `root`.
+ */
+export interface DoltFailureContext {
+  host: string;
+  port: number;
+  database: string;
+  userDefaulted?: boolean;
+}
+
+/** A configured value, made safe to place inside a message. */
+function field(value: string): string {
+  return sanitizeBoundaryText(value, MAX_REASON_FIELD_BYTES);
+}
+
+/**
  * The Dolt server refused the credential. Thrown by the store's pool and
  * connections in place of the driver's own error, whose message repeats the
  * account name and whatever else the server chose to say. The message here is
@@ -77,37 +94,100 @@ export function selectOnly(target: DoltQueryable): DoltSelect {
  * the one this process asked to log in as, and neither the password field
  * nor the driver's text is included.
  *
- * The rejection is recognized by the driver's error code, never by matching
- * message text. Anything else — a refused connection, an unknown database, a
- * failed query — propagates unchanged and keeps its existing treatment at the
- * turn boundary; a failure that is already a `DomainError` stays visible.
+ * Each store-failure class here is recognized by the driver's error code,
+ * never by matching message text. Any other failure (a failed query, say)
+ * propagates unchanged and keeps its existing treatment at the turn boundary;
+ * a failure that is already a `DomainError` stays visible.
  */
 export class DoltLoginRefusedError extends DomainError {
   /** The Dolt user the login was refused for, when the pool knew it. */
   readonly user?: string;
+  /** Set when `user` is the `root` fallback for an unset `DOLT_USER`. */
+  readonly userDefaulted: boolean;
 
-  constructor(user?: string) {
-    const named = user === undefined ? undefined : sanitizeBoundaryText(
-      user,
-      MAX_REASON_FIELD_BYTES,
-    );
+  constructor(user?: string, options: { userDefaulted?: boolean } = {}) {
+    const named = user === undefined ? undefined : field(user);
+    const fix = "check DOLT_USER and DOLT_PASSWORD (or the 1Password " +
+      "pointer that supplies them) in prototype/.env or the environment";
     super(
       named === undefined || named.length === 0
-        ? "Dolt refused the login for the configured user; check DOLT_USER " +
-          "and DOLT_PASSWORD (or the 1Password pointer that supplies them) in " +
-          "prototype/.env or the environment"
-        : `Dolt refused the login for user "${named}"; check DOLT_USER and ` +
-          "DOLT_PASSWORD (or the 1Password pointer that supplies them) in " +
-          "prototype/.env or the environment",
+        ? `Dolt refused the login for the configured user; ${fix}`
+        : options.userDefaulted
+        ? `Dolt refused the login for user "${named}": DOLT_USER is not ` +
+          `set, so the runtime logged in as "${named}". Set DOLT_USER and ` +
+          "DOLT_PASSWORD in prototype/.env or the environment (the Dolt " +
+          "users section of schema/README.md lists them), then restart " +
+          "the runtime"
+        : `Dolt refused the login for user "${named}"; ${fix}`,
     );
     this.user = named === undefined || named.length === 0 ? undefined : named;
+    this.userDefaulted = options.userDefaulted === true;
     this.name = "DoltLoginRefusedError";
+  }
+}
+
+/** Why the Dolt server could not be reached. */
+export type DoltUnreachableReason = "refused" | "dns" | "timeout" | "lost";
+
+const UNREACHABLE_REASON_TEXT: Record<DoltUnreachableReason, string> = {
+  refused: "connection refused",
+  dns: "the host name did not resolve",
+  timeout: "the connection timed out",
+  lost: "the connection was lost",
+};
+
+/** Nothing answered at the configured Dolt endpoint. */
+export class DoltUnreachableError extends DomainError {
+  readonly reason: DoltUnreachableReason;
+
+  constructor(
+    endpoint: Pick<DoltFailureContext, "host" | "port">,
+    reason: DoltUnreachableReason,
+  ) {
+    super(
+      `Dolt is not answering at ${field(endpoint.host)}:${endpoint.port} ` +
+        `(${UNREACHABLE_REASON_TEXT[reason]}). Start the Dolt SQL server ` +
+        "(dolt sql-server), or check DOLT_HOST and DOLT_PORT in " +
+        "prototype/.env or the environment, then retry",
+    );
+    this.reason = reason;
+    this.name = "DoltUnreachableError";
+  }
+}
+
+/** The Dolt server answered but has no database by the configured name. */
+export class DoltDatabaseMissingError extends DomainError {
+  /** The configured database name, made safe for a message. */
+  readonly database: string;
+
+  constructor(database: string) {
+    const named = field(database);
+    super(
+      `The Dolt server has no database "${named}". Check ` +
+        "DOLT_DATABASE in prototype/.env or the environment, or create the " +
+        "database and apply the schema as schema/README.md describes",
+    );
+    this.database = named;
+    this.name = "DoltDatabaseMissingError";
   }
 }
 
 /** `mysql2`'s refused-login code and legacy errno, either of which identifies it. */
 const ER_ACCESS_DENIED_ERROR = "ER_ACCESS_DENIED_ERROR";
 const ER_ACCESS_DENIED_ERRNO = 1045;
+const ER_BAD_DB_ERRNO = 1049;
+
+/** Driver and socket codes meaning the endpoint did not answer. */
+const UNREACHABLE_CODES: Readonly<Record<string, DoltUnreachableReason>> = {
+  ECONNREFUSED: "refused",
+  ENOTFOUND: "dns",
+  EAI_AGAIN: "dns",
+  ETIMEDOUT: "timeout",
+  EHOSTUNREACH: "timeout",
+  ENETUNREACH: "timeout",
+  ECONNRESET: "lost",
+  PROTOCOL_CONNECTION_LOST: "lost",
+};
 
 /**
  * The refused-login error this driver error reports, or `undefined` when it
@@ -117,20 +197,46 @@ const ER_ACCESS_DENIED_ERRNO = 1045;
 export function refusedLoginError(
   error: unknown,
   user: string | undefined,
+  options: { userDefaulted?: boolean } = {},
 ): DoltLoginRefusedError | undefined {
   if (typeof error !== "object" || error === null) return undefined;
   const { code, errno } = error as { code?: unknown; errno?: unknown };
   const refused = code === ER_ACCESS_DENIED_ERROR ||
     errno === ER_ACCESS_DENIED_ERRNO;
-  return refused ? new DoltLoginRefusedError(user) : undefined;
+  return refused ? new DoltLoginRefusedError(user, options) : undefined;
 }
 
-/** Rethrow a refused login as `DoltLoginRefusedError`; anything else as itself. */
-function rethrowRefusedLogin(
+/**
+ * The store-failure error this driver error reports, or `undefined` when it
+ * is not one. Without a `context` only a refused login is recognized.
+ */
+export function storeFailureError(
   error: unknown,
   user: string | undefined,
+  context?: DoltFailureContext,
+): DomainError | undefined {
+  const refused = refusedLoginError(error, user, {
+    userDefaulted: context?.userDefaulted,
+  });
+  if (refused !== undefined || context === undefined) return refused;
+  if (typeof error !== "object" || error === null) return undefined;
+  const { code, errno } = error as { code?: unknown; errno?: unknown };
+  if (code === "ER_BAD_DB_ERROR" || errno === ER_BAD_DB_ERRNO) {
+    return new DoltDatabaseMissingError(context.database);
+  }
+  if (typeof code === "string" && Object.hasOwn(UNREACHABLE_CODES, code)) {
+    return new DoltUnreachableError(context, UNREACHABLE_CODES[code]);
+  }
+  return undefined;
+}
+
+/** Rethrow a store failure as its `DomainError`; anything else as itself. */
+function rethrowStoreFailure(
+  error: unknown,
+  user: string | undefined,
+  context: DoltFailureContext | undefined,
 ): never {
-  throw refusedLoginError(error, user) ?? error;
+  throw storeFailureError(error, user, context) ?? error;
 }
 
 /**
@@ -155,7 +261,12 @@ export function createDoltPool(
     waitForConnections: true,
     connectionLimit: 5,
   }) as unknown as DoltPool;
-  return guardDoltLogins(pool, config.user);
+  return guardDoltLogins(pool, config.user, {
+    host: config.host,
+    port: config.port,
+    database: config.database,
+    userDefaulted: config.userDefaulted,
+  });
 }
 
 /**
@@ -163,9 +274,11 @@ export function createDoltPool(
  * than the driver's own error, whose message restates the account name. The
  * pool names the user it was built with, so the error names the same account
  * this process asked to log in as — never one parsed out of the server's
- * reply. A connection handed out by `getConnection` is guarded the same way,
- * because the journal acquires one to run a transaction. Every other failure
- * propagates unchanged.
+ * reply. Given the endpoint `context`, an unreachable server and an unknown
+ * database surface the same way, as `DoltUnreachableError` and
+ * `DoltDatabaseMissingError`. A connection handed out by `getConnection` is
+ * guarded the same way, because the journal acquires one to run a
+ * transaction. Every other failure propagates unchanged.
  *
  * Applied to a driver pool of any provenance: `createDoltPool` guards the pool
  * it builds, and a test drives the same guard over a stand-in.
@@ -173,13 +286,14 @@ export function createDoltPool(
 export function guardDoltLogins(
   pool: DoltPool,
   user: string | undefined,
+  context?: DoltFailureContext,
 ): DoltPool {
   return {
     async execute(sql, params) {
       try {
         return await pool.execute(sql, params);
       } catch (error) {
-        rethrowRefusedLogin(error, user);
+        rethrowStoreFailure(error, user, context);
       }
     },
     async getConnection() {
@@ -187,25 +301,26 @@ export function guardDoltLogins(
       try {
         connection = await pool.getConnection();
       } catch (error) {
-        rethrowRefusedLogin(error, user);
+        rethrowStoreFailure(error, user, context);
       }
-      return guardedDoltConnection(connection, user);
+      return guardedDoltConnection(connection, user, context);
     },
     end: () => pool.end(),
   };
 }
 
-/** A pooled connection whose statements report a refused login as such. */
+/** A pooled connection whose statements report a store failure as such. */
 function guardedDoltConnection(
   connection: DoltConnection,
   user: string | undefined,
+  context: DoltFailureContext | undefined,
 ): DoltConnection {
   return {
     async execute(sql, params) {
       try {
         return await connection.execute(sql, params);
       } catch (error) {
-        rethrowRefusedLogin(error, user);
+        rethrowStoreFailure(error, user, context);
       }
     },
     beginTransaction: () => connection.beginTransaction(),

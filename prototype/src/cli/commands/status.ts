@@ -56,7 +56,12 @@ export interface RuntimeStatusPayload {
     /** The tool sandbox (BIT-662); absent on older servers. */
     sandbox?: { state?: unknown; backend?: unknown; reason?: unknown };
     /** The Dolt store's state (BIT-832); absent on older servers. */
-    store?: { state?: unknown; user?: unknown };
+    store?: {
+      state?: unknown;
+      user?: unknown;
+      userDefaulted?: unknown;
+      database?: unknown;
+    };
   };
 }
 
@@ -87,9 +92,9 @@ export function formatSandbox(
 
 /**
  * The Dolt store's line, or null when the runtime reports no store (an older
- * server). The refused line names the account and how to fix it; it carries
- * no password and no driver text, which is what the probe reports and all it
- * reports.
+ * server). Each line names the cause and how to fix it: the refused line names
+ * the account, the missing-database line the database. It carries no password
+ * and no driver text, which is what the probe reports and all it reports.
  */
 export function formatStore(
   store: NonNullable<RuntimeStatusPayload["runtime"]>["store"],
@@ -100,12 +105,25 @@ export function formatStore(
     const user = typeof store.user === "string" && store.user.length > 0
       ? sanitizeField(store.user, "")
       : "";
-    return user === ""
-      ? `dolt REFUSED the login: check DOLT_USER and DOLT_PASSWORD`
+    if (user === "") {
+      return `dolt REFUSED the login: check DOLT_USER and DOLT_PASSWORD`;
+    }
+    return store.userDefaulted === true
+      ? `dolt REFUSED the login for user "${user}": DOLT_USER is not set, ` +
+        `so the runtime logged in as ${user}; set DOLT_USER and ` +
+        "DOLT_PASSWORD in prototype/.env and restart the runtime"
       : `dolt REFUSED the login for user "${user}": check DOLT_USER and ` +
         "DOLT_PASSWORD";
   }
-  return "dolt unreachable: is the Dolt server running?";
+  if (store.state === "no_database") {
+    const database = typeof store.database === "string"
+      ? sanitizeField(store.database, "")
+      : "";
+    return `dolt has no database "${database}": check DOLT_DATABASE, or ` +
+      "create it and apply the schema (schema/README.md)";
+  }
+  return "dolt unreachable: start the Dolt SQL server (dolt sql-server), or " +
+    "check DOLT_HOST and DOLT_PORT";
 }
 
 /** A fingerprint field for display: its first 12 characters (of the hex). */

@@ -6,6 +6,12 @@
  * column tuples before it serves, and refuses to start when any are missing.
  */
 
+import { DomainError } from "../contract/mod.ts";
+import {
+  DoltDatabaseMissingError,
+  DoltLoginRefusedError,
+  DoltUnreachableError,
+} from "./dolt-pool.ts";
 import {
   CANONICAL_TABLE_COLUMNS,
   type CanonicalTable,
@@ -17,7 +23,7 @@ export interface MissingColumn {
 }
 
 /** Thrown at boot when the live database lacks canonical columns. */
-export class MissingSchemaColumnsError extends Error {
+export class MissingSchemaColumnsError extends DomainError {
   readonly missing: readonly MissingColumn[];
 
   constructor(missing: readonly MissingColumn[]) {
@@ -95,13 +101,19 @@ const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
 
 /**
  * Whether the boot-time column check failed because the database was not
- * reachable or usable (connection, authentication, unknown database), in
+ * reachable or usable (connection, authentication, unknown database, raw or
+ * as the pool's own error for it), in
  * which case the engine boots as it did before the check existed and the
  * error surfaces on first use. Any other failure is not recognized here, so
  * the boot fails rather than serving with a check that never completed.
  */
 export function isDatabaseUnavailableError(error: unknown): boolean {
-  if (error instanceof ColumnCheckTimeoutError) return true;
+  if (
+    error instanceof ColumnCheckTimeoutError ||
+    error instanceof DoltLoginRefusedError ||
+    error instanceof DoltUnreachableError ||
+    error instanceof DoltDatabaseMissingError
+  ) return true;
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" && UNAVAILABLE_CODES.has(code);

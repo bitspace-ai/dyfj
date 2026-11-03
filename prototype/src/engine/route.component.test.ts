@@ -454,3 +454,64 @@ test("selectModelRoute does not restore a built-in default the catalog marks ina
     false,
   );
 });
+
+// ── a model the fallback catalog lacks names why the catalog fell back ─────
+
+const storeDown: RouteModelReader = {
+  listActive: () =>
+    Promise.reject(
+      new DomainError("Dolt is not answering at 127.0.0.1:3306 (connection refused)"),
+    ),
+  listInactiveSlugs: () =>
+    Promise.reject(
+      new DomainError("Dolt is not answering at 127.0.0.1:3306 (connection refused)"),
+    ),
+};
+
+test("resolveRoute names the catalog failure when the fallback lacks the model", async () => {
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({ routingOptions: { modelId: "scratch-local" } }),
+        storeDown,
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof WorkbenchModelNotFoundError);
+      assert.match(
+        error.message,
+        /^Model scratch-local is unavailable because the model catalog could not be loaded/,
+      );
+      assert.match(error.message, /Dolt is not answering at 127\.0\.0\.1:3306/);
+      return true;
+    },
+  );
+});
+
+test("selectModelRoute names the catalog failure for a configured default", async () => {
+  await assert.rejects(
+    () =>
+      selectModelRoute(storeDown, {
+        mode: "ask",
+        routingOptions: {},
+        defaultCompanionModel: "scratch-local",
+      }),
+    (error: unknown) =>
+      error instanceof WorkbenchModelNotFoundError &&
+      /model catalog could not be loaded/.test(error.message) &&
+      /Dolt is not answering/.test(error.message),
+  );
+});
+
+test("an unknown model over a loaded catalog says how to pick another", async () => {
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({ routingOptions: { modelId: "missing" } }),
+        catalog(LOCAL),
+      ),
+    (error: unknown) =>
+      error instanceof WorkbenchModelNotFoundError &&
+      /dyfj models/.test(error.message) &&
+      !/catalog could not be loaded/.test(error.message),
+  );
+});

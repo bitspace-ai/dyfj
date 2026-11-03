@@ -9,7 +9,11 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DoltLoginRefusedError, type DoltQueryable } from "./dolt-pool.ts";
+import {
+  DoltDatabaseMissingError,
+  DoltLoginRefusedError,
+  type DoltQueryable,
+} from "./dolt-pool.ts";
 import { createStoreProbe, STORE_PROBE_TIMEOUT_MS } from "./store-status.ts";
 
 /** One probe call, as `runtime/status` makes it. */
@@ -50,6 +54,26 @@ test("probeStoreStatus — a refused login is refused, naming the user", async (
 test("probeStoreStatus — a refused login with no user names none", async () => {
   const pool = standin(() => Promise.reject(new DoltLoginRefusedError()));
   assert.deepStrictEqual(await probeStoreStatus(pool), { state: "refused" });
+});
+
+test("probeStoreStatus — a refused default login says DOLT_USER was unset", async () => {
+  const pool = standin(() =>
+    Promise.reject(new DoltLoginRefusedError("root", { userDefaulted: true }))
+  );
+  assert.deepStrictEqual(
+    await probeStoreStatus(pool),
+    { state: "refused", user: "root", userDefaulted: true },
+  );
+});
+
+test("probeStoreStatus — an unknown database is its own state, naming it", async () => {
+  const pool = standin(() =>
+    Promise.reject(new DoltDatabaseMissingError("nope_db"))
+  );
+  assert.deepStrictEqual(
+    await probeStoreStatus(pool),
+    { state: "no_database", database: "nope_db" },
+  );
 });
 
 test("probeStoreStatus — any other failure is unreachable, carrying nothing", async () => {

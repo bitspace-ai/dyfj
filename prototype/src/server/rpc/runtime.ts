@@ -279,13 +279,29 @@ export function runtimeStatus(
   };
 }
 
-/** The store segment as `runtime/status` reports it: the state, and a user. */
+/**
+ * The store segment as `runtime/status` reports it: the state, and the
+ * configured user or database it names.
+ */
 function storePayload(
   store: StoreStatus,
-): { state: StoreStatus["state"]; user?: string } {
-  return store.state === "refused" && store.user !== undefined
-    ? { state: store.state, user: store.user }
-    : { state: store.state };
+): {
+  state: StoreStatus["state"];
+  user?: string;
+  userDefaulted?: true;
+  database?: string;
+} {
+  if (store.state === "refused") {
+    return {
+      state: store.state,
+      ...(store.user === undefined ? {} : { user: store.user }),
+      ...(store.userDefaulted ? { userDefaulted: true as const } : {}),
+    };
+  }
+  if (store.state === "no_database") {
+    return { state: store.state, database: store.database };
+  }
+  return { state: store.state };
 }
 
 /**

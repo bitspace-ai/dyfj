@@ -404,6 +404,14 @@ not exist until you create it. Create the users and their grants first, as
 `DOLT_USER=dyfj_runtime` in `.env`. Until then, and whenever `DOLT_USER` is
 unset, the runtime connects as `root`.
 
+When the store cannot be used, the runtime still boots, and `dyfj status` and
+every failed turn say why and what to change: a refused login names the user
+(and says when `DOLT_USER` was unset and the runtime fell back to `root`), a
+server that does not answer names `DOLT_HOST:DOLT_PORT`, and a server without
+the configured database names `DOLT_DATABASE`. A turn whose model is missing
+only because the catalog could not be loaded reports the store's failure, not
+a missing model.
+
 The local default is Qwen3.6 35B-A3B served by llama.cpp, catalog slug
 `llama-cpp/qwen3.6-35b-a3b`, the first active Tier 0 row in the registry's
 local preference order. Start `llama-server` with a compatible GGUF on its
@@ -2790,3 +2798,6 @@ Document revisions only. Code and behavior changes are tracked in
   evidence; the JSON-RPC seam section names the `did not run` status.
 - 2026-11-02 - The JSON-RPC seam section says only a `bash` or `git` result's
   first line is read as an exit status.
+- 2026-11-03 - "Set up the prototype" says how an unusable Dolt store is
+  reported: the runtime boots, and status and turns name the refused user,
+  the unanswering endpoint or the missing database, and the fix.
