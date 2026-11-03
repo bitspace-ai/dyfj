@@ -530,10 +530,28 @@ describe("the dolt store line (BIT-832)", () => {
     );
   });
 
-  it("points at the server when the store is unreachable", () => {
+  it("says DOLT_USER was unset when the refused user was the fallback", () => {
+    assert.equal(
+      formatStore({ state: "refused", user: "root", userDefaulted: true }),
+      'dolt REFUSED the login for user "root": DOLT_USER is not set, so the ' +
+        "runtime tried to log in as root; set DOLT_USER and DOLT_PASSWORD in " +
+        "prototype/.env and restart the runtime",
+    );
+  });
+
+  it("points at the server and the endpoint settings when the store is unreachable", () => {
     assert.equal(
       formatStore({ state: "unreachable" }),
-      "dolt unreachable: is the Dolt server running?",
+      "dolt unreachable: start the Dolt SQL server (dolt sql-server), or " +
+        "check DOLT_HOST and DOLT_PORT",
+    );
+  });
+
+  it("names the missing database and DOLT_DATABASE", () => {
+    assert.equal(
+      formatStore({ state: "no_database", database: "nope_db" }),
+      'dolt has no database "nope_db": check DOLT_DATABASE, or create it ' +
+        "and apply the schema (schema/README.md)",
     );
   });
 
@@ -574,7 +592,7 @@ describe("the dolt store line (BIT-832)", () => {
     });
     assert.match(
       text,
-      /sandbox srt 0\.0\.81\ndolt unreachable: is the Dolt server running\?/,
+      /sandbox srt 0\.0\.81\ndolt unreachable: start the Dolt SQL server/,
     );
   });
 });

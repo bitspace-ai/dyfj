@@ -15,6 +15,10 @@ import { DomainError, summarizeError } from "../contract/mod.ts";
 // the wire, into runtime events, or into durable error rows.
 const MAX_ERROR_FIELD_BYTES = 120;
 
+// A summarized cause quoted inside another message (a store failure behind a
+// missing model): room for one DomainError sentence, under the summary cap.
+const MAX_CAUSE_FIELD_BYTES = 280;
+
 function errorField(raw: string): string {
   return sanitizeBoundaryText(raw, MAX_ERROR_FIELD_BYTES);
 }
@@ -34,10 +38,26 @@ function errorUrlField(raw: string): string {
   }
 }
 
+/**
+ * No catalog row matched the requested slug (or tier). `catalogFailure` is
+ * the summarized error of a catalog load that failed, when selection ran over
+ * the built-in local rows instead: the missing model is then a symptom, and
+ * the message leads with the cause.
+ */
 export class WorkbenchModelNotFoundError extends DomainError {
   public readonly slug: string;
-  constructor(slug: string) {
-    super(`Model not found: ${errorField(slug)}`);
+  constructor(slug: string, options: { catalogFailure?: string } = {}) {
+    super(
+      options.catalogFailure === undefined
+        ? `Model not found: ${errorField(slug)}. Run \`dyfj models\` to ` +
+          "list the catalog, then choose a listed model with --model (or " +
+          "/model in the REPL), or set DYFJ_WORKBENCH_MODEL to one"
+        : `Model ${errorField(slug)} is unavailable because the model ` +
+          "catalog could not be loaded (only the built-in local models " +
+          `were): ${
+            sanitizeBoundaryText(options.catalogFailure, MAX_CAUSE_FIELD_BYTES)
+          }`,
+    );
     this.slug = slug;
     this.name = "WorkbenchModelNotFoundError";
   }

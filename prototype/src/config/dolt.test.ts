@@ -31,7 +31,16 @@ test("resolveDoltConnection defaults the password to empty, never a dev password
     user: "root",
     password: "",
     database: "dolt",
+    // DOLT_USER was unset, so a refused login can say root was the fallback.
+    userDefaulted: true,
   });
+});
+
+test("resolveDoltConnection marks no default when DOLT_USER is set", () => {
+  assert.ok(
+    !("userDefaulted" in
+      resolveDoltConnection(new MapEnv({ DOLT_USER: "dyfj_runtime" }))),
+  );
 });
 
 test("resolveDoltEndpoint reads only the host and port", () => {

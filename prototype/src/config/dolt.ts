@@ -11,6 +11,11 @@ export interface DoltConnectionConfig {
   user: string;
   password: string;
   database: string;
+  /**
+   * Set when `DOLT_USER` was not set and `user` is the `root` fallback, so a
+   * refused login can say so.
+   */
+  userDefaulted?: true;
 }
 
 /** The Dolt server's address: all the runtime policy needs. */
@@ -33,10 +38,12 @@ export function resolveDoltEndpoint(env: Env): DoltEndpoint {
  * resolve.
  */
 export function resolveDoltConnection(env: Env): DoltConnectionConfig {
+  const user = env.get("DOLT_USER");
   return {
     ...resolveDoltEndpoint(env),
-    user: env.get("DOLT_USER") ?? "root",
+    user: user ?? "root",
     password: env.get("DOLT_PASSWORD") ?? "",
     database: env.get("DOLT_DATABASE") ?? "dolt",
+    ...(user === undefined ? { userDefaulted: true as const } : {}),
   };
 }

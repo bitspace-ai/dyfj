@@ -265,6 +265,33 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A Dolt store Workbench cannot use says why.** A
+  stopped `dolt sql-server`, a wrong `DOLT_HOST`/`DOLT_PORT` or an unknown
+  `DOLT_DATABASE` used to fail a turn with a misleading `Model not found:
+  <model>` (the catalog had silently fallen back to the built-in local rows)
+  or `[Error, N bytes]`, and `dyfj status` called every one of them
+  `unreachable: is the Dolt server running?`. The store's pool now reports
+  each as a message that names the configured endpoint or database and the
+  fix (`Dolt is not answering at 127.0.0.1:3306 (connection refused). Start
+  the Dolt SQL server (dolt sql-server), or check DOLT_HOST and DOLT_PORT
+  ...`; `The Dolt server has no database "x". Check DOLT_DATABASE ...`), a
+  missing model over a fallback catalog leads with that cause, and `dyfj
+  status` gains a `dolt has no database "x"` line. A refused login for the
+  `root` fallback says `DOLT_USER is not set, so the runtime tried to log in as
+  "root"`. A refused login also no longer crashes the runtime at boot with a
+  stack trace: the boot-time column check now recognizes the pool's own
+  login error as an unusable store, as it already did the driver's, so the
+  runtime boots and `dyfj status` reports the refusal. A model not in the
+  catalog now says to run `dyfj models` and pick one with `--model`,
+  `/model` or `DYFJ_WORKBENCH_MODEL`. A Dolt user without a grant the
+  runtime needs is named too: a refused write (or Dolt's generic error for a
+  refused read) fails the turn with `Dolt refused a statement for user "x":
+  it lacks a grant this runtime needs ...` instead of `[Error, 37 bytes]`,
+  and a boot whose user can see none of a canonical table (which
+  `information_schema` hides without a grant) names the tables and both
+  causes, a schema never applied or a missing grant, instead of listing
+  every column of them as needing a migration.
+
 - **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
   recorded turn" notice `down` prints, instead of failing with a raw `ENOENT`.
 

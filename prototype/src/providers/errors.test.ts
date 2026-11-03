@@ -449,7 +449,9 @@ describe("provider error own properties", () => {
     [
       new WorkbenchModelNotFoundError("s"),
       ["slug", "name"],
-      "Model not found: s",
+      "Model not found: s. Run `dyfj models` to list the catalog, then " +
+      "choose a listed model with --model (or /model in the REPL), or set " +
+      "DYFJ_WORKBENCH_MODEL to one",
     ],
     [
       new WorkbenchModelFastSpeedUnsupportedError("s"),

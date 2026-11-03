@@ -7,15 +7,22 @@
  * `DoltLoginRefusedError` the pool raises is what the probe reports.
  */
 
-import { DoltLoginRefusedError, type DoltQueryable } from "./dolt-pool.ts";
+import {
+  DoltDatabaseMissingError,
+  DoltLoginRefusedError,
+  type DoltQueryable,
+} from "./dolt-pool.ts";
 
 /**
  * What the probe learned. It carries no driver text and no error message: the
- * state, plus the user a refused login named, is all it returns.
+ * state, plus the configured user a refused login named (and whether it was
+ * the `root` fallback) or the configured database a server lacked, is all it
+ * returns.
  */
 export type StoreStatus =
   | { state: "ok" }
-  | { state: "refused"; user?: string }
+  | { state: "refused"; user?: string; userDefaulted?: true }
+  | { state: "no_database"; database: string }
   | { state: "unreachable" };
 
 /** How long the probe waits for `SELECT 1` before calling the store unreachable. */
@@ -24,7 +31,8 @@ export const STORE_PROBE_TIMEOUT_MS = 1500;
 /**
  * A probe over `pool`: each call races one `SELECT 1` against a `timeoutMs`
  * timer and resolves `ok` when the query answers, `refused` (with the user the
- * pool named) on a `DoltLoginRefusedError`, and `unreachable` on any other
+ * pool named) on a `DoltLoginRefusedError`, `no_database` on a
+ * `DoltDatabaseMissingError`, and `unreachable` on any other
  * failure or when the timer fires first. It never rejects.
  *
  * At most one query is outstanding. A query the timer outran is not cancelled
@@ -63,9 +71,14 @@ async function queryStatus(pool: DoltQueryable): Promise<StoreStatus> {
     return { state: "ok" };
   } catch (error) {
     if (error instanceof DoltLoginRefusedError) {
-      return error.user === undefined
-        ? { state: "refused" }
-        : { state: "refused", user: error.user };
+      return {
+        state: "refused",
+        ...(error.user === undefined ? {} : { user: error.user }),
+        ...(error.userDefaulted ? { userDefaulted: true as const } : {}),
+      };
+    }
+    if (error instanceof DoltDatabaseMissingError) {
+      return { state: "no_database", database: error.database };
     }
     return { state: "unreachable" };
   }

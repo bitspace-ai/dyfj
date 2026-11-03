@@ -6,6 +6,12 @@
  * column tuples before it serves, and refuses to start when any are missing.
  */
 
+import { DomainError } from "../contract/mod.ts";
+import {
+  DoltDatabaseMissingError,
+  DoltLoginRefusedError,
+  DoltUnreachableError,
+} from "./dolt-pool.ts";
 import {
   CANONICAL_TABLE_COLUMNS,
   type CanonicalTable,
@@ -17,17 +23,40 @@ export interface MissingColumn {
 }
 
 /** Thrown at boot when the live database lacks canonical columns. */
-export class MissingSchemaColumnsError extends Error {
+export class MissingSchemaColumnsError extends DomainError {
   readonly missing: readonly MissingColumn[];
 
   constructor(missing: readonly MissingColumn[]) {
-    const names = missing.map(({ table, column }) => `${table}.${column}`);
-    super(
-      `The Dolt database is missing ${missing.length} column(s) this ` +
-        `runtime needs: ${names.join(", ")}. Apply the forward migrations ` +
-        "in schema/migrations/ to bring it to the current baseline (see " +
-        "schema/README.md), then start the runtime again.",
-    );
+    // A table with every canonical column missing is reported as the table:
+    // information_schema hides a table the user has no grant on, so it may
+    // exist and be unreadable, and its columns would only crowd the message.
+    const tables = (Object.keys(CANONICAL_TABLE_COLUMNS) as CanonicalTable[])
+      .filter((table) =>
+        CANONICAL_TABLE_COLUMNS[table].every((column) =>
+          missing.some((m) => m.table === table && m.column === column)
+        )
+      );
+    const columns = missing.filter(({ table }) => !tables.includes(table));
+    const parts: string[] = [];
+    if (columns.length > 0) {
+      const names = columns.map(({ table, column }) => `${table}.${column}`);
+      parts.push(
+        `The Dolt database is missing ${columns.length} column(s) this ` +
+          `runtime needs: ${names.join(", ")}. Apply the forward migrations ` +
+          "in schema/migrations/ to bring it to the current baseline (see " +
+          "schema/README.md), then start the runtime again.",
+      );
+    }
+    if (tables.length > 0) {
+      parts.push(
+        `The Dolt database shows this runtime no table named ` +
+          `${tables.join(", ")}. Either the schema was never applied to it ` +
+          "(schema/README.md), or the DOLT_USER it logs in as has no grant " +
+          "on those tables (the Dolt users section of schema/README.md); " +
+          "fix that, then start the runtime again.",
+      );
+    }
+    super(parts.join(" "));
     this.name = "MissingSchemaColumnsError";
     this.missing = missing;
   }
@@ -95,13 +124,19 @@ const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
 
 /**
  * Whether the boot-time column check failed because the database was not
- * reachable or usable (connection, authentication, unknown database), in
+ * reachable or usable (connection, authentication, unknown database, raw or
+ * as the pool's own error for it), in
  * which case the engine boots as it did before the check existed and the
  * error surfaces on first use. Any other failure is not recognized here, so
  * the boot fails rather than serving with a check that never completed.
  */
 export function isDatabaseUnavailableError(error: unknown): boolean {
-  if (error instanceof ColumnCheckTimeoutError) return true;
+  if (
+    error instanceof ColumnCheckTimeoutError ||
+    error instanceof DoltLoginRefusedError ||
+    error instanceof DoltUnreachableError ||
+    error instanceof DoltDatabaseMissingError
+  ) return true;
   if (typeof error !== "object" || error === null) return false;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" && UNAVAILABLE_CODES.has(code);

@@ -189,13 +189,18 @@ async function selectedAcpRoute(
   } | null
 > {
   try {
+    let catalogFailure: unknown;
     const catalog = await loadWorkbenchModelsWithLocalDefaults(models).catch(
-      () => defaultLocalWorkbenchModels(),
+      (error) => {
+        catalogFailure = error;
+        return defaultLocalWorkbenchModels();
+      },
     );
-    const selection = selectWorkbenchModel(
+    const selection = selectNamingCatalogFailure(
       catalog,
       request.routingOptions ?? {},
       request.defaultCompanionModel,
+      catalogFailure,
     );
     if (selection.selected.api !== "acp") return null;
     let profile: AcpRunnerSelection["profile"];
@@ -298,6 +303,30 @@ export interface ModelRoute {
 }
 
 /**
+ * `selectWorkbenchModel`, except that over a fallback catalog (the catalog
+ * load failed with `catalogFailure`) a model the built-in rows lack is
+ * reported with the load failure as its cause, not as a bare missing model.
+ */
+function selectNamingCatalogFailure(
+  catalog: WorkbenchModel[],
+  options: WorkbenchRoutingOptions,
+  defaultCompanionModel: string | null | undefined,
+  catalogFailure: unknown,
+): ReturnType<typeof selectWorkbenchModel> {
+  try {
+    return selectWorkbenchModel(catalog, options, defaultCompanionModel);
+  } catch (error) {
+    if (
+      catalogFailure === undefined ||
+      !(error instanceof WorkbenchModelNotFoundError)
+    ) throw error;
+    throw new WorkbenchModelNotFoundError(error.slug, {
+      catalogFailure: summarizeError(catalogFailure),
+    });
+  }
+}
+
+/**
  * Select the model for a native turn. Ask and next-work turns fall back to the
  * static local tier-0 default when the catalog cannot be loaded (with a
  * console warning); a companion turn fails instead.
@@ -313,6 +342,7 @@ export async function selectModelRoute(
   const isNextWork = isNextWorkMode(request.mode);
   const usesRepoAskContext = request.mode === "ask" || isNextWork;
   let catalog: WorkbenchModel[];
+  let catalogFailure: unknown;
   try {
     catalog = usesRepoAskContext
       ? await loadWorkbenchModelsWithLocalDefaults(models)
@@ -328,11 +358,13 @@ export async function selectModelRoute(
       }`,
     );
     catalog = defaultLocalWorkbenchModels();
+    catalogFailure = err;
   }
-  const selection = selectWorkbenchModel(
+  const selection = selectNamingCatalogFailure(
     catalog,
     request.routingOptions,
     request.defaultCompanionModel,
+    catalogFailure,
   );
   return {
     models: catalog,
