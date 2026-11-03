@@ -11,6 +11,64 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A running turn is legible from the Rust REPL, and a finished one shows
+  its evidence.** A long turn used to look like a stall: one `· working…`
+  line, then nothing during a provider call or a slow command. On a terminal
+  the REPL now keeps a status line under the turn, redrawn every second, that
+  says what it waits on and for how long (`… waiting on <model> 47s · turn
+  1m12s · step 3 · 5 calls`, `… running bash npm test 2m05s`), and adds `no
+  runtime event for <time>` after 30 s of silence that began after the
+  current wait did (during a plain long wait, the wait's clock already shows
+  it). It is never drawn over
+  streamed text and is erased before any other output. Tool lines name what
+  each call acted on (`✓ read_file src/a.ts (5ms)`) and mark with `!` a call
+  that ran but whose result reports a problem (`! bash npm test (3.2s) ·
+  exit 1`); the started line is left to the status line on a terminal, so
+  each call is one line in scrollback. Every turn closes, before its receipt,
+  with an evidence summary from the runtime's tool frames rather than the
+  model's account: calls by outcome, with a `bash` or `git` call that exited
+  non-zero or timed out counted as a failed command (`2 commands failed (exit
+  7; timed out after 3000ms)`) and a command whose exit status was not
+  reported, as an older runtime's are not, counted as `reported no exit
+  status` and marked `?` rather than as ok, wall time, files the file tools
+  wrote, each command with its exit status, the calls that went wrong, and
+  the files no command reported exit 0 after; a command cut short is listed
+  as `reported no completion`. It never calls a command a passing check, and it
+  ends by saying it does not check the reply's claims; a turn with no tool
+  calls says the reply is the model's own account. `/evidence` lists every
+  call of the last turn with when it started and ended, and works while the
+  runtime is disconnected. On the external-agent (ACP) route the status line
+  names the agent's tool call in progress (`external tool` when it has no
+  title or name) and a line marks each one's end,
+  and the evidence records those calls, marked as the agent's own report.
+  A turn the runtime settles as cancelled ends with `turn cancelled`.
+  Durations over a second read as seconds. The TypeScript client's tool lines
+  name the subject and status too. `prototype/testing/probes/long-turn/`
+  holds a scripted turn and a pty driver that run all of this against a
+  disposable runtime.
+
+- **Stream frames carry the turn they belong to.** A `stream` notification
+  now includes the `turnId` the `turn` request named. The Rust REPL drops a
+  frame tagged with another turn's id, so a late frame from a turn the
+  operator abandoned is no longer shown under the next turn. Untagged frames
+  from an older runtime are rendered as before.
+
+- **Tool frames say what a call acted on and how a command exited.**
+  `toolCallStarted` and `toolCallCompleted` carry an optional `subject`, the
+  first string argument the durable `tool_call` event keeps (redacted
+  arguments are never the subject; a command that redacts every argument has
+  none), single-lined, scrubbed and capped at 120 bytes. A completed call
+  that ran without a tool error carries an optional `resultStatus` when its
+  result opens with a `bash` or `git` exit status (for `git`, also after its
+  one-line subdirectory notice) or a tool's `error:` reply,
+  reduced as the log reduces a failure reason. A redacted result contributes
+  only the runtime-written exit status line, or the fixed `did not run` when
+  the command replied `error: …` instead (its runner threw, its working
+  directory was refused, or its arguments failed validation); the reply's
+  text is never shown. `isError` is unchanged: a
+  non-zero exit or a `not found` reply is still output the model reads, and
+  the runaway-spend check still treats it so.
+
 - **A turn that stops at the output limit says so (BIT-811).** A reasoning
   model that spent its whole per-call output budget on reasoning ended its
   turn with an empty reply and nothing reported why, though `dyfj exec --json`
@@ -193,6 +251,9 @@ README are tracked separately in its Revision history section.
   come from.
 
 ### Fixed
+
+- **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
+  recorded turn" notice `down` prints, instead of failing with a raw `ENOENT`.
 
 - **Isolated Dolt fixture teardown (BIT-854).** Dolt children run with
   `DOLT_DISABLE_EVENT_FLUSH`, so no detached event flush writes into the

@@ -230,6 +230,13 @@ export type WorkbenchRuntimeEvent =
     sessionId: string;
     commandId: string;
     callId: string;
+    /**
+     * What the call acts on, for the operator: the first string argument the
+     * durable tool_call event keeps (a path, a pattern, a command), one line,
+     * at most 120 bytes. Absent when the command redacts every argument or
+     * no such value exists. Repeated on the matching toolCallCompleted.
+     */
+    subject?: string;
   }
   | {
     type: "toolCallCompleted";
@@ -245,6 +252,15 @@ export type WorkbenchRuntimeEvent =
      * and on a call that was not approved.
      */
     failureReason?: string;
+    /**
+     * On a call that ran without a tool error: the exit status line of a
+     * command (`exit 1`, `exit by signal SIGTERM`, a timeout), or the
+     * `error: …` line a tool replied with, reduced as the durable log reduces
+     * a failure reason. Either is output the model reads, not a failed call,
+     * so isError stays false; this is what lets a client show it.
+     */
+    resultStatus?: string;
+    subject?: string;
     errorName?: string;
     errorMessage?: string;
     /**

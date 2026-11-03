@@ -422,12 +422,17 @@ export type TurnReceipt = NativeTurnReceipt | ExternalAgentTurnReceipt;
  *            below because clients must act on or display them)
  *   done   — terminal success, carrying the full TurnReceipt
  *   error  — terminal failure
+ *
+ * Every frame carries `turnId` when the request named one, so a client can
+ * discard a late frame from a turn it already abandoned instead of showing
+ * that turn's activity under the next one.
  */
-export type TurnStreamFrame =
+export type TurnStreamFrame = { turnId?: string } & (
   | { t: "delta"; text: string }
   | { t: "event"; event: Record<string, unknown> }
   | { t: "done"; result: TurnReceipt }
-  | { t: "error"; message: string };
+  | { t: "error"; message: string }
+);
 
 /**
  * The superseding-retry signal. Emitted between the deltas of an abandoned

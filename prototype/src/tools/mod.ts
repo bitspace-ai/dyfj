@@ -60,6 +60,14 @@ export {
   redactToolCall,
 } from "./redaction.ts";
 export {
+  resultStatusField,
+  subjectField,
+  TOOL_STATUS_MAX_BYTES,
+  TOOL_SUBJECT_MAX_BYTES,
+  toolCallSubject,
+  toolResultStatus,
+} from "./call-subject.ts";
+export {
   approvalDeniedReason,
   buildCommandToolCallEventPayload,
   type CommandEventContext,

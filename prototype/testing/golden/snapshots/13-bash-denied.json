@@ -169,7 +169,8 @@
             "type": "toolCallStarted",
             "sessionId": "<ULID:1>",
             "commandId": "bash",
-            "callId": "call_golden_1"
+            "callId": "call_golden_1",
+            "subject": "echo golden-bash-denied"
           }
         }
       },
@@ -197,6 +198,7 @@
             "sessionId": "<ULID:1>",
             "commandId": "bash",
             "callId": "call_golden_1",
+            "subject": "echo golden-bash-denied",
             "isError": true,
             "durationMs": "<DURATION>",
             "verdict": "approval_denied"

@@ -41,7 +41,8 @@ pub enum Waited {
 ///
 /// A prompt read stays open the whole time, so Ctrl-C, Ctrl-D and `/quit`
 /// quit at once rather than after the next attempt; a SIGINT between reads
-/// does too. Any other line is refused, because there is nowhere to send it.
+/// does too. `/evidence` prints the last turn's local record; any other line
+/// is refused, because there is nowhere to send it.
 /// A prompt still open when the runtime returns is left in `pending`, and its
 /// answer is the first submission to the restarted runtime.
 ///
@@ -60,6 +61,7 @@ pub async fn wait_for_runtime(
     interrupts: &mut mpsc::Receiver<()>,
     exit: &mut ExitWatch,
     log: &mut Option<LogTail>,
+    last_evidence: Option<&[String]>,
     delays: &mut dyn Iterator<Item = Duration>,
 ) -> Waited {
     let mut attempt = Box::pin(connect_after(socket, delays.next().unwrap_or(MAX_BACKOFF)));
@@ -95,6 +97,10 @@ pub async fn wait_for_runtime(
                     Ok(ReadOutcome::Line(line)) => match classify(&line) {
                         Submission::Quit => return Waited::Quit,
                         Submission::Empty => {}
+                        // The last turn's record is local; it needs no runtime.
+                        _ if commands::parse(&line) == Some(commands::Command::Evidence) => {
+                            commands::print_evidence(last_evidence)
+                        }
                         _ => eprintln!(
                             "the runtime is disconnected; nothing was sent. \
                              Waiting for it (Ctrl-C or /quit to leave)."
@@ -160,7 +166,7 @@ pub async fn await_prompt(
             () = exit.requested() => return Prompted::Exit,
             Some(orphan) = orphans.recv() => note_orphan(&orphan),
             message = incoming.recv() => match message {
-                Some(Incoming::Stream(_)) => {}
+                Some(Incoming::Stream { .. }) => {}
                 Some(Incoming::Approval { respond, .. }) => {
                     let _ = respond.send(Verdict::deny("turn is no longer active"));
                 }
@@ -366,6 +372,7 @@ mod tests {
                 &mut self.interrupts,
                 &mut self.exit,
                 &mut None,
+                None,
                 &mut delays,
             )
             .await
@@ -772,7 +779,8 @@ mod tests {
         let (mut repl, mut terminal) = harness();
         let waiting = repl.wait(&path);
         tokio::pin!(waiting);
-        for line in ["hello", "/help"] {
+        // `/evidence` answers locally and leaves the wait running too.
+        for line in ["hello", "/help", "/evidence"] {
             let respond = tokio::select! {
                 _ = &mut waiting => panic!("a typed line must not end the wait"),
                 ask = terminal.asks.recv() => match ask {

@@ -273,15 +273,18 @@ async function exec(state: State, prompt: string): Promise<void> {
   await chmod(`${state.root}/evidence.txt`, 0o600);
   process.stdout.write(result);
 }
-async function down(state: State): Promise<void> {
-  let evidence: string;
+/** The recorded evidence, or the notice that no turn was recorded. */
+async function recordedEvidence(state: State): Promise<string> {
   try {
-    evidence = await readFile(`${state.root}/evidence.txt`, "utf8");
+    return await readFile(`${state.root}/evidence.txt`, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    evidence = `Commit: ${state.commit}\n` +
+    return `Commit: ${state.commit}\n` +
       "No recorded turn; use scratch-runtime exec to capture evidence.\n";
   }
+}
+async function down(state: State): Promise<void> {
+  const evidence = await recordedEvidence(state);
   const supervisor = spawnSync("ps", ["-o", "command=", "-p", `${state.pid}`], {
     encoding: "utf8",
   });
@@ -336,9 +339,7 @@ async function main(args: string[]): Promise<void> {
     if (command === "exec" && rest.length === 3) return exec(state, rest[2]);
     if (command === "down" && rest.length === 2) return down(state);
     if (command === "evidence" && rest.length === 2) {
-      process.stdout.write(
-        await readFile(`${state.root}/evidence.txt`, "utf8"),
-      );
+      process.stdout.write(await recordedEvidence(state));
       return;
     }
   }

@@ -178,8 +178,10 @@ function clientApprover(ctx: RpcContext, activeTurn: TurnTicket): TurnApprover {
 }
 
 // The turn's frame sink: text deltas and runtime events go back to the
-// connected client as `stream` notifications.
-function streamFrames(ctx: RpcContext): FrameSink {
+// connected client as `stream` notifications, tagged with the request's turn
+// id when it named one.
+function streamFrames(ctx: RpcContext, turnId: string | undefined): FrameSink {
+  const tag = turnId === undefined ? {} : { turnId };
   // A client that drops mid-turn makes every subsequent notify reject.
   // Deltas and status events are best-effort, so their send failures are
   // swallowed and logged once per turn rather than once per frame (a
@@ -208,7 +210,7 @@ function streamFrames(ctx: RpcContext): FrameSink {
     onTextDelta: (text) => {
       ctx.notify(
         "stream",
-        { t: "delta", text } satisfies TurnStreamFrame,
+        { t: "delta", text, ...tag } satisfies TurnStreamFrame,
       ).catch(noteStreamNotifyFailure);
     },
     // Safety-critical signals are the events whose delivery the runtime
@@ -222,7 +224,7 @@ function streamFrames(ctx: RpcContext): FrameSink {
     onRuntimeEvent: (event) => {
       const sent = ctx.notify(
         "stream",
-        { t: "event", event } satisfies TurnStreamFrame,
+        { t: "event", event, ...tag } satisfies TurnStreamFrame,
       );
       if (
         isSupersedingRetryStarted(event) ||
@@ -287,7 +289,7 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
           ...engineDeps,
           externalMcpCommands: deps.externalMcpCommands,
           approver: clientApprover(ctx, activeTurn),
-          frames: streamFrames(ctx),
+          frames: streamFrames(ctx, turnId),
         });
       } finally {
         const contextTurns = activeTurns.get(ctx);

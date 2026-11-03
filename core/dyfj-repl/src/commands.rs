@@ -47,6 +47,8 @@ pub enum Command {
     Budget(Option<(crate::budget::Limit, f64)>),
     /// `/receipt steps`: the last turn's usage, per provider call.
     ReceiptSteps,
+    /// `/evidence`: every tool call of the last turn, as the runtime reported it.
+    Evidence,
     /// `/session`
     SessionShow,
     /// `/session list`
@@ -169,6 +171,10 @@ pub fn parse(input: &str) -> Option<Command> {
             },
             _ => Command::Usage(crate::budget::usage()),
         },
+        "/evidence" => match args.as_slice() {
+            [] => Command::Evidence,
+            _ => Command::Usage("usage: /evidence".into()),
+        },
         "/receipt" => match args.as_slice() {
             ["steps"] => Command::ReceiptSteps,
             _ => Command::Usage("usage: /receipt steps".into()),
@@ -284,6 +290,7 @@ commands (type them alone on a line; inside a paste they are prompt text):
   /steps [N]                                           show or set the tool-step limit
   /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
   /receipt steps                                       the last turn's usage, per provider call
+  /evidence                                            every tool call of the last turn, and how it ended
   /session | /session list | /session switch <id>     show, list or resume sessions
   /friction <sev> [--escaped] <text...>                post a daily-driver friction
   /idea mark <label...> | /idea list                   mark or list ideas
@@ -348,6 +355,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         Command::Steps(target) => steps(client, session, target).await,
         Command::Budget(target) => budget(client, session, target).await,
         Command::ReceiptSteps => receipt_steps(session),
+        Command::Evidence => print_evidence(session.last_evidence.as_deref()),
         Command::SessionShow => session_show(session),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
@@ -368,6 +376,28 @@ fn receipt_steps(session: &Session) {
             }
         }
         _ => eprintln!("no per-step usage for the last turn"),
+    }
+}
+
+/// Print every tool call of the last turn, from the runtime's frames rather
+/// than the model's account of them. It needs no runtime, so it also answers
+/// while the REPL waits for a disconnected one.
+pub fn print_evidence(calls: Option<&[String]>) {
+    match calls {
+        None => eprintln!("no turn has run in this REPL yet"),
+        Some([]) => eprintln!("the last turn ran no tools"),
+        Some(calls) => {
+            let plural = if calls.len() == 1 { "" } else { "s" };
+            eprintln!("last turn, {} tool call{plural}, as the runtime reported them:", calls.len());
+            for line in calls {
+                eprintln!("{line}");
+            }
+            eprintln!(
+                "[start→end] seconds into the turn · ✓ ok · ! ran, but its result reports a problem \
+                 (for a command: a non-zero exit or a timeout) · ✗ failed · ⊘ not approved · ? exit status not reported"
+            );
+            eprintln!("this is the runtime's record of the calls; it does not check the reply's claims");
+        }
     }
 }
 
@@ -615,7 +645,7 @@ async fn request_answering_approvals(
                     }
                 }
                 // No turn is running, so a stray frame has nothing to render into.
-                Some(Incoming::Stream(_)) => {}
+                Some(Incoming::Stream { .. }) => {}
                 None => return (&mut pending).await,
             },
         }
@@ -1496,6 +1526,8 @@ mod run_tests {
     fn parses_steps_within_the_bound() {
         use crate::commands::parse;
         assert_eq!(parse("/receipt steps"), Some(Command::ReceiptSteps));
+        assert_eq!(parse("/evidence"), Some(Command::Evidence));
+        assert_eq!(parse("/evidence all"), Some(Command::Usage("usage: /evidence".into())));
         for line in ["/receipt", "/receipt step", "/receipt steps 2"] {
             assert_eq!(parse(line), Some(Command::Usage("usage: /receipt steps".into())), "{line}");
         }

@@ -31,6 +31,8 @@ import {
   fixedOperatorReason,
   invokeCommandWithEvent,
   operatorFailureReason,
+  resultStatusField,
+  subjectField,
 } from "../tools/mod.ts";
 import { summarizeError } from "../contract/mod.ts";
 import {
@@ -369,17 +371,18 @@ async function invokeTool(
   const { state, input, ports } = turn;
   const { session } = state;
   const toolStartedAt = ports.clock.now();
+  const command = state.commandRegistry.lookup(toolCall.name);
+  const subject = subjectField(command, toolCall.arguments);
   const completed = {
     type: "toolCallCompleted" as const,
     sessionId: session.sessionId,
     commandId: toolCall.name,
     callId: toolCall.id,
+    ...subject,
   };
   const startedEvent = emitRuntimeEvent(input.frames?.onRuntimeEvent, {
+    ...completed,
     type: "toolCallStarted",
-    sessionId: session.sessionId,
-    commandId: toolCall.name,
-    callId: toolCall.id,
   });
   try {
     // Starting event emission and invoking the command happen in the same
@@ -409,10 +412,7 @@ async function invokeTool(
         ? commandResult.operatorReason
         : undefined) ??
         operatorFailureReason(commandResult.reason, toolCall.arguments, {
-          declared: Object.keys(
-            state.commandRegistry.lookup(toolCall.name)?.inputSchema
-              .properties ?? {},
-          ),
+          declared: Object.keys(command?.inputSchema.properties ?? {}),
         })
       : undefined;
     // The frame is live; the log and the notice (which the stored receipt
@@ -447,6 +447,7 @@ async function invokeTool(
       isError: commandResult.isError,
       durationMs,
       ...(failureReason === undefined ? {} : { failureReason }),
+      ...resultStatusField(command, toolCall.arguments, commandResult),
       ...(approvalDenied ? { verdict: "approval_denied" as const } : {}),
     });
     return {

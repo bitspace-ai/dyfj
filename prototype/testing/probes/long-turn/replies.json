@@ -1,0 +1,8 @@
+[
+  {"kind":"tool","tool":"list_files","arguments":{"path":"."}},
+  {"kind":"tool","tool":"write_file","arguments":{"path":"notes.txt","content":"trial edit\n"}},
+  {"kind":"tool","tool":"bash","arguments":{"command":"sleep 35; echo 'a deliberately failing check'; exit 7"}},
+  {"kind":"tool","tool":"bash","arguments":{"command":"sleep 10; npm test","timeoutSec":3}},
+  {"kind":"text","text":"All checks passed. Everything is verified."},
+  {"kind":"hold","text":"Waiting for a slow provider."}
+]
