@@ -250,6 +250,19 @@ README are tracked separately in its Revision history section.
   needed to write them, and they are where a driver definition or hook would
   come from.
 
+### Changed
+
+- **Nine dependency bumps in one change (BIT-860).** The runtime's own ACP
+  client moves from `@agentclientprotocol/sdk` 1.8.0 to 2.1.0, the version the
+  Codex adapter already carries. SDK 2.0 removed the legacy connection classes,
+  which the client does not use, and the default protocol stays ACP v1.
+  `@modelcontextprotocol/client` and `@modelcontextprotocol/server` move from
+  2.3.1 to 2.4.0, and the transitive `node-forge` from 1.4.0 to 1.4.2. In
+  `core/`, `rustyline` moves from 18.0.1 to 19.0.0, `tokio` from 1.53.3 to
+  1.54.1, `uuid` from 1.28.0 to 1.29.0, `rustls` from 0.23.45 to 0.23.46 and
+  `libc` from 0.2.190 to 0.2.191. Every version is at least five days past
+  its release.
+
 ### Fixed
 
 - **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
