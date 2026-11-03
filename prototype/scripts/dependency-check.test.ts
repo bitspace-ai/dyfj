@@ -68,3 +68,17 @@ test("a range instead of an exact pin is not compared", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("an installed manifest that cannot be parsed says to run npm ci", async () => {
+  const root = await tree({ ulid: "3.0.2" }, {});
+  try {
+    await mkdir(join(root, "node_modules", "ulid"), { recursive: true });
+    await writeFile(join(root, "node_modules", "ulid", "package.json"), "");
+    const problem = dependencyProblem(join(root, "prototype"));
+    assert.ok(problem !== undefined);
+    assert.match(problem, /ulid/);
+    assert.match(problem, /npm ci/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

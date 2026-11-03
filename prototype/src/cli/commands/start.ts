@@ -34,8 +34,9 @@ export async function runStart(
   try {
     return await startRuntime(config, { autostarted });
   } catch (error) {
-    // A config error's own line names the file and the fault; any other
-    // error is summarized, never relayed.
+    // A config error's own line names the file and the fault. Any other
+    // error is summarized: a DomainError's message is relayed, anything
+    // else is reduced to its class and size.
     io.err(
       `dyfj: could not start local runtime: ${
         configErrorText(error) ?? summarizeError(error)

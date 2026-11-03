@@ -4,7 +4,8 @@
  * A path longer than the platform's `sun_path` made the runtime die with an
  * uncaught `listen EINVAL` stack trace, and the client report the connect as
  * `[Error, N bytes]`. The node:net adapter now checks the length itself and
- * maps a bind failure's code to a message naming the path and the fix.
+ * maps a bind failure to a message naming the path, its code (described for
+ * the codes it knows) and the fix.
  */
 
 import assert from "node:assert/strict";
@@ -15,12 +16,13 @@ import { test } from "node:test";
 import { DomainError, summarizeError } from "../contract/mod.ts";
 import { nodeSocketHost } from "./node-socket.ts";
 import {
+  listenFailure,
   maxSocketPathBytes,
   RuntimeListenError,
   SocketPathTooLongError,
 } from "./socket-failure.ts";
 
-/** A path of exactly `bytes` bytes under a short existing directory. */
+/** A path of exactly `bytes` bytes under a short ASCII-named directory. */
 function pathOfBytes(dir: string, bytes: number): string {
   const prefix = `${dir}/`;
   return prefix + "s".repeat(bytes - prefix.length);
@@ -95,4 +97,24 @@ test("listen in a directory that does not exist names the directory", async () =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("an unmapped bind failure keeps its code", () => {
+  const error = listenFailure(
+    "/tmp/dyfj.sock",
+    Object.assign(new Error("listen ENOSPC: no space"), { code: "ENOSPC" }),
+  );
+  assert.ok(error instanceof RuntimeListenError);
+  assert.match(error.message, /\(ENOSPC\)/);
+  assert.ok(!error.message.includes("no space"));
+});
+
+test("a parent that is not a directory is not called missing", () => {
+  const error = listenFailure(
+    "/dev/null/child/wb.sock",
+    Object.assign(new Error("listen ENOTDIR"), { code: "ENOTDIR" }),
+  );
+  assert.ok(error instanceof RuntimeListenError);
+  assert.doesNotMatch(error.message, /does not exist/);
+  assert.match(error.message, /not a directory/);
 });

@@ -563,22 +563,23 @@ ensure_runtime() {
   return 1
 }
 
-# The lines the runtime wrote since the last autostart marker, at most 20,
-# indented, with control characters removed, on stderr. The log is the
-# operator's own (owner-only) file and this is what they would read there,
-# bounded so a stack trace cannot flood the terminal.
+# The last lines the runtime wrote since the last autostart marker, at most
+# 20 and each cut to 300 bytes, indented, on stderr, with ASCII control
+# characters other than tab and newline removed. Only the log's last 400
+# lines are read, so a long log costs no more than a short one. The log is
+# the operator's own (owner-only) file and this is what they would read
+# there, bounded so a stack trace cannot flood the terminal.
 report_runtime_log_tail() {
   local log="$1"
   [[ -r "$log" ]] || return 0
-  awk '
-    /^── dyfj autostart at / { start = NR; next }
-    { lines[NR] = $0 }
+  tail -n 400 "$log" 2>/dev/null | awk '
+    /^── dyfj autostart at / { n = 0; next }
+    { ring[n % 20] = $0; n++ }
     END {
-      first = NR - 19
-      if (first <= start) first = start + 1
-      for (i = first; i <= NR; i++) if (i in lines) print "  " substr(lines[i], 1, 300)
+      first = n > 20 ? n - 20 : 0
+      for (i = first; i < n; i++) print "  " substr(ring[i % 20], 1, 300)
     }
-  ' "$log" 2>/dev/null | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2 || true
+  ' 2>/dev/null | LC_ALL=C tr -d '\000-\010\013-\037\177' >&2 || true
 }
 
 prototype_root() {

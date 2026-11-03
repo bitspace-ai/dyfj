@@ -272,7 +272,9 @@ README are tracked separately in its Revision history section.
   (Node built-ins only) after its Node version check and prints, for example,
   `dyfj: the dependency ulid is not installed, so the client and runtime
   cannot load; run npm ci in <repository root>, then retry`, or names the
-  installed and pinned versions of a mismatched package.
+  installed and pinned versions of a mismatched package, or a package whose
+  installed `package.json` cannot be read. It compares versions only for
+  exact `x.y.z` pins, and checks direct dependencies, not the lockfile.
 
 - **An autostart that fails without a stated reason shows the log's last
   lines.** `dyfj start` reported a config file it could not read (for example
@@ -280,9 +282,11 @@ README are tracked separately in its Revision history section.
   [Error, 40 bytes]`, and the launcher only pointed at the log. `dyfj start`
   now relays the config error's own line, which also says what to do (`make
   it a regular file you can read, or move it aside to run on the defaults`),
-  and the launcher and the Rust REPL relay that line. When the log states no
-  reason, the launcher prints its last 20 lines since the autostart, control
-  characters removed, including after `runtime is not answering`.
+  and the launcher and the Rust REPL relay that line; control characters in
+  a config error's line are removed. When the log states no reason, the
+  launcher prints its last 20 lines since the autostart, read from the end of
+  the log, with ASCII control characters other than tab and newline removed,
+  including after `runtime is not answering`.
 
 - **A runtime that cannot boot says why, and the launcher relays it.** A
   socket path longer than macOS's 104-byte `sun_path` made the runtime die
@@ -294,7 +298,7 @@ README are tracked separately in its Revision history section.
   --socket or DYFJ_SOCKET ...`), and the runtime and the client report the
   same for a path that reaches them. A socket the runtime cannot bind for
   another reason (a missing directory, permission, a file in the way) names
-  the path and the cause. Any boot failure whose message Workbench wrote is
+  the path and the error's code, with a description for the codes it knows. Any boot failure whose message Workbench wrote is
   now one `dyfj runtime: failed to start: <reason>` line with no stack trace;
   when an autostarted runtime exits before it answers, the launcher stops
   waiting at once and prints `dyfj: the runtime exited before it answered:

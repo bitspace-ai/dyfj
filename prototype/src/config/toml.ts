@@ -10,6 +10,7 @@
  * (`toml-parser.test.ts`) and an integration test cover the real one.
  */
 
+import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import { type Env, processEnv } from "./env.ts";
 
 export type TomlParser = (
@@ -62,16 +63,23 @@ function errorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+/** The most of a config error's text that is relayed, in UTF-8 bytes. */
+const MAX_CONFIG_ERROR_BYTES = 2_000;
+
 /**
  * The one-line text of a config error, or undefined when `error` is not one.
- * Config validators and `readConfigFile` throw an `Error` whose message
- * starts with `config:` and is path-free and written here, so it is safe to
- * relay; line breaks inside it collapse to single spaces.
+ * A config error is recognized by its message's `config:` prefix, the one
+ * config validators and `readConfigFile` write. Line breaks collapse to
+ * single spaces, control characters are removed, and the text is capped, so
+ * the line is safe to print even when the message is not one of those.
  */
 export function configErrorText(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
   if (!error.message.startsWith("config:")) return undefined;
-  return error.message.replace(/\s*[\r\n]+\s*/g, " ").trim();
+  return sanitizeBoundaryText(
+    error.message.replace(/\s*[\r\n]+\s*/g, " "),
+    MAX_CONFIG_ERROR_BYTES,
+  ).trim();
 }
 
 export async function readConfigFile(

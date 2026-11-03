@@ -7,7 +7,8 @@
 // (--socket, DYFJ_SOCKET, or the HOME/XDG_RUNTIME_DIR it derives from), and
 // fixed text; the platform's message is never relayed.
 
-import { existsSync } from "node:fs";
+import { Buffer } from "node:buffer";
+import { statSync } from "node:fs";
 import process from "node:process";
 import { DomainError } from "../contract/mod.ts";
 
@@ -44,7 +45,7 @@ export class SocketPathTooLongError extends DomainError {
 
 /** Throw `SocketPathTooLongError` when `path` does not fit. */
 export function assertSocketPathFits(path: string): void {
-  const bytes = new TextEncoder().encode(path).byteLength;
+  const bytes = Buffer.byteLength(path, "utf8");
   const limit = maxSocketPathBytes();
   if (bytes > limit) throw new SocketPathTooLongError(path, bytes, limit);
 }
@@ -72,22 +73,47 @@ export class RuntimeListenError extends DomainError {
   }
 }
 
+/** An error code safe to name in a message: an `E`-prefixed literal. */
+const ERROR_CODE = /^E[A-Z0-9_]{1,31}$/;
+
+/** The code `stat` of `path`'s parent directory fails with, if it fails. */
+function parentStatCode(path: string): string | undefined {
+  const slash = path.lastIndexOf("/");
+  if (slash <= 0) return undefined;
+  try {
+    statSync(path.slice(0, slash));
+    return undefined;
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === "string" ? code : "unknown";
+  }
+}
+
 /**
- * The bind failure `error` reports for `path`. A missing parent directory is
- * checked directly, because macOS reports it as EACCES; any other cause is
- * read from the error's code, never its message.
+ * The bind failure `error` reports for `path`. The parent directory is
+ * checked directly, because macOS reports a missing one as EACCES: it is
+ * called missing only when `stat` says ENOENT, and an ENOTDIR from `stat`
+ * names that instead. Any other cause is read from the bind error's code,
+ * never its message; a code without a fixed description is still named.
  */
 export function listenFailure(path: string, error: unknown): DomainError {
   if (error instanceof DomainError) return error;
-  const slash = path.lastIndexOf("/");
-  if (slash > 0 && !existsSync(path.slice(0, slash))) {
+  const parent = parentStatCode(path);
+  if (parent === "ENOENT") {
     return new RuntimeListenError(path, "its directory does not exist");
   }
-  const code = typeof error === "object" && error !== null
+  const raw = parent === "ENOTDIR"
+    ? parent
+    : typeof error === "object" && error !== null
     ? (error as { code?: unknown }).code
     : undefined;
-  const cause = typeof code === "string" && Object.hasOwn(LISTEN_CAUSES, code)
+  const code = typeof raw === "string" && ERROR_CODE.test(raw)
+    ? raw
+    : undefined;
+  const cause = code === undefined
+    ? "an unrecognized error"
+    : Object.hasOwn(LISTEN_CAUSES, code)
     ? `${LISTEN_CAUSES[code]} (${code})`
-    : "an unrecognized error";
+    : `an error without a known fix (${code})`;
   return new RuntimeListenError(path, cause);
 }

@@ -1758,8 +1758,9 @@ describe("an autostart that cannot succeed says why", () => {
         DYFJ_SOCKET: socket,
         DYFJ_LAUNCHER_DRY_RUN: "",
         DYFJ_SANDBOX: "off",
-        // A port this test just released has no listener, so the boot's
-        // column check fails fast and the runtime goes on to bind.
+        // A port this test just released has no listener unless another
+        // process took it since, so the boot's column check fails fast and
+        // the runtime goes on to bind.
         DOLT_HOST: "127.0.0.1",
         DOLT_PORT: String(doltPort),
         ...extraEnv,
