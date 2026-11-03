@@ -534,12 +534,12 @@ describe("the dolt store line (BIT-832)", () => {
     assert.equal(
       formatStore({ state: "refused", user: "root", userDefaulted: true }),
       'dolt REFUSED the login for user "root": DOLT_USER is not set, so the ' +
-        "runtime logged in as root; set DOLT_USER and DOLT_PASSWORD in " +
+        "runtime tried to log in as root; set DOLT_USER and DOLT_PASSWORD in " +
         "prototype/.env and restart the runtime",
     );
   });
 
-  it("points at the server and its address when the store is unreachable", () => {
+  it("points at the server and the endpoint settings when the store is unreachable", () => {
     assert.equal(
       formatStore({ state: "unreachable" }),
       "dolt unreachable: start the Dolt SQL server (dolt sql-server), or " +

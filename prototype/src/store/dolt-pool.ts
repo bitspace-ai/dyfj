@@ -94,8 +94,10 @@ function field(value: string): string {
  * the one this process asked to log in as, and neither the password field
  * nor the driver's text is included.
  *
- * Each store-failure class here is recognized by the driver's error code,
- * never by matching message text. Any other failure (a failed query, say)
+ * Each store-failure class here is recognized by the driver's error code or
+ * errno, with one exception: Dolt reports a read of a table the user has no
+ * grant on as the generic ER_UNKNOWN_ERROR, recognized by its message's fixed
+ * shape (`GENERIC_GRANT_DENIED`). Any other failure (a failed query, say)
  * propagates unchanged and keeps its existing treatment at the turn boundary;
  * a failure that is already a `DomainError` stays visible.
  */
@@ -114,7 +116,7 @@ export class DoltLoginRefusedError extends DomainError {
         ? `Dolt refused the login for the configured user; ${fix}`
         : options.userDefaulted
         ? `Dolt refused the login for user "${named}": DOLT_USER is not ` +
-          `set, so the runtime logged in as "${named}". Set DOLT_USER and ` +
+          `set, so the runtime tried to log in as "${named}". Set DOLT_USER and ` +
           "DOLT_PASSWORD in prototype/.env or the environment (the Dolt " +
           "users section of schema/README.md lists them), then restart " +
           "the runtime"
@@ -127,12 +129,18 @@ export class DoltLoginRefusedError extends DomainError {
 }
 
 /** Why the Dolt server could not be reached. */
-export type DoltUnreachableReason = "refused" | "dns" | "timeout" | "lost";
+export type DoltUnreachableReason =
+  | "refused"
+  | "dns"
+  | "timeout"
+  | "noroute"
+  | "lost";
 
 const UNREACHABLE_REASON_TEXT: Record<DoltUnreachableReason, string> = {
   refused: "connection refused",
   dns: "the host name did not resolve",
   timeout: "the connection timed out",
+  noroute: "no route to the host",
   lost: "the connection was lost",
 };
 
@@ -212,8 +220,8 @@ const UNREACHABLE_CODES: Readonly<Record<string, DoltUnreachableReason>> = {
   ENOTFOUND: "dns",
   EAI_AGAIN: "dns",
   ETIMEDOUT: "timeout",
-  EHOSTUNREACH: "timeout",
-  ENETUNREACH: "timeout",
+  EHOSTUNREACH: "noroute",
+  ENETUNREACH: "noroute",
   ECONNRESET: "lost",
   PROTOCOL_CONNECTION_LOST: "lost",
 };
@@ -314,8 +322,9 @@ export function createDoltPool(
  * this process asked to log in as — never one parsed out of the server's
  * reply. Given the endpoint `context`, an unreachable server and an unknown
  * database surface the same way, as `DoltUnreachableError` and
- * `DoltDatabaseMissingError`. A connection handed out by `getConnection` is
- * guarded the same way, because the journal acquires one to run a
+ * `DoltDatabaseMissingError`, and a missing grant as `DoltGrantMissingError`.
+ * A connection handed out by `getConnection` is guarded the same way,
+ * transaction steps included, because the journal acquires one to run a
  * transaction. Every other failure propagates unchanged.
  *
  * Applied to a driver pool of any provenance: `createDoltPool` guards the pool
@@ -347,6 +356,19 @@ export function guardDoltLogins(
   };
 }
 
+/** Run `step`, reporting a store failure it raises as its `DomainError`. */
+async function guarded(
+  step: () => Promise<void>,
+  user: string | undefined,
+  context: DoltFailureContext | undefined,
+): Promise<void> {
+  try {
+    await step();
+  } catch (error) {
+    rethrowStoreFailure(error, user, context);
+  }
+}
+
 /** A pooled connection whose statements report a store failure as such. */
 function guardedDoltConnection(
   connection: DoltConnection,
@@ -361,9 +383,10 @@ function guardedDoltConnection(
         rethrowStoreFailure(error, user, context);
       }
     },
-    beginTransaction: () => connection.beginTransaction(),
-    commit: () => connection.commit(),
-    rollback: () => connection.rollback(),
+    beginTransaction: () =>
+      guarded(() => connection.beginTransaction(), user, context),
+    commit: () => guarded(() => connection.commit(), user, context),
+    rollback: () => guarded(() => connection.rollback(), user, context),
     release: () => connection.release(),
     destroy: () => connection.destroy(),
   };

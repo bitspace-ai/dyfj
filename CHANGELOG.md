@@ -265,7 +265,7 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- **A Dolt store Workbench cannot use says why, in every surface.** A
+- **A Dolt store Workbench cannot use says why.** A
   stopped `dolt sql-server`, a wrong `DOLT_HOST`/`DOLT_PORT` or an unknown
   `DOLT_DATABASE` used to fail a turn with a misleading `Model not found:
   <model>` (the catalog had silently fallen back to the built-in local rows)
@@ -277,7 +277,7 @@ README are tracked separately in its Revision history section.
   ...`; `The Dolt server has no database "x". Check DOLT_DATABASE ...`), a
   missing model over a fallback catalog leads with that cause, and `dyfj
   status` gains a `dolt has no database "x"` line. A refused login for the
-  `root` fallback says `DOLT_USER is not set, so the runtime logged in as
+  `root` fallback says `DOLT_USER is not set, so the runtime tried to log in as
   "root"`. A refused login also no longer crashes the runtime at boot with a
   stack trace: the boot-time column check now recognizes the pool's own
   login error as an unusable store, as it already did the driver's, so the

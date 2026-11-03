@@ -404,13 +404,17 @@ not exist until you create it. Create the users and their grants first, as
 `DOLT_USER=dyfj_runtime` in `.env`. Until then, and whenever `DOLT_USER` is
 unset, the runtime connects as `root`.
 
-When the store cannot be used, the runtime still boots, and `dyfj status` and
-every failed turn say why and what to change: a refused login names the user
-(and says when `DOLT_USER` was unset and the runtime fell back to `root`), a
-server that does not answer names `DOLT_HOST:DOLT_PORT`, a server without
-the configured database names `DOLT_DATABASE`, and a statement refused for
-want of a grant names the user and the Dolt users section of
-`schema/README.md`. A turn whose model is missing
+When the store cannot be reached, refuses the login or has no database by the
+configured name, the runtime still boots, and a failed turn says why and what
+to change: a refused login names the user (and says when `DOLT_USER` was
+unset and the runtime fell back to `root`), a server that does not answer
+names its `host:port` and says to check `DOLT_HOST` and `DOLT_PORT`, and a
+server without the configured database names it and `DOLT_DATABASE`. `dyfj
+status` reports the same three cases from one `SELECT 1`; it does not check
+table grants. A statement refused for want of a grant fails its turn with a
+message that names the user and the Dolt users section of
+`schema/README.md`; a boot whose user cannot see a canonical table still
+fails, and names the tables. A turn whose model is missing
 only because the catalog could not be loaded reports the store's failure, not
 a missing model.
 

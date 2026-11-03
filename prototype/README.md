@@ -381,8 +381,10 @@ grants it needs are in [Dolt users](../schema/README.md#dolt-users). If
 (`src/store/dolt-pool.ts`) reports a refused login, an endpoint that does not
 answer, a missing database and a statement refused for want of a grant as
 `DomainError`s that name the configured user,
-`DOLT_HOST:DOLT_PORT` or `DOLT_DATABASE` and the fix, never the driver's text;
-the runtime boots past all three, and `dyfj status` shows the same cause.
+the endpoint or `DOLT_DATABASE` and the fix, never the driver's text. The
+runtime boots past a refused login, an endpoint that does not answer and a
+missing database, and `dyfj status` shows those three; it does not check
+table grants.
 
 Useful checks:
 

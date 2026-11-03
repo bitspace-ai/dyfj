@@ -9,6 +9,7 @@
  */
 
 import assert from "node:assert/strict";
+import { type AddressInfo, createServer } from "node:net";
 import { test } from "node:test";
 import type { DoltConnectionConfig } from "../config/mod.ts";
 import { composeRuntimePolicy } from "../config/mod.ts";
@@ -150,12 +151,64 @@ test("an unrelated ER_UNKNOWN_ERROR is left alone", async () => {
   assert.equal(error, raw);
 });
 
+test("an unroutable host is reported as no route, not a timeout", async () => {
+  for (const code of ["EHOSTUNREACH", "ENETUNREACH"]) {
+    const error = await rejection(guardDoltLogins(
+      failingPool(driverError(`connect ${code} 10.0.0.1:3306`, code, -65)),
+      "workbench",
+      endpoint,
+    ));
+    assert.ok(error instanceof DoltUnreachableError, code);
+    assert.match(error.message, /\(no route to the host\)/, code);
+  }
+});
+
+test("a transaction's begin, commit and rollback report a store failure", async () => {
+  const lost = driverError(
+    "Connection lost: The server closed the connection.",
+    "PROTOCOL_CONNECTION_LOST",
+    -1,
+  );
+  const connection = {
+    execute: () => Promise.resolve([[], []] as never),
+    beginTransaction: () => Promise.reject(lost),
+    commit: () => Promise.reject(lost),
+    rollback: () => Promise.reject(lost),
+    release: () => {},
+    destroy: () => {},
+  };
+  const guarded = await guardDoltLogins(
+    { ...failingPool(lost), getConnection: () => Promise.resolve(connection) },
+    "workbench",
+    endpoint,
+  ).getConnection();
+  for (const step of ["beginTransaction", "commit", "rollback"] as const) {
+    await assert.rejects(
+      () => guarded[step](),
+      (error: unknown) =>
+        error instanceof DoltUnreachableError &&
+        /\(the connection was lost\)/.test(error.message),
+      step,
+    );
+  }
+});
+
+/** A loopback port that was just free: bound, then released. */
+async function freedLoopbackPort(): Promise<number> {
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
 test("the real driver's refused connection becomes DoltUnreachableError", async () => {
-  // Port 1 on loopback has no listener, so the driver itself raises the
-  // ECONNREFUSED this maps; no stand-in error is involved.
+  // A port this test bound and released has no listener, so the driver
+  // itself raises the ECONNREFUSED this maps; no stand-in error is involved.
+  const port = await freedLoopbackPort();
   const config: DoltConnectionConfig = {
     host: "127.0.0.1",
-    port: 1,
+    port,
     user: "workbench",
     password: "do-not-print",
     database: "dolt",
@@ -164,14 +217,14 @@ test("the real driver's refused connection becomes DoltUnreachableError", async 
   try {
     const error = await rejection(pool);
     assert.ok(error instanceof DoltUnreachableError, String(error));
-    assert.match(error.message, /127\.0\.0\.1:1 \(connection refused\)/);
+    assert.match(error.message, new RegExp(`127\\.0\\.0\\.1:${port} \\(connection refused\\)`));
     assert.ok(!error.message.includes("do-not-print"));
   } finally {
     await pool.end();
   }
 });
 
-test("the boot column check boots past every store-unavailable error", async () => {
+test("the boot column check boots past a refused login, an unreachable server and a missing database", async () => {
   const errors = [
     new DoltLoginRefusedError("root"),
     new DoltUnreachableError(endpoint, "refused"),

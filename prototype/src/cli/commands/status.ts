@@ -110,7 +110,7 @@ export function formatStore(
     }
     return store.userDefaulted === true
       ? `dolt REFUSED the login for user "${user}": DOLT_USER is not set, ` +
-        `so the runtime logged in as ${user}; set DOLT_USER and ` +
+        `so the runtime tried to log in as ${user}; set DOLT_USER and ` +
         "DOLT_PASSWORD in prototype/.env and restart the runtime"
       : `dolt REFUSED the login for user "${user}": check DOLT_USER and ` +
         "DOLT_PASSWORD";
