@@ -28,20 +28,21 @@ export const BUDGET_FLAGS: Record<string, BudgetLimitName> = {
 
 /**
  * The launch flag for each limit as the runtime names it on the wire (a spend
- * approval's `crossedScopes`), or undefined for a name this client does not
- * know.
+ * approval's `crossedScopes`), in the order a message lists them.
  */
+export const LIMIT_REASON_FLAGS: ReadonlyArray<
+  readonly [reason: string, flag: string]
+> = [
+  ["per_call_limit", "--budget-per-call"],
+  ["runaway_stall", "--budget-runaway"],
+  ["turn_limit", "--budget-turn"],
+  ["session_limit", "--budget-session"],
+  ["daily_limit", "--budget-day"],
+];
+
+/** The launch flag for a limit name, or undefined for one this client does not know. */
 export function flagForLimitReason(reason: unknown): string | undefined {
-  const flags: Record<string, string> = {
-    per_call_limit: "--budget-per-call",
-    runaway_stall: "--budget-runaway",
-    turn_limit: "--budget-turn",
-    session_limit: "--budget-session",
-    daily_limit: "--budget-day",
-  };
-  return typeof reason === "string" && Object.hasOwn(flags, reason)
-    ? flags[reason]
-    : undefined;
+  return LIMIT_REASON_FLAGS.find(([known]) => known === reason)?.[1];
 }
 
 /** The runtime refuses a limit above this (a fat-finger guard). */

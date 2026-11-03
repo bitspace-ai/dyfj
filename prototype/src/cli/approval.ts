@@ -5,7 +5,7 @@
  */
 
 import type { ToolApprovalVerdict } from "../transport/mod.ts";
-import { flagForLimitReason } from "./budget.ts";
+import { flagForLimitReason, LIMIT_REASON_FLAGS } from "./budget.ts";
 import type { Io } from "./io.ts";
 
 const MAX_ACP_PERMISSION_OPTIONS = 16;
@@ -161,24 +161,28 @@ export async function promptMidTurnApproval(
 
 /**
  * Why a spend approval was declined without a terminal, and how to proceed:
- * answer it from one, or raise the limits it crosses (only the known limit
- * names on the wire are named).
+ * answer it from one, or raise every limit it crosses. Each known limit name
+ * on the wire becomes its flag, once, in a fixed order; a name this client
+ * does not know is said to exist. The list is only scanned, so a long one
+ * costs no allocation per entry.
  */
 function spendApprovalUnavailable(crossedScopes: unknown): string {
-  const flags = Array.isArray(crossedScopes)
-    ? [
-      ...new Set(
-        crossedScopes.flatMap((scope) => {
-          const flag = flagForLimitReason(scope);
-          return flag === undefined ? [] : [`${flag} <usd>`];
-        }),
-      ),
-    ]
+  const scopes: readonly unknown[] = Array.isArray(crossedScopes)
+    ? crossedScopes
     : [];
-  return "approval needs an interactive terminal; run the turn from one to " +
-    `answer it, or raise the limit with ${
-      flags.length > 0 ? flags.join(" or ") : "its --budget-* flag"
-    }`;
+  const flags = LIMIT_REASON_FLAGS
+    .filter(([reason]) => scopes.includes(reason))
+    .map(([, flag]) => `${flag} <usd>`);
+  const unknown = scopes.some((scope) => flagForLimitReason(scope) === undefined);
+  const lead = "approval needs an interactive terminal; run the turn from " +
+    "one to answer it, or raise ";
+  if (flags.length === 0) return `${lead}the limit with its --budget-* flag`;
+  const other = unknown
+    ? ", and any other limit the runtime named but this client does not know"
+    : "";
+  return flags.length === 1 && !unknown
+    ? `${lead}the limit with ${flags[0]}`
+    : `${lead}each limit it crosses with ${flags.join(" and ")}${other}`;
 }
 
 function formatApprovalArgs(args: unknown): string {

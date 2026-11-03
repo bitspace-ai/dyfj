@@ -324,12 +324,38 @@ describe("promptMidTurnApproval", () => {
       message: "Projected spend crosses the turn limit",
       crossedScopes: ["turn_limit", "daily_limit", "not-a-scope"],
     }, false);
+    // Both limits block the retry, so both flags are needed, not either one;
+    // a limit this client does not know is said to exist, not dropped.
     assert.deepStrictEqual(verdict, {
       decision: "deny",
       reason: "approval needs an interactive terminal; run the turn from " +
-        "one to answer it, or raise the limit with --budget-turn <usd> " +
-        "or --budget-day <usd>",
+        "one to answer it, or raise each limit it crosses with " +
+        "--budget-turn <usd> and --budget-day <usd>, and any other limit " +
+        "the runtime named but this client does not know",
     });
+    assert.deepStrictEqual(
+      await promptMidTurnApproval(io, {
+        kind: "budget_ceiling",
+        crossedScopes: ["turn_limit"],
+      }, false),
+      {
+        decision: "deny",
+        reason: "approval needs an interactive terminal; run the turn from " +
+          "one to answer it, or raise the limit with --budget-turn <usd>",
+      },
+    );
+    // A long list of repeats still names one flag, once.
+    assert.deepStrictEqual(
+      await promptMidTurnApproval(io, {
+        kind: "budget_ceiling",
+        crossedScopes: new Array(100_000).fill("turn_limit"),
+      }, false),
+      {
+        decision: "deny",
+        reason: "approval needs an interactive terminal; run the turn from " +
+          "one to answer it, or raise the limit with --budget-turn <usd>",
+      },
+    );
     // A tool approval keeps its reason: it is what the model is told.
     assert.deepStrictEqual(
       await promptMidTurnApproval(io, { kind: "tool" }, false),
