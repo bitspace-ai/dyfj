@@ -103,12 +103,33 @@ export async function readConfigFile(
   try {
     return await parseToml(raw);
   } catch (err) {
-    // The parser message describes the TOML syntax error, not the path; the
-    // leading label is path-free.
+    // The parser's own message quotes the lines around the error, which can
+    // hold any value in the file, so only its line and column are kept.
+    const at = parseLocation(err);
     throw new Error(
-      `config: failed to parse ${configLabel(path)}: ${(err as Error).message}`,
+      `config: failed to parse ${configLabel(path)}${at}; fix ` +
+        (at === "" ? "its TOML syntax" : "the TOML syntax there") +
+        ", or move the file aside to run on the defaults",
     );
   }
+}
+
+/** A parse error's position: a positive integer the parser reported. */
+function position(err: unknown, name: "line" | "column"): number | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const value = (err as Record<string, unknown>)[name];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+/** ` at line L, column C` for a parse error that reports both, else "". */
+function parseLocation(err: unknown): string {
+  const line = position(err, "line");
+  const column = position(err, "column");
+  return line === undefined || column === undefined
+    ? ""
+    : ` at line ${line}, column ${column}`;
 }
 
 export function readString(

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { readTextFile } from "../../config/mod.ts";
-import { readConfigFile } from "../../config/toml.ts";
+import { defaultParseToml, readConfigFile } from "../../config/toml.ts";
 import { DomainError } from "../../contract/mod.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
@@ -59,6 +59,25 @@ describe("runtime lifecycle commands", () => {
       `expected stderr.join("\\n") to include "leaves the runtime running"`,
     );
     assert.ok(!(stderr.join("\n")).includes("foreground process"));
+  });
+
+  it("runStart names a config.toml parse error's line and column, not the file's contents", async () => {
+    const { io, stderr } = fakeIo();
+    // Malformed TOML on line 3, beside a value the diagnostic must not repeat.
+    const raw = '[providers]\nkey = "UAT_PRIVATE_MARKER_7c1"\nbroken = = 1\n' +
+      'other = "UAT_PRIVATE_MARKER_7c1"\n';
+    const starter: StartRuntimeFn = async () => {
+      await readConfigFile("config.toml", async () => raw, defaultParseToml);
+      return 0;
+    };
+    assert.strictEqual(await runStart(cfg(), io, starter), 1);
+    const text = stderr.join("\n");
+    assert.ok(!text.includes("UAT_PRIVATE_MARKER_7c1"), text);
+    assert.ok(!text.includes("broken"), text);
+    assert.match(
+      text,
+      /dyfj: could not start local runtime: config: failed to parse config\.toml at line 3, column \d+/,
+    );
   });
 
   it("runStart relays a config error's own path-free line, not its size", async () => {

@@ -1808,6 +1808,33 @@ describe("an autostart that cannot succeed says why", () => {
     }
   });
 
+  it("relays a config.toml parse error by its line and column, not the file's contents", async () => {
+    const dir = await mkdtemp("/tmp/dyfj_la_");
+    try {
+      await mkdir(`${dir}/home`);
+      await mkdir(`${dir}/root`);
+      await writeFile(
+        `${dir}/root/config.toml`,
+        '[providers]\nkey = "UAT_PRIVATE_MARKER_7c1"\nbroken = = 1\n',
+      );
+      const { code, err } = await autostart(`${dir}/home`, `${dir}/x.sock`, {
+        DYFJ_ROOT: `${dir}/root`,
+      });
+      assert.notEqual(code, 0);
+      includes(err, "config: failed to parse config.toml at line 3, column");
+      refutes(err.includes("UAT_PRIVATE_MARKER_7c1"));
+      // The autostart log holds the runtime's own stderr: the same line.
+      const logs = await readdir(`${dir}/home/.dyfj/log`);
+      assert.ok(logs.length > 0);
+      for (const name of logs) {
+        const text = await readFile(`${dir}/home/.dyfj/log/${name}`, "utf8");
+        refutes(text.includes("UAT_PRIVATE_MARKER_7c1"));
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("shows the log's last lines when the runtime exits without stating why", async () => {
     // A stand-in tree: the client stub answers the launcher's parse check
     // and probes as "not running", and its `start` dies the way an uncaught
