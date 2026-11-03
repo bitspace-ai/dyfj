@@ -27,13 +27,36 @@ export class MissingSchemaColumnsError extends DomainError {
   readonly missing: readonly MissingColumn[];
 
   constructor(missing: readonly MissingColumn[]) {
-    const names = missing.map(({ table, column }) => `${table}.${column}`);
-    super(
-      `The Dolt database is missing ${missing.length} column(s) this ` +
-        `runtime needs: ${names.join(", ")}. Apply the forward migrations ` +
-        "in schema/migrations/ to bring it to the current baseline (see " +
-        "schema/README.md), then start the runtime again.",
-    );
+    // A table with every canonical column missing is reported as the table:
+    // information_schema hides a table the user has no grant on, so it may
+    // exist and be unreadable, and its columns would only crowd the message.
+    const tables = (Object.keys(CANONICAL_TABLE_COLUMNS) as CanonicalTable[])
+      .filter((table) =>
+        CANONICAL_TABLE_COLUMNS[table].every((column) =>
+          missing.some((m) => m.table === table && m.column === column)
+        )
+      );
+    const columns = missing.filter(({ table }) => !tables.includes(table));
+    const parts: string[] = [];
+    if (columns.length > 0) {
+      const names = columns.map(({ table, column }) => `${table}.${column}`);
+      parts.push(
+        `The Dolt database is missing ${columns.length} column(s) this ` +
+          `runtime needs: ${names.join(", ")}. Apply the forward migrations ` +
+          "in schema/migrations/ to bring it to the current baseline (see " +
+          "schema/README.md), then start the runtime again.",
+      );
+    }
+    if (tables.length > 0) {
+      parts.push(
+        `The Dolt database shows this runtime no table named ` +
+          `${tables.join(", ")}. Either the schema was never applied to it ` +
+          "(schema/README.md), or the DOLT_USER it logs in as has no grant " +
+          "on those tables (the Dolt users section of schema/README.md); " +
+          "fix that, then start the runtime again.",
+      );
+    }
+    super(parts.join(" "));
     this.name = "MissingSchemaColumnsError";
     this.missing = missing;
   }

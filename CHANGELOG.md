@@ -283,7 +283,14 @@ README are tracked separately in its Revision history section.
   login error as an unusable store, as it already did the driver's, so the
   runtime boots and `dyfj status` reports the refusal. A model not in the
   catalog now says to run `dyfj models` and pick one with `--model`,
-  `/model` or `DYFJ_WORKBENCH_MODEL`.
+  `/model` or `DYFJ_WORKBENCH_MODEL`. A Dolt user without a grant the
+  runtime needs is named too: a refused write (or Dolt's generic error for a
+  refused read) fails the turn with `Dolt refused a statement for user "x":
+  it lacks a grant this runtime needs ...` instead of `[Error, 37 bytes]`,
+  and a boot whose user can see none of a canonical table (which
+  `information_schema` hides without a grant) names the tables and both
+  causes, a schema never applied or a missing grant, instead of listing
+  every column of them as needing a migration.
 
 - **`scratch-runtime.ts evidence` before any `exec`** prints the same "No
   recorded turn" notice `down` prints, instead of failing with a raw `ENOENT`.

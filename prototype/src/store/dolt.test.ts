@@ -13,6 +13,7 @@ import {
   isReadOnlySelect,
   selectOnly,
 } from "./dolt-pool.ts";
+import { MAX_ERROR_SUMMARY_BYTES } from "../contract/mod.ts";
 import { DoltStore } from "./dolt.ts";
 import { CANONICAL_TABLE_COLUMNS, type EventInsert } from "./generated/rows.ts";
 import {
@@ -665,4 +666,33 @@ test("close ends the pool the store was given", async () => {
   const { pool, log } = scriptedPool();
   await new DoltStore(pool).close();
   assert.deepStrictEqual(log, ["end"]);
+});
+
+test("a table the runtime cannot see is named as a table, with grants as a cause", async () => {
+  // information_schema hides a table the user has no grant on, so a missing
+  // grant looks exactly like a missing table; the message names both causes.
+  const { pool } = scriptedPool(() =>
+    liveColumns().filter((row) => row.tbl !== "prompts")
+  );
+  const error = await captureRejection(
+    () => new DoltStore(pool).assertCanonicalColumns(),
+    MissingSchemaColumnsError,
+  );
+  assert.match(error.message, /no table named prompts/);
+  assert.match(error.message, /grant/);
+  assert.match(error.message, /Dolt users/);
+  assert.doesNotMatch(error.message, /prompts\.[a-z]/);
+});
+
+test("a database with no visible canonical table fits the summary cap", async () => {
+  const { pool } = scriptedPool(() => [] as ReturnType<typeof liveColumns>);
+  const error = await captureRejection(
+    () => new DoltStore(pool).assertCanonicalColumns(),
+    MissingSchemaColumnsError,
+  );
+  assert.ok(
+    new TextEncoder().encode(error.message).byteLength <= MAX_ERROR_SUMMARY_BYTES,
+    error.message,
+  );
+  assert.match(error.message, /grant/);
 });

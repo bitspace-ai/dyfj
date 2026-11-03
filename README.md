@@ -407,8 +407,10 @@ unset, the runtime connects as `root`.
 When the store cannot be used, the runtime still boots, and `dyfj status` and
 every failed turn say why and what to change: a refused login names the user
 (and says when `DOLT_USER` was unset and the runtime fell back to `root`), a
-server that does not answer names `DOLT_HOST:DOLT_PORT`, and a server without
-the configured database names `DOLT_DATABASE`. A turn whose model is missing
+server that does not answer names `DOLT_HOST:DOLT_PORT`, a server without
+the configured database names `DOLT_DATABASE`, and a statement refused for
+want of a grant names the user and the Dolt users section of
+`schema/README.md`. A turn whose model is missing
 only because the catalog could not be loaded reports the store's failure, not
 a missing model.
 

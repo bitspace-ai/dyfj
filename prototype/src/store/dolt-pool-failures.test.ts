@@ -16,6 +16,7 @@ import { DomainError, summarizeError } from "../contract/mod.ts";
 import {
   createDoltPool,
   DoltDatabaseMissingError,
+  DoltGrantMissingError,
   DoltLoginRefusedError,
   DoltUnreachableError,
   guardDoltLogins,
@@ -105,6 +106,48 @@ test("a login refused for the default user says DOLT_USER was not set", async ()
   assert.match(error.message, /DOLT_USER is not set/);
   assert.match(error.message, /prototype\/\.env/);
   assert.ok(!error.message.includes("Access denied"));
+});
+
+test("a statement refused for want of a grant names the user and the grants", async () => {
+  // Dolt's answers, as the driver raised them against a user granted SELECT
+  // only: a write is ER_TABLEACCESS_DENIED_ERROR; a read of an ungranted table
+  // is the generic ER_UNKNOWN_ERROR, recognized by its message's fixed shape.
+  for (
+    const raw of [
+      driverError(
+        "command denied to user 'probe_rw'@'%'",
+        "ER_TABLEACCESS_DENIED_ERROR",
+        1142,
+      ),
+      driverError(
+        "Access denied for user 'probe_ro'@'%' to table 'events'",
+        "ER_UNKNOWN_ERROR",
+        1105,
+      ),
+    ]
+  ) {
+    const error = await rejection(
+      guardDoltLogins(failingPool(raw), "dyfj_runtime", endpoint),
+    );
+    assert.ok(error instanceof DoltGrantMissingError, String(error));
+    assert.ok(error instanceof DomainError);
+    assert.match(error.message, /user "dyfj_runtime"/);
+    assert.match(error.message, /grant/);
+    assert.match(error.message, /Dolt users/);
+    assert.ok(!error.message.includes("probe_"), error.message);
+  }
+});
+
+test("an unrelated ER_UNKNOWN_ERROR is left alone", async () => {
+  const raw = driverError(
+    'column "nope" could not be found in any table in scope',
+    "ER_UNKNOWN_ERROR",
+    1105,
+  );
+  const error = await rejection(
+    guardDoltLogins(failingPool(raw), "dyfj_runtime", endpoint),
+  );
+  assert.equal(error, raw);
 });
 
 test("the real driver's refused connection becomes DoltUnreachableError", async () => {

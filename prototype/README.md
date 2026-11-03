@@ -379,7 +379,8 @@ Run the Workbench as its own Dolt user, not `root`. The user and the table
 grants it needs are in [Dolt users](../schema/README.md#dolt-users). If
 `DOLT_USER` is unset, the runtime connects as `root`. The store's pool
 (`src/store/dolt-pool.ts`) reports a refused login, an endpoint that does not
-answer and a missing database as `DomainError`s that name the configured user,
+answer, a missing database and a statement refused for want of a grant as
+`DomainError`s that name the configured user,
 `DOLT_HOST:DOLT_PORT` or `DOLT_DATABASE` and the fix, never the driver's text;
 the runtime boots past all three, and `dyfj status` shows the same cause.
 

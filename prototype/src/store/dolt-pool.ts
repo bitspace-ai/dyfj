@@ -172,10 +172,39 @@ export class DoltDatabaseMissingError extends DomainError {
   }
 }
 
+/** The Dolt user lacks a privilege a statement needed. */
+export class DoltGrantMissingError extends DomainError {
+  constructor(user: string | undefined) {
+    const named = user === undefined ? "" : field(user);
+    super(
+      `Dolt refused a statement for ${
+        named.length === 0 ? "the configured user" : `user "${named}"`
+      }: it lacks a grant this runtime needs. Grant it the privileges the ` +
+        "Dolt users section of schema/README.md lists (or set DOLT_USER to a " +
+        "user that has them), then retry",
+    );
+    this.name = "DoltGrantMissingError";
+  }
+}
+
 /** `mysql2`'s refused-login code and legacy errno, either of which identifies it. */
 const ER_ACCESS_DENIED_ERROR = "ER_ACCESS_DENIED_ERROR";
 const ER_ACCESS_DENIED_ERRNO = 1045;
 const ER_BAD_DB_ERRNO = 1049;
+
+/** Codes for a statement refused for want of a privilege. */
+const GRANT_DENIED_CODES: ReadonlySet<string> = new Set([
+  "ER_DBACCESS_DENIED_ERROR",
+  "ER_TABLEACCESS_DENIED_ERROR",
+  "ER_COLUMNACCESS_DENIED_ERROR",
+  "ER_SPECIFIC_ACCESS_DENIED_ERROR",
+]);
+
+// Dolt reports a read of a table the user has no grant on as the generic
+// ER_UNKNOWN_ERROR, so that one case is recognized by the message's fixed
+// shape. The message is matched, never relayed.
+const GENERIC_GRANT_DENIED =
+  /^Access denied for user '[^']{0,200}'@'[^']{0,200}' to (?:table|database)\b/;
 
 /** Driver and socket codes meaning the endpoint did not answer. */
 const UNREACHABLE_CODES: Readonly<Record<string, DoltUnreachableReason>> = {
@@ -223,6 +252,15 @@ export function storeFailureError(
   const { code, errno } = error as { code?: unknown; errno?: unknown };
   if (code === "ER_BAD_DB_ERROR" || errno === ER_BAD_DB_ERRNO) {
     return new DoltDatabaseMissingError(context.database);
+  }
+  if (typeof code === "string" && GRANT_DENIED_CODES.has(code)) {
+    return new DoltGrantMissingError(user);
+  }
+  if (code === "ER_UNKNOWN_ERROR" && error instanceof Error) {
+    const message = error.message.slice(0, 1_024);
+    if (GENERIC_GRANT_DENIED.test(message)) {
+      return new DoltGrantMissingError(user);
+    }
   }
   if (typeof code === "string" && Object.hasOwn(UNREACHABLE_CODES, code)) {
     return new DoltUnreachableError(context, UNREACHABLE_CODES[code]);
