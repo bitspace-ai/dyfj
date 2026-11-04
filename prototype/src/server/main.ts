@@ -112,7 +112,7 @@ import {
   type WorkbenchUnavailableSecret,
 } from "./rpc/runtime.ts";
 import { buildSurfaceHandlers } from "./rpc/surface.ts";
-import { buildModelsHandlers } from "./rpc/models.ts";
+import { buildModelsHandlers, type PickerCatalog } from "./rpc/models.ts";
 import { buildToolsHandlers } from "./rpc/tools.ts";
 import { buildSessionsHandlers } from "./rpc/sessions.ts";
 import {
@@ -271,14 +271,20 @@ function requireStore(options: WorkbenchUnixServerOptions): Store {
 }
 
 // Degrade to the local defaults if the registry is unavailable, preserving
-// the local-first posture instead of an empty list.
-async function loadPickerModels(
+// the local-first posture instead of an empty list, and keep the reason so
+// `models/list` can say why only those rows are listed.
+async function loadPickerCatalog(
   store: () => Store,
-): Promise<WorkbenchModel[]> {
+): Promise<PickerCatalog> {
   try {
-    return await loadWorkbenchModelsWithLocalDefaults(store().models);
-  } catch {
-    return defaultLocalWorkbenchModels();
+    return {
+      models: await loadWorkbenchModelsWithLocalDefaults(store().models),
+    };
+  } catch (error) {
+    return {
+      models: defaultLocalWorkbenchModels(),
+      unavailable: summarizeError(error),
+    };
   }
 }
 
@@ -319,7 +325,11 @@ function buildHandlers(
   lifetime: RuntimeLifetime,
 ): RpcHandlers {
   const store = () => requireStore(options);
-  const loadModels = options.loadModels ?? (() => loadPickerModels(store));
+  const loadCatalog = options.loadModels === undefined
+    ? () => loadPickerCatalog(store)
+    : undefined;
+  const loadModels = options.loadModels ??
+    (async () => (await loadPickerCatalog(store)).models);
   const listSessions = options.listSessions ??
     ((query: { project?: string; limit?: number }) =>
       listWorkbenchSessions({ ...query, sessions: store().sessions }));
@@ -365,7 +375,7 @@ function buildHandlers(
       }),
     }),
     ...buildSurfaceHandlers({ ...options, loadModels, listSessions }),
-    ...buildModelsHandlers({ loadModels }),
+    ...buildModelsHandlers({ loadModels, loadCatalog }),
     ...buildToolsHandlers(options),
     ...buildSessionsHandlers({
       listSessions,

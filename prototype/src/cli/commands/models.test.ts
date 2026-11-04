@@ -52,6 +52,29 @@ describe("models/sessions over UDS", () => {
     );
   });
 
+  it("runModels says when it lists only the built-in rows, and why", async () => {
+    const { io, stdout, stderr } = fakeIo();
+    const code = await runModels(
+      cfg(),
+      io,
+      fakeConnect({
+        "models/list": {
+          models: [{ slug: "llama-cpp/x", tier: 0 }],
+          catalogUnavailable:
+            "Dolt is not answering at 127.0.0.1:1 (connection refused)\u001b[2J",
+        },
+      }),
+    );
+    assert.strictEqual(code, 0);
+    assert.ok(stdout.join("").includes("llama-cpp/x"));
+    const err = stderr.join("");
+    assert.match(
+      err,
+      /^dyfj: the model catalog could not be loaded, so only the built-in local models are listed: Dolt is not answering at 127\.0\.0\.1:1/,
+    );
+    assert.ok(!err.includes("\u001b"), err);
+  });
+
   it("runModels annotates rows the server marked unroutable", async () => {
     const { io, stdout } = fakeIo();
     const code = await runModels(

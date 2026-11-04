@@ -32,6 +32,33 @@ import {
 import process from "node:process";
 import { Readable, Writable } from "node:stream";
 import { collectBoundedStderr, settlesWithin } from "./acp-child-io.ts";
+import {
+  AcpAccessRouteMismatchError,
+  AcpAuthenticationEvidenceError,
+  AcpAuthenticationRequiredError,
+  AcpProtocolMessageLimitError,
+  AcpRunnerError,
+  AcpSessionUpdateLimitError,
+  agentRequestFailure,
+  promptFailure,
+  sessionFailure,
+} from "./acp-errors.ts";
+
+/** Reject `pending` with `error`, and return the error for the caller to throw. */
+function rejecting<E>(pending: { reject(reason: unknown): void }, error: E): E {
+  pending.reject(error);
+  return error;
+}
+
+export {
+  AcpAccessRouteMismatchError,
+  AcpAuthenticationEvidenceError,
+  AcpAuthenticationRequiredError,
+  AcpProtocolMessageLimitError,
+  AcpRunnerError,
+  AcpSessionUpdateLimitError,
+  agentRequestFailure,
+};
 
 export type AcpAuthenticationType =
   | "chat-gpt"
@@ -221,59 +248,6 @@ type LiveSdkSession = {
   dispose: () => void;
 };
 
-export class AcpRunnerError extends Error {
-  public readonly phase:
-    | "spawn"
-    | "initialize"
-    | "authenticate"
-    | "session"
-    | "prompt"
-    | "cancel"
-    | "permission"
-    | "protocol"
-    | "terminate";
-  constructor(message: string, phase: AcpRunnerError["phase"]) {
-    super(message);
-    this.phase = phase;
-    this.name = "AcpRunnerError";
-  }
-}
-
-export class AcpSessionUpdateLimitError extends AcpRunnerError {
-  constructor() {
-    super("ACP agent exceeded the session-update limit", "protocol");
-  }
-}
-
-export class AcpProtocolMessageLimitError extends AcpRunnerError {
-  constructor() {
-    super("ACP agent exceeded the protocol-message limit", "protocol");
-  }
-}
-
-export class AcpAuthenticationRequiredError extends DomainError {
-  readonly phase = "authenticate" as const;
-  constructor() {
-    super("Codex ChatGPT authentication is required");
-    this.name = "AcpAuthenticationRequiredError";
-  }
-}
-
-export class AcpAccessRouteMismatchError extends DomainError {
-  readonly phase = "authenticate" as const;
-  constructor() {
-    super("Codex ACP is not using ChatGPT authentication");
-    this.name = "AcpAccessRouteMismatchError";
-  }
-}
-
-export class AcpAuthenticationEvidenceError extends DomainError {
-  readonly phase = "authenticate" as const;
-  constructor() {
-    super("Codex ACP authentication evidence is unavailable");
-    this.name = "AcpAuthenticationEvidenceError";
-  }
-}
 
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 5_000;
 export const DEFAULT_SESSION_TIMEOUT_MS = 5_000;
@@ -392,7 +366,7 @@ export async function runSignalCommand(
     if (code === 0) return true;
     const detail = diagnostic.text();
     if (detail.includes("No such process")) return false;
-    const summary = detail.trim().slice(0, 256);
+    const summary = sanitizeBoundaryText(detail.trim(), 256);
     throw new AcpRunnerError(
       summary === ""
         ? "ACP process-group signaling failed"
@@ -1508,7 +1482,9 @@ class LiveAcpSession implements AcpSessionHandle {
       );
       if (this.#pendingPermissionConfirmations > 0) this.#promptDeadline.pause();
       const promptFailed = Promise.withResolvers<void>();
-      void session.prompt(input.prompt).catch(() => {
+      let promptError: unknown;
+      void session.prompt(input.prompt).catch((error: unknown) => {
+        promptError = error;
         promptFailed.resolve();
       });
       if (input.abortSignal?.aborted) requestCancelAndWake();
@@ -1573,10 +1549,7 @@ class LiveAcpSession implements AcpSessionHandle {
           );
         }
         if (outcome.kind === "prompt_failure") {
-          throw new AcpRunnerError(
-            "ACP prompt request failed before the turn completed",
-            "prompt",
-          );
+          throw promptFailure(promptError, this.#profile);
         }
         if (this.#protocolError !== undefined) throw this.#protocolError;
         const message = outcome.message;
@@ -1870,8 +1843,7 @@ class LiveAcpSession implements AcpSessionHandle {
           this.#ready.resolve();
           await this.#finished.promise;
         } catch (error) {
-          this.#ready.reject(error);
-          throw error;
+          throw rejecting(this.#ready, sessionFailure(error, profile));
         } finally {
           this.#sdkSession?.dispose();
         }

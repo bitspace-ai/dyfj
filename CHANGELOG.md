@@ -288,6 +288,26 @@ README are tracked separately in its Revision history section.
   the log, with ASCII control characters other than tab and newline removed,
   including after `runtime is not answering`.
 
+- **An external agent's failure says what to do.** A `codex-chatgpt` turn
+  whose ChatGPT sign-in had expired reached the CLI and the REPL as `[Error,
+  51 bytes]`: the adapter's `auth_required` answer to the prompt was
+  discarded, and every ACP runner error was masked as a foreign error. The
+  runner now maps ACP's `auth_required` (JSON-RPC -32000) on `session/new` or
+  the prompt to `The Codex runner's ChatGPT sign-in is missing or has expired.
+  Sign its home in again with cd prototype && npm run codex-chatgpt-login,
+  then retry the turn`, reports any other agent error by its JSON-RPC code
+  without its text, and its own errors (`ACP prompt timed out`, a protocol
+  limit) now cross the turn boundary as their messages.
+
+- **A model list served from the built-in rows says so.** When the runtime
+  cannot load its catalog, `models/list` still lists the built-in local
+  models and now carries `catalogUnavailable`, the loader's failure as
+  summarized for the wire: the store's own message for a failure the Dolt
+  pool names, otherwise only the error's class and size. `dyfj models`
+  prints it on stderr, and the Rust REPL prints it before refusing a
+  `--model`, `/model` or resumed model as unknown, which it used to do with
+  no hint that the catalog had not loaded.
+
 - **A runtime that cannot boot says why, and the launcher relays it.** A
   socket path longer than macOS's 104-byte `sun_path` made the runtime die
   with an uncaught `listen EINVAL` stack trace in the autostart log, the

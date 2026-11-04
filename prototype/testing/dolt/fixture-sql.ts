@@ -26,8 +26,12 @@ interface RawPool {
 export function openFixtureSql(): FixtureSql {
   // mysql2's type declarations, as the checker resolves them, drop the pool's
   // mixed-in promise methods.
+  // `userDefaulted` is Workbench's own note, not a driver option.
+  const { userDefaulted: _, ...connection } = resolveDoltConnection(
+    processEnv,
+  );
   const pool = mysql.createPool({
-    ...resolveDoltConnection(processEnv),
+    ...connection,
     connectionLimit: 1,
   }) as unknown as RawPool;
   return {
