@@ -99,10 +99,11 @@ type BoundedJson =
 
 /**
  * Serialize one raw value and check it before any part of it is kept. The
- * credential check reads the whole value, decoded as well as serialized, so
- * neither escaping nor a later cut can hide a credential.
+ * credential check reads the whole value, serialized and decoded, before any
+ * cut. An oversized value that will not be kept at all (`scanOversized`
+ * false) is not scanned: it is reported oversized and nothing of it is kept.
  */
-function boundedJson(value: unknown): BoundedJson {
+function boundedJson(value: unknown, scanOversized: boolean): BoundedJson {
   let json: string | undefined;
   try {
     json = JSON.stringify(value);
@@ -110,13 +111,14 @@ function boundedJson(value: unknown): BoundedJson {
     return { kind: "malformed" };
   }
   if (json === undefined) return { kind: "malformed" };
+  const oversized =
+    utf8ByteLengthWithinLimit(json, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES) ===
+      undefined;
+  if (oversized && !scanOversized) return { kind: "oversized", json };
   if (historyValueContainsSecretShape(value, json)) {
     return { kind: "credential_shaped" };
   }
-  return utf8ByteLengthWithinLimit(json, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES) ===
-      undefined
-    ? { kind: "oversized", json }
-    : { kind: "ok", json };
+  return oversized ? { kind: "oversized", json } : { kind: "ok", json };
 }
 
 function truncatedToolOutput(json: string): string {
@@ -199,7 +201,7 @@ export function applyAcpToolPatch(
     }
   }
   if (Object.hasOwn(update, "rawInput")) {
-    const input = boundedJson(update.rawInput);
+    const input = boundedJson(update.rawInput, false);
     delete call.rawInputJson;
     delete call.inputProblem;
     if (input.kind === "ok") call.rawInputJson = input.json;
@@ -210,7 +212,7 @@ export function applyAcpToolPatch(
     }
   }
   if (Object.hasOwn(update, "rawOutput")) {
-    const output = boundedJson(update.rawOutput);
+    const output = boundedJson(update.rawOutput, true);
     delete call.rawOutputJson;
     delete call.outputProblem;
     if (output.kind === "ok") call.rawOutputJson = output.json;
@@ -246,19 +248,23 @@ export function finishAcpToolEvidence(
 ): AcpToolEvidence {
   const calls: AcpToolCallEvidence[] = [];
   for (const call of accumulator.entries) {
+    const problems = callProblems(call);
+    // A credential-shaped call keeps neither raw field, even the one that
+    // passed on its own.
+    const keepRaw = !problems.includes("credential_shaped");
     calls.push({
       ...(call.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),
       ...(call.title === undefined ? {} : { title: call.title }),
       ...(call.name === undefined ? {} : { name: call.name }),
       ...(call.kind === undefined ? {} : { kind: call.kind }),
       ...(call.status === undefined ? {} : { status: call.status }),
-      ...(call.rawInputJson === undefined
+      ...(!keepRaw || call.rawInputJson === undefined
         ? {}
         : { rawInputJson: call.rawInputJson }),
-      ...(call.rawOutputJson === undefined
+      ...(!keepRaw || call.rawOutputJson === undefined
         ? {}
         : { rawOutputJson: call.rawOutputJson }),
-      problems: callProblems(call),
+      problems,
     });
   }
   return { status: "captured", observedCalls: calls.length, calls };

@@ -25,43 +25,92 @@ export function historyContainsSecretShape(value: string): boolean {
   return containsSensitiveShape(value);
 }
 
-function textContainsSecretShape(text: string): boolean {
-  // Serializing a string escapes its quotes, so a credential field inside a
-  // string reads as `{\"token\":\"...\"}`, which the shapes do not match.
-  // Checking the text without backslashes undoes any depth of escaping; it can
-  // only add matches, never remove one.
-  return containsSensitiveShape(text) ||
-    containsSensitiveShape(text.replaceAll("\\", "")) ||
-    containsSensitiveShape(sanitizeHistoryText(text));
+const JSON_ESCAPE = /\\(?:u([0-9A-Fa-f]{4})|(["\\/bfnrt]))/g;
+const SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+};
+
+/**
+ * `text` with JSON string escapes decoded, level after level, until none is
+ * left. Each pass shortens the text, so the loop ends.
+ */
+function withJsonEscapesDecoded(text: string): string {
+  let current = text;
+  while (current.includes("\\")) {
+    const next = current.replace(
+      JSON_ESCAPE,
+      (_match, hex: string | undefined, simple: string | undefined) =>
+        hex === undefined
+          ? SIMPLE_ESCAPES[simple!]
+          : String.fromCharCode(Number.parseInt(hex, 16)),
+    );
+    if (next === current) break;
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Whether `text` carries something shaped like a live credential, read as it
+ * is, with control characters removed, with JSON string escapes decoded, and
+ * with every backslash removed. Text that holds serialized JSON escapes its
+ * quotes and may escape any character (`{\"\u0074oken\":...}`), which the
+ * shapes alone do not match. Each extra reading can only add matches.
+ */
+export function historyTextContainsSecretShape(text: string): boolean {
+  if (containsSensitiveShape(text)) return true;
+  if (containsSensitiveShape(sanitizeHistoryText(text))) return true;
+  if (!text.includes("\\")) return false;
+  const decoded = withJsonEscapesDecoded(text);
+  return containsSensitiveShape(decoded) ||
+    containsSensitiveShape(sanitizeHistoryText(decoded)) ||
+    containsSensitiveShape(decoded.replaceAll("\\", ""));
 }
 
 /**
  * Whether a JSON value, or its serialized form `json`, carries something
  * shaped like a live credential. `json` must be what `value` serializes to,
- * so the value is acyclic. The serialized form is checked as a whole and
- * with escaping removed, and every key and string in the value is checked as
- * it decodes, so a credential inside a string value (command output holding
- * JSON or a quoted assignment) is found wherever it sits in that string.
+ * so the value is acyclic. The serialized form and every key and string in
+ * the value are each read as `historyTextContainsSecretShape` reads text. The
+ * walk keeps one frame per open array or object, not one entry per element.
  */
 export function historyValueContainsSecretShape(
   value: unknown,
   json: string,
 ): boolean {
-  if (textContainsSecretShape(json)) return true;
-  const pending: unknown[] = [value];
-  while (pending.length > 0) {
-    const part = pending.pop();
+  if (historyTextContainsSecretShape(json)) return true;
+  const frames: Iterator<unknown>[] = [[value][Symbol.iterator]()];
+  while (frames.length > 0) {
+    const next = frames[frames.length - 1].next();
+    if (next.done === true) {
+      frames.pop();
+      continue;
+    }
+    const part = next.value;
     if (typeof part === "string") {
-      if (textContainsSecretShape(part)) return true;
+      if (historyTextContainsSecretShape(part)) return true;
     } else if (Array.isArray(part)) {
-      for (const child of part) pending.push(child);
+      frames.push(part[Symbol.iterator]());
     } else if (part !== null && typeof part === "object") {
-      for (const [key, child] of Object.entries(part)) {
-        pending.push(key, child);
-      }
+      frames.push(objectKeysAndValues(part));
     }
   }
   return false;
+}
+
+function* objectKeysAndValues(part: object): Generator<unknown> {
+  for (const key in part) {
+    if (!Object.hasOwn(part, key)) continue;
+    yield key;
+    yield (part as Record<string, unknown>)[key];
+  }
 }
 
 /**

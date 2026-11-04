@@ -136,5 +136,34 @@ describe("ACP tool evidence capture", () => {
         ACP_TOOL_OUTPUT_TRUNCATION_MARKER,
       ));
     });
+
+    it("rejects an output whose embedded JSON escapes a key's letters", () => {
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawOutput: { stdout: `{"\\u0074oken":"${secret}"}${filler}` },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.deepStrictEqual(evidence.calls[0].problems, [
+        "credential_shaped",
+      ]);
+      assert.ok(!JSON.stringify(evidence).includes(secret));
+    });
+
+    it("keeps neither raw field when only the output is credential-shaped", () => {
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawOutput: { stdout: shapes["embedded JSON"] },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.deepStrictEqual(evidence.calls[0], {
+        toolCallId: "call-a",
+        title: "Run call-a",
+        kind: "execute",
+        status: "completed",
+        problems: ["credential_shaped"],
+      });
+    });
   });
 });

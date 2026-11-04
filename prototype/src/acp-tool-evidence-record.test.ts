@@ -85,4 +85,21 @@ describe("prepareAcpToolEvidence", () => {
     );
     assert.ok(!JSON.stringify(prepared).includes(secret));
   });
+
+  it("rejects a title that holds an escaped credential field", () => {
+    const secret = "abcdefghijklmnopqrstuvwxyz012345";
+    const prepared = prepareAcpToolEvidence({
+      status: "captured",
+      observedCalls: 1,
+      calls: [{
+        ...call("call-a"),
+        title: `Run {\\"token\\":\\"${secret}\\"}`,
+      }],
+    });
+    assert.partialDeepStrictEqual(prepared.calls[0], {
+      outcome: "rejected",
+      reason: "credential_shaped",
+    });
+    assert.ok(!JSON.stringify(prepared).includes(secret));
+  });
 });

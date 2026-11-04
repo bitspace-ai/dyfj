@@ -272,16 +272,20 @@ README are tracked separately in its Revision history section.
   only `ACP tool evidence: unavailable (0/7 calls recorded)`. Workbench now
   judges each call on its own. A call that passes every check is still
   persisted as a replayable request/result pair. Any other call is persisted
-  as a gap marker (`acp.history_unavailable`) that keeps the call's checked
-  id, tool name, kind, title and status and one fixed reason code
+  as a gap marker (`acp.history_unavailable`) that keeps those of the call's
+  id, tool name, kind, title and status that passed the bound, sanitizing and
+  credential-shape checks, and one fixed reason code
   (`missing_raw_input`, `missing_raw_output`, `oversized_input`,
   `oversized_output`, `malformed`, `credential_shaped` or
   `incomplete_status`). A partial call also keeps its checked input, and an
   oversized output is kept cut to the 8 KiB bound and ends with a truncation
-  marker, unless the credential-shape gate rejects it. That gate reads each
-  whole input and output before any cut, serialized and with every string
-  decoded, so a credential inside command output is caught wherever it sits;
-  a rejected call keeps no raw value. Replay still withholds every gap marker. The receipt line
+  marker, unless the credential-shape gate rejects it. That gate matches a
+  fixed set of credential patterns and reads each output whole before any
+  cut, with every string decoded and JSON string escapes undone at any depth,
+  so a credential field inside command output, such as embedded JSON or a
+  quoted assignment, is caught wherever it sits in the output. A call the
+  gate matches keeps neither raw field, and a rejected call keeps no raw
+  value. Replay still withholds every gap marker. The receipt line
   names the counts by outcome (`ACP tool evidence: 5 recorded, 2 partial
   (missing_raw_output), 0 rejected of 7`), the terminal footer adds the
   partial and rejected counts, and the turn result's `runner.toolEvidence`

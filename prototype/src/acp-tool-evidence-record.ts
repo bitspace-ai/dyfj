@@ -24,7 +24,7 @@ import {
   boundedHistoryField,
   boundedHistoryMetadata,
   HistoryLimitError,
-  historyContainsSecretShape,
+  historyTextContainsSecretShape,
   historyValueContainsSecretShape,
   MAX_HISTORY_TOOL_CALL_ID_BYTES,
   MAX_HISTORY_TOOL_NAME_BYTES,
@@ -41,8 +41,9 @@ export interface PersistableAcpToolCall {
 }
 
 /**
- * An ACP tool call Workbench could not record in full. It keeps the safe
- * fields that passed every check and one fixed reason code. A `partial` call
+ * An ACP tool call Workbench could not record in full. It keeps one fixed
+ * reason code and those identity and label fields that passed the bound,
+ * sanitizing and credential-shape checks. A `partial` call
  * also keeps its checked input and, when present, its checked output (cut to
  * the bound with a marker when oversized). A `rejected` call keeps no raw value.
  */
@@ -92,7 +93,7 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
     field: string,
   ): string | undefined => {
     if (value === undefined) return undefined;
-    if (historyContainsSecretShape(value)) {
+    if (historyTextContainsSecretShape(value)) {
       problems.add("credential_shaped");
       return undefined;
     }
@@ -118,7 +119,10 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
     // Check the value as received and as it would be persisted: removing
     // control characters can join text the first check saw as separate.
     const kept = sanitizeHistoryText(clipToUtf8Bytes(value, maxBytes) ?? value);
-    if (historyContainsSecretShape(value) || historyContainsSecretShape(kept)) {
+    if (
+      historyTextContainsSecretShape(value) ||
+      historyTextContainsSecretShape(kept)
+    ) {
       problems.add("credential_shaped");
       return undefined;
     }
