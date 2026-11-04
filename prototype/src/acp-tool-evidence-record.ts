@@ -106,11 +106,14 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
     maxBytes: number,
   ): string | undefined => {
     if (value === undefined) return undefined;
-    if (historyContainsSecretShape(value)) {
+    // Check the value as received and as it would be persisted: removing
+    // control characters can join text the first check saw as separate.
+    const kept = sanitizeHistoryText(clipToUtf8Bytes(value, maxBytes) ?? value);
+    if (historyContainsSecretShape(value) || historyContainsSecretShape(kept)) {
       problems.add("credential_shaped");
       return undefined;
     }
-    return sanitizeHistoryText(clipToUtf8Bytes(value, maxBytes) ?? value);
+    return kept;
   };
 
   const toolCallId = metadata(

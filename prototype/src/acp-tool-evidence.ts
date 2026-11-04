@@ -37,8 +37,9 @@ export interface AcpToolCallEvidence {
 }
 
 /**
- * Bounded tool evidence observed on the ACP update stream, one entry per call.
- * `unavailable` means no call could be attributed (the turn was aborted); it
+ * Bounded tool evidence observed on the ACP update stream: one entry per
+ * distinct usable call id, plus at most one entry for every update that had no
+ * usable id, in the order each first appeared. `unavailable` means no call could be attributed (the turn was aborted); it
  * carries no raw values.
  */
 export type AcpToolEvidence =

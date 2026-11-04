@@ -1268,7 +1268,8 @@ each external-agent footer. Workbench merges each real ACP `tool_call` with its
 persisted as a replayable tool request/result pair (`recorded`) only when it
 has a well-formed call id and tool name that sanitizing leaves unchanged, a
 `completed` or `failed` status, an input whose combined title, kind and input
-record fits the 4 KiB argument bound, an output within the 8 KiB bound, no
+record fits the 4 KiB argument bound and its node and depth limits, an output
+within the 8 KiB bound, no
 other capture problem, and values that pass the credential-shape gate. Any other call is
 persisted as a gap marker that keeps the call's checked safe fields (call id,
 tool name, kind, title, status) and one fixed reason code: `missing_raw_input`,

@@ -28,4 +28,24 @@ describe("prepareAcpToolEvidence", () => {
       [["recorded", "call-a", undefined], ["rejected", undefined, "malformed"]],
     );
   });
+
+  it("rejects a title whose sanitized form is credential-shaped", () => {
+    const prepared = prepareAcpToolEvidence({
+      status: "captured",
+      observedCalls: 1,
+      calls: [{
+        ...call("call-a"),
+        title: "to\u0000ken=abcdefghijklmnopqrstuvwxyz012345",
+        rawOutputJson: undefined,
+        problems: ["missing_raw_output"],
+      }],
+    });
+    assert.partialDeepStrictEqual(prepared.calls[0], {
+      outcome: "rejected",
+      reason: "credential_shaped",
+    });
+    assert.ok(
+      !JSON.stringify(prepared).includes("abcdefghijklmnopqrstuvwxyz012345"),
+    );
+  });
 });
