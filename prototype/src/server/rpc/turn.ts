@@ -10,11 +10,13 @@ import {
 import type { Env, PermissionLevel } from "../../config/mod.ts";
 import {
   type AcpPermissionSelection,
+  DomainError,
   isSupersedingRetryStarted,
   type TurnStreamFrame,
   type WorkbenchAuthContext,
 } from "../../contract/mod.ts";
 import {
+  describeErrorForLog,
   engineConfigToTurnDeps,
   executeTurn,
   type ExecuteTurnDeps,
@@ -25,6 +27,7 @@ import {
   type TurnRequestBody,
   type TurnRuntime,
   type TurnTicket,
+  UnexpectedTurnError,
 } from "../../engine/mod.ts";
 import type {
   CommandDefinition,
@@ -291,6 +294,14 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
           approver: clientApprover(ctx, activeTurn),
           frames: streamFrames(ctx, turnId),
         });
+      } catch (error) {
+        // A DomainError states its condition and crosses the wire as its
+        // message. Anything else would reach the client as `[Error, N bytes]`
+        // with no next step: this is the one seam every turn crosses, so the
+        // log gets its class and code here and the client a stated condition.
+        if (error instanceof DomainError) throw error;
+        console.error(`[turn-error] ${describeErrorForLog(error)}`);
+        throw new UnexpectedTurnError(error);
       } finally {
         const contextTurns = activeTurns.get(ctx);
         if (contextTurns?.get(activeKey) === activeTurn) {

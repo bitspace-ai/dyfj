@@ -125,7 +125,13 @@ export async function runExec(
     }
   } catch (error) {
     turnFailed = true;
-    io.err(socketError(error, config));
+    const line = socketError(error, config);
+    // A `--json` consumer reads stdout: a failed turn is a JSON object
+    // there too, never an empty document.
+    if (json) {
+      io.out(`${JSON.stringify({ error: line.replace(/^dyfj: /, "") })}\n`);
+    }
+    io.err(line);
     exitCode = 1;
   } finally {
     let cleanupError: unknown;

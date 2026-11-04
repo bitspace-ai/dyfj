@@ -473,11 +473,12 @@ async fn run_turn(
                     }
                     Err(_) if client.is_closed() => return interrupted(wrote_any, &mut view, session),
                     Err(err) => {
-                        eprintln!("\n{}", runtime_error("turn failed", &err.to_string()));
+                        let runtime_log = std::env::var("DYFJ_RUNTIME_LOG").ok();
+                        eprintln!("\n{}", turn_failure_line(&err.to_string(), runtime_log.as_deref()));
                         if wrote_any {
                             println!();
                         }
-                        view.close(session);
+                        view.close_failed(session);
                     }
                 }
                 return TurnEnd::Settled;
@@ -683,6 +684,17 @@ fn flush_queued_frames(
 /// operator is least likely to be scrutinising.
 fn runtime_error(context: &str, message: &str) -> String {
     format!("{context}: {}", approval::visible(message))
+}
+
+/// The `turn failed` line. A failure that sends the operator to the runtime
+/// log names the file when the launcher said where it is (`DYFJ_RUNTIME_LOG`);
+/// the runtime itself does not know.
+fn turn_failure_line(message: &str, runtime_log: Option<&str>) -> String {
+    let line = runtime_error("turn failed", message);
+    match runtime_log.filter(|path| !path.is_empty() && message.contains("runtime log")) {
+        Some(path) => format!("{line} (runtime log: {})", approval::visible(path)),
+        None => line,
+    }
 }
 
 
@@ -923,6 +935,17 @@ mod tests {
     /// only that the sanitiser works — it could not detect a path that never
     /// called it, and three such paths were shipped: stream errors, RPC errors
     /// and the posture line.
+    #[test]
+    fn an_unclassified_turn_failure_names_the_runtime_log_when_the_launcher_said_where_it_is() {
+        let unclassified = "The turn failed on an unclassified error (Error, 29 bytes); its message is withheld. The runtime log records its class, and its code when it has one.";
+        let line = super::turn_failure_line(unclassified, Some("/h/.dyfj/log/runtime-workbench-1.log"));
+        assert!(line.starts_with("turn failed: The turn failed"), "{line:?}");
+        assert!(line.ends_with(" (runtime log: /h/.dyfj/log/runtime-workbench-1.log)"), "{line:?}");
+        assert!(!super::turn_failure_line(unclassified, None).contains("runtime log:"));
+        let stated = super::turn_failure_line("Budget exceeded [turn_limit]", Some("/h/l.log"));
+        assert_eq!(stated, "turn failed: Budget exceeded [turn_limit]");
+    }
+
     #[test]
     fn runtime_errors_reaching_the_terminal_are_sanitised() {
         let hostile = "boom\u{1b}[2J wiped";
@@ -1330,9 +1353,22 @@ impl TurnView {
 
     /// Print the evidence summary and keep every call for `/evidence`.
     fn close(&mut self, session: &mut Session) {
+        self.close_with(session, evidence::Ledger::summary);
+    }
+
+    /// `close` for a turn that failed, which has no reply to speak of.
+    fn close_failed(&mut self, session: &mut Session) {
+        self.close_with(session, evidence::Ledger::failed_summary);
+    }
+
+    fn close_with(
+        &mut self,
+        session: &mut Session,
+        summary: fn(&evidence::Ledger, i64) -> Vec<String>,
+    ) {
         self.status.clear();
         let elapsed = self.status.elapsed(Instant::now()).as_millis() as i64;
-        for line in self.ledger.summary(elapsed) {
+        for line in summary(&self.ledger, elapsed) {
             eprintln!("{line}");
         }
         session.last_evidence = Some(self.ledger.every_call());

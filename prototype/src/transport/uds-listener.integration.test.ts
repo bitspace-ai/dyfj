@@ -8,7 +8,7 @@ import {
   udsTestSocket,
 } from "../../testing/servers/uds-sockets.ts";
 import { fabricateStaleUdsSocket } from "../../testing/servers/listeners.ts";
-import { JsonRpcPeer } from "./jsonrpc-peer.ts";
+import { JsonRpcPeer, PeerClosedError } from "./jsonrpc-peer.ts";
 import { nodeSocketHost } from "./node-socket.ts";
 import type {
   JsonRpcRequest,
@@ -168,10 +168,11 @@ test("serveUnixJsonRpc close disconnects peers and removes the socket file", asy
   // hang up, which can land before server.close() resolves. Attach the
   // expectation first, or that rejection is briefly unhandled and the test
   // runner fails the file with an uncaught error.
+  // A server that hangs up is reported as the peer closing, a DomainError
+  // the client can name, not a bare "connection closed".
   const rejected = assert.rejects(
     () => pending,
-    (error: unknown) =>
-      error instanceof Error && error.message.includes("connection closed"),
+    (error: unknown) => error instanceof PeerClosedError,
   );
   // Let the request reach the server before closing.
   await new Promise((resolve) => setTimeout(resolve, 20));

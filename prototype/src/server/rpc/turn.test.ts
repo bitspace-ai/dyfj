@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { TurnStreamFrame } from "../../contract/mod.ts";
+import { DomainError, type TurnStreamFrame } from "../../contract/mod.ts";
 import {
   SessionOwners,
   type TurnRuntime,
@@ -187,6 +187,67 @@ test("a turn without a prompt -> invalidParams", async () => {
   assert.deepStrictEqual(error.code, RpcErrorCode.invalidParams);
 });
 
+test("a turn that fails on an error Workbench did not write says so, gives a next step, and logs the class and code", async () => {
+  // The driver's own message never crosses the wire; the client used to get
+  // `[Error, 29 bytes]` and nothing else, and the console the class alone.
+  const foreign = Object.assign(new Error("Access denied for user 'root'"), {
+    code: "ER_ACCESS_DENIED_ERROR",
+    errno: 1045,
+  });
+  const logged: string[] = [];
+  const restore = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
+  let error;
+  try {
+    error = await rpcFailure(
+      handlers(() => Promise.reject(foreign)),
+      "turn",
+      { prompt: "hi" },
+      client(),
+    );
+  } finally {
+    console.error = restore;
+  }
+  assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
+  for (
+    const expected of [
+      "unclassified",
+      "(Error, 29 bytes)",
+      "runtime log",
+      "dyfj status",
+    ]
+  ) {
+    assert.ok(
+      error.message.includes(expected),
+      `expected ${JSON.stringify(error.message)} to include ${
+        JSON.stringify(expected)
+      }`,
+    );
+  }
+  assert.ok(!error.message.includes("Access denied"), error.message);
+  const line = logged.find((entry) => entry.startsWith("[turn-error]"));
+  assert.ok(line !== undefined, logged.join("\n"));
+  assert.ok(line.includes("code=ER_ACCESS_DENIED_ERROR"), line);
+  assert.ok(line.includes("errno=1045"), line);
+  // The log keeps the class-and-code discipline: no foreign message text.
+  assert.ok(!line.includes("Access denied"), line);
+});
+
+test("a turn that fails on a DomainError passes its message through unchanged", async () => {
+  const error = await rpcFailure(
+    handlers(() =>
+      Promise.reject(new DomainError("Budget exceeded: turn limit $4.00"))
+    ),
+    "turn",
+    { prompt: "hi" },
+    client(),
+  );
+  assert.deepStrictEqual(error.code, RpcErrorCode.internalError);
+  assert.deepStrictEqual(error.message, "Budget exceeded: turn limit $4.00");
+});
+
 test("turn keeps the superseding-retry signal ordered between stale and replacement deltas", async () => {
   // The reset contract only works if the seam preserves emission order: a
   // consumer resets exactly at the signal, keeping everything after it.
@@ -250,7 +311,9 @@ test("a rejected supersede notification prevents the replacement provider call",
   await assert.rejects(
     async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx),
     (error: unknown) =>
-      error instanceof Error && error.message.includes("stream channel lost"),
+      error instanceof Error && error.message.includes("unclassified") &&
+      error.cause instanceof Error &&
+      error.cause.message.includes("stream channel lost"),
   );
   assert.deepStrictEqual(replacementProviderCalled, false);
   assert.deepStrictEqual(sent, [{ t: "delta", text: "stale partial" }]);
@@ -279,7 +342,9 @@ test("a rejected unparsed-markup notification fails the turn", async () => {
   await assert.rejects(
     async () => await handlers(runRuntime).turn({ prompt: "hi" }, ctx),
     (error: unknown) =>
-      error instanceof Error && error.message.includes("stream channel lost"),
+      error instanceof Error && error.message.includes("unclassified") &&
+      error.cause instanceof Error &&
+      error.cause.message.includes("stream channel lost"),
   );
   assert.deepStrictEqual(completed, false);
 });

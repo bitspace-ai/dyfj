@@ -19,8 +19,10 @@
 export {
   classifyErrorKind,
   ContextCompressionPersistenceUncertainError,
+  describeErrorForLog,
   PaidEscalationDeclinedError,
   ToolStepLimitConclusionError,
+  UnexpectedTurnError,
   WorkspaceContextUnavailableError,
 } from "./errors.ts";
 export { writeMaybe } from "./event-writes.ts";
