@@ -1264,10 +1264,12 @@ projected messages and tool exchanges, and the prior and new external session
 identifiers. The terminal client also prints the continuity state, whether the
 native session was new, reused, or replaced, and the ACP tool-evidence count in
 each external-agent footer. Workbench merges each real ACP `tool_call` with its
-`tool_call_update` patches and judges every call on its own. A call with a
-well-formed call id and tool name, a `completed` or `failed` status, and
-bounded input and output that pass the credential-shape gate is persisted as a
-replayable tool request/result pair (`recorded`). Any other call is
+`tool_call_update` patches and judges every call on its own. A call is
+persisted as a replayable tool request/result pair (`recorded`) only when it
+has a well-formed call id and tool name that sanitizing leaves unchanged, a
+`completed` or `failed` status, an input whose combined title, kind and input
+record fits the 4 KiB argument bound, an output within the 8 KiB bound, no
+other capture problem, and values that pass the credential-shape gate. Any other call is
 persisted as a gap marker that keeps the call's checked safe fields (call id,
 tool name, kind, title, status) and one fixed reason code: `missing_raw_input`,
 `missing_raw_output`, `oversized_input`, `oversized_output`, `malformed`,

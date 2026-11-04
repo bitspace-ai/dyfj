@@ -3669,12 +3669,18 @@ describe("reconstructed tool history", () => {
     assert.ok(truncated.endsWith(ACP_TOOL_OUTPUT_TRUNCATION_MARKER));
     assertNotContains(truncated, "tail-not-kept");
 
-    // Replay keeps the two recorded pairs and withholds each gap visibly.
+    // Replay keeps the two recorded pairs, withholds the three gap markers
+    // and reports them as omissions.
     const priorEvents = await fetchWorkbenchSessionEvents({
       sessionId,
       events: h.store.events,
     });
-    const replayedToolCalls = buildConversationMessages(priorEvents).flatMap((
+    let omission: unknown;
+    const replayedToolCalls = buildConversationMessages(priorEvents, {
+      onOmission: (reported) => {
+        omission = reported;
+      },
+    }).flatMap((
       message,
     ) =>
       message.role === "assistant"
@@ -3685,6 +3691,12 @@ describe("reconstructed tool history", () => {
       "fixture-mixed-typecheck",
       "fixture-mixed-test",
     ]);
+    assert.partialDeepStrictEqual(asRecord(omission), {
+      gapMarkers: 3,
+      malformedToolRecords: 0,
+      withheldFromProjection: 3,
+      projectedPairs: 2,
+    });
   });
 
   it("secret-shaped tool history fails before model work", async () => {

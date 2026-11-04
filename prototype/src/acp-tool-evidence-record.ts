@@ -88,7 +88,14 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
       return undefined;
     }
     try {
-      return boundedHistoryMetadata(value, maxBytes, field);
+      const bounded = boundedHistoryMetadata(value, maxBytes, field);
+      // Sanitizing must not change an identity: `call-a` and a control-
+      // character variant of it are distinct calls and must stay distinct.
+      if (bounded !== value) {
+        problems.add("malformed");
+        return undefined;
+      }
+      return bounded;
     } catch {
       problems.add("malformed");
       return undefined;
