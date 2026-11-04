@@ -82,9 +82,15 @@ interface MutableAcpToolCallEvidence {
 }
 
 export interface AcpToolEvidenceAccumulator {
+  /** Every entry, in the order its first update arrived. */
+  entries: MutableAcpToolCallEvidence[];
   calls: Map<string, MutableAcpToolCallEvidence>;
-  /** Updates with no usable call id; each counts as one rejected call. */
-  unattributed: MutableAcpToolCallEvidence[];
+  /**
+   * The one entry for every update with no usable call id. How many calls
+   * those updates describe cannot be known, so they count as one rejected
+   * entry, placed where the first of them arrived.
+   */
+  unattributed?: MutableAcpToolCallEvidence;
 }
 
 type BoundedJson =
@@ -141,13 +147,17 @@ export function applyAcpToolPatch(
   }
   const toolCallId = optionalToolField(update.toolCallId);
   if (toolCallId === undefined) {
-    accumulator.unattributed.push({ malformed: true });
+    if (accumulator.unattributed === undefined) {
+      accumulator.unattributed = { malformed: true };
+      accumulator.entries.push(accumulator.unattributed);
+    }
     return;
   }
   let call = accumulator.calls.get(toolCallId);
   if (call === undefined) {
     call = { toolCallId, malformed: update.sessionUpdate !== "tool_call" };
     accumulator.calls.set(toolCallId, call);
+    accumulator.entries.push(call);
   } else if (update.sessionUpdate === "tool_call") {
     // A second announcement of the same id cannot be told apart from a
     // different call reusing it.
@@ -233,9 +243,7 @@ export function finishAcpToolEvidence(
   accumulator: AcpToolEvidenceAccumulator,
 ): AcpToolEvidence {
   const calls: AcpToolCallEvidence[] = [];
-  for (
-    const call of [...accumulator.calls.values(), ...accumulator.unattributed]
-  ) {
+  for (const call of accumulator.entries) {
     calls.push({
       ...(call.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),
       ...(call.title === undefined ? {} : { title: call.title }),
@@ -255,5 +263,5 @@ export function finishAcpToolEvidence(
 }
 
 export function newAcpToolEvidenceAccumulator(): AcpToolEvidenceAccumulator {
-  return { calls: new Map(), unattributed: [] };
+  return { entries: [], calls: new Map() };
 }

@@ -678,9 +678,9 @@ const app = agent({ name: "dyfj-acp-fixture" })
           rawOutput: { exitCode: 1, stdout: "1 failing" },
         },
       ];
-      const perCallScenario = Object.keys(perCallScenarios).find((name) =>
-        prompt.includes(name)
-      );
+      const perCallScenario = prompt.includes("FIXTURE_RECALL")
+        ? undefined
+        : Object.keys(perCallScenarios).find((name) => prompt.includes(name));
       if (perCallScenario !== undefined) {
         for (const call of perCallScenarios[perCallScenario]) {
           const { status, rawOutput, ...announced } = call;

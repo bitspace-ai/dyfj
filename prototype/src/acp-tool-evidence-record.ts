@@ -2,7 +2,8 @@
  * Per-call ACP tool evidence: turn the bounded calls the ACP client captured
  * into what Workbench persists. Each call is judged on its own and ends
  * `recorded` (a replayable request/result pair), `partial` or `rejected` with a
- * fixed reason code, so one bad call never drops the others.
+ * fixed reason code, so a problem with one call never drops calls with other
+ * ids.
  */
 import { clipToUtf8Bytes } from "./kernel/mod.ts";
 import type {
@@ -63,7 +64,10 @@ export type PreparedAcpToolCall =
 export interface PreparedAcpToolEvidence {
   status: "complete" | "partial" | "unavailable";
   observedCalls: number;
-  /** One entry per observed call, in the order the agent announced them. */
+  /**
+   * One entry per distinct usable call id, plus at most one entry for all
+   * updates that carried no usable id, in the order each first appeared.
+   */
   calls: PreparedAcpToolCall[];
 }
 

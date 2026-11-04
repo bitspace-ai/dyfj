@@ -266,7 +266,7 @@ README are tracked separately in its Revision history section.
 ### Fixed
 
 - **ACP tool calls are recorded one by one, and the receipt says why any
-  was not.** Recording an external agent's tool calls was all-or-nothing: one
+  captured call was not.** Recording an external agent's tool calls was all-or-nothing: one
   call with a missing or oversized `rawOutput`, a credential-shaped value or
   an unfinished status dropped every call in the turn, and the receipt read
   only `ACP tool evidence: unavailable (0/7 calls recorded)`. Workbench now

@@ -1264,9 +1264,10 @@ projected messages and tool exchanges, and the prior and new external session
 identifiers. The terminal client also prints the continuity state, whether the
 native session was new, reused, or replaced, and the ACP tool-evidence count in
 each external-agent footer. Workbench merges each real ACP `tool_call` with its
-`tool_call_update` patches and judges every call on its own. A call whose
-bounded terminal input and output pass the credential-shape gate is persisted
-as a replayable tool request/result pair (`recorded`). Any other call is
+`tool_call_update` patches and judges every call on its own. A call with a
+well-formed call id and tool name, a `completed` or `failed` status, and
+bounded input and output that pass the credential-shape gate is persisted as a
+replayable tool request/result pair (`recorded`). Any other call is
 persisted as a gap marker that keeps the call's checked safe fields (call id,
 tool name, kind, title, status) and one fixed reason code: `missing_raw_input`,
 `missing_raw_output`, `oversized_input`, `oversized_output`, `malformed`,
@@ -1274,7 +1275,9 @@ tool name, kind, title, status) and one fixed reason code: `missing_raw_input`,
 or unfinished output) also keeps its checked input, and an oversized output is
 kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
 (credential-shaped, malformed, missing or oversized input) keeps no raw value.
-One bad call never drops the others. The receipt names the counts by outcome,
+A problem with one call no longer drops calls with other ids; a second
+announcement that reuses an id marks that shared entry malformed, and all
+updates with no usable id count as one rejected entry. The receipt names the counts by outcome,
 for example `ACP tool evidence: 5 recorded, 2 partial (missing_raw_output), 0
 rejected of 7`, and the turn result's `runner.toolEvidence` carries the same
 counts with per-reason tallies. Evidence reads `unavailable` only when no call
