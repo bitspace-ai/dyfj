@@ -1146,11 +1146,13 @@ with only the error's class and size, then its stack trace. When an
 autostarted runtime exits before it answers, the launcher stops waiting and
 prints that reason (`dyfj: the runtime exited before it answered: ...`) with
 the log path. `dyfj start` reports a config file it cannot read the same way
-(`config: cannot read config.toml (EISDIR); ...`). When the log states no
-reason, only an error's class and size, the launcher prints the log's last 20
-lines since the autostart instead, with ASCII control characters other than
-tab and newline removed. It notices the exit only for a runtime it spawned
-itself; otherwise, including while it waits on another invocation's start, it
+(`config: cannot read config.toml (EISDIR); ...`), and a file it cannot
+parse by line and column only (`config: failed to parse config.toml at line
+3, column 10; fix the TOML syntax there ...`), without quoting the file.
+When the log states no reason, only an error's class and size, the launcher
+prints the log's last 20 lines since the autostart instead, with ASCII
+control characters other than tab and newline removed. It notices the exit
+only for a runtime it spawned itself; otherwise, including while it waits on another invocation's start, it
 says `runtime is not answering` once its probes run out, and prints the same
 lines. The launcher passes the log's path to both
 clients as `DYFJ_RUNTIME_LOG`. When a runtime closes the connection while the

@@ -265,6 +265,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A config.toml parse error names its line and column, not the file's
+  contents.** `dyfj start`, the runtime's boot line and the launcher relayed
+  the TOML parser's whole message, which quotes the lines around the error,
+  so whatever those lines held reached the terminal and the autostart log.
+  The error is now `config: failed to parse config.toml at line 3, column
+  10; fix the TOML syntax there, or move the file aside to run on the
+  defaults`, built from fixed text and the parser's numeric position alone;
+  a parse error without a position says only that the file did not parse.
+
 - **The launcher says when the dependencies are not installed.** A checkout
   whose `node_modules` was missing, or stale after a pull changed the pins,
   printed Node's `ERR_MODULE_NOT_FOUND` stack trace for the first import

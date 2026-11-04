@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 
-import { configErrorText, configFilePath } from "./toml.ts";
+import { configErrorText, configFilePath, readConfigFile } from "./toml.ts";
 
 const env = (map: Record<string, string> = {}) => new MapEnv(map);
 
@@ -40,4 +40,22 @@ test("configErrorText strips control characters from a config error", () => {
   assert.ok(text !== undefined);
   assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(text), JSON.stringify(text));
   assert.match(text, /^config: bad value \[2J ?in config\.toml$/);
+});
+
+test("a parse error without a position names neither it nor the parser's text", async () => {
+  await assert.rejects(
+    () =>
+      readConfigFile("/x/config.toml", async () => "a = 1", () => {
+        throw new Error("parser text quoting a = 1");
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        "config: failed to parse config.toml; fix its TOML syntax, or " +
+          "move the file aside to run on the defaults",
+      );
+      return true;
+    },
+  );
 });
