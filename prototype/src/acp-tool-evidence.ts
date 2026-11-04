@@ -3,15 +3,12 @@
  * call is merged across its `tool_call` and `tool_call_update` patches and
  * judged on its own: a problem marks only that call, by a fixed reason code.
  */
-import {
-  clipToUtf8Bytes,
-  containsSensitiveShape,
-  utf8ByteLengthWithinLimit,
-} from "./kernel/mod.ts";
+import { clipToUtf8Bytes, utf8ByteLengthWithinLimit } from "./kernel/mod.ts";
 import {
   ACP_TOOL_EVIDENCE_REASONS,
   type AcpToolEvidenceReason,
 } from "./contract/mod.ts";
+import { historyValueContainsSecretShape } from "./acp-history-bounds.ts";
 
 /** ACP tool-call statuses Workbench keeps; any other value is dropped. */
 export type AcpToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
@@ -97,8 +94,14 @@ export interface AcpToolEvidenceAccumulator {
 type BoundedJson =
   | { kind: "ok"; json: string }
   | { kind: "oversized"; json: string }
+  | { kind: "credential_shaped" }
   | { kind: "malformed" };
 
+/**
+ * Serialize one raw value and check it before any part of it is kept. The
+ * credential check reads the whole value, decoded as well as serialized, so
+ * neither escaping nor a later cut can hide a credential.
+ */
 function boundedJson(value: unknown): BoundedJson {
   let json: string | undefined;
   try {
@@ -107,6 +110,9 @@ function boundedJson(value: unknown): BoundedJson {
     return { kind: "malformed" };
   }
   if (json === undefined) return { kind: "malformed" };
+  if (historyValueContainsSecretShape(value, json)) {
+    return { kind: "credential_shaped" };
+  }
   return utf8ByteLengthWithinLimit(json, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES) ===
       undefined
     ? { kind: "oversized", json }
@@ -200,7 +206,7 @@ export function applyAcpToolPatch(
     else {
       call.inputProblem = input.kind === "oversized"
         ? "oversized_input"
-        : "malformed";
+        : input.kind;
     }
   }
   if (Object.hasOwn(update, "rawOutput")) {
@@ -208,15 +214,10 @@ export function applyAcpToolPatch(
     delete call.rawOutputJson;
     delete call.outputProblem;
     if (output.kind === "ok") call.rawOutputJson = output.json;
-    else if (output.kind === "malformed") call.outputProblem = "malformed";
-    else if (containsSensitiveShape(output.json)) {
-      // The whole value is checked, not only the kept prefix, so a cut can
-      // never hide a credential from the later shape gate.
-      call.outputProblem = "credential_shaped";
-    } else {
+    else if (output.kind === "oversized") {
       call.rawOutputJson = truncatedToolOutput(output.json);
       call.outputProblem = "oversized_output";
-    }
+    } else call.outputProblem = output.kind;
   }
 }
 

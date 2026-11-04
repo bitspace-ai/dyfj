@@ -278,8 +278,10 @@ README are tracked separately in its Revision history section.
   `oversized_output`, `malformed`, `credential_shaped` or
   `incomplete_status`). A partial call also keeps its checked input, and an
   oversized output is kept cut to the 8 KiB bound and ends with a truncation
-  marker, unless the credential-shape gate rejects it; a rejected call keeps
-  no raw value. Replay still withholds every gap marker. The receipt line
+  marker, unless the credential-shape gate rejects it. That gate reads each
+  whole input and output before any cut, serialized and with every string
+  decoded, so a credential inside command output is caught wherever it sits;
+  a rejected call keeps no raw value. Replay still withholds every gap marker. The receipt line
   names the counts by outcome (`ACP tool evidence: 5 recorded, 2 partial
   (missing_raw_output), 0 rejected of 7`), the terminal footer adds the
   partial and rejected counts, and the turn result's `runner.toolEvidence`

@@ -25,6 +25,45 @@ export function historyContainsSecretShape(value: string): boolean {
   return containsSensitiveShape(value);
 }
 
+function textContainsSecretShape(text: string): boolean {
+  // Serializing a string escapes its quotes, so a credential field inside a
+  // string reads as `{\"token\":\"...\"}`, which the shapes do not match.
+  // Checking the text without backslashes undoes any depth of escaping; it can
+  // only add matches, never remove one.
+  return containsSensitiveShape(text) ||
+    containsSensitiveShape(text.replaceAll("\\", "")) ||
+    containsSensitiveShape(sanitizeHistoryText(text));
+}
+
+/**
+ * Whether a JSON value, or its serialized form `json`, carries something
+ * shaped like a live credential. `json` must be what `value` serializes to,
+ * so the value is acyclic. The serialized form is checked as a whole and
+ * with escaping removed, and every key and string in the value is checked as
+ * it decodes, so a credential inside a string value (command output holding
+ * JSON or a quoted assignment) is found wherever it sits in that string.
+ */
+export function historyValueContainsSecretShape(
+  value: unknown,
+  json: string,
+): boolean {
+  if (textContainsSecretShape(json)) return true;
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const part = pending.pop();
+    if (typeof part === "string") {
+      if (textContainsSecretShape(part)) return true;
+    } else if (Array.isArray(part)) {
+      for (const child of part) pending.push(child);
+    } else if (part !== null && typeof part === "object") {
+      for (const [key, child] of Object.entries(part)) {
+        pending.push(key, child);
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Strip control characters while keeping line structure. Line feeds survive
  * because quoting (above) is what makes them safe; tabs and carriage returns

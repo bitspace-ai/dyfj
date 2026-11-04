@@ -48,4 +48,41 @@ describe("prepareAcpToolEvidence", () => {
       !JSON.stringify(prepared).includes("abcdefghijklmnopqrstuvwxyz012345"),
     );
   });
+
+  it("rejects persisted text holding an escaped credential field", () => {
+    // The capture step is the only producer; this checks the second gate on
+    // its own, with escaped JSON and a cut output that no longer parses.
+    const secret = "abcdefghijklmnopqrstuvwxyz012345";
+    const escapedOutput = JSON.stringify({ stdout: `{"token":"${secret}"}` });
+    const prepared = prepareAcpToolEvidence({
+      status: "captured",
+      observedCalls: 3,
+      calls: [
+        { ...call("call-a"), rawOutputJson: escapedOutput },
+        {
+          ...call("call-b"),
+          rawOutputJson: `${escapedOutput.slice(0, -2)}\n[cut]`,
+          problems: ["oversized_output"],
+        },
+        {
+          ...call("call-c"),
+          rawInputJson: JSON.stringify({
+            command: ["sh", "-c", `echo password="${secret}"`],
+          }),
+        },
+      ],
+    });
+    assert.deepStrictEqual(
+      prepared.calls.map((entry) => [
+        entry.outcome,
+        entry.outcome === "recorded" ? undefined : entry.reason,
+      ]),
+      [
+        ["rejected", "credential_shaped"],
+        ["rejected", "credential_shaped"],
+        ["rejected", "credential_shaped"],
+      ],
+    );
+    assert.ok(!JSON.stringify(prepared).includes(secret));
+  });
 });

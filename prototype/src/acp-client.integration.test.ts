@@ -1446,8 +1446,8 @@ describe("runAcpAgent", () => {
       [
         ["fixture-mixed-typecheck", []],
         ["fixture-missing-output", ["missing_raw_output"]],
-        // The input's credential shape is judged by the runtime gate.
-        ["fixture-secret-input", []],
+        // Capture checks the whole input for credential shapes and keeps none.
+        ["fixture-secret-input", ["credential_shaped"]],
         ["fixture-oversized-output", ["oversized_output"]],
         ["fixture-mixed-test", []],
       ],

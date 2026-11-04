@@ -1270,7 +1270,10 @@ has a well-formed call id and tool name that sanitizing leaves unchanged, a
 `completed` or `failed` status, an input whose combined title, kind and input
 record fits the 4 KiB argument bound and its node and depth limits, an output
 within the 8 KiB bound, no
-other capture problem, and values that pass the credential-shape gate. Any other call is
+other capture problem, and values that pass the credential-shape gate. The gate
+reads each whole input and output before any cut, both as serialized and with
+every string decoded, so a credential inside command output (such as embedded
+JSON or a quoted assignment) is caught wherever it sits. Any other call is
 persisted as a gap marker that keeps the call's checked safe fields (call id,
 tool name, kind, title, status) and one fixed reason code: `missing_raw_input`,
 `missing_raw_output`, `oversized_input`, `oversized_output`, `malformed`,

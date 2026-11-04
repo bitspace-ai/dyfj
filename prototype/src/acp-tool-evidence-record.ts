@@ -25,6 +25,7 @@ import {
   boundedHistoryMetadata,
   HistoryLimitError,
   historyContainsSecretShape,
+  historyValueContainsSecretShape,
   MAX_HISTORY_TOOL_CALL_ID_BYTES,
   MAX_HISTORY_TOOL_NAME_BYTES,
   MAX_HISTORY_TOOL_RESULT_BYTES,
@@ -74,6 +75,14 @@ export interface PreparedAcpToolEvidence {
 /** Display bound for a not-recorded call's title; the title is a label. */
 const MAX_ACP_TOOL_GAP_TITLE_BYTES = 1_024;
 const MAX_ACP_TOOL_GAP_KIND_BYTES = 128;
+
+function parsedOrText(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
 
 function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
   const problems = new Set<AcpToolEvidenceReason>(call.problems);
@@ -143,7 +152,7 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
         ...(call.kind === undefined ? {} : { kind: call.kind }),
         input,
       });
-      if (historyContainsSecretShape(toolArguments)) {
+      if (historyValueContainsSecretShape(input, toolArguments)) {
         problems.add("credential_shaped");
         toolArguments = undefined;
       }
@@ -162,7 +171,12 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
         MAX_HISTORY_TOOL_RESULT_BYTES,
         "tool result",
       );
-      if (historyContainsSecretShape(toolResult)) {
+      // The capture step checked the whole value before any cut; this checks
+      // what is persisted, escaping removed, and the decoded value when the
+      // kept text still parses.
+      if (
+        historyValueContainsSecretShape(parsedOrText(toolResult), toolResult)
+      ) {
         problems.add("credential_shaped");
         toolResult = undefined;
       }
