@@ -159,12 +159,17 @@ export async function promptMidTurnApproval(
   return { decision: "deny", reason: "operator declined" };
 }
 
+/** How many distinct unknown limit names are counted before "9+". */
+const MAX_COUNTED_UNKNOWN_LIMITS = 9;
+
 /**
  * Why a spend approval was declined without a terminal, and how to proceed:
  * answer it from one, or raise every limit it crosses. Each known limit name
- * on the wire becomes its flag, once, in a fixed order; a name this client
- * does not know is said to exist. The list is only scanned, so a long one
- * costs no allocation per entry.
+ * on the wire becomes its flag, once, in a fixed order; the distinct names
+ * this client does not know are counted (up to 9, then "9+"). The list is
+ * only scanned, plus a set of at most ten unknown names. The runtime caps
+ * this reason at MAX_REASON_FIELD_BYTES (200); the longest form, all five
+ * flags and "9+ more are unknown", is 195 bytes.
  */
 function spendApprovalUnavailable(crossedScopes: unknown): string {
   const scopes: readonly unknown[] = Array.isArray(crossedScopes)
@@ -172,17 +177,28 @@ function spendApprovalUnavailable(crossedScopes: unknown): string {
     : [];
   const flags = LIMIT_REASON_FLAGS
     .filter(([reason]) => scopes.includes(reason))
-    .map(([, flag]) => `${flag} <usd>`);
-  const unknown = scopes.some((scope) => flagForLimitReason(scope) === undefined);
-  const lead = "approval needs an interactive terminal; run the turn from " +
-    "one to answer it, or raise ";
-  if (flags.length === 0) return `${lead}the limit with its --budget-* flag`;
-  const other = unknown
-    ? ", and any other limit the runtime named but this client does not know"
-    : "";
-  return flags.length === 1 && !unknown
-    ? `${lead}the limit with ${flags[0]}`
-    : `${lead}each limit it crosses with ${flags.join(" and ")}${other}`;
+    .map(([, flag]) => flag);
+  const unknown = new Set<unknown>();
+  for (const scope of scopes) {
+    if (unknown.size > MAX_COUNTED_UNKNOWN_LIMITS) break;
+    if (flagForLimitReason(scope) === undefined) unknown.add(scope);
+  }
+  const count = unknown.size > MAX_COUNTED_UNKNOWN_LIMITS
+    ? `${MAX_COUNTED_UNKNOWN_LIMITS}+`
+    : String(unknown.size);
+  const verb = unknown.size === 1 ? "is" : "are";
+  const terminal = "approval needs an interactive terminal; run the turn " +
+    "from one";
+  if (flags.length === 0) {
+    return `${terminal} to answer it, or raise the limit with its ` +
+      "--budget-* flag" +
+      (unknown.size === 0 ? "" : `; ${count} ${verb} unknown to this client`);
+  }
+  if (flags.length === 1 && unknown.size === 0) {
+    return `${terminal} to answer it, or raise the limit with ${flags[0]} <usd>`;
+  }
+  return `${terminal}, or raise each crossed limit: ${flags.join(", ")}` +
+    (unknown.size === 0 ? "" : `; ${count} more ${verb} unknown`);
 }
 
 function formatApprovalArgs(args: unknown): string {

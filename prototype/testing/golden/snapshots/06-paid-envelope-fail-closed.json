@@ -11,9 +11,9 @@
       ],
       "code": 1,
       "stdout": {
-        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise each limit it crosses with --budget-per-call <usd> and --budget-runaway <usd> and --budget-turn <usd>"
+        "error": "Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one, or raise each crossed limit: --budget-per-call, --budget-runaway, --budget-turn"
       },
-      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one to answer it, or raise each limit it crosses with --budget-per-call <usd> and --budget-runaway <usd> and --budget-turn <usd>\n"
+      "stderr": "dyfj: Budget ceiling confirmation declined: approval needs an interactive terminal; run the turn from one, or raise each crossed limit: --budget-per-call, --budget-runaway, --budget-turn\n"
     },
     "rpcSessionEnvelopeOnly": {
       "response": {

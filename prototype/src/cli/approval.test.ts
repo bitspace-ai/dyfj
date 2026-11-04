@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { fakeIo } from "../../testing/fakes/fake-io.ts";
+import { BudgetCeilingDeclinedError } from "../budget/mod.ts";
 import { promptMidTurnApproval } from "./approval.ts";
+import { LIMIT_REASON_FLAGS } from "./budget.ts";
 import type { Io } from "./io.ts";
 
 describe("promptMidTurnApproval", () => {
@@ -329,9 +331,8 @@ describe("promptMidTurnApproval", () => {
     assert.deepStrictEqual(verdict, {
       decision: "deny",
       reason: "approval needs an interactive terminal; run the turn from " +
-        "one to answer it, or raise each limit it crosses with " +
-        "--budget-turn <usd> and --budget-day <usd>, and any other limit " +
-        "the runtime named but this client does not know",
+        "one, or raise each crossed limit: --budget-turn, --budget-day; 1 " +
+        "more is unknown",
     });
     assert.deepStrictEqual(
       await promptMidTurnApproval(io, {
@@ -421,5 +422,52 @@ describe("promptMidTurnApproval: allow for the rest of the session", () => {
     const verdict = await promptMidTurnApproval(fake.io, { ...grantable, grantable: undefined }, true);
     assert.deepStrictEqual(verdict, { decision: "deny", reason: "operator declined" });
     assert.deepStrictEqual(fake.prompts, ["   approve? [y/N] "]);
+  });
+});
+
+describe("a non-interactive spend approval's reason as the operator sees it", () => {
+  it("keeps every crossed flag and the unknown count through the declined error's reason cap", async () => {
+    // Each subset of the known limits (the empty one included), beside zero,
+    // one or two limits this client does not know, reaches the operator
+    // through BudgetCeilingDeclinedError, which caps the reason; no flag and
+    // no unknown count may be cut off.
+    const known = LIMIT_REASON_FLAGS.map(([reason]) => reason);
+    const unknownSets = [[], ["future_a"], ["future_a", "future_b"]];
+    for (let mask = 0; mask < 1 << known.length; mask++) {
+      const crossed = known.filter((_, i) => (mask & (1 << i)) !== 0);
+      for (const unknowns of unknownSets) {
+        if (crossed.length === 0 && unknowns.length === 0) continue;
+        const scopes = [...crossed, ...unknowns];
+        const verdict = await promptMidTurnApproval(fakeIo([]).io, {
+          kind: "budget_ceiling",
+          crossedScopes: scopes,
+        }, false);
+        assert.strictEqual(verdict.decision, "deny");
+        const reason = (verdict as { reason: string }).reason;
+        const shown = new BudgetCeilingDeclinedError(reason).message;
+        assert.ok(shown.endsWith(reason), `${scopes.join(",")}: ${shown}`);
+        for (const [scope, flag] of LIMIT_REASON_FLAGS) {
+          if (scopes.includes(scope)) assert.ok(shown.includes(flag), shown);
+        }
+        if (unknowns.length === 1) assert.match(shown, /\b1 (more )?is unknown/, shown);
+        if (unknowns.length === 2) assert.match(shown, /\b2 (more )?are unknown/, shown);
+        if (unknowns.length === 0) assert.doesNotMatch(shown, /unknown/, shown);
+      }
+    }
+  });
+
+  it("counts more than nine unknown limits as 9+, still within the cap", async () => {
+    const scopes = [
+      ...LIMIT_REASON_FLAGS.map(([reason]) => reason),
+      ...Array.from({ length: 12 }, (_, i) => `future_${i}`),
+    ];
+    const verdict = await promptMidTurnApproval(fakeIo([]).io, {
+      kind: "budget_ceiling",
+      crossedScopes: scopes,
+    }, false);
+    const reason = (verdict as { reason: string }).reason;
+    const shown = new BudgetCeilingDeclinedError(reason).message;
+    assert.ok(shown.endsWith("; 9+ more are unknown"), shown);
+    for (const [, flag] of LIMIT_REASON_FLAGS) assert.ok(shown.includes(flag), shown);
   });
 });

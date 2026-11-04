@@ -276,9 +276,11 @@ README are tracked separately in its Revision history section.
   map is shut down`, and an unavailable workspace. Each now ends with the next
   step: the `--budget-*` flag (and `/budget` command) for the limit
   concerned, or the `[budget]` default; for a spend approval without a
-  terminal, the flag for each limit it crosses that this client knows (all
-  of them, joined with "and", since each one blocks a retry), and a note
-  when the runtime named a limit it does not know;
+  terminal, the flag of every limit it crosses that this client knows
+  (`raise each crossed limit: --budget-turn, --budget-day`, since each one
+  blocks a retry), and a count of the limits the runtime named that this
+  client does not know (`2 more are unknown`, up to `9+`), all within the
+  runtime's 200-byte reason cap;
   `--approve-paid` (in the REPL, `/model <slug> --approve-paid`);
   `DYFJ_TRUST_WORKSPACE_INSTRUCTIONS=1` and a runtime restart; dropping
   `--fast`; waiting, ending a session or restarting the runtime; checking the
