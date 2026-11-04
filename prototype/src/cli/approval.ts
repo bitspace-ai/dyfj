@@ -5,6 +5,7 @@
  */
 
 import type { ToolApprovalVerdict } from "../transport/mod.ts";
+import { flagForLimitReason, LIMIT_REASON_FLAGS } from "./budget.ts";
 import type { Io } from "./io.ts";
 
 const MAX_ACP_PERMISSION_OPTIONS = 16;
@@ -109,7 +110,9 @@ export async function promptMidTurnApproval(
   if (!interactive) {
     return {
       decision: "deny",
-      reason: "approval needs an interactive terminal",
+      reason: r.kind === "budget_ceiling" || r.kind === "runaway_anomaly"
+        ? spendApprovalUnavailable(r.crossedScopes)
+        : "approval needs an interactive terminal",
     };
   }
   // A runtime from before BIT-785 may still send `runaway_anomaly`; it is a
@@ -154,6 +157,48 @@ export async function promptMidTurnApproval(
     return { decision: "approve", scope: "session" };
   }
   return { decision: "deny", reason: "operator declined" };
+}
+
+/** How many distinct unknown limit names are counted before "9+". */
+const MAX_COUNTED_UNKNOWN_LIMITS = 9;
+
+/**
+ * Why a spend approval was declined without a terminal, and how to proceed:
+ * answer it from one, or raise every limit it crosses. Each known limit name
+ * on the wire becomes its flag, once, in a fixed order; the distinct names
+ * this client does not know are counted (up to 9, then "9+"). The list is
+ * only scanned, plus a set of at most ten unknown names. The runtime caps
+ * this reason at MAX_REASON_FIELD_BYTES (200); the longest form, all five
+ * flags and "9+ more are unknown", is 195 bytes.
+ */
+function spendApprovalUnavailable(crossedScopes: unknown): string {
+  const scopes: readonly unknown[] = Array.isArray(crossedScopes)
+    ? crossedScopes
+    : [];
+  const flags = LIMIT_REASON_FLAGS
+    .filter(([reason]) => scopes.includes(reason))
+    .map(([, flag]) => flag);
+  const unknown = new Set<unknown>();
+  for (const scope of scopes) {
+    if (unknown.size > MAX_COUNTED_UNKNOWN_LIMITS) break;
+    if (flagForLimitReason(scope) === undefined) unknown.add(scope);
+  }
+  const count = unknown.size > MAX_COUNTED_UNKNOWN_LIMITS
+    ? `${MAX_COUNTED_UNKNOWN_LIMITS}+`
+    : String(unknown.size);
+  const verb = unknown.size === 1 ? "is" : "are";
+  const terminal = "approval needs an interactive terminal; run the turn " +
+    "from one";
+  if (flags.length === 0) {
+    return `${terminal} to answer it, or raise the limit with its ` +
+      "--budget-* flag" +
+      (unknown.size === 0 ? "" : `; ${count} ${verb} unknown to this client`);
+  }
+  if (flags.length === 1 && unknown.size === 0) {
+    return `${terminal} to answer it, or raise the limit with ${flags[0]} <usd>`;
+  }
+  return `${terminal}, or raise each crossed limit: ${flags.join(", ")}` +
+    (unknown.size === 0 ? "" : `; ${count} more ${verb} unknown`);
 }
 
 function formatApprovalArgs(args: unknown): string {

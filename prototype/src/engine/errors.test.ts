@@ -19,6 +19,7 @@ import {
   PaidEscalationDeclinedError,
   SessionModelUnavailableError,
   SessionRunnerNotRestorableError,
+  WorkspaceContextUnavailableError,
 } from "./errors.ts";
 
 // ── PaidEscalationDeclinedError — reason field sanitization ──────────────────
@@ -97,6 +98,12 @@ test("classifyErrorKind classifies a DomainError subclass with a shadowed .const
   assert.ok(err instanceof BudgetExceededError);
   assert.strictEqual(classifyErrorKind(err), "BudgetExceededError");
   assert.notStrictEqual(classifyErrorKind(err), "FOREIGN_PAYLOAD");
+});
+
+test("an unavailable workspace names the path to check and the retry", () => {
+  const err = new WorkspaceContextUnavailableError();
+  assert.match(err.message, /--workspace/);
+  assert.match(err.message, /retry/);
 });
 
 test("classifyErrorKind classifies an unlisted DomainError subclass to the generic literal", () => {

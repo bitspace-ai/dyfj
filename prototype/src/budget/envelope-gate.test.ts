@@ -799,7 +799,10 @@ it("BudgetExceededError keeps its own properties and message", () => {
   assert.strictEqual(
     err.message,
     "Budget exceeded [session_limit]: estimated $1.000000, limit " +
-      "$2.000000, session total so far $3.000000",
+      "$2.000000, session total so far $3.000000. To go past it, raise " +
+      "this session's limit with --budget-session <usd> (or /budget " +
+      "session <usd> in the REPL), or the default under [budget] in " +
+      "~/.dyfj/config.toml",
   );
   assert.strictEqual(err.cause, undefined);
 });

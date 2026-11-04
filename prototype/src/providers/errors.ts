@@ -66,7 +66,11 @@ export class WorkbenchModelNotFoundError extends DomainError {
 export class WorkbenchModelFastSpeedUnsupportedError extends DomainError {
   public readonly slug: string;
   constructor(slug: string) {
-    super(`Model "${errorField(slug)}" does not support fast speed tier`);
+    super(
+      `Model "${errorField(slug)}" does not support fast speed tier. Drop ` +
+        "--fast (or turn it off with /fast off in the REPL), or choose a " +
+        "model that supports it",
+    );
     this.slug = slug;
     this.name = "WorkbenchModelFastSpeedUnsupportedError";
   }

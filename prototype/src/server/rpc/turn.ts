@@ -298,7 +298,8 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
         // A DomainError states its condition and crosses the wire as its
         // message. Anything else would reach the client as `[Error, N bytes]`
         // with no next step: this is the one seam every turn crosses, so the
-        // log gets its class and code here and the client a stated condition.
+        // log gets its class here, and its code when it has one, and the
+        // client a stated condition.
         if (error instanceof DomainError) throw error;
         console.error(`[turn-error] ${describeErrorForLog(error)}`);
         throw new UnexpectedTurnError(error);

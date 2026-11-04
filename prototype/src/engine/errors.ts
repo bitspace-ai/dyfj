@@ -157,7 +157,9 @@ export class StepLimitHandoffIncompleteError extends DomainError {
 export class WorkspaceContextUnavailableError extends DomainError {
   constructor() {
     super(
-      "The selected workspace is unavailable; repository context was not loaded.",
+      "The selected workspace is unavailable; repository context was not " +
+        "loaded. Check that the workspace path exists and is a directory " +
+        "(--workspace, or the directory dyfj was started from), then retry.",
     );
     this.name = "WorkspaceContextUnavailableError";
   }

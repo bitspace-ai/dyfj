@@ -16,6 +16,7 @@
  */
 import {
   type AcpRunnerSelection,
+  CODEX_WORKSPACE_TRUST_REQUIRED,
   DomainError,
   type PaidEscalationVerdict,
   summarizeError,
@@ -270,9 +271,7 @@ export async function resolveRoute(
     route.selection.profile === "codex-chatgpt" &&
     request.trustWorkspaceInstructions !== true
   ) {
-    throw new DomainError(
-      "codex-chatgpt requires explicit workspace trust",
-    );
+    throw new DomainError(CODEX_WORKSPACE_TRUST_REQUIRED);
   }
   if (route.model !== null) {
     await confirmPaidRoute({
