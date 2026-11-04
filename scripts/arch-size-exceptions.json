@@ -2,7 +2,7 @@
   {
     "kind": "module",
     "path": "prototype/src/acp-client.ts",
-    "lines": 2302,
+    "lines": 2112,
     "reason": "Deferred with the ACP runner's restructuring (decision D20; WO-18 moves it to runners/acp/)."
   },
   {
@@ -22,7 +22,7 @@
   {
     "kind": "module",
     "path": "prototype/src/external-agent-runtime.ts",
-    "lines": 1747,
+    "lines": 1477,
     "reason": "Deferred with the ACP runner's restructuring (decision D20; WO-18 moves it to runners/acp/)."
   },
   {

@@ -265,6 +265,28 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **ACP tool calls are recorded one by one, and the receipt says why any
+  was not.** Recording an external agent's tool calls was all-or-nothing: one
+  call with a missing or oversized `rawOutput`, a credential-shaped value or
+  an unfinished status dropped every call in the turn, and the receipt read
+  only `ACP tool evidence: unavailable (0/7 calls recorded)`. Workbench now
+  judges each call on its own. A call that passes every check is still
+  persisted as a replayable request/result pair. Any other call is persisted
+  as a gap marker (`acp.history_unavailable`) that keeps the call's checked
+  id, tool name, kind, title and status and one fixed reason code
+  (`missing_raw_input`, `missing_raw_output`, `oversized_input`,
+  `oversized_output`, `malformed`, `credential_shaped` or
+  `incomplete_status`). A partial call also keeps its checked input, and an
+  oversized output is kept cut to the 8 KiB bound and ends with a truncation
+  marker, unless the credential-shape gate rejects it; a rejected call keeps
+  no raw value. Replay still withholds every gap marker. The receipt line
+  names the counts by outcome (`ACP tool evidence: 5 recorded, 2 partial
+  (missing_raw_output), 0 rejected of 7`), the terminal footer adds the
+  partial and rejected counts, and the turn result's `runner.toolEvidence`
+  gains a `partial` status, `partialCalls`, `rejectedCalls` and per-reason
+  tallies (`partialReasons`, `rejectedReasons`). Evidence reads `unavailable`
+  only when no call could be attributed, as on an aborted turn.
+
 - **Spend, paid-model and runner refusals say how to proceed.** These
   refusals named the condition and stopped: `Budget exceeded [turn_limit]:
   ...`, `Budget ceiling confirmation declined: approval needs an interactive

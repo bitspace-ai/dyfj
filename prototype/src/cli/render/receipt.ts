@@ -79,6 +79,8 @@ export function formatReceipt(
       ? "ACP tools unreported"
       : toolEvidence.status === "unavailable"
       ? `ACP tools unavailable (${toolEvidence.observedCalls} observed)`
+      : toolEvidence.status === "partial"
+      ? `ACP tools ${toolEvidence.recordedCalls}/${toolEvidence.observedCalls} recorded (${toolEvidence.partialCalls} partial, ${toolEvidence.rejectedCalls} rejected)`
       : `ACP tools ${toolEvidence.recordedCalls}/${toolEvidence.observedCalls} recorded`;
     const history = result.historyOmission === undefined
       ? ""
