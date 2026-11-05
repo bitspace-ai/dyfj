@@ -178,6 +178,21 @@ describe("ACP tool evidence capture", () => {
       ]);
     });
 
+    it("rejects a credential key that only an intermediate decoding pass shows", () => {
+      // One pass turns `\u005ctoken` into `\token`, which matches once the
+      // backslash is removed; the next pass turns `\t` into a tab.
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawOutput: { stdout: `{"\\u005ctoken":"${secret}"}` },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.deepStrictEqual(evidence.calls[0].problems, [
+        "credential_shaped",
+      ]);
+      assert.ok(!JSON.stringify(evidence).includes(secret));
+    });
+
     it("decodes nested escaping up to the cap, and stops there", () => {
       const nested = (text: string, levels: number) => {
         let out = text;

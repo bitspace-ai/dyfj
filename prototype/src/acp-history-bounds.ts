@@ -44,50 +44,45 @@ const SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
  */
 export const MAX_HISTORY_JSON_ESCAPE_LEVELS = 4;
 
-/**
- * `text` with up to `MAX_HISTORY_JSON_ESCAPE_LEVELS` levels of JSON string
- * escapes decoded, stopping early once a pass changes nothing.
- */
-function withJsonEscapesDecoded(text: string): string {
-  let current = text;
-  for (
-    let level = 0;
-    level < MAX_HISTORY_JSON_ESCAPE_LEVELS && current.includes("\\");
-    level += 1
-  ) {
-    const next = current.replace(
-      JSON_ESCAPE,
-      (_match, hex: string | undefined, simple: string | undefined) =>
-        hex === undefined
-          ? SIMPLE_ESCAPES[simple!]
-          : String.fromCharCode(Number.parseInt(hex, 16)),
-    );
-    if (next === current) break;
-    current = next;
-  }
-  return current;
+/** `text` with one level of JSON string escapes decoded. */
+function withOneJsonEscapeLevelDecoded(text: string): string {
+  return text.replace(
+    JSON_ESCAPE,
+    (_match, hex: string | undefined, simple: string | undefined) =>
+      hex === undefined
+        ? SIMPLE_ESCAPES[simple!]
+        : String.fromCharCode(Number.parseInt(hex, 16)),
+  );
 }
 
 /**
  * Whether `text` carries something shaped like a live credential. The check
- * reads the text as it is, as `sanitizeHistoryText` would store it, with
- * every backslash removed, and with up to
- * `MAX_HISTORY_JSON_ESCAPE_LEVELS` levels of JSON string escapes decoded
- * (that decoded text also as stored and with its remaining backslashes
- * removed). Text that holds serialized JSON escapes its quotes and may escape
- * any character (`{\"\u0074oken\":...}`), which the shapes alone do not
- * match. Each extra reading can only add matches. Each reading is one linear
- * pass over the text.
+ * reads the text in three forms: as it is, as `sanitizeHistoryText` would
+ * store it, and with every backslash removed. It then decodes one level of
+ * JSON string escapes and reads the result in the same three forms, for up to
+ * `MAX_HISTORY_JSON_ESCAPE_LEVELS` levels, stopping early once a pass changes
+ * nothing. Every pass is read, not only the last, because a later pass can
+ * undo a match an earlier one exposed (`\u005ctoken` decodes to `\token`,
+ * then to a tab and `oken`). Text that holds serialized JSON escapes its
+ * quotes and may escape any character (`{\"\u0074oken\":...}`), which the
+ * shapes alone do not match. Each reading is one linear pass over the text.
  */
 export function historyTextContainsSecretShape(text: string): boolean {
-  if (containsSensitiveShape(text)) return true;
-  if (containsSensitiveShape(sanitizeHistoryText(text))) return true;
-  if (!text.includes("\\")) return false;
-  if (containsSensitiveShape(text.replaceAll("\\", ""))) return true;
-  const decoded = withJsonEscapesDecoded(text);
-  return containsSensitiveShape(decoded) ||
-    containsSensitiveShape(sanitizeHistoryText(decoded)) ||
-    containsSensitiveShape(decoded.replaceAll("\\", ""));
+  let current = text;
+  for (let level = 0; ; level += 1) {
+    if (
+      containsSensitiveShape(current) ||
+      containsSensitiveShape(sanitizeHistoryText(current))
+    ) {
+      return true;
+    }
+    if (!current.includes("\\")) return false;
+    if (containsSensitiveShape(current.replaceAll("\\", ""))) return true;
+    if (level === MAX_HISTORY_JSON_ESCAPE_LEVELS) return false;
+    const next = withOneJsonEscapeLevelDecoded(current);
+    if (next === current) return false;
+    current = next;
+  }
 }
 
 /**

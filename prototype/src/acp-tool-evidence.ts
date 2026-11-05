@@ -298,9 +298,11 @@ export function finishAcpToolEvidence(
   const calls: AcpToolCallEvidence[] = [];
   for (const call of accumulator.entries) {
     const problems = callProblems(call);
-    // A call still credential-shaped at the end keeps neither raw field, even
-    // the one that passed on its own. A later patch that replaces the matched
-    // field with a clean value clears that problem.
+    // A call whose raw input or output still matches after its last patch
+    // keeps neither raw field, even the one that passed on its own. A later
+    // patch that replaces the matched field with a clean value clears that
+    // problem. Labels and identity are checked when the call is prepared for
+    // persisting, not here.
     const keepRaw = !problems.includes("credential_shaped");
     calls.push({
       ...(call.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),

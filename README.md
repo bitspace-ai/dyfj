@@ -1273,12 +1273,14 @@ within the 8 KiB bound, no
 other capture problem, and values that pass the credential-shape gate. The gate
 matches a fixed set of credential patterns. It reads each output whole before
 any cut, and reads the serialized form and every key and string of a value in
-several forms: as they are; as Workbench would store them (other control
+three forms: as they are; as Workbench would store them (other control
 characters deleted, tabs and carriage returns turned into spaces, line feeds
-kept); with every backslash removed; and with up to four levels of JSON string
-escapes decoded, that decoded text also as stored and with its remaining
-backslashes removed. So a credential field inside command output, such as
-embedded JSON or a quoted assignment, is caught wherever it sits in the output;
+kept); and with every backslash removed. It then decodes one level of JSON
+string escapes at a time, for up to four levels, and reads the text after
+every level in the same three forms, since a later level can undo a match an
+earlier one showed. So a credential field inside command output, such as
+embedded JSON or a quoted assignment, is caught wherever it sits in the output
+when one of those readings shows it;
 text the patterns do not describe, a credential hidden by more than four
 levels of `\u` escapes (decoding stops after four passes; removing backslashes
 still undoes deeper escaping of quotes and backslashes alone), or an encoding
@@ -1296,9 +1298,11 @@ sanitizing and credential-shape checks, and one fixed reason code: `missing_raw_
 or unfinished output) also keeps its checked input, and an oversized output is
 kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
 (credential-shaped, malformed, missing or oversized input) keeps no raw value.
-A call whose final merged state is credential-shaped keeps neither raw field; a
-later patch that replaces the matched field with a clean value clears that
-problem.
+At capture, a call whose raw input or output still matches after its last
+patch keeps neither raw field; a later patch that replaces the matched field
+with a clean value clears that problem. The id, name, kind and title are
+checked when the call is prepared for persisting: a match there makes the call
+a rejected gap, which keeps no raw value.
 A problem with one call no longer drops calls with other ids; a second
 announcement that reuses an id marks that shared entry malformed, and all
 updates with no usable id count as one rejected entry. The receipt names the counts by outcome,
