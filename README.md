@@ -1279,8 +1279,12 @@ kept); with every backslash removed; and with up to four levels of JSON string
 escapes decoded, that decoded text also as stored and with its remaining
 backslashes removed. So a credential field inside command output, such as
 embedded JSON or a quoted assignment, is caught wherever it sits in the output;
-text the patterns do not describe, escaping nested more than four levels deep,
-or an encoding other than JSON escaping, is not. An input whose serialized form
+text the patterns do not describe, a credential hidden by more than four
+levels of `\u` escapes (decoding stops after four passes; removing backslashes
+still undoes deeper escaping of quotes and backslashes alone), or an encoding
+other than JSON escaping, is not. Because each output is read whole, the
+check's working memory is bounded by the ACP stream's per-message limit
+(384 KiB, or 1 MiB for long-running sessions), not by the 8 KiB kept. An input whose serialized form
 would exceed 8 KiB is measured before it is serialized, is not scanned, and is
 rejected as `oversized_input` with none of it kept; a smaller input is scanned
 and then still rejected as `oversized_input` if its argument record exceeds the
@@ -1292,6 +1296,9 @@ sanitizing and credential-shape checks, and one fixed reason code: `missing_raw_
 or unfinished output) also keeps its checked input, and an oversized output is
 kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
 (credential-shaped, malformed, missing or oversized input) keeps no raw value.
+A call whose final merged state is credential-shaped keeps neither raw field; a
+later patch that replaces the matched field with a clean value clears that
+problem.
 A problem with one call no longer drops calls with other ids; a second
 announcement that reuses an id marks that shared entry malformed, and all
 updates with no usable id count as one rejected entry. The receipt names the counts by outcome,

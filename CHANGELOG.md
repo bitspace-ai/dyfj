@@ -282,9 +282,13 @@ README are tracked separately in its Revision history section.
   marker, unless the credential-shape gate rejects it. That gate matches a
   fixed set of credential patterns and reads each output whole before any
   cut, with every string decoded, every backslash removed and up to four
-  levels of JSON string escapes undone, so a credential field inside command output, such as embedded JSON or a
-  quoted assignment, is caught wherever it sits in the output. A call the
-  gate matches keeps neither raw field, and a rejected call keeps no raw
+  passes of JSON string escape decoding (a credential hidden by more than
+  four levels of `\u` escapes is not caught), so a credential field inside command output, such as embedded JSON or a
+  quoted assignment, is caught wherever it sits in the output. A call whose
+  final merged state the gate matches keeps neither raw field (a later
+  patch that replaces the matched field with a clean value clears the
+  match), the check's working memory is bounded by the ACP stream's
+  per-message limit rather than by the 8 KiB kept, and a rejected call keeps no raw
   value. Replay still withholds every gap marker. The receipt line
   names the counts by outcome (`ACP tool evidence: 5 recorded, 2 partial
   (missing_raw_output), 0 rejected of 7`), the terminal footer adds the

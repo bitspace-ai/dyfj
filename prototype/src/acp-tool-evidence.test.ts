@@ -206,6 +206,45 @@ describe("ACP tool evidence capture", () => {
       );
     });
 
+    it("decodes at most four levels of unicode escaping, as documented", () => {
+      // `levels` levels of `\u` escaping of "t", which removing backslashes
+      // alone does not undo.
+      const escapedT = (levels: number) =>
+        `\\${"u005c".repeat(levels - 1)}u0074`;
+      const capture = (levels: number) => {
+        const accumulator = newAcpToolEvidenceAccumulator();
+        applyAcpToolPatch(accumulator, {
+          ...completedCall("call-a"),
+          rawOutput: { stdout: `{"${escapedT(levels)}oken":"${secret}"}` },
+        });
+        return finishAcpToolEvidence(accumulator).calls[0].problems;
+      };
+      assert.deepStrictEqual(capture(4), ["credential_shaped"]);
+      // The fifth level is past the cap, so the decoding passes stop before
+      // it: this pins the documented limit.
+      assert.deepStrictEqual(capture(5), []);
+    });
+
+    it("stops measuring an oversized input before reading all of it", () => {
+      const command: unknown[] = Array.from({ length: 50_000 }, () => 0);
+      let reachedLate = false;
+      Object.defineProperty(command, 49_999, {
+        enumerable: true,
+        get() {
+          reachedLate = true;
+          throw new Error("read past the bound");
+        },
+      });
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawInput: { command },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.strictEqual(reachedLate, false);
+      assert.deepStrictEqual(evidence.calls[0].problems, ["oversized_input"]);
+    });
+
     it("measures an oversized input before serializing it, and keeps none", () => {
       const accumulator = newAcpToolEvidenceAccumulator();
       applyAcpToolPatch(accumulator, {

@@ -105,9 +105,10 @@ type BoundedJson =
  * Whether `value`, a parsed JSON value, surely serializes to more than
  * `limitBytes`. It sums a lower bound of the serialized length (each string's
  * code units and quotes, one unit per scalar, brackets and array separators)
- * and stops as soon as the bound passes the limit, so the work is bounded by
- * the limit, not by the value. A UTF-8 encoding is never shorter than the
- * string's code units.
+ * and stops as soon as the bound passes the limit, so it reads only the
+ * entries needed to pass it. Listing an object's keys still costs time in
+ * proportion to their number; the protocol stream's per-message limit bounds
+ * that. A UTF-8 encoding is never shorter than the string's code units.
  */
 function surelyExceedsJsonBytes(value: unknown, limitBytes: number): boolean {
   let total = 0;
@@ -135,7 +136,8 @@ function surelyExceedsJsonBytes(value: unknown, limitBytes: number): boolean {
 /**
  * Serialize one raw value and check it before any part of it is kept. The
  * credential check reads the whole value, serialized and decoded, before any
- * cut. A value that will not be kept at all when oversized (`keepOversized`
+ * cut, so its working memory is bounded by the protocol stream's per-message
+ * limit, not by the 8 KiB kept. A value that will not be kept at all when oversized (`keepOversized`
  * false, as for an input) is measured before it is serialized and is not
  * scanned: it is reported oversized and nothing of it is kept.
  */
@@ -296,8 +298,9 @@ export function finishAcpToolEvidence(
   const calls: AcpToolCallEvidence[] = [];
   for (const call of accumulator.entries) {
     const problems = callProblems(call);
-    // A credential-shaped call keeps neither raw field, even the one that
-    // passed on its own.
+    // A call still credential-shaped at the end keeps neither raw field, even
+    // the one that passed on its own. A later patch that replaces the matched
+    // field with a clean value clears that problem.
     const keepRaw = !problems.includes("credential_shaped");
     calls.push({
       ...(call.toolCallId === undefined ? {} : { toolCallId: call.toolCallId }),
