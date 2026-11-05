@@ -29,6 +29,33 @@ describe("prepareAcpToolEvidence", () => {
     );
   });
 
+  it("rejects a credential-shaped name that the acp. prefix would hide", () => {
+    const unsafeName = "token:abcdefgh12345678";
+    const prepared = prepareAcpToolEvidence({
+      status: "captured",
+      observedCalls: 2,
+      calls: [{ ...call("call-a"), name: unsafeName }, {
+        ...call("call-b"),
+        name: unsafeName,
+        status: "in_progress",
+        rawOutputJson: undefined,
+        problems: ["missing_raw_output", "incomplete_status"],
+      }],
+    });
+    assert.deepStrictEqual(
+      prepared.calls.map((entry) => [
+        entry.outcome,
+        entry.outcome === "recorded" ? undefined : entry.reason,
+        entry.toolName,
+      ]),
+      [
+        ["rejected", "credential_shaped", undefined],
+        ["rejected", "credential_shaped", undefined],
+      ],
+    );
+    assert.ok(!JSON.stringify(prepared).includes("abcdefgh12345678"));
+  });
+
   it("rejects a title whose sanitized form is credential-shaped", () => {
     const prepared = prepareAcpToolEvidence({
       status: "captured",

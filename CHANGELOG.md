@@ -290,8 +290,9 @@ README are tracked separately in its Revision history section.
   input or output the gate still matches after its last patch keeps
   neither raw field (a later patch that replaces the matched field with a
   clean value clears the match); a match in the id, name, kind or title is
-  found when the call is prepared for persisting and makes it a rejected
-  gap. The check's working memory is bounded by the ACP stream's
+  found when the call is prepared for persisting (the name is checked both
+  as received and with its `acp.` prefix) and makes it a rejected gap
+  without that field. The check's working memory is bounded by the ACP stream's
   per-message limit rather than by the 8 KiB kept, and a rejected call
   keeps no raw value. Replay still withholds every gap marker. The receipt line
   names the counts by outcome (`ACP tool evidence: 5 recorded, 2 partial

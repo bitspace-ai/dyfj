@@ -3578,6 +3578,82 @@ describe("reconstructed tool history", () => {
     assertNotContains(JSON.stringify(toolEvents[0]), "notes.txt");
   });
 
+  it("rejects a credential-shaped ACP tool name before adding its prefix", async () => {
+    // `acp.` before the name hides a shape that needs a delimiter before it.
+    const unsafeName = "token:abcdefgh12345678";
+    const h = createHarness();
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "run a check",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000132",
+      workspaceRoot: process.cwd(),
+    }, {
+      runAgent: () =>
+        Promise.resolve({
+          text: "recorded",
+          stopReason: "stop" as const,
+          capabilities: [],
+          elapsedMs: 1,
+          toolEvidence: {
+            status: "captured" as const,
+            observedCalls: 2,
+            calls: [{
+              toolCallId: "call-complete",
+              title: "Run check",
+              name: unsafeName,
+              kind: "execute",
+              status: "completed" as const,
+              rawInputJson: '{"command":["true"]}',
+              rawOutputJson: '{"exitCode":0}',
+              problems: [],
+            }, {
+              toolCallId: "call-incomplete",
+              title: "Run check",
+              name: unsafeName,
+              kind: "execute",
+              status: "in_progress" as const,
+              rawInputJson: '{"command":["true"]}',
+              problems: ["missing_raw_output", "incomplete_status"],
+            }],
+          },
+        }),
+    });
+    assert.deepStrictEqual(result.runner.toolEvidence, {
+      status: "partial",
+      observedCalls: 2,
+      recordedCalls: 0,
+      partialCalls: 0,
+      rejectedCalls: 2,
+      partialReasons: {},
+      rejectedReasons: { credential_shaped: 2 },
+    });
+    const toolEvents = h.events.filter((event) =>
+      event.event_type === "tool_call"
+    );
+    assert.strictEqual(toolEvents.length, 2);
+    assert.deepStrictEqual(
+      toolEvents.map((event) => JSON.parse(String(event.tool_arguments))),
+      [{
+        outcome: "rejected",
+        reason: "credential_shaped",
+        toolCallId: "call-complete",
+        title: "Run check",
+        kind: "execute",
+        status: "completed",
+      }, {
+        outcome: "rejected",
+        reason: "credential_shaped",
+        toolCallId: "call-incomplete",
+        title: "Run check",
+        kind: "execute",
+        status: "in_progress",
+      }],
+    );
+    assertNotContains(JSON.stringify(h.events), "abcdefgh12345678");
+  });
+
   it("records each ACP tool call on its own and names why any was not recorded", async () => {
     const h = createHarness();
     const sessionId = "01ACPSESSION000000000000131";

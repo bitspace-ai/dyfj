@@ -136,11 +136,18 @@ function prepareAcpToolCall(call: AcpToolCallEvidence): PreparedAcpToolCall {
   );
   if (toolCallId === undefined) problems.add("malformed");
   const sourceName = call.name ?? call.kind;
-  let toolName = metadata(
-    sourceName === undefined ? undefined : `acp.${sourceName}`,
-    MAX_HISTORY_TOOL_NAME_BYTES,
-    "tool name",
-  );
+  // Check the name as received as well as in its stored `acp.` form: the
+  // prefix can hide a shape that needs a delimiter before it. `label` returns
+  // undefined for a defined value only when that check matches.
+  const sourceNameMatches = sourceName !== undefined &&
+    label(sourceName, MAX_HISTORY_TOOL_NAME_BYTES) === undefined;
+  let toolName = sourceName === undefined || sourceNameMatches
+    ? undefined
+    : metadata(
+      `acp.${sourceName}`,
+      MAX_HISTORY_TOOL_NAME_BYTES,
+      "tool name",
+    );
   if (toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) toolName = undefined;
   if (toolName === undefined) problems.add("malformed");
   const title = label(call.title, MAX_ACP_TOOL_GAP_TITLE_BYTES);

@@ -1301,8 +1301,11 @@ kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
 At capture, a call whose raw input or output still matches after its last
 patch keeps neither raw field; a later patch that replaces the matched field
 with a clean value clears that problem. The id, name, kind and title are
-checked when the call is prepared for persisting: a match there makes the call
-a rejected gap, which keeps no raw value.
+checked when the call is prepared for persisting: the tool name both as
+received and in its stored `acp.`-prefixed form, the title and kind both as
+received and as they would be stored, and the id as received. A match in any of
+them leaves that field out of the gap marker and makes the call a rejected gap,
+which keeps no raw value.
 A problem with one call no longer drops calls with other ids; a second
 announcement that reuses an id marks that shared entry malformed, and all
 updates with no usable id count as one rejected entry. The receipt names the counts by outcome,
