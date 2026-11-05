@@ -281,8 +281,8 @@ README are tracked separately in its Revision history section.
   oversized output is kept cut to the 8 KiB bound and ends with a truncation
   marker, unless the credential-shape gate rejects it. That gate matches a
   fixed set of credential patterns and reads each output whole before any
-  cut, with every string decoded and JSON string escapes undone at any depth,
-  so a credential field inside command output, such as embedded JSON or a
+  cut, with every string decoded, every backslash removed and up to four
+  levels of JSON string escapes undone, so a credential field inside command output, such as embedded JSON or a
   quoted assignment, is caught wherever it sits in the output. A call the
   gate matches keeps neither raw field, and a rejected call keeps no raw
   value. Replay still withholds every gap marker. The receipt line

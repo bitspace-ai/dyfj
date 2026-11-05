@@ -8,7 +8,10 @@ import {
   ACP_TOOL_EVIDENCE_REASONS,
   type AcpToolEvidenceReason,
 } from "./contract/mod.ts";
-import { historyValueContainsSecretShape } from "./acp-history-bounds.ts";
+import {
+  historyValueContainsSecretShape,
+  objectKeysAndValues,
+} from "./acp-history-bounds.ts";
 
 /** ACP tool-call statuses Workbench keeps; any other value is dropped. */
 export type AcpToolCallStatus = "pending" | "in_progress" | "completed" | "failed";
@@ -94,16 +97,55 @@ export interface AcpToolEvidenceAccumulator {
 type BoundedJson =
   | { kind: "ok"; json: string }
   | { kind: "oversized"; json: string }
+  | { kind: "oversized_dropped" }
   | { kind: "credential_shaped" }
   | { kind: "malformed" };
 
 /**
+ * Whether `value`, a parsed JSON value, surely serializes to more than
+ * `limitBytes`. It sums a lower bound of the serialized length (each string's
+ * code units and quotes, one unit per scalar, brackets and array separators)
+ * and stops as soon as the bound passes the limit, so the work is bounded by
+ * the limit, not by the value. A UTF-8 encoding is never shorter than the
+ * string's code units.
+ */
+function surelyExceedsJsonBytes(value: unknown, limitBytes: number): boolean {
+  let total = 0;
+  const frames: Iterator<unknown>[] = [[value][Symbol.iterator]()];
+  while (frames.length > 0) {
+    const next = frames[frames.length - 1].next();
+    if (next.done === true) {
+      frames.pop();
+      continue;
+    }
+    const part = next.value;
+    if (typeof part === "string") total += part.length + 2;
+    else if (Array.isArray(part)) {
+      total += 1 + part.length;
+      frames.push(part[Symbol.iterator]());
+    } else if (part !== null && typeof part === "object") {
+      total += 2;
+      frames.push(objectKeysAndValues(part));
+    } else if (part !== undefined) total += 1;
+    if (total > limitBytes) return true;
+  }
+  return false;
+}
+
+/**
  * Serialize one raw value and check it before any part of it is kept. The
  * credential check reads the whole value, serialized and decoded, before any
- * cut. An oversized value that will not be kept at all (`scanOversized`
- * false) is not scanned: it is reported oversized and nothing of it is kept.
+ * cut. A value that will not be kept at all when oversized (`keepOversized`
+ * false, as for an input) is measured before it is serialized and is not
+ * scanned: it is reported oversized and nothing of it is kept.
  */
-function boundedJson(value: unknown, scanOversized: boolean): BoundedJson {
+function boundedJson(value: unknown, keepOversized: boolean): BoundedJson {
+  if (
+    !keepOversized &&
+    surelyExceedsJsonBytes(value, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES)
+  ) {
+    return { kind: "oversized_dropped" };
+  }
   let json: string | undefined;
   try {
     json = JSON.stringify(value);
@@ -114,7 +156,7 @@ function boundedJson(value: unknown, scanOversized: boolean): BoundedJson {
   const oversized =
     utf8ByteLengthWithinLimit(json, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES) ===
       undefined;
-  if (oversized && !scanOversized) return { kind: "oversized", json };
+  if (oversized && !keepOversized) return { kind: "oversized_dropped" };
   if (historyValueContainsSecretShape(value, json)) {
     return { kind: "credential_shaped" };
   }
@@ -206,9 +248,10 @@ export function applyAcpToolPatch(
     delete call.inputProblem;
     if (input.kind === "ok") call.rawInputJson = input.json;
     else {
-      call.inputProblem = input.kind === "oversized"
-        ? "oversized_input"
-        : input.kind;
+      call.inputProblem =
+        input.kind === "oversized" || input.kind === "oversized_dropped"
+          ? "oversized_input"
+          : input.kind;
     }
   }
   if (Object.hasOwn(update, "rawOutput")) {
@@ -219,7 +262,11 @@ export function applyAcpToolPatch(
     else if (output.kind === "oversized") {
       call.rawOutputJson = truncatedToolOutput(output.json);
       call.outputProblem = "oversized_output";
-    } else call.outputProblem = output.kind;
+    } else {
+      call.outputProblem = output.kind === "oversized_dropped"
+        ? "oversized_output"
+        : output.kind;
+    }
   }
 }
 

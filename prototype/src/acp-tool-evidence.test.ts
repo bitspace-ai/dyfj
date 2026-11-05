@@ -165,5 +165,63 @@ describe("ACP tool evidence capture", () => {
         problems: ["credential_shaped"],
       });
     });
+
+    it("rejects an output holding a backslash-prefixed credential key", () => {
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawOutput: { stdout: `\\token=${secret}` },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.deepStrictEqual(evidence.calls[0].problems, [
+        "credential_shaped",
+      ]);
+    });
+
+    it("decodes nested escaping up to the cap, and stops there", () => {
+      const nested = (text: string, levels: number) => {
+        let out = text;
+        for (let level = 0; level < levels; level += 1) {
+          out = JSON.stringify(out).slice(1, -1);
+        }
+        return out;
+      };
+      const capture = (stdout: string) => {
+        const accumulator = newAcpToolEvidenceAccumulator();
+        applyAcpToolPatch(accumulator, {
+          ...completedCall("call-a"),
+          rawOutput: { stdout },
+        });
+        return finishAcpToolEvidence(accumulator).calls[0].problems;
+      };
+      assert.deepStrictEqual(
+        capture(nested(`{"\\u0074oken":"${secret}"}`, 3)),
+        ["credential_shaped"],
+      );
+      // Hostile nesting far past the cap is checked in a few linear passes,
+      // then kept cut like any clean oversized output.
+      assert.deepStrictEqual(
+        capture(`\\${"u005c".repeat(4_000)}u0041`),
+        ["oversized_output"],
+      );
+    });
+
+    it("measures an oversized input before serializing it, and keeps none", () => {
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-a"),
+        rawInput: { command: Array.from({ length: 100_000 }, () => 0) },
+      });
+      applyAcpToolPatch(accumulator, {
+        ...completedCall("call-b"),
+        rawInput: { command: ["printf", `${shapes["embedded JSON"]}${filler}`] },
+      });
+      const evidence = finishAcpToolEvidence(accumulator);
+      for (const call of evidence.calls) {
+        assert.deepStrictEqual(call.problems, ["oversized_input"]);
+        assert.strictEqual(call.rawInputJson, undefined);
+      }
+      assert.ok(!JSON.stringify(evidence).includes(secret));
+    });
   });
 });

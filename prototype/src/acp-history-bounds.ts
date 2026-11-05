@@ -38,12 +38,23 @@ const SIMPLE_ESCAPES: Readonly<Record<string, string>> = {
 };
 
 /**
- * `text` with JSON string escapes decoded, level after level, until none is
- * left. Each pass shortens the text, so the loop ends.
+ * How many levels of JSON string escaping the credential check decodes. Each
+ * level is one linear pass, so the cap keeps the check linear in the text's
+ * length however deeply hostile text nests its escapes.
+ */
+export const MAX_HISTORY_JSON_ESCAPE_LEVELS = 4;
+
+/**
+ * `text` with up to `MAX_HISTORY_JSON_ESCAPE_LEVELS` levels of JSON string
+ * escapes decoded, stopping early once a pass changes nothing.
  */
 function withJsonEscapesDecoded(text: string): string {
   let current = text;
-  while (current.includes("\\")) {
+  for (
+    let level = 0;
+    level < MAX_HISTORY_JSON_ESCAPE_LEVELS && current.includes("\\");
+    level += 1
+  ) {
     const next = current.replace(
       JSON_ESCAPE,
       (_match, hex: string | undefined, simple: string | undefined) =>
@@ -58,16 +69,21 @@ function withJsonEscapesDecoded(text: string): string {
 }
 
 /**
- * Whether `text` carries something shaped like a live credential, read as it
- * is, with control characters removed, with JSON string escapes decoded, and
- * with every backslash removed. Text that holds serialized JSON escapes its
- * quotes and may escape any character (`{\"\u0074oken\":...}`), which the
- * shapes alone do not match. Each extra reading can only add matches.
+ * Whether `text` carries something shaped like a live credential. The check
+ * reads the text as it is, as `sanitizeHistoryText` would store it, with
+ * every backslash removed, and with up to
+ * `MAX_HISTORY_JSON_ESCAPE_LEVELS` levels of JSON string escapes decoded
+ * (that decoded text also as stored and with its remaining backslashes
+ * removed). Text that holds serialized JSON escapes its quotes and may escape
+ * any character (`{\"\u0074oken\":...}`), which the shapes alone do not
+ * match. Each extra reading can only add matches. Each reading is one linear
+ * pass over the text.
  */
 export function historyTextContainsSecretShape(text: string): boolean {
   if (containsSensitiveShape(text)) return true;
   if (containsSensitiveShape(sanitizeHistoryText(text))) return true;
   if (!text.includes("\\")) return false;
+  if (containsSensitiveShape(text.replaceAll("\\", ""))) return true;
   const decoded = withJsonEscapesDecoded(text);
   return containsSensitiveShape(decoded) ||
     containsSensitiveShape(sanitizeHistoryText(decoded)) ||
@@ -105,7 +121,8 @@ export function historyValueContainsSecretShape(
   return false;
 }
 
-function* objectKeysAndValues(part: object): Generator<unknown> {
+/** Each own enumerable key of `part`, then its value, without copying. */
+export function* objectKeysAndValues(part: object): Generator<unknown> {
   for (const key in part) {
     if (!Object.hasOwn(part, key)) continue;
     yield key;
