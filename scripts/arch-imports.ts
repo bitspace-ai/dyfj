@@ -701,6 +701,33 @@ export function collectSources(root: string, rules: LayerRules): Map<string, str
   return sources;
 }
 
+/** Where the Rust crates live; their `.rs` files get the module limit. */
+export const RUST_ROOT = "core";
+
+/** The `.rs` files under `core/`, skipping Cargo's `target/` build output. */
+export function collectRustSources(root: string): Map<string, string> {
+  const sources = new Map<string, string>();
+  const walk = (relative: string) => {
+    let entries;
+    try {
+      entries = readdirSync(`${root}/${relative}`, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name !== "target") walk(path);
+      } else if (entry.isFile() && path.endsWith(".rs")) {
+        sources.set(path, readFileSync(`${root}/${path}`, "utf8"));
+      }
+    }
+  };
+  walk(RUST_ROOT);
+  return sources;
+}
+
 export function existsIn(root: string): (path: string) => boolean {
   return (path) => {
     try {
@@ -749,8 +776,9 @@ export function main(args: readonly string[], root: string): number {
   for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
   const sizeExceptions = readJson(root, SIZE_EXCEPTIONS_PATH);
   const sizeErrors = hardLimitViolations(
-    sources,
+    new Map([...sources, ...collectRustSources(root)]),
     (path) => {
+      if (path.endsWith(".rs")) return true;
       const unit = unitFor(rules, path);
       return unit !== undefined && !unit.outside;
     },
