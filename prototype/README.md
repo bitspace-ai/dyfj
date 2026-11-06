@@ -514,8 +514,9 @@ on.
 
 `dyfj models` shows `output-cap=<tokens>` for a native hosted request's
 default total output limit and `reasoning=low` when the adapter sends a low
-effort setting. OpenAI rows also show `(tools=none)`: tool-bearing calls keep
-their existing no-reasoning setting, while text-only calls use low effort.
+effort setting. OpenAI rows with `reasoning_effort_control` enabled also
+show `(tools=none)`: tool-bearing calls keep their existing `none` setting,
+while text-only calls request low effort.
 Local and external-agent rows have no hosted request cap to display.
 
 Hosted rows with the `reasoning` capability default to 32,768 total output
@@ -534,11 +535,13 @@ The existing `reasoning_effort_control` catalog flag enables these mappings:
 | Anthropic | `output_config: { effort: "low" }` |
 
 Gemini retains `generationConfig.thinkingConfig.thinkingLevel: "low"` for
-the supported Gemini 3.x rows. Models without an effort control get the
-larger cap without a reasoning parameter. Effort is advisory, so a long
-reasoning run can still exhaust the cap. This is not a fixed reservation
-for answer tokens. Higher output caps also permit more billed output and
-reserve more context space; existing spend checks still apply.
+the supported Gemini 3.x rows, independently of `reasoning_effort_control`.
+For the providers in the table, reasoning models with that flag disabled
+receive the reasoning-model cap without an explicit effort parameter.
+Effort is advisory, so a long reasoning run can still exhaust the cap. This
+is not a fixed reservation for answer tokens. Higher output caps also
+permit more billed output and reserve more context space; existing spend
+checks still apply.
 
 Parameter references checked on 2026-11-05:
 [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/),
