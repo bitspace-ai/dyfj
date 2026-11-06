@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   assertSchemaApplyPlan,
@@ -11,6 +12,88 @@ import {
 const schemaDir = new URL("./", import.meta.url);
 const deepSeek = "llama-cpp/deepseek-r1-32b";
 const qwen = "llama-cpp/qwen3.6-35b-a3b";
+
+test("fresh and upgraded catalogs declare verified low-effort support", async () => {
+  const expected: Array<[string, number]> = [
+    ["claude-fable-5", 1],
+    ["deepseek/deepseek-v4-pro-0813", 1],
+    ["deepseek/deepseek-v4.1-flash-1017", 1],
+    ["grok-build-0.1", 0],
+    ["meta/muse-glimmer-30b", 1],
+    ["minimax/minimax-m3", 0],
+    ["moonshotai/kimi-k3.1-pro", 1],
+    ["z-ai/glm-5.3", 1],
+  ];
+  const plan = await readSchemaApplyPlan(schemaDir);
+  assertSchemaApplyPlan(plan);
+  for (
+    const [label, files] of [
+      ["fresh reasoning catalog", [...plan.current, ...plan.catalog]],
+      ["upgraded reasoning catalog", [...plan.history, ...plan.migrations]],
+    ] as const
+  ) {
+    await withSchemaRepository(
+      schemaDir,
+      files,
+      label,
+      undefined,
+      async (repository) => {
+        const slugs = expected.map(([s]) => `'${s}'`).join(",");
+        const query =
+          `SELECT slug, reasoning_effort_control, active FROM models WHERE slug IN (${slugs}) ORDER BY slug`;
+        const beforeReapply = await queryRows(repository, query, undefined);
+        assert.deepEqual(
+          beforeReapply.map((
+            r,
+          ) => [r.slug, Number(r.reasoning_effort_control)]),
+          label === "upgraded reasoning catalog"
+            ? expected.filter(([slug]) => slug !== "meta/muse-glimmer-30b")
+            : expected,
+        );
+        if (label === "upgraded reasoning catalog") {
+          // Historical replay lacks these fresh-catalog rows. Exercise their
+          // updates on existing rows without making this migration add models.
+          await runChecked("dolt", [
+            "sql",
+            "-q",
+            "INSERT INTO models (slug, display_name, provider, api, tier, context_window, max_output_tokens, capabilities) VALUES ('meta/muse-glimmer-30b', 'Muse Glimmer', 'openrouter', 'openai-completions', 1, 131072, 32768, '[\"reasoning\"]'), ('qwen/qwen3-next-80b-a3b-instruct', 'Qwen3 Next', 'openrouter', 'openai-completions', 1, 262144, 262144, '[\"reasoning\"]')",
+          ], { cwd: repository, label: "seed existing catalog rows" });
+        }
+        await runChecked("dolt", [
+          "sql",
+          "-q",
+          `UPDATE models SET active = FALSE WHERE slug IN (${slugs})`,
+        ], { cwd: repository, label: "disable rows in disposable catalog" });
+        await runChecked("dolt", ["sql"], {
+          cwd: repository,
+          input: await readFile(
+            new URL("migrations/024_models_reasoning_effort.sql", schemaDir),
+            "utf8",
+          ),
+          label: "reapply reasoning effort migration",
+        });
+        const rows = await queryRows(repository, query, undefined);
+        assert.deepEqual(
+          rows.map((r) => [r.slug, Number(r.reasoning_effort_control)]),
+          expected,
+        );
+        assert.ok(rows.every((r) => Number(r.active) === 0));
+        const limits = await queryRows(
+          repository,
+          "SELECT slug, max_output_tokens FROM models WHERE slug IN ('meta/muse-glimmer-30b', 'qwen/qwen3-next-80b-a3b-instruct') ORDER BY slug",
+          undefined,
+        );
+        assert.deepEqual(
+          limits.map((r) => [r.slug, Number(r.max_output_tokens)]),
+          [
+            ["meta/muse-glimmer-30b", 16_384],
+            ["qwen/qwen3-next-80b-a3b-instruct", 16_384],
+          ],
+        );
+      },
+    );
+  }
+});
 
 async function assertQwenActive(
   repository: string,

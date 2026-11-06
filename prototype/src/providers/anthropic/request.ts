@@ -296,6 +296,7 @@ export function buildAnthropicMessagesRequest(
     historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxTokens?: number;
+    effort?: "low";
     /** Ask for progress updates (`ANTHROPIC_PROGRESS_UPDATES_CAPABILITY`). */
     progressUpdates?: boolean;
   } = {},
@@ -334,6 +335,7 @@ export function buildAnthropicMessagesRequest(
     messages: AnthropicWireMessage[];
     tools?: AnthropicWireTool[];
     thinking?: { type: "adaptive"; display: "updates" };
+    output_config?: { effort: "low" };
   } = {
     model,
     max_tokens: options.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
@@ -356,6 +358,9 @@ export function buildAnthropicMessagesRequest(
   if (tools) body.tools = tools;
   if (options.progressUpdates) {
     body.thinking = { type: "adaptive", display: "updates" };
+  }
+  if (options.effort !== undefined) {
+    body.output_config = { effort: options.effort };
   }
   return body;
 }

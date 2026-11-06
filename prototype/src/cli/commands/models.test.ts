@@ -23,6 +23,18 @@ describe("models/sessions over UDS", () => {
       });
   }
 
+  it("prints the server's effective cap and reasoning settings", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runModels(cfg(), io, fakeConnect({
+      "models/list": { models: [{ slug: "reasoning-model", provider: "openai", tier: 1,
+        defaultOutputTokens: 32_768, reasoningEffort: "low", toolReasoningEffort: "none" }] },
+    }));
+    assert.equal(code, 0);
+    assert.match(stdout.join(""), /output-cap=32768/);
+    assert.match(stdout.join(""), /reasoning=low/);
+    assert.match(stdout.join(""), /tools=none/);
+  });
+
   it("runModels lists models from the seam", async () => {
     const { io, stdout } = fakeIo();
     const code = await runModels(

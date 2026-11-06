@@ -8,6 +8,8 @@ import {
   getModelAccessModality,
   isLocalWorkbenchModel,
   modelHasCatalogPricing,
+  modelTransmittedOutputCap,
+  modelReasoningEffort,
   type WorkbenchModel,
 } from "../../providers/mod.ts";
 import type { RpcHandlers } from "../../transport/mod.ts";
@@ -43,6 +45,9 @@ export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
           routable: modelHasCatalogPricing(model),
           local: isLocalWorkbenchModel(model),
           modality: getModelAccessModality(model),
+          defaultOutputTokens: modelTransmittedOutputCap(model),
+          reasoningEffort: modelReasoningEffort(model),
+          toolReasoningEffort: modelReasoningEffort(model, true),
         })),
         ...(catalog.unavailable === undefined
           ? {}

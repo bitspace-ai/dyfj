@@ -28,6 +28,10 @@ import {
   isAllowedLocalProviderBaseUrl,
 } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
+import {
+  hostedDefaultOutputTokens,
+  modelReasoningEffort,
+} from "../shared/reasoning-output.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import {
   canonicalToolCallSignature,
@@ -63,7 +67,7 @@ export const openAICompatibleAdapter: ProviderAdapter = {
   supportsTranscriptRetry: true,
   defaultOutputTokens: (model) =>
     openAIHostedProviders.has(model.provider)
-      ? HOSTED_OPENAI_DEFAULT_MAX_TOKENS
+      ? hostedDefaultOutputTokens(model, HOSTED_OPENAI_DEFAULT_MAX_TOKENS)
       : undefined,
   validateBaseUrl(model): BaseUrlCheck {
     const hostedContract = openAIHostedProviderContracts.get(model.provider);
@@ -212,11 +216,12 @@ async function executeOpenAICompatibleTurn(
               : request.maxOutputTokens,
             includeStreamUsage: openAIHostedProviders.has(model.provider),
             providerRouting,
-            reasoningEffort: (model.provider === "openai" &&
-                model.reasoningEffortControl &&
-                request.tools &&
-                request.tools.length > 0)
-              ? "none"
+            reasoningEffort: model.provider === "openrouter"
+              ? undefined
+              : modelReasoningEffort(model, Boolean(request.tools?.length)),
+            openRouterReasoning: model.provider === "openrouter" &&
+                modelReasoningEffort(model) === "low"
+              ? { effort: "low" }
               : undefined,
           },
         ),

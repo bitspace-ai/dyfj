@@ -291,6 +291,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- Hosted reasoning-capable models now default to a 32,768-token output cap,
+  bounded by the catalog limit, and use low reasoning effort where the
+  provider and catalog support it. This reduces the chance of spending the
+  whole cap on reasoning before answering. OpenAI tool calls keep their
+  existing `none` effort. `dyfj models` shows the effective default cap and
+  effort, including that tool-call exception. Existing databases need
+  `024_models_reasoning_effort.sql` for the corrected effort-support flags
+  and the 16,384-token provider limits for Muse Glimmer and Qwen3 Next Instruct.
+
 - **ACP tool calls are recorded one by one, and the receipt says why any
   captured call was not.** Recording an external agent's tool calls was all-or-nothing: one
   call with a missing or oversized `rawOutput`, a credential-shaped value or
