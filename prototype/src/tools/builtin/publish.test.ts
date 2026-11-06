@@ -259,8 +259,9 @@ describe("publish tools: start", () => {
     const { registry, tickets } = tools({ runner });
     const result = await invoke(registry, call("publish/start"));
     // The reply is asserted before the run is waited for - that order is
-    // this test's subject - so the wait also runs from `finally`, and a
-    // failed assertion cannot skip the wait for the run's report work.
+    // this test's subject - so the wait below also runs after a failed
+    // assertion, without its own failure replacing the assertion's.
+    let failure: { error: unknown } | undefined;
     try {
       assert.strictEqual(result.isError, false);
       const text = result.result as string;
@@ -284,9 +285,14 @@ describe("publish tools: start", () => {
       await settle(tickets);
       const view = tickets.latest("session-1");
       assert.strictEqual(view?.phase, "ready");
-    } finally {
-      await settle(tickets);
+    } catch (error) {
+      failure = { error };
     }
+    if (failure !== undefined) {
+      await settle(tickets).catch(() => {});
+      throw failure.error;
+    }
+    await settle(tickets);
   });
 
   it("stops at a failing pre-gate, without running the gate", async () => {
@@ -567,7 +573,7 @@ describe("publish tools: real processes", () => {
         registry.register(command);
       }
       await invoke(registry, call("publish/start"));
-      // The runner is real here, so wait for the run to finish.
+      // The runner is real here; wait with the same helper as above.
       await settle(tickets);
       const view = tickets.latest("session-1");
       assert.strictEqual(view?.phase, "failed");

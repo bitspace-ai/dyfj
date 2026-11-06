@@ -274,8 +274,8 @@ README are tracked separately in its Revision history section.
   parallel load that in-flight file work was still live when the file
   ended, and the per-file handle check reported it (`FSReqPromise`) and
   failed the file intermittently. The three tests now wait before they
-  assert; a fourth, which asserts the immediate reply first, also waits
-  from a `finally`; and the helper waits until each ticket is terminal and
+  assert; a fourth, which asserts the immediate reply first, waits
+  afterwards pass or fail; and the helper waits until each ticket is terminal and
   neither an `FSReqPromise` nor a `CloseReq` resource is live (a pending
   file-handle close reports as the second). The handle check itself is
   unchanged, and no product code changed.
