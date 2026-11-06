@@ -73,9 +73,14 @@ Section 5.
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
     `external-agent-runtime.ts`, `acp-fixture-command.ts`, which builds
     the fixture agent's command, `acp-child-io.ts`, its bounded child
-    stderr capture and settle wait, and `acp-adapter-package.ts`, which
-    finds the pinned Codex adapter in the npm workspace install), whose
-    move is deferred;
+    stderr capture and settle wait, `acp-adapter-package.ts`, which
+    finds the pinned Codex adapter in the npm workspace install,
+    `acp-tool-evidence.ts`, which captures each ACP tool call from the
+    update stream, `acp-tool-evidence-record.ts`, which judges each
+    captured call recorded, partial or rejected, and
+    `acp-history-bounds.ts`, the bounds and credential-shape checks that
+    tool evidence and transcript reconstruction share), whose move is
+    deferred;
   - the interactive REPL (`cli.ts`), which the Rust client in
     `core/dyfj-repl` replaces.
 
@@ -1259,10 +1264,55 @@ projected messages and tool exchanges, and the prior and new external session
 identifiers. The terminal client also prints the continuity state, whether the
 native session was new, reused, or replaced, and the ACP tool-evidence count in
 each external-agent footer. Workbench merges each real ACP `tool_call` with its
-`tool_call_update` patches and persists a tool request/result pair only when the
-adapter supplies bounded terminal input and output that pass the credential-
-shape gate. Otherwise it records a fixed value-free gap marker, reports tool
-evidence as unavailable. On later turns, Workbench recomputes persisted-history
+`tool_call_update` patches and judges every call on its own. A call is
+persisted as a replayable tool request/result pair (`recorded`) only when it
+has a well-formed call id and tool name that sanitizing leaves unchanged, a
+`completed` or `failed` status, an input whose combined title, kind and input
+record fits the 4 KiB argument bound and its node and depth limits, an output
+within the 8 KiB bound, no
+other capture problem, and values that pass the credential-shape gate. The gate
+matches a fixed set of credential patterns. It reads each output whole before
+any cut, and reads the serialized form and every key and string of a value in
+three forms: as they are; as Workbench would store them (other control
+characters deleted, tabs and carriage returns turned into spaces, line feeds
+kept); and with every backslash removed. It then decodes one level of JSON
+string escapes at a time, for up to four levels, and reads the text after
+every level in the same three forms, since a later level can undo a match an
+earlier one showed. So a credential field inside command output, such as
+embedded JSON or a quoted assignment, is caught wherever it sits in the output
+when one of those readings shows it;
+text the patterns do not describe, a credential hidden by more than four
+levels of `\u` escapes (decoding stops after four passes; removing backslashes
+still undoes deeper escaping of quotes and backslashes alone), or an encoding
+other than JSON escaping, is not. Because each output is read whole, the
+check's working memory is bounded by the ACP stream's per-message limit
+(384 KiB, or 1 MiB for long-running sessions), not by the 8 KiB kept. An input whose serialized form
+would exceed 8 KiB is measured before it is serialized, is not scanned, and is
+rejected as `oversized_input` with none of it kept; a smaller input is scanned
+and then still rejected as `oversized_input` if its argument record exceeds the
+4 KiB bound. Any other call is persisted as a gap marker that keeps the
+call's id, tool name, kind, title and status where each passed the bound,
+sanitizing and credential-shape checks, and one fixed reason code: `missing_raw_input`,
+`missing_raw_output`, `oversized_input`, `oversized_output`, `malformed`,
+`credential_shaped` or `incomplete_status`. A `partial` call (missing, oversized
+or unfinished output) also keeps its checked input, and an oversized output is
+kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
+(credential-shaped, malformed, missing or oversized input) keeps no raw value.
+At capture, a call whose raw input or output still matches after its last
+patch keeps neither raw field; a later patch that replaces the matched field
+with a clean value clears that problem. The id, name, kind and title are
+checked when the call is prepared for persisting: the tool name both as
+received and in its stored `acp.`-prefixed form, the title and kind both as
+received and as they would be stored, and the id as received. A match in any of
+them leaves that field out of the gap marker and makes the call a rejected gap,
+which keeps no raw value.
+A problem with one call no longer drops calls with other ids; a second
+announcement that reuses an id marks that shared entry malformed, and all
+updates with no usable id count as one rejected entry. The receipt names the counts by outcome,
+for example `ACP tool evidence: 5 recorded, 2 partial (missing_raw_output), 0
+rejected of 7`, and the turn result's `runner.toolEvidence` carries the same
+counts with per-reason tallies. Evidence reads `unavailable` only when no call
+could be attributed, as on an aborted turn. On later turns, Workbench recomputes persisted-history
 omissions from the immutable event log, withholds each malformed tool record or
 gap marker from the projected transcript, and retains valid pairs, empty valid
 results, operator prompts, prose, and stored summaries. Whole-history record

@@ -15,7 +15,7 @@
         "traceId": "<TRACE:1>",
         "stopReason": "stop",
         "text": "first|cwd=<TMP>/workspace|last",
-        "receipt": "External-agent turn receipt\nSession: <ULID:1>\nTrace: <TRACE:1>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: complete (0/0 calls recorded)\nWorkspace: <TMP>/workspace\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: <DURATION>\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
+        "receipt": "External-agent turn receipt\nSession: <ULID:1>\nTrace: <TRACE:1>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 0 recorded, 0 partial, 0 rejected of 0\nWorkspace: <TMP>/workspace\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: <DURATION>\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
         "runner": {
           "kind": "external_agent",
           "profile": "fixture",
@@ -46,7 +46,11 @@
           "toolEvidence": {
             "status": "complete",
             "observedCalls": 0,
-            "recordedCalls": 0
+            "recordedCalls": 0,
+            "partialCalls": 0,
+            "rejectedCalls": 0,
+            "partialReasons": {},
+            "rejectedReasons": {}
           },
           "elapsedMs": "<DURATION>"
         },
@@ -76,7 +80,7 @@
         "progress_total": 1,
         "mode": "interactive",
         "iteration": null,
-        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s8] Hello, fixture agent.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nExternal-agent turn receipt\nSession: <ULID:1>\nTrace: <TRACE:1>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: complete (0/0 calls recorded)\nWorkspace: <TMP>/workspace\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: <DURATION>\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
+        "content": "# Workbench Session\n\n**Mode:** turn\n**Trace:** <TRACE:1>\n\n## Prompt\n\n[golden:s8] Hello, fixture agent.\n\n## Context Sources\n\n- none\n\n## Receipt\n\nExternal-agent turn receipt\nSession: <ULID:1>\nTrace: <TRACE:1>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 0 recorded, 0 partial, 0 rejected of 0\nWorkspace: <TMP>/workspace\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: <DURATION>\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
         "created_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>",
         "updated_at": "<TIMESTAMP nnnn-nn-nn nn:nn:nn.nnnnnn>"
       }

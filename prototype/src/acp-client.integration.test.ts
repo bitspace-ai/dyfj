@@ -20,10 +20,12 @@ import process from "node:process";
 import { describe, it } from "node:test";
 import { dirname, join } from "node:path";
 import {
+  ACP_TOOL_OUTPUT_TRUNCATION_MARKER,
   type AcpExecutionProfile,
   type AcpProgressUpdate,
   type AcpRunInput,
   assertProcessGroupSignaler,
+  MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES,
   runAcpAgent,
   runSignalCommand,
   startAcpSession,
@@ -1350,7 +1352,7 @@ describe("runAcpAgent", () => {
     });
     assert.strictEqual(result.text, "recorded");
     assert.deepStrictEqual(result.toolEvidence, {
-      status: "complete",
+      status: "captured",
       observedCalls: 1,
       calls: [{
         toolCallId: "fixture-history-call",
@@ -1359,32 +1361,100 @@ describe("runAcpAgent", () => {
         status: "completed",
         rawInputJson: '{"path":"fixture-history.txt"}',
         rawOutputJson: '{"text":"codename=zephyr-quill-7"}',
+        problems: [],
       }],
     });
   });
 
   for (
-    const [prompt, observedCalls] of [
-      ["FIXTURE_TOOL_HISTORY_DUPLICATE_ID", 1],
-      ["FIXTURE_TOOL_HISTORY_UNKNOWN_UPDATE", 0],
-      ["FIXTURE_TOOL_HISTORY_NONTERMINAL", 1],
+    const [prompt, expected] of [
+      ["FIXTURE_TOOL_HISTORY_DUPLICATE_ID", {
+        toolCallId: "fixture-duplicate-call",
+        problems: ["malformed"],
+      }],
+      ["FIXTURE_TOOL_HISTORY_UNKNOWN_UPDATE", {
+        toolCallId: "fixture-unknown-call",
+        problems: ["malformed", "missing_raw_input"],
+      }],
+      ["FIXTURE_TOOL_HISTORY_NONTERMINAL", {
+        toolCallId: "fixture-nonterminal-call",
+        problems: ["incomplete_status", "missing_raw_output"],
+      }],
     ] as const
   ) {
-    it(`marks malformed or incomplete ACP tool history unavailable: ${prompt}`, async () => {
+    it(`names why a malformed or incomplete ACP tool call is not complete: ${prompt}`, async () => {
       const result = await runAcpAgent({
         profile: fixtureProfile(),
         prompt,
       });
       assert.strictEqual(result.text, "recorded");
-      assert.deepStrictEqual(result.toolEvidence, {
-        status: "unavailable",
-        observedCalls,
-        calls: [],
-      });
+      assert.strictEqual(result.toolEvidence?.status, "captured");
+      assert.strictEqual(result.toolEvidence?.observedCalls, 1);
+      assert.partialDeepStrictEqual(result.toolEvidence!.calls[0], expected);
     });
   }
 
-  it("marks interrupted ACP tool history unavailable", async () => {
+  it("keeps a call's input when its rawOutput is missing", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_TOOL_HISTORY_MISSING_OUTPUT",
+    });
+    assert.deepStrictEqual(result.toolEvidence, {
+      status: "captured",
+      observedCalls: 1,
+      calls: [{
+        toolCallId: "fixture-missing-output",
+        title: "Run npm run typecheck",
+        kind: "execute",
+        status: "completed",
+        rawInputJson: '{"command":["npm","run","typecheck"]}',
+        problems: ["missing_raw_output"],
+      }],
+    });
+  });
+
+  it("keeps an oversized output cut to the bound with a marker", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_TOOL_HISTORY_OVERSIZED_OUTPUT",
+    });
+    const call = result.toolEvidence!.calls[0];
+    assert.deepStrictEqual(call.problems, ["oversized_output"]);
+    assert.strictEqual(call.rawInputJson, '{"command":["npm","test"]}');
+    const output = call.rawOutputJson!;
+    assert.ok(output.startsWith('{"stdout":"ok xxx'), output.slice(0, 40));
+    assert.ok(output.endsWith(ACP_TOOL_OUTPUT_TRUNCATION_MARKER));
+    assert.ok(!output.includes("tail-not-kept"));
+    assert.strictEqual(
+      new TextEncoder().encode(output).byteLength <=
+        MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES,
+      true,
+    );
+  });
+
+  it("keeps good calls when other calls in the turn are bad", async () => {
+    const result = await runAcpAgent({
+      profile: fixtureProfile(),
+      prompt: "FIXTURE_TOOL_HISTORY_MIXED",
+    });
+    assert.strictEqual(result.toolEvidence?.status, "captured");
+    assert.deepStrictEqual(
+      result.toolEvidence!.calls.map((call) => [
+        call.toolCallId,
+        call.problems,
+      ]),
+      [
+        ["fixture-mixed-typecheck", []],
+        ["fixture-missing-output", ["missing_raw_output"]],
+        // Capture checks the whole input for credential shapes and keeps none.
+        ["fixture-secret-input", ["credential_shaped"]],
+        ["fixture-oversized-output", ["oversized_output"]],
+        ["fixture-mixed-test", []],
+      ],
+    );
+  });
+
+  it("marks an interrupted ACP tool call incomplete", async () => {
     const controller = new AbortController();
     const result = await runAcpAgent({
       profile: fixtureProfile(),
@@ -1396,8 +1466,12 @@ describe("runAcpAgent", () => {
     });
     assert.strictEqual(result.stopReason, "aborted");
     assert.partialDeepStrictEqual(result.toolEvidence!, {
-      status: "unavailable",
-      calls: [],
+      observedCalls: 1,
+      calls: [{
+        toolCallId: "fixture-interrupted-call",
+        status: "in_progress",
+        problems: ["incomplete_status", "missing_raw_output"],
+      }],
     });
   });
 

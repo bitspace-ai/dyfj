@@ -628,6 +628,83 @@ const app = agent({ name: "dyfj-acp-fixture" })
         await fixture.cancel.promise;
         return { stopReason: "cancelled" };
       }
+      // Per-call evidence scenarios. Each names its calls by role so a test
+      // can check that one bad call leaves the others recorded.
+      const perCallScenarios: Record<string, Record<string, unknown>[]> = {
+        FIXTURE_TOOL_HISTORY_MISSING_OUTPUT: [{
+          toolCallId: "fixture-missing-output",
+          title: "Run npm run typecheck",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: ["npm", "run", "typecheck"] },
+        }],
+        FIXTURE_TOOL_HISTORY_OVERSIZED_OUTPUT: [{
+          toolCallId: "fixture-oversized-output",
+          title: "Run npm test",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: ["npm", "test"] },
+          rawOutput: { stdout: `ok ${"x".repeat(20_000)} tail-not-kept` },
+        }],
+        FIXTURE_TOOL_HISTORY_SECRET_INPUT: [{
+          toolCallId: "fixture-secret-input",
+          title: "Run fixture login",
+          kind: "execute",
+          status: "completed",
+          rawInput: {
+            command: "login token=abcdefghijklmnopqrstuvwxyz012345",
+          },
+          rawOutput: { stdout: "logged in" },
+        }],
+      };
+      perCallScenarios.FIXTURE_TOOL_HISTORY_MIXED = [
+        {
+          toolCallId: "fixture-mixed-typecheck",
+          title: "Run npm run typecheck",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: ["npm", "run", "typecheck"] },
+          rawOutput: { exitCode: 0, stdout: "typecheck ok" },
+        },
+        ...perCallScenarios.FIXTURE_TOOL_HISTORY_MISSING_OUTPUT,
+        ...perCallScenarios.FIXTURE_TOOL_HISTORY_SECRET_INPUT,
+        ...perCallScenarios.FIXTURE_TOOL_HISTORY_OVERSIZED_OUTPUT,
+        {
+          toolCallId: "fixture-mixed-test",
+          title: "Run npm test",
+          kind: "execute",
+          status: "failed",
+          rawInput: { command: ["npm", "test"] },
+          rawOutput: { exitCode: 1, stdout: "1 failing" },
+        },
+      ];
+      const perCallScenario = prompt.includes("FIXTURE_RECALL")
+        ? undefined
+        : Object.keys(perCallScenarios).find((name) => prompt.includes(name));
+      if (perCallScenario !== undefined) {
+        for (const call of perCallScenarios[perCallScenario]) {
+          const { status, rawOutput, ...announced } = call;
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call",
+              ...announced,
+              status: "in_progress",
+            },
+          });
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId: call.toolCallId,
+              status,
+              ...(rawOutput === undefined ? {} : { rawOutput }),
+            },
+          });
+        }
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
       if (
         prompt.includes("FIXTURE_TOOL_HISTORY") &&
         !prompt.includes("FIXTURE_RECALL")

@@ -1,5 +1,4 @@
 import {
-  containsSensitiveShape,
   generateSpanId,
   generateTraceId,
   generateULID,
@@ -26,11 +25,38 @@ import {
   AcpProtocolMessageLimitError,
   type AcpRouteEvidence,
   AcpSessionUpdateLimitError,
-  type AcpToolEvidence,
   assertAcpPromptWithinLimit,
   runAcpAgent,
 } from "./acp-client.ts";
 import { codexAcpPackageRoot, ownPrototypeRoot } from "./acp-adapter-package.ts";
+import {
+  assertNoSecretShape,
+  boundedHistoryArguments,
+  boundedHistoryField,
+  boundedHistoryMetadata,
+  malformedToolHistory,
+  MAX_HISTORY_TOOL_CALL_ID_BYTES,
+  MAX_HISTORY_TOOL_NAME_BYTES,
+  MAX_HISTORY_TOOL_RESULT_BYTES,
+} from "./acp-history-bounds.ts";
+import {
+  type AcpToolCallGap,
+  acpToolGapArguments,
+  formatAcpToolEvidenceLine,
+  prepareAcpToolEvidence,
+  type PreparedAcpToolEvidence,
+  summarizeAcpToolEvidence,
+} from "./acp-tool-evidence-record.ts";
+
+export {
+  historyContainsSecretShape,
+  MAX_HISTORY_TOOL_ARGUMENT_DEPTH,
+  MAX_HISTORY_TOOL_ARGUMENT_NODES,
+  MAX_HISTORY_TOOL_ARGUMENTS_BYTES,
+  MAX_HISTORY_TOOL_CALL_ID_BYTES,
+  MAX_HISTORY_TOOL_NAME_BYTES,
+  MAX_HISTORY_TOOL_RESULT_BYTES,
+} from "./acp-history-bounds.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import type {
   AcpPermissionPrompt,
@@ -511,13 +537,6 @@ export const MAX_RECONSTRUCTED_PRIOR_MESSAGES = 32;
 
 /** Per-message bound for one projected conversation message's text. */
 export const MAX_HISTORY_MESSAGE_BYTES = 32_768;
-/** Per-field bounds for one projected tool exchange. */
-export const MAX_HISTORY_TOOL_NAME_BYTES = 128;
-export const MAX_HISTORY_TOOL_CALL_ID_BYTES = 128;
-export const MAX_HISTORY_TOOL_ARGUMENTS_BYTES = 4_096;
-export const MAX_HISTORY_TOOL_RESULT_BYTES = 8_192;
-export const MAX_HISTORY_TOOL_ARGUMENT_NODES = 256;
-export const MAX_HISTORY_TOOL_ARGUMENT_DEPTH = 16;
 
 const RECONSTRUCTION_HEADER_LINES = [
   "[dyfj-workbench reconstructed transcript]",
@@ -534,191 +553,10 @@ const RECONSTRUCTION_FOOTER = "[end of reconstructed transcript]";
  */
 const HISTORY_QUOTE = "  | ";
 
-const SAFE_HISTORY_METADATA = /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/;
-
-/**
- * Whether `value` carries something shaped like a live credential: values of
- * that shape must not be replayed into a prompt.
- */
-export function historyContainsSecretShape(value: string): boolean {
-  return containsSensitiveShape(value);
-}
-
-/**
- * Strip control characters while keeping line structure. Line feeds survive
- * because quoting (above) is what makes them safe; tabs and carriage returns
- * collapse to a space so no record can be rewritten in a terminal or split
- * into a forged line.
- */
-function sanitizeHistoryText(raw: string): string {
-  let out = "";
-  for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code === 10 || code === 0x2028 || code === 0x2029) {
-      out += "\n";
-      continue;
-    }
-    if (code === 9 || code === 13) {
-      out += " ";
-      continue;
-    }
-    const isC0Control = code <= 31;
-    const isDel = code === 127;
-    const isC1Control = code >= 128 && code <= 159;
-    if (isC0Control || isDel || isC1Control) continue;
-    out += ch;
-  }
-  return out;
-}
-
-/**
- * Bound and sanitize one field. Overflow throws rather than truncates: a
- * shortened tool result reads as complete evidence and would be a quieter
- * defect than a refused turn. `field` is a fixed caller literal — no
- * historical content ever reaches the message.
- */
-function boundedHistoryField(
-  value: string,
-  maxBytes: number,
-  field: string,
-): string {
-  if (utf8ByteLengthWithinLimit(value, maxBytes) === undefined) {
-    throw new DomainError(
-      `ACP continuity reconstruction exceeded the ${field} limit`,
-    );
-  }
-  return sanitizeHistoryText(value);
-}
-
-function malformedToolHistory(): never {
-  throw new DomainError(
-    "ACP continuity reconstruction found malformed tool history",
-  );
-}
-
-function toolArgumentLimit(kind = "tool argument"): never {
-  throw new DomainError(
-    `ACP continuity reconstruction exceeded the ${kind} limit`,
-  );
-}
-
-function boundedHistoryArguments(value: Record<string, unknown>): string {
-  const parts: string[] = [];
-  const ancestors = new Set<object>();
-  let bytes = 0;
-  let nodes = 0;
-  const append = (part: string): void => {
-    const partBytes = utf8ByteLengthWithinLimit(
-      part,
-      MAX_HISTORY_TOOL_ARGUMENTS_BYTES - bytes,
-    );
-    if (partBytes === undefined) toolArgumentLimit();
-    bytes += partBytes;
-    parts.push(part);
-  };
-  const appendJsonString = (part: string): void => {
-    if (
-      utf8ByteLengthWithinLimit(part, MAX_HISTORY_TOOL_ARGUMENTS_BYTES) ===
-        undefined
-    ) {
-      toolArgumentLimit();
-    }
-    append(JSON.stringify(part));
-  };
-  const encode = (part: unknown, depth: number): void => {
-    nodes += 1;
-    if (nodes > MAX_HISTORY_TOOL_ARGUMENT_NODES) {
-      toolArgumentLimit("tool argument complexity");
-    }
-    if (part === null) {
-      append("null");
-      return;
-    }
-    if (typeof part === "string") {
-      appendJsonString(part);
-      return;
-    }
-    if (typeof part === "boolean") {
-      append(part ? "true" : "false");
-      return;
-    }
-    if (typeof part === "number") {
-      if (!Number.isFinite(part)) malformedToolHistory();
-      append(JSON.stringify(part));
-      return;
-    }
-    if (typeof part !== "object") malformedToolHistory();
-    if (depth >= MAX_HISTORY_TOOL_ARGUMENT_DEPTH) {
-      toolArgumentLimit("tool argument complexity");
-    }
-    if (ancestors.has(part)) malformedToolHistory();
-    ancestors.add(part);
-    try {
-      if (Array.isArray(part)) {
-        if (part.length > MAX_HISTORY_TOOL_ARGUMENT_NODES) {
-          toolArgumentLimit("tool argument complexity");
-        }
-        append("[");
-        for (let index = 0; index < part.length; index++) {
-          if (!Object.hasOwn(part, index)) malformedToolHistory();
-          if (index > 0) append(",");
-          encode(part[index], depth + 1);
-        }
-        append("]");
-        return;
-      }
-      const prototype = Object.getPrototypeOf(part);
-      if (prototype !== Object.prototype && prototype !== null) {
-        malformedToolHistory();
-      }
-      if (Object.getOwnPropertySymbols(part).length > 0) malformedToolHistory();
-      const keys = Object.keys(part);
-      if (keys.length > MAX_HISTORY_TOOL_ARGUMENT_NODES) {
-        toolArgumentLimit("tool argument complexity");
-      }
-      append("{");
-      for (let index = 0; index < keys.length; index++) {
-        const key = keys[index];
-        const descriptor = Object.getOwnPropertyDescriptor(part, key);
-        if (descriptor === undefined || !("value" in descriptor)) {
-          malformedToolHistory();
-        }
-        if (index > 0) append(",");
-        appendJsonString(key);
-        append(":");
-        encode(descriptor.value, depth + 1);
-      }
-      append("}");
-    } finally {
-      ancestors.delete(part);
-    }
-  };
-  encode(value, 0);
-  return parts.join("");
-}
-
-function boundedHistoryMetadata(
-  value: string,
-  maxBytes: number,
-  field: string,
-): string {
-  const bounded = boundedHistoryField(value, maxBytes, field);
-  if (!SAFE_HISTORY_METADATA.test(bounded)) malformedToolHistory();
-  assertNoSecretShape(bounded);
-  return bounded;
-}
-
 function quotedHistoryLines(text: string): string[] {
   return text.split("\n").map((line) => `${HISTORY_QUOTE}${line}`);
 }
 
-function assertNoSecretShape(value: string): void {
-  if (historyContainsSecretShape(value)) {
-    throw new DomainError(
-      "ACP continuity reconstruction found secret-shaped tool history",
-    );
-  }
-}
 
 type WorkbenchToolResultMessage = Extract<WorkbenchMessage, { role: "tool" }>;
 
@@ -763,93 +601,6 @@ function toolExchangeLines(
     `Tool result (history) [call ${callId}] name=${name} status=${status}:`,
     ...quotedHistoryLines(resultText),
   ];
-}
-
-interface PersistableAcpToolCall {
-  toolCallId: string;
-  toolName: string;
-  toolArguments: string;
-  toolResult: string;
-  toolIsError: boolean;
-}
-
-interface PreparedAcpToolEvidence {
-  status: "complete" | "unavailable";
-  observedCalls: number;
-  calls: PersistableAcpToolCall[];
-}
-
-/**
- * Convert ACP's bounded in-memory snapshots into the exact fields the durable
- * event schema can replay. Any malformed, oversized, or credential-shaped
- * value rejects the whole set; callers record only a fixed gap marker.
- */
-export function prepareAcpToolEvidence(
-  evidence: AcpToolEvidence | undefined,
-): PreparedAcpToolEvidence {
-  if (evidence === undefined) {
-    // Dependency-injected test runners predate the producer field. Production
-    // ACP sessions always return it.
-    return { status: "complete", observedCalls: 0, calls: [] };
-  }
-  if (evidence.status === "unavailable") {
-    return {
-      status: "unavailable",
-      observedCalls: evidence.observedCalls,
-      calls: [],
-    };
-  }
-  try {
-    const calls = evidence.calls.map((call): PersistableAcpToolCall => {
-      const toolCallId = boundedHistoryMetadata(
-        call.toolCallId,
-        MAX_HISTORY_TOOL_CALL_ID_BYTES,
-        "tool call id",
-      );
-      const sourceName = call.name ?? call.kind;
-      if (sourceName === undefined) malformedToolHistory();
-      const toolName = boundedHistoryMetadata(
-        `acp.${sourceName}`,
-        MAX_HISTORY_TOOL_NAME_BYTES,
-        "tool name",
-      );
-      if (toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
-        malformedToolHistory();
-      }
-      const rawInput = JSON.parse(call.rawInputJson) as unknown;
-      const toolArguments = boundedHistoryArguments({
-        title: call.title,
-        ...(call.kind === undefined ? {} : { kind: call.kind }),
-        input: rawInput,
-      });
-      const toolResult = boundedHistoryField(
-        call.rawOutputJson,
-        MAX_HISTORY_TOOL_RESULT_BYTES,
-        "tool result",
-      );
-      assertNoSecretShape(toolArguments);
-      assertNoSecretShape(toolResult);
-      return {
-        toolCallId,
-        toolName,
-        toolArguments,
-        toolResult,
-        toolIsError: call.status === "failed",
-      };
-    });
-    if (calls.length !== evidence.observedCalls) malformedToolHistory();
-    return {
-      status: "complete",
-      observedCalls: evidence.observedCalls,
-      calls,
-    };
-  } catch {
-    return {
-      status: "unavailable",
-      observedCalls: evidence.observedCalls,
-      calls: [],
-    };
-  }
 }
 
 /**
@@ -1005,7 +756,7 @@ function receiptText(input: {
     ]),
     `Prior external session: ${input.priorExternalSessionId ?? "not recorded"}`,
     `External session: ${input.result.externalSessionId ?? "not created"}`,
-    `ACP tool evidence: ${input.toolEvidence.status} (${input.toolEvidence.calls.length}/${input.toolEvidence.observedCalls} calls recorded)`,
+    formatAcpToolEvidenceLine(summarizeAcpToolEvidence(input.toolEvidence)),
     ...(input.historyOmission === undefined ? [] : [
       formatHistoryOmissionSummary(input.historyOmission),
     ]),
@@ -1381,7 +1132,10 @@ export async function runExternalAgentWorkbenchRuntime(
       });
     closeCancellation();
     const toolEvidence = prepareAcpToolEvidence(result.toolEvidence);
-    const writeToolHistoryGap = () => {
+    // A gap marker is never replayed as a tool exchange. For a call that was
+    // not recorded in full it carries the call's checked safe fields, its
+    // reason code and, for a partial call, its checked input and output.
+    const writeToolHistoryGap = (gap?: AcpToolCallGap) => {
       const eventId = generateULID();
       return writeEvent(toolCallEvent({
         event_id: eventId,
@@ -1397,8 +1151,8 @@ export async function runExternalAgentWorkbenchRuntime(
         ...authnFields,
         tool_name: ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
         tool_call_id: `gap-${eventId}`,
-        tool_arguments: "{}",
-        tool_result: "",
+        tool_arguments: gap === undefined ? "{}" : acpToolGapArguments(gap),
+        tool_result: gap?.toolResult ?? "",
         tool_is_error: true,
         runner_kind: "external_agent",
         runner_profile: profile.slug,
@@ -1410,6 +1164,10 @@ export async function runExternalAgentWorkbenchRuntime(
     } else {
       try {
         for (const call of toolEvidence.calls) {
+          if (call.outcome !== "recorded") {
+            await writeToolHistoryGap(call);
+            continue;
+          }
           await writeEvent(toolCallEvent({
             event_id: generateULID(),
             session_id: sessionId,
@@ -1606,11 +1364,7 @@ export async function runExternalAgentWorkbenchRuntime(
             }),
           }),
         },
-        toolEvidence: {
-          status: toolEvidence.status,
-          observedCalls: toolEvidence.observedCalls,
-          recordedCalls: toolEvidence.calls.length,
-        },
+        toolEvidence: summarizeAcpToolEvidence(toolEvidence),
         ...(result.usage === undefined ? {} : {
           usage: {
             source: "acp" as const,

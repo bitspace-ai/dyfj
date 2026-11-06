@@ -52,6 +52,7 @@ import {
 } from "./store/mod.ts";
 import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
+  ACP_TOOL_OUTPUT_TRUNCATION_MARKER,
   type AcpExecutionProfile,
   AcpProtocolMessageLimitError,
   type AcpSessionHandle,
@@ -3443,6 +3444,10 @@ describe("reconstructed tool history", () => {
         status: "complete",
         observedCalls: 1,
         recordedCalls: 1,
+        partialCalls: 0,
+        rejectedCalls: 0,
+        partialReasons: {},
+        rejectedReasons: {},
       });
       const persistedTool = h.events.find((event) =>
         event.event_type === "tool_call"
@@ -3493,13 +3498,17 @@ describe("reconstructed tool history", () => {
         status: "complete",
         observedCalls: 0,
         recordedCalls: 0,
+        partialCalls: 0,
+        rejectedCalls: 0,
+        partialReasons: {},
+        rejectedReasons: {},
       });
     } finally {
       await map.shutdown();
     }
   });
 
-  it("unsafe ACP evidence persists only a fixed continuity gap", async () => {
+  it("credential-shaped ACP evidence persists only safe fields and a reason", async () => {
     const h = createHarness();
     const result = await runExternalAgentWorkbenchRuntime(h, {
       mode: "turn",
@@ -3516,39 +3525,254 @@ describe("reconstructed tool history", () => {
           capabilities: [],
           elapsedMs: 1,
           toolEvidence: {
-            status: "complete" as const,
+            status: "captured" as const,
             observedCalls: 1,
             calls: [{
               toolCallId: "call-unsafe",
               title: "Read value",
               kind: "read",
               status: "completed" as const,
-              rawInputJson: "{}",
+              rawInputJson: '{"path":"notes.txt"}',
               rawOutputJson:
                 '{"text":"token=abcdefghijklmnopqrstuvwxyz012345"}',
+              problems: [],
             }],
           },
         }),
     });
     assert.deepStrictEqual(result.runner.toolEvidence, {
-      status: "unavailable",
+      status: "partial",
       observedCalls: 1,
       recordedCalls: 0,
+      partialCalls: 0,
+      rejectedCalls: 1,
+      partialReasons: {},
+      rejectedReasons: { credential_shaped: 1 },
     });
+    assertContains(
+      result.receipt,
+      "ACP tool evidence: 0 recorded, 0 partial, 1 rejected (credential_shaped) of 1",
+    );
     const toolEvents = h.events.filter((event) =>
       event.event_type === "tool_call"
     );
     assert.deepStrictEqual(toolEvents?.length, 1);
     assert.partialDeepStrictEqual(asRecord(toolEvents[0]), {
       tool_name: "acp.history_unavailable",
-      tool_arguments: "{}",
       tool_result: "",
       tool_is_error: true,
+    });
+    assert.deepStrictEqual(JSON.parse(String(toolEvents[0].tool_arguments)), {
+      outcome: "rejected",
+      reason: "credential_shaped",
+      toolCallId: "call-unsafe",
+      toolName: "acp.read",
+      title: "Read value",
+      kind: "read",
+      status: "completed",
     });
     assertNotContains(
       JSON.stringify(toolEvents[0]),
       "abcdefghijklmnopqrstuvwxyz012345",
     );
+    assertNotContains(JSON.stringify(toolEvents[0]), "notes.txt");
+  });
+
+  it("rejects a credential-shaped ACP tool name before adding its prefix", async () => {
+    // `acp.` before the name hides a shape that needs a delimiter before it.
+    const unsafeName = "token:abcdefgh12345678";
+    const h = createHarness();
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "run a check",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000132",
+      workspaceRoot: process.cwd(),
+    }, {
+      runAgent: () =>
+        Promise.resolve({
+          text: "recorded",
+          stopReason: "stop" as const,
+          capabilities: [],
+          elapsedMs: 1,
+          toolEvidence: {
+            status: "captured" as const,
+            observedCalls: 2,
+            calls: [{
+              toolCallId: "call-complete",
+              title: "Run check",
+              name: unsafeName,
+              kind: "execute",
+              status: "completed" as const,
+              rawInputJson: '{"command":["true"]}',
+              rawOutputJson: '{"exitCode":0}',
+              problems: [],
+            }, {
+              toolCallId: "call-incomplete",
+              title: "Run check",
+              name: unsafeName,
+              kind: "execute",
+              status: "in_progress" as const,
+              rawInputJson: '{"command":["true"]}',
+              problems: ["missing_raw_output", "incomplete_status"],
+            }],
+          },
+        }),
+    });
+    assert.deepStrictEqual(result.runner.toolEvidence, {
+      status: "partial",
+      observedCalls: 2,
+      recordedCalls: 0,
+      partialCalls: 0,
+      rejectedCalls: 2,
+      partialReasons: {},
+      rejectedReasons: { credential_shaped: 2 },
+    });
+    const toolEvents = h.events.filter((event) =>
+      event.event_type === "tool_call"
+    );
+    assert.strictEqual(toolEvents.length, 2);
+    assert.deepStrictEqual(
+      toolEvents.map((event) => JSON.parse(String(event.tool_arguments))),
+      [{
+        outcome: "rejected",
+        reason: "credential_shaped",
+        toolCallId: "call-complete",
+        title: "Run check",
+        kind: "execute",
+        status: "completed",
+      }, {
+        outcome: "rejected",
+        reason: "credential_shaped",
+        toolCallId: "call-incomplete",
+        title: "Run check",
+        kind: "execute",
+        status: "in_progress",
+      }],
+    );
+    assertNotContains(JSON.stringify(h.events), "abcdefgh12345678");
+  });
+
+  it("records each ACP tool call on its own and names why any was not recorded", async () => {
+    const h = createHarness();
+    const sessionId = "01ACPSESSION000000000000131";
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "FIXTURE_TOOL_HISTORY_MIXED",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId,
+      workspaceRoot: process.cwd(),
+    });
+    assert.deepStrictEqual(result.runner.toolEvidence, {
+      status: "partial",
+      observedCalls: 5,
+      recordedCalls: 2,
+      partialCalls: 2,
+      rejectedCalls: 1,
+      partialReasons: { missing_raw_output: 1, oversized_output: 1 },
+      rejectedReasons: { credential_shaped: 1 },
+    });
+    assertContains(
+      result.receipt,
+      "ACP tool evidence: 2 recorded, 2 partial (missing_raw_output 1, oversized_output 1), 1 rejected (credential_shaped) of 5",
+    );
+    const toolEvents = h.events.filter((event) =>
+      event.event_type === "tool_call"
+    );
+    assert.strictEqual(toolEvents.length, 5);
+    assertNotContains(
+      JSON.stringify(toolEvents),
+      "abcdefghijklmnopqrstuvwxyz012345",
+    );
+
+    // The good calls stay replayable request/result pairs, in order.
+    assert.partialDeepStrictEqual(asRecord(toolEvents[0]), {
+      tool_name: "acp.execute",
+      tool_call_id: "fixture-mixed-typecheck",
+      tool_result: '{"exitCode":0,"stdout":"typecheck ok"}',
+      tool_is_error: false,
+    });
+    assert.deepStrictEqual(JSON.parse(String(toolEvents[0].tool_arguments)), {
+      title: "Run npm run typecheck",
+      kind: "execute",
+      input: { command: ["npm", "run", "typecheck"] },
+    });
+    assert.partialDeepStrictEqual(asRecord(toolEvents[4]), {
+      tool_name: "acp.execute",
+      tool_call_id: "fixture-mixed-test",
+      tool_is_error: true,
+    });
+
+    // A partial call keeps its input; a rejected one keeps no raw value.
+    const gap = (index: number) => ({
+      event: asRecord(toolEvents[index]),
+      record: JSON.parse(String(toolEvents[index].tool_arguments)),
+    });
+    assert.partialDeepStrictEqual(gap(1).event, {
+      tool_name: "acp.history_unavailable",
+      tool_result: "",
+      tool_is_error: true,
+    });
+    assert.deepStrictEqual(gap(1).record, {
+      outcome: "partial",
+      reason: "missing_raw_output",
+      toolCallId: "fixture-missing-output",
+      toolName: "acp.execute",
+      title: "Run npm run typecheck",
+      kind: "execute",
+      status: "completed",
+      input: { command: ["npm", "run", "typecheck"] },
+    });
+    assert.deepStrictEqual(gap(2).record, {
+      outcome: "rejected",
+      reason: "credential_shaped",
+      toolCallId: "fixture-secret-input",
+      toolName: "acp.execute",
+      title: "Run fixture login",
+      kind: "execute",
+      status: "completed",
+    });
+    assert.strictEqual(gap(2).event.tool_result, "");
+    assert.partialDeepStrictEqual(gap(3).record, {
+      outcome: "partial",
+      reason: "oversized_output",
+      toolCallId: "fixture-oversized-output",
+      input: { command: ["npm", "test"] },
+    });
+    const truncated = String(gap(3).event.tool_result);
+    assert.ok(truncated.endsWith(ACP_TOOL_OUTPUT_TRUNCATION_MARKER));
+    assertNotContains(truncated, "tail-not-kept");
+
+    // Replay keeps the two recorded pairs, withholds the three gap markers
+    // and reports them as omissions.
+    const priorEvents = await fetchWorkbenchSessionEvents({
+      sessionId,
+      events: h.store.events,
+    });
+    let omission: unknown;
+    const replayedToolCalls = buildConversationMessages(priorEvents, {
+      onOmission: (reported) => {
+        omission = reported;
+      },
+    }).flatMap((
+      message,
+    ) =>
+      message.role === "assistant"
+        ? (message.toolCalls ?? []).map((call) => call.id)
+        : []
+    );
+    assert.deepStrictEqual(replayedToolCalls, [
+      "fixture-mixed-typecheck",
+      "fixture-mixed-test",
+    ]);
+    assert.partialDeepStrictEqual(asRecord(omission), {
+      gapMarkers: 3,
+      malformedToolRecords: 0,
+      withheldFromProjection: 3,
+      projectedPairs: 2,
+    });
   });
 
   it("secret-shaped tool history fails before model work", async () => {

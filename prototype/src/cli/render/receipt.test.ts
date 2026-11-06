@@ -44,6 +44,10 @@ describe("presentation", () => {
           status: "complete",
           observedCalls: 0,
           recordedCalls: 0,
+          partialCalls: 0,
+          rejectedCalls: 0,
+          partialReasons: {},
+          rejectedReasons: {},
         },
         elapsedMs: 12,
       },
@@ -180,9 +184,13 @@ describe("presentation", () => {
           toolchainDirectoryCount: 0 as const,
         },
         toolEvidence: {
-          status: "complete" as const,
-          observedCalls: 0,
-          recordedCalls: 0,
+          status: "partial" as const,
+          observedCalls: 7,
+          recordedCalls: 5,
+          partialCalls: 2,
+          rejectedCalls: 0,
+          partialReasons: { missing_raw_output: 2 },
+          rejectedReasons: {},
         },
         usage: {
           source: "acp" as const,
@@ -203,6 +211,10 @@ describe("presentation", () => {
       formatted.includes(
         "codex-chatgpt/gpt-6.1-sol · acp v1 · local_stdio · subscription_oauth",
       ),
+      formatted,
+    );
+    assert.ok(
+      formatted.includes("ACP tools 5/7 recorded (2 partial, 0 rejected)"),
       formatted,
     );
     assert.ok(

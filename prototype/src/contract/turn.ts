@@ -159,8 +159,47 @@ export type ExternalAgentStopReason =
   | "refusal"
   | "cancelled";
 
-/** Fixed, value-free marker for an ACP tool exchange that cannot be replayed. */
+/**
+ * Fixed tool name for an ACP tool exchange that cannot be replayed. A marker
+ * for one observed call carries only that call's checked safe fields, its
+ * reason code and, for a partial call, its checked input and output; a marker
+ * for a turn whose calls are unknown carries no values.
+ */
 export const ACP_TOOL_HISTORY_UNAVAILABLE_NAME = "acp.history_unavailable";
+
+/**
+ * Fixed reason codes for an ACP tool call Workbench could not record in full.
+ * A code never carries the value that caused it. Listed in precedence order:
+ * when a call fails several rules, the first matching code is the reason.
+ */
+export const ACP_TOOL_EVIDENCE_REASONS = [
+  "credential_shaped",
+  "malformed",
+  "oversized_input",
+  "missing_raw_input",
+  "incomplete_status",
+  "missing_raw_output",
+  "oversized_output",
+] as const;
+export type AcpToolEvidenceReason = typeof ACP_TOOL_EVIDENCE_REASONS[number];
+
+/**
+ * Reasons that reject a call outright: Workbench keeps none of its raw values.
+ * Every other reason leaves a partial record that keeps the call's input.
+ */
+export const ACP_TOOL_EVIDENCE_REJECTING_REASONS: ReadonlySet<
+  AcpToolEvidenceReason
+> = new Set([
+  "credential_shaped",
+  "malformed",
+  "oversized_input",
+  "missing_raw_input",
+]);
+
+/** Count of not-recorded calls per reason code; absent codes are zero. */
+export type AcpToolEvidenceReasonCounts = Partial<
+  Record<AcpToolEvidenceReason, number>
+>;
 
 export type HistoryDelivery =
   | "warm-no-replay"
@@ -374,10 +413,21 @@ export interface ExternalAgentTurnReceipt {
         | "unauthenticated";
     };
     /** Workbench's durable capture posture for ACP tool updates in this turn. */
+    /**
+     * Each observed call is `recorded` (replayable request/result pair),
+     * `partial` (input kept, output missing, truncated or unfinished) or
+     * `rejected` (no raw value kept). `partial` status means at least one call
+     * was not recorded in full; `unavailable` means the turn ended before any
+     * call could be attributed (an aborted turn).
+     */
     toolEvidence: {
-      status: "complete" | "unavailable";
+      status: "complete" | "partial" | "unavailable";
       observedCalls: number;
       recordedCalls: number;
+      partialCalls: number;
+      rejectedCalls: number;
+      partialReasons: AcpToolEvidenceReasonCounts;
+      rejectedReasons: AcpToolEvidenceReasonCounts;
     };
     /** ACP-reported prompt-response usage. ACP marks this surface unstable. */
     usage?: {
