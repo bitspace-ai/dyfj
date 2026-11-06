@@ -1408,7 +1408,10 @@ README are tracked separately in its Revision history section.
   (`--workspace`, or the client's working directory) need no approval
   prompt, protected paths such as `.git` stay read-only, and writes outside
   the workspace and network access are refused unless the model escalates and
-  the operator approves. A session on this route wrote inside a linked
+  the operator approves. Correction: the mode also lets the sandbox write to
+  `/tmp`, and a command that a Codex command rule allows skipped approval
+  and ran outside the sandbox; see the Security entry on sandbox escalation.
+  A session on this route wrote inside a linked
   worktree freely, and was refused writing outside it, touching the
   worktree's `.git` pointer, creating a git tag and reaching the network. The
   mode is pinned by a test, because codex-acp maps an unknown mode to its
@@ -1703,6 +1706,22 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The Codex ChatGPT route refuses to start while saved Codex command
+  rules are present (BIT-844).** Codex loads command rules from the `rules`
+  directory of its home and runs a command that those rules allow outside its
+  sandbox without asking for approval, so Workbench never saw the request.
+  Codex saves such a rule when a "don't ask again for commands that start
+  with …" option is chosen. The route now refuses to start if, when checked
+  at launch, `~/.dyfj/runner-homes/codex-chatgpt/home/.codex/rules` holds
+  any entry; a rule written there later is not caught. On this route,
+  Workbench no longer offers or returns the three codex-acp 2.5.0 option IDs
+  that save an approval for later sessions (a command rule, a network
+  policy, or an MCP tool's "always allow"). On this route, an escalated
+  command that no rule allowed reached Workbench as a permission request:
+  a non-interactive `dyfj exec` rejected it, and an interactive one asked,
+  with reject as the default. If the route refuses to start, review the files
+  in that directory and remove them. Tests pin the refusal and the withheld
+  options.
 - **The Codex ChatGPT route turns off Codex's ChatGPT app tools (BIT-840).**
   With a ChatGPT sign-in, Codex's defaults turn on its `apps` and `plugins`
   features, which exposed every app connected to the signed-in account as a
