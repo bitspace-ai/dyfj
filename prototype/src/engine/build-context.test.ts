@@ -677,3 +677,32 @@ test("a turn whose transport is missing or unknown gets no boot-failure block", 
     );
   }
 });
+
+// ─── the model catalog tool (BIT-817) ────────────────────────────────────────
+
+test("a loopback companion turn offers workbench.models over the store's catalog", async () => {
+  await using root = await tempWorkspace();
+  const { state } = await runContext({ rootOverride: root.root });
+  const command = state.commandRegistry.lookup("workbench.models");
+  assert.ok(command !== undefined, "expected workbench.models on a loopback turn");
+  const listing = await command.executor(
+    {
+      commandId: "workbench.models",
+      callId: "call-models",
+      caller: { principalId: "operator", principalType: "human" },
+      arguments: {},
+    },
+    { authzBasis: "policy:allow:read-only" },
+  );
+  assert.match(String(listing), /^local-chat \| ollama \| t0 \| local \|/m);
+  assert.ok(!String(listing).includes("127.0.0.1"));
+});
+
+test("a remote companion turn is not offered workbench.models", async () => {
+  await using root = await tempWorkspace();
+  const { state } = await runContext({
+    rootOverride: root.root,
+    authContext: REMOTE,
+  });
+  assert.strictEqual(state.commandRegistry.lookup("workbench.models"), undefined);
+});

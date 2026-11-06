@@ -97,6 +97,12 @@ export {
 export { resolveImplementer } from "./builtin/publish-implementer.ts";
 export { PublishTickets, type PublishPhase, type PublishTicketView } from "./builtin/publish-tickets.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
+export {
+  type CatalogListing,
+  type CatalogModelRow,
+  formatCatalogListing,
+  MAX_LISTED_MODELS,
+} from "./builtin/models.ts";
 export { RootAnchors } from "./builtin/root-anchors.ts";
 export type {
   ExecutorConnection,
