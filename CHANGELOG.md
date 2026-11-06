@@ -291,6 +291,21 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The publish tool tests wait for a detached run's report work
+  (BIT-841).** `publish/start` runs its phases detached and closes the
+  report file after the last phase is recorded. Three tests in
+  `publish.test.ts` started a run and returned without waiting for it,
+  and the file's settle helper waited only for a ticket's phase to turn
+  terminal, which a report append or close can still follow. Under
+  parallel load that in-flight file work was still live when the file
+  ended, and the per-file handle check reported it (`FSReqPromise`) and
+  failed the file intermittently. The three tests now wait before they
+  assert; a fourth, which asserts the immediate reply first, waits
+  afterwards pass or fail; and the helper waits until each ticket is terminal and
+  neither an `FSReqPromise` nor a `CloseReq` resource is live (a pending
+  file-handle close reports as the second). The handle check itself is
+  unchanged, and no product code changed.
+
 - **ACP tool calls are recorded one by one, and the receipt says why any
   captured call was not.** Recording an external agent's tool calls was all-or-nothing: one
   call with a missing or oversized `rawOutput`, a credential-shaped value or
