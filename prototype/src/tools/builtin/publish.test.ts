@@ -167,9 +167,9 @@ function call(commandId: string, args: Record<string, unknown> = {}): CommandCal
  * what the snapshot watches for.
  */
 async function settle(tickets: PublishTickets): Promise<void> {
-  // No ticket, no run: a refused start leaves nothing to wait for. (A
-  // caller waiting from `finally` must not turn that case into a
-  // four-second timeout that replaces the failure it was preserving.)
+  // No ticket held, nothing to wait for: a refused start created none.
+  // (A caller that waits while preserving an earlier failure must not
+  // turn that case into a four-second timeout of its own.)
   if (tickets.list("session-1").length === 0) return;
   for (let attempt = 0; attempt < 400; attempt++) {
     // Look only after a timer turn: a detached run between two file
@@ -292,7 +292,6 @@ describe("publish tools: start", () => {
       await settle(tickets).catch(() => {});
       throw failure.error;
     }
-    await settle(tickets);
   });
 
   it("stops at a failing pre-gate, without running the gate", async () => {
