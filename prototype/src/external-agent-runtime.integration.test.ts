@@ -1735,6 +1735,37 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
   });
 
+  it("refuses to start while the Codex home holds command rules", async () => {
+    const home = await tempDir();
+    try {
+      const rules = `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex/rules`;
+      const nodePath = `${home}/node`;
+      await mkdir(rules, { recursive: true, mode: 0o700 });
+      await writeFile(nodePath, "#!/bin/sh\nexit 0\n");
+      await chmod(nodePath, 0o700);
+      const start = () =>
+        codexChatGptProfile(process.cwd(), {
+          home,
+          prototypeRoot: process.cwd(),
+          nodePath,
+        });
+      // An empty rules directory approves nothing.
+      await start();
+      await writeFile(
+        `${rules}/default.rules`,
+        'prefix_rule(pattern=["git", "commit"], decision="allow")\n',
+      );
+      await assert.rejects(start, (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("Codex rules directory") &&
+        error.message.includes(
+          ".dyfj/runner-homes/codex-chatgpt/home/.codex/rules under the operator home",
+        ));
+    } finally {
+      await rm(home, { recursive: true });
+    }
+  });
+
   it("rejects a writable pre-existing Codex home", async () => {
     const home = await tempDir();
     try {
