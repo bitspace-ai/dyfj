@@ -1700,8 +1700,9 @@ README are tracked separately in its Revision history section.
   Workbench no longer offers or returns the three codex-acp 2.5.0 option IDs
   that save an approval for later sessions (a command rule, a network
   policy, or an MCP tool's "always allow"). On this route, an escalated
-  command that no rule allowed reached Workbench as a permission request,
-  which `dyfj exec` rejected. If the route refuses to start, review the files
+  command that no rule allowed reached Workbench as a permission request:
+  a non-interactive `dyfj exec` rejected it, and an interactive one asked,
+  with reject as the default. If the route refuses to start, review the files
   in that directory and remove them. Tests pin the refusal and the withheld
   options.
 - **The Codex ChatGPT route turns off Codex's ChatGPT app tools (BIT-840).**
