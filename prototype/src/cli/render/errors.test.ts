@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import process from "node:process";
 import { describe, it } from "node:test";
 import { DomainError } from "../../contract/mod.ts";
 import {
@@ -7,7 +8,16 @@ import {
   RpcErrorCode,
 } from "../../transport/mod.ts";
 import type { CliConfig } from "../args.ts";
-import { isTimeoutError, socketError } from "./errors.ts";
+import {
+  inToolSandbox,
+  isTimeoutError,
+  SANDBOXED_UNREACHABLE,
+  socketError,
+} from "./errors.ts";
+
+// The cases that do not pass `sandboxed` describe a client outside the tool
+// sandbox, so a run from inside it (SANDBOX_RUNTIME=1) must not change them.
+delete process.env.SANDBOX_RUNTIME;
 
 function cfg(overrides: Partial<CliConfig> = {}): CliConfig {
   return {
@@ -229,6 +239,70 @@ describe("isTimeoutError and socketError", () => {
       `expected ${
         JSON.stringify(msgRefused)
       } to include "Start it with: dyfj start"`,
+    );
+  });
+});
+
+describe("inside the tool sandbox (BIT-817)", () => {
+  const refused = Object.assign(new Error("connect ENOENT"), { code: "ENOENT" });
+  const denied = Object.assign(new Error("connect EPERM"), { code: "EPERM" });
+
+  it("reads SANDBOX_RUNTIME=1 as sandboxed, and nothing else", () => {
+    assert.strictEqual(inToolSandbox("1"), true);
+    for (const value of [undefined, "", "0", "true"]) {
+      assert.strictEqual(inToolSandbox(value), false, String(value));
+    }
+  });
+
+  it("a refused, denied or missing socket is one line that points at workbench.models", () => {
+    const connRefused = Object.assign(new Error("connect ECONNREFUSED"), {
+      code: "ECONNREFUSED",
+    });
+    for (
+      const error of [
+        refused,
+        denied,
+        connRefused,
+        new Error("Permission denied (os error 13)"),
+      ]
+    ) {
+      const s = socketError(error, cfg(), undefined, true);
+      assert.strictEqual(s, SANDBOXED_UNREACHABLE);
+      assert.ok(!s.includes("\n"));
+      assert.ok(!s.includes("dyfj start"));
+      assert.match(s, /workbench\.models/);
+    }
+  });
+
+  it("any other failure gets the message it gets outside the sandbox", () => {
+    const exhausted = Object.assign(
+      new Error("connect EMFILE /tmp/enoent.sock"),
+      { code: "EMFILE" },
+    );
+    assert.strictEqual(
+      socketError(exhausted, cfg(), undefined, true),
+      socketError(exhausted, cfg(), undefined, false),
+    );
+    assert.match(
+      socketError(new PeerClosedError(), cfg(), undefined, true),
+      /closed the connection before it answered/,
+    );
+  });
+
+  it("an answer from the runtime is still reported as itself", () => {
+    const s = socketError(
+      new RpcError(RpcErrorCode.internalError, "Budget exceeded: turn limit"),
+      cfg(),
+      undefined,
+      true,
+    );
+    assert.strictEqual(s, "dyfj: Budget exceeded: turn limit");
+  });
+
+  it("outside the sandbox a refused connect keeps its start advice", () => {
+    assert.match(
+      socketError(refused, cfg(), undefined, false),
+      /Start it with: dyfj start/,
     );
   });
 });

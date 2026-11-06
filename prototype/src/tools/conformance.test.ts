@@ -18,6 +18,7 @@ const builtins = buildToolCatalog({
   readMemory: () => "memory",
   searchMemory: () => "recall",
   rootAnchors: new RootAnchors(),
+  listModels: async () => ({ models: [] }),
 }, {
   allowedMemorySlugs: ["kit-memory"],
   workspaceRoot: "/kit-workspace",
@@ -118,6 +119,7 @@ test("the kit covers every builtin tool", () => {
     "edit_file",
     "bash",
     "git",
+    "workbench.models",
   ]);
 });
 
