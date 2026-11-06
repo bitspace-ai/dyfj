@@ -43,6 +43,7 @@ import {
 } from "../contract/mod.ts";
 import { WorkspaceContextUnavailableError } from "./errors.ts";
 import { writeMaybe } from "./event-writes.ts";
+import { catalogListing, loadModelCatalog } from "./model-catalog.ts";
 import { buildNextWorkBrief } from "./next-work.ts";
 import { emitRuntimeEvent } from "./runtime-events.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
@@ -308,6 +309,14 @@ async function buildCompanionContext(
     ...(ports.publish === undefined
       ? {}
       : { publish: { ...ports.publish, sessionId: session.sessionId } }),
+    // The model catalog, offered on a loopback turn only: its provider rows
+    // say which providers this runtime routes to (BIT-817).
+    ...(transport === "loopback"
+      ? {
+        listModels: async () =>
+          catalogListing(await loadModelCatalog(() => ports.store.models)),
+      }
+      : {}),
   };
   state.commandRegistry = buildToolCatalog(
     toolPorts,

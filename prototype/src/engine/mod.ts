@@ -57,6 +57,12 @@ export {
 export { agentLoop, toolStepToMessages } from "./agent-loop.ts";
 export { runWorkbenchRuntime } from "./native-runner.ts";
 export {
+  catalogListing,
+  catalogModelRow,
+  loadModelCatalog,
+  type ModelCatalog,
+} from "./model-catalog.ts";
+export {
   buildNextWorkBrief,
   type NextWorkBriefInput,
   type NextWorkResult,
