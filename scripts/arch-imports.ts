@@ -701,6 +701,59 @@ export function collectSources(root: string, rules: LayerRules): Map<string, str
   return sources;
 }
 
+/** Where the Rust crates live; their `.rs` files get the module limit. */
+export const RUST_ROOT = "core";
+
+/**
+ * The `.rs` files under `core/`: regular files, and symlinks that resolve
+ * to files. Symlinked directory entries below `core/` are skipped. A
+ * directory named `target` is skipped exactly when its parent holds an entry
+ * named `Cargo.toml`; this is a naming heuristic, not a read of Cargo's
+ * configuration.
+ */
+function isFileEntry(
+  root: string,
+  path: string,
+  entry: { isFile(): boolean; isSymbolicLink(): boolean },
+): boolean {
+  if (entry.isFile()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return statSync(`${root}/${path}`).isFile();
+  } catch (error) {
+    // A dangling or looping link is not a file; any other failure is thrown
+    // so it cannot hide a module.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ELOOP") return false;
+    throw error;
+  }
+}
+
+export function collectRustSources(root: string): Map<string, string> {
+  const sources = new Map<string, string>();
+  const walk = (relative: string) => {
+    let entries;
+    try {
+      entries = readdirSync(`${root}/${relative}`, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        const buildOutput = entry.name === "target" &&
+          entries.some((e) => e.name === "Cargo.toml");
+        if (!buildOutput) walk(path);
+      } else if (path.endsWith(".rs") && isFileEntry(root, path, entry)) {
+        sources.set(path, readFileSync(`${root}/${path}`, "utf8"));
+      }
+    }
+  };
+  walk(RUST_ROOT);
+  return sources;
+}
+
 export function existsIn(root: string): (path: string) => boolean {
   return (path) => {
     try {
@@ -749,8 +802,9 @@ export function main(args: readonly string[], root: string): number {
   for (const line of formatSizeReport(sizeReport(sources))) console.log(line);
   const sizeExceptions = readJson(root, SIZE_EXCEPTIONS_PATH);
   const sizeErrors = hardLimitViolations(
-    sources,
+    new Map([...sources, ...collectRustSources(root)]),
     (path) => {
+      if (path.endsWith(".rs")) return true;
       const unit = unitFor(rules, path);
       return unit !== undefined && !unit.outside;
     },

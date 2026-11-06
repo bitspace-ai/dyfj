@@ -807,6 +807,34 @@ describe("dyfj launcher autostart classification", () => {
     });
     assert.equal(autostart, "no");
   });
+  it("SANDBOX_RUNTIME=1 (inside the tool sandbox) declines autostart", async () => {
+    const { autostart } = await dryRun({
+      HOME: FAKE_HOME,
+      SANDBOX_RUNTIME: "1",
+    }, ["models"]);
+    assert.equal(autostart, "no");
+  });
+  it("inside the tool sandbox, models fails in one line and takes no lock", async () => {
+    const home = await realTempDir();
+    try {
+      const { code, stdout, stderr } = await output(BASH, [
+        LAUNCHER,
+        "--socket",
+        `${home}/absent.sock`,
+        "models",
+      ], { env: { HOME: home, SANDBOX_RUNTIME: "1" } });
+      assert.equal(code, 1);
+      assert.equal(stdout, "");
+      const lines = stderr.trimEnd().split("\n");
+      assert.equal(lines.length, 1, stderr);
+      includes(lines[0]!, "not reachable from inside the tool sandbox");
+      includes(lines[0]!, "workbench.models");
+      refutes(stderr.includes("lock"));
+      assert.deepEqual(await readdir(home), []);
+    } finally {
+      await rm(home, { recursive: true });
+    }
+  });
   it("a custom socket still autostarts (on that socket)", async () => {
     const { autostart, route } = await dryRun({
       HOME: FAKE_HOME,

@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import process from "node:process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -7,6 +15,7 @@ import {
   type AnalysisInput,
   analyze,
   type Baseline,
+  collectRustSources,
   type CycleAllowEntry,
   type LayerRules,
   packageName,
@@ -1196,5 +1205,98 @@ test("packageName strips registries, versions and subpaths", () => {
       "@scope/pkg",
     ].map(packageName),
     ["mysql2", "mysql2", "mysql2", "@scope/pkg", "@scope/pkg"],
+  );
+});
+
+// Rust modules (BIT-858): `.rs` files under core/ get the module limit; the
+// TypeScript function tokenizer is not run on them.
+const rustModule = "let x = 1;\n".repeat(1001);
+const rustPath = "core/crate/src/big.rs";
+const anyRust = (path: string) => path.endsWith(".rs");
+
+test("a Rust module over the limit with no exception fails", () => {
+  const errors = hardLimitViolations(
+    new Map([[rustPath, rustModule]]),
+    anyRust,
+    [],
+  );
+  assertEquals(errors.length, 1);
+  assertSome(errors, `module ${rustPath} is over the 1000-line limit (1001)`);
+});
+
+test("a Rust module that grows past its recorded size fails", () => {
+  const errors = hardLimitViolations(
+    new Map([[rustPath, rustModule]]),
+    anyRust,
+    [{ kind: "module", path: rustPath, lines: 1000, reason: "deferred" }],
+  );
+  assertEquals(errors.length, 1);
+  assertSome(errors, `module ${rustPath} grew past its recorded size (1001 > 1000)`);
+});
+
+test("an excepted Rust module at its recorded size passes; a stale entry fails", () => {
+  const entry = { kind: "module", path: rustPath, lines: 1001, reason: "deferred" };
+  assertEquals(
+    hardLimitViolations(new Map([[rustPath, rustModule]]), anyRust, [entry]),
+    [],
+  );
+  assertSome(
+    hardLimitViolations(new Map([[rustPath, "fn a() {}\n"]]), anyRust, [entry]),
+    `remove it: module ${rustPath}`,
+  );
+});
+
+test("a long Rust function is not measured as a TypeScript function", () => {
+  const longFn = `fn big() {\n${"    work();\n".repeat(300)}}\n`;
+  assertEquals(
+    hardLimitViolations(new Map([[rustPath, longFn]]), anyRust, []),
+    [],
+  );
+});
+
+test("collectRustSources reads .rs files under core/ and skips target/", () => {
+  const root = mkdtempSync(`${tmpdir()}/arch-rust-`);
+  try {
+    mkdirSync(`${root}/core/crate/src`, { recursive: true });
+    mkdirSync(`${root}/core/target/debug`, { recursive: true });
+    writeFileSync(`${root}/core/crate/src/a.rs`, "fn a() {}\n");
+    writeFileSync(`${root}/core/crate/src/notes.md`, "x\n");
+    writeFileSync(`${root}/core/Cargo.toml`, "[workspace]\n");
+    writeFileSync(`${root}/core/target/debug/gen.rs`, "fn g() {}\n");
+    mkdirSync(`${root}/core/crate/src/target`, { recursive: true });
+    writeFileSync(`${root}/core/crate/src/target/mod.rs`, "fn t() {}\n");
+    symlinkSync(`${root}/core/crate/src/a.rs`, `${root}/core/crate/src/link.rs`);
+    assertEquals([...collectRustSources(root).keys()], [
+      "core/crate/src/a.rs",
+      "core/crate/src/link.rs",
+      "core/crate/src/target/mod.rs",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the committed exceptions record the oversized Rust REPL modules", async () => {
+  const committed = JSON.parse(
+    await readFile(
+      fileURLToPath(new URL("./arch-size-exceptions.json", import.meta.url)),
+      "utf8",
+    ),
+  ) as SizeException[];
+  const paths = committed.filter((e) => e.path.endsWith(".rs")).map((e) => e.path);
+  for (const f of ["commands.rs", "main.rs", "link.rs"]) {
+    assert.ok(paths.includes(`core/dyfj-repl/src/${f}`), f);
+  }
+});
+
+test("a non-Rust, non-.ts module such as .tsx still gets the function limit", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/view.tsx", bigFunction]]),
+    runtimeOnly,
+    [],
+  );
+  assertSome(
+    errors,
+    "function src/view.tsx:1 big is over the 200-line limit (202)",
   );
 });
