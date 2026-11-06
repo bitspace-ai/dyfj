@@ -20,11 +20,7 @@
  */
 
 import process from "node:process";
-import {
-  defaultLocalWorkbenchModels,
-  loadWorkbenchModelsWithLocalDefaults,
-  type WorkbenchModel,
-} from "../providers/mod.ts";
+import type { WorkbenchModel } from "../providers/mod.ts";
 import {
   checkColumnsAtBoot,
   countWorkbenchSessionEvents,
@@ -75,6 +71,7 @@ import {
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
 import {
   type ExternalAgentRunner,
+  loadModelCatalog,
   runWorkbenchRuntime,
   SessionOwners,
   type TurnRuntime,
@@ -273,19 +270,9 @@ function requireStore(options: WorkbenchUnixServerOptions): Store {
 // Degrade to the local defaults if the registry is unavailable, preserving
 // the local-first posture instead of an empty list, and keep the reason so
 // `models/list` can say why only those rows are listed.
-async function loadPickerCatalog(
-  store: () => Store,
-): Promise<PickerCatalog> {
-  try {
-    return {
-      models: await loadWorkbenchModelsWithLocalDefaults(store().models),
-    };
-  } catch (error) {
-    return {
-      models: defaultLocalWorkbenchModels(),
-      unavailable: summarizeError(error),
-    };
-  }
+// The engine's loader, which `workbench.models` reads the catalog through too.
+function loadPickerCatalog(store: () => Store): Promise<PickerCatalog> {
+  return loadModelCatalog(() => store().models);
 }
 
 // The static extension list (specs/01-architecture.md §6), every extension

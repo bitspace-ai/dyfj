@@ -105,6 +105,8 @@ import {
 import {
   CODEX_DISABLED_FEATURES,
   CODEX_HOME_CONFIG_TOML,
+  refuseCodexCommandRules,
+  withholdSavedApprovals,
 } from "./codex-home-config.ts";
 import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
 import { writePrivateFile } from "./private-file.ts";
@@ -453,6 +455,7 @@ export async function codexChatGptProfile(
   await ensurePrivateDirectory(runnerBin);
   await ensurePrivateDirectory(isolatedHome);
   await ensurePrivateDirectory(codexHome);
+  await refuseCodexCommandRules(codexHome);
   await ensurePrivateDirectory(cargoHome);
   const childPath = await writeCodexRunnerBin({
     runnerBin,
@@ -490,12 +493,9 @@ export async function codexChatGptProfile(
     CODEX_PATH: codexPath,
     CARGO_HOME: cargoHome,
     NO_BROWSER: "1",
-    // codex-acp's workspace-write mode: ordinary edits inside the session
-    // workspace need no approval, protected paths such as `.git` stay
-    // read-only, and anything else is refused unless the model escalates and
-    // the operator approves. The value must be exact: codex-acp maps an
-    // unknown mode to its "agent" default, in which Codex approves its own
-    // actions.
+    // codex-acp's workspace-write mode; refuseCodexCommandRules says what can
+    // skip its approvals. The value must be exact: an unknown mode maps to
+    // "agent", in which Codex approves its own actions.
     INITIAL_AGENT_MODE: "workspace-write",
     PATH: childPath,
     CODEX_CONFIG: JSON.stringify(codexConfig),
@@ -1106,7 +1106,7 @@ export async function runExternalAgentWorkbenchRuntime(
         abortSignal: input.abortSignal,
         onTextDelta: input.frames?.onTextDelta,
         onProgress,
-        confirmPermission: input.approver?.confirmExternalAgentPermission,
+        confirmPermission: withholdSavedApprovals(profile, input.approver),
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
       })
@@ -1116,7 +1116,7 @@ export async function runExternalAgentWorkbenchRuntime(
         abortSignal: input.abortSignal,
         onTextDelta: input.frames?.onTextDelta,
         onProgress,
-        confirmPermission: input.approver?.confirmExternalAgentPermission,
+        confirmPermission: withholdSavedApprovals(profile, input.approver),
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
         ...(dependencies.runPolicy === undefined

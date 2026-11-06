@@ -11,6 +11,23 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A sandboxed session can read its model catalog.** A new builtin tool,
+  `workbench.models`, lists the runtime's active model catalog: each model's
+  slug, provider, tier, access modality and price per million input and
+  output tokens, for up to 200 of the rows `dyfj models` lists. It is offered on loopback
+  companion turns, needs no approval, and shows no base URL, API kind or
+  config value. When the catalog cannot be loaded it lists the built-in local
+  models and says so, without the store's error. Before, a model whose bash
+  commands run in the tool sandbox could not list the catalog at all, because
+  the sandbox denies the runtime socket. The tool is not in the `tools/list`
+  listing, which builds its catalog without the model reader.
+- **`dyfj` inside the tool sandbox fails in one line.** When it runs under the
+  srt sandbox (`SANDBOX_RUNTIME=1`), the launcher no longer tries to autostart
+  a runtime, which failed with `cannot create lock file`. A failed connect
+  there (a refused, denied or missing socket, not a timeout) is reported in
+  one error line that names `workbench.models` (`dyfj status` still prints
+  `runtime: unreachable` first). Other failures get the message they get
+  outside the sandbox.
 - **The 1,000-line module limit now covers the Rust crates.** The
   `arch.imports` lane counts the lines of the `.rs` files under `core/`
   (skipping `target/` directories beside a `Cargo.toml`, and symlinked directories below `core/`) and fails on one over 1,000 lines unless
@@ -1431,7 +1448,10 @@ README are tracked separately in its Revision history section.
   (`--workspace`, or the client's working directory) need no approval
   prompt, protected paths such as `.git` stay read-only, and writes outside
   the workspace and network access are refused unless the model escalates and
-  the operator approves. A session on this route wrote inside a linked
+  the operator approves. Correction: the mode also lets the sandbox write to
+  `/tmp`, and a command that a Codex command rule allows skipped approval
+  and ran outside the sandbox; see the Security entry on sandbox escalation.
+  A session on this route wrote inside a linked
   worktree freely, and was refused writing outside it, touching the
   worktree's `.git` pointer, creating a git tag and reaching the network. The
   mode is pinned by a test, because codex-acp maps an unknown mode to its
@@ -1726,6 +1746,22 @@ README are tracked separately in its Revision history section.
 
 ### Security
 
+- **The Codex ChatGPT route refuses to start while saved Codex command
+  rules are present (BIT-844).** Codex loads command rules from the `rules`
+  directory of its home and runs a command that those rules allow outside its
+  sandbox without asking for approval, so Workbench never saw the request.
+  Codex saves such a rule when a "don't ask again for commands that start
+  with …" option is chosen. The route now refuses to start if, when checked
+  at launch, `~/.dyfj/runner-homes/codex-chatgpt/home/.codex/rules` holds
+  any entry; a rule written there later is not caught. On this route,
+  Workbench no longer offers or returns the three codex-acp 2.5.0 option IDs
+  that save an approval for later sessions (a command rule, a network
+  policy, or an MCP tool's "always allow"). On this route, an escalated
+  command that no rule allowed reached Workbench as a permission request:
+  a non-interactive `dyfj exec` rejected it, and an interactive one asked,
+  with reject as the default. If the route refuses to start, review the files
+  in that directory and remove them. Tests pin the refusal and the withheld
+  options.
 - **The Codex ChatGPT route turns off Codex's ChatGPT app tools (BIT-840).**
   With a ChatGPT sign-in, Codex's defaults turn on its `apps` and `plugins`
   features, which exposed every app connected to the signed-in account as a

@@ -26,6 +26,10 @@ import type { CommandSandbox } from "./builtin/srt-sandbox.ts";
 import type { Env } from "../config/mod.ts";
 import { defineGit } from "./builtin/git.ts";
 import { definePublishTools } from "./builtin/publish.ts";
+import {
+  type CatalogListing,
+  defineWorkbenchModels,
+} from "./builtin/models.ts";
 
 /** Runtime capabilities a tool is backed by. Absent ones leave their tools out. */
 export interface ToolCatalogPorts {
@@ -72,6 +76,11 @@ export interface ToolCatalogPorts {
    * Absent - no `[publish]` section - leaves the publish tools unregistered.
    */
   publish?: PublishCatalogPorts;
+  /**
+   * Backs `workbench.models` (BIT-817): the runtime's active model catalog.
+   * Absent leaves the tool unregistered.
+   */
+  listModels?: () => Promise<CatalogListing>;
 }
 
 /** What the publish tools need, resolved by the caller that passes them. */
@@ -164,6 +173,8 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
   workspaceFileTool(defineEditFile),
   workspaceTool(defineBash),
   workspaceTool(defineGit),
+  ({ listModels }) =>
+    listModels === undefined ? undefined : defineWorkbenchModels({ listModels }),
 ];
 
 /**
