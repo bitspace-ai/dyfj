@@ -721,7 +721,8 @@ function isFileEntry(
   try {
     return statSync(`${root}/${path}`).isFile();
   } catch (error) {
-    // A dangling link is not a file; any other failure must not hide a module.
+    // A dangling or looping link is not a file; any other failure is thrown
+    // so it cannot hide a module.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ELOOP") return false;
     throw error;

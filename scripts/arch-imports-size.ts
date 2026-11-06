@@ -548,8 +548,9 @@ function exceptionKey(kind: string, path: string, name?: string): string {
 }
 
 /**
- * Hard-limit violations over the runtime modules `isRuntime` selects (Rust
- * modules, paths ending `.rs`, are checked against the module limit only): each
+ * Hard-limit violations over the runtime modules `isRuntime` selects (paths
+ * ending `.rs` are checked against the module limit only; every other path
+ * is also checked for functions): each
  * module or function over its limit without an exception, each excepted one
  * that grew past its recorded size, and each exception that no longer
  * matches anything over its limit. Malformed entries are violations too.
@@ -619,9 +620,9 @@ export function hardLimitViolations(
       countLines(source),
       MODULE_HARD_LIMIT,
     );
-    // The function tokenizer reads TypeScript; Rust files get the module
-    // limit only.
-    if (!path.endsWith(".ts")) continue;
+    // The function tokenizer reads TypeScript and JavaScript syntax, not
+    // Rust: `.rs` files get the module limit only.
+    if (path.endsWith(".rs")) continue;
     for (const span of functionSpans(source)) {
       check(
         exceptionKey("function", path, span.name),

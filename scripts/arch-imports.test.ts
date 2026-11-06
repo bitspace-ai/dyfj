@@ -1284,7 +1284,19 @@ test("the committed exceptions record the oversized Rust REPL modules", async ()
     ),
   ) as SizeException[];
   const paths = committed.filter((e) => e.path.endsWith(".rs")).map((e) => e.path);
-  for (const f of ["commands.rs", "main.rs"]) {
+  for (const f of ["commands.rs", "main.rs", "link.rs"]) {
     assert.ok(paths.includes(`core/dyfj-repl/src/${f}`), f);
   }
+});
+
+test("a non-Rust, non-.ts module such as .tsx still gets the function limit", () => {
+  const errors = hardLimitViolations(
+    new Map([["src/view.tsx", bigFunction]]),
+    runtimeOnly,
+    [],
+  );
+  assertSome(
+    errors,
+    "function src/view.tsx:1 big is over the 200-line limit (202)",
+  );
 });
