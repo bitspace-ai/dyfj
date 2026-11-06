@@ -65,5 +65,26 @@
     "name": "handleReplPacketCommand",
     "lines": 399,
     "reason": "Part of the interactive REPL, which the Rust client in core/dyfj-repl replaces (decision D23); not split in TypeScript."
+  },
+  {
+    "kind": "module",
+    "path": "core/dyfj-repl/src/commands.rs",
+    "lines": 1944,
+    "reason": "Part of the Rust REPL in core/dyfj-repl (decision D23); not split yet.",
+    "growth_reason": "The size gate now covers Rust; these files were already over the limit and are recorded at their current sizes."
+  },
+  {
+    "kind": "module",
+    "path": "core/dyfj-repl/src/main.rs",
+    "lines": 1465,
+    "reason": "Part of the Rust REPL in core/dyfj-repl (decision D23); not split yet.",
+    "growth_reason": "The size gate now covers Rust; these files were already over the limit and are recorded at their current sizes."
+  },
+  {
+    "kind": "module",
+    "path": "core/dyfj-repl/src/link.rs",
+    "lines": 1015,
+    "reason": "Part of the Rust REPL in core/dyfj-repl (decision D23); not split yet.",
+    "growth_reason": "The size gate now covers Rust; these files were already over the limit and are recorded at their current sizes."
   }
 ]
