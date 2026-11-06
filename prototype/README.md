@@ -266,6 +266,7 @@ dyfj status
 dyfj stop
 dyfj models
 dyfj sessions
+dyfj sessions show <session> --events [--json]
 ```
 
 Inside the REPL, `/session` prints the current session id, `/model` shows or
@@ -326,7 +327,13 @@ protocol for interactive turns, approvals and `turn/cancel`, and for the
 `ideas/list`); `sessions/inspect` also reports the session's recorded model,
 which the Rust REPL restores on `--session` and `/session switch`; see
 [`../core/README.md`](../core/README.md). The engine-free `dyfj` CLI reaches the
-read methods over it with `dyfj models` and `dyfj sessions`; after a TTY-backed
+read methods over it with `dyfj models`, `dyfj sessions`, and
+`dyfj sessions show <session> --events [--json]` (which reads up to 1,000
+events from `events/query` over the socket and prints each projected turn's
+sanitized prompt and reply first-line previews, reconstructed tool-evidence
+summary line, and ordered tool events with their outcome, tool name, and, when
+present on the projection, kind, title, status, gap reason code, and bounded
+checked input preview for both external-agent and native turns); after a TTY-backed
 UDS turn connects, Ctrl-C sends `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY
 SIGINT behavior remains unchanged. After an autostarted server installs its
 SIGINT handler, when cancellation is the terminal outcome after the active

@@ -18,7 +18,9 @@ import {
   type AcpToolEvidenceReason,
   type AcpToolEvidenceReasonCounts,
   type ExternalAgentWorkbenchRuntimeResult,
+  formatAcpToolEvidenceLine,
 } from "./contract/mod.ts";
+export { formatAcpToolEvidenceLine };
 import {
   boundedHistoryArguments,
   boundedHistoryField,
@@ -284,29 +286,6 @@ export function summarizeAcpToolEvidence(
     partialReasons,
     rejectedReasons,
   };
-}
-
-function formatReasonCounts(counts: AcpToolEvidenceReasonCounts): string {
-  const present = ACP_TOOL_EVIDENCE_REASONS.filter((code) =>
-    (counts[code] ?? 0) > 0
-  );
-  if (present.length === 0) return "";
-  if (present.length === 1) return ` (${present[0]})`;
-  return ` (${present.map((code) => `${code} ${counts[code]}`).join(", ")})`;
-}
-
-/** The receipt's tool-evidence line: counts by outcome, reasons by code. */
-export function formatAcpToolEvidenceLine(
-  summary: ExternalAgentWorkbenchRuntimeResult["runner"]["toolEvidence"],
-): string {
-  if (summary.status === "unavailable") {
-    return `ACP tool evidence: unavailable (${summary.observedCalls} observed, none recorded)`;
-  }
-  return `ACP tool evidence: ${summary.recordedCalls} recorded, ${summary.partialCalls} partial${
-    formatReasonCounts(summary.partialReasons)
-  }, ${summary.rejectedCalls} rejected${
-    formatReasonCounts(summary.rejectedReasons)
-  } of ${summary.observedCalls}`;
 }
 
 /** The durable, value-checked record a gap-marker event carries for one call. */

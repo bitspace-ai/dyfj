@@ -173,6 +173,94 @@ describe("parseArgs", () => {
     assert.strictEqual(parseArgs(["models"]).command, "models");
     assert.strictEqual(parseArgs(["sessions"]).command, "sessions");
   });
+  it("parses 'sessions show <ref> --events [--json]' with bare id or slug", () => {
+    assert.deepStrictEqual(
+      parseArgs([
+        "sessions",
+        "show",
+        "workbench-01ktz1xwcn7jmgs5e8kakfezkr",
+        "--events",
+      ]),
+      {
+        command: "sessions",
+        sessionEventsId: "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        json: false,
+        overrides: {},
+      },
+    );
+    assert.deepStrictEqual(
+      parseArgs([
+        "sessions",
+        "show",
+        "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        "--events",
+        "--json",
+      ]),
+      {
+        command: "sessions",
+        sessionEventsId: "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        json: true,
+        overrides: {},
+      },
+    );
+  });
+  it("rejects malformed 'sessions show' and misplaced '--events' usages", () => {
+    assert.ok(
+      (parseArgs(["--events"]).error ?? "").includes(
+        "--events is valid only with 'sessions show <session>'",
+      ),
+    );
+    assert.ok(
+      (parseArgs(["sessions", "--events"]).error ?? "").includes(
+        "--events is valid only with 'sessions show <session>'",
+      ),
+    );
+    assert.ok(
+      (parseArgs(["-p", "hi", "--events"]).error ?? "").includes(
+        "--events is valid only with 'sessions show <session>'",
+      ),
+    );
+    assert.ok(
+      (parseArgs(["sessions", "show", "--events"]).error ?? "").includes(
+        "sessions show requires a session id or slug",
+      ),
+    );
+    assert.ok(
+      (
+        parseArgs([
+          "sessions",
+          "show",
+          "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        ]).error ?? ""
+      ).includes("sessions show requires --events"),
+    );
+    assert.ok(
+      (
+        parseArgs([
+          "sessions",
+          "show",
+          "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+          "extra",
+          "--events",
+        ]).error ?? ""
+      ).includes("sessions show takes a single session id or slug"),
+    );
+    assert.ok(
+      (parseArgs(["sessions", "list"]).error ?? "").includes(
+        "unknown sessions subcommand: list",
+      ),
+    );
+    assert.ok(
+      (
+        parseArgs([
+          "sessions",
+          "show",
+          "not-a-session",
+          "--events",
+        ]).error ?? ""
+      ).includes("dyfj sessions"),
+    );
+  });
   it("'status' and 'start' are their own commands", () => {
     assert.strictEqual(parseArgs(["status"]).command, "status");
     assert.strictEqual(parseArgs(["start"]).command, "start");

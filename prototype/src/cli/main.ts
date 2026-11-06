@@ -26,7 +26,7 @@ import { runExec } from "./commands/exec.ts";
 import { HELP, parseArgs, resolveConfig } from "./args.ts";
 import { type Io, realIo } from "./io.ts";
 import { runModels } from "./commands/models.ts";
-import { runSessions } from "./commands/sessions.ts";
+import { runSessionEvents, runSessions } from "./commands/sessions.ts";
 import { runFreshnessProbe } from "./commands/freshness.ts";
 import { runStart } from "./commands/start.ts";
 import { runStatus } from "./commands/status.ts";
@@ -102,7 +102,14 @@ export async function main(argv: string[], io: Io): Promise<number> {
     return await runModels(config, io);
   }
   if (parsed.command === "sessions") {
-    return await runSessions(config, io);
+    return parsed.sessionEventsId !== undefined
+      ? await runSessionEvents(
+        parsed.sessionEventsId,
+        config,
+        io,
+        parsed.json,
+      )
+      : await runSessions(config, io);
   }
   if (parsed.command === "status") {
     return await runStatus(config, io);

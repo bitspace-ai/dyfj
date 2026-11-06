@@ -65,12 +65,15 @@ export interface CliConfig {
  * slug exactly as `dyfj sessions` lists it (workbench-<id>, lowercased).
  * Returns the canonical uppercase session id.
  */
-export function normalizeSessionRef(value: string): string {
+export function normalizeSessionRef(
+  value: string,
+  caller = "--session",
+): string {
   const slugMatch = value.match(/^workbench-([0-9A-Za-z]{26})$/i);
   const candidate = slugMatch ? slugMatch[1] : value;
   if (!SESSION_ID_SHAPE.test(candidate)) {
     throw new Error(
-      `--session expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
+      `${caller} expects a session id or a slug as listed by 'dyfj sessions', got: ${value}`,
     );
   }
   return candidate.toUpperCase();
@@ -87,6 +90,8 @@ export interface ParsedArgs {
     | "start"
     | "stop";
   prompt?: string;
+  /** Canonical session id for `dyfj sessions show <ref> --events`. */
+  sessionEventsId?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
   launcherAutostarted?: true;
@@ -121,10 +126,125 @@ export function parseToolSteps(value: string): number | undefined {
   return steps >= 1 && steps <= TOOL_STEPS_BOUND ? steps : undefined;
 }
 
+function parseSessionsCommand(
+  positional: readonly string[],
+  events: boolean,
+  json: boolean,
+  overrides: Partial<CliConfig>,
+): ParsedArgs {
+  if (positional.length === 1) {
+    return { command: "sessions", json, overrides };
+  }
+  if (positional[1] !== "show") {
+    return {
+      command: "help",
+      json,
+      overrides,
+      error:
+        `unknown sessions subcommand: ${positional[1]} (expected 'show <session> --events')`,
+    };
+  }
+  if (positional.length < 3) {
+    return {
+      command: "help",
+      json,
+      overrides,
+      error: "sessions show requires a session id or slug",
+    };
+  }
+  if (positional.length > 3) {
+    return {
+      command: "help",
+      json,
+      overrides,
+      error: "sessions show takes a single session id or slug",
+    };
+  }
+  if (!events) {
+    return {
+      command: "help",
+      json,
+      overrides,
+      error: "sessions show requires --events",
+    };
+  }
+  try {
+    return {
+      command: "sessions",
+      sessionEventsId: normalizeSessionRef(positional[2], "sessions show"),
+      json,
+      overrides,
+    };
+  } catch (thrown) {
+    return {
+      command: "help",
+      json,
+      overrides,
+      error: thrown instanceof Error ? thrown.message : String(thrown),
+    };
+  }
+}
+
+function applyValueFlag(
+  arg: string,
+  value: string,
+  overrides: Partial<CliConfig>,
+  setPrompt: (prompt: string) => void,
+): string | undefined {
+  if (arg === "--socket") overrides.socket = value;
+  else if (arg === "--model") overrides.model = value;
+  else if (arg === "--runner") {
+    if (value !== "fixture" && value !== "codex-chatgpt") {
+      return "--runner must be fixture or codex-chatgpt";
+    }
+    overrides.runner = value;
+  } else if (arg === "--session") {
+    // normalizeSessionRef throws on garbage; route it through the standard
+    // usage-error path (exit 2) instead of an uncaught stack trace.
+    try {
+      overrides.sessionId = normalizeSessionRef(value);
+    } catch (thrown) {
+      return thrown instanceof Error ? thrown.message : String(thrown);
+    }
+  } else if (arg === "--workspace") overrides.workspace = value;
+  else if (arg === "--tool-steps") {
+    const steps = parseToolSteps(value);
+    if (steps === undefined) {
+      return `--tool-steps must be an integer from 1 through ${TOOL_STEPS_BOUND}`;
+    }
+    overrides.toolSteps = steps;
+  } else if (Object.hasOwn(BUDGET_FLAGS, arg)) {
+    const usd = parseBudgetUsd(value);
+    if (usd === undefined) {
+      return `${arg} must be a dollar amount above 0 and at most ${MAX_BUDGET_USD}`;
+    }
+    overrides.budget = { ...overrides.budget, [BUDGET_FLAGS[arg]]: usd };
+  } else if (arg === "-p" || arg === "--print") setPrompt(value);
+  else if (arg === "--mode") {
+    if (value !== "turn" && value !== "ask" && value !== "next-work") {
+      return "--mode must be turn, ask, or next-work";
+    }
+    overrides.mode = value;
+  } else if (arg === "--tier") {
+    const tier = Number(value);
+    if (tier !== 0 && tier !== 1 && tier !== 2) {
+      return "--tier must be 0, 1, or 2";
+    }
+    overrides.tier = tier;
+  } else if (arg === "--hint") {
+    if (value !== "code" && value !== "chat" && value !== "reasoning") {
+      return "--hint must be code, chat, or reasoning";
+    }
+    overrides.hint = value;
+  }
+  return undefined;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   const overrides: Partial<CliConfig> = {};
   const positional: string[] = [];
   let json = false;
+  let events = false;
   let printPrompt: string | undefined;
   let help = false;
   let launcherAutostarted = false;
@@ -134,6 +254,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     const arg = argv[i];
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--events") {
+      events = true;
     } else if (arg === "--launcher-autostarted") {
       launcherAutostarted = true;
     } else if (arg === "--approve-paid") {
@@ -155,59 +277,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     } else if (VALUE_FLAGS.has(arg)) {
       const value = argv[++i];
       if (value === undefined) return error(`missing value for ${arg}`);
-      if (arg === "--socket") overrides.socket = value;
-      else if (arg === "--model") overrides.model = value;
-      else if (arg === "--runner") {
-        if (value !== "fixture" && value !== "codex-chatgpt") {
-          return error("--runner must be fixture or codex-chatgpt");
-        }
-        overrides.runner = value;
-      } else if (arg === "--session") {
-        // normalizeSessionRef throws on garbage; route it through the standard
-        // usage-error path (exit 2) instead of an uncaught stack trace.
-        try {
-          overrides.sessionId = normalizeSessionRef(value);
-        } catch (thrown) {
-          return error(
-            thrown instanceof Error ? thrown.message : String(thrown),
-          );
-        }
-      } else if (arg === "--workspace") overrides.workspace = value;
-      else if (arg === "--tool-steps") {
-        const steps = parseToolSteps(value);
-        if (steps === undefined) {
-          return error(
-            `--tool-steps must be an integer from 1 through ${TOOL_STEPS_BOUND}`,
-          );
-        }
-        overrides.toolSteps = steps;
-      } else if (Object.hasOwn(BUDGET_FLAGS, arg)) {
-        const usd = parseBudgetUsd(value);
-        if (usd === undefined) {
-          return error(
-            `${arg} must be a dollar amount above 0 and at most ${MAX_BUDGET_USD}`,
-          );
-        }
-        overrides.budget = { ...overrides.budget, [BUDGET_FLAGS[arg]]: usd };
-      }
-      else if (arg === "-p" || arg === "--print") printPrompt = value;
-      else if (arg === "--mode") {
-        if (value !== "turn" && value !== "ask" && value !== "next-work") {
-          return error("--mode must be turn, ask, or next-work");
-        }
-        overrides.mode = value;
-      } else if (arg === "--tier") {
-        const tier = Number(value);
-        if (tier !== 0 && tier !== 1 && tier !== 2) {
-          return error("--tier must be 0, 1, or 2");
-        }
-        overrides.tier = tier;
-      } else if (arg === "--hint") {
-        if (value !== "code" && value !== "chat" && value !== "reasoning") {
-          return error("--hint must be code, chat, or reasoning");
-        }
-        overrides.hint = value;
-      }
+      const problem = applyValueFlag(
+        arg,
+        value,
+        overrides,
+        (prompt) => {
+          printPrompt = prompt;
+        },
+      );
+      if (problem !== undefined) return error(problem);
     } else if (arg.startsWith("-") && arg !== "-") {
       return error(`unknown flag: ${arg}`);
     } else {
@@ -226,6 +304,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (help) return { command: "help", json, overrides };
+  if (
+    events &&
+    !(
+      printPrompt === undefined && positional[0] === "sessions" &&
+      positional[1] === "show"
+    )
+  ) {
+    return error("--events is valid only with 'sessions show <session>'");
+  }
   if (
     overrides.runner !== undefined &&
     (overrides.model !== undefined || overrides.tier !== undefined ||
@@ -248,8 +335,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (positional[0] === "models" && positional.length === 1) {
     return { command: "models", json, overrides };
   }
-  if (positional[0] === "sessions" && positional.length === 1) {
-    return { command: "sessions", json, overrides };
+  if (positional[0] === "sessions") {
+    return parseSessionsCommand(positional, events, json, overrides);
   }
   if (positional[0] === "status" && positional.length === 1) {
     return { command: "status", json, overrides };
@@ -364,6 +451,8 @@ Usage:
   dyfj stop                 stop the running local runtime at the socket
   dyfj models               list available model slugs
   dyfj sessions             list sessions
+  dyfj sessions show <ref> --events [--json]
+                            print a session's recorded turns and tool events
   dyfj dev                  launcher only: work on the harness; reload the
                             runtime and the Rust REPL when their code changes
 
@@ -412,5 +501,6 @@ Options:
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
   --no-autostart   launcher only: do not auto-start a runtime for this call (env DYFJ_AUTOSTART=0)
   --parse-check    launcher-internal, first argument only: validate the rest and exit 0/2
-  --json           one-shot only: print the full result as JSON
+  --events         with 'sessions show <ref>': print recorded turns and tool events
+  --json           one-shot or 'sessions show --events': print the full result as JSON
   -h, --help       show this help`;

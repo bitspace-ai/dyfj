@@ -11,6 +11,21 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Read a session's recorded turns and tool events from the CLI.**
+  `dyfj sessions show <session> --events [--json]` (accepting a bare session id
+  or a `workbench-<id>` slug) queries `events/query` over the local Unix socket
+  (up to 1,000 events, marking `truncated` when that limit is reached) and
+  projects the returned events into ordered turns and tool events, for both
+  external-agent and native turns. Each turn shows sanitized first-line
+  previews of the prompt and reply (up to 200 UTF-8 bytes including any
+  trailing ellipsis) and a reconstructed tool-evidence summary line (sharing
+  the receipt formatter for non-unavailable ACP turns); each tool event shows
+  its outcome (`recorded`, `partial`, `rejected`, or `unavailable`), tool name,
+  and, when supplied by the projection, kind, title, status, gap reason code,
+  and checked input preview bounded to 240 UTF-8 bytes (including any trailing
+  ellipsis), while values rejected by the credential-shape or size checks stay
+  absent.
+
 - **A running turn is legible from the Rust REPL, and a finished one shows
   its evidence.** A long turn used to look like a stall: one `· working…`
   line, then nothing during a provider call or a slow command. On a terminal

@@ -201,6 +201,29 @@ export type AcpToolEvidenceReasonCounts = Partial<
   Record<AcpToolEvidenceReason, number>
 >;
 
+function formatAcpReasonCounts(counts: AcpToolEvidenceReasonCounts): string {
+  const present = ACP_TOOL_EVIDENCE_REASONS.filter((code) =>
+    (counts[code] ?? 0) > 0
+  );
+  if (present.length === 0) return "";
+  if (present.length === 1) return ` (${present[0]})`;
+  return ` (${present.map((code) => `${code} ${counts[code]}`).join(", ")})`;
+}
+
+/** The receipt's tool-evidence line: counts by outcome, reasons by code. */
+export function formatAcpToolEvidenceLine(
+  summary: ExternalAgentTurnReceipt["runner"]["toolEvidence"],
+): string {
+  if (summary.status === "unavailable") {
+    return `ACP tool evidence: unavailable (${summary.observedCalls} observed, none recorded)`;
+  }
+  return `ACP tool evidence: ${summary.recordedCalls} recorded, ${summary.partialCalls} partial${
+    formatAcpReasonCounts(summary.partialReasons)
+  }, ${summary.rejectedCalls} rejected${
+    formatAcpReasonCounts(summary.rejectedReasons)
+  } of ${summary.observedCalls}`;
+}
+
 export type HistoryDelivery =
   | "warm-no-replay"
   | "projected-transcript"

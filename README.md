@@ -1057,6 +1057,7 @@ dyfj --runner codex-chatgpt exec "Inspect this repository"
 dyfj status
 dyfj models
 dyfj sessions
+dyfj sessions show <session> --events
 dyfj start   # foreground the runtime; Ctrl-C stops it (a third exits at once)
 dyfj stop    # stop the running runtime at the socket
 dyfj dev     # work on the harness: reload the runtime and REPL on save
@@ -1170,7 +1171,26 @@ read methods over the socket:
 ```sh
 dyfj models
 dyfj sessions
+dyfj sessions show <session> --events [--json]
 ```
+
+`dyfj sessions show <session> --events` (accepting either the bare 26-character
+session id or the `workbench-<id>` slug from `dyfj sessions`) reads the
+session's persisted events through `events/query` over the Unix socket (up to
+1,000 events, flagging `truncated` when that limit is reached) and projects the
+returned events into ordered turns and tool events, for both external-agent and
+native turns. For each turn it prints sanitized first-line previews of the
+prompt and reply (up to 200 UTF-8 bytes including any trailing ellipsis) and a
+reconstructed tool-evidence summary line (sharing the receipt formatter for
+non-unavailable ACP turns); for each tool event it prints the outcome
+(`recorded`, `partial`, `rejected`, or `unavailable`), tool name, and, when
+supplied by the projection, kind, title, status, gap reason code, and the
+checked input preview bounded to 240 UTF-8 bytes (including any trailing
+ellipsis). Values rejected by the credential-shape or size checks are not
+persisted and stay absent on readback, where the gap's reason code is shown
+instead. `--json` prints the same readback structure as JSON (or `{"error": ...}`
+with exit status 1 when the session has no recorded events or the runtime is
+unreachable).
 
 The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
