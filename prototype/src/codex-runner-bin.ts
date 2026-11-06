@@ -2,10 +2,10 @@
  * The Codex runner's private bin.
  *
  * The selected Node executable is shimmed here, and so are `npm` and `npx`
- * when a sibling passes the mode-bit and delimiter checks. Selecting that
- * Node does not add its directory to `PATH`. `/usr/bin` and `/bin` stay on
- * `PATH`, and an operator-selected toolchain directory is still added when
- * one is configured.
+ * when a sibling passes the effective-credential mode-bit and delimiter
+ * checks. Selecting that Node does not add its directory to `PATH`.
+ * `/usr/bin` and `/bin` stay on `PATH`, and an operator-selected toolchain
+ * directory is still added when one is configured.
  */
 
 import { dirname, join } from "node:path";
@@ -24,30 +24,50 @@ function execShim(executable: string): string {
 }
 
 /**
- * Ordinary owner, group, and other execute bits for this account. Root may
- * execute when any execute bit is set. Access-control lists are not consulted.
+ * Ordinary owner, group, and other execute bits for these credentials.
+ * Effective uid 0 may execute when any execute bit is set. Access-control
+ * lists are not consulted.
  */
+export function modeBitsAllowExecute(
+  info: { uid: number; gid: number; mode: number },
+  account: { uid: number | undefined; gids: ReadonlySet<number> },
+): boolean {
+  if (process.platform === "win32") return true;
+  if (account.uid === 0) return (info.mode & 0o111) !== 0;
+  if (account.uid !== undefined && info.uid === account.uid) {
+    return (info.mode & 0o100) !== 0;
+  }
+  if (account.gids.has(info.gid)) return (info.mode & 0o010) !== 0;
+  return (info.mode & 0o001) !== 0;
+}
+
+/** Effective user and group. The real uid and gid are not read. */
+function effectiveAccount(): {
+  uid: number | undefined;
+  gids: ReadonlySet<number>;
+} {
+  const gid = process.getegid?.();
+  return {
+    uid: process.geteuid?.(),
+    gids: new Set<number>([
+      ...(gid === undefined ? [] : [gid]),
+      ...(process.getgroups?.() ?? []),
+    ]),
+  };
+}
+
 function accountCanExecute(info: {
   uid: number;
   gid: number;
   mode: number;
 }): boolean {
-  if (process.platform === "win32") return true;
-  const uid = process.getuid?.();
-  if (uid === 0) return (info.mode & 0o111) !== 0;
-  if (uid !== undefined && info.uid === uid) return (info.mode & 0o100) !== 0;
-  const gid = process.getgid?.();
-  const groups = new Set<number>([
-    ...(gid === undefined ? [] : [gid]),
-    ...(process.getgroups?.() ?? []),
-  ]);
-  if (groups.has(info.gid)) return (info.mode & 0o010) !== 0;
-  return (info.mode & 0o001) !== 0;
+  return modeBitsAllowExecute(info, effectiveAccount());
 }
 
 /**
  * The executable `name` beside `nodePath`, when it is a delimiter-safe file
- * whose mode bits let this account execute it. Absent when there is no such
+ * whose mode bits let the effective credentials execute it. Absent when
+ * there is no such
  * sibling.
  */
 async function matchingSibling(

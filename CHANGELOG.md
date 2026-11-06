@@ -279,10 +279,13 @@ README are tracked separately in its Revision history section.
   for the idle TTL. The resident-session bound is eight, so a run of one-shot
   turns then failed once that many handles were still live. A one-shot turn
   now closes that session's idle handle before the receipt returns, while
-  the session lock is still held, so the slot is free for the next turn. A
-  one-shot turn that fails requests that same close before the error
-  returns. If the close also fails, the turn's error is the one returned
-  and the slot may still be held. An
+  the session lock is still held. A receipt that returns waits for that
+  close, so the slot is free for a following turn that starts after the
+  receipt. If the client leaves during the turn or during that close, the
+  slot can stay occupied after the disconnect. A one-shot turn that fails
+  requests that same close before the error returns. If the close also
+  fails, the turn's error is the one returned and the slot may still be
+  held. An
   interactive turn does not release its handle; that idle handle stays until
   the idle TTL, a runtime stop, or a later one-shot turn on the same session.
   An idle session keeps its slot while a client can still resume the live
@@ -297,10 +300,11 @@ README are tracked separately in its Revision history section.
   `/bin` were already on `PATH`, so an `npm` there could still be found.
   When an `npm` or `npx` beside the selected Node passes the check below,
   the runner writes a private shim for it in the runner bin. The check uses
-  ordinary owner, group, and other mode bits, not access-control lists, and
-  both the sibling path and its canonical path must be free of comma and
+  ordinary owner, group, and other mode bits for this process's effective
+  credentials, not the real user and group ids and not access-control lists,
+  and both the sibling path and its canonical path must be free of comma and
   colon. A missing sibling, a sibling
-  whose mode bits do not let this account execute it, or a sibling whose
+  whose mode bits do not let those credentials execute it, or a sibling whose
   path or canonical path contains a comma or colon does not get a new shim.
   A shim already in the runner bin for that name is removed, so a later
   profile does not keep the previous Node's `npm`. `/usr/bin` and `/bin`

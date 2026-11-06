@@ -1249,9 +1249,9 @@ stdio with a cleared, profile-selected environment and the resolved workspace,
 bridges permission requests through the existing approval channel, applies
 deadlines to protocol waits and child cleanup operations, and records
 runner-specific events and a runner receipt. Sequential turns that share a
-Workbench session, workspace, and execution profile reuse one live ACP worker
-and session; a concurrent turn for that same key fails as busy instead of
-queueing. Turn cancellation keeps a healthy handle; a protocol or process
+Workbench session, workspace, and execution profile reuse a healthy ACP worker
+and session only while that handle remains retained; a concurrent turn for
+that same key fails as busy instead of queueing. Turn cancellation keeps a healthy handle; a protocol or process
 failure removes it so the next turn can create a replacement. A warm handle is a
 resource cache, not the evidence of continuity: when the keyed handle is gone
 but the Workbench session has prior turns, the replacement session is not
@@ -1348,10 +1348,13 @@ prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
 acquired handle, the existing error lifecycle closes and removes that handle
 without deleting persisted events. Idle handles retire on a TTL. A one-shot
 `exec`, `ask`, or `-p` turn closes that session's idle external-agent handle
-before the receipt returns, while the session lock is still held, so the
-capacity slot is free when the client disconnects. A one-shot turn that
-fails requests that same close before its error returns; if the close also
-fails, the turn's error is the one returned and the slot may still be held.
+before the receipt returns, while the session lock is still held. A receipt
+that returns waits for that close, so the slot is free for a following turn
+that starts after the receipt. If the client leaves during the turn or during
+that close, the slot can stay occupied after the disconnect. A one-shot turn
+that fails requests that same close before its error returns; if the close
+also fails, the turn's error is the one returned and the slot may still be
+held.
 An interactive turn does
 not release its handle. That idle handle stays until the idle TTL, a runtime
 stop, or a later one-shot turn on the same session. An idle live
@@ -1378,7 +1381,7 @@ systems where `/bin/kill` supports negative process-group signaling, with
 `/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local
 stdio child using the community-maintained `@agentclientprotocol/codex-acp`
 adapter; subscription inference may use remote services. Sequential Workbench
-turns reuse the same live adapter process and ACP session under the same
+turns reuse a retained healthy adapter process and ACP session under the same
 session/workspace/profile rule as the fixture. The login task and runtime
 reject a comma or a colon in the operator home and the selected paths; a colon
 would split the child's `PATH`. The
@@ -1424,11 +1427,13 @@ write, and search permissions. The later child access is still by pathname:
 ancestor ownership and ACLs are not validated, and the selected inode is not
 pinned against replacement after profile construction. Workbench places a
 private Node shim first in the child `PATH`, and private `npm` and `npx`
-shims when a sibling's ordinary mode bits let this account execute it and
-both that path and its canonical path are free of comma and colon, then the
-optional executable directory, `/usr/bin`, and `/bin`. Selecting Node does
-not add that executable's directory. An operator-selected toolchain directory
-can still be that parent. Access-control lists are not consulted. The
+shims when a sibling's ordinary mode bits let this process's effective
+credentials execute it and both that path and its canonical path are free of
+comma and colon, then the optional executable directory, `/usr/bin`, and
+`/bin`. Selecting Node does not add that executable's directory. An
+operator-selected toolchain directory can still be that parent.
+Access-control lists are not consulted, and the real user and group ids are
+not read. The
 child `HOME` stays the dedicated runner home, and the allowlisted environment
 does not name the operator's `~/.dyfj/config.toml`. It also writes that exact
 path to the dedicated home's private `.zprofile` and `.bash_profile` so those
@@ -2931,7 +2936,9 @@ Document revisions only. Code and behavior changes are tracked in
   `catalogUnavailable`.
 - 2026-11-05 - The external-agent lifecycle says a one-shot `exec`, `ask`, or
   `-p` turn releases its idle external-agent session before the receipt
-  returns, and a failed one-shot turn requests that same close before its
-  error returns. The Codex route says the runner `PATH` includes
-  private `npm` and `npx` shims when a sibling passes the mode-bit and
-  delimiter checks, and that the child `HOME` stays the dedicated runner home.
+  returns, a returned receipt waits for that close, and a failed one-shot
+  turn requests that same close before its error returns. Sequential reuse
+  is only while the handle remains retained. The Codex route says the runner
+  `PATH` includes private `npm` and `npx` shims when a sibling passes the
+  effective-credential mode-bit and delimiter checks, and that the child
+  `HOME` stays the dedicated runner home.

@@ -1077,11 +1077,11 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         profile.environment.PATH,
         `${runnerBin}:/usr/bin:/bin`,
       );
-      // Root may pass the mode-bit check when any execute bit is set. For
-      // any other account, the profile's mode-bit check rejects this owned
-      // file because the owner execute bit is unset. Access-control lists
-      // are not consulted.
-      if (process.getuid?.() === 0) {
+      // Effective uid 0 may pass the mode-bit check when any execute bit
+      // is set. For any other effective uid, the profile's mode-bit check
+      // rejects this owned file because the owner execute bit is unset.
+      // Access-control lists are not consulted, and the real uid is not read.
+      if (process.geteuid?.() === 0) {
         assert.strictEqual((await stat(`${runnerBin}/npm`)).mode! & 0o777, 0o700);
       } else {
         await assert.rejects(() => stat(`${runnerBin}/npm`));
