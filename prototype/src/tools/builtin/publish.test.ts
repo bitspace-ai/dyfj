@@ -145,14 +145,37 @@ function call(commandId: string, args: Record<string, unknown> = {}): CommandCal
   };
 }
 
-/** Wait for the detached phases to settle: they append a report per phase. */
+/**
+ * Wait for the detached runs to finish, not only for a ticket's phase to
+ * turn terminal. `publish/start` runs the phases detached and closes the
+ * report after the last phase is recorded - and a cancelled run is marked
+ * failed before its final report append runs - so a terminal phase can
+ * still have report file work in flight. A test that returns then leaves
+ * that work to the file's handle check, which reports it as a leak. The
+ * run is finished when each ticket this session holds is terminal and no
+ * promise-based file request is live; in these tests the only such work
+ * is the detached runs' reports.
+ */
 async function settle(tickets: PublishTickets): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt++) {
-    const phase = tickets.latest("session-1")?.phase;
-    if (phase === "ready" || phase === "failed") return;
+    // Look only after a timer turn: a detached run between two file
+    // operations is a queued continuation, and a synchronous look could
+    // see no file request live moments before it issues the next one.
     await new Promise((resolve) => setTimeout(resolve, 10));
+    const views = tickets.list("session-1");
+    const terminal = views.length > 0 &&
+      views.every((view) => view.phase === "ready" || view.phase === "failed");
+    if (
+      terminal &&
+      !process.getActiveResourcesInfo().includes("FSReqPromise")
+    ) {
+      return;
+    }
   }
-  throw new Error("the phases did not settle");
+  throw new Error(
+    "the run did not settle: a ticket is still active or its report " +
+      "file work is still in flight",
+  );
 }
 
 /** The text a successful call returned; asserts the call succeeded. */
@@ -300,7 +323,7 @@ describe("publish tools: start", () => {
 
   it("hands every child the hardened environment", async () => {
     const runner = stubRunner([]);
-    const { registry } = tools({ runner });
+    const { registry, tickets } = tools({ runner });
     await invoke(registry, call("publish/start"));
     const env = runner.calls[0]?.env ?? {};
     // The git keys travel to the operator's own git, not only to ours.
@@ -319,6 +342,7 @@ describe("publish tools: start", () => {
     for (const forbidden of ["ANTHROPIC_API_KEY", "DOLT_PASSWORD", "DYFJ_SOCKET"]) {
       assert.ok(!(forbidden in env), `${forbidden} must not travel`);
     }
+    await settle(tickets);
   });
 });
 
@@ -391,6 +415,9 @@ describe("publish tools: status and cancel", () => {
     const status = await invoke(registry, call("publish/cancel"));
     assert.strictEqual(cancelled, true);
     assert.match(textOf(status), /cancelled by the operator/);
+    // The cancel marks the ticket failed at once; the detached run still
+    // appends its report entry and closes the file after that.
+    await settle(tickets);
   });
 
   it("reports nothing to cancel for a finished ticket", async () => {
@@ -519,12 +546,8 @@ describe("publish tools: real processes", () => {
         registry.register(command);
       }
       await invoke(registry, call("publish/start"));
-      // The runner is real here, so wait for the phases to settle.
-      for (let attempt = 0; attempt < 200; attempt++) {
-        const view = tickets.latest("session-1");
-        if (view?.phase === "failed" || view?.phase === "ready") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      // The runner is real here, so wait for the run to finish.
+      await settle(tickets);
       const view = tickets.latest("session-1");
       assert.strictEqual(view?.phase, "failed");
       assert.strictEqual(view?.failedPhase, "gate", view?.reason ?? "");
@@ -679,6 +702,7 @@ describe("publish tools: refused before the approval prompt", () => {
     await s.start();
     await s.start();
     assert.strictEqual(s.prompts(), 2);
+    await settle(s.tickets);
   });
 
   it("refuses after approval when the layout changed during the prompt", async () => {
