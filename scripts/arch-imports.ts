@@ -705,10 +705,11 @@ export function collectSources(root: string, rules: LayerRules): Map<string, str
 export const RUST_ROOT = "core";
 
 /**
- * The `.rs` files under `core/`: regular files and symlinks to files, in
- * real directories (symlinked directories are not followed). A directory
- * named `target` is skipped only beside a `Cargo.toml`, where it is Cargo's
- * build output; a source module of that name is still read.
+ * The `.rs` files under `core/`: regular files, and symlinks that resolve
+ * to files. Symlinked directory entries below `core/` are skipped. A
+ * directory named `target` is skipped exactly when its parent holds an entry
+ * named `Cargo.toml`; this is a naming heuristic, not a read of Cargo's
+ * configuration.
  */
 function isFileEntry(
   root: string,
@@ -719,8 +720,11 @@ function isFileEntry(
   if (!entry.isSymbolicLink()) return false;
   try {
     return statSync(`${root}/${path}`).isFile();
-  } catch {
-    return false;
+  } catch (error) {
+    // A dangling link is not a file; any other failure must not hide a module.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ELOOP") return false;
+    throw error;
   }
 }
 

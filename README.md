@@ -1742,8 +1742,9 @@ R2 fail the lane: a runtime module (any unit not marked `outside`, so not
 `prototype/scripts/` or the diagnostics) over 1,000 lines, or a function in one
 over 200 lines, unless `scripts/arch-size-exceptions.json` names it with its
 reason and the size it may not exceed. The module limit also covers the Rust
-crates: the regular `.rs` files (and symlinks to files) in real directories under
-`core/` are held to 1,000 lines, except Cargo's `target/` build output, with no function limit for Rust, and the three REPL modules already over
+crates: the `.rs` files under `core/` (regular files and symlinks that resolve to
+files; symlinked directories below `core/` are skipped) are held to 1,000
+lines, skipping any `target/` directory beside a `Cargo.toml`, with no function limit for Rust, and the three REPL modules already over
 it are recorded in the same list. An excepted module or function that
 grows past its recorded size fails the lane, a recorded size may rise only with
 a `growth_reason` the `ratchet.base` lane accepts (below), and an entry for one

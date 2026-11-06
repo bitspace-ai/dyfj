@@ -13,7 +13,7 @@ README are tracked separately in its Revision history section.
 
 - **The 1,000-line module limit now covers the Rust crates.** The
   `arch.imports` lane counts the lines of the `.rs` files under `core/`
-  (not Cargo's `target/` build output or symlinked directories) and fails on one over 1,000 lines unless
+  (skipping `target/` directories beside a `Cargo.toml`, and symlinked directories below `core/`) and fails on one over 1,000 lines unless
   `scripts/arch-size-exceptions.json` records it. Three REPL modules were
   already over and are recorded at their current sizes: `commands.rs`,
   `main.rs` and `link.rs`. A recorded Rust module fails the lane when it
