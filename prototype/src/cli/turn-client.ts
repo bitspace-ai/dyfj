@@ -47,6 +47,11 @@ export interface TurnRequest {
   maxToolSteps?: number;
   /** The session's own spend limits; honored on the loopback transport only. */
   budget?: Record<string, number>;
+  /**
+   * This client will not resume the turn's live external-agent handle.
+   * One-shot `exec` sets it. The interactive REPL does not.
+   */
+  releaseExternalAgentSession?: boolean;
 }
 
 export function buildTurnBody(

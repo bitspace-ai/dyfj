@@ -1099,6 +1099,88 @@ describe("AcpSessionHandleMap lifecycle", () => {
   });
 });
 
+describe("AcpSessionHandleMap one-shot release", () => {
+  it("dropSession frees an idle slot and leaves a different session", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });
+    const kept = fakeHandle();
+    try {
+      await map.acquire({
+        ...acquireKey(profile, "keep"),
+        create: () => Promise.resolve(kept),
+      });
+      await map.release(kept);
+      await map.dropSession("other");
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(kept.isAlive, true);
+      await map.dropSession("keep");
+      assert.strictEqual(map.size, 0);
+      assert.strictEqual(kept.isAlive, false);
+      const next = fakeHandle();
+      await map.acquire({
+        ...acquireKey(profile, "next"),
+        create: () => Promise.resolve(next),
+      });
+      assert.strictEqual(map.size, 1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("dropSession continues after a close failure", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const first = fakeHandle({ closeError: new Error("close failed") });
+    const second = fakeHandle();
+    try {
+      await map.acquire({
+        ...acquireKey(fixtureProfile({ slug: "a" }), "same"),
+        create: () => Promise.resolve(first),
+      });
+      await map.release(first);
+      await map.acquire({
+        ...acquireKey(fixtureProfile({ slug: "b" }), "same"),
+        create: () => Promise.resolve(second),
+      });
+      await map.release(second);
+      await assert.rejects(() => map.dropSession("same"), /close failed/);
+      assert.strictEqual(map.size, 0);
+      assert.strictEqual(second.isAlive, false);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("dropSession leaves an active handle", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });
+    let aliveDuringTurn: boolean | undefined;
+    const handle = fakeHandle({
+      prompt: async () => {
+        await map.dropSession("session-1");
+        aliveDuringTurn = handle.isAlive;
+        return {
+          text: "ok",
+          stopReason: "stop",
+          capabilities: [],
+          elapsedMs: 0,
+        };
+      },
+    });
+    try {
+      await map.runTurn({
+        ...acquireKey(profile),
+        prompt: "hi",
+        create: () => Promise.resolve(handle),
+      });
+      assert.strictEqual(aliveDuringTurn, true);
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(handle.isAlive, true);
+    } finally {
+      await map.shutdown();
+    }
+  });
+});
+
 describe("session-map failures reaching the operator", () => {
   it("busy, capacity and shutdown each name the next step", () => {
     assert.match(new AcpSessionBusyError().message, /wait|finish/i);

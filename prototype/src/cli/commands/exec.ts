@@ -22,7 +22,10 @@ export async function runExec(
   interactive = true,
   interrupts: TurnInterruptSource | undefined = io.turnInterrupts,
 ): Promise<number> {
-  const body = buildTurnBody(prompt, config, config.sessionId);
+  const body = {
+    ...buildTurnBody(prompt, config, config.sessionId),
+    releaseExternalAgentSession: true,
+  };
   const approvalController = new AbortController();
   let interruptInstalled = false;
   let interruptRequested = false;

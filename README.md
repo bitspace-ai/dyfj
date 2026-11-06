@@ -71,7 +71,9 @@ Section 5.
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
-    `external-agent-runtime.ts`, `acp-fixture-command.ts`, which builds
+    `external-agent-runtime.ts`, `codex-runner-bin.ts`, which writes the
+    Codex runner's private `node`, `npm` and `npx` shims,
+    `acp-fixture-command.ts`, which builds
     the fixture agent's command, `acp-child-io.ts`, its bounded child
     stderr capture and settle wait, `acp-adapter-package.ts`, which
     finds the pinned Codex adapter in the npm workspace install,
@@ -1344,10 +1346,20 @@ tool-argument depth/node limit, or when retained history carries one of the
 explicitly checked credential shapes. The notice is included in the final ACP
 prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
 acquired handle, the existing error lifecycle closes and removes that handle
-without deleting persisted events. Idle handles retire on a TTL, a small
-resident-session bound fails closed without eviction, and UDS close, a
-foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every
-started close to settle, then surface a retained close failure rather than
+without deleting persisted events. Idle handles retire on a TTL. A one-shot
+`exec`, `ask`, or `-p` turn closes that session's idle external-agent handle
+before the receipt returns, while the session lock is still held, so the
+capacity slot is free when the client disconnects. A one-shot turn that
+fails requests that same close before its error returns; if the close also
+fails, the turn's error is the one returned and the slot may still be held.
+An interactive turn does
+not release its handle. That idle handle stays until the idle TTL, a runtime
+stop, or a later one-shot turn on the same session. An idle live
+session keeps a capacity slot while a client can still resume it. A small
+resident-session bound fails closed without evicting a session a client can
+resume. UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight
+creation and for every started close to settle, then surface a retained close
+failure rather than
 reporting success. A shutdown failure exits with status 1. On an interactive
 Unix-socket client, every accepted ACP option (up to 16) is rendered as a
 numbered choice and the exact selected option identifier is returned to the
@@ -1411,10 +1423,16 @@ grant owner search permission; the Rustup state directory must grant owner read,
 write, and search permissions. The later child access is still by pathname:
 ancestor ownership and ACLs are not validated, and the selected inode is not
 pinned against replacement after profile construction. Workbench places a
-private Node shim first in the child `PATH`, then the optional executable
-directory, `/usr/bin`, and `/bin`; it also writes that exact path to the
-dedicated home's private `.zprofile` and `.bash_profile` so those macOS login
-shells reset earlier `path_helper` changes. It does not dynamically derive and
+private Node shim first in the child `PATH`, and private `npm` and `npx`
+shims when a sibling's ordinary mode bits let this account execute it and
+both that path and its canonical path are free of comma and colon, then the
+optional executable directory, `/usr/bin`, and `/bin`. Selecting Node does
+not add that executable's directory. An operator-selected toolchain directory
+can still be that parent. Access-control lists are not consulted. The
+child `HOME` stays the dedicated runner home, and the allowlisted environment
+does not name the operator's `~/.dyfj/config.toml`. It also writes that exact
+path to the dedicated home's private `.zprofile` and `.bash_profile` so those
+macOS login shells reset earlier `path_helper` changes. It does not dynamically derive and
 add an arbitrary parent directory from the selected Node executable; the fixed
 `/usr/bin` and `/bin` entries remain, and an operator may explicitly select
 another directory as the toolchain. It sets `RUSTUP_HOME` to the selected state
@@ -2911,3 +2929,9 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-03 - The Codex route section says how an expired sign-in and other
   agent errors are reported; the JSON-RPC seam section names `models/list`'s
   `catalogUnavailable`.
+- 2026-11-05 - The external-agent lifecycle says a one-shot `exec`, `ask`, or
+  `-p` turn releases its idle external-agent session before the receipt
+  returns, and a failed one-shot turn requests that same close before its
+  error returns. The Codex route says the runner `PATH` includes
+  private `npm` and `npx` shims when a sibling passes the mode-bit and
+  delimiter checks, and that the child `HOME` stays the dedicated runner home.

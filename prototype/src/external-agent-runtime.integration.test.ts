@@ -352,6 +352,57 @@ async function processIsAlive(pid: number): Promise<boolean> {
   return code === 0;
 }
 
+async function installCodexPackage(
+  root: string,
+  home: string,
+): Promise<string> {
+  const packageRoot = `${root}/node_modules/@agentclientprotocol/codex-acp`;
+  await mkdir(home, { recursive: true, mode: 0o700 });
+  await chmod(home, 0o700);
+  await mkdir(`${packageRoot}/dist`, { recursive: true });
+  await writeFile(
+    `${packageRoot}/package.json`,
+    JSON.stringify({ version: "2.5.0" }),
+  );
+  await writeFile(`${packageRoot}/dist/index.js`, "");
+  const codexPath = `${root}/node_modules/@openai/codex/bin/codex.js`;
+  await mkdir(dirname(codexPath), { recursive: true });
+  await writeFile(codexPath, "");
+  await chmod(codexPath, 0o700);
+  const nodePath = `${root}/node`;
+  await writeFile(
+    nodePath,
+    `#!/bin/sh\nprintf '%s\\n' '{"execPath":"${nodePath}","release":"node"}'\n`,
+  );
+  await chmod(nodePath, 0o700);
+  return nodePath;
+}
+
+function captureOutput(
+  file: string,
+  args: string[],
+  env: Record<string, string>,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  const child = spawn(file, args, {
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdout.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderr.push(chunk));
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => {
+      resolve({
+        code,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
+}
+
 // `ln -s` through bash, which the lane's run grant covers.
 async function symlinkThroughBash(
   target: string,
@@ -926,6 +977,9 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await readFile(nodeShim, "utf8"),
         `#!/bin/sh\nexec '${nodePath}' "$@"\n`,
       );
+      const runnerBin = `${home}/.dyfj/runner-homes/codex-chatgpt/bin`;
+      await assert.rejects(() => stat(`${runnerBin}/npm`));
+      await assert.rejects(() => stat(`${runnerBin}/npx`));
       const zshProfile =
         `${home}/.dyfj/runner-homes/codex-chatgpt/home/.zprofile`;
       assert.strictEqual((await stat(zshProfile)).mode! & 0o777, 0o600);
@@ -940,6 +994,162 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await readFile(bashProfile, "utf8"),
         `export PATH='${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin'\n`,
       );
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
+  it("shims npm and npx beside the selected Node and keeps the runner home", async () => {
+    const root = await tempDir();
+    try {
+      const home = `${root}/operator-home`;
+      const nodePath = await installCodexPackage(root, home);
+      const sibling = "#!/bin/sh\n" +
+        "printf '%s %s\\n' \"$(basename \"$0\")\" \"$1\"\n" +
+        "printf 'HOME=%s\\n' \"$HOME\"\n";
+      await writeFile(`${root}/npm`, sibling);
+      await chmod(`${root}/npm`, 0o700);
+      await writeFile(`${root}/npx`, sibling);
+      await chmod(`${root}/npx`, 0o700);
+      await mkdir(`${home}/.dyfj`, { recursive: true, mode: 0o700 });
+      await chmod(`${home}/.dyfj`, 0o700);
+      const sentinel = "operator-config-sentinel";
+      await writeFile(`${home}/.dyfj/config.toml`, sentinel);
+      const marker = "must-not-cross-the-runner";
+      const profile = await withEnvOverlay(
+        { DYFJ_OPERATOR_SENTINEL: marker },
+        () =>
+          codexChatGptProfile(process.cwd(), {
+            home,
+            prototypeRoot: root,
+            nodePath,
+          }),
+      );
+      const runnerBin = `${home}/.dyfj/runner-homes/codex-chatgpt/bin`;
+      const runnerHome = `${home}/.dyfj/runner-homes/codex-chatgpt/home`;
+      assert.strictEqual(
+        profile.environment.PATH,
+        `${runnerBin}:/usr/bin:/bin`,
+      );
+      assert.strictEqual(profile.environment.HOME, runnerHome);
+      assert.strictEqual(
+        Object.values(profile.environment).some((value) =>
+          value.includes("config.toml") || value.includes(sentinel) ||
+          value.includes(marker)
+        ),
+        false,
+      );
+      for (const name of ["npm", "npx"] as const) {
+        const shim = `${runnerBin}/${name}`;
+        assert.strictEqual((await stat(shim)).mode! & 0o777, 0o700);
+        const text = await readFile(shim, "utf8");
+        assert.strictEqual(text, `#!/bin/sh\nexec '${root}/${name}' "$@"\n`);
+        assert.strictEqual(text.includes("config.toml"), false);
+        assert.strictEqual(text.includes(sentinel), false);
+        const ran = await captureOutput(shim, ["--version"], profile.environment);
+        assert.strictEqual(ran.code, 0, ran.stderr);
+        assert.strictEqual(ran.stdout, `${name} --version\nHOME=${runnerHome}\n`);
+        assert.strictEqual(ran.stdout.includes(sentinel), false);
+        assert.strictEqual(ran.stdout.includes("config.toml"), false);
+        assert.strictEqual(ran.stdout.includes(marker), false);
+      }
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
+  it("skips an npm sibling the account cannot execute", async () => {
+    const root = await tempDir();
+    try {
+      const home = `${root}/operator-home`;
+      const nodePath = await installCodexPackage(root, home);
+      await writeFile(`${root}/npm`, "#!/bin/sh\nexit 0\n");
+      // Other-execute only. This process owns the file and the owner execute
+      // bit is unset.
+      await chmod(`${root}/npm`, 0o641);
+      const profile = await codexChatGptProfile(process.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      });
+      const runnerBin = `${home}/.dyfj/runner-homes/codex-chatgpt/bin`;
+      assert.strictEqual(
+        profile.environment.PATH,
+        `${runnerBin}:/usr/bin:/bin`,
+      );
+      // Root may pass the mode-bit check when any execute bit is set. For
+      // any other account, the profile's mode-bit check rejects this owned
+      // file because the owner execute bit is unset. Access-control lists
+      // are not consulted.
+      if (process.getuid?.() === 0) {
+        assert.strictEqual((await stat(`${runnerBin}/npm`)).mode! & 0o777, 0o700);
+      } else {
+        await assert.rejects(() => stat(`${runnerBin}/npm`));
+      }
+      await assert.rejects(() => stat(`${runnerBin}/npx`));
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
+  it("removes a stale npm shim when the selected Node has no npm sibling", async () => {
+    const root = await tempDir();
+    try {
+      const home = `${root}/operator-home`;
+      const nodePath = await installCodexPackage(root, home);
+      const runnerBin = `${home}/.dyfj/runner-homes/codex-chatgpt/bin`;
+      await mkdir(runnerBin, { recursive: true, mode: 0o700 });
+      for (const directory of [
+        `${home}/.dyfj`,
+        `${home}/.dyfj/runner-homes`,
+        `${home}/.dyfj/runner-homes/codex-chatgpt`,
+        runnerBin,
+      ]) {
+        await chmod(directory, 0o700);
+      }
+      await writeFile(`${runnerBin}/npm`, "#!/bin/sh\nprintf 'stale\\n'\n");
+      await chmod(`${runnerBin}/npm`, 0o700);
+      await writeFile(`${runnerBin}/npx`, "#!/bin/sh\nprintf 'stale\\n'\n");
+      await chmod(`${runnerBin}/npx`, 0o700);
+      const profile = await codexChatGptProfile(process.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      });
+      assert.strictEqual(
+        profile.environment.PATH,
+        `${runnerBin}:/usr/bin:/bin`,
+      );
+      await assert.rejects(() => stat(`${runnerBin}/npm`));
+      await assert.rejects(() => stat(`${runnerBin}/npx`));
+      assert.strictEqual((await stat(`${runnerBin}/node`)).mode! & 0o777, 0o700);
+    } finally {
+      await rm(root, { recursive: true });
+    }
+  });
+
+  it("skips an npm sibling whose canonical path contains a colon", async () => {
+    const root = await tempDir();
+    try {
+      const home = `${root}/operator-home`;
+      const nodePath = await installCodexPackage(root, home);
+      const colonDir = `${root}/bad:bin`;
+      await mkdir(colonDir);
+      const target = `${colonDir}/npm`;
+      await writeFile(target, "#!/bin/sh\nexit 0\n");
+      await chmod(target, 0o700);
+      assert.strictEqual(await symlinkThroughBash(target, `${root}/npm`), true);
+      const profile = await codexChatGptProfile(process.cwd(), {
+        home,
+        prototypeRoot: root,
+        nodePath,
+      });
+      const runnerBin = `${home}/.dyfj/runner-homes/codex-chatgpt/bin`;
+      assert.strictEqual(
+        profile.environment.PATH,
+        `${runnerBin}:/usr/bin:/bin`,
+      );
+      await assert.rejects(() => stat(`${runnerBin}/npm`));
     } finally {
       await rm(root, { recursive: true });
     }

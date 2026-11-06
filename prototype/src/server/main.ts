@@ -323,6 +323,7 @@ function buildHandlers(
   owners: SessionOwners,
   runRuntime: TurnRuntime,
   lifetime: RuntimeLifetime,
+  acpSessions: AcpSessionHandleMap,
 ): RpcHandlers {
   const store = () => requireStore(options);
   const loadCatalog = options.loadModels === undefined
@@ -397,6 +398,8 @@ function buildHandlers(
       owners,
       runRuntime,
       fetchSessionEvents,
+      releaseExternalAgentSession: (sessionId) =>
+        acpSessions.dropSession(sessionId),
     }),
   };
 }
@@ -518,6 +521,7 @@ export async function serveWorkbenchUnix(
     owners,
     runRuntime,
     lifetime,
+    acpSessions,
   );
   const transport = await serveUnixJsonRpc(socketPath, {
     handlers,

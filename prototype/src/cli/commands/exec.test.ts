@@ -726,6 +726,18 @@ describe("runExec spinner integration", () => {
     assert.deepStrictEqual(raw, []);
   });
 
+  it("asks the runtime to release the external-agent session", async () => {
+    const { io } = fakeIo();
+    const turn = sequentialTurnConnect([{}]);
+    const code = await runExec("hello", cfg(), io, false, turn.connect);
+    assert.strictEqual(code, 0);
+    assert.strictEqual(
+      (turn.params[0] as { releaseExternalAgentSession?: boolean })
+        .releaseExternalAgentSession,
+      true,
+    );
+  });
+
   it("piped stderr sees no spinner bytes", async () => {
     const { io, raw } = fakeIo();
     const code = await runExec(

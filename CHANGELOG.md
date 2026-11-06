@@ -274,6 +274,42 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A one-shot `dyfj exec` releases its external-agent session (BIT-872).**
+  A one-shot `exec`, `ask`, or `-p` turn left its external-agent handle idle
+  for the idle TTL. The resident-session bound is eight, so a run of one-shot
+  turns then failed once that many handles were still live. A one-shot turn
+  now closes that session's idle handle before the receipt returns, while
+  the session lock is still held, so the slot is free for the next turn. A
+  one-shot turn that fails requests that same close before the error
+  returns. If the close also fails, the turn's error is the one returned
+  and the slot may still be held. An
+  interactive turn does not release its handle; that idle handle stays until
+  the idle TTL, a runtime stop, or a later one-shot turn on the same session.
+  An idle session keeps its slot while a client can still resume the live
+  handle, and capacity still fails closed without evicting such a session.
+  If the close fails after the turn finished, the turn does not return the
+  receipt. A close error that is already a domain error is reported as that
+  error; any other close error on a finished turn is reported as a fixed
+  message that names restarting the runtime.
+
+- **The Codex runner can run `npm` and `npx` (BIT-872).** The profile wrote
+  a private `node` shim and no private `npm` or `npx` shim. `/usr/bin` and
+  `/bin` were already on `PATH`, so an `npm` there could still be found.
+  When an `npm` or `npx` beside the selected Node passes the check below,
+  the runner writes a private shim for it in the runner bin. The check uses
+  ordinary owner, group, and other mode bits, not access-control lists, and
+  both the sibling path and its canonical path must be free of comma and
+  colon. A missing sibling, a sibling
+  whose mode bits do not let this account execute it, or a sibling whose
+  path or canonical path contains a comma or colon does not get a new shim.
+  A shim already in the runner bin for that name is removed, so a later
+  profile does not keep the previous Node's `npm`. `/usr/bin` and `/bin`
+  stay on `PATH`. Selecting Node does not add that executable's directory;
+  an operator-selected toolchain directory can still be that parent. The
+  profile still builds. The child `HOME` stays the dedicated runner
+  home, and the allowlisted environment does not name the operator's
+  `~/.dyfj/config.toml`.
+
 - **ACP tool calls are recorded one by one, and the receipt says why any
   captured call was not.** Recording an external agent's tool calls was all-or-nothing: one
   call with a missing or oversized `rawOutput`, a credential-shaped value or

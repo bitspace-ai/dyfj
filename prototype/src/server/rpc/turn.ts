@@ -67,6 +67,12 @@ export interface TurnHandlerDeps extends TurnPosture {
   externalMcpCommands?: readonly CommandDefinition[];
   /** Where the turn's env-derived defaults are read; the process env when omitted. */
   env?: Env;
+  /**
+   * Close an idle external-agent handle for the session a one-shot turn just
+   * ran. The composition root passes the session map. Absent, the request's
+   * release flag does not free a slot.
+   */
+  releaseExternalAgentSession?: (sessionId: string) => Promise<void>;
 }
 
 // UDS is the canonical loopback transport: a connection is authenticated by the
@@ -293,6 +299,11 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
           externalMcpCommands: deps.externalMcpCommands,
           approver: clientApprover(ctx, activeTurn),
           frames: streamFrames(ctx, turnId),
+          ...(deps.releaseExternalAgentSession === undefined
+            ? {}
+            : {
+              releaseExternalAgentSession: deps.releaseExternalAgentSession,
+            }),
         });
       } catch (error) {
         // A DomainError states its condition and crosses the wire as its

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { AcpExecutionProfile } from "../../acp-client.ts";
+import { AcpSessionHandleMap } from "../../acp-session-map.ts";
 import { DomainError, type TurnStreamFrame } from "../../contract/mod.ts";
 import {
   SessionOwners,
   type TurnRuntime,
+  type WorkbenchRuntimeInput,
   type WorkbenchRuntimeResult,
 } from "../../engine/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
@@ -851,4 +854,153 @@ test("stream frames name the requested turn so late activity cannot describe a l
     { t: "delta", text: "reply", turnId },
     { t: "event", event: { type: "turnCompleted", sessionId: "s", traceId: "t" }, turnId },
   ]);
+});
+
+const ONE_SHOT_PROFILE: AcpExecutionProfile = {
+  slug: "fixture",
+  command: "/usr/bin/true",
+  args: [],
+  environment: {},
+  workspace: "/work",
+  transport: "local_stdio",
+  accessRoute: "local_sidecar",
+  costBasis: "local_free",
+};
+
+/**
+ * A runtime that parks a fake external-agent handle on `map` for the turn's
+ * session, the way the composed runtime does, and counts how many handles
+ * it creates.
+ */
+function sessionMapRuntime(map: AcpSessionHandleMap): {
+  runRuntime: TurnRuntime;
+  creates: () => number;
+} {
+  let creates = 0;
+  const runRuntime: TurnRuntime = async (input: WorkbenchRuntimeInput) => {
+    const sessionId = input.sessionId ?? input.newSessionId ?? "missing";
+    await map.runTurn({
+      sessionId,
+      workspace: "/work",
+      profile: ONE_SHOT_PROFILE,
+      prompt: "hi",
+      create: () => {
+        creates += 1;
+        let closed = false;
+        return Promise.resolve({
+          get isAlive() {
+            return !closed;
+          },
+          durableSessionLoad: false,
+          prompt: () =>
+            Promise.resolve({
+              text: "ok",
+              stopReason: "stop" as const,
+              capabilities: [],
+              elapsedMs: 0,
+            }),
+          close: () => {
+            closed = true;
+            return Promise.resolve();
+          },
+        });
+      },
+    });
+    return result({ sessionId, text: "ok" });
+  };
+  return { runRuntime, creates: () => creates };
+}
+
+test("twelve one-shot turns release their external-agent sessions", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
+  const runtime = sessionMapRuntime(map);
+  const rpc = handlers(runtime.runRuntime, {
+    releaseExternalAgentSession: (sessionId) => map.dropSession(sessionId),
+  });
+  try {
+    for (let i = 0; i < 12; i++) {
+      const receipt = await callRpc(rpc, "turn", {
+        prompt: `shot ${i}`,
+        releaseExternalAgentSession: true,
+      }, client()) as { sessionId: string };
+      assert.equal(typeof receipt.sessionId, "string");
+      assert.equal(map.size, 0);
+    }
+    assert.equal(runtime.creates(), 12);
+  } finally {
+    await map.shutdown();
+  }
+});
+
+test("an interactive turn keeps its idle external-agent session", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
+  const runtime = sessionMapRuntime(map);
+  const rpc = handlers(runtime.runRuntime, {
+    releaseExternalAgentSession: (sessionId) => map.dropSession(sessionId),
+  });
+  try {
+    const first = await callRpc(rpc, "turn", { prompt: "stay" }, client()) as {
+      sessionId: string;
+    };
+    assert.equal(map.size, 1);
+    await callRpc(rpc, "turn", {
+      prompt: "again",
+      sessionId: first.sessionId,
+    }, client());
+    assert.equal(runtime.creates(), 1);
+    assert.equal(map.size, 1);
+  } finally {
+    await map.shutdown();
+  }
+});
+
+test("a failed one-shot turn still releases its external-agent session", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });
+  const runtime = sessionMapRuntime(map);
+  let failed = false;
+  const failing: TurnRuntime = async (input) => {
+    const receipt = await runtime.runRuntime(input);
+    if (!failed) {
+      failed = true;
+      throw new DomainError("turn failed");
+    }
+    return receipt;
+  };
+  const rpc = handlers(failing, {
+    releaseExternalAgentSession: (sessionId) => map.dropSession(sessionId),
+  });
+  try {
+    const failure = await rpcFailure(rpc, "turn", {
+      prompt: "fail",
+      releaseExternalAgentSession: true,
+    });
+    assert.match(failure.message, /turn failed/);
+    assert.equal(map.size, 0);
+    await callRpc(rpc, "turn", {
+      prompt: "next",
+      releaseExternalAgentSession: true,
+    }, client());
+    assert.equal(map.size, 0);
+  } finally {
+    await map.shutdown();
+  }
+});
+
+test("eight idle external-agent sessions fill capacity", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
+  const runtime = sessionMapRuntime(map);
+  const rpc = handlers(runtime.runRuntime, {
+    releaseExternalAgentSession: (sessionId) => map.dropSession(sessionId),
+  });
+  try {
+    for (let i = 0; i < 8; i++) {
+      await callRpc(rpc, "turn", { prompt: `keep ${i}` }, client());
+    }
+    assert.equal(map.size, 8);
+    const failure = await rpcFailure(rpc, "turn", { prompt: "one more" });
+    assert.match(failure.message, /External-agent session capacity reached/);
+    assert.equal(map.size, 8);
+  } finally {
+    await map.shutdown();
+  }
 });

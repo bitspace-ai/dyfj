@@ -272,6 +272,37 @@ export class AcpSessionHandleMap {
     this.#armIdleTimer(entry);
   }
 
+  /**
+   * Close the idle live handles for `sessionId`.
+   *
+   * An active handle is left alone: another turn on that session is using it,
+   * and closing it would cut that turn off. A one-shot turn calls this after
+   * its own handle has been released to idle, while the session lock is still
+   * held, so the handle it just used is idle and no other turn can take it.
+   * Each captured idle handle is closed. A close that fails does not skip
+   * the rest; the first failure is reported after those attempts.
+   */
+  async dropSession(sessionId: string): Promise<void> {
+    const idle = [...this.#entries.values()].flatMap((entry) => {
+      if (entry.state !== "idle" || entry.handle === undefined) return [];
+      if (sessionIdFromHandleKey(entry.key) !== sessionId) return [];
+      return [entry.handle];
+    });
+    let failed = false;
+    let firstError: unknown;
+    for (const handle of idle) {
+      try {
+        await this.drop(handle);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          firstError = error;
+        }
+      }
+    }
+    if (failed) throw firstError;
+  }
+
   async drop(handle: AcpSessionHandle): Promise<void> {
     const entry = this.#entryForHandle(handle);
     if (entry === undefined) {
@@ -456,6 +487,18 @@ export class AcpSessionHandleMap {
     if (this.#entries.get(entry.key) === entry) {
       this.#entries.delete(entry.key);
     }
+  }
+}
+
+function sessionIdFromHandleKey(key: string): string | undefined {
+  try {
+    const parsed = JSON.parse(key) as unknown;
+    if (!Array.isArray(parsed) || typeof parsed[0] !== "string") {
+      return undefined;
+    }
+    return parsed[0];
+  } catch {
+    return undefined;
   }
 }
 
