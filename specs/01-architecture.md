@@ -142,7 +142,7 @@ over 150 lines. The lane enforces the PRD-11 R2 hard limits: a runtime module
 over 1,000 LOC or a function over 200 lines fails it, unless
 `scripts/arch-size-exceptions.json` names it with its reason and the size it
 may not exceed (an entry no longer needed must be removed). The module limit
-also applies to every `.rs` file under `core/`; Rust has no function limit. The lane fails on
+also applies to the `.rs` files under `core/` (not Cargo's `target/` output or symlinked directories); Rust has no function limit. The lane fails on
 an item that grows past its recorded size. The `ratchet.base` lane compares the
 list with itself at the merge base and fails on a recorded size that rose, or
 an entry that is new, unless that entry carries a `growth_reason` added in the

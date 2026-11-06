@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
@@ -1255,8 +1261,16 @@ test("collectRustSources reads .rs files under core/ and skips target/", () => {
     mkdirSync(`${root}/core/target/debug`, { recursive: true });
     writeFileSync(`${root}/core/crate/src/a.rs`, "fn a() {}\n");
     writeFileSync(`${root}/core/crate/src/notes.md`, "x\n");
+    writeFileSync(`${root}/core/Cargo.toml`, "[workspace]\n");
     writeFileSync(`${root}/core/target/debug/gen.rs`, "fn g() {}\n");
-    assertEquals([...collectRustSources(root).keys()], ["core/crate/src/a.rs"]);
+    mkdirSync(`${root}/core/crate/src/target`, { recursive: true });
+    writeFileSync(`${root}/core/crate/src/target/mod.rs`, "fn t() {}\n");
+    symlinkSync(`${root}/core/crate/src/a.rs`, `${root}/core/crate/src/link.rs`);
+    assertEquals([...collectRustSources(root).keys()], [
+      "core/crate/src/a.rs",
+      "core/crate/src/link.rs",
+      "core/crate/src/target/mod.rs",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

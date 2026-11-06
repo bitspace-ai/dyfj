@@ -704,7 +704,26 @@ export function collectSources(root: string, rules: LayerRules): Map<string, str
 /** Where the Rust crates live; their `.rs` files get the module limit. */
 export const RUST_ROOT = "core";
 
-/** The `.rs` files under `core/`, skipping Cargo's `target/` build output. */
+/**
+ * The `.rs` files under `core/`: regular files and symlinks to files, in
+ * real directories (symlinked directories are not followed). A directory
+ * named `target` is skipped only beside a `Cargo.toml`, where it is Cargo's
+ * build output; a source module of that name is still read.
+ */
+function isFileEntry(
+  root: string,
+  path: string,
+  entry: { isFile(): boolean; isSymbolicLink(): boolean },
+): boolean {
+  if (entry.isFile()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  try {
+    return statSync(`${root}/${path}`).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export function collectRustSources(root: string): Map<string, string> {
   const sources = new Map<string, string>();
   const walk = (relative: string) => {
@@ -718,8 +737,10 @@ export function collectRustSources(root: string): Map<string, string> {
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const path = `${relative}/${entry.name}`;
       if (entry.isDirectory()) {
-        if (entry.name !== "target") walk(path);
-      } else if (entry.isFile() && path.endsWith(".rs")) {
+        const buildOutput = entry.name === "target" &&
+          entries.some((e) => e.name === "Cargo.toml");
+        if (!buildOutput) walk(path);
+      } else if (path.endsWith(".rs") && isFileEntry(root, path, entry)) {
         sources.set(path, readFileSync(`${root}/${path}`, "utf8"));
       }
     }
