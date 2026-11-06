@@ -146,12 +146,13 @@ function call(commandId: string, args: Record<string, unknown> = {}): CommandCal
 }
 
 /**
- * Wait for the detached runs to finish, not only for a ticket's phase to
- * turn terminal. `publish/start` runs the phases detached and closes the
- * report after the last phase is recorded - and a cancelled run is marked
- * failed before its final report append runs - so a terminal phase can
- * still have report file work in flight. A test that returns then leaves
- * that work to the file's handle check, which reports it as a leak.
+ * Wait until the detached runs look finished, not only until a ticket's
+ * phase turns terminal. `publish/start` runs the phases detached and
+ * closes the report after the last phase is recorded - and a cancelled
+ * run is marked failed before its final report append runs - so a
+ * terminal phase can still have report file work in flight. A test that
+ * returns then leaves that work to the file's handle check, which
+ * reports it as a leak.
  *
  * The wait ends at a timer-turn look where each ticket this session holds
  * is terminal and the process lists no live `FSReqPromise` or `CloseReq`
@@ -159,10 +160,17 @@ function call(commandId: string, args: Record<string, unknown> = {}): CommandCal
  * first, and a pending `FileHandle.close()` as the second. (Measured on
  * Node 26.11.1: sampling the resource list while a lone close was
  * pending listed `CloseReq` in 1290 samples across 50 closes, against
- * `FSReqPromise` in 50.) In these tests the only such work is the
- * detached runs' reports, whose file operations are all promise-based.
+ * `FSReqPromise` in 50.) That look is a snapshot, not a proof that a run
+ * has finished: it observes terminal tickets and no listed file request
+ * at one timer turn. In these tests the runs' remaining work after a
+ * terminal phase is report file work, all of it promise-based, which is
+ * what the snapshot watches for.
  */
 async function settle(tickets: PublishTickets): Promise<void> {
+  // No ticket, no run: a refused start leaves nothing to wait for. (A
+  // caller waiting from `finally` must not turn that case into a
+  // four-second timeout that replaces the failure it was preserving.)
+  if (tickets.list("session-1").length === 0) return;
   for (let attempt = 0; attempt < 400; attempt++) {
     // Look only after a timer turn: a detached run between two file
     // operations is a queued continuation, and a synchronous look could
@@ -252,7 +260,7 @@ describe("publish tools: start", () => {
     const result = await invoke(registry, call("publish/start"));
     // The reply is asserted before the run is waited for - that order is
     // this test's subject - so the wait also runs from `finally`, and a
-    // failed assertion cannot leave the run's report work behind.
+    // failed assertion cannot skip the wait for the run's report work.
     try {
       assert.strictEqual(result.isError, false);
       const text = result.result as string;
@@ -336,8 +344,7 @@ describe("publish tools: start", () => {
     const runner = stubRunner([]);
     const { registry, tickets } = tools({ runner });
     await invoke(registry, call("publish/start"));
-    // Before the assertions, so a failed one cannot leave the detached
-    // run's report work to the handle check.
+    // Before the assertions, so a failed one cannot skip this wait.
     await settle(tickets);
     const env = runner.calls[0]?.env ?? {};
     // The git keys travel to the operator's own git, not only to ours.
