@@ -244,6 +244,11 @@ parse_launcher_args() {
 # reporter and must not change what it reports, help never needs a runtime.
 autostart_applies() {
   [[ "${DYFJ_AUTOSTART:-1}" == "0" ]] && return 1
+  # Inside the tool sandbox (srt sets SANDBOX_RUNTIME=1 for each command it
+  # wraps) autostart cannot take its lock under ~/.dyfj, and a runtime it
+  # started there would be confined. The client reports the unreachable
+  # socket in one line instead (BIT-817).
+  [[ "${SANDBOX_RUNTIME:-}" == "1" ]] && return 1
   [[ "$AUTOSTART_OPTOUT" == "1" ]] && return 1
   [[ "$LAUNCHER_ARGS_INVALID" == "1" ]] && return 1
   [[ "$LAUNCHER_SAW_HELP" == "1" ]] && return 1
