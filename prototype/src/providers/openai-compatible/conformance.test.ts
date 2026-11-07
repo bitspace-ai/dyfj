@@ -226,7 +226,7 @@ providerAdapterConformance({
           );
           assert.deepStrictEqual(
             JSON.parse(request.body).max_completion_tokens,
-            8192,
+            32_768,
           );
         },
         respond: {

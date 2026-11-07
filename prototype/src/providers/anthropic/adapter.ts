@@ -14,6 +14,10 @@ import {
 } from "../shared/failure.ts";
 import { isAllowedHostedProviderBaseUrl } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
+import {
+  hostedDefaultOutputTokens,
+  modelReasoningEffort,
+} from "../shared/reasoning-output.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import {
   estimateParamsInputText,
@@ -58,7 +62,8 @@ export const anthropicAdapter: ProviderAdapter = {
   // The streaming reader carries text only, so tool-offering calls buffer.
   streamsToolCalls: false,
   supportsTranscriptRetry: true,
-  defaultOutputTokens: () => ANTHROPIC_DEFAULT_MAX_TOKENS,
+  defaultOutputTokens: (model) =>
+    hostedDefaultOutputTokens(model, ANTHROPIC_DEFAULT_MAX_TOKENS),
   validateBaseUrl(model): BaseUrlCheck {
     return isAllowedHostedProviderBaseUrl(
         model.baseUrl,
@@ -106,9 +111,10 @@ export const anthropicAdapter: ProviderAdapter = {
         maxTokens: outputCap(
           model,
           request.maxOutputTokens,
-          ANTHROPIC_DEFAULT_MAX_TOKENS,
+          anthropicAdapter.defaultOutputTokens(model),
         ),
         progressUpdates,
+        effort: modelReasoningEffort(model) === "low" ? "low" : undefined,
       },
     );
     const requestStarted = now();

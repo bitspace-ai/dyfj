@@ -7,12 +7,9 @@
  * currently serves text/JSON turns.
  */
 
+import { DEFAULT_REASONING_EFFORT } from "../shared/reasoning-output.ts";
+
 export const GEMINI_DEFAULT_MAX_TOKENS = 8192;
-// Gemini 3.x are thinking models and draw thinking tokens from maxOutputTokens
-//. Bound thinking so it doesn't starve the answer; "low" keeps the
-// reasoning trail cheap while leaving the 8192 budget mostly for output. (2.5
-// rows would need thinkingBudget instead, but those are inactive.)
-const GEMINI_THINKING_LEVEL = "low";
 
 export function buildGeminiRequest(
   systemPrompt: string,
@@ -32,7 +29,7 @@ export function buildGeminiRequest(
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       maxOutputTokens: options.maxOutputTokens ?? GEMINI_DEFAULT_MAX_TOKENS,
-      thinkingConfig: { thinkingLevel: GEMINI_THINKING_LEVEL },
+      thinkingConfig: { thinkingLevel: DEFAULT_REASONING_EFFORT },
     },
   };
   if (options.jsonObject) {

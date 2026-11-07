@@ -186,9 +186,9 @@ export function modelRequestCarriesTranscript(model: WorkbenchModel): boolean {
  * The output-token limit used to classify stopReason "length" and size wire requests.
  * When a turn specifies `requestedOutputTokens`, the cap is bounded by the model's
  * catalog `maxOutputTokens`. When unspecified, hosted providers apply a safe default
- * request ceiling (8k/16k tokens) to prevent runaway generation while allowing explicit
- * overrides up to the catalog limit. Local OpenAI-compatible requests omit a cap unless
- * requested.
+ * request ceiling (32,768 for reasoning-capable rows, otherwise 8k/16k tokens),
+ * allowing explicit overrides up to the catalog limit. Local OpenAI-compatible
+ * requests omit a cap unless requested.
  */
 export function modelRequestedOutputCap(
   model: WorkbenchModel,

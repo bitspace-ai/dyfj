@@ -1174,6 +1174,15 @@ dyfj models
 dyfj sessions
 ```
 
+`dyfj models` includes the native request's default `output-cap` and
+`reasoning` effort when set. Hosted reasoning-capable rows default to 32,768
+total output tokens, bounded by the catalog limit, with low effort where
+supported. OpenAI's `(tools=none)` annotation shows its tool-call exception.
+Effort does not guarantee answer tokens. See the prototype's
+[reasoning and output caps](prototype/README.md#reasoning-and-output-caps)
+for provider parameters and the catalog migration. `models/list` exposes
+these as `defaultOutputTokens`, `reasoningEffort`, and `toolReasoningEffort`.
+
 The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
 `events/query`, `ideas/list`, `ideas/get`, `packets/list`, `packets/get`,
@@ -2946,6 +2955,8 @@ Document revisions only. Code and behavior changes are tracked in
   `PATH` includes private `npm` and `npx` shims when a sibling passes the
   effective-credential mode-bit and delimiter checks, and that the child
   `HOME` stays the dedicated runner home.
+- 2026-11-05 - The JSON-RPC seam section describes the default output cap
+  and reasoning-effort fields in `models/list` and `dyfj models`.
 - 2026-11-07 - The external-agent lifecycle says a returned one-shot receipt
   has waited for the session's handle close, including a close the idle TTL
   already started, and that the slot is free for a following turn once that
