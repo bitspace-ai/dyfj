@@ -1186,9 +1186,11 @@ cutting at the first CR or LF, turning tabs into spaces, stripping other
 C0/DEL/C1 control characters, scrubbing credential-shaped text, and clipping to
 200 UTF-8 bytes including any trailing ellipsis) and a reconstructed
 tool-evidence summary line (sharing the receipt formatter for non-unavailable
-ACP turns); for each tool event it checks `toolHistoryValid` and required
-`tool_call` fields (including on `acp.history_unavailable` gap rows, rejecting
-invalid rows as `malformed`) and prints the outcome (`recorded`, `partial`,
+ACP turns); for each tool event it checks that `toolHistoryValid` is not
+`false` and that non-empty string `toolName` and `toolCallId`, plain-object
+`toolArguments`, string `toolResult`, and boolean `toolIsError` are present
+(including on `acp.history_unavailable` gap rows, rejecting rows that fail that
+check as `malformed`) and prints the outcome (`recorded`, `partial`,
 `rejected`, or `unavailable`), tool name, and, when supplied by the projection,
 kind, title, status, gap reason code, and the checked input preview bounded to
 240 UTF-8 bytes (including any trailing ellipsis; 272 characters and 64 steps

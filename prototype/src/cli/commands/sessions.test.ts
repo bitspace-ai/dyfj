@@ -560,6 +560,113 @@ describe("runSessionEvents over UDS", () => {
     ]);
   });
 
+  it("rejects tool_call rows with omitted (undefined) toolIsError or toolArguments as malformed", () => {
+    const missingToolIsError = {
+      ...baseEvent({
+        eventId: "m2",
+        eventType: "tool_call",
+        traceId: "trace-missing-error-flag",
+        toolName: "read_file",
+        toolCallId: "native-missing-err",
+        toolArguments: { path: "README.md" },
+        toolResult: "# README",
+        toolHistoryValid: true,
+      }),
+      toolIsError: undefined as unknown as boolean | null,
+    };
+    const acpMissingArguments = {
+      ...baseEvent({
+        eventId: "m4",
+        eventType: "tool_call",
+        traceId: "trace-missing-acp-args",
+        runnerKind: "external_agent",
+        runnerProtocol: "acp",
+        toolName: "acp.execute",
+        toolCallId: "acp-missing-args",
+        toolResult: '{"exitCode":0}',
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+      toolArguments: undefined as unknown as Record<string, unknown> | null,
+    };
+    const gapMissingArguments = {
+      ...baseEvent({
+        eventId: "m5",
+        eventType: "tool_call",
+        traceId: "trace-missing-acp-args",
+        runnerKind: "external_agent",
+        runnerProtocol: "acp",
+        toolName: "acp.history_unavailable",
+        toolCallId: "gap-missing-args",
+        toolResult: "",
+        toolIsError: true,
+        toolHistoryValid: true,
+      }),
+      toolArguments: undefined as unknown as Record<string, unknown> | null,
+    };
+    const events: WorkbenchSessionEvent[] = [
+      baseEvent({
+        eventId: "m1",
+        eventType: "session_start",
+        traceId: "trace-missing-error-flag",
+        content: "Check omitted toolIsError",
+      }),
+      missingToolIsError,
+      baseEvent({
+        eventId: "m3",
+        eventType: "session_start",
+        traceId: "trace-missing-acp-args",
+        content: "Check omitted toolArguments",
+      }),
+      acpMissingArguments,
+      gapMissingArguments,
+    ];
+
+    const readback = projectSessionEventsReadback(sessionId, events);
+    assert.strictEqual(
+      readback.turns[0].toolEvidenceLine,
+      "Native tool evidence: 0 recorded (0 ok, 0 error), 1 rejected (malformed) of 1",
+    );
+    assert.deepStrictEqual(readback.turns[0].toolEvents, [
+      {
+        toolCallId: "native-missing-err",
+        outcome: "rejected",
+        toolName: "read_file",
+        kind: null,
+        title: null,
+        status: null,
+        reason: "malformed",
+        input: null,
+      },
+    ]);
+    assert.strictEqual(
+      readback.turns[1].toolEvidenceLine,
+      "ACP tool evidence: 0 recorded, 0 partial, 2 rejected (malformed) of 2",
+    );
+    assert.deepStrictEqual(readback.turns[1].toolEvents, [
+      {
+        toolCallId: "acp-missing-args",
+        outcome: "rejected",
+        toolName: "acp.execute",
+        kind: null,
+        title: null,
+        status: "completed",
+        reason: "malformed",
+        input: null,
+      },
+      {
+        toolCallId: "gap-missing-args",
+        outcome: "rejected",
+        toolName: "acp.history_unavailable",
+        kind: null,
+        title: null,
+        status: "failed",
+        reason: "malformed",
+        input: null,
+      },
+    ]);
+  });
+
   it("stops object and array input previews once the budget or step cap runs out without reading further entries or child objects", () => {
     const unvisitedChild = new Proxy(
       { nested: "value" },

@@ -320,8 +320,16 @@ function isExternalAgentEvent(event: WorkbenchSessionEvent): boolean {
         (typeof event.toolName === "string" && event.toolName.startsWith("acp."))));
 }
 
-function projectAcpGapToolEvent(event: WorkbenchSessionEvent): SessionTurnToolEventView {
-  const args = event.toolArguments ?? {};
+function isPlainArgumentsObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function projectAcpGapToolEvent(
+  event: WorkbenchSessionEvent,
+  args: Record<string, unknown>,
+): SessionTurnToolEventView {
   const hasPerCallGap =
     (args.outcome === "partial" || args.outcome === "rejected") || "reason" in args;
   if (!hasPerCallGap) {
@@ -361,13 +369,17 @@ function projectToolEvent(
   event: WorkbenchSessionEvent,
   runner: "external_agent" | "native",
 ): SessionTurnToolEventView {
-  const validRecord = event.toolHistoryValid !== false &&
-    event.toolName !== null &&
-    event.toolCallId !== null &&
-    event.toolArguments !== null &&
-    event.toolResult !== null &&
-    event.toolIsError !== null;
-  if (!validRecord) {
+  const args = event.toolArguments;
+  if (
+    event.toolHistoryValid === false ||
+    typeof event.toolName !== "string" ||
+    event.toolName.length === 0 ||
+    typeof event.toolCallId !== "string" ||
+    event.toolCallId.length === 0 ||
+    !isPlainArgumentsObject(args) ||
+    typeof event.toolResult !== "string" ||
+    typeof event.toolIsError !== "boolean"
+  ) {
     return {
       toolCallId: sanitizeToolLabel(event.toolCallId, MAX_TOOL_ID_BYTES),
       outcome: "rejected",
@@ -385,9 +397,8 @@ function projectToolEvent(
     };
   }
   if (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
-    return projectAcpGapToolEvent(event);
+    return projectAcpGapToolEvent(event, args);
   }
-  const args = event.toolArguments!;
   const isExternal = runner === "external_agent";
   const rawInput = isExternal && "input" in args ? args.input : args;
   return {
