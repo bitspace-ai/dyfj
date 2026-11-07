@@ -145,14 +145,49 @@ function call(commandId: string, args: Record<string, unknown> = {}): CommandCal
   };
 }
 
-/** Wait for the detached phases to settle: they append a report per phase. */
+/**
+ * Wait until the detached runs look finished, not only until a ticket's
+ * phase turns terminal. `publish/start` runs the phases detached and
+ * closes the report after the last phase is recorded - and a cancelled
+ * run is marked failed before its final report append runs - so a
+ * terminal phase can still have report file work in flight. A test that
+ * returns then leaves that work to the file's handle check, which
+ * reports it as a leak.
+ *
+ * The wait ends at a timer-turn look where each ticket this session holds
+ * is terminal and the process lists no live `FSReqPromise` or `CloseReq`
+ * resource: a promise-based file operation in flight reports as the
+ * first, and a pending `FileHandle.close()` as the second. (Measured on
+ * Node 26.11.1: sampling the resource list while a lone close was
+ * pending listed `CloseReq` in 1290 samples across 50 closes, against
+ * `FSReqPromise` in 50.) That look is a snapshot, not a proof that a run
+ * has finished: it observes terminal tickets and no listed file request
+ * at one timer turn. In these tests the runs' remaining work after a
+ * terminal phase is report file work, all of it promise-based, which is
+ * what the snapshot watches for.
+ */
 async function settle(tickets: PublishTickets): Promise<void> {
+  // No ticket held, nothing to wait for: a refused start created none.
+  // (A caller that waits while preserving an earlier failure must not
+  // turn that case into a four-second timeout of its own.)
+  if (tickets.list("session-1").length === 0) return;
   for (let attempt = 0; attempt < 400; attempt++) {
-    const phase = tickets.latest("session-1")?.phase;
-    if (phase === "ready" || phase === "failed") return;
+    // Look only after a timer turn: a detached run between two file
+    // operations is a queued continuation, and a synchronous look could
+    // see no file request live moments before it issues the next one.
     await new Promise((resolve) => setTimeout(resolve, 10));
+    const views = tickets.list("session-1");
+    const terminal = views.length > 0 &&
+      views.every((view) => view.phase === "ready" || view.phase === "failed");
+    const resources = process.getActiveResourcesInfo();
+    const fileWorkLive = resources.includes("FSReqPromise") ||
+      resources.includes("CloseReq");
+    if (terminal && !fileWorkLive) return;
   }
-  throw new Error("the phases did not settle");
+  throw new Error(
+    "the run did not settle: a ticket is still active or its report " +
+      "file work is still in flight",
+  );
 }
 
 /** The text a successful call returned; asserts the call succeeded. */
@@ -223,28 +258,40 @@ describe("publish tools: start", () => {
     ]);
     const { registry, tickets } = tools({ runner });
     const result = await invoke(registry, call("publish/start"));
-    assert.strictEqual(result.isError, false);
-    const text = result.result as string;
-    assert.match(text, /phase: pre-gate/);
-    assert.match(text, new RegExp(`head: ${LAYOUT.head}`));
-    // Both phases started with the operator's own argv, filled host-side.
-    assert.deepStrictEqual(runner.calls[0]?.argv, [
-      "./pre-gate",
-      "--range=origin/main...HEAD",
-    ]);
-    await settle(tickets);
-    const ticket = tickets.latest("session-1")!.ticket;
-    assert.deepStrictEqual(runner.calls[1]?.argv, [
-      "./gate",
-      `--report=${ROOT}/reports/${ticket}.log`,
-      `--head=${LAYOUT.head}`,
-    ]);
-    // The gate ran in the session's repository, not in the runtime's own cwd.
-    assert.strictEqual(runner.calls[0]?.cwd, ROOT);
-    // The ticket records the phases as they finish.
-    await settle(tickets);
-    const view = tickets.latest("session-1");
-    assert.strictEqual(view?.phase, "ready");
+    // The reply is asserted before the run is waited for - that order is
+    // this test's subject - so the wait below also runs after a failed
+    // assertion, without its own failure replacing the assertion's.
+    let failure: { error: unknown } | undefined;
+    try {
+      assert.strictEqual(result.isError, false);
+      const text = result.result as string;
+      assert.match(text, /phase: pre-gate/);
+      assert.match(text, new RegExp(`head: ${LAYOUT.head}`));
+      // Both phases started with the operator's own argv, filled host-side.
+      assert.deepStrictEqual(runner.calls[0]?.argv, [
+        "./pre-gate",
+        "--range=origin/main...HEAD",
+      ]);
+      await settle(tickets);
+      const ticket = tickets.latest("session-1")!.ticket;
+      assert.deepStrictEqual(runner.calls[1]?.argv, [
+        "./gate",
+        `--report=${ROOT}/reports/${ticket}.log`,
+        `--head=${LAYOUT.head}`,
+      ]);
+      // The gate ran in the session's repository, not in the runtime's own cwd.
+      assert.strictEqual(runner.calls[0]?.cwd, ROOT);
+      // The ticket records the phases as they finish.
+      await settle(tickets);
+      const view = tickets.latest("session-1");
+      assert.strictEqual(view?.phase, "ready");
+    } catch (error) {
+      failure = { error };
+    }
+    if (failure !== undefined) {
+      await settle(tickets).catch(() => {});
+      throw failure.error;
+    }
   });
 
   it("stops at a failing pre-gate, without running the gate", async () => {
@@ -300,8 +347,10 @@ describe("publish tools: start", () => {
 
   it("hands every child the hardened environment", async () => {
     const runner = stubRunner([]);
-    const { registry } = tools({ runner });
+    const { registry, tickets } = tools({ runner });
     await invoke(registry, call("publish/start"));
+    // Before the assertions, so a failed one cannot skip this wait.
+    await settle(tickets);
     const env = runner.calls[0]?.env ?? {};
     // The git keys travel to the operator's own git, not only to ours.
     const count = Number(env["GIT_CONFIG_COUNT"]);
@@ -389,6 +438,10 @@ describe("publish tools: status and cancel", () => {
     }
     await invoke(registry, call("publish/start"));
     const status = await invoke(registry, call("publish/cancel"));
+    // The cancel marks the ticket failed at once; the detached run still
+    // appends its report entry and closes the file after that. Wait
+    // before the assertions, so a failed one cannot skip the wait.
+    await settle(tickets);
     assert.strictEqual(cancelled, true);
     assert.match(textOf(status), /cancelled by the operator/);
   });
@@ -519,12 +572,8 @@ describe("publish tools: real processes", () => {
         registry.register(command);
       }
       await invoke(registry, call("publish/start"));
-      // The runner is real here, so wait for the phases to settle.
-      for (let attempt = 0; attempt < 200; attempt++) {
-        const view = tickets.latest("session-1");
-        if (view?.phase === "failed" || view?.phase === "ready") break;
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
+      // The runner is real here; wait with the same helper as above.
+      await settle(tickets);
       const view = tickets.latest("session-1");
       assert.strictEqual(view?.phase, "failed");
       assert.strictEqual(view?.failedPhase, "gate", view?.reason ?? "");
@@ -678,6 +727,7 @@ describe("publish tools: refused before the approval prompt", () => {
     const s = scripted({ readLayout: async () => layoutIn(ROOT) });
     await s.start();
     await s.start();
+    await settle(s.tickets);
     assert.strictEqual(s.prompts(), 2);
   });
 
