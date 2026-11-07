@@ -185,7 +185,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       "https://openrouter.ai/api/v1/chat/completions",
     );
     assert.strictEqual(request.headers["authorization"], "Bearer sk-or-key");
-    assert.strictEqual(requestBody.max_completion_tokens, 8192);
+    assert.strictEqual(requestBody.max_completion_tokens, 32_768);
     assert.strictEqual(result.model.provider, "openrouter");
     assert.strictEqual(result.text, "hello from openrouter");
     // 1M input * $0.2688 + 1M output * $0.8448, per-MTok rates.
@@ -248,7 +248,7 @@ describe("runWorkbenchTurn hosted OpenRouter", () => {
       "Bearer sk-xai-test-key",
     );
     assert.strictEqual(request.headers["x-grok-conv-id"], "session-12345");
-    assert.strictEqual(requestBody.max_completion_tokens, 8192);
+    assert.strictEqual(requestBody.max_completion_tokens, 32_768);
     assert.strictEqual(result.model.provider, "xai");
     assert.strictEqual(result.text, "hello from grok 4.6");
     // 0.5M input * $2.0 + 0.1M output * $6.0 = $1.0 + $0.6 = $1.6

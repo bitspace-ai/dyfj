@@ -47,7 +47,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     ),
     (
@@ -231,7 +231,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     ),
     (
@@ -415,7 +415,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        TRUE,
+        FALSE,
         TRUE
     ),
     (
@@ -472,7 +472,7 @@ INSERT INTO models (
         'https://openrouter.ai/api/v1',
         1,
         131072,
-        32768,
+        16384,
         0.350000,
         1.500000,
         0.080000,
@@ -484,7 +484,7 @@ INSERT INTO models (
         3.00,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     ),
     (
@@ -530,7 +530,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        TRUE,
+        FALSE,
         TRUE
     ),
     (
@@ -599,7 +599,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     ),
     (
@@ -656,7 +656,7 @@ INSERT INTO models (
         'https://openrouter.ai/api/v1',
         1,
         262144,
-        262144,
+        16384,
         0.100000,
         1.100000,
         0.025000,
@@ -760,7 +760,7 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     ),
     (
@@ -783,6 +783,6 @@ INSERT INTO models (
         NULL,
         NULL,
         NULL,
-        FALSE,
+        TRUE,
         TRUE
     );

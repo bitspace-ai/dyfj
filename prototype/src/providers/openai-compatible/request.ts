@@ -84,6 +84,7 @@ export function buildOpenAIChatRequest(
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
     reasoningEffort?: string;
+    openRouterReasoning?: { effort: "low" };
     /**
      * Ask a streaming response to end with a usage frame. OpenAI reports no
      * usage on a stream without it; local servers are not sent it.
@@ -104,6 +105,7 @@ export function buildOpenAIChatRequest(
     response_format?: { type: "json_object" };
     max_completion_tokens?: number;
     reasoning_effort?: string;
+    reasoning?: { effort: "low" };
     tools?: Array<{
       type: "function";
       function: WorkbenchToolDefinition;
@@ -134,6 +136,9 @@ export function buildOpenAIChatRequest(
   }
   if (options.reasoningEffort !== undefined) {
     body.reasoning_effort = options.reasoningEffort;
+  }
+  if (options.openRouterReasoning !== undefined) {
+    body.reasoning = options.openRouterReasoning;
   }
   if (options.tools && options.tools.length > 0) {
     // Sanitize names to ^[a-zA-Z0-9_-]+$ — OpenAI rejects dotted command ids

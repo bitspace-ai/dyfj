@@ -520,6 +520,53 @@ both cases and the update path. Before the move to `node:test`, the runner's wri
 on `testing/golden/snapshots` enforced the same rule. Any suite argument other than `--update` is refused, because nothing could pass it
 on.
 
+### Reasoning and output caps
+
+`dyfj models` shows `output-cap=<tokens>` for a native hosted request's
+default total output limit and `reasoning=low` when the adapter sends a low
+effort setting. OpenAI rows with `reasoning_effort_control` enabled also
+show `(tools=none)`: tool-bearing calls keep their existing `none` setting,
+while text-only calls request low effort.
+Local and external-agent rows have no hosted request cap to display.
+
+Hosted rows with the `reasoning` capability default to 32,768 total output
+tokens, including reasoning and answer tokens. The catalog's
+`max_output_tokens` bounds that default. Explicit caller caps still take
+precedence and are bounded by the catalog. Other hosted rows retain their
+8,192-token default, or 16,000 for Anthropic. Local requests keep the
+server's default unless the caller supplies a cap.
+
+The existing `reasoning_effort_control` catalog flag enables these mappings:
+
+| Provider | Request parameter |
+| --- | --- |
+| OpenAI and xAI | `reasoning_effort: "low"` |
+| OpenRouter | `reasoning: { effort: "low" }` |
+| Anthropic | `output_config: { effort: "low" }` |
+
+Gemini retains `generationConfig.thinkingConfig.thinkingLevel: "low"` for
+the supported Gemini 3.x rows, independently of `reasoning_effort_control`.
+For the providers in the table, reasoning models with that flag disabled
+receive the reasoning-model cap without an explicit effort parameter.
+Effort is advisory, so a long reasoning run can still exhaust the cap. This
+is not a fixed reservation for answer tokens. Higher output caps also
+permit more billed output and reserve more context space; existing spend
+checks still apply.
+
+Parameter references checked on 2026-11-05:
+[OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/),
+[OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens),
+[Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort),
+[Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
+and [xAI reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning).
+OpenRouter's [model metadata](https://openrouter.ai/api/v1/models) supplies
+per-model supported effort levels. Apply
+`schema/migrations/024_models_reasoning_effort.sql` to an existing database
+to update effort-support flags on up to eight existing model rows and the
+16,384-token provider limits for Muse Glimmer and Qwen3 Next Instruct.
+Fresh installs use the matching catalog seed. The migration preserves
+prices and activation.
+
 ### Disposable runtime
 
 From `prototype/`, `node scripts/scratch-runtime.ts up` starts a foreground
