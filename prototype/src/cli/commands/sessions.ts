@@ -162,8 +162,9 @@ function appendBoundedObjectPreview(
   state.out += "{";
   let count = 0;
   for (const k in record) {
+    const prefixNeeded = count > 0 ? 1 : 0;
     if (
-      state.out.length + (count > 0 ? 1 : 0) >= state.budget ||
+      state.out.length + prefixNeeded >= state.budget ||
       state.steps >= MAX_PREVIEW_STEPS
     ) {
       if (count > 0) state.out += ",";
@@ -176,19 +177,24 @@ function appendBoundedObjectPreview(
       state.sensitive = true;
       return;
     }
+    const remaining = Math.max(
+      0,
+      state.budget - state.out.length - prefixNeeded,
+    );
+    const keyJson = JSON.stringify(k.slice(0, remaining));
+    if (state.out.length + prefixNeeded + keyJson.length + 1 >= state.budget) {
+      if (count > 0) state.out += ",";
+      count += 1;
+      state.out += `${keyJson}:${JSON.stringify(ELLIPSIS)}`;
+      break;
+    }
     const v = record[k];
     if (v === undefined || typeof v === "function" || typeof v === "symbol") {
       continue;
     }
     if (count > 0) state.out += ",";
     count += 1;
-    const remaining = Math.max(0, state.budget - state.out.length);
-    const keyJson = JSON.stringify(k.slice(0, remaining));
     state.out += `${keyJson}:`;
-    if (state.out.length >= state.budget || state.steps >= MAX_PREVIEW_STEPS) {
-      state.out += JSON.stringify(ELLIPSIS);
-      break;
-    }
     appendBoundedJsonPreview(v, depth + 1, state);
     if (state.sensitive) return;
   }
@@ -323,7 +329,11 @@ function isExternalAgentEvent(event: WorkbenchSessionEvent): boolean {
 function isPlainArgumentsObject(
   value: unknown,
 ): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
 function projectAcpGapToolEvent(

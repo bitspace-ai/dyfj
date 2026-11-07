@@ -604,6 +604,21 @@ describe("runSessionEvents over UDS", () => {
       }),
       toolArguments: undefined as unknown as Record<string, unknown> | null,
     };
+    const nonPlainArguments = {
+      ...baseEvent({
+        eventId: "m6",
+        eventType: "tool_call",
+        traceId: "trace-missing-acp-args",
+        runnerKind: "external_agent",
+        runnerProtocol: "acp",
+        toolName: "acp.execute",
+        toolCallId: "acp-date-args",
+        toolResult: '{"exitCode":0}',
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+      toolArguments: new Date(0) as unknown as Record<string, unknown> | null,
+    };
     const events: WorkbenchSessionEvent[] = [
       baseEvent({
         eventId: "m1",
@@ -620,6 +635,7 @@ describe("runSessionEvents over UDS", () => {
       }),
       acpMissingArguments,
       gapMissingArguments,
+      nonPlainArguments,
     ];
 
     const readback = projectSessionEventsReadback(sessionId, events);
@@ -641,7 +657,7 @@ describe("runSessionEvents over UDS", () => {
     ]);
     assert.strictEqual(
       readback.turns[1].toolEvidenceLine,
-      "ACP tool evidence: 0 recorded, 0 partial, 2 rejected (malformed) of 2",
+      "ACP tool evidence: 0 recorded, 0 partial, 3 rejected (malformed) of 3",
     );
     assert.deepStrictEqual(readback.turns[1].toolEvents, [
       {
@@ -661,6 +677,16 @@ describe("runSessionEvents over UDS", () => {
         kind: null,
         title: null,
         status: "failed",
+        reason: "malformed",
+        input: null,
+      },
+      {
+        toolCallId: "acp-date-args",
+        outcome: "rejected",
+        toolName: "acp.execute",
+        kind: null,
+        title: null,
+        status: "completed",
         reason: "malformed",
         input: null,
       },
@@ -687,9 +713,17 @@ describe("runSessionEvents over UDS", () => {
     });
     overBudgetRecord.third = unvisitedChild;
 
-    const longKeyExhaustsBudget: Record<string, unknown> = {
-      ["k".repeat(MAX_SESSION_EVENT_INPUT_BYTES + 64)]: unvisitedChild,
-    };
+    const longKeyExhaustsBudget: Record<string, unknown> = {};
+    Object.defineProperty(
+      longKeyExhaustsBudget,
+      "k".repeat(MAX_SESSION_EVENT_INPUT_BYTES + 64),
+      {
+        enumerable: true,
+        get() {
+          throw new Error("read property value after key exhausted budget");
+        },
+      },
+    );
 
     const manyUndefinedThenThrow: Record<string, unknown> = {};
     for (let i = 0; i < 64; i += 1) {
