@@ -15,6 +15,7 @@ import {
 } from "../shared/failure.ts";
 import { isAllowedHostedProviderBaseUrl } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
+import { hostedDefaultOutputTokens } from "../shared/reasoning-output.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import { withTimePerOutputToken } from "../shared/tokens.ts";
 import { abortedWorkbenchTurnResult } from "../shared/turn-result.ts";
@@ -43,7 +44,8 @@ export const geminiAdapter: ProviderAdapter = {
   streamsToolCalls: false,
   // The request carries only the seed prompt, so a retry would replay it.
   supportsTranscriptRetry: false,
-  defaultOutputTokens: () => GEMINI_DEFAULT_MAX_TOKENS,
+  defaultOutputTokens: (model) =>
+    hostedDefaultOutputTokens(model, GEMINI_DEFAULT_MAX_TOKENS),
   validateBaseUrl(model): BaseUrlCheck {
     return isAllowedHostedProviderBaseUrl(
         model.baseUrl,
@@ -102,7 +104,7 @@ export const geminiAdapter: ProviderAdapter = {
             maxOutputTokens: outputCap(
               model,
               request.maxOutputTokens,
-              GEMINI_DEFAULT_MAX_TOKENS,
+              geminiAdapter.defaultOutputTokens(model),
             ),
           }),
         ),

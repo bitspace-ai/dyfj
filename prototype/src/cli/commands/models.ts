@@ -15,6 +15,9 @@ export interface ModelRow {
   /** Server-computed locality (on-machine loopback provider); absent on older servers. */
   local?: boolean;
   capabilities?: string[];
+  defaultOutputTokens?: number;
+  reasoningEffort?: "low" | "none";
+  toolReasoningEffort?: "low" | "none";
 }
 
 export async function fetchModelSlugs(
@@ -87,11 +90,18 @@ export async function runModels(
       : "";
     const modality = (m as { modality?: string }).modality;
     const modalityStr = modality ? `${modality.padEnd(19)} ` : "";
+    const cap = m.defaultOutputTokens === undefined
+      ? "" : `  output-cap=${m.defaultOutputTokens}`;
+    const effort = m.reasoningEffort === undefined
+      ? "" : `  reasoning=${m.reasoningEffort}`;
+    const tools = m.toolReasoningEffort !== undefined &&
+        m.toolReasoningEffort !== m.reasoningEffort
+      ? ` (tools=${m.toolReasoningEffort})` : "";
     io.out(
       `${(m.slug ?? "").padEnd(slugWidth)} t${m.tier ?? "?"}  ` +
         `${modalityStr}${(m.provider ?? "").padEnd(10)} ${
           m.displayName ?? ""
-        }${unroutable}\n`,
+        }${cap}${effort}${tools}${unroutable}\n`,
     );
   }
   return 0;

@@ -98,6 +98,7 @@ export {
   runWorkbenchTurn,
 } from "./registry/registry.ts";
 export { estimateTextTokens, messageEstimateText } from "./shared/tokens.ts";
+export { modelReasoningEffort } from "./shared/reasoning-output.ts";
 export {
   classifyContextExceeded,
   type ContextExceededReport,
