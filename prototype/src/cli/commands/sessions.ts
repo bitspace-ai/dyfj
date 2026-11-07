@@ -24,7 +24,7 @@ import type { CliConfig } from "../args.ts";
 import type { ConnectFn, Io } from "../io.ts";
 import { socketError } from "../render/errors.ts";
 
-/** Maximum UTF-8 byte length (including trailing ellipsis) for a prompt or reply first-line preview. */
+/** Maximum UTF-8 byte length (including trailing ellipsis) for a recorded `session_start` or response `content` first-line preview. */
 export const MAX_SESSION_EVENT_LINE_BYTES = 200;
 
 /** Maximum UTF-8 byte length (including trailing ellipsis) for a persisted tool call's checked input preview. */
@@ -35,6 +35,7 @@ const ELLIPSIS_UTF8_BYTES = 3;
 const MAX_SENSITIVE_SCAN_CHARS = 1024;
 const MAX_PREVIEW_BUILD_CHARS = MAX_SESSION_EVENT_INPUT_BYTES + 32;
 const MAX_PREVIEW_DEPTH = 12;
+const MAX_PREVIEW_STEPS = 64;
 
 const MAX_TOOL_ID_BYTES = 128;
 const MAX_TOOL_NAME_BYTES = 128;
@@ -134,67 +135,157 @@ function sanitizeToolLabel(value: unknown, maxBytes: number): string | null {
   return clipWithEllipsis(cleaned, maxBytes);
 }
 
-function serializeBoundedJsonPreview(
+interface BoundedPreviewState {
+  out: string;
+  readonly budget: number;
+  steps: number;
+  sensitive: boolean;
+}
+
+/**
+ * Append an object's preview entries until `state.budget` or
+ * `MAX_PREVIEW_STEPS` traversal thresholds are reached, stopping before reading
+ * further property values or entering nested objects once either threshold is
+ * reached (JSON string escaping on a kept slice can briefly exceed
+ * `state.budget` before `formatBoundedToolInput` strips control characters and
+ * clips the final preview to `MAX_SESSION_EVENT_INPUT_BYTES`). Listing a
+ * visited object's own keys with `for...in` still costs V8 time and memory in
+ * proportion to that object's key count (bounded on the wire by the UDS
+ * transport's 16 MiB frame limit, and for ACP records by the 4 KiB / 64-node
+ * history argument bound).
+ */
+function appendBoundedObjectPreview(
+  record: Record<string, unknown>,
+  depth: number,
+  state: BoundedPreviewState,
+): void {
+  state.out += "{";
+  let count = 0;
+  for (const k in record) {
+    if (
+      state.out.length + (count > 0 ? 1 : 0) >= state.budget ||
+      state.steps >= MAX_PREVIEW_STEPS
+    ) {
+      if (count > 0) state.out += ",";
+      state.out += ELLIPSIS;
+      break;
+    }
+    state.steps += 1;
+    if (!Object.hasOwn(record, k)) continue;
+    if (containsSensitiveShape(k.slice(0, MAX_SENSITIVE_SCAN_CHARS))) {
+      state.sensitive = true;
+      return;
+    }
+    const v = record[k];
+    if (v === undefined || typeof v === "function" || typeof v === "symbol") {
+      continue;
+    }
+    if (count > 0) state.out += ",";
+    count += 1;
+    const remaining = Math.max(0, state.budget - state.out.length);
+    const keyJson = JSON.stringify(k.slice(0, remaining));
+    state.out += `${keyJson}:`;
+    if (state.out.length >= state.budget || state.steps >= MAX_PREVIEW_STEPS) {
+      state.out += JSON.stringify(ELLIPSIS);
+      break;
+    }
+    appendBoundedJsonPreview(v, depth + 1, state);
+    if (state.sensitive) return;
+  }
+  state.out += "}";
+}
+
+function appendBoundedJsonPreview(
   value: unknown,
-  budget: number,
-  depth = 0,
-): { text: string; sensitive: boolean } | null {
-  if (value === null) return { text: "null", sensitive: false };
-  if (typeof value === "boolean") return { text: String(value), sensitive: false };
+  depth: number,
+  state: BoundedPreviewState,
+): void {
+  if (value === null) {
+    state.out += "null";
+    return;
+  }
+  if (typeof value === "boolean") {
+    state.out += String(value);
+    return;
+  }
   if (typeof value === "number") {
-    return { text: Number.isFinite(value) ? String(value) : "null", sensitive: false };
+    state.out += Number.isFinite(value) ? String(value) : "null";
+    return;
   }
   if (typeof value === "string") {
     if (containsSensitiveShape(value.slice(0, MAX_SENSITIVE_SCAN_CHARS))) {
-      return { text: "", sensitive: true };
+      state.sensitive = true;
+      return;
     }
-    const slice = value.length > budget ? value.slice(0, budget) : value;
-    return { text: JSON.stringify(slice), sensitive: false };
+    const remaining = Math.max(0, state.budget - state.out.length);
+    const slice = value.length > remaining ? value.slice(0, remaining) : value;
+    state.out += JSON.stringify(slice);
+    return;
   }
-  if (depth >= MAX_PREVIEW_DEPTH) return { text: JSON.stringify(ELLIPSIS), sensitive: false };
+  if (
+    depth >= MAX_PREVIEW_DEPTH ||
+    state.out.length >= state.budget ||
+    state.steps >= MAX_PREVIEW_STEPS
+  ) {
+    state.out += JSON.stringify(ELLIPSIS);
+    return;
+  }
   if (Array.isArray(value)) {
-    let out = "[";
+    state.out += "[";
     for (let i = 0; i < value.length; i += 1) {
-      if (i > 0) out += ",";
-      if (out.length > budget) {
-        out += ELLIPSIS;
+      if (
+        state.out.length + (i > 0 ? 1 : 0) >= state.budget ||
+        state.steps >= MAX_PREVIEW_STEPS
+      ) {
+        if (i > 0) state.out += ",";
+        state.out += ELLIPSIS;
         break;
       }
-      const item = serializeBoundedJsonPreview(value[i], budget - out.length, depth + 1);
-      if (item?.sensitive) return item;
-      out += item === null ? "null" : item.text;
+      state.steps += 1;
+      if (i > 0) state.out += ",";
+      const item = value[i];
+      if (
+        item === undefined ||
+        typeof item === "function" ||
+        typeof item === "symbol"
+      ) {
+        state.out += "null";
+        continue;
+      }
+      appendBoundedJsonPreview(item, depth + 1, state);
+      if (state.sensitive) return;
     }
-    return { text: `${out}]`, sensitive: false };
+    state.out += "]";
+    return;
   }
   if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    let out = "{";
-    let count = 0;
-    for (const k in record) {
-      if (!Object.hasOwn(record, k)) continue;
-      const v = record[k];
-      if (v === undefined || typeof v === "function" || typeof v === "symbol") continue;
-      if (containsSensitiveShape(k.slice(0, MAX_SENSITIVE_SCAN_CHARS))) {
-        return { text: "", sensitive: true };
-      }
-      if (count > 0) out += ",";
-      count += 1;
-      if (out.length > budget) {
-        out += ELLIPSIS;
-        break;
-      }
-      const keyJson = JSON.stringify(k.slice(0, budget));
-      const valPreview = serializeBoundedJsonPreview(
-        v,
-        Math.max(16, budget - out.length - keyJson.length - 1),
-        depth + 1,
-      );
-      if (valPreview?.sensitive) return valPreview;
-      if (valPreview !== null) out += `${keyJson}:${valPreview.text}`;
-    }
-    return { text: `${out}}`, sensitive: false };
+    appendBoundedObjectPreview(
+      value as Record<string, unknown>,
+      depth,
+      state,
+    );
   }
-  return null;
+}
+
+function serializeBoundedJsonPreview(
+  value: unknown,
+  budget: number,
+): { text: string; sensitive: boolean } | null {
+  if (
+    value === undefined ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  ) {
+    return null;
+  }
+  const state: BoundedPreviewState = {
+    out: "",
+    budget,
+    steps: 0,
+    sensitive: false,
+  };
+  appendBoundedJsonPreview(value, 0, state);
+  return { text: state.out, sensitive: state.sensitive };
 }
 
 function formatBoundedToolInput(value: unknown): string | null {
@@ -227,19 +318,6 @@ function isExternalAgentEvent(event: WorkbenchSessionEvent): boolean {
     (event.eventType === "tool_call" &&
       (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME ||
         (typeof event.toolName === "string" && event.toolName.startsWith("acp."))));
-}
-
-function extractReplyText(event: WorkbenchSessionEvent | undefined): string {
-  if (event === undefined || typeof event.content !== "string") return "";
-  if (event.eventType === "model_response" && event.content.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(event.content) as Record<string, unknown>;
-      if (typeof parsed.raw === "string" && "validation" in parsed) return parsed.raw;
-    } catch {
-      // Plain reply text that starts with `{`.
-    }
-  }
-  return event.content;
 }
 
 function projectAcpGapToolEvent(event: WorkbenchSessionEvent): SessionTurnToolEventView {
@@ -283,9 +361,6 @@ function projectToolEvent(
   event: WorkbenchSessionEvent,
   runner: "external_agent" | "native",
 ): SessionTurnToolEventView {
-  if (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
-    return projectAcpGapToolEvent(event);
-  }
   const validRecord = event.toolHistoryValid !== false &&
     event.toolName !== null &&
     event.toolCallId !== null &&
@@ -308,6 +383,9 @@ function projectToolEvent(
       reason: "malformed",
       input: null,
     };
+  }
+  if (event.toolName === ACP_TOOL_HISTORY_UNAVAILABLE_NAME) {
+    return projectAcpGapToolEvent(event);
   }
   const args = event.toolArguments!;
   const isExternal = runner === "external_agent";
@@ -438,15 +516,12 @@ export function projectSessionEventsReadback(
     const runner = bucket.events.some(isExternalAgentEvent)
       ? "external_agent"
       : "native";
-    const startEvent = bucket.events.find((e) =>
-      e.eventType === "session_start" && typeof e.content === "string"
-    );
+    const startEvent = bucket.events.find((e) => e.eventType === "session_start");
     let responseEvent: WorkbenchSessionEvent | undefined;
     for (const event of bucket.events) {
       if (
-        (event.eventType === "agent_response" ||
-          event.eventType === "model_response") &&
-        typeof event.content === "string"
+        event.eventType === "agent_response" ||
+        event.eventType === "model_response"
       ) {
         responseEvent = event;
       }
@@ -459,7 +534,7 @@ export function projectSessionEventsReadback(
       traceId: bucket.traceId,
       runner,
       promptFirstLine: firstLineForReadback(startEvent?.content),
-      replyFirstLine: firstLineForReadback(extractReplyText(responseEvent)),
+      replyFirstLine: firstLineForReadback(responseEvent?.content),
       toolEvidenceLine: formatTurnToolEvidenceLine(runner, toolEvents),
       toolEvents,
     };

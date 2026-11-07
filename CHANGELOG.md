@@ -16,15 +16,27 @@ README are tracked separately in its Revision history section.
   or a `workbench-<id>` slug) queries `events/query` over the local Unix socket
   (up to 1,000 events, marking `truncated` when that limit is reached) and
   projects the returned events into ordered turns and tool events, for both
-  external-agent and native turns. Each turn shows sanitized first-line
-  previews of the prompt and reply (up to 200 UTF-8 bytes including any
-  trailing ellipsis) and a reconstructed tool-evidence summary line (sharing
-  the receipt formatter for non-unavailable ACP turns); each tool event shows
-  its outcome (`recorded`, `partial`, `rejected`, or `unavailable`), tool name,
-  and, when supplied by the projection, kind, title, status, gap reason code,
-  and checked input preview bounded to 240 UTF-8 bytes (including any trailing
-  ellipsis), while values rejected by the credential-shape or size checks stay
-  absent.
+  external-agent and native turns. Each turn shows first-line previews of the
+  turn's first recorded `session_start` content and last recorded
+  `agent_response` or `model_response` content as persisted (sliced to 1,024
+  characters before cutting at the first CR or LF, turning tabs into spaces,
+  stripping other C0/DEL/C1 control characters, scrubbing credential-shaped
+  text, and clipping to 200 UTF-8 bytes including any trailing ellipsis) and a
+  reconstructed tool-evidence summary line (sharing the receipt formatter for
+  non-unavailable ACP turns); each tool event checks `toolHistoryValid` and
+  required `tool_call` fields (including on `acp.history_unavailable` gap rows,
+  rejecting invalid rows as `malformed`) and shows its outcome (`recorded`,
+  `partial`, `rejected`, or `unavailable`), tool name, and, when supplied by
+  the projection, kind, title, status, gap reason code, and checked input
+  preview bounded to 240 UTF-8 bytes (including any trailing ellipsis; 272
+  characters and 64 steps are traversal thresholds after which the walk stops
+  reading further array elements, object property values, or child objects,
+  while JSON string escaping on a kept slice can briefly exceed 272 characters
+  before control-character stripping and 240-byte clipping, and V8's `for...in`
+  still lists a visited object's own keys up front, bounded on the wire by the
+  UDS transport's 16 MiB frame limit and for ACP records by the 4 KiB / 64-node
+  history argument bound), while values rejected by the credential-shape or
+  size checks at capture/record time stay absent.
 - **A sandboxed session can read its model catalog.** A new builtin tool,
   `workbench.models`, lists the runtime's active model catalog: each model's
   slug, provider, tier, access modality and price per million input and

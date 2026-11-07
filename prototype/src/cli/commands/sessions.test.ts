@@ -7,6 +7,7 @@ import type { ConnectFn } from "../io.ts";
 import {
   formatSessionEventsReadback,
   MAX_SESSION_EVENT_INPUT_BYTES,
+  MAX_SESSION_EVENT_LINE_BYTES,
   projectSessionEventsReadback,
   runSessionEvents,
   runSessions,
@@ -434,5 +435,251 @@ describe("runSessionEvents over UDS", () => {
       error: `no recorded events for session ${sessionId}`,
     });
     assert.match(stderr.join("\n"), /no recorded events for session/);
+  });
+
+  it("clips an 8 MiB JSON model_response without parsing it and preserves JSON replies with raw and validation fields", () => {
+    const sensorReply = '{"raw":"sensor reading","validation":false,"units":"volts"}';
+    const hugeJsonReply = `{"raw":"${"x".repeat(8 * 1024 * 1024)}","validation":true}`;
+    const events: WorkbenchSessionEvent[] = [
+      baseEvent({
+        eventId: "r1",
+        eventType: "session_start",
+        traceId: "trace-reply-1",
+        content: "Read sensor",
+      }),
+      baseEvent({
+        eventId: "r2",
+        eventType: "model_response",
+        traceId: "trace-reply-1",
+        content: sensorReply,
+      }),
+      baseEvent({
+        eventId: "r3",
+        eventType: "session_start",
+        traceId: "trace-reply-2",
+        content: "Dump payload",
+      }),
+      baseEvent({
+        eventId: "r4",
+        eventType: "model_response",
+        traceId: "trace-reply-2",
+        content: hugeJsonReply,
+      }),
+      baseEvent({
+        eventId: "r5",
+        eventType: "session_start",
+        traceId: "trace-reply-3",
+        content: "Run checks",
+      }),
+      baseEvent({
+        eventId: "r6",
+        eventType: "model_response",
+        traceId: "trace-reply-3",
+        content: "Running checks",
+      }),
+      baseEvent({
+        eventId: "r7",
+        eventType: "model_response",
+        traceId: "trace-reply-3",
+        content: null,
+      }),
+    ];
+
+    const originalParse = JSON.parse;
+    let parseCalls = 0;
+    JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+      parseCalls += 1;
+      return originalParse(...args);
+    }) as typeof JSON.parse;
+    let readback: SessionEventsReadback;
+    try {
+      readback = projectSessionEventsReadback(sessionId, events);
+    } finally {
+      JSON.parse = originalParse;
+    }
+
+    assert.strictEqual(parseCalls, 0);
+    assert.strictEqual(readback.turns[0].replyFirstLine, sensorReply);
+    assert.strictEqual(readback.turns[1].replyFirstLine.endsWith("…"), true);
+    assert.strictEqual(
+      Buffer.byteLength(readback.turns[1].replyFirstLine, "utf8"),
+      MAX_SESSION_EVENT_LINE_BYTES,
+    );
+    assert.ok(readback.turns[1].replyFirstLine.startsWith('{"raw":"xxxx'));
+    assert.strictEqual(readback.turns[2].replyFirstLine, "");
+  });
+
+  it("rejects an acp.history_unavailable event with toolHistoryValid: false as malformed", () => {
+    const events: WorkbenchSessionEvent[] = [
+      baseEvent({
+        eventId: "g1",
+        eventType: "session_start",
+        traceId: "trace-invalid-gap",
+        content: "Check gap validation",
+      }),
+      baseEvent({
+        eventId: "g2",
+        eventType: "tool_call",
+        traceId: "trace-invalid-gap",
+        runnerKind: "external_agent",
+        runnerProtocol: "acp",
+        toolName: "acp.history_unavailable",
+        toolCallId: "gap-invalid",
+        toolArguments: {
+          outcome: "partial",
+          reason: "missing_raw_output",
+          toolCallId: "call-part",
+          toolName: "acp.execute",
+          title: "Run lint",
+          kind: "execute",
+          status: "completed",
+          input: { command: ["npm", "run", "lint"] },
+        },
+        toolResult: "",
+        toolIsError: true,
+        toolHistoryValid: false,
+      }),
+    ];
+
+    const readback = projectSessionEventsReadback(sessionId, events);
+    assert.strictEqual(
+      readback.turns[0].toolEvidenceLine,
+      "ACP tool evidence: 0 recorded, 0 partial, 1 rejected (malformed) of 1",
+    );
+    assert.deepStrictEqual(readback.turns[0].toolEvents, [
+      {
+        toolCallId: "gap-invalid",
+        outcome: "rejected",
+        toolName: "acp.history_unavailable",
+        kind: null,
+        title: null,
+        status: "failed",
+        reason: "malformed",
+        input: null,
+      },
+    ]);
+  });
+
+  it("stops object and array input previews once the budget or step cap runs out without reading further entries or child objects", () => {
+    const unvisitedChild = new Proxy(
+      { nested: "value" },
+      {
+        ownKeys() {
+          throw new Error("listed child keys past budget");
+        },
+      },
+    );
+    const overBudgetRecord: Record<string, unknown> = {
+      first: "x".repeat(MAX_SESSION_EVENT_INPUT_BYTES + 64),
+    };
+    Object.defineProperty(overBudgetRecord, "second", {
+      enumerable: true,
+      get() {
+        throw new Error("read property past budget");
+      },
+    });
+    overBudgetRecord.third = unvisitedChild;
+
+    const longKeyExhaustsBudget: Record<string, unknown> = {
+      ["k".repeat(MAX_SESSION_EVENT_INPUT_BYTES + 64)]: unvisitedChild,
+    };
+
+    const manyUndefinedThenThrow: Record<string, unknown> = {};
+    for (let i = 0; i < 64; i += 1) {
+      manyUndefinedThenThrow[`empty_${i}`] = undefined;
+    }
+    Object.defineProperty(manyUndefinedThenThrow, "late", {
+      enumerable: true,
+      get() {
+        throw new Error("read property past step cap");
+      },
+    });
+
+    const overBudgetArray: unknown[] = ["x".repeat(268)];
+    Object.defineProperty(overBudgetArray, 1, {
+      enumerable: true,
+      get() {
+        throw new Error("read array element past budget");
+      },
+    });
+
+    const events: WorkbenchSessionEvent[] = [
+      baseEvent({
+        eventId: "b1",
+        eventType: "session_start",
+        traceId: "trace-bounds",
+        content: "Bound input preview",
+      }),
+      baseEvent({
+        eventId: "b2",
+        eventType: "tool_call",
+        traceId: "trace-bounds",
+        toolName: "write_file",
+        toolCallId: "call-over-budget",
+        toolArguments: overBudgetRecord,
+        toolResult: "ok",
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+      baseEvent({
+        eventId: "b3",
+        eventType: "tool_call",
+        traceId: "trace-bounds",
+        toolName: "write_file",
+        toolCallId: "call-long-key",
+        toolArguments: longKeyExhaustsBudget,
+        toolResult: "ok",
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+      baseEvent({
+        eventId: "b4",
+        eventType: "tool_call",
+        traceId: "trace-bounds",
+        toolName: "write_file",
+        toolCallId: "call-step-cap",
+        toolArguments: manyUndefinedThenThrow,
+        toolResult: "ok",
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+      baseEvent({
+        eventId: "b5",
+        eventType: "tool_call",
+        traceId: "trace-bounds",
+        runnerKind: "external_agent",
+        runnerProtocol: "acp",
+        toolName: "acp.execute",
+        toolCallId: "call-array-budget",
+        toolArguments: {
+          title: "Run array",
+          kind: "execute",
+          input: overBudgetArray,
+        },
+        toolResult: "ok",
+        toolIsError: false,
+        toolHistoryValid: true,
+      }),
+    ];
+
+    const readback = projectSessionEventsReadback(sessionId, events);
+    const [firstTool, secondTool, thirdTool, fourthTool] =
+      readback.turns[0].toolEvents;
+    assert.strictEqual(
+      Buffer.byteLength(firstTool.input ?? "", "utf8"),
+      MAX_SESSION_EVENT_INPUT_BYTES,
+    );
+    assert.strictEqual(firstTool.input?.endsWith("…"), true);
+    assert.strictEqual(
+      Buffer.byteLength(secondTool.input ?? "", "utf8"),
+      MAX_SESSION_EVENT_INPUT_BYTES,
+    );
+    assert.strictEqual(secondTool.input?.endsWith("…"), true);
+    assert.strictEqual(thirdTool.input, "{…}");
+    assert.strictEqual(
+      Buffer.byteLength(fourthTool.input ?? "", "utf8"),
+      MAX_SESSION_EVENT_INPUT_BYTES,
+    );
+    assert.strictEqual(fourthTool.input?.endsWith("…"), true);
   });
 });

@@ -336,10 +336,13 @@ which the Rust REPL restores on `--session` and `/session switch`; see
 read methods over it with `dyfj models`, `dyfj sessions`, and
 `dyfj sessions show <session> --events [--json]` (which reads up to 1,000
 events from `events/query` over the socket and prints each projected turn's
-sanitized prompt and reply first-line previews, reconstructed tool-evidence
-summary line, and ordered tool events with their outcome, tool name, and, when
-present on the projection, kind, title, status, gap reason code, and bounded
-checked input preview for both external-agent and native turns); after a TTY-backed
+first-line previews of the persisted `session_start` content and last
+`agent_response` or `model_response` content after control-character stripping,
+credential-shape scrubbing, and 200-byte clipping, its reconstructed
+tool-evidence summary line, and its ordered tool events with their outcome,
+tool name, and, when present on the projection, kind, title, status, gap reason
+code, and 240-byte checked input preview for both external-agent and native
+turns); after a TTY-backed
 UDS turn connects, Ctrl-C sends `turn/cancel` for REPL and one-shot turns, while pre-connection and non-TTY
 SIGINT behavior remains unchanged. After an autostarted server installs its
 SIGINT handler, when cancellation is the terminal outcome after the active
