@@ -296,10 +296,13 @@ README are tracked separately in its Revision history section.
   for the idle TTL. The resident-session bound is eight, so a run of one-shot
   turns then failed once that many handles were still live. A one-shot turn
   now closes that session's idle handle before the receipt returns, while
-  the session lock is still held. A receipt that returns has waited for
-  that close, including a close the idle TTL already started. That close
-  has finished, so the slot is free for a following turn that starts after
-  the receipt. If the client leaves during the turn or during that close, the
+  the session lock is still held. A receipt for a finished turn is returned
+  only after that cleanup has waited for the session's idle closes, a close
+  the idle TTL already started, and a close the idle TTL already finished
+  in failure. When that wait finishes without error, those slots are free
+  for a following turn. A close that fails and leaves the handle alive
+  keeps its slot, and a finished turn does not return its receipt. If the
+  client leaves during the turn or during that close, the
   slot can stay occupied after the disconnect. A one-shot turn that fails
   requests that same close before the error returns. If the close also
   fails, the turn's error is the one returned and the slot may still be

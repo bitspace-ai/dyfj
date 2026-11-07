@@ -284,34 +284,30 @@ export class AcpSessionHandleMap {
    * held, so the handle it just used is idle and no other turn can take it.
    * The idle TTL can start that close first. The entry is then `closing`
    * rather than idle, and it still holds its capacity slot until the close
-   * finishes. This waits for that close. Each captured idle handle is closed.
-   * A close that fails does not skip the rest; the first failure is reported
-   * after those attempts.
+   * finishes. This waits for that close. A close that already failed and
+   * left the handle alive is run again, not skipped. Each captured idle
+   * handle is closed. Rejection handlers are attached when those closes
+   * start. A close that fails does not skip the rest; the first failure is
+   * reported after those attempts.
    */
   async dropSession(sessionId: string): Promise<void> {
     const waits: Promise<void>[] = [];
     for (const entry of this.#entries.values()) {
       if (sessionIdFromHandleKey(entry.key) !== sessionId) continue;
       if (entry.state === "closing") {
-        if (entry.closePromise !== undefined) waits.push(entry.closePromise);
+        // A settled failure clears closePromise and leaves the entry. Retry
+        // that close. An in-progress close is joined.
+        waits.push(entry.closePromise ?? this.#removeAndClose(entry));
         continue;
       }
       if (entry.state !== "idle" || entry.handle === undefined) continue;
       waits.push(this.drop(entry.handle));
     }
-    let failed = false;
-    let firstError: unknown;
-    for (const wait of waits) {
-      try {
-        await wait;
-      } catch (error) {
-        if (!failed) {
-          failed = true;
-          firstError = error;
-        }
-      }
+    const settled = await Promise.allSettled(waits);
+    const failure = settled.find((result) => result.status === "rejected");
+    if (failure !== undefined && failure.status === "rejected") {
+      throw failure.reason;
     }
-    if (failed) throw firstError;
   }
 
   async drop(handle: AcpSessionHandle): Promise<void> {

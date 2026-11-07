@@ -1150,6 +1150,94 @@ describe("AcpSessionHandleMap one-shot release", () => {
     }
   });
 
+  it("dropSession attaches a rejection handler when a second close fails first", async () => {
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    let finishSlow: (() => void) | undefined;
+    const closeWait = new Promise<void>((resolve) => {
+      finishSlow = resolve;
+    });
+    const slow = fakeHandle({ closeWait });
+    const fast = fakeHandle({ closeError: new Error("fast close failed") });
+    const captured = captureUnhandledRejections();
+    try {
+      await map.acquire({
+        ...acquireKey(fixtureProfile({ slug: "slow" }), "same"),
+        create: () => Promise.resolve(slow),
+      });
+      map.release(slow);
+      await map.acquire({
+        ...acquireKey(fixtureProfile({ slug: "fast" }), "same"),
+        create: () => Promise.resolve(fast),
+      });
+      map.release(fast);
+      const dropping = map.dropSession("same");
+      let settled = false;
+      const observed = dropping.then(
+        () => {
+          settled = true;
+          return undefined;
+        },
+        (error: unknown) => {
+          settled = true;
+          return error;
+        },
+      );
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.deepStrictEqual(captured.failures, []);
+      assert.strictEqual(settled, false);
+      assert.strictEqual(map.size, 1);
+      finishSlow?.();
+      const outcome = await observed;
+      assert.ok(outcome instanceof Error);
+      assert.match(outcome.message, /fast close failed/);
+      assert.deepStrictEqual(captured.failures, []);
+      assert.strictEqual(slow.isAlive, false);
+      assert.strictEqual(map.size, 0);
+    } finally {
+      finishSlow?.();
+      captured.stop();
+      await map.shutdown();
+    }
+  });
+
+  it("dropSession reports an idle-TTL close that failed and left the handle alive", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    const handle = fakeHandle({
+      closeError: new Error("idle close failed while alive"),
+      stayAliveOnCloseError: true,
+    });
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const retire = [...timers.values()][0];
+      assert.ok(retire !== undefined);
+      retire();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "closing");
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(handle.isAlive, true);
+      await assert.rejects(
+        () => map.dropSession("session-1"),
+        /idle close failed while alive/,
+      );
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(handle.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "closing");
+    } finally {
+      await map.shutdown().catch(() => {});
+    }
+  });
+
   it("dropSession waits for an idle-TTL close already in progress", async () => {
     const profile = fixtureProfile();
     const { timers, setTimeout, clearTimeout } = fakeIdleTimers();

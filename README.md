@@ -1349,9 +1349,12 @@ acquired handle, the existing error lifecycle closes and removes that handle
 without deleting persisted events. Idle handles retire on a TTL. A one-shot
 `exec`, `ask`, or `-p` turn closes that session's idle external-agent handle
 before the receipt returns, while the session lock is still held. A receipt
-that returns has waited for that close, including a close the idle TTL
-already started. That close has finished, so the slot is free for a
-following turn that starts after the receipt. If the client leaves during
+for a finished turn is returned only after that cleanup has waited for the
+session's idle closes, a close the idle TTL already started, and a close
+the idle TTL already finished in failure. When that wait finishes without
+error, those slots are free for a following turn. A close that fails and
+leaves the handle alive keeps its slot, and a finished turn does not return
+its receipt. If the client leaves during
 the turn or during that close, the slot can stay occupied after the
 disconnect. A one-shot turn that fails requests that same close before its
 error returns; if the close also fails, the turn's error is the one returned
@@ -2947,3 +2950,9 @@ Document revisions only. Code and behavior changes are tracked in
   has waited for the session's handle close, including a close the idle TTL
   already started, and that the slot is free for a following turn once that
   close has finished.
+- 2026-11-07 - The external-agent lifecycle says a finished one-shot receipt
+  is returned only after idle closes, a close the idle TTL already started,
+  and a close the idle TTL already finished in failure have been waited out.
+  Those slots are free when that wait finishes without error. A close that
+  leaves the handle alive keeps its slot, and that finished turn does not
+  return its receipt.
