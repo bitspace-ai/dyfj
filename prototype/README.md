@@ -552,9 +552,10 @@ and [xAI reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoni
 OpenRouter's [model metadata](https://openrouter.ai/api/v1/models) supplies
 per-model supported effort levels. Apply
 `schema/migrations/024_models_reasoning_effort.sql` to an existing database
-to update eight effort-support flags and the 16,384-token provider limits
-for Muse Glimmer and Qwen3 Next Instruct. Fresh installs use the matching
-catalog seed. The migration preserves prices and activation.
+to update effort-support flags on up to eight existing model rows and the
+16,384-token provider limits for Muse Glimmer and Qwen3 Next Instruct.
+Fresh installs use the matching catalog seed. The migration preserves
+prices and activation.
 
 ### Disposable runtime
 
