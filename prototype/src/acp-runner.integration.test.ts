@@ -3,16 +3,22 @@
 // runner, permission and tool evidence, and the session replays from the
 // isolated fixture database the integration lane starts.
 import assert from "node:assert/strict";
+import { unlink } from "node:fs/promises";
 import process from "node:process";
 import { describe, it } from "node:test";
 import { runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
+import { main } from "./cli/main.ts";
+import type { SessionEventsReadback } from "./cli/commands/sessions.ts";
 import { buildConversationMessages } from "./context/mod.ts";
+import { serveWorkbenchUnix } from "./server/main.ts";
 import { type DoltStore, fetchWorkbenchSessionEvents } from "./store/mod.ts";
 import {
   type FixtureSql,
   openFixtureSql,
   openFixtureStore,
 } from "../testing/dolt/fixture-sql.ts";
+import { fakeIo } from "../testing/fakes/fake-io.ts";
+import { udsTestSocket } from "../testing/servers/uds-sockets.ts";
 
 // Each test opens its own fixture handles and closes them before returning, so
 // no pooled connection outlives the test that opened it.
@@ -157,6 +163,165 @@ describe("external ACP runner persistence (integration)", () => {
           { role: "assistant", content: "recorded" },
         ]);
       } finally {
+        await deleteSession(sql, result.sessionId);
+      }
+    }));
+
+  it("reads a fixture external-agent turn with recorded, partial and rejected calls over UDS via 'dyfj sessions show <id> --events'", () =>
+    withFixture(async (store, sql) => {
+      const result = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "FIXTURE_TOOL_HISTORY_MIXED",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        workspaceRoot: process.cwd(),
+      }, { store });
+
+      const socketPath = udsTestSocket("cli-sessions-events");
+      let server: Awaited<ReturnType<typeof serveWorkbenchUnix>> | undefined;
+
+      try {
+        await unlink(socketPath).catch(() => {});
+        server = await serveWorkbenchUnix(socketPath, { store });
+
+        const textIo = fakeIo();
+        const textCode = await main(
+          [
+            "--socket",
+            socketPath,
+            "sessions",
+            "show",
+            result.sessionId,
+            "--events",
+          ],
+          textIo.io,
+        );
+        assert.strictEqual(textCode, 0);
+        const textOut = textIo.stdout.join("");
+        assert.ok(textOut.includes(`Session ${result.sessionId} (1 turn)`));
+        assert.ok(textOut.includes("Prompt: FIXTURE_TOOL_HISTORY_MIXED"));
+        assert.ok(textOut.includes("Reply:  recorded"));
+        assert.ok(
+          textOut.includes(
+            "ACP tool evidence: 2 recorded, 2 partial (missing_raw_output 1, oversized_output 1), 1 rejected (credential_shaped) of 5",
+          ),
+        );
+        assert.ok(
+          textOut.includes(
+            '1. [recorded] acp.execute · kind=execute · status=completed · title="Run npm run typecheck" · input={"command":["npm","run","typecheck"]}',
+          ),
+        );
+        assert.ok(
+          textOut.includes(
+            '2. [partial] acp.execute · kind=execute · status=completed · reason=missing_raw_output · title="Run npm run typecheck" · input={"command":["npm","run","typecheck"]}',
+          ),
+        );
+        assert.ok(
+          textOut.includes(
+            '3. [rejected] acp.execute · kind=execute · status=completed · reason=credential_shaped · title="Run fixture login"',
+          ),
+        );
+        assert.ok(
+          textOut.includes(
+            '4. [partial] acp.execute · kind=execute · status=completed · reason=oversized_output · title="Run npm test" · input={"command":["npm","test"]}',
+          ),
+        );
+        assert.ok(
+          textOut.includes(
+            '5. [recorded] acp.execute · kind=execute · status=failed · title="Run npm test" · input={"command":["npm","test"]}',
+          ),
+        );
+        assert.ok(!textOut.includes("abcdefghijklmnopqrstuvwxyz012345"));
+        assert.ok(!textOut.includes("tail-not-kept"));
+
+        const jsonIo = fakeIo();
+        const jsonCode = await main(
+          [
+            "--socket",
+            socketPath,
+            "sessions",
+            "show",
+            `workbench-${result.sessionId.toLowerCase()}`,
+            "--events",
+            "--json",
+          ],
+          jsonIo.io,
+        );
+        assert.strictEqual(jsonCode, 0);
+        const jsonText = jsonIo.stdout.join("");
+        assert.ok(!jsonText.includes("abcdefghijklmnopqrstuvwxyz012345"));
+        assert.ok(!jsonText.includes("tail-not-kept"));
+        const parsed = JSON.parse(jsonText) as SessionEventsReadback;
+        assert.deepStrictEqual(parsed, {
+          sessionId: result.sessionId,
+          truncated: false,
+          turns: [
+            {
+              turn: 1,
+              traceId: result.traceId,
+              runner: "external_agent",
+              promptFirstLine: "FIXTURE_TOOL_HISTORY_MIXED",
+              replyFirstLine: "recorded",
+              toolEvidenceLine:
+                "ACP tool evidence: 2 recorded, 2 partial (missing_raw_output 1, oversized_output 1), 1 rejected (credential_shaped) of 5",
+              toolEvents: [
+                {
+                  toolCallId: "fixture-mixed-typecheck",
+                  outcome: "recorded",
+                  toolName: "acp.execute",
+                  kind: "execute",
+                  title: "Run npm run typecheck",
+                  status: "completed",
+                  reason: null,
+                  input: '{"command":["npm","run","typecheck"]}',
+                },
+                {
+                  toolCallId: "fixture-missing-output",
+                  outcome: "partial",
+                  toolName: "acp.execute",
+                  kind: "execute",
+                  title: "Run npm run typecheck",
+                  status: "completed",
+                  reason: "missing_raw_output",
+                  input: '{"command":["npm","run","typecheck"]}',
+                },
+                {
+                  toolCallId: "fixture-secret-input",
+                  outcome: "rejected",
+                  toolName: "acp.execute",
+                  kind: "execute",
+                  title: "Run fixture login",
+                  status: "completed",
+                  reason: "credential_shaped",
+                  input: null,
+                },
+                {
+                  toolCallId: "fixture-oversized-output",
+                  outcome: "partial",
+                  toolName: "acp.execute",
+                  kind: "execute",
+                  title: "Run npm test",
+                  status: "completed",
+                  reason: "oversized_output",
+                  input: '{"command":["npm","test"]}',
+                },
+                {
+                  toolCallId: "fixture-mixed-test",
+                  outcome: "recorded",
+                  toolName: "acp.execute",
+                  kind: "execute",
+                  title: "Run npm test",
+                  status: "failed",
+                  reason: null,
+                  input: '{"command":["npm","test"]}',
+                },
+              ],
+            },
+          ],
+        });
+      } finally {
+        await server?.close();
+        await unlink(socketPath).catch(() => {});
         await deleteSession(sql, result.sessionId);
       }
     }));

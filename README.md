@@ -1059,6 +1059,7 @@ dyfj --runner codex-chatgpt exec "Inspect this repository"
 dyfj status
 dyfj models
 dyfj sessions
+dyfj sessions show <session> --events
 dyfj start   # foreground the runtime; Ctrl-C stops it (a third exits at once)
 dyfj stop    # stop the running runtime at the socket
 dyfj dev     # work on the harness: reload the runtime and REPL on save
@@ -1172,6 +1173,7 @@ read methods over the socket:
 ```sh
 dyfj models
 dyfj sessions
+dyfj sessions show <session> --events [--json]
 ```
 
 `dyfj models` includes the native request's default `output-cap` and
@@ -1182,6 +1184,39 @@ Effort does not guarantee answer tokens. See the prototype's
 [reasoning and output caps](prototype/README.md#reasoning-and-output-caps)
 for provider parameters and the catalog migration. `models/list` exposes
 these as `defaultOutputTokens`, `reasoningEffort`, and `toolReasoningEffort`.
+
+`dyfj sessions show <session> --events` (accepting either the bare 26-character
+session id or the `workbench-<id>` slug from `dyfj sessions`) reads the
+session's persisted events through `events/query` over the Unix socket (up to
+1,000 events, flagging `truncated` when that limit is reached) and projects the
+returned events into ordered turns and tool events, for both external-agent and
+native turns. For each turn it prints first-line previews of the turn's first
+recorded `session_start` content and last recorded `agent_response` or
+`model_response` content as persisted (sliced to 1,024 characters before
+cutting at the first CR or LF, turning tabs into spaces, stripping other
+C0/DEL/C1 control characters, scrubbing credential-shaped text, and clipping to
+200 UTF-8 bytes including any trailing ellipsis) and a reconstructed
+tool-evidence summary line (sharing the receipt formatter for non-unavailable
+ACP turns); for each tool event it checks that `toolHistoryValid` is not
+`false` and that non-empty string `toolName` and `toolCallId`, plain-object
+`toolArguments`, string `toolResult`, and boolean `toolIsError` are present
+(including on `acp.history_unavailable` gap rows, rejecting rows that fail that
+check as `malformed`) and prints the outcome (`recorded`, `partial`,
+`rejected`, or `unavailable`), tool name, and, when supplied by the projection,
+kind, title, status, gap reason code, and the checked input preview bounded to
+240 UTF-8 bytes (including any trailing ellipsis; 272 characters and 64 steps
+are traversal thresholds after which the walk stops reading further array
+elements, object property values, or child objects, while JSON string escaping
+on a kept slice can briefly exceed 272 characters before control-character
+stripping and 240-byte clipping, and V8's `for...in` still lists a visited
+object's own keys up front, bounded on the wire by the UDS transport's 16 MiB
+frame limit and for ACP records by the 4 KiB / 64-node history argument bound).
+Values rejected by the credential-shape or size checks at capture/record time
+are not
+persisted and stay absent on readback, where the gap's reason code is shown
+instead. `--json` prints the same readback structure as JSON (or `{"error": ...}`
+with exit status 1 when the session has no recorded events or the runtime is
+unreachable).
 
 The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 `surface/snapshot`, `models/list`, `sessions/list`, `sessions/inspect`,
@@ -2959,6 +2994,8 @@ Document revisions only. Code and behavior changes are tracked in
   `HOME` stays the dedicated runner home.
 - 2026-11-05 - The JSON-RPC seam section describes the default output cap
   and reasoning-effort fields in `models/list` and `dyfj models`.
+- 2026-11-06 - The JSON-RPC seam section documents `dyfj sessions show <session> --events [--json]`
+  and its turn, tool-event, and preview bounds.
 - 2026-11-07 - The external-agent lifecycle says a returned one-shot receipt
   has waited for the session's handle close, including a close the idle TTL
   already started, and that the slot is free once teardown removes the
