@@ -291,6 +291,15 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- Hosted reasoning-capable models now default to a 32,768-token output cap,
+  bounded by the catalog limit, and use low reasoning effort where the
+  provider and catalog support it. This reduces the chance of spending the
+  whole cap on reasoning before answering. OpenAI requests that offer tools
+  ask for `none` effort only when `reasoning_effort_control` is enabled.
+  `dyfj models` shows the effective default cap and effort, including that
+  tool-call exception. Existing databases need
+  `024_models_reasoning_effort.sql` for the corrected effort-support flags
+  and the 16,384-token provider limits for Muse Glimmer and Qwen3 Next Instruct.
 - **The publish tool tests wait for a detached run's report work
   (BIT-841).** `publish/start` runs its phases detached and closes the
   report file after the last phase is recorded. Three tests in

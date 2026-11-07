@@ -7,12 +7,27 @@ import { buildModelsHandlers } from "./models.ts";
 async function listModels(rows: unknown[]) {
   const { models } = await callRpc(
     buildModelsHandlers({
-      loadModels: () => Promise.resolve(rows as WorkbenchModel[]),
+      loadModels: () => Promise.resolve((rows as WorkbenchModel[]).map((row) => ({
+        ...row, capabilities: row.capabilities ?? [],
+      }))),
     }),
     "models/list",
   ) as { models: Array<Record<string, unknown>> };
   return models;
 }
+
+test("models/list exposes the effective request cap and both OpenAI effort settings", async () => {
+  const models = await listModels([
+    { slug: "reasoning", provider: "openai", capabilities: ["reasoning"],
+      reasoningEffortControl: true, maxOutputTokens: 65_536 },
+    { slug: "bounded", provider: "openrouter", capabilities: ["reasoning"],
+      reasoningEffortControl: true, maxOutputTokens: 16_384 },
+    { slug: "local", provider: "llama-cpp", capabilities: ["reasoning"], maxOutputTokens: 8192 },
+  ]);
+  assert.deepEqual(models.map((m) => [m.defaultOutputTokens, m.reasoningEffort, m.toolReasoningEffort]), [
+    [32_768, "low", "none"], [16_384, "low", "low"], [undefined, undefined, undefined],
+  ]);
+});
 
 test("models/list returns the loaded models with a server-computed routable flag", async () => {
   const models = await listModels([
