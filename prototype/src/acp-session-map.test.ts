@@ -1150,6 +1150,51 @@ describe("AcpSessionHandleMap one-shot release", () => {
     }
   });
 
+  it("dropSession waits for an idle-TTL close already in progress", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    let finishClose: (() => void) | undefined;
+    const closeWait = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    const handle = fakeHandle({ closeWait });
+    try {
+      await map.acquire({
+        ...acquireKey(profile),
+        create: () => Promise.resolve(handle),
+      });
+      map.release(handle);
+      const retire = [...timers.values()][0];
+      assert.ok(retire !== undefined);
+      retire();
+      assert.strictEqual(map.stateFor(acquireKey(profile)), "closing");
+      assert.strictEqual(map.size, 1);
+      let resolved = false;
+      const dropping = map.dropSession("session-1").then(
+        () => {
+          resolved = true;
+        },
+      );
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.strictEqual(resolved, false);
+      assert.strictEqual(map.size, 1);
+      finishClose?.();
+      await dropping;
+      assert.strictEqual(resolved, true);
+      assert.strictEqual(map.size, 0);
+      assert.strictEqual(handle.isAlive, false);
+    } finally {
+      finishClose?.();
+      await map.shutdown();
+    }
+  });
+
   it("dropSession leaves an active handle", async () => {
     const profile = fixtureProfile();
     const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });

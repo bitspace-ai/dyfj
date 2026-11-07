@@ -123,6 +123,8 @@ interface MapEntry {
   createPromise?: Promise<AcpSessionHandle>;
   idleGeneration: number;
   idleTimer?: unknown;
+  /** The close already running for this entry, if one is in progress. */
+  closePromise?: Promise<void>;
 }
 
 export function canonicalExecutionProfileDigest(
@@ -273,26 +275,35 @@ export class AcpSessionHandleMap {
   }
 
   /**
-   * Close the idle live handles for `sessionId`.
+   * Close the idle live handles for `sessionId`, and wait for a close of
+   * that session that is already in progress.
    *
    * An active handle is left alone: another turn on that session is using it,
    * and closing it would cut that turn off. A one-shot turn calls this after
    * its own handle has been released to idle, while the session lock is still
    * held, so the handle it just used is idle and no other turn can take it.
-   * Each captured idle handle is closed. A close that fails does not skip
-   * the rest; the first failure is reported after those attempts.
+   * The idle TTL can start that close first. The entry is then `closing`
+   * rather than idle, and it still holds its capacity slot until the close
+   * finishes. This waits for that close. Each captured idle handle is closed.
+   * A close that fails does not skip the rest; the first failure is reported
+   * after those attempts.
    */
   async dropSession(sessionId: string): Promise<void> {
-    const idle = [...this.#entries.values()].flatMap((entry) => {
-      if (entry.state !== "idle" || entry.handle === undefined) return [];
-      if (sessionIdFromHandleKey(entry.key) !== sessionId) return [];
-      return [entry.handle];
-    });
+    const waits: Promise<void>[] = [];
+    for (const entry of this.#entries.values()) {
+      if (sessionIdFromHandleKey(entry.key) !== sessionId) continue;
+      if (entry.state === "closing") {
+        if (entry.closePromise !== undefined) waits.push(entry.closePromise);
+        continue;
+      }
+      if (entry.state !== "idle" || entry.handle === undefined) continue;
+      waits.push(this.drop(entry.handle));
+    }
     let failed = false;
     let firstError: unknown;
-    for (const handle of idle) {
+    for (const wait of waits) {
       try {
-        await this.drop(handle);
+        await wait;
       } catch (error) {
         if (!failed) {
           failed = true;
@@ -467,7 +478,25 @@ export class AcpSessionHandleMap {
     await this.#removeAndClose(entry);
   }
 
-  async #removeAndClose(entry: MapEntry): Promise<void> {
+  /**
+   * One close per entry while it is running. A later call joins that close
+   * instead of starting another. After it settles, a new call can run again,
+   * which is how shutdown retries a close that left the handle alive.
+   */
+  #removeAndClose(entry: MapEntry): Promise<void> {
+    if (entry.closePromise !== undefined) return entry.closePromise;
+    const promise = this.#performClose(entry);
+    entry.closePromise = promise;
+    const clear = () => {
+      if (entry.closePromise === promise) entry.closePromise = undefined;
+    };
+    // Both outcomes are handled here so a failed close is not a second,
+    // unhandled rejection on top of the caller's own wait.
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  async #performClose(entry: MapEntry): Promise<void> {
     this.#disarmIdleTimer(entry);
     if (entry.state === "closed") return;
     if (this.#entries.get(entry.key) === entry && entry.state !== "closing") {
