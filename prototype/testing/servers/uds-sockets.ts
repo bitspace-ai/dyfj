@@ -29,6 +29,8 @@ export const UDS_TEST_SOCKETS = [
   "listener-count",
   "listener-stop-accepting",
   "server-acp-close",
+  "server-exec-release",
+  "server-exec-capacity",
   "server-sigint",
   "server-stop",
   "server-unknown-method",

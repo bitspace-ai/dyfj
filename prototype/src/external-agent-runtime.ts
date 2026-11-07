@@ -108,6 +108,7 @@ import {
   refuseCodexCommandRules,
   withholdSavedApprovals,
 } from "./codex-home-config.ts";
+import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
 import { writePrivateFile } from "./private-file.ts";
 
 /**
@@ -456,19 +457,11 @@ export async function codexChatGptProfile(
   await ensurePrivateDirectory(codexHome);
   await refuseCodexCommandRules(codexHome);
   await ensurePrivateDirectory(cargoHome);
-  await writePrivateFile(
-    join(runnerBin, "node"),
-    `#!/bin/sh\nexec ${shellSingleQuote(nodePath)} "$@"\n`,
-    0o700,
-    "Codex ACP private Node shim is unavailable",
-  );
-
-  const childPath = [
+  const childPath = await writeCodexRunnerBin({
     runnerBin,
-    ...(toolchainPath === undefined ? [] : [toolchainPath]),
-    "/usr/bin",
-    "/bin",
-  ].join(":");
+    nodePath,
+    toolchainPath,
+  });
   for (const profileName of [".zprofile", ".bash_profile"]) {
     await writePrivateFile(
       join(isolatedHome, profileName),

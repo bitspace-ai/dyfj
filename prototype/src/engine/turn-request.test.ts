@@ -208,6 +208,33 @@ test("parseBudgetOverride rejects non-objects and out-of-range values", () => {
   });
 });
 
+test("resolveTurnFromBody honors a loopback one-shot release", () => {
+  match(
+    resolveTurnFromBody(
+      { prompt: "hi", releaseExternalAgentSession: true },
+      true,
+    ),
+    { releaseExternalAgentSession: true },
+  );
+  match(resolveTurnFromBody({ prompt: "hi" }, true), {
+    releaseExternalAgentSession: false,
+  });
+  match(
+    resolveTurnFromBody(
+      { prompt: "hi", releaseExternalAgentSession: true },
+      false,
+    ),
+    { releaseExternalAgentSession: false },
+  );
+  match(
+    resolveTurnFromBody(
+      { prompt: "hi", releaseExternalAgentSession: "yes" },
+      true,
+    ),
+    { status: 400, error: "releaseExternalAgentSession must be a boolean" },
+  );
+});
+
 test("resolveTurnFromBody validates the session id shape", () => {
   match(resolveTurnFromBody({ prompt: "hi", sessionId: "../etc" }, true), {
     status: 400,

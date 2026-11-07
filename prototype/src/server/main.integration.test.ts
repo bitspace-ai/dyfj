@@ -7,7 +7,11 @@ import {
   udsTestSocket,
 } from "../../testing/servers/uds-sockets.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
-import type { WorkbenchRuntimeResult } from "../engine/mod.ts";
+import type {
+  TurnRuntime,
+  WorkbenchRuntimeInput,
+  WorkbenchRuntimeResult,
+} from "../engine/mod.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { MemoryStore } from "../store/mod.ts";
 import {
@@ -438,4 +442,93 @@ test("an autostarted runtime that cannot bind fails its boot and leaves nothing 
   );
   await map.shutdown();
   assert.strictEqual(state.closed, true);
+});
+
+function countingAcpRuntime(map: AcpSessionHandleMap): {
+  runRuntime: TurnRuntime;
+  creates: () => number;
+} {
+  let creates = 0;
+  const profile = {
+    slug: "fixture",
+    command: process.execPath,
+    args: ["-e", "0"],
+    environment: {},
+    workspace: "/work",
+    transport: "local_stdio" as const,
+    accessRoute: "local_sidecar" as const,
+    costBasis: "local_free" as const,
+  };
+  const runRuntime: TurnRuntime = async (input: WorkbenchRuntimeInput) => {
+    const sessionId = input.sessionId ?? input.newSessionId ?? "missing";
+    await map.runTurn({
+      sessionId,
+      workspace: "/work",
+      profile,
+      prompt: "hi",
+      create: () => {
+        creates += 1;
+        let closed = false;
+        return Promise.resolve({
+          get isAlive() {
+            return !closed;
+          },
+          durableSessionLoad: false,
+          prompt: () =>
+            Promise.resolve({
+              text: "ok",
+              stopReason: "stop" as const,
+              capabilities: [],
+              elapsedMs: 0,
+            }),
+          close: () => {
+            closed = true;
+            return Promise.resolve();
+          },
+        });
+      },
+    });
+    return { sessionId, text: "ok" } as WorkbenchRuntimeResult;
+  };
+  return { runRuntime, creates: () => creates };
+}
+
+test("twelve one-shot turns on one runtime leave no live external-agent session", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
+  const runtime = countingAcpRuntime(map);
+  await using started = await startServer("server-exec-release", {
+    runRuntime: runtime.runRuntime,
+    acpSessions: map,
+  });
+  await using client = await dial(started.server);
+  for (let i = 0; i < 12; i++) {
+    const receipt = await client.peer.request("turn", {
+      prompt: `shot ${i}`,
+      releaseExternalAgentSession: true,
+    }) as { sessionId: string };
+    assert.equal(typeof receipt.sessionId, "string");
+    assert.equal(map.size, 0);
+  }
+  assert.equal(runtime.creates(), 12);
+});
+
+test("idle external-agent sessions without a release fill capacity", async () => {
+  const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
+  const runtime = countingAcpRuntime(map);
+  await using started = await startServer("server-exec-capacity", {
+    runRuntime: runtime.runRuntime,
+    acpSessions: map,
+  });
+  await using client = await dial(started.server);
+  for (let i = 0; i < 8; i++) {
+    await client.peer.request("turn", { prompt: `keep ${i}` });
+  }
+  assert.equal(map.size, 8);
+  const error = await client.peer.request("turn", { prompt: "one more" }).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+  assert.ok(error instanceof RpcError);
+  assert.match(error.message, /External-agent session capacity reached/);
+  assert.equal(map.size, 8);
 });

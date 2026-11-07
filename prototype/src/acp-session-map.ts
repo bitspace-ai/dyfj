@@ -123,6 +123,8 @@ interface MapEntry {
   createPromise?: Promise<AcpSessionHandle>;
   idleGeneration: number;
   idleTimer?: unknown;
+  /** The close already running for this entry, if one is in progress. */
+  closePromise?: Promise<void>;
 }
 
 export function canonicalExecutionProfileDigest(
@@ -270,6 +272,42 @@ export class AcpSessionHandleMap {
     }
     entry.state = "idle";
     this.#armIdleTimer(entry);
+  }
+
+  /**
+   * Close the idle live handles for `sessionId`, and wait for a close of
+   * that session that is already in progress.
+   *
+   * An active handle is left alone: another turn on that session is using it,
+   * and closing it would cut that turn off. A one-shot turn calls this after
+   * its own handle has been released to idle, while the session lock is still
+   * held, so the handle it just used is idle and no other turn can take it.
+   * The idle TTL can start that close first. The entry is then `closing`
+   * rather than idle, and it still holds its capacity slot until the close
+   * finishes. This waits for that close. A close that already failed and
+   * left the handle alive is run again, not skipped. Each captured idle
+   * handle is closed. Rejection handlers are attached when those closes
+   * start. A close that fails does not skip the rest; the first failure is
+   * reported after those attempts.
+   */
+  async dropSession(sessionId: string): Promise<void> {
+    const waits: Promise<void>[] = [];
+    for (const entry of this.#entries.values()) {
+      if (sessionIdFromHandleKey(entry.key) !== sessionId) continue;
+      if (entry.state === "closing") {
+        // A settled failure clears closePromise and leaves the entry. Retry
+        // that close. An in-progress close is joined.
+        waits.push(entry.closePromise ?? this.#removeAndClose(entry));
+        continue;
+      }
+      if (entry.state !== "idle" || entry.handle === undefined) continue;
+      waits.push(this.drop(entry.handle));
+    }
+    const settled = await Promise.allSettled(waits);
+    const failure = settled.find((result) => result.status === "rejected");
+    if (failure !== undefined && failure.status === "rejected") {
+      throw failure.reason;
+    }
   }
 
   async drop(handle: AcpSessionHandle): Promise<void> {
@@ -436,7 +474,25 @@ export class AcpSessionHandleMap {
     await this.#removeAndClose(entry);
   }
 
-  async #removeAndClose(entry: MapEntry): Promise<void> {
+  /**
+   * One close per entry while it is running. A later call joins that close
+   * instead of starting another. After it settles, a new call can run again,
+   * which is how shutdown retries a close that left the handle alive.
+   */
+  #removeAndClose(entry: MapEntry): Promise<void> {
+    if (entry.closePromise !== undefined) return entry.closePromise;
+    const promise = this.#performClose(entry);
+    entry.closePromise = promise;
+    const clear = () => {
+      if (entry.closePromise === promise) entry.closePromise = undefined;
+    };
+    // Both outcomes are handled here so a failed close is not a second,
+    // unhandled rejection on top of the caller's own wait.
+    void promise.then(clear, clear);
+    return promise;
+  }
+
+  async #performClose(entry: MapEntry): Promise<void> {
     this.#disarmIdleTimer(entry);
     if (entry.state === "closed") return;
     if (this.#entries.get(entry.key) === entry && entry.state !== "closing") {
@@ -456,6 +512,18 @@ export class AcpSessionHandleMap {
     if (this.#entries.get(entry.key) === entry) {
       this.#entries.delete(entry.key);
     }
+  }
+}
+
+function sessionIdFromHandleKey(key: string): string | undefined {
+  try {
+    const parsed = JSON.parse(key) as unknown;
+    if (!Array.isArray(parsed) || typeof parsed[0] !== "string") {
+      return undefined;
+    }
+    return parsed[0];
+  } catch {
+    return undefined;
   }
 }
 

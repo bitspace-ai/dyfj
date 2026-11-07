@@ -26,10 +26,11 @@ import {
   resolveRuntimeEnvDefaults,
   type WorkbenchConfig,
 } from "../config/mod.ts";
-import type {
-  HistoryOmissionProjection,
-  WorkbenchAuthContext,
-  WorkbenchSessionEvent,
+import {
+  DomainError,
+  type HistoryOmissionProjection,
+  type WorkbenchAuthContext,
+  type WorkbenchSessionEvent,
 } from "../contract/mod.ts";
 import type { SessionOwners, TurnTicket } from "./session-owner.ts";
 import {
@@ -179,6 +180,12 @@ export interface ExecuteTurnDeps {
   maxToolSteps?: number;
   /** The highest tool-step limit a turn request may set (config). */
   maxToolStepsCeiling?: number;
+  /**
+   * Close the turn's idle external-agent handle before the session lock is
+   * released. The server passes the ACP session map's `dropSession`. Absent
+   * outside that composition, in which case a release request is a no-op.
+   */
+  releaseExternalAgentSession?: (sessionId: string) => Promise<void>;
 }
 
 /** Thread the loaded engine config into executeTurn deps. */
@@ -269,13 +276,50 @@ export function executeTurn(
     const newSession = resolved.sessionId === undefined
       ? { newSessionId: sessionId }
       : {};
-    const result = await runExecuteTurn(resolved, deps, {
-      ...resume,
-      ...newSession,
-    });
-    console.error(formatTurnSummaryLine(result));
-    return result;
+    let result: WorkbenchRuntimeResult | undefined;
+    try {
+      result = await runExecuteTurn(resolved, deps, {
+        ...resume,
+        ...newSession,
+      });
+      console.error(formatTurnSummaryLine(result));
+      return result;
+    } finally {
+      if (
+        resolved.releaseExternalAgentSession &&
+        deps.releaseExternalAgentSession !== undefined
+      ) {
+        await releaseExternalAgentSession(
+          deps.releaseExternalAgentSession,
+          result,
+          sessionId,
+        );
+      }
+    }
   });
+}
+
+/**
+ * Free the one-shot turn's idle external-agent handle. A turn that already
+ * failed keeps that error: this runs from `finally`, and a throw here would
+ * replace a pending exception only when we throw on purpose. A finished turn
+ * that cannot release does not return its receipt over a live handle.
+ */
+async function releaseExternalAgentSession(
+  release: (sessionId: string) => Promise<void>,
+  result: WorkbenchRuntimeResult | undefined,
+  sessionId: string,
+): Promise<void> {
+  try {
+    await release(result?.sessionId ?? sessionId);
+  } catch (error) {
+    if (result === undefined) return;
+    if (error instanceof DomainError) throw error;
+    throw new DomainError(
+      "the external-agent session did not release; restart the runtime " +
+        "(`dyfj stop`, then start it), then retry",
+    );
+  }
 }
 
 function runExecuteTurn(

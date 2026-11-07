@@ -29,6 +29,11 @@ export interface TurnRequestBody {
   // the session's own tool-step limit, within the configured ceiling. A
   // remote caller may lower the limit but not raise it.
   maxToolSteps?: unknown;
+  /**
+   * The caller will not resume this turn's live external-agent handle.
+   * Honored on the loopback transport only.
+   */
+  releaseExternalAgentSession?: unknown;
 }
 
 const TURN_ID_SHAPE =
@@ -195,6 +200,11 @@ export interface ResolvedTurn {
   approvePaidInference: boolean;
   /** The request's own tool-step limit, already checked against the ceiling. */
   maxToolSteps?: number;
+  /**
+   * Close this turn's idle external-agent handle before the session lock is
+   * released. A one-shot client sets it; an interactive client does not.
+   */
+  releaseExternalAgentSession: boolean;
 }
 
 /**
@@ -303,10 +313,24 @@ export function resolveTurnFromBody(
   const maxToolSteps = resolveMaxToolSteps(body.maxToolSteps, loopback, options);
   if (typeof maxToolSteps === "object") return maxToolSteps;
 
+  let releaseExternalAgentSession = false;
+  if (body.releaseExternalAgentSession !== undefined) {
+    if (typeof body.releaseExternalAgentSession !== "boolean") {
+      return {
+        error: "releaseExternalAgentSession must be a boolean",
+        status: 400,
+      };
+    }
+    // A remote caller cannot release a local agent's live session.
+    releaseExternalAgentSession = loopback &&
+      body.releaseExternalAgentSession === true;
+  }
+
   return {
     runtimeInput,
     sessionId,
     approvePaidInference,
+    releaseExternalAgentSession,
     ...(maxToolSteps === undefined ? {} : { maxToolSteps }),
   };
 }

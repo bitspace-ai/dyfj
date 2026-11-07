@@ -162,6 +162,7 @@
     "prototype/src/acp-tool-evidence.ts": "runners/acp",
     "prototype/src/acp-tool-evidence-record.ts": "runners/acp",
     "prototype/src/codex-home-config.ts": "runners/acp",
+    "prototype/src/codex-runner-bin.ts": "runners/acp",
     "prototype/src/private-file.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
     "prototype/src/cli.ts": "cli"

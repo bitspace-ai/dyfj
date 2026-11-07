@@ -71,7 +71,9 @@ Section 5.
   its target layer by name in `scripts/arch-layers.json` (`files`), which is
   the authoritative list. They are:
   - the ACP runner (`acp-client.ts`, `acp-session-map.ts`,
-    `external-agent-runtime.ts`, `acp-fixture-command.ts`, which builds
+    `external-agent-runtime.ts`, `codex-runner-bin.ts`, which writes the
+    Codex runner's private `node`, `npm` and `npx` shims,
+    `acp-fixture-command.ts`, which builds
     the fixture agent's command, `acp-child-io.ts`, its bounded child
     stderr capture and settle wait, `acp-adapter-package.ts`, which
     finds the pinned Codex adapter in the npm workspace install,
@@ -1291,9 +1293,9 @@ stdio with a cleared, profile-selected environment and the resolved workspace,
 bridges permission requests through the existing approval channel, applies
 deadlines to protocol waits and child cleanup operations, and records
 runner-specific events and a runner receipt. Sequential turns that share a
-Workbench session, workspace, and execution profile reuse one live ACP worker
-and session; a concurrent turn for that same key fails as busy instead of
-queueing. Turn cancellation keeps a healthy handle; a protocol or process
+Workbench session, workspace, and execution profile reuse a healthy ACP worker
+and session only while that handle remains retained; a concurrent turn for
+that same key fails as busy instead of queueing. Turn cancellation keeps a healthy handle; a protocol or process
 failure removes it so the next turn can create a replacement. A warm handle is a
 resource cache, not the evidence of continuity: when the keyed handle is gone
 but the Workbench session has prior turns, the replacement session is not
@@ -1388,10 +1390,29 @@ tool-argument depth/node limit, or when retained history carries one of the
 explicitly checked credential shapes. The notice is included in the final ACP
 prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
 acquired handle, the existing error lifecycle closes and removes that handle
-without deleting persisted events. Idle handles retire on a TTL, a small
-resident-session bound fails closed without eviction, and UDS close, a
-foreground SIGINT, or `dyfj stop` wait for in-flight creation and for every
-started close to settle, then surface a retained close failure rather than
+without deleting persisted events. Idle handles retire on a TTL. A one-shot
+`exec`, `ask`, or `-p` turn closes that session's idle external-agent handle
+before the receipt returns, while the session lock is still held. Cleanup
+waits for every matching entry still retained — an idle handle, a close
+already in progress, or a retained entry whose close failed — and reports
+failures from those waits. A receipt for a finished turn is returned only
+after that wait. A TTL close that failed but already removed its entry is
+not reported by the one-shot turn, and its slot is free. A close that fails
+and leaves the handle alive keeps its slot, and a finished turn does not
+return its receipt. The slot is free once teardown removes the handle. If
+the client leaves during
+the turn or during that close, the slot can stay occupied after the
+disconnect. A one-shot turn that fails requests that same close before its
+error returns; if the close also fails, the turn's error is the one returned
+and the slot may still be held.
+An interactive turn does
+not release its handle. That idle handle stays until the idle TTL, a runtime
+stop, or a later one-shot turn on the same session. An idle live
+session keeps a capacity slot while a client can still resume it. A small
+resident-session bound fails closed without evicting a session a client can
+resume. UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight
+creation and for every started close to settle, then surface a retained close
+failure rather than
 reporting success. A shutdown failure exits with status 1. On an interactive
 Unix-socket client, every accepted ACP option (up to 16) is rendered as a
 numbered choice and the exact selected option identifier is returned to the
@@ -1410,7 +1431,7 @@ systems where `/bin/kill` supports negative process-group signaling, with
 `/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local
 stdio child using the community-maintained `@agentclientprotocol/codex-acp`
 adapter; subscription inference may use remote services. Sequential Workbench
-turns reuse the same live adapter process and ACP session under the same
+turns reuse a retained healthy adapter process and ACP session under the same
 session/workspace/profile rule as the fixture. The login task and runtime
 reject a comma or a colon in the operator home and the selected paths; a colon
 would split the child's `PATH`. The
@@ -1455,10 +1476,18 @@ grant owner search permission; the Rustup state directory must grant owner read,
 write, and search permissions. The later child access is still by pathname:
 ancestor ownership and ACLs are not validated, and the selected inode is not
 pinned against replacement after profile construction. Workbench places a
-private Node shim first in the child `PATH`, then the optional executable
-directory, `/usr/bin`, and `/bin`; it also writes that exact path to the
-dedicated home's private `.zprofile` and `.bash_profile` so those macOS login
-shells reset earlier `path_helper` changes. It does not dynamically derive and
+private Node shim first in the child `PATH`, and private `npm` and `npx`
+shims when a sibling's ordinary mode bits let this process's effective
+credentials execute it and both that path and its canonical path are free of
+comma and colon, then the optional executable directory, `/usr/bin`, and
+`/bin`. Selecting Node does not add that executable's directory. An
+operator-selected toolchain directory can still be that parent.
+Access-control lists are not consulted, and the real user and group ids are
+not read. The
+child `HOME` stays the dedicated runner home, and the allowlisted environment
+does not name the operator's `~/.dyfj/config.toml`. It also writes that exact
+path to the dedicated home's private `.zprofile` and `.bash_profile` so those
+macOS login shells reset earlier `path_helper` changes. It does not dynamically derive and
 add an arbitrary parent directory from the selected Node executable; the fixed
 `/usr/bin` and `/bin` entries remain, and an operator may explicitly select
 another directory as the toolchain. It sets `RUSTUP_HOME` to the selected state
@@ -2955,7 +2984,32 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-03 - The Codex route section says how an expired sign-in and other
   agent errors are reported; the JSON-RPC seam section names `models/list`'s
   `catalogUnavailable`.
+- 2026-11-05 - The external-agent lifecycle says a one-shot `exec`, `ask`, or
+  `-p` turn releases its idle external-agent session before the receipt
+  returns, a returned receipt waits for that close, and a failed one-shot
+  turn requests that same close before its error returns. Sequential reuse
+  is only while the handle remains retained. The Codex route says the runner
+  `PATH` includes private `npm` and `npx` shims when a sibling passes the
+  effective-credential mode-bit and delimiter checks, and that the child
+  `HOME` stays the dedicated runner home.
 - 2026-11-05 - The JSON-RPC seam section describes the default output cap
   and reasoning-effort fields in `models/list` and `dyfj models`.
 - 2026-11-06 - The JSON-RPC seam section documents `dyfj sessions show <session> --events [--json]`
   and its turn, tool-event, and preview bounds.
+- 2026-11-07 - The external-agent lifecycle says a returned one-shot receipt
+  has waited for the session's handle close, including a close the idle TTL
+  already started, and that the slot is free once teardown removes the
+  handle. A rejected close that leaves the handle alive keeps its slot.
+- 2026-11-07 - The external-agent lifecycle says one-shot cleanup waits for
+  every matching entry still retained — an idle handle, a close already in
+  progress, or a retained entry whose close failed — and reports failures
+  from those waits. A TTL close that failed but already removed its entry
+  is not reported by the one-shot turn, and its slot is free. A close that
+  leaves the handle alive keeps its slot, and that finished turn does not
+  return its receipt.
+- 2026-11-07 - The external-agent lifecycle narrows that account: one-shot
+  cleanup waits for every matching entry still retained and reports failures
+  from those waits. A TTL close that failed but already removed its entry is
+  not reported by the one-shot turn, and its slot is free. The slot is free
+  once teardown removes the handle; a rejected close that leaves the handle
+  alive keeps its slot.
