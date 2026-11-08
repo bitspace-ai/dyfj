@@ -89,6 +89,7 @@ const MODEL = {
 };
 interface State {
   pid: number;
+  supervisorStartedAt: string;
   root: string;
   socket: string;
   commit: string;
@@ -108,7 +109,10 @@ export function assertPrivateStateFile(
   }
 }
 
-export function assertRuntimeCommand(command: string): void {
+export function assertRuntimeCommand(
+  command: string,
+  startedAt: { recorded: string; actual: string },
+): void {
   const script = fileURLToPath(import.meta.url);
   const matches = [process.execPath, "node"].some((node) =>
     [script, "scripts/scratch-runtime.ts", "./scripts/scratch-runtime.ts"]
@@ -123,6 +127,32 @@ export function assertRuntimeCommand(command: string): void {
   if (!matches) {
     throw new Error("PID is not this runtime supervisor running up");
   }
+  if (!startedAt.recorded) {
+    throw new Error(
+      "state file has no runtime supervisor start time; if an older up " +
+        "wrote it, stop that instance by hand",
+    );
+  }
+  if (startedAt.actual !== startedAt.recorded) {
+    throw new Error(
+      "runtime supervisor start time does not match the state file",
+    );
+  }
+}
+
+// up and down run as separate processes, so both resolve ps from one fixed
+// PATH: the lstart format differs between BSD ps and procps-ng ps.
+const PS_ENV = { PATH: "/bin:/usr/bin", TZ: "UTC" };
+
+function supervisorStartedAt(pid: number): string {
+  const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    encoding: "utf8",
+    env: PS_ENV,
+  });
+  if (result.error || result.status !== 0 || !result.stdout.trim()) {
+    throw new Error("cannot verify runtime supervisor start time");
+  }
+  return result.stdout.trim();
 }
 
 async function loadState(path: string, forShutdown: boolean): Promise<State> {
@@ -155,7 +185,9 @@ export async function loadScript(scriptFile?: string): Promise<ModelScript> {
   );
 }
 async function up(scriptFile?: string): Promise<void> {
+  process.umask(0o077);
   const script = await loadScript(scriptFile);
+  const startedAt = supervisorStartedAt(process.pid);
   let root: string | undefined;
   const controller = new AbortController();
   const stop = () => controller.abort();
@@ -183,6 +215,7 @@ async function up(scriptFile?: string): Promise<void> {
     if (git.status !== 0) throw new Error("cannot identify checkout commit");
     const state: State = {
       pid: process.pid,
+      supervisorStartedAt: startedAt,
       root,
       socket,
       commit: git.stdout.trim(),
@@ -287,11 +320,15 @@ async function down(state: State): Promise<void> {
   const evidence = await recordedEvidence(state);
   const supervisor = spawnSync("ps", ["-o", "command=", "-p", `${state.pid}`], {
     encoding: "utf8",
+    env: PS_ENV,
   });
   if (supervisor.error || supervisor.status !== 0) {
     throw new Error("cannot verify runtime supervisor command");
   }
-  assertRuntimeCommand(supervisor.stdout);
+  assertRuntimeCommand(supervisor.stdout, {
+    recorded: state.supervisorStartedAt,
+    actual: supervisorStartedAt(state.pid),
+  });
   process.kill(state.pid, "SIGTERM");
   const deadline = Date.now() + 30_000;
   const alive = (pid: number) => {

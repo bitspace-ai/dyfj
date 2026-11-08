@@ -587,9 +587,13 @@ recorded processes (the supervisor, Dolt and the engine) stop and the
 temporary root is removed. It does not track `exec`'s CLI children, so run
 `down` only after every `exec` has returned. Before
 signalling a process, `down` requires the state file to be owned by the current
-user with mode `0600`, and checks that the PID's command line matches an
-invocation of `scratch-runtime.ts up`. That check does not tell two checkouts
-apart. It prints
+user with mode `0600`, checks that the PID's command line matches an
+invocation of `scratch-runtime.ts up`, and checks that the PID's start time
+matches the one `up` recorded. The command-line check does not tell two
+checkouts apart. The start-time check refuses a PID whose start time differs,
+such as one another process has reused. It also refuses a state file written
+before the check existed; stop such an instance by hand. `up` sets its umask
+to `077`, which the Dolt and engine processes inherit. `down` prints
 an explicit notice if no turn was recorded. Ctrl-C or SIGTERM in the `up`
 terminal also attempts to stop the instance and remove its root. A startup failure
 attempts the same cleanup. Exported variables point at deleted paths after shutdown; use them

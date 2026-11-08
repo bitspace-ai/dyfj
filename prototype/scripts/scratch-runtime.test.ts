@@ -15,12 +15,18 @@ test("an empty --script path is refused, not replaced by the default", async () 
 });
 
 test("shutdown refuses a PID whose command is not this runtime's up", () => {
+  const startedAt = {
+    recorded: "Sat Nov  7 16:00:00 2026",
+    actual: "Sat Nov  7 16:00:00 2026",
+  };
   const script = fileURLToPath(
     new URL("./scratch-runtime.ts", import.meta.url),
   );
-  assertRuntimeCommand(`${process.execPath} ${script} up`);
-  assertRuntimeCommand("node scripts/scratch-runtime.ts up\n");
-  assertRuntimeCommand("node scripts/scratch-runtime.ts up --script r.json");
+  assertRuntimeCommand(`${process.execPath} ${script} up`, startedAt);
+  assertRuntimeCommand("node scripts/scratch-runtime.ts up\n", startedAt);
+  assertRuntimeCommand(
+    "node scripts/scratch-runtime.ts up --script r.json", startedAt,
+  );
   for (const command of [
     "node unrelated.ts",
     "node scripts/scratch-runtime.ts down",
@@ -29,7 +35,7 @@ test("shutdown refuses a PID whose command is not this runtime's up", () => {
     "echo node scripts/scratch-runtime.ts up",
     "",
   ]) {
-    throws(() => assertRuntimeCommand(command), /runtime supervisor/);
+    throws(() => assertRuntimeCommand(command, startedAt), /runtime supervisor/);
   }
 });
 
@@ -50,6 +56,26 @@ test("shutdown requires the current owner and mode 0600", () => {
   throws(
     () => assertPrivateStateFile({ uid: 501, mode: 0o100600 }, undefined),
     /owner/,
+  );
+});
+
+test("shutdown refuses a reused PID with a different supervisor start time", () => {
+  throws(
+    () => assertRuntimeCommand("node scripts/scratch-runtime.ts up", {
+      recorded: "Sat Nov  7 16:00:00 2026",
+      actual: "Sat Nov  7 16:01:00 2026",
+    }),
+    /runtime supervisor start time does not match/,
+  );
+});
+
+test("shutdown names a state file that predates the start-time check", () => {
+  throws(
+    () => assertRuntimeCommand("node scripts/scratch-runtime.ts up", {
+      recorded: "",
+      actual: "Sat Nov  7 16:00:00 2026",
+    }),
+    /no runtime supervisor start time/,
   );
 });
 
