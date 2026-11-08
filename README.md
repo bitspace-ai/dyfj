@@ -1979,7 +1979,8 @@ deliberately, pin and fixtures together, when external-agent work resumes.
 The pins Dependabot does not cover are the Rust toolchain channel in
 `core/rust-toolchain.toml`, the exact Node version in `.node-version`, and the
 exact Dolt archive versions plus their committed SHA-256 digests in
-`.github/workflows/gate.yml`. Applying a change to
+`.github/workflows/gate.yml` (each digest appears twice per job: in the
+archive check and in that archive's cache key). Applying a change to
 those is intended to be a manual, operator-inspected step; the configuration
 enforces neither the inspection nor who may change them. No gate check flags
 them when they age, so keeping them fresh is a manual cadence. The
