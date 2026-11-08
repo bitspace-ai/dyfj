@@ -22,20 +22,20 @@ function run(
   env: Record<string, string>,
   restrictiveUmask = false,
 ) {
-  const child = spawn(
-    restrictiveUmask ? "/bin/sh" : process.execPath,
-    restrictiveUmask
-      ? [
-        "-c", 'umask 0777; exec "$@"', "scratch", process.execPath,
-        command, ...args,
-      ]
-      : [command, ...args],
-    {
+  // The child inherits the umask in effect when spawn forks it. spawn is
+  // synchronous, so no other JavaScript runs under the restrictive umask, and
+  // this file's tests run one at a time.
+  const previousUmask = restrictiveUmask ? process.umask(0o777) : undefined;
+  let child;
+  try {
+    child = spawn(process.execPath, [command, ...args], {
       cwd: prototypeRoot,
       env,
       stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
+    });
+  } finally {
+    if (previousUmask !== undefined) process.umask(previousUmask);
+  }
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => stdout += chunk);
