@@ -319,18 +319,19 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- **The CI gate's Dolt install survives transient release-download failures
+- **The CI gate's Dolt install retries transient release-download failures
   (BIT-893).** Both gate jobs (`full-gate` and `macos-portability`) fetched the
   pinned Dolt archive with one `curl` attempt, so an intermittent upstream
   HTTP 504 failed the required check on changes unrelated to it. The download
-  now retries up to four times on any error, with a 20-second connect timeout
-  and a 180-second limit per attempt. The archive is also cached with
-  `actions/cache` (pinned by commit digest) under a key naming the Dolt
-  version, platform and pinned SHA-256; a run that restores the entry skips
-  the download. The
-  committed digest is checked before unpacking whether the archive was
-  downloaded or restored from the cache. A restored archive that fails the
-  check fails the job; it does not fall back to a fresh download.
+  now retries up to four times on any error, with a 20-second connect timeout,
+  a 180-second limit per attempt, no new retry after 600 seconds, and a
+  15-minute timeout on the install step. An outage that outlasts that budget
+  still fails the job. The archive is also cached with `actions/cache` (pinned
+  by commit digest) under a key naming the Dolt version, platform and pinned
+  SHA-256; a run that restores the entry skips the download. The committed
+  digest is checked before unpacking whether the archive was downloaded or
+  restored from the cache. A restored archive that fails the check fails the
+  job; it does not fall back to a fresh download.
 
 - **A one-shot `dyfj exec` releases its external-agent session (BIT-872).**
   A one-shot `exec`, `ask`, or `-p` turn left its external-agent handle idle
