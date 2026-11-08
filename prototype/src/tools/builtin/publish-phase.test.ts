@@ -342,7 +342,10 @@ describe("publish phases: a dead ticket starts nothing", () => {
   });
 
   it("starts no gate when markGated refuses", async () => {
-    const tickets = new PublishTickets({ ttlMs: 1 });
+    // A manual clock: the ticket is alive while the pre-gate starts and dies
+    // only when the report write moves time past its lifetime.
+    let now = 0;
+    const tickets = new PublishTickets({ ttlMs: 1, now: () => now });
     const created = tickets.create({
       sessionId: "s1",
       layout: layout(),
@@ -366,9 +369,11 @@ describe("publish phases: a dead ticket starts nothing", () => {
       "anthropic",
       {
         writeError: undefined,
-        // Let the ticket's one-millisecond lifetime pass mid-run.
-        append: () =>
-          new Promise((resolve) => setTimeout(resolve, 20)),
+        // The ticket's one-millisecond lifetime passes mid-run.
+        append: () => {
+          now += 2;
+          return Promise.resolve();
+        },
       },
     );
     assert.strictEqual(calls, 1, "the gate must not start");
