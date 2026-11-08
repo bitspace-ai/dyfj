@@ -124,15 +124,31 @@ export function assertRuntimeCommand(
             value.length > `${prefix} --script `.length;
       })
   );
-  if (!matches || !startedAt.recorded || startedAt.actual !== startedAt.recorded) {
+  if (!matches) {
     throw new Error("PID is not this runtime supervisor running up");
   }
+  if (!startedAt.recorded) {
+    throw new Error(
+      "state file has no runtime supervisor start time; it was written " +
+        "before down checked one, so stop that instance by hand",
+    );
+  }
+  if (startedAt.actual !== startedAt.recorded) {
+    throw new Error(
+      "runtime supervisor start time does not match the state file; " +
+        "the PID now belongs to a different process",
+    );
+  }
 }
+
+// up and down run as separate processes, so both resolve ps from one fixed
+// PATH: the lstart format differs between BSD ps and procps-ng ps.
+const PS_ENV = { PATH: "/bin:/usr/bin", TZ: "UTC" };
 
 function supervisorStartedAt(pid: number): string {
   const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
     encoding: "utf8",
-    env: { PATH: process.env.PATH ?? "/usr/bin:/bin", TZ: "UTC" },
+    env: PS_ENV,
   });
   if (result.error || result.status !== 0 || !result.stdout.trim()) {
     throw new Error("cannot verify runtime supervisor start time");
@@ -305,6 +321,7 @@ async function down(state: State): Promise<void> {
   const evidence = await recordedEvidence(state);
   const supervisor = spawnSync("ps", ["-o", "command=", "-p", `${state.pid}`], {
     encoding: "utf8",
+    env: PS_ENV,
   });
   if (supervisor.error || supervisor.status !== 0) {
     throw new Error("cannot verify runtime supervisor command");

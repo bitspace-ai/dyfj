@@ -319,6 +319,20 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **`scratch-runtime.ts down` checks the supervisor's start time, and `up`
+  survives a restrictive umask (BIT-851).** `up` records its own process start
+  time (`ps -o lstart=`, in UTC) in the state file. Before signalling, `down`
+  compares that value with the recorded PID's current start time, and refuses
+  a PID whose start time differs, such as one reused by another process. A
+  state file written before this change has no start time, and `down` refuses
+  it with a message saying so; stop such an instance by hand. The `ps` calls in
+  `up` and `down` run with `PATH=/bin:/usr/bin`, because the `lstart` format
+  differs between BSD and procps-ng `ps`. `up` sets its umask to `077`
+  before it creates anything, so under a restrictive umask such as `0777` its
+  directories are still created usable, and new files and directories get no
+  group or other access unless a process sets it explicitly. The umask is
+  inherited by the Dolt and engine processes that `up` starts.
+
 - **A one-shot `dyfj exec` releases its external-agent session (BIT-872).**
   A one-shot `exec`, `ask`, or `-p` turn left its external-agent handle idle
   for the idle TTL. The resident-session bound is eight, so a run of one-shot

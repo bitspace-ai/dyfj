@@ -65,7 +65,17 @@ test("shutdown refuses a reused PID with a different supervisor start time", () 
       recorded: "Sat Nov  7 16:00:00 2026",
       actual: "Sat Nov  7 16:01:00 2026",
     }),
-    /runtime supervisor/,
+    /runtime supervisor start time does not match/,
+  );
+});
+
+test("shutdown names a state file that predates the start-time check", () => {
+  throws(
+    () => assertRuntimeCommand("node scripts/scratch-runtime.ts up", {
+      recorded: "",
+      actual: "Sat Nov  7 16:00:00 2026",
+    }),
+    /no runtime supervisor start time/,
   );
 });
 

@@ -196,7 +196,7 @@ test("scratch up, dyfj exec, receipt and down leave only recorded evidence", {
   }
 });
 
-test("down refuses stale state without signalling another root's supervisor", {
+test("down refuses a state file whose supervisor start time does not match", {
   timeout: 120_000,
 }, async () => {
   const staleRoot = await mkdtemp("/tmp/dyfj_s_");
@@ -225,7 +225,7 @@ test("down refuses stale state without signalling another root's supervisor", {
       "down signalled another root's supervisor",
     );
     assert.equal(await down.closed, 1, down.stderr());
-    assert.match(down.stderr(), /runtime supervisor/);
+    assert.match(down.stderr(), /runtime supervisor start time does not match/);
     assert.equal(up.child.exitCode, null);
     const ownDown = run(["down", "--state", path], env);
     assert.equal(await ownDown.closed, 0, ownDown.stderr());
