@@ -93,12 +93,24 @@ jobs:
       # The pinned SHA-256 below is the integrity control for this archive and
       # is checked before the archive is unpacked or any byte of it is
       # executed. The verifier prints only the checked path and an OK/FAILED
-      # status, so a mismatch stays value-free.
+      # status, so a mismatch stays value-free. The archive is cached under a
+      # key that names the version, platform and pinned digest, so a pin change
+      # misses the old entry. A cache hit only skips the download: a restored
+      # archive goes through the same digest check, and a mismatch fails the
+      # job rather than falling back to a fresh download. The download retries
+      # transient upstream failures within a bounded time.
+      - name: Restore the cached Dolt 2.3.1 archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/dolt.tar.gz
+          key: dolt-2.3.1-linux-amd64-sha256-0a2a318f27c5e1088a2883038573c2054e00f356dc9752e74bca934f8321959a
       - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/dolt.tar.gz \
-            "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-linux-amd64.tar.gz"
+          if [ ! -f /tmp/dolt.tar.gz ]; then
+            curl -fsSL --retry 4 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 180 -o /tmp/dolt.tar.gz \
+              "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-linux-amd64.tar.gz"
+          fi
           printf '%s  %s\n' "0a2a318f27c5e1088a2883038573c2054e00f356dc9752e74bca934f8321959a" /tmp/dolt.tar.gz | sha256sum -c -
           tar -xzf /tmp/dolt.tar.gz -C "$HOME"
           "$HOME/dolt-linux-amd64/bin/dolt" version | grep -F "2.3.1"
@@ -143,11 +155,18 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Restore the cached Dolt 2.3.1 archive
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/dolt.tar.gz
+          key: dolt-2.3.1-darwin-arm64-sha256-d738b9f523289e9c51dbe0e9f2623c8e032924c62fa72a443703020adf099d27
       - name: Install Dolt 2.3.1 (exact pinned version, digest-verified)
         run: |
           set -euo pipefail
-          curl -fsSL -o /tmp/dolt.tar.gz \
-            "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-darwin-arm64.tar.gz"
+          if [ ! -f /tmp/dolt.tar.gz ]; then
+            curl -fsSL --retry 4 --retry-all-errors --retry-delay 5 --connect-timeout 20 --max-time 180 -o /tmp/dolt.tar.gz \
+              "https://github.com/dolthub/dolt/releases/download/v2.3.1/dolt-darwin-arm64.tar.gz"
+          fi
           printf '%s  %s\n' "d738b9f523289e9c51dbe0e9f2623c8e032924c62fa72a443703020adf099d27" /tmp/dolt.tar.gz | shasum -a 256 -c -
           mkdir -p "$HOME/.dolt-pinned"
           tar -xzf /tmp/dolt.tar.gz -C "$HOME/.dolt-pinned" --strip-components=1
