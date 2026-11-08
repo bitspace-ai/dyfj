@@ -98,9 +98,10 @@ jobs:
       # misses the old entry. A cache hit only skips the download: a restored
       # archive goes through the same digest check, and a mismatch fails the
       # job rather than falling back to a fresh download. The download makes
-      # up to five attempts of at most 180 seconds each and starts no retry
-      # after 600 seconds; the step's own timeout caps the total, including any
-      # wait a server asks for between attempts.
+      # up to five attempts of at most 180 seconds each, and curl schedules no
+      # retry once 600 seconds have elapsed (one scheduled just before then can
+      # still start just after). The step's own timeout caps the total,
+      # including any wait a server asks for between attempts.
       - name: Restore the cached Dolt 2.3.1 archive
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
