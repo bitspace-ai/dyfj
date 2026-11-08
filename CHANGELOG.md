@@ -325,7 +325,8 @@ README are tracked separately in its Revision history section.
   compares that value with the recorded PID's current start time, and refuses
   a PID whose start time differs, such as one reused by another process. A
   state file written before this change has no start time, and `down` refuses
-  it with a message saying so; stop such an instance by hand. The `ps` calls in
+  it. When that file's supervisor is still running `up`, the message says the
+  start time is missing; stop such an instance by hand. The `ps` calls in
   `up` and `down` run with `PATH=/bin:/usr/bin`, because the `lstart` format
   differs between BSD and procps-ng `ps`. `up` sets its umask to `077`
   before it creates anything, so under a restrictive umask such as `0777` its
