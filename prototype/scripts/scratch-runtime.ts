@@ -129,14 +129,13 @@ export function assertRuntimeCommand(
   }
   if (!startedAt.recorded) {
     throw new Error(
-      "state file has no runtime supervisor start time; it was written " +
-        "before down checked one, so stop that instance by hand",
+      "state file has no runtime supervisor start time; if an older up " +
+        "wrote it, stop that instance by hand",
     );
   }
   if (startedAt.actual !== startedAt.recorded) {
     throw new Error(
-      "runtime supervisor start time does not match the state file; " +
-        "the PID now belongs to a different process",
+      "runtime supervisor start time does not match the state file",
     );
   }
 }
