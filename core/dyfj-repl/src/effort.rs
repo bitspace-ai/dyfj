@@ -79,9 +79,22 @@ pub fn clear_off_codex(session: &mut Session, slug: &str) {
 /// runtime's configured one. A changed effort starts a new Codex session on
 /// the next turn, which is given this session's transcript.
 pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
+    // Clearing comes before any runtime read and needs no Codex model: it is
+    // how an effort the current route refuses is dropped.
+    let previous = session.effort.clone();
+    let clearing = target == EffortTarget::Default;
+    if clearing {
+        session.effort = None;
+    }
+    let cleared = "reasoning effort cleared; turns name none";
     let status = match client.request("runtime/status", json!({})).await {
         Ok(status) => status,
-        Err(err) => return error_line("could not read the runtime's posture", &err),
+        Err(err) => {
+            if clearing {
+                eprintln!("{cleared}");
+            }
+            return error_line("could not read the runtime's posture", &err);
+        }
     };
     let active = session.model.clone().or_else(|| {
         status
@@ -89,14 +102,10 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
             .and_then(Value::as_str)
             .map(str::to_string)
     });
-    let codex = active.as_deref().is_some_and(is_codex_model);
-    // Clearing needs no Codex model: it is how an effort the current route
-    // refuses is dropped.
-    if target == EffortTarget::Default && !codex {
-        session.effort = None;
-        return eprintln!("reasoning effort cleared; turns name none");
-    }
-    if !codex {
+    if !active.as_deref().is_some_and(is_codex_model) {
+        if clearing {
+            return eprintln!("{cleared}");
+        }
         return eprintln!(
             "reasoning effort applies only to codex-chatgpt models; \"{}\" is not one",
             visible(active.as_deref().unwrap_or("the runtime default"))
@@ -107,7 +116,7 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
         .and_then(Value::as_str)
         .unwrap_or("medium")
         .to_string();
-    let before = session.effort.clone().unwrap_or_else(|| configured.clone());
+    let before = previous.unwrap_or_else(|| configured.clone());
     match target {
         EffortTarget::Show => {
             return match &session.effort {
@@ -116,7 +125,7 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
             };
         }
         EffortTarget::Set(level) => session.effort = Some(level),
-        EffortTarget::Default => session.effort = None,
+        EffortTarget::Default => {}
     }
     let now = session.effort.clone().unwrap_or(configured);
     if now == before {
@@ -207,10 +216,14 @@ mod tests {
         drive(codex_catalog, &mut session, vec![model("local/qwen")]).await;
         assert_eq!(session.effort, None, "a non-Codex model drops the effort");
 
-        // `/effort default` clears an effort the route refuses, so the
-        // operator is never left with turns that all fail.
+        // `/effort default` clears an effort the current route refuses...
         session.effort = Some("high".into());
         drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
+        assert_eq!(session.effort, None);
+
+        // ... and before any runtime read, which may fail.
+        session.effort = Some("high".into());
+        drive(|_, _| json!({"rpcError": {"code": -32000, "message": "down"}}), &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
         assert_eq!(session.effort, None);
     }
 }

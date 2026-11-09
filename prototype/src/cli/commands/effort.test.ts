@@ -92,6 +92,28 @@ describe("/effort", () => {
     assert.match(stderr.join("\n"), /reasoning effort cleared/);
   });
 
+  it("clears an effort with /effort default when the runtime cannot be read", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: CODEX, effort: "high" });
+    const down: ConnectFn = () => Promise.reject(new Error("no runtime"));
+    await handleReplEffortCommand("/effort default", config, io, down);
+    assert.strictEqual(config.effort, undefined);
+    assert.match(stderr.join("\n"), /reasoning effort cleared/);
+  });
+
+  it("names no new Codex session when /effort default keeps the effort", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: CODEX, effort: "high" });
+    await handleReplEffortCommand(
+      "/effort default",
+      config,
+      io,
+      connect({ codexReasoningEffort: "high" }),
+    );
+    assert.strictEqual(config.effort, undefined);
+    assert.match(stderr.join("\n"), /reasoning effort stays high/);
+  });
+
   it("names no new Codex session when the effort does not change", async () => {
     const { io, stderr } = fakeIo();
     const config = cfg({ model: CODEX, effort: "high" });
