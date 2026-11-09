@@ -71,7 +71,20 @@ export async function handleReplEffortCommand(
   return true;
 }
 
-/** True when `slug` names a model on the Codex ChatGPT route. */
-export function isCodexModel(slug: string | undefined): boolean {
-  return slug?.startsWith(CODEX_MODEL_PREFIX) === true;
+/**
+ * Drop the session's effort on a switch to `slug` when it is not a Codex
+ * model: carried over, the effort would be refused on every turn.
+ */
+export function clearEffortOffCodex(
+  config: CliConfig,
+  slug: string,
+  io: Io,
+): void {
+  if (config.effort === undefined || slug.startsWith(CODEX_MODEL_PREFIX)) {
+    return;
+  }
+  config.effort = undefined;
+  io.err(
+    `dyfj: reasoning effort cleared for "${slug}" (codex-chatgpt models only)`,
+  );
 }

@@ -174,6 +174,47 @@ pub fn source_tree_hash(root: &Path) -> String {
     hash().unwrap_or_else(|_| FINGERPRINT_UNKNOWN.to_string())
 }
 
+/// One line saying what the next turn will run on, printed after a
+/// command changes it: the session's choices and the catalog row for its
+/// model, without a runtime status read.
+pub fn switch_line(session: &Session, rows: &[Value]) -> String {
+    let mut parts = Vec::new();
+    match &session.model {
+        Some(slug) => {
+            parts.push(visible(slug));
+            if session.model_origin == ModelOrigin::Restored {
+                parts.push("restored from session".into());
+            }
+            if let Some(row) = rows.iter().find(|r| r.get("slug").and_then(Value::as_str) == Some(slug.as_str())) {
+                if let Some(t) = row.get("tier").and_then(Value::as_i64) {
+                    parts.push(format!("tier {t}"));
+                }
+                match row.get("local").and_then(Value::as_bool) {
+                    Some(true) => parts.push("local".into()),
+                    Some(false) => parts.push("hosted".into()),
+                    None => {}
+                }
+            }
+        }
+        None => parts.push("runtime default model".into()),
+    }
+    if session.model_origin == ModelOrigin::Unrecorded {
+        parts.push("no recorded model for this session".into());
+    }
+    if let Some(effort) = &session.effort {
+        parts.push(format!("effort {effort}"));
+    }
+    if session.fast == Some(true) {
+        parts.push("fast".into());
+    }
+    parts.push(if session.approve_paid {
+        "paid approved for this session".into()
+    } else {
+        "paid per runtime posture".into()
+    });
+    format!("posture: {}", parts.join(" · "))
+}
+
 fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     let runtime = status.get("runtime").unwrap_or(status);
     let mut parts: Vec<String> = Vec::new();

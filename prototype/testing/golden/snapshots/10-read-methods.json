@@ -142,6 +142,7 @@
           "defaultRunawayStallUsd": 0.5,
           "maxToolSteps": 32,
           "maxToolStepsCeiling": 64,
+          "codexReasoningEffort": "medium",
           "models": {
             "total": 4,
             "local": 4,
@@ -317,6 +318,7 @@
           "defaultRunawayStallUsd": 0.5,
           "maxToolSteps": 32,
           "maxToolStepsCeiling": 64,
+          "codexReasoningEffort": "medium",
           "models": {
             "total": 4,
             "local": 4,
