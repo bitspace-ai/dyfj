@@ -41,6 +41,13 @@ export async function handleReplEffortCommand(
     io.err(posture.error);
     return true;
   }
+  // Clearing needs no Codex model: it is how an effort the current route
+  // refuses is dropped.
+  if (target === "default" && posture.effort === undefined) {
+    config.effort = undefined;
+    io.err("reasoning effort cleared; turns name none");
+    return true;
+  }
   if (posture.effort === undefined) {
     io.err(
       `dyfj: reasoning effort applies only to codex-chatgpt models; ` +
@@ -55,17 +62,16 @@ export async function handleReplEffortCommand(
     );
     return true;
   }
-  if (target === "default") {
-    config.effort = undefined;
-  } else {
-    config.effort = target;
-  }
+  const before = posture.effort;
+  config.effort = target === "default" ? undefined : target;
   const updated = await fetchSessionPosture(config, connect);
   const effort = "error" in updated ? config.effort : updated.effort;
   io.err(
-    `reasoning effort ${effort ?? "default"} from the next turn; a session ` +
-      "with earlier turns continues in a new Codex session, which is given " +
-      "this session's transcript",
+    effort === before
+      ? `reasoning effort stays ${before}`
+      : `reasoning effort ${effort ?? "default"} from the next turn; a ` +
+        "session with earlier turns continues in a new Codex session, which " +
+        "is given this session's transcript",
   );
   io.err("error" in updated ? updated.error : formatPostureLine(updated));
   return true;

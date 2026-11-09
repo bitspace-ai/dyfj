@@ -201,8 +201,14 @@ pub fn switch_line(session: &Session, rows: &[Value]) -> String {
     if session.model_origin == ModelOrigin::Unrecorded {
         parts.push("no recorded model for this session".into());
     }
-    if let Some(effort) = &session.effort {
-        parts.push(format!("effort {effort}"));
+    // No status is read here, so a Codex model without the session's own
+    // effort is named as running at the runtime's default.
+    match &session.effort {
+        Some(effort) => parts.push(format!("effort {}", visible(effort))),
+        None if session.model.as_deref().is_some_and(crate::session::is_codex_model) => {
+            parts.push("runtime-default effort".into())
+        }
+        None => {}
     }
     if session.fast == Some(true) {
         parts.push("fast".into());
@@ -432,6 +438,12 @@ mod tests {
         let local = Session { model: Some("local/qwen".into()), ..Session::default() };
         let rendered = line(&status, &local, "/tmp/s.sock");
         assert!(!rendered.contains("effort"), "{rendered}");
+        // The line printed after a command has no status to read the
+        // configured effort from, so it says the default applies.
+        let codex = Session { model: Some("codex-chatgpt/gpt-6.1-sol".into()), ..Session::default() };
+        assert!(super::switch_line(&codex, &[]).contains("runtime-default effort"));
+        let own = Session { effort: Some("high".into()), ..codex };
+        assert!(super::switch_line(&own, &[]).contains("effort high"));
     }
 
     /// The command line's choices override the runtime's defaults on the

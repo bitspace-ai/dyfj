@@ -1430,18 +1430,21 @@ Codex turns run at the reasoning effort the operator chooses. `--effort
 <low|medium|high|xhigh>` (on `dyfj`, `dyfj exec` and the Rust REPL) and the
 REPL command `/effort <level>` set it for a `codex-chatgpt/*` model, or for
 `--runner codex-chatgpt`, and Workbench passes it to Codex as
-`model_reasoning_effort`. `/effort` shows the current effort and
-`/effort default` returns to the configured one. Without either, a turn runs
+`model_reasoning_effort`. `/effort` shows the current effort.
+`/effort default` returns to the configured one, and works on any model, so
+it also drops an effort the current route refuses. Without either, a turn runs
 at `[codex] reasoning_effort` in `~/.dyfj/config.toml` (env
 `DYFJ_CODEX_REASONING_EFFORT`), and at `medium` when that is unset. Any other
 level is refused before a turn runs. An effort on any other model is refused
 too: by the command line when it names that model, and otherwise by the
 runtime before the turn starts. A `/model` switch to such a model clears the
-session's effort. The posture line names the effort for a Codex model. A new
-effort takes effect from the next turn. In a session with earlier turns, that
-turn continues in a new Codex session, which is given the session's
-transcript, because the Codex profile carries the effort and a changed
-profile does not reuse the warm one.
+session's effort. The posture line names the effort for a Codex model. The
+Rust REPL's line after a command reads no runtime status, so there a session
+that set no effort shows `runtime-default effort`. A changed effort takes
+effect from the next turn. In a session with earlier turns, that turn
+continues in a new Codex session, which is given the session's transcript,
+because the Codex profile carries the effort and a changed profile does not
+reuse the warm one.
 
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with

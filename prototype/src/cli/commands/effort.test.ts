@@ -84,6 +84,23 @@ describe("/effort", () => {
     assert.match(stderr.join("\n"), /usage: \/effort \[low\|medium\|high\|xhigh\|default\]/);
   });
 
+  it("clears an effort with /effort default even off the Codex route", async () => {
+    const { io, stderr } = fakeIo();
+    const local = cfg({ model: "local-small", effort: "high" });
+    await handleReplEffortCommand("/effort default", local, io, connect());
+    assert.strictEqual(local.effort, undefined);
+    assert.match(stderr.join("\n"), /reasoning effort cleared/);
+  });
+
+  it("names no new Codex session when the effort does not change", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: CODEX, effort: "high" });
+    await handleReplEffortCommand("/effort high", config, io, connect());
+    const out = stderr.join("\n");
+    assert.match(out, /reasoning effort stays high/);
+    assert.doesNotMatch(out, /new Codex session/);
+  });
+
   it("formatPostureLine names the effort when one is given", () => {
     assert.match(
       formatPostureLine({
