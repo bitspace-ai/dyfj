@@ -42,6 +42,40 @@ README are tracked separately in its Revision history section.
   `schema/migrations/025_events_approval_parking.sql` for the two new event
   types.
 
+- **Tests that agent shells cannot reach the runtime socket unprompted.**
+  Whatever connects to the Workbench runtime's Unix socket acts as the
+  operator: it can answer approvals and stop the runtime. Three checks cover
+  the routes an agent's shell commands run on:
+  - **Native `bash`, allowlist route.** `bash-socket-reach.test.ts` checks
+    that the read-only allowlist asks before each listed Unix-socket client
+    form (`dyfj`, `nc`, `ncat`, `socat`, `curl --unix-socket`, script
+    interpreters, `env`/`exec` wrappers, and chains that end in one), and that
+    the refusal comes from the rule that should refuse it: the reason names
+    the client, or for `git -c` and a pipe to `nc`, the git or pipe rule. It
+    also runs the allowlisted readers (`cat`, `head`, `tail`, `wc`, `grep`,
+    `rg`, `sed -n`, `ls`) that are on PATH against a live socket inside the
+    workspace, fails if one could not execute, and checks that none connects;
+    a reader missing from PATH is skipped with the reason. These checks cover
+    the classifier only: a call the operator approves is outside them, and a
+    command added to the allowlist later needs its own review.
+  - **Native `bash`, srt sandbox route.** New checks in
+    `srt-sandbox.integration.test.ts` run `node` and `nc -U` in the sandbox
+    against a live socket at the default runtime path
+    (`<HOME>/.dyfj/run/workbench.sock`) and inside the writable worktree. The
+    same command run outside the sandbox must connect (the control); inside
+    it must not, and `node` must report `EPERM` or `EACCES`.
+  - **Codex route.** `codex-seatbelt-socket.test.ts` is a canary. It runs the
+    pinned Codex executable's `codex sandbox` in workspace-write mode, the
+    mode the route asks codex-acp for, with a Codex home of its own. It does
+    not go through codex-acp. At both socket locations, `node` and `nc -U`
+    must connect with the sandbox's network access on (the control) and must
+    not connect with it off, where `node` must report `EPERM`. The canary runs
+    on macOS only (Seatbelt); Codex's Linux sandbox is not checked.
+
+  Each containment check fails on a build opened up to allow the connect:
+  `nc` and `dyfj` added to the allowlist, srt's `allowAllUnixSockets`, or
+  Codex's `network_access`. No product code changes.
+
 - **Read a session's recorded turns and tool events from the CLI.**
   `dyfj sessions show <session> --events [--json]` (accepting a bare session id
   or a `workbench-<id>` slug) queries `events/query` over the local Unix socket
