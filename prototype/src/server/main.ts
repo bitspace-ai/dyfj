@@ -119,7 +119,11 @@ import {
 import { buildTurnHandlers } from "./rpc/turn.ts";
 import { buildApprovalsHandlers } from "./rpc/approvals.ts";
 import { UDS_LOOPBACK_AUTH } from "./rpc/turn-core.ts";
-import { buildHeadlessTurns, type HeadlessTurns } from "./headless-turn.ts";
+import {
+  buildHeadlessTurns,
+  HeadlessSessions,
+  type HeadlessTurns,
+} from "./headless-turn.ts";
 import { ParkedApprovals } from "./parked-approvals.ts";
 
 export interface WorkbenchUnixServerOptions {
@@ -352,6 +356,7 @@ function buildHandlers(
     options,
     frictionEventWriter,
   );
+  const headlessSessions = new HeadlessSessions();
   const turnDeps = {
     ...options,
     owners,
@@ -360,6 +365,7 @@ function buildHandlers(
     releaseExternalAgentSession: (sessionId: string) =>
       acpSessions.dropSession(sessionId),
     parkedApprovals,
+    headlessSessions,
   };
   const handlers: RpcHandlers = {
     ...buildRuntimeHandlers({

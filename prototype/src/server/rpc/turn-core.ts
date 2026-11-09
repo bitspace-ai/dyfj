@@ -55,6 +55,12 @@ export interface TurnCoreDeps extends TurnPosture {
    * in for the operator's answer, which only `approvals/answer` gives.
    */
   parkedApprovals?: { hasPending(sessionId: string): boolean };
+  /**
+   * Sessions with a turn the runtime started itself in flight. A turn naming
+   * one is refused rather than queued behind it, so the operator's prompt is
+   * never stuck behind an approval it would have to answer.
+   */
+  headlessSessions?: { has(sessionId: string): boolean };
 }
 
 
@@ -114,6 +120,17 @@ function sessionAwaitingApproval(sessionId: string): string {
     `Answer it from the session: dyfj --session ${sessionId}`;
 }
 
+/**
+ * Why a turn naming a session that is running a turn the runtime started is
+ * refused. Queued behind it, the prompt would wait on that turn's approvals
+ * while holding the client that has to answer them.
+ */
+function sessionRunningHeadless(sessionId: string): string {
+  return `session ${sessionId} is running a turn the runtime started; ` +
+    `nothing was sent. Its approvals are asked in the session: ` +
+    `dyfj --session ${sessionId}`;
+}
+
 export function buildTurnCore(deps: TurnCoreDeps): TurnCore {
   const { owners, runRuntime, fetchSessionEvents } = deps;
   const engineDeps = resolveEngineTurnDeps(deps);
@@ -128,11 +145,14 @@ export function buildTurnCore(deps: TurnCoreDeps): TurnCore {
       });
       // Refused before the caller admits it, so nothing is queued behind the
       // waiting turn.
-      if (
-        !("error" in resolved) && resolved.sessionId !== undefined &&
-        deps.parkedApprovals?.hasPending(resolved.sessionId) === true
-      ) {
+      if ("error" in resolved || resolved.sessionId === undefined) {
+        return resolved;
+      }
+      if (deps.parkedApprovals?.hasPending(resolved.sessionId) === true) {
         return { error: sessionAwaitingApproval(resolved.sessionId) };
+      }
+      if (deps.headlessSessions?.has(resolved.sessionId) === true) {
+        return { error: sessionRunningHeadless(resolved.sessionId) };
       }
       return resolved;
     },

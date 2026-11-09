@@ -11,7 +11,7 @@ import type { RpcContext } from "../../transport/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
-import { buildHeadlessTurns } from "../headless-turn.ts";
+import { buildHeadlessTurns, HeadlessSessions } from "../headless-turn.ts";
 import { ParkedApprovals } from "../parked-approvals.ts";
 import { buildApprovalsHandlers } from "./approvals.ts";
 import { buildTurnHandlers } from "./turn.ts";
@@ -75,6 +75,7 @@ function compose(runRuntime: TurnRuntime) {
     fetchSessionEvents: () => Promise.resolve([]),
     env: new MapEnv(),
     parkedApprovals: parked,
+    headlessSessions: new HeadlessSessions(),
   };
   return {
     events,
@@ -256,6 +257,56 @@ test("text sent to the session cannot resolve a parked approval", { timeout: 5_0
     verdict: { decision: string };
   };
   assert.equal(receipt.verdict.decision, "deny");
+});
+
+test("a turn sent while a headless turn runs on its session is refused, not queued behind it", { timeout: 5_000 }, async () => {
+  // The headless turn announces its session, then runs a step (held here)
+  // before it asks for an approval. A later turn on the same session runs at
+  // once and asks nothing.
+  let releaseStep!: () => void;
+  const step = new Promise<void>((resolve) => releaseStep = resolve);
+  const prompts: string[] = [];
+  const composed = compose(async (input) => {
+    prompts.push(input.prompt);
+    const sessionId = input.sessionId ?? input.newSessionId!;
+    if (prompts.length > 1) return result({ sessionId });
+    await input.frames?.onRuntimeEvent?.({
+      type: "sessionStart",
+      sessionId,
+      traceId: "T1",
+      mode: "chat",
+    });
+    await step;
+    const verdict = await input.approver!.confirmToolApproval!(toolRequest);
+    return result({ sessionId, verdict });
+  });
+  const turn = await startHeadless(composed);
+
+  // Nothing is parked yet, but the session is busy: the prompt is refused
+  // instead of waiting behind a turn whose approval it would block.
+  const refused = await rpcFailure(composed.handlers, "turn", {
+    prompt: "hello",
+    sessionId: turn.sessionId,
+  }, eagerClient());
+  assert.match(refused.message, /running a turn the runtime started/);
+  assert.match(refused.message, /nothing was sent/);
+  assert.deepStrictEqual(prompts, ["do the thing"]);
+
+  releaseStep();
+  const [pending] = await untilParked(composed.handlers, turn.sessionId);
+  await callRpc(composed.handlers, "approvals/answer", {
+    sessionId: turn.sessionId,
+    approvalId: pending!.approvalId,
+    response: { decision: "approve" },
+  });
+  await turn.result;
+
+  // Once the headless turn has settled, the session takes turns again.
+  await callRpc(composed.handlers, "turn", {
+    prompt: "hello again",
+    sessionId: turn.sessionId,
+  }, eagerClient());
+  assert.deepStrictEqual(prompts, ["do the thing", "hello again"]);
 });
 
 test("a parked ACP permission is answered by selecting one of its options", async () => {

@@ -4,7 +4,9 @@
 // the turn's `sessionStart` event, and the approver parks each approval
 // request in `ParkedApprovals` against that session until the operator answers
 // it (`approvals/answer`). A request raised before the session is announced, or
-// one whose park cannot be recorded, is denied instead. Text deltas have no
+// one whose park cannot be recorded, is denied instead. From that announcement
+// until the turn settles, the session is marked running in `HeadlessSessions`,
+// and the turn core refuses a turn that names it. Text deltas have no
 // reader; the turn's events are in the log.
 //
 // This is a runtime service, not an RPC method. Nothing starts a headless turn
@@ -37,8 +39,35 @@ export interface HeadlessTurns {
   start(body: TurnRequestBody): HeadlessTurn | { error: string };
 }
 
+/**
+ * The sessions with a headless turn in flight, counted per session. Written
+ * only by `buildHeadlessTurns`; the turn core reads it to refuse a turn that
+ * would otherwise queue behind one.
+ */
+export class HeadlessSessions {
+  readonly #running = new Map<string, number>();
+
+  has(sessionId: string): boolean {
+    return this.#running.has(sessionId);
+  }
+
+  /** Mark the session running; the returned function ends that mark once. */
+  enter(sessionId: string): () => void {
+    this.#running.set(sessionId, (this.#running.get(sessionId) ?? 0) + 1);
+    let left = false;
+    return () => {
+      if (left) return;
+      left = true;
+      const count = (this.#running.get(sessionId) ?? 1) - 1;
+      if (count > 0) this.#running.set(sessionId, count);
+      else this.#running.delete(sessionId);
+    };
+  }
+}
+
 export interface HeadlessTurnDeps extends TurnCoreDeps {
   parkedApprovals: ParkedApprovals;
+  headlessSessions: HeadlessSessions;
 }
 
 const PARK_FAILED = "the approval request could not be parked for the operator";
@@ -56,6 +85,7 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
       // by its approver. A request raised before the session is known cannot
       // be parked against it, and is denied.
       let site: ParkSite | undefined;
+      let leave = () => {};
       let announce!: (sessionId: string) => void;
       let unannounced!: (error: Error) => void;
       const session = new Promise<string>((resolve, reject) => {
@@ -70,6 +100,8 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
         onRuntimeEvent: (event) => {
           if (event.type !== "sessionStart") return;
           site = { sessionId: event.sessionId, traceId: event.traceId };
+          leave();
+          leave = deps.headlessSessions.enter(event.sessionId);
           announce(event.sessionId);
         },
       };
@@ -84,8 +116,14 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
 
       const result = core.run(resolved, { ticket, approver, frames });
       void result.then(
-        () => unannounced(new Error("the turn ended before its session started")),
-        () => unannounced(new Error("the turn failed before its session started")),
+        () => {
+          leave();
+          unannounced(new Error("the turn ended before its session started"));
+        },
+        () => {
+          leave();
+          unannounced(new Error("the turn failed before its session started"));
+        },
       );
       return { ticket, session, result };
     },

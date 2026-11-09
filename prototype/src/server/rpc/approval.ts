@@ -107,7 +107,8 @@ export type TurnApprover = NonNullable<ExecuteTurnDeps["approver"]>;
 
 /**
  * Ask one approval request and wait for the answer. A rejection is a request
- * that could not be asked or answered; the approver denies it.
+ * that could not be asked or answered; the approver denies it, unless the
+ * turn was cancelled, in which case the cancellation propagates.
  */
 export type RequestApproval = (
   request: unknown,
