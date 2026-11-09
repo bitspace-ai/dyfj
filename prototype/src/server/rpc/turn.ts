@@ -1,38 +1,25 @@
 // The `turn` namespace: `turn` runs one agentic turn on this connection and
 // `turn/cancel` cancels it. Approvals go to the connected client as
 // server-initiated `approval` requests; text deltas and runtime events go
-// back as `stream` notifications.
+// back as `stream` notifications. The turn itself runs in the turn core
+// (`turn-core.ts`); this binding supplies the connection's approver and sink.
 
 import {
   budgetCeilingApprovalRequest,
   type BudgetCeilingVerdict,
 } from "../../budget/mod.ts";
-import type { Env, PermissionLevel } from "../../config/mod.ts";
 import {
   type AcpPermissionSelection,
-  DomainError,
   isSupersedingRetryStarted,
   type TurnStreamFrame,
-  type WorkbenchAuthContext,
 } from "../../contract/mod.ts";
 import {
-  describeErrorForLog,
-  engineConfigToTurnDeps,
-  executeTurn,
-  type ExecuteTurnDeps,
   type FrameSink,
   isValidTurnId,
-  resolveTurnFromBody,
-  type SessionOwners,
   type TurnRequestBody,
-  type TurnRuntime,
   type TurnTicket,
-  UnexpectedTurnError,
 } from "../../engine/mod.ts";
-import type {
-  CommandDefinition,
-  ToolApprovalVerdict,
-} from "../../tools/mod.ts";
+import type { ToolApprovalVerdict } from "../../tools/mod.ts";
 import {
   asRecord,
   type RpcContext,
@@ -48,60 +35,15 @@ import {
   toApprovalVerdict,
   toBudgetCeilingVerdict,
 } from "./approval.ts";
-import type { FetchSessionEvents } from "./events.ts";
+import {
+  buildTurnCore,
+  type TurnApprover,
+  type TurnCoreDeps,
+} from "./turn-core.ts";
 
-/** The engine posture a turn inherits when its request does not set it. */
-export interface TurnPosture {
-  /** Loaded engine config; when present, the loose fields below are unused. */
-  engineConfig?: Parameters<typeof engineConfigToTurnDeps>[0];
-  defaultCompanionModel?: string | null;
-  permissionLevel?: PermissionLevel;
-}
+export type { TurnPosture } from "./turn-core.ts";
 
-export interface TurnHandlerDeps extends TurnPosture {
-  /** The engine's session owners, shared with the runtime the turns run. */
-  owners: SessionOwners;
-  runRuntime: TurnRuntime;
-  fetchSessionEvents: FetchSessionEvents;
-  /** Boot-discovered external MCP commands available to each turn. */
-  externalMcpCommands?: readonly CommandDefinition[];
-  /** Where the turn's env-derived defaults are read; the process env when omitted. */
-  env?: Env;
-  /**
-   * Close an idle external-agent handle for the session a one-shot turn just
-   * ran. The composition root passes the session map. Absent, the request's
-   * release flag does not free a slot.
-   */
-  releaseExternalAgentSession?: (sessionId: string) => Promise<void>;
-}
-
-// UDS is the canonical loopback transport: a connection is authenticated by the
-// OS as the local user via the socket's filesystem permissions (the 0700 parent
-// dir owned by the operator), and carries full loopback clearance. Paid
-// escalation and budget overrides therefore remain available — but, exactly as
-// on the HTTP loopback path, only with an explicit per-turn opt-in in the params
-//; the shared turn core enforces that, not this binding.
-const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
-  transport: "loopback",
-  authnStatus: "authenticated",
-  authnMechanism: "local_user",
-  authnIssuerRef: "local_os",
-  authzBasis: "policy:loopback-uds",
-};
-
-function resolveEngineTurnDeps(
-  options: TurnPosture,
-): ReturnType<typeof engineConfigToTurnDeps> {
-  if (options.engineConfig !== undefined) {
-    return engineConfigToTurnDeps(options.engineConfig);
-  }
-  return {
-    defaultCompanionModel: options.defaultCompanionModel,
-    permissionLevel: options.permissionLevel,
-  };
-}
-
-type TurnApprover = NonNullable<ExecuteTurnDeps["approver"]>;
+export type TurnHandlerDeps = TurnCoreDeps;
 
 // The turn's approver: each decision goes to the connected client as a
 // server-initiated `approval` request, bounded by the turn's cancel signal.
@@ -252,22 +194,13 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
   // The engine's session owners: turn locks, budget scopes and cancel
   // signals. The connection map below only records which turn each
   // connection is running.
-  const { owners, runRuntime, fetchSessionEvents } = deps;
-  const engineDeps = resolveEngineTurnDeps(deps);
+  const { owners } = deps;
+  const core = buildTurnCore(deps);
   const activeTurns = new Map<RpcContext, Map<string, TurnTicket>>();
 
   return {
     turn: async (params, ctx) => {
-      const resolved = resolveTurnFromBody(
-        asRecord(params) as TurnRequestBody,
-        true,
-        {
-          approvePaidDefault: engineDeps.approvePaidDefault,
-          trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
-          maxToolSteps: engineDeps.maxToolSteps,
-          maxToolStepsCeiling: engineDeps.maxToolStepsCeiling,
-        },
-      );
+      const resolved = core.resolve(asRecord(params) as TurnRequestBody);
       if ("error" in resolved) {
         throw new RpcError(RpcErrorCode.invalidParams, resolved.error);
       }
@@ -287,33 +220,11 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
       }
       contextTurns.set(activeKey, activeTurn);
       try {
-        return await executeTurn(resolved, {
-          owners,
+        return await core.run(resolved, {
           ticket: activeTurn,
-          ...(deps.env === undefined ? {} : { env: deps.env }),
-          authContext: UDS_LOOPBACK_AUTH,
-          loopback: true,
-          runRuntime,
-          fetchSessionEvents,
-          ...engineDeps,
-          externalMcpCommands: deps.externalMcpCommands,
           approver: clientApprover(ctx, activeTurn),
           frames: streamFrames(ctx, turnId),
-          ...(deps.releaseExternalAgentSession === undefined
-            ? {}
-            : {
-              releaseExternalAgentSession: deps.releaseExternalAgentSession,
-            }),
         });
-      } catch (error) {
-        // A DomainError states its condition and crosses the wire as its
-        // message. Anything else would reach the client as `[Error, N bytes]`
-        // with no next step: this is the one seam every turn crosses, so the
-        // log gets its class here, and its code when it has one, and the
-        // client a stated condition.
-        if (error instanceof DomainError) throw error;
-        console.error(`[turn-error] ${describeErrorForLog(error)}`);
-        throw new UnexpectedTurnError(error);
       } finally {
         const contextTurns = activeTurns.get(ctx);
         if (contextTurns?.get(activeKey) === activeTurn) {
