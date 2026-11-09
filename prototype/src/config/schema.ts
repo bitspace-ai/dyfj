@@ -28,7 +28,8 @@ export const PERMISSION_LEVELS: readonly PermissionLevel[] = [
 
 /**
  * The reasoning efforts the Codex ChatGPT route accepts, passed to Codex as
- * `model_reasoning_effort`. Without one, a Codex turn runs at `medium`.
+ * `model_reasoning_effort`. A Codex turn whose request and config name none
+ * runs at `medium`.
  */
 export type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export const CODEX_REASONING_EFFORTS: readonly CodexReasoningEffort[] = [

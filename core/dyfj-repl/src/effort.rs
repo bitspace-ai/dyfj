@@ -160,8 +160,9 @@ mod tests {
         }
     }
 
-    /// `--effort` takes the levels the Codex route accepts, on a Codex model
-    /// only, and fails at startup otherwise.
+    /// `--effort` takes the levels the Codex route accepts. Startup refuses
+    /// it on a named model off the Codex route, unless a resumed session's
+    /// recorded model will replace that model.
     #[test]
     fn a_startup_effort_is_validated_before_the_session_starts() {
         assert_eq!(level_flag("xhigh".into()), Ok("xhigh".into()));
