@@ -10,7 +10,6 @@ import {
   describeErrorForLog,
   engineConfigToTurnDeps,
   executeTurn,
-  type ExecuteTurnDeps,
   type FrameSink,
   type ResolvedTurn,
   resolveTurnFromBody,
@@ -22,7 +21,10 @@ import {
   type WorkbenchRuntimeResult,
 } from "../../engine/mod.ts";
 import type { CommandDefinition } from "../../tools/mod.ts";
+import type { TurnApprover } from "./approval.ts";
 import type { FetchSessionEvents } from "./events.ts";
+
+export type { TurnApprover } from "./approval.ts";
 
 /** The engine posture a turn inherits when its request does not set it. */
 export interface TurnPosture {
@@ -47,10 +49,14 @@ export interface TurnCoreDeps extends TurnPosture {
    * release flag does not free a slot.
    */
   releaseExternalAgentSession?: (sessionId: string) => Promise<void>;
+  /**
+   * The runtime's parked approvals. A turn that names a session with an
+   * approval waiting is refused: text sent to that session must never stand
+   * in for the operator's answer, which only `approvals/answer` gives.
+   */
+  parkedApprovals?: { hasPending(sessionId: string): boolean };
 }
 
-/** The decisions a turn asks its caller for: tool, ACP permission, spend. */
-export type TurnApprover = NonNullable<ExecuteTurnDeps["approver"]>;
 
 /**
  * What the caller of one turn supplies. The caller admits the ticket from the
@@ -76,8 +82,9 @@ export interface TurnCore {
 // escalation and budget overrides therefore remain available — but, exactly as
 // on the HTTP loopback path, only with an explicit per-turn opt-in in the params
 //; the shared turn core enforces that, not this binding. This core runs every
-// turn under this posture; the `turn` RPC is its only caller today.
-const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
+// turn under this posture: the `turn` RPC's and the runtime's headless turns
+// (`../headless-turn.ts`).
+export const UDS_LOOPBACK_AUTH: WorkbenchAuthContext = {
   transport: "loopback",
   authnStatus: "authenticated",
   authnMechanism: "local_user",
@@ -97,18 +104,38 @@ function resolveEngineTurnDeps(
   };
 }
 
+/**
+ * Why a turn naming a session whose running turn is waiting for the
+ * operator's approval is refused. Its text is not delivered: an answer is
+ * given only through `approvals/answer`.
+ */
+function sessionAwaitingApproval(sessionId: string): string {
+  return `session ${sessionId} is waiting for approval; nothing was sent. ` +
+    `Answer it from the session: dyfj --session ${sessionId}`;
+}
+
 export function buildTurnCore(deps: TurnCoreDeps): TurnCore {
   const { owners, runRuntime, fetchSessionEvents } = deps;
   const engineDeps = resolveEngineTurnDeps(deps);
 
   return {
-    resolve: (body) =>
-      resolveTurnFromBody(body, true, {
+    resolve: (body) => {
+      const resolved = resolveTurnFromBody(body, true, {
         approvePaidDefault: engineDeps.approvePaidDefault,
         trustWorkspaceInstructions: engineDeps.trustWorkspaceInstructions,
         maxToolSteps: engineDeps.maxToolSteps,
         maxToolStepsCeiling: engineDeps.maxToolStepsCeiling,
-      }),
+      });
+      // Refused before the caller admits it, so nothing is queued behind the
+      // waiting turn.
+      if (
+        !("error" in resolved) && resolved.sessionId !== undefined &&
+        deps.parkedApprovals?.hasPending(resolved.sessionId) === true
+      ) {
+        return { error: sessionAwaitingApproval(resolved.sessionId) };
+      }
+      return resolved;
+    },
     run: async (resolved, { ticket, approver, frames }) => {
       try {
         return await executeTurn(resolved, {

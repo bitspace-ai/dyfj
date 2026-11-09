@@ -5,11 +5,6 @@
 // (`turn-core.ts`); this binding supplies the connection's approver and sink.
 
 import {
-  budgetCeilingApprovalRequest,
-  type BudgetCeilingVerdict,
-} from "../../budget/mod.ts";
-import {
-  type AcpPermissionSelection,
   isSupersedingRetryStarted,
   type TurnStreamFrame,
 } from "../../contract/mod.ts";
@@ -19,7 +14,6 @@ import {
   type TurnRequestBody,
   type TurnTicket,
 } from "../../engine/mod.ts";
-import type { ToolApprovalVerdict } from "../../tools/mod.ts";
 import {
   asRecord,
   type RpcContext,
@@ -27,14 +21,7 @@ import {
   RpcErrorCode,
   type RpcHandlers,
 } from "../../transport/mod.ts";
-import {
-  approvalWasAborted,
-  rejectedAcpPermissionSelection,
-  terminalAcpToolKind,
-  toAcpPermissionSelection,
-  toApprovalVerdict,
-  toBudgetCeilingVerdict,
-} from "./approval.ts";
+import { approverOver } from "./approval.ts";
 import {
   buildTurnCore,
   type TurnApprover,
@@ -47,85 +34,17 @@ export type TurnHandlerDeps = TurnCoreDeps;
 
 // The turn's approver: each decision goes to the connected client as a
 // server-initiated `approval` request, bounded by the turn's cancel signal.
+// A failed request (no client approver, dropped connection) denies,
+// fail-closed.
 function clientApprover(ctx: RpcContext, activeTurn: TurnTicket): TurnApprover {
-  const abortIfApprovalWasInterrupted = (response: unknown): void => {
-    if (!approvalWasAborted(response)) return;
-    activeTurn.abort();
-    throw activeTurn.signal.reason;
-  };
-  const rejectStaleApprovalAfterCancellation = (): void => {
-    if (activeTurn.signal.aborted) {
-      throw activeTurn.signal.reason;
-    }
-  };
-  const requestApproval = (
-    request: unknown,
-    signal?: AbortSignal,
-  ): Promise<unknown> =>
-    ctx.request(
-      "approval",
-      request,
-      signal === undefined
-        ? activeTurn.signal
-        : AbortSignal.any([activeTurn.signal, signal]),
-    );
-  return {
-    // mid-turn approval over the duplex channel — the server asks
-    // the connected client to approve a mutating tool or budget ceiling;
-    // the client's response is the verdict. A failed request (no client
-    // approver, dropped connection) denies, fail-closed.
-    confirmToolApproval: (request, signal) =>
-      requestApproval(request, signal).then(
-        (response) => {
-          abortIfApprovalWasInterrupted(response);
-          rejectStaleApprovalAfterCancellation();
-          return toApprovalVerdict(response);
-        },
-        (): ToolApprovalVerdict => {
-          rejectStaleApprovalAfterCancellation();
-          return {
-            decision: "deny",
-            reason: "approval request failed (no client approver?)",
-          };
-        },
-      ),
-    confirmExternalAgentPermission: (prompt, signal) =>
-      requestApproval({
-        kind: "external_agent_permission",
-        title: prompt.toolCall.title,
-        arguments: {
-          "ACP tool": prompt.toolCall.name ?? "(not supplied)",
-          "ACP kind": terminalAcpToolKind(prompt.toolCall.kind),
-          "Requested input": prompt.toolCall.inputSummary,
-        },
-        options: prompt.options,
-      }, signal).then(
-        (response) => {
-          abortIfApprovalWasInterrupted(response);
-          rejectStaleApprovalAfterCancellation();
-          return toAcpPermissionSelection(response, prompt);
-        },
-        (): AcpPermissionSelection => {
-          rejectStaleApprovalAfterCancellation();
-          return rejectedAcpPermissionSelection(prompt);
-        },
-      ),
-    confirmBudgetCeiling: (warning) =>
-      requestApproval(budgetCeilingApprovalRequest(warning)).then(
-        (response) => {
-          abortIfApprovalWasInterrupted(response);
-          rejectStaleApprovalAfterCancellation();
-          return toBudgetCeilingVerdict(response);
-        },
-        (): BudgetCeilingVerdict => {
-          rejectStaleApprovalAfterCancellation();
-          return {
-            decision: "deny",
-            reason: "budget ceiling approval failed (no client approver?)",
-          };
-        },
-      ),
-  };
+  return approverOver(
+    (request, signal) => ctx.request("approval", request, signal),
+    activeTurn,
+    {
+      tool: "approval request failed (no client approver?)",
+      budget: "budget ceiling approval failed (no client approver?)",
+    },
+  );
 }
 
 // The turn's frame sink: text deltas and runtime events go back to the

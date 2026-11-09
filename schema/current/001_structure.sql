@@ -19,7 +19,9 @@ CREATE TABLE events (
         'provider_call',
         'runner_selected',
         'agent_permission',
-        'agent_response'
+        'agent_response',
+        'approval_parked',
+        'approval_resolved'
     ) NOT NULL,
     created_at                TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 

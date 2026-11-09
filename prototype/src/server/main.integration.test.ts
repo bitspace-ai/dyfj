@@ -532,3 +532,53 @@ test("idle external-agent sessions without a release fill capacity", async () =>
   assert.match(error.message, /External-agent session capacity reached/);
   assert.equal(map.size, 8);
 });
+
+// A headless turn over the real composition: its approval parks in the
+// runtime, a client on the socket lists and answers it, and the turn resumes.
+test("a headless turn's parked approval is answered by a client on the socket", async () => {
+  const store = new MemoryStore();
+  const runRuntime: TurnRuntime = async (input) => {
+    const sessionId = input.newSessionId!;
+    await input.frames?.onRuntimeEvent?.({
+      type: "sessionStart",
+      sessionId,
+      traceId: "T1",
+      mode: "chat",
+    });
+    const verdict = await input.approver!.confirmToolApproval!({
+      commandId: "bash",
+      callId: "c1",
+      title: "Run a command",
+      arguments: { command: "touch x" },
+    });
+    return { verdict } as unknown as WorkbenchRuntimeResult;
+  };
+  await using started = await startServer("server-parked-approval", {
+    store,
+    runRuntime,
+  });
+  const turn = started.server.startHeadlessTurn({ prompt: "do the thing" });
+  assert.ok(!("error" in turn));
+  const sessionId = await turn.session;
+
+  await using client = await dial(started.server);
+  let approvals: { approvalId: string }[] = [];
+  for (let i = 0; i < 200 && approvals.length === 0; i++) {
+    ({ approvals } = await client.peer.request("approvals/pending", {
+      sessionId,
+    }) as { approvals: { approvalId: string }[] });
+  }
+  assert.equal(approvals.length, 1);
+  assert.deepStrictEqual(
+    await client.peer.request("approvals/answer", {
+      sessionId,
+      approvalId: approvals[0]!.approvalId,
+      response: { decision: "approve" },
+    }),
+    { answered: true },
+  );
+  const receipt = await turn.result as unknown as { verdict: unknown };
+  assert.deepStrictEqual(receipt.verdict, { decision: "approve" });
+  // The park and its answer are in the log.
+  assert.equal(await store.events.countBySession(sessionId), 2);
+});

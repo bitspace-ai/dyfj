@@ -130,6 +130,23 @@ export function agentResponseEvent(
 }
 
 /**
+ * A turn's approval request was parked for the operator; `resource` is the
+ * approval id.
+ */
+export function approvalParkedEvent(
+  fields: EventFieldsWith<"resource" | "content">,
+): TypedEventInsert<"approval_parked"> {
+  return build("approval_parked", fields);
+}
+
+/** A parked approval was answered, timed out, or cancelled. */
+export function approvalResolvedEvent(
+  fields: EventFieldsWith<"resource" | "permission_verdict">,
+): TypedEventInsert<"approval_resolved"> {
+  return build("approval_resolved", fields);
+}
+
+/**
  * One builder per event type. A new `event_type` in the DDL fails typecheck
  * here until it has a builder.
  */
@@ -148,4 +165,6 @@ export const EVENT_BUILDERS: {
   runner_selected: runnerSelectedEvent,
   agent_permission: agentPermissionEvent,
   agent_response: agentResponseEvent,
+  approval_parked: approvalParkedEvent,
+  approval_resolved: approvalResolvedEvent,
 };

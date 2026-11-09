@@ -174,6 +174,8 @@ export const METHOD_CATALOG = [
   { id: "tools/inspect", namespace: "tools", kind: "read" },
   { id: "turn", namespace: "turn", kind: "interactive" },
   { id: "turn/cancel", namespace: "turn", kind: "interactive" },
+  { id: "approvals/pending", namespace: "approvals", kind: "read" },
+  { id: "approvals/answer", namespace: "approvals", kind: "interactive" },
 ] as const satisfies readonly WorkbenchMethodSummary[];
 
 const METHOD_IDS = METHOD_CATALOG.map((method) => method.id);

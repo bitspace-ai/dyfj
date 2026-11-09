@@ -40,6 +40,10 @@ bounded evidence derived from the resolved workspace and protocol-observed
 version, external session, stop reason, and a bounded subset of flattened
 capability paths. They also record permission verdicts without
 representing opaque inner activity as a provider call or model response.
+Approvals that a runtime-started turn parks for the operator are recorded as
+`approval_parked` (the approval id and its kind, never the request's
+arguments) and `approval_resolved` (the verdict, from an answer, a timeout or
+a cancellation).
 
 The historical replay files are provenance and validation input. They include
 the earlier reflection/skills/capability experiments, authn metadata, model

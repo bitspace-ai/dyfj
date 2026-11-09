@@ -47,6 +47,14 @@ pub fn for_turn(tagged: Option<&str>, expected: &str) -> bool {
     tagged.is_none_or(|id| id == expected)
 }
 
+/// The runtime validates `turnId` against a UUID shape and rejects anything
+/// else, so this is a protocol requirement rather than a formatting choice. It
+/// also routes `turn/cancel` by this id: a repeated id would let a cancel land
+/// on the wrong turn.
+pub fn new_turn_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 /// Our answer to a server-initiated `approval` request.
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
@@ -367,6 +375,32 @@ async fn read_loop<R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 mod tests {
+
+    /// Mirrors TURN_ID_SHAPE in the runtime's turn-runner. A turn id that
+    /// fails this is rejected before the turn starts, so the check belongs
+    /// here rather than being discovered against a live socket.
+    #[test]
+    fn turn_ids_match_the_shape_the_runtime_requires() {
+        let id = new_turn_id();
+        let bytes = id.as_bytes();
+        assert_eq!(id.len(), 36, "{id}");
+        assert_eq!(bytes[8], b'-');
+        assert_eq!(bytes[13], b'-');
+        assert_eq!(bytes[18], b'-');
+        assert_eq!(bytes[23], b'-');
+        // Version nibble must be 1-8, variant nibble 8/9/a/b.
+        let version = id.chars().nth(14).unwrap();
+        let variant = id.chars().nth(19).unwrap();
+        assert!(('1'..='8').contains(&version), "version {version} in {id}");
+        assert!(matches!(variant, '8' | '9' | 'a' | 'b'), "variant {variant} in {id}");
+        assert!(
+            id.char_indices()
+                .all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() }),
+            "a hyphen out of place or a non-hex character in {id}"
+        );
+        assert_ne!(new_turn_id(), new_turn_id(), "ids must not repeat");
+    }
+
     use super::*;
     use serde_json::json;
 

@@ -25,7 +25,9 @@
             "tools/list",
             "tools/inspect",
             "turn",
-            "turn/cancel"
+            "turn/cancel",
+            "approvals/pending",
+            "approvals/answer"
           ],
           "methodCatalog": [
             {
@@ -121,6 +123,16 @@
             {
               "id": "turn/cancel",
               "namespace": "turn",
+              "kind": "interactive"
+            },
+            {
+              "id": "approvals/pending",
+              "namespace": "approvals",
+              "kind": "read"
+            },
+            {
+              "id": "approvals/answer",
+              "namespace": "approvals",
               "kind": "interactive"
             }
           ],
@@ -200,7 +212,9 @@
             "tools/list",
             "tools/inspect",
             "turn",
-            "turn/cancel"
+            "turn/cancel",
+            "approvals/pending",
+            "approvals/answer"
           ],
           "methodCatalog": [
             {
@@ -296,6 +310,16 @@
             {
               "id": "turn/cancel",
               "namespace": "turn",
+              "kind": "interactive"
+            },
+            {
+              "id": "approvals/pending",
+              "namespace": "approvals",
+              "kind": "read"
+            },
+            {
+              "id": "approvals/answer",
+              "namespace": "approvals",
               "kind": "interactive"
             }
           ],
