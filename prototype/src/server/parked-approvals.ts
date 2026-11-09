@@ -212,22 +212,41 @@ export class ParkedApprovals {
       this.#recordingEnded(site.sessionId);
     }
     if (first !== "done") {
-      // Ended while the park was being recorded. If the record lands anyway,
-      // writing its end is attempted after it. Only the ids are kept for
-      // that, not the request.
-      const verdict = first === "timeout" ? "denied" : "cancelled";
-      void recorded.then(
-        () =>
-          this.#recordResolution(site, approvalId, toolName, {
-            by: first,
-            verdict,
-          }),
-        () => {},
-      );
+      this.#resolveIfRecordLands(recorded, site, approvalId, toolName, first);
       if (first === "cancel") throw signal!.reason;
       return timeoutDenial(this.#timeoutMs);
     }
+    return this.#register(site, approvalId, toolName, request, timedOut, signal);
+  }
 
+  /**
+   * A park that ended while it was being recorded: if the record lands
+   * anyway, writing its end is attempted after it. A method of its own, so
+   * the continuation's scope holds the ids and never the request.
+   */
+  #resolveIfRecordLands(
+    recorded: Promise<void>,
+    site: ParkSite,
+    approvalId: string,
+    toolName: string | null,
+    by: "cancel" | "timeout",
+  ): void {
+    const verdict = by === "timeout" ? "denied" : "cancelled";
+    void recorded.then(
+      () => this.#recordResolution(site, approvalId, toolName, { by, verdict }),
+      () => {},
+    );
+  }
+
+  /** List a recorded park and wait for its answer, timeout or cancel. */
+  #register(
+    site: ParkSite,
+    approvalId: string,
+    toolName: string | null,
+    request: unknown,
+    timedOut: AbortSignal,
+    signal: AbortSignal | undefined,
+  ): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => {
       const onCancel = () => entry.settle({ by: "cancel" });
       const onTimeout = () => entry.settle({ by: "timeout" });

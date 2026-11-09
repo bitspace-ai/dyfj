@@ -361,6 +361,9 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        if !parked::clear_to_send(&client, &input, session.id.as_deref()).await {
+            continue;
+        }
         run_turn(
             &client,
             &input,

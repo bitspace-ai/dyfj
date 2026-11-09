@@ -33,9 +33,10 @@ README are tracked separately in its Revision history section.
   its session has an approval waiting or being recorded is refused
   (`session <id> is waiting for approval; nothing was
   sent`), so text sent to the session cannot stand in for the answer. The Rust
-  REPL checks for parked approvals when it attaches with `--session <id>`,
-  asks each one with the ordinary approval prompt and sends the answer; Ctrl-C
-  leaves it parked. Nothing starts a headless turn yet: the runtime service
+  REPL checks for parked approvals when it attaches with `--session <id>`
+  and again before each message it sends on that session, asks each one with
+  the ordinary approval prompt and sends the answer; Ctrl-C leaves it parked
+  and sends nothing. Nothing starts a headless turn yet: the runtime service
   (`startHeadlessTurn`) is in place for a coordinator's dispatch tools, which
   are not built. Parked approvals live in memory and do not survive a runtime
   restart. An existing Dolt database needs

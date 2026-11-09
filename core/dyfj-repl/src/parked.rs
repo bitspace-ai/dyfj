@@ -2,12 +2,14 @@
 //!
 //! A turn with no client connection cannot ask anyone, so the runtime parks
 //! each of its approval requests against the session and the turn waits. When
-//! the operator attaches (`--session <id>`), this lists them
-//! (`approvals/pending`), asks each one with the ordinary approval prompt, and
-//! sends the answer (`approvals/answer`). The runtime parses that answer with
+//! the operator attaches (`--session <id>`), and again before each message
+//! sent on that session, this lists them (`approvals/pending`), asks each one
+//! with the ordinary approval prompt, and sends the answer
+//! (`approvals/answer`). The runtime parses that answer with
 //! the same fail-closed rules as a live turn's.
 //!
-//! Ctrl-C leaves an approval parked: it is asked again on the next attach.
+//! Ctrl-C leaves an approval parked: it is asked again before the next
+//! message, or on the next attach.
 //! Nothing typed at the ordinary prompt answers a parked approval; the runtime
 //! refuses a turn on a session that has one waiting.
 
@@ -20,9 +22,9 @@ use tokio::sync::mpsc;
 /// What happened to the session's parked approvals.
 #[derive(Debug, PartialEq)]
 pub enum Attached {
-    /// Every approval listed at attach was asked, or there were none. An
-    /// answer the runtime refused, or one with no id, was reported and is not
-    /// retried.
+    /// Every listed approval was handled, or there were none. One with an id
+    /// was asked; an answer the runtime refused was reported. One without an
+    /// id was reported and skipped.
     Done,
     /// The operator pressed Ctrl-C; the rest are still parked.
     LeftParked,
@@ -65,7 +67,7 @@ pub async fn answer_parked(client: &Client, input: &mpsc::Sender<Ask>, session_i
         let verdict = match approval::ask_while_connected(client, input, &request).await {
             Asked::Disconnected => return Attached::Unavailable,
             Asked::Answered(Outcome::Cancelled) => {
-                eprintln!("left waiting; it is asked again the next time you attach to this session");
+                eprintln!("left waiting; it is asked again before your next message, or when you attach");
                 return Attached::LeftParked;
             }
             Asked::Answered(Outcome::Verdict(verdict)) => verdict,
@@ -84,6 +86,19 @@ pub async fn answer_parked(client: &Client, input: &mpsc::Sender<Ask>, session_i
         }
     }
     Attached::Done
+}
+
+/// Before a message is sent on a session: ask any approval parked since
+/// attach, including the next one a parked turn raised after an answer. The
+/// runtime refuses a turn while one waits. False when the operator left one
+/// parked, so the message is not sent.
+pub async fn clear_to_send(client: &Client, input: &mpsc::Sender<Ask>, session_id: Option<&str>) -> bool {
+    let Some(id) = session_id else { return true };
+    if answer_parked(client, input, id).await == Attached::LeftParked {
+        eprintln!("nothing was sent");
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -148,7 +163,7 @@ mod tests {
         );
         conn.answer(&answer, json!({"answered": true})).await;
         assert_eq!(attach.await.unwrap(), Attached::Done);
-        // The operator saw the whole request before answering it.
+        // The request's command was in the approval prompt.
         let shown = shown.await.unwrap();
         assert!(shown[0].contains("touch x"), "{shown:?}");
     }
@@ -224,6 +239,49 @@ mod tests {
         assert_eq!(second["params"]["approvalId"], "a2");
         conn.answer(&second, json!({"answered": true})).await;
         assert_eq!(attach.await.unwrap(), Attached::Done);
+    }
+
+    #[tokio::test]
+    async fn an_approval_parked_after_attach_is_asked_before_the_next_message() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, _incoming) = Client::connect(&path).await.unwrap();
+        let mut conn = runtime.accept().await;
+        let (input, _shown) = terminal(vec![ReadOutcome::Line("y".into())]);
+
+        let check = tokio::spawn(async move { clear_to_send(&client, &input, Some(SESSION)).await });
+        let pending = conn.expect_request("approvals/pending").await;
+        conn.answer(&pending, json!({"approvals": [parked_tool("a2")]})).await;
+        let answer = conn.expect_request("approvals/answer").await;
+        assert_eq!(answer["params"]["approvalId"], "a2");
+        conn.answer(&answer, json!({"answered": true})).await;
+        assert!(check.await.unwrap(), "answered, so the message is sent");
+    }
+
+    #[tokio::test]
+    async fn a_message_is_not_sent_while_an_approval_is_left_parked() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, _incoming) = Client::connect(&path).await.unwrap();
+        let mut conn = runtime.accept().await;
+        let (input, _shown) = terminal(vec![ReadOutcome::Interrupted]);
+
+        let check = tokio::spawn(async move { clear_to_send(&client, &input, Some(SESSION)).await });
+        let pending = conn.expect_request("approvals/pending").await;
+        conn.answer(&pending, json!({"approvals": [parked_tool("a1")]})).await;
+        assert!(!check.await.unwrap());
+        assert!(conn.frame_within(Duration::from_millis(200)).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_new_session_has_nothing_parked_to_check() {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, _incoming) = Client::connect(&path).await.unwrap();
+        let mut conn = runtime.accept().await;
+        let (input, _shown) = terminal(vec![]);
+        assert!(clear_to_send(&client, &input, None).await);
+        assert!(conn.frame_within(Duration::from_millis(200)).await.is_none());
     }
 
     #[tokio::test]

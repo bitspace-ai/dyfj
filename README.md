@@ -1229,7 +1229,7 @@ for `dyfj stop`; the narrow operator-approved `friction/post` method;
 which list and answer the approval requests a runtime-started (headless) turn
 has parked for its session (a `turn` naming a session with one waiting is
 refused, so text cannot answer it; the Rust REPL asks them on `--session`
-attach); plus streaming `turn` and cancellation
+attach and before each message on that session); plus streaming `turn` and cancellation
 `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications,
 each tagged with the request's `turnId` when it named one, so a client can drop
