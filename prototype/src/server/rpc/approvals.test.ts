@@ -309,6 +309,42 @@ test("a turn sent while a headless turn runs on its session is refused, not queu
   assert.deepStrictEqual(prompts, ["do the thing", "hello again"]);
 });
 
+test("a headless turn resuming a session refuses other turns before it announces the session", { timeout: 5_000 }, async () => {
+  // Startup (held here) runs before the turn announces the session it
+  // resumes. A turn naming that session in the meantime must not be admitted
+  // ahead of the announcement and left queued behind the headless turn.
+  let releaseStartup!: () => void;
+  const startup = new Promise<void>((resolve) => releaseStartup = resolve);
+  const prompts: string[] = [];
+  const composed = compose(async (input) => {
+    prompts.push(input.prompt);
+    const sessionId = input.sessionId ?? input.newSessionId!;
+    if (prompts.length > 1) return result({ sessionId });
+    await startup;
+    await input.frames?.onRuntimeEvent?.({
+      type: "sessionStart",
+      sessionId,
+      traceId: "T1",
+      mode: "chat",
+    });
+    return result({ sessionId });
+  });
+  const sessionId = "01J9ZQ4W8X6V5T3R2P1N0M9K8H";
+  const started = composed.headless.start({ prompt: "resume", sessionId });
+  assert.ok(!("error" in started));
+
+  const refused = await rpcFailure(composed.handlers, "turn", {
+    prompt: "hello",
+    sessionId,
+  }, eagerClient());
+  assert.match(refused.message, /running a turn the runtime started/);
+
+  releaseStartup();
+  await started.result;
+  await callRpc(composed.handlers, "turn", { prompt: "after", sessionId }, eagerClient());
+  assert.deepStrictEqual(prompts, ["resume", "after"]);
+});
+
 test("a parked ACP permission is answered by selecting one of its options", async () => {
   const prompt: AcpPermissionPrompt = {
     sessionId: "acp-1",

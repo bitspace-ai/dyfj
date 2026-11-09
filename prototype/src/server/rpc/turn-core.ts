@@ -57,8 +57,8 @@ export interface TurnCoreDeps extends TurnPosture {
   parkedApprovals?: { hasPending(sessionId: string): boolean };
   /**
    * Sessions with a turn the runtime started itself in flight. A turn naming
-   * one is refused rather than queued behind it, so the operator's prompt is
-   * never stuck behind an approval it would have to answer.
+   * one while it is marked is refused rather than queued behind it, where the
+   * operator's prompt would wait on an approval it has to answer.
    */
   headlessSessions?: { has(sessionId: string): boolean };
 }

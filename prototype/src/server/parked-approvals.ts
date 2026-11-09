@@ -222,7 +222,7 @@ export class ParkedApprovals {
   /**
    * A park that ended while it was being recorded: if the record lands
    * anyway, writing its end is attempted after it. A method of its own, so
-   * the continuation's scope holds the ids and never the request.
+   * the continuation does not capture the ended park's request.
    */
   #resolveIfRecordLands(
     recorded: Promise<void>,

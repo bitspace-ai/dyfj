@@ -33,8 +33,9 @@ README are tracked separately in its Revision history section.
   its session has an approval waiting or being recorded is refused
   (`session <id> is waiting for approval; nothing was
   sent`), so text sent to the session cannot stand in for the answer. So is a
-  `turn` naming a session while a headless turn runs there after announcing
-  it, with or without a park yet (`session <id> is running a turn the runtime
+  `turn` naming a session while a headless turn runs there (from its start
+  when it resumes the session, from its `sessionStart` when it opens a new
+  one), with or without a park yet (`session <id> is running a turn the runtime
   started; nothing was sent`): queued behind that turn, the prompt would hold
   the client that has to answer its next approval. The Rust
   REPL checks for parked approvals when it attaches with `--session <id>`

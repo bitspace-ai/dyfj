@@ -4,9 +4,10 @@
 // the turn's `sessionStart` event, and the approver parks each approval
 // request in `ParkedApprovals` against that session until the operator answers
 // it (`approvals/answer`). A request raised before the session is announced, or
-// one whose park cannot be recorded, is denied instead. From that announcement
-// until the turn settles, the session is marked running in `HeadlessSessions`,
-// and the turn core refuses a turn that names it. Text deltas have no
+// one whose park cannot be recorded, is denied instead. The session is marked
+// running in `HeadlessSessions` until the turn settles: from the start for a
+// turn that resumes a session, from `sessionStart` for a new one. The turn
+// core refuses a turn that names it while it is marked. Text deltas have no
 // reader; the turn's events are in the log.
 //
 // This is a runtime service, not an RPC method. Nothing starts a headless turn
@@ -85,7 +86,12 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
       // by its approver. A request raised before the session is known cannot
       // be parked against it, and is denied.
       let site: ParkSite | undefined;
-      let leave = () => {};
+      // A turn resuming a session marks it running before it is admitted, so
+      // no turn naming it can be admitted ahead of the announcement. A new
+      // session has no id anyone can name until `sessionStart`.
+      let leave = resolved.sessionId === undefined
+        ? () => {}
+        : deps.headlessSessions.enter(resolved.sessionId);
       let announce!: (sessionId: string) => void;
       let unannounced!: (error: Error) => void;
       const session = new Promise<string>((resolve, reject) => {
