@@ -10,8 +10,9 @@ pub fn socket_path() -> Result<String> {
 }
 
 /// Mirrors resolveSocketPath in the runtime's uds-path: `DYFJ_SOCKET`, then
-/// `$XDG_RUNTIME_DIR/dyfj`, then `~/.dyfj/run`. An empty value counts as unset,
-/// as it does there, so the client finds the socket the runtime is serving.
+/// `$XDG_RUNTIME_DIR/dyfj`, then `~/.dyfj/run`. An empty `DYFJ_SOCKET` or
+/// `XDG_RUNTIME_DIR` counts as unset, as it does there, so the client finds the
+/// socket the runtime is serving.
 fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
     let set = |key: &str| env(key).filter(|value| !value.is_empty());
     if let Some(explicit) = set("DYFJ_SOCKET") {
