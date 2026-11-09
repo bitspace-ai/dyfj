@@ -1426,6 +1426,23 @@ selected access route (`local_sidecar`) and its cost basis (`local_free`). The
 fixture is protocol coverage, not evidence for a vendor agent or subscription
 route.
 
+Codex turns run at the reasoning effort the operator chooses. `--effort
+<low|medium|high|xhigh>` (on `dyfj`, `dyfj exec` and the Rust REPL) and the
+REPL command `/effort <level>` set it for a `codex-chatgpt/*` model, or for
+`--runner codex-chatgpt`, and Workbench passes it to Codex as
+`model_reasoning_effort`. `/effort` shows the current effort and
+`/effort default` returns to the configured one. Without either, a turn runs
+at `[codex] reasoning_effort` in `~/.dyfj/config.toml` (env
+`DYFJ_CODEX_REASONING_EFFORT`), and at `medium` when that is unset. Any other
+level is refused before a turn runs. An effort on any other model is refused
+too: by the command line when it names that model, and otherwise by the
+runtime before the turn starts. A `/model` switch to such a model clears the
+session's effort. The posture line names the effort for a Codex model. A new
+effort takes effect from the next turn. In a session with earlier turns, that
+turn continues in a new Codex session, which is given the session's
+transcript, because the Codex profile carries the effort and a changed
+profile does not reuse the warm one.
+
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with
 `/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local
@@ -2092,7 +2109,7 @@ available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
 prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
 every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
-`--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
+`--effort`, `--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
 `DYFJ_WORKBENCH_HINT` holds a value the TypeScript client applies (a tier of
 0, 1 or 2; a hint of `code`, `chat` or `reasoning`), since only it reads them.
 Otherwise, and with `DYFJ_REPL=ts`,

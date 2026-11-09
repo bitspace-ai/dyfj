@@ -571,6 +571,20 @@ describe("buildTurnBody", () => {
     );
   });
 
+  it("sends the session's reasoning effort, with a Codex runner too", () => {
+    assert.deepStrictEqual(
+      buildTurnBody(
+        "hi",
+        cfg({ model: "codex-chatgpt/gpt-6.1-sol", effort: "xhigh" }),
+      ).routingOptions,
+      { modelId: "codex-chatgpt/gpt-6.1-sol", reasoningEffort: "xhigh" },
+    );
+    assert.partialDeepStrictEqual(
+      buildTurnBody("hi", cfg({ runner: "codex-chatgpt", effort: "high" })),
+      { runner: "codex-chatgpt", routingOptions: { reasoningEffort: "high" } },
+    );
+  });
+
   it("omits routingOptions when no routing is set", () => {
     assert.deepStrictEqual(buildTurnBody("hi", cfg()), {
       prompt: "hi",

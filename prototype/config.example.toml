@@ -45,6 +45,13 @@ level = "strict"
 # Env override: DYFJ_MAX_TOOL_STEPS_CEILING.
 # max_tool_steps_ceiling = 64
 
+[codex]
+# The reasoning effort a codex-chatgpt/* turn runs at when the turn names
+# none: low, medium, high or xhigh. `--effort` and the REPL's `/effort` win
+# over it. Omit it to run Codex turns at medium. Any other value fails the load.
+# Env override: DYFJ_CODEX_REASONING_EFFORT.
+# reasoning_effort = "high"
+
 [paid]
 # Standing paid-inference posture on loopback turns. When a request omits the
 # per-turn approvePaidInference flag, the engine falls back to this default.

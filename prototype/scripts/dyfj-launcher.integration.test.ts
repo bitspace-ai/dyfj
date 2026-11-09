@@ -1448,6 +1448,22 @@ describe("interactive REPL front-end selection", () => {
     ]);
   });
 
+  it("passes --effort through to the Rust REPL", async () => {
+    await using dir = await temporaryDir("dyfj-repl-");
+    const bin = `${dir.path}/dyfj-repl`;
+    const record = `${dir.path}/record`;
+    await writeFile(bin, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+    await chmod(bin, 0o755);
+    const args = ["--model", "codex-chatgpt/gpt-6.1-sol", "--effort", "xhigh"];
+    const { code } = await launch(
+      { DYFJ_LAUNCHER_DRY_RUN: "", DYFJ_REPL: "rust", DYFJ_REPL_BIN: bin },
+      ["--no-autostart", ...args, "--socket", "/tmp/r.sock"],
+      { terminal: true },
+    );
+    assert.equal(code, 0);
+    assert.deepEqual((await readFile(record, "utf8")).split("\n"), [...args, ""]);
+  });
+
   it("keeps tier and hint routing from the environment on the TypeScript REPL", async () => {
     await using repl = await fakeReplBin();
     const bin = repl.bin;

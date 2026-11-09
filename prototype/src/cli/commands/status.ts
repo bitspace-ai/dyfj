@@ -40,6 +40,8 @@ export interface RuntimeStatusPayload {
     maxToolSteps?: number;
     /** The highest limit a session may set; absent on older servers. */
     maxToolStepsCeiling?: number;
+    /** The effort a Codex turn runs at when it names none; absent on older servers. */
+    codexReasoningEffort?: string;
     models?: { total?: number; local?: number; hosted?: number };
     methods?: string[];
     autostarted?: boolean;

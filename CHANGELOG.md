@@ -11,6 +11,23 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Set the reasoning effort of Codex turns.** `dyfj --effort <level>` and
+  `dyfj exec --effort <level>` take `low`, `medium`, `high` or `xhigh` for a
+  `codex-chatgpt/*` model or `--runner codex-chatgpt`, and Workbench sends the
+  level to Codex as `model_reasoning_effort`. Until now every Codex turn ran at
+  `medium`. The REPL command `/effort [<level>|default]`, in both the Rust and
+  the TypeScript REPL, shows or changes it from the next turn. In a session
+  with earlier turns, that turn continues in a new Codex session, which is
+  given the session's transcript. The posture line names the effort on a Codex
+  model. The optional `[codex] reasoning_effort` key in `~/.dyfj/config.toml`
+  (env `DYFJ_CODEX_REASONING_EFFORT`) sets the default; without it the default
+  stays `medium`, which the runtime now reports as `codexReasoningEffort` in
+  `runtime/status`. Any other level is refused by the command line, the turn
+  request and the config loader, before a turn runs. An effort on a model off
+  the Codex route is refused by the command line when it names that model, and
+  otherwise by route resolution before the turn starts. A `/model` switch to
+  such a model clears it. The launcher passes `--effort` to the Rust REPL.
+
 - **Read a session's recorded turns and tool events from the CLI.**
   `dyfj sessions show <session> --events [--json]` (accepting a bare session id
   or a `workbench-<id>` slug) queries `events/query` over the local Unix socket

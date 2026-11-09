@@ -11,7 +11,11 @@ import {
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
-import { AGENT_DEFAULTS } from "../config/mod.ts";
+import {
+  AGENT_DEFAULTS,
+  codexReasoningEffortRefusal,
+  isCodexReasoningEffort,
+} from "../config/mod.ts";
 
 export interface TurnRequestBody {
   prompt?: unknown;
@@ -101,6 +105,14 @@ function parseRoutingOptions(
     }
     output.fast = input.fast;
   }
+  if ("reasoningEffort" in input) {
+    if (!isCodexReasoningEffort(input.reasoningEffort)) {
+      return {
+        error: codexReasoningEffortRefusal("routingOptions.reasoningEffort"),
+      };
+    }
+    output.reasoningEffort = input.reasoningEffort;
+  }
   return output;
 }
 
@@ -131,7 +143,10 @@ function buildRuntimeInputFromJson(
   ) {
     return { error: "runner must be fixture or codex-chatgpt" };
   }
-  if (body.runner !== undefined && Object.keys(routingOptions).length > 0) {
+  // The effort is not model routing: it configures the runner the request
+  // names, and route resolution refuses it on a runner other than Codex.
+  const { reasoningEffort: _effort, ...modelRouting } = routingOptions;
+  if (body.runner !== undefined && Object.keys(modelRouting).length > 0) {
     return { error: "runner cannot be combined with model routing options" };
   }
   return {

@@ -30,6 +30,17 @@ pub struct Prompter<'a> {
 /// extension: the posted last-command context is clipped to this length.
 const FRICTION_COMMAND_MAX_CHARACTERS: usize = 120;
 
+/// What `/effort` was asked to do.
+#[derive(Debug, PartialEq)]
+pub enum EffortTarget {
+    /// `/effort`: show the effort the next Codex turn runs at.
+    Show,
+    /// `/effort <level>`: one of `session::REASONING_EFFORTS`.
+    Set(String),
+    /// `/effort default`: back to the runtime's configured effort.
+    Default,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Help,
@@ -41,6 +52,8 @@ pub enum Command {
     },
     /// `/fast [on|off]`; `None` toggles.
     Fast(Option<bool>),
+    /// `/effort [low|medium|high|xhigh|default]`
+    Effort(EffortTarget),
     /// `/steps [N]`; `None` shows the limit.
     Steps(Option<u32>),
     /// `/budget [<limit> <usd>]`; `None` shows the limits.
@@ -152,6 +165,14 @@ pub fn parse(input: &str) -> Option<Command> {
             ["on"] => Command::Fast(Some(true)),
             ["off"] => Command::Fast(Some(false)),
             _ => Command::Usage("usage: /fast [on|off]".into()),
+        },
+        "/effort" => match args.as_slice() {
+            [] => Command::Effort(EffortTarget::Show),
+            ["default"] => Command::Effort(EffortTarget::Default),
+            [level] if crate::session::REASONING_EFFORTS.contains(level) => {
+                Command::Effort(EffortTarget::Set((*level).to_string()))
+            }
+            _ => Command::Usage(EFFORT_USAGE.into()),
         },
         "/steps" => match args.as_slice() {
             [] => Command::Steps(None),
@@ -283,10 +304,18 @@ fn strip_quotes(label: &str) -> String {
     t.to_string()
 }
 
+const EFFORT_USAGE: &str = "usage: /effort [low|medium|high|xhigh|default]";
+
+/// What a changed effort does to a session's Codex conversation; the
+/// TypeScript REPL prints the same words.
+const EFFORT_RESTART_NOTE: &str = "a session with earlier turns continues in a new Codex session, \
+     which is given this session's transcript";
+
 const HELP: &str = "\
 commands (type them alone on a line; inside a paste they are prompt text):
   /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
   /fast [on|off]                                       toggle the fast speed tier
+  /effort [low|medium|high|xhigh|default]              show or set a codex-chatgpt model's reasoning effort
   /steps [N]                                           show or set the tool-step limit
   /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
   /receipt steps                                       the last turn's usage, per provider call
@@ -352,6 +381,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
             fast,
         } => model(client, session, slug, approve_paid, fast).await,
         Command::Fast(target) => fast_toggle(client, session, target).await,
+        Command::Effort(target) => effort(client, session, target).await,
         Command::Steps(target) => steps(client, session, target).await,
         Command::Budget(target) => budget(client, session, target).await,
         Command::ReceiptSteps => receipt_steps(session),
@@ -793,6 +823,9 @@ fn posture(session: &Session, rows: &[Value]) -> String {
     if session.model_origin == ModelOrigin::Unrecorded {
         parts.push("no recorded model for this session".into());
     }
+    if let Some(effort) = &session.effort {
+        parts.push(format!("effort {effort}"));
+    }
     if session.fast == Some(true) {
         parts.push("fast".into());
     }
@@ -847,6 +880,15 @@ async fn model(
                 visible(&slug)
             );
         }
+        // An effort carried over to a model off the Codex route would be
+        // refused on every turn.
+        if session.effort.is_some() && !crate::session::is_codex_model(&slug) {
+            session.effort = None;
+            eprintln!(
+                "reasoning effort cleared: {} is not a codex-chatgpt model",
+                visible(&slug)
+            );
+        }
         session.choose_model(slug);
     }
     if let Some(f) = fast {
@@ -875,6 +917,50 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
     }
     session.fast = Some(want);
     eprintln!("{}", posture(session, &rows));
+}
+
+/// `/effort` shows the effort the next Codex turn runs at; `/effort <level>`
+/// sets it for the rest of the session, and `/effort default` returns to the
+/// runtime's configured one. Only a codex-chatgpt model takes one. A changed
+/// effort starts a new Codex session on the next turn, which is given this
+/// session's transcript.
+async fn effort(client: &Client, session: &mut Session, target: EffortTarget) {
+    let status = match client.request("runtime/status", json!({})).await {
+        Ok(status) => status,
+        Err(err) => return error_line("could not read the runtime's posture", &err),
+    };
+    let active = session.model.clone().or_else(|| {
+        status
+            .pointer("/runtime/defaultTurnModel/slug")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    });
+    if !active.as_deref().is_some_and(crate::session::is_codex_model) {
+        return eprintln!(
+            "reasoning effort applies only to codex-chatgpt models; \"{}\" is not one",
+            visible(active.as_deref().unwrap_or("the runtime default"))
+        );
+    }
+    let configured = status
+        .pointer("/runtime/codexReasoningEffort")
+        .and_then(Value::as_str)
+        .unwrap_or("medium")
+        .to_string();
+    match target {
+        EffortTarget::Show => {
+            return match &session.effort {
+                Some(effort) => eprintln!("reasoning effort: {effort}"),
+                None => eprintln!("reasoning effort: {} (runtime default)", visible(&configured)),
+            };
+        }
+        EffortTarget::Set(level) => session.effort = Some(level),
+        EffortTarget::Default => session.effort = None,
+    }
+    let now = session.effort.clone().unwrap_or(configured);
+    eprintln!("reasoning effort {} from the next turn; {EFFORT_RESTART_NOTE}", visible(&now));
+    if let Some(rows) = list_models(client).await {
+        eprintln!("{}", posture(session, &rows));
+    }
 }
 
 /// `/steps` shows the session's tool-step limit; `/steps N` sets it for the
@@ -1263,6 +1349,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_effort_levels_the_codex_route_accepts() {
+        use crate::commands::{EffortTarget, parse};
+        assert_eq!(parse("/effort"), Some(Command::Effort(EffortTarget::Show)));
+        for level in ["low", "medium", "high", "xhigh"] {
+            assert_eq!(
+                parse(&format!("/effort {level}")),
+                Some(Command::Effort(EffortTarget::Set(level.into())))
+            );
+        }
+        assert_eq!(parse("/effort default"), Some(Command::Effort(EffortTarget::Default)));
+        for line in ["/effort max", "/effort HIGH", "/effort high now"] {
+            assert!(matches!(parse(line), Some(Command::Usage(_))), "{line}");
+        }
+    }
+
+    #[test]
     fn fast_and_session_subcommands() {
         assert_eq!(parse("/fast"), Some(Command::Fast(None)));
         assert_eq!(parse("/fast off"), Some(Command::Fast(Some(false))));
@@ -1532,6 +1634,45 @@ mod run_tests {
         let mut local = Session { model: Some("local/qwen".into()), ..Session::default() };
         drive(catalog, &mut local, vec![Command::Fast(Some(true))]).await;
         assert_eq!(local.fast, None, "a model without the tier is refused");
+    }
+
+    /// The catalog above with a Codex model in it.
+    fn codex_catalog(method: &str, params: &Value) -> Value {
+        let mut value = catalog(method, params);
+        if method == "models/list" {
+            value["models"].as_array_mut().unwrap().push(json!({
+                "slug": "codex-chatgpt/gpt-6.1-sol", "tier": 2, "local": false,
+                "modality": "subscription-hosted"
+            }));
+        }
+        value
+    }
+
+    /// `/effort` sets the next turn's effort on a Codex model only, and a
+    /// switch to a model off that route drops it rather than have every
+    /// turn refused.
+    #[tokio::test]
+    async fn effort_applies_to_codex_models_only() {
+        use crate::commands::EffortTarget;
+        let mut session = Session::default();
+        drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Set("high".into()))]).await;
+        assert_eq!(session.effort, None, "the runtime default z-ai/glm-5.2 is not a Codex model");
+
+        drive(
+            codex_catalog,
+            &mut session,
+            vec![model("codex-chatgpt/gpt-6.1-sol"), Command::Effort(EffortTarget::Set("high".into()))],
+        )
+        .await;
+        assert_eq!(session.effort.as_deref(), Some("high"));
+        assert_eq!(session.turn_body("hi", "t-1")["routingOptions"]["reasoningEffort"], "high");
+
+        drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
+        assert_eq!(session.effort, None);
+
+        session.effort = Some("xhigh".into());
+        drive(codex_catalog, &mut session, vec![model("local/qwen")]).await;
+        assert_eq!(session.effort, None, "a non-Codex model drops the effort");
     }
 
     /// A runtime whose tool-step limit is 32 under a ceiling of 48.

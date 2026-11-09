@@ -32,6 +32,7 @@ export interface TurnRequest {
     tier?: 0 | 1 | 2;
     hint?: "code" | "chat" | "reasoning";
     fast?: boolean;
+    reasoningEffort?: "low" | "medium" | "high" | "xhigh";
   };
   sessionId?: string;
   /** Working directory to scope the server's read-only file tools to. */
@@ -65,6 +66,10 @@ export function buildTurnBody(
     if (config.tier !== undefined) routingOptions.tier = config.tier;
     if (config.hint !== undefined) routingOptions.hint = config.hint;
     if (config.fast !== undefined) routingOptions.fast = config.fast;
+  }
+  // Not model routing: an explicit Codex runner takes it too.
+  if (config.effort !== undefined) {
+    routingOptions.reasoningEffort = config.effort;
   }
 
   const body: TurnRequest = { prompt, mode: config.mode };

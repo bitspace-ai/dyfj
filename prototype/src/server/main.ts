@@ -205,7 +205,7 @@ export interface WorkbenchUnixServerOptions {
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  >;
+  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */
   acpSessions?: AcpSessionHandleMap;
   /**

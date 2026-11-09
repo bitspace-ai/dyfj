@@ -16,6 +16,9 @@
 import { processEnv } from "./env.ts";
 import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import {
+  type CodexReasoningEffort,
+  codexReasoningEffortRefusal,
+  isCodexReasoningEffort,
   type PermissionLevel,
   schemaBooleanDefault,
   schemaEnvVar,
@@ -86,6 +89,12 @@ export interface WorkbenchConfig {
   maxToolSteps: number;
   /** The highest tool-step limit a session may set for itself. */
   maxToolStepsCeiling: number;
+  /**
+   * The reasoning effort a Codex ChatGPT turn runs at when the turn names
+   * none ([codex] reasoning_effort / DYFJ_CODEX_REASONING_EFFORT). Null
+   * leaves Codex turns at `medium`.
+   */
+  codexReasoningEffort: CodexReasoningEffort | null;
 }
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
@@ -102,7 +111,16 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultRunawayStallUsd: schemaNumberDefault("defaultRunawayStallUsd"),
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
+  codexReasoningEffort: null,
 };
+
+function validateCodexReasoningEffort(
+  value: string,
+  source: string,
+): CodexReasoningEffort {
+  if (isCodexReasoningEffort(value)) return value;
+  throw new Error(`config: ${codexReasoningEffortRefusal(source)}`);
+}
 
 /**
  * Resolve the engine config with precedence defaults → file → env. A missing
@@ -203,6 +221,13 @@ export async function loadConfig(
         `${configLabel(path)} [agent].max_tool_steps`,
       );
     }
+    const fileEffort = readString(table, "codex", "reasoning_effort");
+    if (fileEffort !== undefined) {
+      config.codexReasoningEffort = validateCodexReasoningEffort(
+        fileEffort,
+        `${configLabel(path)} [codex].reasoning_effort`,
+      );
+    }
     const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");
     if (fileCeiling !== undefined) {
       config.maxToolStepsCeiling = validateMaxToolSteps(
@@ -213,6 +238,13 @@ export async function loadConfig(
   }
 
   // ── env layer (overrides the file) ──
+  const envEffort = env.get(schemaEnvVar("codexReasoningEffort"));
+  if (envEffort !== undefined && envEffort !== "") {
+    config.codexReasoningEffort = validateCodexReasoningEffort(
+      envEffort,
+      schemaEnvVar("codexReasoningEffort"),
+    );
+  }
   const envModel = env.get("DYFJ_WORKBENCH_MODEL");
   if (envModel !== undefined && envModel !== "") {
     config.defaultCompanionModel = envModel;

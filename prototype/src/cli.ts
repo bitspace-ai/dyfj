@@ -46,6 +46,10 @@ import {
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, type ModelRow } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
+import {
+  handleReplEffortCommand,
+  isCodexModel,
+} from "./cli/commands/effort.ts";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
 import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
@@ -132,7 +136,8 @@ export async function runRepl(
       ) continue;
       if (
         await handleReplModelCommand(cmd, config, io, connect) ||
-        await handleReplFastCommand(cmd, config, io, connect)
+        await handleReplFastCommand(cmd, config, io, connect) ||
+        await handleReplEffortCommand(cmd, config, io, connect)
       ) {
         sessionState.lastReplCommand = cmd;
         continue;
@@ -1631,6 +1636,14 @@ export async function handleReplModelCommand(
     io.err(`dyfj: fast speed tier disabled for "${slug}" (unsupported)`);
   }
 
+  // An effort carried over to a model off the Codex route would be refused
+  // on every turn.
+  if (config.effort !== undefined && !isCodexModel(slug)) {
+    config.effort = undefined;
+    io.err(
+      `dyfj: reasoning effort cleared for "${slug}" (codex-chatgpt models only)`,
+    );
+  }
   config.model = slug;
   config.runner = undefined;
   if (approvePaid) config.approvePaid = true;

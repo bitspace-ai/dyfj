@@ -210,6 +210,17 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     // Both states are shown, as the TypeScript posture line shows them: the
     // default of paid off is the one an operator most needs to see, because
     // it is why a hosted turn is refused. An absent field narrows the line.
+    // The effort the next turn runs at, on a Codex model only: the
+    // session's own, else the runtime's configured default.
+    let active = session.model.as_deref().or(default_slug);
+    if active.is_some_and(crate::session::is_codex_model) {
+        let effort = session
+            .effort
+            .as_deref()
+            .or_else(|| runtime.get("codexReasoningEffort").and_then(Value::as_str))
+            .unwrap_or("medium");
+        parts.push(format!("effort {}", visible(effort)));
+    }
     if session.fast == Some(true) {
         parts.push("fast".into());
     }
@@ -361,6 +372,25 @@ mod tests {
         let own = Session { max_tool_steps: Some(6), ..Session::default() };
         let rendered = line(&status, &own, "/tmp/s.sock");
         assert!(rendered.contains("6 tool steps (ceiling 48)"), "{rendered}");
+    }
+
+    /// A Codex model's line names the effort its next turn runs at: the
+    /// session's own, else the runtime's configured default. Other models
+    /// have no effort to name.
+    #[test]
+    fn names_the_codex_effort_and_only_for_codex_models() {
+        let status = json!({"runtime": {
+            "defaultTurnModel": {"slug": "codex-chatgpt/gpt-6.1-sol", "tier": 2, "local": false},
+            "codexReasoningEffort": "medium"
+        }});
+        let rendered = line(&status, &Session::default(), "/tmp/s.sock");
+        assert!(rendered.contains("effort medium"), "{rendered}");
+        let own = Session { effort: Some("xhigh".into()), ..Session::default() };
+        let rendered = line(&status, &own, "/tmp/s.sock");
+        assert!(rendered.contains("effort xhigh"), "{rendered}");
+        let local = Session { model: Some("local/qwen".into()), ..Session::default() };
+        let rendered = line(&status, &local, "/tmp/s.sock");
+        assert!(!rendered.contains("effort"), "{rendered}");
     }
 
     /// The command line's choices override the runtime's defaults on the

@@ -1,0 +1,77 @@
+/**
+ * The REPL's `/effort` command: show or set the session's reasoning effort on
+ * the Codex ChatGPT route.
+ */
+import { isCodexReasoningEffort } from "../../config/mod.ts";
+import { connectUnixClient } from "../../transport/mod.ts";
+import { CODEX_MODEL_PREFIX, type CliConfig } from "../args.ts";
+import type { ConnectFn, Io } from "../io.ts";
+import { fetchSessionPosture, formatPostureLine } from "../posture.ts";
+
+const USAGE = "usage: /effort [low|medium|high|xhigh|default]";
+
+/**
+ * `/effort` shows the effort the next Codex turn runs at; `/effort <level>`
+ * sets it for the rest of the session, and `/effort default` returns to the
+ * runtime's configured one. A changed effort starts a new Codex session on
+ * the next turn, which is given this session's transcript.
+ */
+export async function handleReplEffortCommand(
+  line: string,
+  config: CliConfig,
+  io: Io,
+  connect: ConnectFn = connectUnixClient,
+): Promise<boolean> {
+  const parts = line.trim().split(/\s+/);
+  if (parts[0] !== "/effort") return false;
+  if (parts.length > 2) {
+    io.err(USAGE);
+    return true;
+  }
+  const target = parts[1];
+  if (
+    target !== undefined && target !== "default" &&
+    !isCodexReasoningEffort(target)
+  ) {
+    io.err(USAGE);
+    return true;
+  }
+  const posture = await fetchSessionPosture(config, connect);
+  if ("error" in posture) {
+    io.err(posture.error);
+    return true;
+  }
+  if (posture.effort === undefined) {
+    io.err(
+      `dyfj: reasoning effort applies only to codex-chatgpt models; ` +
+        `"${posture.slug}" is not one`,
+    );
+    return true;
+  }
+  if (target === undefined) {
+    io.err(
+      `reasoning effort: ${posture.effort}` +
+        (config.effort === undefined ? " (runtime default)" : ""),
+    );
+    return true;
+  }
+  if (target === "default") {
+    config.effort = undefined;
+  } else {
+    config.effort = target;
+  }
+  const updated = await fetchSessionPosture(config, connect);
+  const effort = "error" in updated ? config.effort : updated.effort;
+  io.err(
+    `reasoning effort ${effort ?? "default"} from the next turn; a session ` +
+      "with earlier turns continues in a new Codex session, which is given " +
+      "this session's transcript",
+  );
+  io.err("error" in updated ? updated.error : formatPostureLine(updated));
+  return true;
+}
+
+/** True when `slug` names a model on the Codex ChatGPT route. */
+export function isCodexModel(slug: string | undefined): boolean {
+  return slug?.startsWith(CODEX_MODEL_PREFIX) === true;
+}

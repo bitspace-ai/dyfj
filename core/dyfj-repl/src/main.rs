@@ -57,10 +57,12 @@ fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
 }
 
 const USAGE: &str = "\
-usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--tool-steps <N>] [--budget-<limit> <usd>] [--session <id>] [--workspace <dir>]
+usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [--tool-steps <N>] [--budget-<limit> <usd>] [--session <id>] [--workspace <dir>]
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
+  --effort <level>  reasoning effort for codex-chatgpt/* models: low, medium, high or xhigh
+                    (default: the runtime's [codex] reasoning_effort, else medium)
   --tool-steps <N>  this session's tool-step limit, 1 through 64 and not above the runtime's ceiling
   --budget-turn, --budget-session, --budget-day, --budget-per-call, --budget-runaway <usd>
                     this session's spend limits (default: the runtime's [budget] config);
@@ -99,6 +101,13 @@ fn parse_args(
                 session.model_pinned = true;
             }
             "--workspace" => session.workspace = Some(value("--workspace")?),
+            "--effort" => {
+                let level = value("--effort")?;
+                if !session::REASONING_EFFORTS.contains(&level.as_str()) {
+                    return Err("--effort must be low, medium, high, or xhigh".into());
+                }
+                session.effort = Some(level);
+            }
             "--tool-steps" => {
                 let raw = value("--tool-steps")?;
                 session.max_tool_steps = Some(commands::parse_tool_steps(&raw).ok_or_else(|| {
@@ -132,6 +141,11 @@ fn parse_args(
             }
             other => return Err(format!("unknown argument {other}")),
         }
+    }
+    // The runtime refuses an effort on any other route; a named model off
+    // it fails here, before the session starts.
+    if session.effort.is_some() && session.model.as_deref().is_some_and(|m| !session::is_codex_model(m)) {
+        return Err("--effort applies only to codex-chatgpt/* models".into());
     }
     // A resumed session keeps the workspace stored on its row; the runtime
     // never moves it, so a local default here would only misreport it.
@@ -1140,6 +1154,33 @@ mod tests {
         assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
         // A resumed session's workspace is the one stored on its row.
         assert_eq!(session.workspace, None);
+    }
+
+    /// `--effort` takes the levels the Codex route accepts, on a Codex model
+    /// only, and fails at startup otherwise.
+    #[test]
+    fn effort_is_validated_before_the_session_starts() {
+        let session = super::parse_args(
+            &args(&["--model", "codex-chatgpt/gpt-6.1-sol", "--effort", "xhigh"]),
+            env(&[]),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(session.effort.as_deref(), Some("xhigh"));
+        let defaulted = super::parse_args(&args(&["--effort", "low"]), env(&[]), None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(defaulted.effort.as_deref(), Some("low"), "the runtime default may be a Codex model");
+        assert_eq!(
+            super::parse_args(&args(&["--effort", "max"]), env(&[]), None).unwrap_err(),
+            "--effort must be low, medium, high, or xhigh"
+        );
+        assert_eq!(
+            super::parse_args(&args(&["--model", "local/qwen", "--effort", "high"]), env(&[]), None).unwrap_err(),
+            "--effort applies only to codex-chatgpt/* models"
+        );
+        assert!(super::parse_args(&args(&["--effort"]), env(&[]), None).is_err());
     }
 
     /// A malformed id fails at startup rather than at the first turn, and the
