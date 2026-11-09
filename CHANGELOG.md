@@ -17,11 +17,11 @@ README are tracked separately in its Revision history section.
   level to Codex as `model_reasoning_effort`. Until now every Codex turn ran at
   `medium`. The REPL command `/effort [<level>|default]`, in both the Rust and
   the TypeScript REPL, shows or changes it from the next turn; `/effort
-  default` works on any model. In a session with earlier turns, a changed
-  effort moves the next turn to a new Codex session, which is given the
-  session's transcript. The posture line names the effort on a Codex model;
-  the Rust REPL's line after a command shows `runtime-default effort` when the
-  session set none. The optional `[codex] reasoning_effort` key in `~/.dyfj/config.toml`
+  default` works on any model. A turn at another effort than the last does
+  not reuse the last turn's warm Codex session, because the Codex profile
+  carries the effort. The posture line names the effort on a Codex model; the
+  Rust REPL's line after a command shows `runtime-default effort` when the
+  session names a Codex model and set none. The optional `[codex] reasoning_effort` key in `~/.dyfj/config.toml`
   (env `DYFJ_CODEX_REASONING_EFFORT`) sets the default; without it the default
   stays `medium`, which the runtime now reports as `codexReasoningEffort` in
   `runtime/status`. Any other level is refused by the command line, the turn

@@ -1440,11 +1440,11 @@ too: by the command line when it names that model, and otherwise by the
 runtime before the turn starts. A `/model` switch to such a model clears the
 session's effort. The posture line names the effort for a Codex model. The
 Rust REPL's line after a command reads no runtime status, so there a session
-that set no effort shows `runtime-default effort`. A changed effort takes
-effect from the next turn. In a session with earlier turns, that turn
-continues in a new Codex session, which is given the session's transcript,
-because the Codex profile carries the effort and a changed profile does not
-reuse the warm one.
+that names a Codex model and set no effort shows `runtime-default effort`. A
+changed effort takes effect from the next turn. The Codex profile carries the
+effort, and the runtime reuses a warm Codex session only for the same
+profile, so a turn at another effort than the last does not continue in the
+last turn's warm session.
 
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with

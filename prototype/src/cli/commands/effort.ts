@@ -13,8 +13,8 @@ const USAGE = "usage: /effort [low|medium|high|xhigh|default]";
 /**
  * `/effort` shows the effort the next Codex turn runs at; `/effort <level>`
  * sets it for the rest of the session, and `/effort default` returns to the
- * runtime's configured one. A changed effort starts a new Codex session on
- * the next turn, which is given this session's transcript.
+ * runtime's configured one. The Codex profile carries the effort, so a turn
+ * at another effort than the last does not reuse that turn's warm session.
  */
 export async function handleReplEffortCommand(
   line: string,
@@ -70,9 +70,7 @@ export async function handleReplEffortCommand(
   io.err(
     after === before
       ? `reasoning effort stays ${before}`
-      : `reasoning effort ${after} from the next turn; a session with ` +
-        "earlier turns continues in a new Codex session, which is given " +
-        "this session's transcript",
+      : `reasoning effort ${after} from the next turn; a warm Codex session opened at another effort is not reused for it`,
   );
   io.err(formatPostureLine({ ...posture, effort: after }));
   return true;

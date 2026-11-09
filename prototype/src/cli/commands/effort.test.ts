@@ -120,7 +120,7 @@ describe("/effort", () => {
     await handleReplEffortCommand("/effort high", config, io, connect());
     const out = stderr.join("\n");
     assert.match(out, /reasoning effort stays high/);
-    assert.doesNotMatch(out, /new Codex session/);
+    assert.doesNotMatch(out, /not reused/);
   });
 
   it("formatPostureLine names the effort when one is given", () => {

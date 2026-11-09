@@ -15,8 +15,7 @@ const USAGE: &str = "usage: /effort [low|medium|high|xhigh|default]";
 
 /// What a changed effort does to a session's Codex conversation; the
 /// TypeScript REPL prints the same words.
-const RESTART_NOTE: &str = "a session with earlier turns continues in a new Codex session, \
-     which is given this session's transcript";
+const RESTART_NOTE: &str = "a warm Codex session opened at another effort is not reused for it";
 
 /// What `/effort` was asked to do.
 #[derive(Debug, PartialEq)]
@@ -76,8 +75,8 @@ pub fn clear_off_codex(session: &mut Session, slug: &str) {
 
 /// `/effort` shows the effort the next Codex turn runs at; `/effort <level>`
 /// sets it for the rest of the session, and `/effort default` returns to the
-/// runtime's configured one. A changed effort starts a new Codex session on
-/// the next turn, which is given this session's transcript.
+/// runtime's configured one. The Codex profile carries the effort, so a turn
+/// at another effort than the last does not reuse that turn's warm session.
 pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
     // Clearing comes before any runtime read and needs no Codex model: it is
     // how an effort the current route refuses is dropped.
