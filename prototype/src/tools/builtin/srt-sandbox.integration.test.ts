@@ -16,7 +16,7 @@
 // without resolving it.
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -41,7 +41,11 @@ import { defineBash } from "./exec.ts";
 import { defineEditFile, defineWriteFile } from "./file.ts";
 import { defineGit } from "./git.ts";
 import { bootSandbox, type CommandSandbox, shellQuote } from "./srt-sandbox.ts";
-import { listenLoopbackProbe } from "../../transport/mod.ts";
+import {
+  ensureSocketDir,
+  listenLoopbackProbe,
+  resolveSocketPath,
+} from "../../transport/mod.ts";
 
 const deps = SandboxManager.isSupportedPlatform()
   ? SandboxManager.checkDependencies()
@@ -365,6 +369,86 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
       assert.ok(!out.startsWith("exit 0"), out);
       assert.match(out, /403|CONNECT tunnel failed/);
     });
+  });
+
+  // BIT-899: the runtime's own socket. Whatever connects to it is the
+  // operator (it can answer approvals), and this route runs commands without
+  // a prompt, so the sandbox alone must refuse the connect: at the default
+  // path under the operator's home, and inside the writable worktree.
+  describe("the Workbench runtime socket", () => {
+    // A short directory of its own: the default path under this suite's
+    // temp directory would pass the Unix-socket path limit.
+    let operatorHome = "";
+    before(() => {
+      operatorHome = realpathSync(mkdtempSync("/tmp/dyfj-rt-"));
+    });
+    after(() => rmSync(operatorHome, { recursive: true, force: true }));
+
+    // Each client with the error a sandbox refusal gives it, where it prints
+    // one: nc exits 1 silently whatever the cause, so only its control (the
+    // same command connecting from outside the sandbox) shows it can connect.
+    const clients: [string, (path: string) => string, RegExp | null][] = [
+      ["node", (path) =>
+        `node -e ${
+          shellQuote(
+            `require("net").connect(${JSON.stringify(path)})` +
+              `.on("connect",()=>process.exit(0))` +
+              `.on("error",(e)=>{console.error(e.code);process.exit(3)})`,
+          )
+        }`, /EPERM|EACCES/],
+    ];
+    if (existsSync("/usr/bin/nc")) {
+      clients.push(["nc -U", (path) => `/usr/bin/nc -U ${shellQuote(path)} </dev/null`, null]);
+    }
+    const places: [string, () => string][] = [
+      ["the default path under the operator home", () =>
+        resolveSocketPath(new MapEnv({ HOME: operatorHome }))],
+      ["a socket inside the writable worktree", () => join(W, "w.sock")],
+    ];
+
+    /** Runs `command` with bash outside the sandbox: the control. */
+    const hostBash = (command: string) =>
+      new Promise<number | null>((resolve) => {
+        execFile(
+          "bash",
+          ["-c", command],
+          { cwd: W, env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, timeout: 20_000 },
+          (error) => resolve(error === null ? 0 : (typeof error.code === "number" ? error.code : null)),
+        );
+      });
+
+    for (const [place, socketPath] of places) {
+      for (const [client, command, refusal] of clients) {
+        it(`${client} cannot connect to ${place}`, async () => {
+          const path = socketPath();
+          ensureSocketDir(path);
+          let accepted = false;
+          const server = createServer((socket) => {
+            accepted = true;
+            socket.destroy();
+          });
+          await new Promise<void>((resolve) => server.listen(path, resolve));
+          try {
+            // The control: the same command, run outside the sandbox, connects.
+            const hostExit = await hostBash(command(path));
+            for (let i = 0; i < 100 && !accepted; i++) {
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            assert.equal(hostExit, 0, "the control command failed outside the sandbox");
+            assert.equal(accepted, true, "the control connect was not accepted");
+            accepted = false;
+            const out = await bash(command(path));
+            assert.ok(!out.startsWith("exit 0"), out);
+            if (refusal !== null) assert.match(out, refusal);
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            assert.equal(accepted, false, "the sandboxed command reached the socket");
+          } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+            rmSync(path, { force: true });
+          }
+        });
+      }
+    }
   });
 
   describe("check 7: the gitdir pointer files", () => {
