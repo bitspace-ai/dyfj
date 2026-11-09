@@ -86,8 +86,9 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
       // by its approver. A request raised before the session is known cannot
       // be parked against it, and is denied.
       let site: ParkSite | undefined;
-      // A turn resuming a session marks it running before it is admitted, so
-      // no turn naming it can be admitted ahead of the announcement. A new
+      // A turn resuming a session marks it running in the same synchronous
+      // step as its admission, before it runs, so no turn naming it can be
+      // admitted ahead of the announcement. A new
       // session has no id anyone can name until `sessionStart`.
       let leave = resolved.sessionId === undefined
         ? () => {}

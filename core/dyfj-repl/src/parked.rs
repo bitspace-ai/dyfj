@@ -26,7 +26,8 @@ pub enum Attached {
     /// was asked; an answer the runtime refused was reported. One without an
     /// id was reported and skipped.
     Done,
-    /// The operator pressed Ctrl-C; the rest are still parked.
+    /// The operator pressed Ctrl-C: no answer was sent for that approval, and
+    /// the rest listed were not asked.
     LeftParked,
     /// The list could not be read, or the runtime went away.
     Unavailable,
