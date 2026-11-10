@@ -45,15 +45,18 @@ pub fn parse_add_dir(value: &str) -> Option<(String, bool)> {
     (!path.is_empty()).then(|| (path.to_string(), read_only))
 }
 
-/// `path` made absolute: a leading `~/` is `home`, a relative path joins
-/// `cwd`.
+/// `path` made absolute: a leading `~/` is `home`, and a path that is not
+/// absolute joins `cwd` when there is one.
 pub fn absolute_root(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
     let expanded = match (home, path.strip_prefix('~')) {
         (Some(home), Some(rest)) if rest.is_empty() || rest.starts_with('/') => format!("{home}{rest}"),
         _ => path.to_string(),
     };
     match cwd {
-        Some(cwd) if !expanded.starts_with('/') => format!("{}/{expanded}", cwd.trim_end_matches('/')),
+        Some(cwd) if !std::path::Path::new(&expanded).is_absolute() => std::path::Path::new(cwd)
+            .join(&expanded)
+            .to_string_lossy()
+            .into_owned(),
         _ => expanded,
     }
 }

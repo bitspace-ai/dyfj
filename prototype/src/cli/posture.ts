@@ -89,7 +89,9 @@ export function formatRoots(
   const listed = roots.map((root) =>
     root.readOnly ? `${root.path} (read-only)` : root.path
   );
-  return `roots: ${[workspace ?? "(session workspace)", ...listed].join(", ")}`;
+  return stripControls(
+    `roots: ${[workspace ?? "(session workspace)", ...listed].join(", ")}`,
+  );
 }
 
 /**

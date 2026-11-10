@@ -4,6 +4,7 @@
  * The UDS handler passes its JSON-RPC params here; the per-session lock and
  * resume reconstruction happen later, in `executeTurn` (`turn.ts`).
  */
+import { isAbsolute } from "node:path";
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
 import {
   type AdditionalRootRequest,
@@ -197,7 +198,7 @@ export function parseAdditionalRoots(
     if (Object.keys(rest).length > 0) {
       return { error: "additionalRoots entries take only path and readOnly" };
     }
-    if (typeof path !== "string" || !path.startsWith("/")) {
+    if (typeof path !== "string" || !isAbsolute(path)) {
       return { error: "additionalRoots paths must be absolute" };
     }
     if (readOnly !== undefined && typeof readOnly !== "boolean") {

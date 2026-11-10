@@ -22,6 +22,13 @@ describe("formatRoots", () => {
     );
   });
 
+  it("strips terminal control characters from the paths", () => {
+    assert.strictEqual(
+      formatRoots("/ws", [{ path: "/a\x1b[2Jb", readOnly: false }]),
+      "roots: /ws, /a[2Jb",
+    );
+  });
+
   it("adds nothing without added roots", () => {
     assert.strictEqual(formatRoots("/ws", undefined), null);
     assert.strictEqual(formatRoots("/ws", []), null);

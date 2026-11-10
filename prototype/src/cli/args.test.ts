@@ -670,5 +670,9 @@ describe("--add-dir", () => {
       resolveConfig({}, new Map(), false, "/cwd").additionalRoots,
       undefined,
     );
+    const many = new Map([["DYFJ_ADD_DIRS", ",".repeat(5) + Array.from({ length: 40 }, (_, i) => `/r${i}`).join(",")]]);
+    const roots = resolveConfig({}, many, false, "/cwd").additionalRoots!;
+    assert.strictEqual(roots.length, 16);
+    assert.strictEqual(roots[0].path, "/r0");
   });
 });

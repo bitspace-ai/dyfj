@@ -93,6 +93,29 @@ describe("admitAdditionalRoots", () => {
     );
   });
 
+  it("refuses a child of ~/.dyfj whose name starts with two dots", async () => {
+    await mkdir(join(home, ".dyfj", "..cache"));
+    await assert.rejects(
+      admitAdditionalRoots([{ path: join(home, ".dyfj", "..cache"), readOnly: false }], {
+        protectedPaths: guarded,
+      }),
+      refused(1),
+    );
+  });
+
+  it("refuses a symlinked home whose protected paths do not exist yet", async () => {
+    const real = join(base, "disk-home");
+    await mkdir(real);
+    const alias = join(base, "alias-home");
+    await symlink(real, alias);
+    await assert.rejects(
+      admitAdditionalRoots([{ path: alias, readOnly: false }], {
+        protectedPaths: await protectedPaths({ home: alias }),
+      }),
+      refused(1),
+    );
+  });
+
   it("refuses DYFJ_ROOT when it is set", async () => {
     const configRoot = join(base, "config-root");
     await mkdir(configRoot);
@@ -162,5 +185,7 @@ describe("protectedPaths", () => {
     assert.ok(overlapsProtectedPath("/h", "/h/.dyfj"));
     assert.ok(!overlapsProtectedPath("/h/projects", "/h/.dyfj"));
     assert.ok(!overlapsProtectedPath("/h/.dyfjx", "/h/.dyfj"));
+    assert.ok(overlapsProtectedPath("/h/.dyfj/..cache", "/h/.dyfj"));
+    assert.ok(!overlapsProtectedPath("/h/a", "/h/b"));
   });
 });

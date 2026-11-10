@@ -18,7 +18,15 @@
  */
 
 import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AdditionalRootRequest,
@@ -27,7 +35,10 @@ import {
   MAX_ADDITIONAL_ROOTS,
 } from "../../contract/mod.ts";
 
-/** An added root was refused. The message names its position, not its path. */
+/**
+ * An added root was refused. A refusal of one root names its position, and
+ * the refusal of too many roots names the limit; neither names a path.
+ */
 export class AdditionalRootRefusedError extends DomainError {
   override readonly name = "AdditionalRootRefusedError";
 }
@@ -47,18 +58,31 @@ export function runtimePrototypeRoot(): string {
   return fileURLToPath(new URL("../../../", import.meta.url));
 }
 
+/**
+ * `path` with its deepest existing ancestor canonicalized and the missing
+ * rest appended, so a path that does not exist yet is compared in the same
+ * spelling as a canonical root (a symlinked home, for example).
+ */
 async function canonical(path: string): Promise<string> {
-  try {
-    return await realpath(path);
-  } catch {
-    // A path that does not exist yet is protected by its lexical form.
-    return resolve(path);
+  let existing = resolve(path);
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      return join(await realpath(existing), ...missing);
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return resolve(path);
+      missing.unshift(basename(existing));
+      existing = parent;
+    }
   }
 }
 
 /**
- * The canonical protected paths. A path that does not exist is listed by its
- * lexical form, so a root that would contain it once created is refused too.
+ * The protected paths, each in its lexical form and in its canonical form.
+ * For a path that does not exist yet, the canonical form canonicalizes its
+ * deepest existing ancestor, so a root that would contain it once created is
+ * refused too.
  */
 export async function protectedPaths(
   inputs: ProtectedPathInputs,
@@ -91,7 +115,9 @@ export async function protectedPaths(
 /** True when `inner` is `outer` or lies inside it. Both are absolute. */
 export function pathWithin(outer: string, inner: string): boolean {
   const rel = relative(outer, inner);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  // A child named `..cache` is inside; only a `..` segment leaves.
+  return rel === "" ||
+    (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 /** True when `root` is, sits inside, or contains `guarded`. */

@@ -2113,7 +2113,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
   });
 
-  it("sends only read-write added roots to the runner and counts both", async () => {
+  it("sends only read-write added roots to the runner and counts them", async () => {
     const h = createHarness();
     const base = await realpath(await mkdtemp(join(tmpdir(), "tmp-roots-")));
     try {
@@ -2174,24 +2174,20 @@ describe("runExternalAgentWorkbenchRuntime", () => {
   });
 
   it("ignores added roots from a remote caller", async () => {
-    const h = createHarness();
-    await assert.rejects(
-      runExternalAgentWorkbenchRuntime(h, {
-        mode: "turn",
-        prompt: "ordered response",
-        routingOptions: {},
-        runner: { kind: "acp", profile: "fixture" },
-        additionalRoots: [{ path: process.env.HOME!, readOnly: false }],
-        authContext: {
-          transport: "remote",
-          authnStatus: "authenticated",
-          authnMechanism: "api_key",
-          authnIssuerRef: "test",
-          authzBasis: "api_key",
-        },
-      }),
-      /unavailable to remote callers/,
+    // The home directory holds ~/.dyfj, so admitting it would throw.
+    const profile = fixtureProfile(process.cwd());
+    const unchanged = await withAddedRoots(
+      { additionalRoots: [{ path: process.env.HOME!, readOnly: false }] },
+      {
+        transport: "remote",
+        authnStatus: "authenticated",
+        authnMechanism: "api_key",
+        authnIssuerRef: "test",
+        authzBasis: "api_key",
+      },
+      profile,
     );
+    assert.strictEqual(unchanged, profile);
   });
 
   it("rejects an oversized prompt before writing session state", async () => {

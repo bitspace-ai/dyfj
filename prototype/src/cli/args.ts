@@ -298,11 +298,7 @@ export function resolveAdditionalRoots(
   env: { get(key: string): string | undefined },
   cwd: string,
 ): AdditionalRootRequest[] {
-  const typed = flagged ??
-    (env.get("DYFJ_ADD_DIRS") ?? "").split(",")
-      .map((entry) => parseAddDir(entry))
-      .filter((root): root is AdditionalRootRequest => root !== undefined)
-      .slice(0, MAX_ADDITIONAL_ROOTS);
+  const typed = flagged ?? fromEnv(env.get("DYFJ_ADD_DIRS") ?? "");
   const home = env.get("HOME");
   return typed.map(({ path, readOnly }) => {
     const expanded = home !== undefined && (path === "~" || path.startsWith("~/"))
@@ -313,6 +309,20 @@ export function resolveAdditionalRoots(
       readOnly,
     };
   });
+}
+
+/** The first `MAX_ADDITIONAL_ROOTS` non-empty entries of `DYFJ_ADD_DIRS`. */
+function fromEnv(value: string): AdditionalRootRequest[] {
+  const roots: AdditionalRootRequest[] = [];
+  let start = 0;
+  while (start <= value.length && roots.length < MAX_ADDITIONAL_ROOTS) {
+    const comma = value.indexOf(",", start);
+    const end = comma === -1 ? value.length : comma;
+    const root = parseAddDir(value.slice(start, end));
+    if (root !== undefined) roots.push(root);
+    start = end + 1;
+  }
+  return roots;
 }
 
 /** The slug prefix of the Codex ChatGPT route's models. */

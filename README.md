@@ -1454,7 +1454,7 @@ A session can use more than one directory. `--add-dir <path>` (on `dyfj`,
 `dyfj exec` and the Rust REPL) adds a read-write root beside the workspace, and
 `--add-dir <path>:ro` a read-only one. The flag can be repeated up to 16 times;
 without it, `DYFJ_ADD_DIRS` (comma-separated, same `:ro` suffix) applies. The
-client makes each path absolute and sends the roots on every turn: they are not
+client joins a relative path to its working directory and sends the roots on every turn: they are not
 stored with the session, so a resumed session has the roots its client names.
 The runtime takes them from a loopback caller only. Before a turn runs, it
 resolves each root to its canonical path and refuses one that is not a
@@ -1472,7 +1472,7 @@ the run stops before the session starts if the agent does not advertise
 `sessionCapabilities.additionalDirectories`. Read-only roots are not sent,
 because Codex would make them writable. Codex's workspace-write sandbox reads
 outside its writable roots whether or not roots are added. The posture line
-ends with `roots: <workspace>, <root>, …` and `/session` prints one
+lists `roots: <workspace>, <root>, …` and `/session` prints one
 `added root:` line per root; the external-agent receipt counts the writable
 roots sent.
 
