@@ -68,8 +68,9 @@ const MAX_LINK_HOPS = 40;
 
 /**
  * The physical location of the absolute `path`, resolved one component at a
- * time as the filesystem would (a `..` after a symlink leaves the link's
- * target), with the part that does not exist yet appended as written. Every
+ * time (a `..` after a symlink leaves the link's target), with the part that
+ * does not exist yet appended as written. A component that cannot be
+ * inspected for any reason but absence throws `AdditionalRootRefusedError`. Every
  * symlink met on the way, in a parent directory or as the final entry,
  * dangling or not, adds its own physical location to `links`: replacing any
  * of them would redirect the path. Throws `AdditionalRootRefusedError` after
@@ -81,7 +82,11 @@ async function physicalPath(
   hops = { count: 0 },
 ): Promise<string> {
   const root = parse(path).root;
-  const parts = path.slice(root.length).split(/[\\/]+/).filter((part) => part !== "");
+  // On POSIX a backslash is a filename character, not a separator.
+  const separators = sep === "\\" ? /[\\/]+/ : /\/+/;
+  const parts = path.slice(root.length).split(separators).filter((part) =>
+    part !== ""
+  );
   let current = root;
   for (const [index, part] of parts.entries()) {
     if (part === ".") continue;
@@ -93,7 +98,15 @@ async function physicalPath(
     let link: string | undefined;
     try {
       if ((await lstat(next)).isSymbolicLink()) link = await readlink(next);
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ENOTDIR") {
+        // Unreadable, not absent: the path's location is unknown.
+        throw new AdditionalRootRefusedError(
+          "Additional roots are refused: a protected path cannot be " +
+            "inspected",
+        );
+      }
       // Absent from here on: the rest is appended as written.
       return [next, ...parts.slice(index + 1)].join(sep);
     }

@@ -3,7 +3,14 @@
 
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import process from "node:process";
 import { join } from "node:path";
@@ -193,6 +200,38 @@ describe("admitAdditionalRoots", () => {
       }),
       refused(1),
     );
+  });
+
+  it("treats a backslash in a POSIX home as part of a name", {
+    skip: process.platform === "win32",
+  }, async () => {
+    const real = join(base, "bs-real-home");
+    await mkdir(join(real, ".dyfj"), { recursive: true });
+    await mkdir(join(base, "bs-home"));
+    const alias = join(base, "bs-home\\");
+    await symlink(real, alias);
+    await assert.rejects(
+      admitAdditionalRoots([{ path: real, readOnly: true }], {
+        protectedPaths: await protectedPaths({ home: alias }),
+      }),
+      refused(1),
+    );
+  });
+
+  it("refuses every root when a protected path cannot be inspected", {
+    skip: process.platform === "win32" || process.getuid?.() === 0,
+  }, async () => {
+    const locked = join(base, "locked");
+    await mkdir(join(locked, "home"), { recursive: true });
+    await chmod(locked, 0o000);
+    try {
+      await assert.rejects(
+        protectedPaths({ home: join(locked, "home") }),
+        AdditionalRootRefusedError,
+      );
+    } finally {
+      await chmod(locked, 0o700);
+    }
   });
 
   it("refuses a chain of dangling symlinks too long to follow", async () => {
