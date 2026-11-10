@@ -358,10 +358,18 @@ export class WorkbenchToolBridge {
       throw error;
     }
     const bridge = new WorkbenchToolBridge(directory, socketPath, listener);
+    // A bridge that stops accepting connections closes, so the runtime's
+    // next Codex turn starts a new one instead of reusing it.
     void bridge.#acceptLoop().catch(() => {
       console.error("[tool-bridge] the bridge stopped accepting connections");
+      void bridge.close();
     });
     return bridge;
+  }
+
+  /** True once the bridge has closed, by `close()` or a failed accept loop. */
+  get closed(): boolean {
+    return this.#closed;
   }
 
   get socketPath(): string {
@@ -531,6 +539,14 @@ export class WorkbenchToolBridge {
           void Promise.allSettled(approvals).then(() => ended.dispose());
         }
       };
+    // A call cancelled, or whose turn ended, before it reached the command
+    // does not run, whatever its policy.
+    if (stop.aborted) {
+      return textResult(
+        "The call was cancelled or its turn ended before it ran.",
+        true,
+      );
+    }
     const result = await invokeCommandWithEvent(
       createCommandRegistry(
         turn.commands.filter((command) => command.id === tool.commandId),
@@ -590,8 +606,10 @@ export interface CodexWorkbenchToolsOptions {
  * The Codex `mcp_servers` entry for the Workbench tool bridge. Codex starts
  * the shim with `nodePath`; the token goes in the server's own environment.
  * `default_tools_approval_mode = "approve"` stops Codex from raising its own
- * prompt for these tools: the bridge runs every call through Workbench's
- * policy, which raises the Workbench prompt for an `ask` command.
+ * prompt for these tools: the bridge runs each admitted call to an offered
+ * tool through Workbench's policy. An `ask` command that no session grant
+ * covers raises the Workbench prompt when the turn has an approver, and is
+ * denied when it has none.
  */
 export function codexWorkbenchToolsServer(
   nodePath: string,

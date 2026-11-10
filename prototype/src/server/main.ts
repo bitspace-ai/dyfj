@@ -516,7 +516,11 @@ export async function serveWorkbenchUnix(
   let bridgeStart: Promise<WorkbenchToolBridge> | undefined;
   const toolBridge: ExternalAgentToolBridge | undefined =
     options.engineConfig?.codexWorkbenchTools === false ? undefined : {
-      bridge: () => {
+      bridge: async () => {
+        // A bridge that closed itself is replaced, once, by the next turn.
+        const pending = bridgeStart;
+        const current = await pending?.catch(() => undefined);
+        if (current?.closed && bridgeStart === pending) bridgeStart = undefined;
         bridgeStart ??= WorkbenchToolBridge.start(dirname(socketPath)).catch(
           (error) => {
             bridgeStart = undefined;
