@@ -11,6 +11,57 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Codex sessions reach the operator's configured MCP tools.** A
+  `codex-chatgpt/*` session now gets the commands of the operator's
+  `[[mcp.servers]]` (for example Linear's `get_issue`, `list_comments`,
+  `save_comment` and the bounded `create_issue`) through the Workbench tool
+  bridge, a runtime-hosted MCP server. Two commands whose names map to the
+  same tool name (`.` and other characters become `_`) are both left out. Codex starts a small stdio shim
+  (`prototype/scripts/workbench-tool-bridge-shim.ts`), which connects to the bridge's Unix
+  socket in a new owner-only directory beside the runtime socket (under the
+  system temporary directory when that path would be too long for a socket).
+  - **Session binding.** The runtime mints one token per Workbench session and
+    keeps the token-to-session map in memory. A connection serves the session
+    its token maps to; no tool argument names a session. A call is admitted
+    only while that session has a turn in progress, and an approval that
+    arrives after the turn ended or after Codex cancelled the call counts as a
+    denial. A session may have at most eight bridged calls in progress.
+  - **Workbench approvals.** Each call goes through the same invoke path as a
+    native tool call, with the turn's approver, session grants, permission
+    level and journal. A command whose policy is `ask`, and that no session
+    grant covers, asks the turn's approver (the Workbench approval prompt on an interactive turn) and is
+    denied when the turn has none. Each admitted call attempts to record one
+    `tool_call` event in the session; a failed journal write is logged and
+    does not fail the call. Codex is configured not to raise its own approval
+    for these tools (`default_tools_approval_mode = "approve"`), so Workbench's
+    approval is the one that decides.
+  - **Codex config.** The bridge's entry goes in the route's per-process
+    Codex config, not in ACP `session/new`: codex-acp 2.5.0 maps a
+    `session/new` server to command, args and env only, so it cannot carry
+    Codex's per-call timeout. The token is in the shim's environment entry of
+    that config. It is not written to the Codex home, and it carries no
+    credential for Linear or any other service. Codex's `apps` and `plugins`
+    stay off.
+  - **Config.** The bridge is on by default; `[codex] workbench_tools = false`
+    turns it off. `[codex] tool_timeout_seconds` (default 300, an integer
+    from 1 through 3600) sets Codex's per-call timeout for bridged tools. Codex
+    0.165.0 leaves that timeout unset unless the config names one; its
+    built-in default was not measured.
+  - **Tests.** `workbench-tool-bridge-socket.test.ts` drives the shim and the
+    bridge with an MCP client. `workbench-tool-bridge-codex.test.ts` starts
+    the pinned Codex app-server with the route's entry and calls bridged
+    tools through its direct tool-call request, with no model turn and no
+    sign-in.
+  - **Codex's own record of an MCP call.** Codex also reports each MCP tool
+    call on the ACP stream, and the runtime keeps those reports as
+    `acp_tool` events. For a call reported as an MCP call (title
+    `mcp.<server>.<tool>`, or raw input `{server, tool, arguments}`), that
+    record now keeps the server and tool names and replaces the arguments and
+    the result with `[redacted]`. This matches the redaction the MCP
+    commands declare for Workbench's own `tool_call` event.
+  - Builtin commands (`bash`, file, git and memory tools) are not offered:
+    Codex has its own shell and file tools.
+
 - **Lineage fields on `session_start`, and their readback.** Migration
   `026_events_session_lineage.sql` adds six nullable `events` columns:
   `parent_session_id`, `lineage_depth`, `lineage_label`, `reasoning_effort`,
