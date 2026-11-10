@@ -43,6 +43,7 @@ export const UDS_TEST_SOCKETS = [
   "server-stop-closes-admission",
   "server-boot-bind-fail",
   "server-manual-stays",
+  "server-parked-approval",
   "cli-stop-live",
   "cli-stop-fails",
   "cli-stop-missing",

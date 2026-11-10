@@ -215,6 +215,8 @@ test("runtime/status exposes method catalog metadata", async () => {
     "tools/inspect",
     "turn",
     "turn/cancel",
+    "approvals/pending",
+    "approvals/answer",
   ]);
   assert.deepStrictEqual(runtime.methodCatalog, [
     { id: "runtime/liveness", namespace: "runtime", kind: "read" },
@@ -236,6 +238,8 @@ test("runtime/status exposes method catalog metadata", async () => {
     { id: "tools/inspect", namespace: "tools", kind: "read" },
     { id: "turn", namespace: "turn", kind: "interactive" },
     { id: "turn/cancel", namespace: "turn", kind: "interactive" },
+    { id: "approvals/pending", namespace: "approvals", kind: "read" },
+    { id: "approvals/answer", namespace: "approvals", kind: "interactive" },
   ]);
 });
 

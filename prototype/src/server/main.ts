@@ -117,6 +117,14 @@ import {
   type SessionEventsRequest,
 } from "./rpc/events.ts";
 import { buildTurnHandlers } from "./rpc/turn.ts";
+import { buildApprovalsHandlers } from "./rpc/approvals.ts";
+import { UDS_LOOPBACK_AUTH } from "./rpc/turn-core.ts";
+import {
+  buildHeadlessTurns,
+  HeadlessSessions,
+  type HeadlessTurns,
+} from "./headless-turn.ts";
+import { ParkedApprovals } from "./parked-approvals.ts";
 
 export interface WorkbenchUnixServerOptions {
   /**
@@ -311,7 +319,8 @@ function buildHandlers(
   runRuntime: TurnRuntime,
   lifetime: RuntimeLifetime,
   acpSessions: AcpSessionHandleMap,
-): RpcHandlers {
+  parkedApprovals: ParkedApprovals,
+): { handlers: RpcHandlers; headlessTurns: HeadlessTurns } {
   const store = () => requireStore(options);
   const loadCatalog = options.loadModels === undefined
     ? () => loadPickerCatalog(store)
@@ -347,7 +356,18 @@ function buildHandlers(
     options,
     frictionEventWriter,
   );
-  return {
+  const headlessSessions = new HeadlessSessions();
+  const turnDeps = {
+    ...options,
+    owners,
+    runRuntime,
+    fetchSessionEvents,
+    releaseExternalAgentSession: (sessionId: string) =>
+      acpSessions.dropSession(sessionId),
+    parkedApprovals,
+    headlessSessions,
+  };
+  const handlers: RpcHandlers = {
     ...buildRuntimeHandlers({
       ...options,
       ...(options.sandbox === undefined
@@ -380,15 +400,10 @@ function buildHandlers(
       linear,
       toolApprover: rpcToolApprover,
     }),
-    ...buildTurnHandlers({
-      ...options,
-      owners,
-      runRuntime,
-      fetchSessionEvents,
-      releaseExternalAgentSession: (sessionId) =>
-        acpSessions.dropSession(sessionId),
-    }),
+    ...buildTurnHandlers(turnDeps),
+    ...buildApprovalsHandlers({ parked: parkedApprovals }),
   };
+  return { handlers, headlessTurns: buildHeadlessTurns(turnDeps) };
 }
 
 // The production turn runtime: the engine with its external-agent runner bound
@@ -450,6 +465,12 @@ function composeTurnRuntime(
 
 export interface WorkbenchUnixServer {
   readonly socketPath: string;
+  /**
+   * Start a turn with no client connection. Its approval requests raised
+   * after it announces its session park until they are answered through
+   * `approvals/answer`, time out or are withdrawn by a cancel.
+   */
+  startHeadlessTurn: HeadlessTurns["start"];
   close(options?: { disconnectPeers?: boolean }): Promise<void>;
 }
 
@@ -490,7 +511,16 @@ export async function serveWorkbenchUnix(
   // Assigned once the socket is bound, before any request can arrive.
   let stopAccepting = () => {};
   const onShutdown = options.onShutdown;
-  const handlers = buildHandlers(
+  // The approval requests of headless turns, waiting for the operator. One
+  // registry per engine: the turn core reads it to refuse text sent to a
+  // waiting session, and the approvals methods answer from it.
+  const parkedApprovals = new ParkedApprovals({
+    writeEvent: async (event) => {
+      await options.store.journal.commit({ events: [event] });
+    },
+    authContext: UDS_LOOPBACK_AUTH,
+  });
+  const { handlers, headlessTurns } = buildHandlers(
     {
       ...options,
       // A `runtime/stop` shutdown first stops admitting connections. The stop
@@ -509,6 +539,7 @@ export async function serveWorkbenchUnix(
     runRuntime,
     lifetime,
     acpSessions,
+    parkedApprovals,
   );
   const transport = await serveUnixJsonRpc(socketPath, {
     handlers,
@@ -540,6 +571,7 @@ export async function serveWorkbenchUnix(
 
   return {
     socketPath,
+    startHeadlessTurn: (body) => headlessTurns.start(body),
     async close(options: { disconnectPeers?: boolean } = {}) {
       lifetime.dispose();
       // Closing the transport first stops admitting connections before the

@@ -16,6 +16,7 @@ mod evidence;
 #[cfg(test)]
 mod fake_runtime;
 mod link;
+mod parked;
 mod posture;
 mod progress;
 mod receipt;
@@ -24,7 +25,7 @@ mod submission;
 mod terminal;
 
 use anyhow::{Context, Result};
-use client::{Client, Incoming, StreamFrame, Verdict, for_turn};
+use client::{Client, Incoming, StreamFrame, Verdict, for_turn, new_turn_id};
 use serde_json::{Value, json};
 use session::Session;
 use submission::{MAX_INPUT_CHARACTERS, Submission, classify};
@@ -99,6 +100,11 @@ async fn main() -> Result<()> {
     }
     if let Some(control) = control.as_mut() {
         control.note_session(session.id.as_deref());
+    }
+    // Attaching to a session: a turn the runtime started there may be waiting
+    // for an approval that only an attached operator can give.
+    if let Some(id) = session.id.clone() {
+        parked::answer_parked(&client, &input, &id).await;
     }
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
@@ -249,6 +255,9 @@ async fn main() -> Result<()> {
             continue;
         }
 
+        if !parked::clear_to_send(&client, &input, session.id.as_deref()).await {
+            continue;
+        }
         run_turn(
             &client,
             &input,
@@ -652,17 +661,9 @@ fn length_stopped_empty(result: &Value) -> bool {
         && result.get("text").and_then(Value::as_str).unwrap_or("").is_empty()
 }
 
-/// The runtime validates `turnId` against a UUID shape and rejects anything
-/// else, so this is a protocol requirement rather than a formatting choice. It
-/// also routes `turn/cancel` by this id: a repeated id would let a cancel land
-/// on the wrong turn.
-fn new_turn_id() -> String {
-    uuid::Uuid::new_v4().to_string()
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{MAX_INPUT_CHARACTERS, Submission, classify, new_turn_id};
+    use super::{MAX_INPUT_CHARACTERS, Submission, classify};
 
     /// The receipt string carries the audit-gap warning beside the answer.
     /// Streaming must not hide it, and a buffered answer must still appear.
@@ -913,31 +914,6 @@ mod tests {
             classify(&over),
             Submission::TooLong { characters: MAX_INPUT_CHARACTERS + 1 }
         );
-    }
-
-
-    /// Mirrors TURN_ID_SHAPE in the runtime's turn-runner. A turn id that
-    /// fails this is rejected before the turn starts, so the check belongs
-    /// here rather than being discovered against a live socket.
-    #[test]
-    fn turn_ids_match_the_shape_the_runtime_requires() {
-        let id = new_turn_id();
-        let bytes = id.as_bytes();
-        assert_eq!(id.len(), 36, "{id}");
-        assert_eq!(bytes[8], b'-');
-        assert_eq!(bytes[13], b'-');
-        assert_eq!(bytes[18], b'-');
-        assert_eq!(bytes[23], b'-');
-        // Version nibble must be 1-8, variant nibble 8/9/a/b.
-        let version = id.chars().nth(14).unwrap();
-        let variant = id.chars().nth(19).unwrap();
-        assert!(('1'..='8').contains(&version), "version {version} in {id}");
-        assert!(matches!(variant, '8' | '9' | 'a' | 'b'), "variant {variant} in {id}");
-        assert!(
-            id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
-            "non-hex character in {id}"
-        );
-        assert_ne!(new_turn_id(), new_turn_id(), "ids must not repeat");
     }
 
     /// Two approvals during one turn. The terminal answers `n`, then Ctrl-C.

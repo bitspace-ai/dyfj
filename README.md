@@ -1225,7 +1225,11 @@ The seam exposes read methods for `runtime/liveness`, `runtime/status`,
 catalog loader's summarized failure, when it can list only the built-in local
 models; `dyfj models` and the Rust REPL print it); `runtime/stop`, which shuts the runtime down
 for `dyfj stop`; the narrow operator-approved `friction/post` method;
-`ideas/mark` and `packets/draft`; plus streaming `turn` and cancellation
+`ideas/mark` and `packets/draft`; `approvals/pending` and `approvals/answer`,
+which list and answer the approval requests a runtime-started (headless) turn
+has parked for its session (a `turn` naming a session with one waiting, or
+with a headless turn running, is refused, so text cannot answer it; the Rust REPL asks them on `--session`
+attach and before each message on that session); plus streaming `turn` and cancellation
 `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications,
 each tagged with the request's `turnId` when it named one, so a client can drop

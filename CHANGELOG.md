@@ -11,6 +11,43 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Parked approvals: a turn the runtime starts itself waits for the operator.**
+  A turn with no client connection (a headless turn) now runs under a parking
+  approver. Once the turn has announced its session, each of its approval
+  requests (a mutating tool call, an external agent's permission request, a
+  spend check) is recorded as an `approval_parked` event and held against that
+  session, and the turn waits: until the operator answers it, until 24 hours
+  pass from the request (then it is denied), or until the turn is cancelled. A
+  request raised before the session is announced, or whose park cannot be
+  recorded, is denied. Two operator RPC methods on the runtime socket reach
+  them: `approvals/pending { sessionId }` lists a
+  session's parked requests, and `approvals/answer { sessionId, approvalId,
+  response }` answers one with the same response a connected client sends to
+  an `approval` request, parsed with the same fail-closed rules. An answer for
+  an id that is not pending for that session is refused, and so is a second
+  answer for one id. Any process that can connect to the runtime socket can
+  call them: the socket is the operator's, and no agent tool names an
+  approval. Each park's end is recorded as a best-effort `approval_resolved`
+  event with its verdict, classified by the same rules the turn applies to
+  the answer; the turn does not wait for that write. A `turn` submitted while
+  its session has an approval waiting or being recorded is refused
+  (`session <id> is waiting for approval; nothing was
+  sent`), so text sent to the session cannot stand in for the answer. So is a
+  `turn` naming a session while a headless turn runs there (from its start
+  when it resumes the session, from its `sessionStart` when it opens a new
+  one), with or without a park yet (`session <id> is running a turn the runtime
+  started; nothing was sent`): queued behind that turn, the prompt would hold
+  the client that has to answer its next approval. The Rust
+  REPL checks for parked approvals when it attaches with `--session <id>`
+  and again before each message it sends on that session, asks each one with
+  the ordinary approval prompt and sends the answer; Ctrl-C leaves it parked
+  and sends nothing. Nothing starts a headless turn yet: the runtime service
+  (`startHeadlessTurn`) is in place for a coordinator's dispatch tools, which
+  are not built. Parked approvals live in memory and do not survive a runtime
+  restart. An existing Dolt database needs
+  `schema/migrations/025_events_approval_parking.sql` for the two new event
+  types.
+
 - **Set the reasoning effort of Codex turns.** `dyfj --effort <level>` and
   `dyfj exec --effort <level>` take `low`, `medium`, `high` or `xhigh` for a
   `codex-chatgpt/*` model or `--runner codex-chatgpt`, and Workbench's built-in

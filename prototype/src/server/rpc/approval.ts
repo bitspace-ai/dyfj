@@ -1,11 +1,15 @@
 // Mapping a client's answer to a server-initiated `approval` request into the
 // verdict the caller acts on. Fail-closed: only an explicit approval approves.
 
-import type { BudgetCeilingVerdict } from "../../budget/mod.ts";
+import {
+  budgetCeilingApprovalRequest,
+  type BudgetCeilingVerdict,
+} from "../../budget/mod.ts";
 import type {
   AcpPermissionPrompt,
   AcpPermissionSelection,
 } from "../../contract/mod.ts";
+import type { ExecuteTurnDeps, TurnTicket } from "../../engine/mod.ts";
 import type { ToolApprovalVerdict } from "../../tools/mod.ts";
 
 // Parse the client's response to an `approval` request into a verdict. Anything
@@ -96,4 +100,101 @@ export function toAcpPermissionSelection(
     return { optionId: record.optionId, source: "operator" };
   }
   return rejectedAcpPermissionSelection(prompt);
+}
+
+/** The decisions a turn asks its caller for: tool, ACP permission, spend. */
+export type TurnApprover = NonNullable<ExecuteTurnDeps["approver"]>;
+
+/**
+ * Ask one approval request and wait for the answer. A rejection is a request
+ * that could not be asked or answered; the approver denies it, unless the
+ * turn was cancelled, in which case the cancellation propagates.
+ */
+export type RequestApproval = (
+  request: unknown,
+  signal: AbortSignal,
+) => Promise<unknown>;
+
+/** The denial reasons an approver gives when a request cannot be asked. */
+export interface ApprovalUnavailable {
+  tool: string;
+  budget: string;
+}
+
+/**
+ * A turn's approver over one way of asking: the connected client (`turn`) or
+ * the operator, through a parked approval (a headless turn). Every answer goes
+ * through the same fail-closed parsing, whoever gave it. Each request is
+ * bounded by the turn's cancel signal; an answer of `abort` ends the turn, and
+ * an answer that arrives after the turn was cancelled cannot start work.
+ */
+export function approverOver(
+  requestApproval: RequestApproval,
+  turn: TurnTicket,
+  unavailable: ApprovalUnavailable,
+): TurnApprover {
+  const abortIfApprovalWasInterrupted = (response: unknown): void => {
+    if (!approvalWasAborted(response)) return;
+    turn.abort();
+    throw turn.signal.reason;
+  };
+  const rejectStaleApprovalAfterCancellation = (): void => {
+    if (turn.signal.aborted) {
+      throw turn.signal.reason;
+    }
+  };
+  const ask = (request: unknown, signal?: AbortSignal): Promise<unknown> =>
+    requestApproval(
+      request,
+      signal === undefined
+        ? turn.signal
+        : AbortSignal.any([turn.signal, signal]),
+    );
+  return {
+    confirmToolApproval: (request, signal) =>
+      ask(request, signal).then(
+        (response) => {
+          abortIfApprovalWasInterrupted(response);
+          rejectStaleApprovalAfterCancellation();
+          return toApprovalVerdict(response);
+        },
+        (): ToolApprovalVerdict => {
+          rejectStaleApprovalAfterCancellation();
+          return { decision: "deny", reason: unavailable.tool };
+        },
+      ),
+    confirmExternalAgentPermission: (prompt, signal) =>
+      ask({
+        kind: "external_agent_permission",
+        title: prompt.toolCall.title,
+        arguments: {
+          "ACP tool": prompt.toolCall.name ?? "(not supplied)",
+          "ACP kind": terminalAcpToolKind(prompt.toolCall.kind),
+          "Requested input": prompt.toolCall.inputSummary,
+        },
+        options: prompt.options,
+      }, signal).then(
+        (response) => {
+          abortIfApprovalWasInterrupted(response);
+          rejectStaleApprovalAfterCancellation();
+          return toAcpPermissionSelection(response, prompt);
+        },
+        (): AcpPermissionSelection => {
+          rejectStaleApprovalAfterCancellation();
+          return rejectedAcpPermissionSelection(prompt);
+        },
+      ),
+    confirmBudgetCeiling: (warning) =>
+      ask(budgetCeilingApprovalRequest(warning)).then(
+        (response) => {
+          abortIfApprovalWasInterrupted(response);
+          rejectStaleApprovalAfterCancellation();
+          return toBudgetCeilingVerdict(response);
+        },
+        (): BudgetCeilingVerdict => {
+          rejectStaleApprovalAfterCancellation();
+          return { decision: "deny", reason: unavailable.budget };
+        },
+      ),
+  };
 }
