@@ -26,6 +26,7 @@ import {
   dirname,
   isAbsolute,
   join,
+  parse,
   relative,
   resolve,
   sep,
@@ -62,61 +63,55 @@ export function runtimePrototypeRoot(): string {
   return fileURLToPath(new URL("../../../", import.meta.url));
 }
 
+/** Symlinks followed while resolving one protected path, at most. */
+const MAX_LINK_HOPS = 40;
+
 /**
- * Canonical spellings of the absolute `path`: its realpath when it resolves;
- * otherwise the realpath of the nearest ancestor that resolves, walking the
- * path as written (no lexical `..` folding first, so `link/..` follows the
- * link), with the unresolved rest appended. A dangling symlink on the way
- * also contributes its target's spellings; a chain of more than eight
- * dangling links throws `AdditionalRootRefusedError`.
+ * The physical location of the absolute `path`, resolved one component at a
+ * time as the filesystem would (a `..` after a symlink leaves the link's
+ * target), with the part that does not exist yet appended as written. Every
+ * symlink met on the way, in a parent directory or as the final entry,
+ * dangling or not, adds its own physical location to `links`: replacing any
+ * of them would redirect the path. Throws `AdditionalRootRefusedError` after
+ * `MAX_LINK_HOPS` symlinks.
  */
-async function canonicalForms(path: string, depth = 0): Promise<string[]> {
-  try {
-    return [await realpath(path)];
-  } catch {
-    // Not resolvable as a whole: walk up below.
-  }
-  const forms: string[] = [];
-  let existing = path;
-  const missing: string[] = [];
-  for (;;) {
-    let link = false;
-    try {
-      link = (await lstat(existing)).isSymbolicLink();
-    } catch {
-      // Absent: keep walking up.
+async function physicalPath(
+  path: string,
+  links: Set<string>,
+  hops = { count: 0 },
+): Promise<string> {
+  const root = parse(path).root;
+  const parts = path.slice(root.length).split(/[\\/]+/).filter((part) => part !== "");
+  let current = root;
+  for (const [index, part] of parts.entries()) {
+    if (part === ".") continue;
+    if (part === "..") {
+      current = dirname(current);
+      continue;
     }
-    if (link && depth >= 8) {
+    const next = join(current, part);
+    let link: string | undefined;
+    try {
+      if ((await lstat(next)).isSymbolicLink()) link = await readlink(next);
+    } catch {
+      // Absent from here on: the rest is appended as written.
+      return [next, ...parts.slice(index + 1)].join(sep);
+    }
+    if (link === undefined) {
+      current = next;
+      continue;
+    }
+    links.add(next);
+    if (++hops.count > MAX_LINK_HOPS) {
       throw new AdditionalRootRefusedError(
-        "Additional roots are refused: a protected path is a chain of " +
-          "dangling symlinks too long to follow",
+        "Additional roots are refused: a protected path passes through " +
+          "too many symlinks to follow",
       );
     }
-    if (link) {
-      let target: string | undefined;
-      try {
-        target = await readlink(existing);
-      } catch {
-        // Gone since lstat: keep walking up.
-      }
-      if (target !== undefined) {
-        const absolute = isAbsolute(target)
-          ? target
-          : `${dirname(existing)}${sep}${target}`;
-        const rest = missing.length === 0 ? "" : sep + missing.join(sep);
-        forms.push(...await canonicalForms(absolute + rest, depth + 1));
-      }
-    }
-    const parent = dirname(existing);
-    if (parent === existing) return [...forms, resolve(path)];
-    missing.unshift(basename(existing));
-    existing = parent;
-    try {
-      return [...forms, join(await realpath(existing), ...missing)];
-    } catch {
-      // Keep walking up.
-    }
+    const target = isAbsolute(link) ? link : `${current}${sep}${link}`;
+    current = await physicalPath(target, links, hops);
   }
+  return current;
 }
 
 /** `path` and `child` joined without folding `..` segments. */
@@ -127,10 +122,10 @@ function under(path: string, ...children: string[]): string {
 }
 
 /**
- * The protected paths, each in its lexical form, its canonical forms (see
- * `canonicalForms`) and the canonical forms of the directory holding it, so
- * a root that would contain one once it is created, or that holds a
- * protected symlink through an aliased parent, is refused too. Throws `AdditionalRootRefusedError` without an absolute
+ * The protected paths, each in its lexical form, its physical location, and
+ * the physical location of every symlink on the way to it (see
+ * `physicalPath`). So a root that would contain one once it is created, or
+ * that holds any link a protected path passes through, is refused too. Throws `AdditionalRootRefusedError` without an absolute
  * `HOME`.
  */
 export async function protectedPaths(
@@ -162,12 +157,7 @@ export async function protectedPaths(
   const resolved = new Set<string>();
   for (const path of listed) {
     resolved.add(resolve(path));
-    for (const form of await canonicalForms(path)) resolved.add(form);
-    // Where the entry itself sits: when the path is a symlink, its target's
-    // forms above miss the directory that holds the link.
-    for (const form of await canonicalForms(dirname(path))) {
-      resolved.add(join(form, basename(path)));
-    }
+    resolved.add(await physicalPath(path, resolved));
   }
   return [...resolved];
 }
@@ -210,7 +200,7 @@ export async function admitAdditionalRoots(
   }
   const primary = options.primary === undefined
     ? undefined
-    : (await canonicalForms(options.primary))[0];
+    : await physicalPath(options.primary, new Set());
   const byPath = new Map<string, boolean>();
   for (const [index, root] of requested.entries()) {
     const position = index + 1;

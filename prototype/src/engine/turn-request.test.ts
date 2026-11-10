@@ -302,10 +302,13 @@ test("resolveTurnFromBody lets an explicit Codex runner carry a reasoning effort
 describe("parseAdditionalRoots", () => {
   it("accepts absolute roots, read-only when asked", () => {
     assert.deepStrictEqual(
-      parseAdditionalRoots([{ path: "/a" }, { path: "/b", readOnly: true }]),
+      parseAdditionalRoots(
+        [{ path: "/a" }, { path: "/b", readOnly: true }],
+        "linux",
+      ),
       { roots: [{ path: "/a", readOnly: false }, { path: "/b", readOnly: true }] },
     );
-    assert.deepStrictEqual(parseAdditionalRoots(undefined), { roots: [] });
+    assert.deepStrictEqual(parseAdditionalRoots(undefined, "linux"), { roots: [] });
   });
 
   it("on Windows, takes only drive- or UNC-qualified paths", () => {
@@ -328,7 +331,7 @@ describe("parseAdditionalRoots", () => {
         Array.from({ length: 17 }, () => ({ path: "/a" })),
       ]
     ) {
-      assert.ok("error" in parseAdditionalRoots(value), JSON.stringify(value));
+      assert.ok("error" in parseAdditionalRoots(value, "linux"), JSON.stringify(value));
     }
   });
 });

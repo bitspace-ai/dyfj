@@ -47,13 +47,24 @@ pub fn parse_add_dir(value: &str) -> Option<(String, bool)> {
     (!path.is_empty()).then(|| (path.to_string(), read_only))
 }
 
-/// `path` made absolute: a leading `~/` is `home`, and a path that is not
-/// absolute joins `cwd` when there is one.
+/// `path` made absolute: a leading `~/` is `home`, and a relative path joins
+/// `cwd` when there is one. A Windows path with a drive but no root
+/// (`D:repo`) or a root but no drive (`\repo`) is resolved against the
+/// process's current directory for that drive.
 pub fn absolute_root(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
     let expanded = match (home, path.strip_prefix('~')) {
         (Some(home), Some(rest)) if rest.is_empty() || rest.starts_with('/') => format!("{home}{rest}"),
         _ => path.to_string(),
     };
+    let candidate = std::path::Path::new(&expanded);
+    let partly_qualified = !candidate.is_absolute()
+        && (candidate.has_root()
+            || matches!(candidate.components().next(), Some(std::path::Component::Prefix(_))));
+    if partly_qualified {
+        if let Ok(resolved) = std::path::absolute(candidate) {
+            return resolved.to_string_lossy().into_owned();
+        }
+    }
     match cwd {
         Some(cwd) if !std::path::Path::new(&expanded).is_absolute() => std::path::Path::new(cwd)
             .join(&expanded)

@@ -177,10 +177,28 @@ describe("admitAdditionalRoots", () => {
     );
   });
 
+  it("refuses a root that holds an intermediate link of a .env chain", async () => {
+    const checkout = join(base, "chain-checkout", "prototype");
+    const bridge = join(base, "bridge");
+    const secrets = join(base, "chain-secrets");
+    await mkdir(checkout, { recursive: true });
+    await mkdir(join(bridge, "prototype"), { recursive: true });
+    await mkdir(secrets);
+    await writeFile(join(secrets, "runtime.env"), "CANARY_TOKEN=not-a-secret\n");
+    await symlink(join(secrets, "runtime.env"), join(bridge, "prototype", ".env"));
+    await symlink(join(bridge, "prototype", ".env"), join(checkout, ".env"));
+    await assert.rejects(
+      admitAdditionalRoots([{ path: bridge, readOnly: false }], {
+        protectedPaths: await protectedPaths({ home, prototypeRoot: checkout }),
+      }),
+      refused(1),
+    );
+  });
+
   it("refuses a chain of dangling symlinks too long to follow", async () => {
     const checkout = join(base, "long-chain", "prototype");
     await mkdir(checkout, { recursive: true });
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < 41; i++) {
       await symlink(join(base, "long-chain", `l${i + 1}`), join(base, "long-chain", `l${i}`));
     }
     await symlink(join(base, "long-chain", "l0"), join(checkout, ".env"));
