@@ -645,9 +645,9 @@ describe("--add-dir", () => {
         "/op-home/projects/main-repo",
       ),
       [
-        { path: "/op-home/projects/wt", readOnly: false },
+        { path: "/op-home/projects/main-repo/../wt", readOnly: false },
         { path: "/op-home/ref", readOnly: true },
-        { path: "/abs/x", readOnly: false },
+        { path: "/abs/./x", readOnly: false },
       ],
     );
   });

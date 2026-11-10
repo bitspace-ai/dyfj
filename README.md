@@ -1461,8 +1461,8 @@ refuses every added root when it has no absolute `HOME`, and otherwise
 resolves each root to its canonical path and refuses one that is not a
 directory, or that is, contains or sits inside `~/.dyfj` (which holds the Codex
 runner home), `~/.config/dyfj`, `DYFJ_ROOT`, or the file behind the runtime
-checkout's `prototype/.env`. So the main checkout cannot be an added root; a
-worktree can. On the native route, the file tools (`read_file`, `list_files`,
+checkout's `prototype/.env`. So the checkout the runtime runs from cannot be an added root, nor the
+checkout holding the file its `prototype/.env` links to. On the native route, the file tools (`read_file`, `list_files`,
 `grep_files`, `glob_files`, `write_file`, `edit_file`) take an optional `root`
 argument naming an added root, and each root keeps the tools' own per-call
 containment checks; `write_file` and `edit_file` refuse a read-only root

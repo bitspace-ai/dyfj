@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import process from "node:process";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { MAX_ADDITIONAL_ROOTS } from "../../contract/mod.ts";
@@ -154,6 +155,29 @@ describe("admitAdditionalRoots", () => {
       }),
       refused(1),
     );
+  });
+
+  it("refuses a chain of dangling symlinks too long to follow", async () => {
+    const checkout = join(base, "long-chain", "prototype");
+    await mkdir(checkout, { recursive: true });
+    for (let i = 0; i < 9; i++) {
+      await symlink(join(base, "long-chain", `l${i + 1}`), join(base, "long-chain", `l${i}`));
+    }
+    await symlink(join(base, "long-chain", "l0"), join(checkout, ".env"));
+    await assert.rejects(
+      protectedPaths({ home, prototypeRoot: checkout }),
+      AdditionalRootRefusedError,
+    );
+  });
+
+  it("protects a relative DYFJ_ROOT against the runtime's cwd", async () => {
+    const listed = await protectedPaths({ home, dyfjRoot: "rel-config" });
+    assert.ok(listed.includes(join(process.cwd(), "rel-config")), listed.join("\n"));
+  });
+
+  it("keeps a trailing backslash in a POSIX home name", async () => {
+    const listed = await protectedPaths({ home: "/op\\" });
+    assert.ok(listed.includes("/op\\/.dyfj"), listed.join("\n"));
   });
 
   it("refuses DYFJ_ROOT when it is set", async () => {

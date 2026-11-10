@@ -30,6 +30,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
   type AdditionalRootRequest,
@@ -66,7 +67,8 @@ export function runtimePrototypeRoot(): string {
  * otherwise the realpath of the nearest ancestor that resolves, walking the
  * path as written (no lexical `..` folding first, so `link/..` follows the
  * link), with the unresolved rest appended. A dangling symlink on the way
- * also contributes its target's spellings, up to a bounded depth.
+ * also contributes its target's spellings; a chain of more than eight
+ * dangling links throws `AdditionalRootRefusedError`.
  */
 async function canonicalForms(path: string, depth = 0): Promise<string[]> {
   try {
@@ -78,18 +80,31 @@ async function canonicalForms(path: string, depth = 0): Promise<string[]> {
   let existing = path;
   const missing: string[] = [];
   for (;;) {
-    if (depth < 8) {
+    let link = false;
+    try {
+      link = (await lstat(existing)).isSymbolicLink();
+    } catch {
+      // Absent: keep walking up.
+    }
+    if (link && depth >= 8) {
+      throw new AdditionalRootRefusedError(
+        "Additional roots are refused: a protected path is a chain of " +
+          "dangling symlinks too long to follow",
+      );
+    }
+    if (link) {
+      let target: string | undefined;
       try {
-        if ((await lstat(existing)).isSymbolicLink()) {
-          const target = await readlink(existing);
-          const absolute = isAbsolute(target)
-            ? target
-            : `${dirname(existing)}${sep}${target}`;
-          const rest = missing.length === 0 ? "" : sep + missing.join(sep);
-          forms.push(...await canonicalForms(absolute + rest, depth + 1));
-        }
+        target = await readlink(existing);
       } catch {
-        // Absent: keep walking up.
+        // Gone since lstat: keep walking up.
+      }
+      if (target !== undefined) {
+        const absolute = isAbsolute(target)
+          ? target
+          : `${dirname(existing)}${sep}${target}`;
+        const rest = missing.length === 0 ? "" : sep + missing.join(sep);
+        forms.push(...await canonicalForms(absolute + rest, depth + 1));
       }
     }
     const parent = dirname(existing);
@@ -106,7 +121,9 @@ async function canonicalForms(path: string, depth = 0): Promise<string[]> {
 
 /** `path` and `child` joined without folding `..` segments. */
 function under(path: string, ...children: string[]): string {
-  return [path.replace(/[\\/]+$/, ""), ...children].join(sep);
+  let base = path;
+  while (base.length > 1 && base.endsWith(sep)) base = base.slice(0, -1);
+  return [base === sep ? "" : base, ...children].join(sep);
 }
 
 /**
@@ -129,11 +146,14 @@ export async function protectedPaths(
     under(inputs.home, ".dyfj", "runner-homes"),
     under(inputs.home, ".config", "dyfj"),
   ];
-  if (
-    inputs.dyfjRoot !== undefined && inputs.dyfjRoot !== "" &&
-    isAbsolute(inputs.dyfjRoot)
-  ) {
-    listed.push(inputs.dyfjRoot);
+  if (inputs.dyfjRoot !== undefined && inputs.dyfjRoot !== "") {
+    // A relative DYFJ_ROOT is relative to the runtime's cwd, as the config
+    // loader reads it.
+    listed.push(
+      isAbsolute(inputs.dyfjRoot)
+        ? inputs.dyfjRoot
+        : `${process.cwd()}${sep}${inputs.dyfjRoot}`,
+    );
   }
   if (inputs.prototypeRoot !== undefined) {
     listed.push(under(inputs.prototypeRoot, ".env"));

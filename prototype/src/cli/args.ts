@@ -9,7 +9,7 @@ import {
   codexReasoningEffortRefusal,
   isCodexReasoningEffort,
 } from "../config/mod.ts";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   type AdditionalRootRequest,
   MAX_ADDITIONAL_ROOTS,
@@ -305,8 +305,10 @@ export function resolveAdditionalRoots(
     const expanded = home !== undefined && (path === "~" || path.startsWith("~/"))
       ? home + path.slice(1)
       : path;
+    // Joined, not resolved: folding `..` here could pick another directory
+    // than the filesystem does through a symlink. The runtime canonicalizes.
     return {
-      path: isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded),
+      path: isAbsolute(expanded) ? expanded : `${cwd.replace(/\/+$/, "")}/${expanded}`,
       readOnly,
     };
   });
