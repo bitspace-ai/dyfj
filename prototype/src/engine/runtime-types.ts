@@ -40,6 +40,7 @@ import type {
 export type PublishEnginePorts = Omit<PublishCatalogPorts, "sessionId">;
 import type {
   BudgetTallyMode,
+  CodexReasoningEffort,
   Env,
   PermissionLevel,
   RuntimePolicy,
@@ -179,6 +180,12 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * default when absent. A headless driver supplies its own.
    */
   defaultCompanionModel?: string | null;
+  /**
+   * The effort a Codex ChatGPT turn runs at when its routing options name
+   * none (config [codex] reasoning_effort), resolved at the boundary. Route
+   * resolution applies it to the Codex route only.
+   */
+  defaultCodexReasoningEffort?: CodexReasoningEffort;
   /**
    * Set by the engine, never by a caller: the session's recorded model this
    * resumed turn was routed to because it named none (`session-model.ts`).

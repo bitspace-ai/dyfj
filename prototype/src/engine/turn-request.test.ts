@@ -263,3 +263,37 @@ test("paidEscalationVerdict denies a loopback caller that did not opt in", () =>
     decision: "approve",
   });
 });
+
+test("resolveTurnFromBody accepts each Codex reasoning effort and refuses any other value", () => {
+  for (const reasoningEffort of ["low", "medium", "high", "xhigh"]) {
+    match(
+      resolveTurnFromBody({ prompt: "hi", routingOptions: { reasoningEffort } }, true),
+      { runtimeInput: { routingOptions: { reasoningEffort } } },
+    );
+  }
+  for (const reasoningEffort of ["minimal", "XHIGH", "", 3]) {
+    match(
+      resolveTurnFromBody({ prompt: "hi", routingOptions: { reasoningEffort } }, true),
+      {
+        status: 400,
+        error: "routingOptions.reasoningEffort must be low, medium, high, or xhigh",
+      },
+    );
+  }
+});
+
+test("resolveTurnFromBody lets an explicit Codex runner carry a reasoning effort", () => {
+  match(
+    resolveTurnFromBody({
+      prompt: "hi",
+      runner: "codex-chatgpt",
+      routingOptions: { reasoningEffort: "xhigh" },
+    }, true, { trustWorkspaceInstructions: true }),
+    {
+      runtimeInput: {
+        runner: { kind: "acp", profile: "codex-chatgpt" },
+        routingOptions: { reasoningEffort: "xhigh" },
+      },
+    },
+  );
+});

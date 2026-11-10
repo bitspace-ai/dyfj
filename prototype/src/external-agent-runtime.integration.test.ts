@@ -1419,6 +1419,59 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
   });
 
+  it("runExternalAgentWorkbenchRuntime sends the operator's reasoning effort to Codex", async () => {
+    const h = createHarness();
+    const home = await tempDir();
+    try {
+      const nodePath = `${home}/node`;
+      await writeFile(
+        nodePath,
+        `#!/bin/sh\nif [ "$1" = "-p" ]; then printf '{"execPath":"${nodePath}","release":"node"}\\n'; exit 0; fi\nprintf '{"type":"stop"}\\n'\n`,
+      );
+      await chmod(nodePath, 0o700);
+      const capturedEfforts: unknown[] = [];
+      for (
+        const reasoningEffort of ["xhigh", undefined] as const
+      ) {
+        await withEnvOverlay(
+          { HOME: home, DYFJ_NODE_PATH: nodePath },
+          () =>
+            runExternalAgentWorkbenchRuntime(h, {
+              mode: "turn",
+              prompt: "test",
+              routingOptions: {
+                modelId: "codex-chatgpt/gpt-6.1-sol",
+                ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+              },
+              runner: { kind: "acp", profile: "codex-chatgpt" },
+              workspaceRoot: process.cwd(),
+              trustWorkspaceInstructions: true,
+            }, {
+              runAgent: (agentInput) => {
+                capturedEfforts.push(
+                  JSON.parse(agentInput.profile.environment.CODEX_CONFIG!)
+                    .model_reasoning_effort,
+                );
+                return Promise.resolve({
+                  text: "ok",
+                  stopReason: "stop",
+                  capabilities: [],
+                  routeEvidence: {
+                    source: "profile_declared",
+                    authenticationType: "chat-gpt",
+                  },
+                  elapsedMs: 1,
+                });
+              },
+            }),
+        );
+      }
+      assert.deepStrictEqual(capturedEfforts, ["xhigh", "medium"]);
+    } finally {
+      await rm(home, { recursive: true });
+    }
+  });
+
   it("rejects invalid toolchain directory authority with fixed diagnostics", async () => {
     const home = await tempDir();
     const unsafe = `${home}/unsafe`;

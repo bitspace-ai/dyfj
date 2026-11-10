@@ -41,6 +41,8 @@ pub enum Command {
     },
     /// `/fast [on|off]`; `None` toggles.
     Fast(Option<bool>),
+    /// `/effort [low|medium|high|xhigh|default]`
+    Effort(crate::effort::EffortTarget),
     /// `/steps [N]`; `None` shows the limit.
     Steps(Option<u32>),
     /// `/budget [<limit> <usd>]`; `None` shows the limits.
@@ -153,6 +155,7 @@ pub fn parse(input: &str) -> Option<Command> {
             ["off"] => Command::Fast(Some(false)),
             _ => Command::Usage("usage: /fast [on|off]".into()),
         },
+        "/effort" => crate::effort::parse(&args),
         "/steps" => match args.as_slice() {
             [] => Command::Steps(None),
             [value] => match parse_tool_steps(value) {
@@ -287,6 +290,7 @@ const HELP: &str = "\
 commands (type them alone on a line; inside a paste they are prompt text):
   /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
   /fast [on|off]                                       toggle the fast speed tier
+  /effort [low|medium|high|xhigh|default]              show or set a codex-chatgpt model's reasoning effort
   /steps [N]                                           show or set the tool-step limit
   /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
   /receipt steps                                       the last turn's usage, per provider call
@@ -352,6 +356,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
             fast,
         } => model(client, session, slug, approve_paid, fast).await,
         Command::Fast(target) => fast_toggle(client, session, target).await,
+        Command::Effort(target) => crate::effort::run(client, session, target).await,
         Command::Steps(target) => steps(client, session, target).await,
         Command::Budget(target) => budget(client, session, target).await,
         Command::ReceiptSteps => receipt_steps(session),
@@ -401,7 +406,7 @@ pub fn print_evidence(calls: Option<&[String]>) {
     }
 }
 
-fn error_line(context: &str, err: &anyhow::Error) {
+pub(crate) fn error_line(context: &str, err: &anyhow::Error) {
     eprintln!("{context}: {}", visible(&err.to_string()));
 }
 
@@ -419,7 +424,7 @@ pub fn catalog_notice(listed: &Value) -> Option<String> {
 
 /// The model rows from `models/list`, or `None` after reporting why not. A
 /// list served from the built-in fallback rows is reported first.
-async fn list_models(client: &Client) -> Option<Vec<Value>> {
+pub(crate) async fn list_models(client: &Client) -> Option<Vec<Value>> {
     match client.request("models/list", json!({})).await {
         Ok(v) => {
             if let Some(notice) = catalog_notice(&v) {
@@ -768,42 +773,6 @@ pub fn format_models(rows: &[Value]) -> Vec<String> {
     out
 }
 
-/// One line saying what the next turn will run on.
-fn posture(session: &Session, rows: &[Value]) -> String {
-    let mut parts = Vec::new();
-    match &session.model {
-        Some(slug) => {
-            parts.push(visible(slug));
-            if session.model_origin == ModelOrigin::Restored {
-                parts.push("restored from session".into());
-            }
-            if let Some(row) = rows.iter().find(|r| str_field(r, "slug") == slug) {
-                if let Some(t) = row.get("tier").and_then(Value::as_i64) {
-                    parts.push(format!("tier {t}"));
-                }
-                match row.get("local").and_then(Value::as_bool) {
-                    Some(true) => parts.push("local".into()),
-                    Some(false) => parts.push("hosted".into()),
-                    None => {}
-                }
-            }
-        }
-        None => parts.push("runtime default model".into()),
-    }
-    if session.model_origin == ModelOrigin::Unrecorded {
-        parts.push("no recorded model for this session".into());
-    }
-    if session.fast == Some(true) {
-        parts.push("fast".into());
-    }
-    parts.push(if session.approve_paid {
-        "paid approved for this session".into()
-    } else {
-        "paid per runtime posture".into()
-    });
-    format!("posture: {}", parts.join(" · "))
-}
-
 async fn model(
     client: &Client,
     session: &mut Session,
@@ -847,6 +816,7 @@ async fn model(
                 visible(&slug)
             );
         }
+        crate::effort::clear_off_codex(session, &slug);
         session.choose_model(slug);
     }
     if let Some(f) = fast {
@@ -855,7 +825,7 @@ async fn model(
     if approve_paid {
         session.approve_paid = true;
     }
-    eprintln!("{}", posture(session, &rows));
+    eprintln!("{}", crate::posture::switch_line(session, &rows));
 }
 
 async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool>) {
@@ -874,7 +844,7 @@ async fn fast_toggle(client: &Client, session: &mut Session, target: Option<bool
         }
     }
     session.fast = Some(want);
-    eprintln!("{}", posture(session, &rows));
+    eprintln!("{}", crate::posture::switch_line(session, &rows));
 }
 
 /// `/steps` shows the session's tool-step limit; `/steps N` sets it for the
@@ -1027,7 +997,7 @@ async fn session_switch(client: &Client, session: &mut Session, id: String) {
     }
     eprintln!("switched to session: {}", visible(&id));
     session.switch_to(id, workspace, recorded);
-    eprintln!("{}", posture(session, rows.as_deref().unwrap_or(&[])));
+    eprintln!("{}", crate::posture::switch_line(session, rows.as_deref().unwrap_or(&[])));
 }
 
 async fn friction(
@@ -1389,7 +1359,7 @@ mod tests {
 /// end of a socket pair: the requests each command sends, the approvals it
 /// answers, and what it changes on the session.
 #[cfg(test)]
-mod run_tests {
+pub(crate) mod run_tests {
     use super::{Command, Prompter, run, startup_model_ok};
     use crate::client::{Client, Incoming};
     use crate::session::{ModelOrigin, Session};
@@ -1453,7 +1423,7 @@ mod run_tests {
         tx
     }
 
-    async fn drive(answer: Answer, session: &mut Session, commands: Vec<Command>) -> Vec<Value> {
+    pub(crate) async fn drive(answer: Answer, session: &mut Session, commands: Vec<Command>) -> Vec<Value> {
         drive_interrupted(answer, session, commands, 0).await
     }
 
@@ -1489,7 +1459,7 @@ mod run_tests {
         seen.iter().filter_map(|m| m["method"].as_str()).collect()
     }
 
-    fn catalog(method: &str, _: &Value) -> Value {
+    pub(crate) fn catalog(method: &str, _: &Value) -> Value {
         match method {
             "models/list" => json!({"models": [
                 {"slug": "local/qwen", "tier": 0, "local": true, "modality": "local"},
@@ -1505,7 +1475,7 @@ mod run_tests {
         }
     }
 
-    fn model(slug: &str) -> Command {
+    pub(crate) fn model(slug: &str) -> Command {
         Command::Model { slug: Some(slug.into()), approve_paid: false, fast: None }
     }
 

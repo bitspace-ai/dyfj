@@ -26,6 +26,30 @@ export const PERMISSION_LEVELS: readonly PermissionLevel[] = [
   "operator",
 ];
 
+/**
+ * The reasoning efforts the Codex ChatGPT route accepts, passed to Codex as
+ * `model_reasoning_effort`. A Codex turn whose request and config name none
+ * runs at `medium`.
+ */
+export type CodexReasoningEffort = "low" | "medium" | "high" | "xhigh";
+export const CODEX_REASONING_EFFORTS: readonly CodexReasoningEffort[] = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+export function isCodexReasoningEffort(
+  value: unknown,
+): value is CodexReasoningEffort {
+  return (CODEX_REASONING_EFFORTS as readonly unknown[]).includes(value);
+}
+
+/** The refusal for a level outside `CODEX_REASONING_EFFORTS`. */
+export function codexReasoningEffortRefusal(source: string): string {
+  return `${source} must be low, medium, high, or xhigh`;
+}
+
 // ── Declared key registry ─────────────────────────────────────────────────────
 
 /**
@@ -179,6 +203,15 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     type: "boolean",
     kind: "value",
     default: false,
+  },
+  {
+    key: "codexReasoningEffort",
+    envVar: "DYFJ_CODEX_REASONING_EFFORT",
+    domain: "engine",
+    type: "enum",
+    kind: "value",
+    enumValues: CODEX_REASONING_EFFORTS,
+    default: null,
   },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   {

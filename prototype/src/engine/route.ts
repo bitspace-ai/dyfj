@@ -33,6 +33,7 @@ import {
   type WorkbenchRoutingOptions,
   type WorkbenchSelection,
 } from "../providers/mod.ts";
+import type { CodexReasoningEffort } from "../config/mod.ts";
 import { PaidEscalationDeclinedError } from "./errors.ts";
 
 /** The catalog reader route resolution loads models through. */
@@ -138,9 +139,17 @@ export interface RouteRequest {
   runner?: AcpRunnerSelection;
   defaultCompanionModel?: string | null;
   trustWorkspaceInstructions?: boolean;
+  /** The configured effort for a Codex ChatGPT turn that names none. */
+  defaultCodexReasoningEffort?: CodexReasoningEffort;
   defaultSessionBudgetUsd?: number;
   defaultPerCallBudgetUsd?: number;
   approver?: { confirmPaidEscalation?: ConfirmPaidEscalation };
+}
+
+function reasoningEffortRefusal(slug: string | undefined): string {
+  const model = slug === undefined ? "the selected model" : `"${slug}"`;
+  return `Reasoning effort applies only to codex-chatgpt models, and ${model} ` +
+    "is not one. Drop --effort, or run /effort default in the REPL.";
 }
 
 /**
@@ -265,7 +274,19 @@ export async function resolveRoute(
   } else {
     route = await selectedAcpRoute(request, models);
   }
-  if (route === null) return { runner: "native" };
+  const requestedEffort = request.routingOptions?.reasoningEffort;
+  if (route === null || route.selection.profile !== "codex-chatgpt") {
+    if (requestedEffort !== undefined) {
+      throw new DomainError(
+        reasoningEffortRefusal(
+          route === null
+            ? request.routingOptions.modelId
+            : route.model?.slug ?? route.selection.profile,
+        ),
+      );
+    }
+    if (route === null) return { runner: "native" };
+  }
 
   if (
     route.selection.profile === "codex-chatgpt" &&
@@ -285,10 +306,16 @@ export async function resolveRoute(
       perCallLimitUsd: request.defaultPerCallBudgetUsd ?? 0,
     }, request.approver?.confirmPaidEscalation);
   }
+  const defaultEffort = route.selection.profile === "codex-chatgpt" &&
+      requestedEffort === undefined
+    ? request.defaultCodexReasoningEffort
+    : undefined;
   return {
     runner: "acp",
     selection: route.selection,
-    routingOptions: route.routingOptions,
+    routingOptions: defaultEffort === undefined
+      ? route.routingOptions
+      : { ...route.routingOptions, reasoningEffort: defaultEffort },
   };
 }
 

@@ -20,6 +20,7 @@ import {
   redactsArgumentsById,
 } from "../tools/mod.ts";
 import {
+  type CodexReasoningEffort,
   type Env,
   type PermissionLevel,
   processEnv,
@@ -180,6 +181,8 @@ export interface ExecuteTurnDeps {
   maxToolSteps?: number;
   /** The highest tool-step limit a turn request may set (config). */
   maxToolStepsCeiling?: number;
+  /** The configured effort for a Codex ChatGPT turn that names none. */
+  defaultCodexReasoningEffort?: CodexReasoningEffort;
   /**
    * Close the turn's idle external-agent handle before the session lock is
    * released. The server passes the ACP session map's `dropSession`. Absent
@@ -203,7 +206,7 @@ export function engineConfigToTurnDeps(
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  >,
+  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>,
 ): Pick<
   ExecuteTurnDeps,
   | "defaultCompanionModel"
@@ -217,6 +220,7 @@ export function engineConfigToTurnDeps(
   | "defaultRunawayStallUsd"
   | "maxToolSteps"
   | "maxToolStepsCeiling"
+  | "defaultCodexReasoningEffort"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -230,6 +234,9 @@ export function engineConfigToTurnDeps(
     defaultRunawayStallUsd: config.defaultRunawayStallUsd,
     maxToolSteps: config.maxToolSteps,
     maxToolStepsCeiling: config.maxToolStepsCeiling,
+    ...(config.codexReasoningEffort
+      ? { defaultCodexReasoningEffort: config.codexReasoningEffort }
+      : {}),
   };
 }
 
@@ -354,6 +361,9 @@ function runExecuteTurn(
       : false,
     // operator permission posture, resolved once at the boundary from config
     permissionLevel: deps.permissionLevel,
+    ...(deps.defaultCodexReasoningEffort === undefined
+      ? {}
+      : { defaultCodexReasoningEffort: deps.defaultCodexReasoningEffort }),
     // config-file budget defaults override the env-only boundary resolver
     ...(deps.defaultSessionBudgetUsd !== undefined
       ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }

@@ -6,7 +6,11 @@ import {
   sanitizeBoundaryText,
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
-import { processEnv, type RuntimePolicy } from "./config/mod.ts";
+import {
+  type CodexReasoningEffort,
+  processEnv,
+  type RuntimePolicy,
+} from "./config/mod.ts";
 import { dirname, join } from "node:path";
 import {
   chmod,
@@ -353,7 +357,7 @@ export interface CodexChatGptProfileOptions {
   toolchainPath?: string;
   rustupHome?: string;
   modelName?: string;
-  reasoningEffort?: string;
+  reasoningEffort?: CodexReasoningEffort;
   fast?: boolean;
 }
 
@@ -881,6 +885,7 @@ export async function runExternalAgentWorkbenchRuntime(
         : await codexChatGptProfile(workspace, {
           modelName: modelSlug?.slice("codex-chatgpt/".length),
           fast: input.routingOptions?.fast,
+          reasoningEffort: input.routingOptions?.reasoningEffort,
         })
       : await dependencies.resolveProfile(input.runner.profile, workspace);
   } catch (error) {

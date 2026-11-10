@@ -38,6 +38,58 @@ describe("parseArgs", () => {
     );
   });
 
+  it("parses --effort for the Codex route and refuses any other level", () => {
+    for (const level of ["low", "medium", "high", "xhigh"]) {
+      assert.strictEqual(parseArgs(["--effort", level]).overrides.effort, level);
+    }
+    assert.partialDeepStrictEqual(
+      parseArgs([
+        "--model",
+        "codex-chatgpt/gpt-6.1-sol",
+        "--effort",
+        "xhigh",
+        "exec",
+        "hi",
+      ]),
+      { command: "exec", overrides: { effort: "xhigh" } },
+    );
+    assert.partialDeepStrictEqual(
+      parseArgs(["--runner", "codex-chatgpt", "--effort", "high", "exec", "hi"]),
+      { command: "exec", overrides: { runner: "codex-chatgpt", effort: "high" } },
+    );
+    for (const level of ["minimal", "XHIGH", "max"]) {
+      assert.strictEqual(
+        parseArgs(["--effort", level, "exec", "hi"]).error,
+        "--effort must be low, medium, high, or xhigh",
+      );
+    }
+    assert.strictEqual(
+      parseArgs(["--effort"]).error,
+      "missing value for --effort",
+    );
+    assert.strictEqual(
+      parseArgs(["--model", "local-small", "--effort", "high", "exec", "hi"])
+        .error,
+      "--effort applies only to codex-chatgpt/* models",
+    );
+    assert.strictEqual(
+      parseArgs(["--runner", "fixture", "--effort", "high", "exec", "hi"])
+        .error,
+      "--effort applies only to codex-chatgpt/* models",
+    );
+  });
+
+  it("carries --effort into the resolved config", () => {
+    assert.strictEqual(
+      resolveConfig({ effort: "xhigh" }, { get: () => undefined }).effort,
+      "xhigh",
+    );
+    assert.strictEqual(
+      resolveConfig({}, { get: () => undefined }).effort,
+      undefined,
+    );
+  });
+
   it("parses --fast and --no-fast flags", () => {
     assert.strictEqual(parseArgs(["--fast"]).overrides.fast, true);
     assert.strictEqual(parseArgs(["--no-fast"]).overrides.fast, false);

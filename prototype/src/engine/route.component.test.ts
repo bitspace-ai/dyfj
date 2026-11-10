@@ -516,3 +516,73 @@ test("an unknown model over a loaded catalog says how to pick another", async ()
       !/catalog could not be loaded/.test(error.message),
   );
 });
+
+// ── resolveRoute: Codex reasoning effort ─────────────────────────────────────
+
+test("resolveRoute refuses a reasoning effort on a native model before consent", async () => {
+  const confirm = consent({ decision: "approve" });
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({
+          routingOptions: { modelId: LOCAL.slug, reasoningEffort: "high" },
+          approver: { confirmPaidEscalation: confirm },
+        }),
+        catalog(LOCAL, CODEX_TERRA),
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      error.message.includes("codex-chatgpt") &&
+      error.message.includes("local-small"),
+  );
+  assert.equal(confirm.mock.callCount(), 0);
+});
+
+test("resolveRoute refuses a reasoning effort on the ACP fixture runner", async () => {
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({
+          routingOptions: { reasoningEffort: "low" },
+          runner: { kind: "acp", profile: "fixture" },
+        }),
+        failingCatalog,
+      ),
+    (error: unknown) =>
+      error instanceof DomainError && error.message.includes("codex-chatgpt"),
+  );
+});
+
+test("resolveRoute applies the configured Codex reasoning effort only when the turn names none", async () => {
+  const defaulted = await resolveRoute(
+    request({
+      routingOptions: { modelId: CODEX_TERRA.slug },
+      trustWorkspaceInstructions: true,
+      defaultCodexReasoningEffort: "high",
+      approver: { confirmPaidEscalation: consent({ decision: "approve" }) },
+    }),
+    catalog(LOCAL, CODEX_TERRA),
+  );
+  assert.strictEqual(defaulted.runner, "acp");
+  if (defaulted.runner !== "acp") return;
+  assert.strictEqual(defaulted.routingOptions.reasoningEffort, "high");
+
+  const explicit = await resolveRoute(
+    request({
+      routingOptions: { modelId: CODEX_TERRA.slug, reasoningEffort: "xhigh" },
+      trustWorkspaceInstructions: true,
+      defaultCodexReasoningEffort: "high",
+      approver: { confirmPaidEscalation: consent({ decision: "approve" }) },
+    }),
+    catalog(LOCAL, CODEX_TERRA),
+  );
+  assert.strictEqual(explicit.runner, "acp");
+  if (explicit.runner !== "acp") return;
+  assert.strictEqual(explicit.routingOptions.reasoningEffort, "xhigh");
+
+  const native = await resolveRoute(
+    request({ defaultCodexReasoningEffort: "high" }),
+    catalog(LOCAL),
+  );
+  assert.deepStrictEqual(native, { runner: "native" });
+});

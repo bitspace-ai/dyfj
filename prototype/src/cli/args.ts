@@ -4,6 +4,11 @@
  * `main --parse-check`.
  */
 
+import {
+  type CodexReasoningEffort,
+  codexReasoningEffortRefusal,
+  isCodexReasoningEffort,
+} from "../config/mod.ts";
 import { SESSION_ID_SHAPE } from "../contract/mod.ts";
 import { resolveSocketPath } from "../transport/mod.ts";
 import {
@@ -46,6 +51,12 @@ export interface CliConfig {
    * Requests the fast service tier for prioritized generation throughput.
    */
   fast?: boolean;
+  /**
+   * The session's reasoning effort on the Codex ChatGPT route (--effort,
+   * /effort), sent on every turn. Undefined leaves the runtime's configured
+   * default, `medium` unless [codex] reasoning_effort sets one.
+   */
+  effort?: CodexReasoningEffort;
   /**
    * The session's own tool-step limit (--tool-steps, /steps), sent on every
    * native turn; an external runner keeps its own loop and is sent none.
@@ -108,6 +119,7 @@ const VALUE_FLAGS = new Set([
   "--workspace",
   "--runner",
   "--tool-steps",
+  "--effort",
   ...Object.keys(BUDGET_FLAGS),
   "-p",
   "--print",
@@ -207,7 +219,12 @@ function applyValueFlag(
       return thrown instanceof Error ? thrown.message : String(thrown);
     }
   } else if (arg === "--workspace") overrides.workspace = value;
-  else if (arg === "--tool-steps") {
+  else if (arg === "--effort") {
+    if (!isCodexReasoningEffort(value)) {
+      return codexReasoningEffortRefusal("--effort");
+    }
+    overrides.effort = value;
+  } else if (arg === "--tool-steps") {
     const steps = parseToolSteps(value);
     if (steps === undefined) {
       return `--tool-steps must be an integer from 1 through ${TOOL_STEPS_BOUND}`;
@@ -239,6 +256,9 @@ function applyValueFlag(
   }
   return undefined;
 }
+
+/** The slug prefix of the Codex ChatGPT route's models. */
+export const CODEX_MODEL_PREFIX = "codex-chatgpt/";
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const overrides: Partial<CliConfig> = {};
@@ -321,6 +341,16 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return error(
       "--runner cannot be combined with --model, --tier, --hint, or --fast/--no-fast",
     );
+  }
+  // The runtime refuses an effort on any other route too; this catches the
+  // routes the command line already names.
+  if (
+    overrides.effort !== undefined &&
+    (overrides.runner === "fixture" ||
+      (overrides.model !== undefined &&
+        !overrides.model.startsWith(CODEX_MODEL_PREFIX)))
+  ) {
+    return error("--effort applies only to codex-chatgpt/* models");
   }
   if (
     overrides.runner !== undefined &&
@@ -426,6 +456,7 @@ export function resolveConfig(
     unix: overrides.unix ?? true,
     approvePaid: overrides.approvePaid ?? false,
     fast: overrides.fast,
+    ...(overrides.effort === undefined ? {} : { effort: overrides.effort }),
     ...(overrides.toolSteps === undefined
       ? {}
       : { toolSteps: overrides.toolSteps }),
@@ -470,6 +501,8 @@ REPL commands:
                             (hosted) inference when escalating; add --fast or
                             --no-fast to toggle fast speed tier
   /fast [on|off]            toggle or set fast speed tier (for supported models)
+  /effort [<level>|default] show or set the reasoning effort of a codex-chatgpt
+                            model (low, medium, high, xhigh) from the next turn
   /steps [N]                show or set this session's tool-step limit; a value
                             above the runtime's ceiling is refused
   /budget [<limit> <usd>]   show the spend limits, or set one for this session:
@@ -488,6 +521,8 @@ Options:
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --fast           enable fast speed tier for supported models (faster generation)
   --no-fast        disable fast speed tier (standard speed)
+  --effort <level> reasoning effort for codex-chatgpt/* models: low, medium,
+                   high or xhigh (default: [codex] reasoning_effort, else medium)
   --tool-steps <N> this session's tool-step limit, 1 through 64 and not above
                    the runtime's ceiling (DYFJ_MAX_TOOL_STEPS_CEILING)
   --budget-turn <usd>, --budget-session <usd>, --budget-day <usd>,
