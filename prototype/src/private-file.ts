@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { chmod, open, rename, rm } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
+import process from "node:process";
 import { DomainError } from "./contract/mod.ts";
 
 /**
@@ -34,4 +35,52 @@ export async function writePrivateFile(
     }
     throw new DomainError(diagnostic);
   }
+}
+
+/**
+ * Create `path` owner-only, or check that an existing one is a directory and,
+ * on a platform other than Windows, the account's and not group- or
+ * world-writable.
+ */
+export async function ensurePrivateDirectory(
+  path: string,
+  enforceExistingMode = true,
+): Promise<void> {
+  let created = false;
+  try {
+    await mkdir(path, { mode: 0o700 });
+    created = true;
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
+  }
+  const info = await lstat(path);
+  if (!info.isDirectory() || info.isSymbolicLink()) {
+    throw new DomainError("Codex ACP runner home is unavailable");
+  }
+  if (
+    !created && process.platform !== "win32" &&
+    (info.uid !== process.getuid?.() ||
+      (info.mode & 0o022) !== 0)
+  ) {
+    throw new DomainError("Codex ACP runner home is unavailable");
+  }
+  if (created || enforceExistingMode) await chmod(path, 0o700);
+}
+
+/**
+ * Refuse unless `path` is a directory that is not a symbolic link and, on a
+ * platform other than Windows, that the account owns and others cannot write.
+ */
+export async function requireOwnedDirectory(path: string): Promise<void> {
+  try {
+    const info = await lstat(path);
+    if (
+      info.isDirectory() && !info.isSymbolicLink() &&
+      (process.platform === "win32" ||
+        (info.uid === process.getuid?.() && (info.mode & 0o022) === 0))
+    ) return;
+  } catch {
+    // Use the fixed diagnostic below instead of disclosing the supplied path.
+  }
+  throw new DomainError("Codex ACP operator home is unavailable");
 }

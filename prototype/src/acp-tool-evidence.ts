@@ -77,6 +77,8 @@ interface MutableAcpToolCallEvidence {
   rawOutputJson?: string;
   /** Sticky: the call's identity or stream shape was wrong. */
   malformed: boolean;
+  /** Sticky: the agent reported this call as an MCP tool call. */
+  mcp?: boolean;
   /** Reset whenever a later patch replaces the field. */
   inputProblem?: AcpToolEvidenceReason;
   outputProblem?: AcpToolEvidenceReason;
@@ -188,6 +190,61 @@ function optionalToolField(value: unknown): string | undefined {
  * Merge one session update into the call it names. A problem marks only that
  * call; every other call in the turn is unaffected.
  */
+/** What an MCP call's evidence keeps in place of its arguments and result. */
+export const ACP_MCP_REDACTED = "[redacted]";
+
+/**
+ * Whether `value` is the raw input codex-acp 2.5.0 reports for an MCP tool
+ * call: `{server, tool, arguments}`. It reports the call's title as
+ * `mcp.<server>.<tool>`.
+ */
+function isMcpRawInput(
+  value: unknown,
+): value is { server: string; tool: string } {
+  return value !== null && typeof value === "object" &&
+    !Array.isArray(value) &&
+    typeof (value as { server?: unknown }).server === "string" &&
+    typeof (value as { tool?: unknown }).tool === "string" &&
+    Object.hasOwn(value, "arguments");
+}
+
+/**
+ * Replace an MCP call's raw arguments and result with `ACP_MCP_REDACTED`,
+ * keeping the server and tool names. Workbench's MCP commands declare their
+ * arguments and results redacted from durable records (BIT-896): the same
+ * call reached through the Workbench tool bridge is recorded redacted there,
+ * and Codex's own report of it must not keep what that record drops.
+ */
+function redactMcpCall(
+  call: MutableAcpToolCallEvidence,
+  rawInput: unknown,
+): void {
+  if (call.rawInputJson !== undefined || call.inputProblem !== undefined) {
+    let names: unknown = rawInput;
+    if (names === undefined && call.rawInputJson !== undefined) {
+      try {
+        names = JSON.parse(call.rawInputJson);
+      } catch {
+        names = undefined;
+      }
+    }
+    const kept = boundedJson(
+      isMcpRawInput(names)
+        ? { server: names.server, tool: names.tool, arguments: ACP_MCP_REDACTED }
+        : ACP_MCP_REDACTED,
+      false,
+    );
+    delete call.inputProblem;
+    delete call.rawInputJson;
+    if (kept.kind === "ok") call.rawInputJson = kept.json;
+    else call.inputProblem = "malformed";
+  }
+  if (call.rawOutputJson !== undefined || call.outputProblem !== undefined) {
+    delete call.outputProblem;
+    call.rawOutputJson = JSON.stringify(ACP_MCP_REDACTED);
+  }
+}
+
 export function applyAcpToolPatch(
   accumulator: AcpToolEvidenceAccumulator,
   update: Record<string, unknown>,
@@ -235,6 +292,12 @@ export function applyAcpToolPatch(
   patchString("title");
   patchString("name");
   patchString("kind");
+  if (
+    call.title?.startsWith("mcp.") === true ||
+    (Object.hasOwn(update, "rawInput") && isMcpRawInput(update.rawInput))
+  ) {
+    call.mcp = true;
+  }
   if (Object.hasOwn(update, "status")) {
     const status = update.status;
     if (typeof status === "string" && ACP_TOOL_CALL_STATUSES.has(status)) {
@@ -269,6 +332,12 @@ export function applyAcpToolPatch(
         ? "oversized_output"
         : output.kind;
     }
+  }
+  if (call.mcp === true) {
+    redactMcpCall(
+      call,
+      Object.hasOwn(update, "rawInput") ? update.rawInput : undefined,
+    );
   }
 }
 

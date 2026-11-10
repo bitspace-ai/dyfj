@@ -95,7 +95,20 @@ export interface WorkbenchConfig {
    * leaves Codex turns at `medium`.
    */
   codexReasoningEffort: CodexReasoningEffort | null;
+  /**
+   * Whether a Codex ChatGPT session reaches the operator's configured MCP
+   * tools through the Workbench tool bridge ([codex] workbench_tools).
+   */
+  codexWorkbenchTools: boolean;
+  /**
+   * Codex's per-call timeout, in seconds, for a bridged Workbench tool
+   * ([codex] tool_timeout_seconds), from 1 through 3600.
+   */
+  codexToolTimeoutSeconds: number;
 }
+
+/** The highest `[codex] tool_timeout_seconds` the loader accepts. */
+export const MAX_CODEX_TOOL_TIMEOUT_SECONDS = 3600;
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultCompanionModel: null,
@@ -112,7 +125,22 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   maxToolSteps: schemaNumberDefault("maxToolSteps"),
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
   codexReasoningEffort: null,
+  codexWorkbenchTools: true,
+  codexToolTimeoutSeconds: 300,
 };
+
+function validateCodexToolTimeout(value: number, source: string): number {
+  if (
+    !Number.isInteger(value) || value < 1 ||
+    value > MAX_CODEX_TOOL_TIMEOUT_SECONDS
+  ) {
+    throw new Error(
+      `config: invalid Codex tool timeout from ${source} (expected an ` +
+        `integer from 1 through ${MAX_CODEX_TOOL_TIMEOUT_SECONDS} seconds)`,
+    );
+  }
+  return value;
+}
 
 function validateCodexReasoningEffort(
   value: string,
@@ -226,6 +254,17 @@ export async function loadConfig(
       config.codexReasoningEffort = validateCodexReasoningEffort(
         fileEffort,
         `${configLabel(path)} [codex].reasoning_effort`,
+      );
+    }
+    const fileWorkbenchTools = readBoolean(table, "codex", "workbench_tools");
+    if (fileWorkbenchTools !== undefined) {
+      config.codexWorkbenchTools = fileWorkbenchTools;
+    }
+    const fileToolTimeout = readNumber(table, "codex", "tool_timeout_seconds");
+    if (fileToolTimeout !== undefined) {
+      config.codexToolTimeoutSeconds = validateCodexToolTimeout(
+        fileToolTimeout,
+        `${configLabel(path)} [codex].tool_timeout_seconds`,
       );
     }
     const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");

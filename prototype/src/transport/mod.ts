@@ -59,6 +59,7 @@ export {
   PeerClosedError,
 } from "./jsonrpc-peer.ts";
 export {
+  maxSocketPathBytes,
   RuntimeListenError,
   SocketPathTooLongError,
 } from "./socket-failure.ts";

@@ -113,7 +113,18 @@ import {
   withholdSavedApprovals,
 } from "./codex-home-config.ts";
 import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
-import { writePrivateFile } from "./private-file.ts";
+import {
+  ensurePrivateDirectory,
+  requireOwnedDirectory,
+  writePrivateFile,
+} from "./private-file.ts";
+import {
+  bindCodexTurn,
+  type CodexTurnTools,
+  type CodexWorkbenchToolsOptions,
+  codexWorkbenchToolsConfig,
+  type ExternalAgentToolBridge,
+} from "./workbench-tool-bridge.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -121,7 +132,8 @@ import { writePrivateFile } from "./private-file.ts";
  * runtime input satisfies it structurally, so this module never imports the
  * engine.
  */
-export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
+export interface ExternalAgentRuntimeInput
+  extends WorkbenchRuntimeRequest, Omit<CodexTurnTools, "runner" | "approver"> {
   runner: AcpRunnerSelection;
   routingOptions: WorkbenchRoutingOptions;
   approver?: {
@@ -130,7 +142,7 @@ export interface ExternalAgentRuntimeInput extends WorkbenchRuntimeRequest {
       prompt: AcpPermissionPrompt,
       signal: AbortSignal,
     ) => Promise<AcpPermissionSelection>;
-  };
+  } & CodexTurnTools["approver"];
   abortSignal?: AbortSignal;
   /** The turn ticket's window, closed once the agent's run settles. */
   cancellationWindow?: { closeCancellation(): void };
@@ -306,45 +318,6 @@ async function operatorAuthorizedRustupHomeDirectory(
   throw new DomainError("Codex ACP Rustup home directory is unavailable");
 }
 
-async function ensurePrivateDirectory(
-  path: string,
-  enforceExistingMode = true,
-): Promise<void> {
-  let created = false;
-  try {
-    await mkdir(path, { mode: 0o700 });
-    created = true;
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== "EEXIST") throw error;
-  }
-  const info = await lstat(path);
-  if (!info.isDirectory() || info.isSymbolicLink()) {
-    throw new DomainError("Codex ACP runner home is unavailable");
-  }
-  if (
-    !created && process.platform !== "win32" &&
-    (info.uid !== process.getuid?.() ||
-      (info.mode & 0o022) !== 0)
-  ) {
-    throw new DomainError("Codex ACP runner home is unavailable");
-  }
-  if (created || enforceExistingMode) await chmod(path, 0o700);
-}
-
-async function requireOwnedDirectory(path: string): Promise<void> {
-  try {
-    const info = await lstat(path);
-    if (
-      info.isDirectory() && !info.isSymbolicLink() &&
-      (process.platform === "win32" ||
-        (info.uid === process.getuid?.() && (info.mode & 0o022) === 0))
-    ) return;
-  } catch {
-    // Use the fixed diagnostic below instead of disclosing the supplied path.
-  }
-  throw new DomainError("Codex ACP operator home is unavailable");
-}
-
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -359,6 +332,8 @@ export interface CodexChatGptProfileOptions {
   modelName?: string;
   reasoningEffort?: CodexReasoningEffort;
   fast?: boolean;
+  /** The Workbench tool bridge this session's Codex reaches; absent, none. */
+  workbenchTools?: CodexWorkbenchToolsOptions;
 }
 
 export async function bundledCodexExecutable(
@@ -491,6 +466,7 @@ export async function codexChatGptProfile(
   if (options.fast === true) {
     codexConfig.service_tier = "fast";
   }
+  Object.assign(codexConfig, codexWorkbenchToolsConfig(nodePath, options.workbenchTools));
   const environment: Record<string, string> = {
     HOME: isolatedHome,
     CODEX_HOME: codexHome,
@@ -820,6 +796,7 @@ export interface ExternalAgentRuntimeDependencies {
   resolveProfile?: (
     profile: "fixture" | "codex-chatgpt",
     workspace: string,
+    workbenchTools?: CodexWorkbenchToolsOptions,
   ) => AcpExecutionProfile | Promise<AcpExecutionProfile>;
   runAgent?: typeof runAcpAgent;
   sessionMap?: AcpSessionHandleMap;
@@ -828,6 +805,22 @@ export interface ExternalAgentRuntimeDependencies {
    * uses its map's. The base policy when absent.
    */
   runPolicy?: RuntimePolicy;
+  /** The Workbench tool bridge for Codex ChatGPT turns; absent, Codex gets none. */
+  toolBridge?: ExternalAgentToolBridge;
+}
+
+/** The turn's execution profile; `codex` is what a Codex profile is built from. */
+async function resolveTurnProfile(
+  input: ExternalAgentRuntimeInput,
+  dependencies: ExternalAgentRuntimeDependencies,
+  workspace: string,
+  codex: CodexChatGptProfileOptions,
+): Promise<AcpExecutionProfile> {
+  if (dependencies.resolveProfile !== undefined) {
+    return await dependencies.resolveProfile(input.runner.profile, workspace, codex.workbenchTools);
+  }
+  if (input.runner.profile === "fixture") return fixtureProfile(workspace);
+  return await codexChatGptProfile(workspace, codex);
 }
 
 export async function runExternalAgentWorkbenchRuntime(
@@ -860,6 +853,8 @@ export async function runExternalAgentWorkbenchRuntime(
   } satisfies WorkbenchAuthContext;
   let workspace: string;
   let profile: AcpExecutionProfile;
+  let bridged: Awaited<ReturnType<typeof bindCodexTurn>>;
+  const sessionId = input.sessionId ?? input.newSessionId ?? generateULID();
   const modelSlug = input.runner.profile === "codex-chatgpt"
     ? input.routingOptions.modelId?.startsWith("codex-chatgpt/")
       ? input.routingOptions.modelId
@@ -879,22 +874,18 @@ export async function runExternalAgentWorkbenchRuntime(
     }
     assertAcpPromptWithinLimit(input.prompt);
     workspace = await resolveWorkspace(input, authContext, store.sessions);
-    profile = dependencies.resolveProfile === undefined
-      ? input.runner.profile === "fixture"
-        ? fixtureProfile(workspace)
-        : await codexChatGptProfile(workspace, {
-          modelName: modelSlug?.slice("codex-chatgpt/".length),
-          fast: input.routingOptions?.fast,
-          reasoningEffort: input.routingOptions?.reasoningEffort,
-        })
-      : await dependencies.resolveProfile(input.runner.profile, workspace);
+    bridged = await bindCodexTurn(dependencies.toolBridge, sessionId, input);
+    profile = await resolveTurnProfile(input, dependencies, workspace, {
+      modelName: modelSlug?.slice("codex-chatgpt/".length),
+      fast: input.routingOptions?.fast,
+      reasoningEffort: input.routingOptions?.reasoningEffort,
+      workbenchTools: bridged?.workbenchTools,
+    });
   } catch (error) {
     closeCancellation();
     throw error;
   }
 
-  const sessionId = input.sessionId ?? input.newSessionId ??
-    generateULID();
   const traceId = generateTraceId();
   const rootSpanId = generateSpanId();
   const principalId = input.principalId ?? "user";
@@ -1084,8 +1075,10 @@ export async function runExternalAgentWorkbenchRuntime(
     if (dependencies.sessionMap === undefined) {
       assertAcpPromptWithinLimit(directPrompt);
     }
-    const result = dependencies.sessionMap !== undefined
-      ? await dependencies.sessionMap.runTurn({
+    const releaseBridgeTurn = bridged?.activate(traceId, rootSpanId, writeEvent);
+    // Via `then`: a runner that throws synchronously still releases the turn.
+    const result = await Promise.resolve().then(() => dependencies.sessionMap !== undefined
+      ? dependencies.sessionMap.runTurn({
         sessionId,
         workspace,
         profile,
@@ -1115,7 +1108,7 @@ export async function runExternalAgentWorkbenchRuntime(
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
       })
-      : await (dependencies.runAgent ?? runAcpAgent)({
+      : (dependencies.runAgent ?? runAcpAgent)({
         profile,
         prompt: directPrompt,
         abortSignal: input.abortSignal,
@@ -1127,7 +1120,7 @@ export async function runExternalAgentWorkbenchRuntime(
         ...(dependencies.runPolicy === undefined
           ? {}
           : { runPolicy: dependencies.runPolicy }),
-      });
+      })).finally(() => releaseBridgeTurn?.());
     closeCancellation();
     const toolEvidence = prepareAcpToolEvidence(result.toolEvidence);
     // A gap marker is never replayed as a tool exchange. For a call that was

@@ -338,6 +338,37 @@ const table = (t: Record<string, unknown>) => () => t;
     );
   });
 
+  test("loadConfig Codex tool bridge: on with a 300 s timeout by default; the file sets both", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(cfg.codexWorkbenchTools, true);
+    assert.strictEqual(cfg.codexToolTimeoutSeconds, 300);
+    const fileCfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({
+        codex: { workbench_tools: false, tool_timeout_seconds: 900 },
+      }),
+    });
+    assert.strictEqual(fileCfg.codexWorkbenchTools, false);
+    assert.strictEqual(fileCfg.codexToolTimeoutSeconds, 900);
+  });
+
+  test("loadConfig Codex tool bridge: refuses a timeout outside 1 through 3600 seconds", async () => {
+    for (const value of [0, 3601, 1.5]) {
+      assert.match(
+        (await captureRejection(() =>
+          loadConfig({
+            env: env(HOME),
+            readTextFile: present,
+            parseToml: table({ codex: { tool_timeout_seconds: value } }),
+          })
+        ) as Error).message,
+        /\[codex\]\.tool_timeout_seconds/,
+        String(value),
+      );
+    }
+  });
+
   test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     assert.strictEqual(cfg.maxToolStepsCeiling, 64);

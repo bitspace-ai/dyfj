@@ -86,6 +86,10 @@
         {
           "path": "prototype/scripts/isolated-dolt-fixture.ts",
           "justification": "The isolated Dolt fixture binds a loopback listener on port 0 to pick a free port for its sql-server, then closes it. It is test tooling that the integration lane's runner and the golden harness start outside the runtime graph, which no runtime module may import."
+        },
+        {
+          "path": "prototype/scripts/workbench-tool-bridge-shim.ts",
+          "justification": "The Workbench tool bridge's stdio shim, which Codex starts as an MCP server: it connects to the bridge's Unix socket, sends its session token, and copies bytes between its stdio and the socket. It runs as its own process with only node: imports, outside the runtime graph, which no runtime module may import."
         }
       ]
     },
@@ -165,6 +169,7 @@
     "prototype/src/codex-runner-bin.ts": "runners/acp",
     "prototype/src/private-file.ts": "runners/acp",
     "prototype/src/external-agent-runtime.ts": "runners/acp",
+    "prototype/src/workbench-tool-bridge.ts": "runners/acp",
     "prototype/src/cli.ts": "cli"
   }
 }
