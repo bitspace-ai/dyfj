@@ -322,6 +322,75 @@ export function storeConformance(subject: StoreConformanceSubject): void {
   );
 
   run(
+    "lineage reads each session's earliest session_start, unset columns as null",
+    async (store) => {
+      assert.deepStrictEqual(await store.events.lineage([]), new Map());
+      // S1: a start written before the lineage columns existed, then a later
+      // start that sets them. The earliest start is the record.
+      await commitEvents(store, event({ session_id: "S1" }));
+      await subject.tick();
+      await commitEvents(
+        store,
+        event({
+          session_id: "S1",
+          parent_session_id: "LATER",
+          lineage_depth: 2,
+        }),
+      );
+      // S2: a dispatched child whose first start records every field; a
+      // later start and a non-start event on S2 do not replace it.
+      await commitEvents(
+        store,
+        event({
+          session_id: "S2",
+          parent_session_id: "S1",
+          lineage_depth: 1,
+          lineage_label: "lineage-fields",
+          reasoning_effort: "high",
+          turn_route: "acp",
+          model_family: "gpt",
+        }),
+      );
+      await subject.tick();
+      await commitEvents(
+        store,
+        event({ session_id: "S2", parent_session_id: "OTHER" }),
+        event({
+          session_id: "S2",
+          event_type: "model_selected",
+          action: "select",
+          parent_session_id: "NOT_A_START",
+        }),
+        // S3 has events but no session_start.
+        event({
+          session_id: "S3",
+          event_type: "model_selected",
+          action: "select",
+          parent_session_id: "NOT_A_START",
+        }),
+      );
+      const lineage = await store.events.lineage(["S1", "S2", "S3", "S4"]);
+      assert.deepStrictEqual([...lineage.keys()].sort(), ["S1", "S2"]);
+      assert.deepStrictEqual(lineage.get("S1"), {
+        parentSessionId: null,
+        depth: null,
+        label: null,
+        effort: null,
+        route: null,
+        family: null,
+      });
+      assert.deepStrictEqual(lineage.get("S2"), {
+        parentSessionId: "S1",
+        depth: 1,
+        label: "lineage-fields",
+        effort: "high",
+        route: "acp",
+        family: "gpt",
+      });
+    },
+  );
+
+  run(
     "latestRun names the session's newest completed model call or runner turn",
     async (store) => {
       assert.strictEqual(await store.events.latestRun("S1"), null);
@@ -611,7 +680,7 @@ export function storeConformance(subject: StoreConformanceSubject): void {
     );
     assert.deepStrictEqual(
       Object.keys(store.events).sort(),
-      ["bySession", "countBySession", "exists", "latestRun"],
+      ["bySession", "countBySession", "exists", "latestRun", "lineage"],
     );
     // Appending an existing event id is rejected, not an overwrite.
     const original = event({ content: "original" });

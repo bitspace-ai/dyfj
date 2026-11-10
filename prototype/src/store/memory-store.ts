@@ -22,6 +22,9 @@ import {
   type ModelReader,
   type PromptReader,
   SESSION_EVENT_COLUMNS,
+  SESSION_LINEAGE_COLUMNS,
+  type SessionLineage,
+  sessionLineageFromText,
   type SessionReader,
   type SpendReader,
   type Store,
@@ -733,6 +736,33 @@ export class MemoryStore implements Store {
             }
             : { kind: "model", slug: String(latest.row.model_id) },
         );
+      },
+      lineage: (sessionIds) => {
+        const wanted = new Set(sessionIds);
+        if (wanted.size === 0) return Promise.resolve(new Map());
+        const earliest = new Map<string, StampedEvent>();
+        for (const e of this.#tables.events) {
+          const sessionId = String(e.row.session_id);
+          if (e.row.event_type !== "session_start" || !wanted.has(sessionId)) {
+            continue;
+          }
+          const seen = earliest.get(sessionId);
+          if (seen === undefined || compareEventOrder(e, seen) < 0) {
+            earliest.set(sessionId, e);
+          }
+        }
+        const out = new Map<string, SessionLineage>();
+        for (const [sessionId, e] of earliest) {
+          const row: TextRow = {};
+          for (const column of SESSION_LINEAGE_COLUMNS) {
+            const value = e.row[column];
+            row[column] = value === null || value === undefined
+              ? ""
+              : String(value);
+          }
+          out.set(sessionId, sessionLineageFromText(row));
+        }
+        return Promise.resolve(out);
       },
     };
   }

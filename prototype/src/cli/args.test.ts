@@ -262,6 +262,26 @@ describe("parseArgs", () => {
       },
     );
   });
+  it("parses 'sessions show <ref> [--json]' without --events as the summary", () => {
+    assert.deepStrictEqual(
+      parseArgs(["sessions", "show", "workbench-01ktz1xwcn7jmgs5e8kakfezkr"]),
+      {
+        command: "sessions",
+        sessionShowId: "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        json: false,
+        overrides: {},
+      },
+    );
+    assert.deepStrictEqual(
+      parseArgs(["sessions", "show", "01KTZ1XWCN7JMGS5E8KAKFEZKR", "--json"]),
+      {
+        command: "sessions",
+        sessionShowId: "01KTZ1XWCN7JMGS5E8KAKFEZKR",
+        json: true,
+        overrides: {},
+      },
+    );
+  });
   it("rejects malformed 'sessions show' and misplaced '--events' usages", () => {
     assert.ok(
       (parseArgs(["--events"]).error ?? "").includes(
@@ -282,15 +302,6 @@ describe("parseArgs", () => {
       (parseArgs(["sessions", "show", "--events"]).error ?? "").includes(
         "sessions show requires a session id or slug",
       ),
-    );
-    assert.ok(
-      (
-        parseArgs([
-          "sessions",
-          "show",
-          "01KTZ1XWCN7JMGS5E8KAKFEZKR",
-        ]).error ?? ""
-      ).includes("sessions show requires --events"),
     );
     assert.ok(
       (

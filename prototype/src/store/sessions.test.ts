@@ -5,6 +5,7 @@ import {
   buildWorkbenchSessionSlug,
   createWorkbenchSession,
   fetchWorkbenchSessionEvents,
+  fetchWorkbenchSessionLineage,
   fetchWorkbenchSessionWorkspace,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
@@ -12,6 +13,7 @@ import {
 } from "./sessions.ts";
 import {
   type CommitBatch,
+  EMPTY_SESSION_LINEAGE,
   type EventReader,
   type Journal,
   MemoryStore,
@@ -96,6 +98,7 @@ function eventsReturning(
     exists: () => Promise.resolve(false),
     countBySession: () => Promise.resolve(rows.length),
     latestRun: () => Promise.resolve(null),
+    lineage: () => Promise.resolve(new Map()),
     bySession: (query) => {
       calls.push(query);
       return Promise.resolve(rows.map((row) => ({ ...row })) as TextRow[]);
@@ -249,6 +252,7 @@ const listRow = (over: Record<string, string>) => ({
 
 test("listWorkbenchSessions: groups sessions by project with unfiled last", async () => {
   const groups = await listWorkbenchSessions({
+    events: eventsReturning([]),
     sessions: sessionsReturning({
       list: [
         listRow({
@@ -280,14 +284,17 @@ test("listWorkbenchSessions: groups sessions by project with unfiled last", asyn
 test("listWorkbenchSessions: passes the project filter and a clamped limit to the reader", async () => {
   const calls: unknown[] = [];
   await listWorkbenchSessions({
+    events: eventsReturning([]),
     project: "dyfj",
     sessions: sessionsReturning({}, calls),
   });
   await listWorkbenchSessions({
+    events: eventsReturning([]),
     limit: 5000.7,
     sessions: sessionsReturning({}, calls),
   });
   await listWorkbenchSessions({
+    events: eventsReturning([]),
     limit: -1,
     sessions: sessionsReturning({}, calls),
   });
@@ -577,4 +584,62 @@ test("fetchWorkbenchSessionEvents: preserves explicit descending order", async (
 
   assert.partialDeepStrictEqual({ ...calls[0] }, { limit: 10, order: "desc" });
   assert.deepStrictEqual(events.map((e) => e.eventId), ["evt-2", "evt-1"]);
+});
+
+test("listWorkbenchSessions: names each session's parent from its lineage, null when it has none", async () => {
+  const asked: string[][] = [];
+  const events = eventsReturning([]);
+  events.lineage = (ids) => {
+    asked.push([...ids]);
+    return Promise.resolve(
+      new Map([[
+        "01AAAAAAAAAAAAAAAAAAAAAAAB",
+        {
+          ...EMPTY_SESSION_LINEAGE,
+          parentSessionId: "01AAAAAAAAAAAAAAAAAAAAAAAC",
+          depth: 1,
+        },
+      ]]),
+    );
+  };
+  const groups = await listWorkbenchSessions({
+    events,
+    sessions: sessionsReturning({
+      list: [
+        listRow({
+          session_id: "01AAAAAAAAAAAAAAAAAAAAAAAB",
+          updated_at: "2026-06-12 12:00:00",
+        }),
+        listRow({ session_id: "01AAAAAAAAAAAAAAAAAAAAAAAC" }),
+      ],
+    }),
+  });
+  assert.deepStrictEqual(asked, [[
+    "01AAAAAAAAAAAAAAAAAAAAAAAB",
+    "01AAAAAAAAAAAAAAAAAAAAAAAC",
+  ]]);
+  assert.deepStrictEqual(
+    groups[0].sessions.map((s) => [s.sessionId, s.parentSessionId]),
+    [
+      ["01AAAAAAAAAAAAAAAAAAAAAAAB", "01AAAAAAAAAAAAAAAAAAAAAAAC"],
+      ["01AAAAAAAAAAAAAAAAAAAAAAAC", null],
+    ],
+  );
+});
+
+test("fetchWorkbenchSessionLineage: a session that recorded no lineage reads as nulls", async () => {
+  assert.deepStrictEqual(
+    await fetchWorkbenchSessionLineage({
+      sessionId: "01AAAAAAAAAAAAAAAAAAAAAAAB",
+      events: eventsReturning([]),
+    }),
+    {
+      parentSessionId: null,
+      depth: null,
+      label: null,
+      effort: null,
+      route: null,
+      family: null,
+    },
+  );
 });

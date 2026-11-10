@@ -44,6 +44,14 @@ import {
 } from "./external-agent-runtime.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
 import { withAddedRoots } from "./acp-runner-roots.ts";
+import { CODEX_HOME_CONFIG_TOML } from "./codex-home-config.ts";
+import type { CommandDefinition } from "./tools/mod.ts";
+import {
+  type BridgeTurn,
+  type CodexWorkbenchToolsOptions,
+  type ExternalAgentToolBridge,
+  WORKBENCH_BRIDGE_SHIM_PATH,
+} from "./workbench-tool-bridge.ts";
 import {
   type CommitBatch,
   type CommitOptions,
@@ -1387,6 +1395,51 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           service_tier: "fast",
         },
       );
+
+      // The Workbench tool bridge goes in the per-process Codex config, with
+      // the token in the shim's own environment entry. The Codex home's
+      // config.toml is unchanged, and no other environment value names it.
+      const bridgedProfile = await codexChatGptProfile(process.cwd(), {
+        home,
+        prototypeRoot: process.cwd(),
+        nodePath,
+        workbenchTools: {
+          socketPath: "/tmp/codex-bridge-x/tools.sock",
+          token: "bridge-token-canary",
+          toolTimeoutSeconds: 300,
+        },
+      });
+      assert.deepStrictEqual(
+        JSON.parse(bridgedProfile.environment.CODEX_CONFIG!),
+        {
+          model: "gpt-6.1-terra",
+          model_reasoning_effort: "medium",
+          features: { apps: false, plugins: false },
+          mcp_servers: {
+            workbench: {
+              command: bridgedProfile.command,
+              args: [
+                WORKBENCH_BRIDGE_SHIM_PATH,
+                "/tmp/codex-bridge-x/tools.sock",
+              ],
+              env: { DYFJ_WORKBENCH_BRIDGE_TOKEN: "bridge-token-canary" },
+              tool_timeout_sec: 300,
+              default_tools_approval_mode: "approve",
+            },
+          },
+        },
+      );
+      assert.strictEqual(
+        await readFile(
+          `${home}/.dyfj/runner-homes/codex-chatgpt/home/.codex/config.toml`,
+          "utf8",
+        ),
+        CODEX_HOME_CONFIG_TOML,
+      );
+      for (const [name, value] of Object.entries(bridgedProfile.environment)) {
+        if (name === "CODEX_CONFIG") continue;
+        assert.ok(!value.includes("bridge-token-canary"), name);
+      }
     } finally {
       await rm(home, { recursive: true });
     }
@@ -1508,6 +1561,179 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.deepStrictEqual(capturedEfforts, ["xhigh", "medium"]);
     } finally {
       await rm(home, { recursive: true });
+    }
+  });
+
+  describe("the Workbench tool bridge", () => {
+    const linearGetIssue: CommandDefinition = {
+      id: "mcp.linear.get_issue",
+      title: "get_issue",
+      description: "Get a Linear issue",
+      inputSchema: { type: "object", properties: {} },
+      permission: {
+        effects: ["read.external"],
+        defaultDecision: "allow",
+        resources: [],
+      },
+      executor: () => Promise.resolve("issue"),
+    };
+
+    /** A bridge that records what the runtime binds and activates. */
+    function recordingBridge() {
+      const record = {
+        started: 0,
+        bound: [] as string[],
+        turns: [] as Array<{ sessionId: string; turn: BridgeTurn }>,
+        active: new Set<string>(),
+      };
+      const dependency: ExternalAgentToolBridge = {
+        bridge: () => {
+          record.started++;
+          return Promise.resolve({
+            socketPath: "/tmp/codex-bridge-test/tools.sock",
+            bind: (sessionId: string) => {
+              record.bound.push(sessionId);
+              return `token-for-${sessionId}`;
+            },
+            activate: (sessionId: string, turn: BridgeTurn) => {
+              record.turns.push({ sessionId, turn });
+              record.active.add(sessionId);
+              return () => record.active.delete(sessionId);
+            },
+          });
+        },
+        toolTimeoutSeconds: 120,
+        sessionGrants: () => ({ has: () => false, add: () => {} }),
+      };
+      return { record, dependency };
+    }
+
+    const stopResult = {
+      text: "ok",
+      stopReason: "stop" as const,
+      capabilities: [],
+      routeEvidence: {
+        source: "profile_declared" as const,
+        authenticationType: "chat-gpt" as const,
+      },
+      elapsedMs: 1,
+    };
+
+    it("binds the session and runs bridged calls under the turn's own ports while Codex runs", async () => {
+      const h = createHarness();
+      const { record, dependency } = recordingBridge();
+      const confirmToolApproval = () =>
+        Promise.resolve({ decision: "deny" as const });
+      let tools: CodexWorkbenchToolsOptions | undefined;
+      let activeDuringRun = false;
+      const result = await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "read BIT-1",
+        routingOptions: { modelId: "codex-chatgpt/gpt-6.1-terra" },
+        runner: { kind: "acp", profile: "codex-chatgpt" },
+        workspaceRoot: process.cwd(),
+        trustWorkspaceInstructions: true,
+        externalMcpCommands: [linearGetIssue],
+        permissionLevel: "operator",
+        approver: { confirmToolApproval },
+      }, {
+        resolveProfile: (_profile, workspace, workbenchTools) => {
+          tools = workbenchTools;
+          return { ...fixtureProfile(workspace), slug: "codex-chatgpt" };
+        },
+        runAgent: async () => {
+          const [{ sessionId, turn }] = record.turns;
+          activeDuringRun = record.active.has(sessionId);
+          await turn.writeEvent({
+            ...h.events[0],
+            event_id: "bridge-event",
+            event_type: "tool_call",
+          } as never);
+          return stopResult;
+        },
+        toolBridge: dependency,
+      });
+      const sessionId = result.sessionId;
+      assert.deepStrictEqual(record.bound, [sessionId]);
+      assert.deepStrictEqual(tools, {
+        socketPath: "/tmp/codex-bridge-test/tools.sock",
+        token: `token-for-${sessionId}`,
+        toolTimeoutSeconds: 120,
+      });
+      assert.strictEqual(activeDuringRun, true);
+      assert.strictEqual(record.active.size, 0, "the turn was not released");
+      const [{ sessionId: activated, turn }] = record.turns;
+      assert.strictEqual(activated, sessionId);
+      assert.deepStrictEqual(turn.commands, [linearGetIssue]);
+      assert.strictEqual(turn.confirmApproval, confirmToolApproval);
+      assert.strictEqual(turn.policy.permissionLevel, "operator");
+      assert.strictEqual(turn.policy.loopback, true);
+      assert.ok(turn.policy.sessionGrants !== undefined);
+      assert.ok(
+        h.events.some((event) => event.event_id === "bridge-event"),
+        "the bridged tool_call event did not reach the session journal",
+      );
+    });
+
+    it("releases the bridged turn when the agent run fails", async () => {
+      const h = createHarness();
+      const { record, dependency } = recordingBridge();
+      await assert.rejects(
+        runExternalAgentWorkbenchRuntime(h, {
+          mode: "turn",
+          prompt: "read BIT-1",
+          routingOptions: { modelId: "codex-chatgpt/gpt-6.1-terra" },
+          runner: { kind: "acp", profile: "codex-chatgpt" },
+          workspaceRoot: process.cwd(),
+          trustWorkspaceInstructions: true,
+          externalMcpCommands: [linearGetIssue],
+        }, {
+          resolveProfile: (_profile, workspace) => ({
+            ...fixtureProfile(workspace),
+            slug: "codex-chatgpt",
+          }),
+          runAgent: () => Promise.reject(new DomainError("agent failed")),
+          toolBridge: dependency,
+        }),
+      );
+      assert.strictEqual(record.turns.length, 1);
+      assert.strictEqual(record.active.size, 0);
+    });
+
+    for (
+      const [name, runner, commands] of [
+        ["the fixture route", "fixture", [linearGetIssue]],
+        ["a turn with no configured MCP command", "codex-chatgpt", []],
+      ] as const
+    ) {
+      it(`offers no bridge to ${name}`, async () => {
+        const h = createHarness();
+        const { record, dependency } = recordingBridge();
+        let tools: CodexWorkbenchToolsOptions | undefined = {
+          socketPath: "unset",
+          token: "unset",
+          toolTimeoutSeconds: 0,
+        };
+        await runExternalAgentWorkbenchRuntime(h, {
+          mode: "turn",
+          prompt: "hello",
+          routingOptions: {},
+          runner: { kind: "acp", profile: runner },
+          workspaceRoot: process.cwd(),
+          trustWorkspaceInstructions: true,
+          externalMcpCommands: [...commands],
+        }, {
+          resolveProfile: (_profile, workspace, workbenchTools) => {
+            tools = workbenchTools;
+            return fixtureProfile(workspace);
+          },
+          runAgent: () => Promise.resolve(stopResult),
+          toolBridge: dependency,
+        });
+        assert.strictEqual(tools, undefined);
+        assert.strictEqual(record.started, 0);
+        assert.strictEqual(record.turns.length, 0);
+      });
     }
   });
 

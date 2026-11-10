@@ -78,6 +78,19 @@ CREATE TABLE events (
     runner_auth_type          ENUM('chat-gpt', 'api-key', 'gateway', 'unauthenticated'),
     permission_verdict        ENUM('approved', 'denied', 'cancelled'),
 
+    -- A session's lineage and posture, on its session_start events. Reads
+    -- take the earliest session_start of a session. A dispatched leaf records
+    -- its coordinator's session id, its depth below it and the coordinator's
+    -- label for it. reasoning_effort is the value the runtime passed, not the
+    -- value requested; model_family comes from the model catalog. NULL in
+    -- every row written before a producer exists.
+    parent_session_id         VARCHAR(64),
+    lineage_depth             TINYINT UNSIGNED,
+    lineage_label             VARCHAR(128),
+    reasoning_effort          VARCHAR(16),
+    turn_route                ENUM('native', 'acp'),
+    model_family              VARCHAR(64),
+
     tokens_input              INT UNSIGNED,
     tokens_output             INT UNSIGNED,
     tokens_cache_read         INT UNSIGNED,

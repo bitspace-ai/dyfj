@@ -51,6 +51,17 @@ level = "strict"
 # over it. Omit it to run Codex turns at medium. Any other value fails the load.
 # Env override: DYFJ_CODEX_REASONING_EFFORT.
 # reasoning_effort = "high"
+#
+# A codex-chatgpt/* session reaches the operator's configured MCP tools
+# ([[mcp.servers]] below; two whose tool names collide once `.` becomes `_`
+# are both left out) through the Workbench tool bridge: a runtime-hosted
+# MCP server that runs each call through Workbench's own approvals, as a
+# native tool call does. Set false to give Codex no Workbench tools.
+# workbench_tools = true
+# Codex's per-call timeout for a bridged tool, in seconds: an integer from 1
+# through 3600. A call that waits on the Workbench approval prompt counts
+# toward it.
+# tool_timeout_seconds = 300
 
 [paid]
 # Standing paid-inference posture on loopback turns. When a request omits the

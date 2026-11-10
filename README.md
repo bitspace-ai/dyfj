@@ -1477,6 +1477,31 @@ lists `roots: <workspace>, <root>, …` and `/session` prints one
 `added root:` line per root; the external-agent receipt counts the writable
 roots sent.
 
+A Codex session reaches the operator's configured MCP tools (the commands of
+`[[mcp.servers]]` in `~/.dyfj/config.toml`) through the Workbench tool bridge.
+A command's name is mapped to letters, digits, `_` and `-`; two commands whose
+mapped names collide are both left out.
+The bridge is an MCP server that the runtime hosts on a Unix socket in an
+owner-only directory beside the runtime socket, or under the system temporary
+directory when that path would exceed the Unix-socket path limit. Codex starts
+a stdio shim that
+connects to it. The runtime binds each connection to one Workbench session by a
+token that it mints and keeps in memory, so no tool argument chooses the
+session. A call is admitted only while that session has a turn in progress.
+It goes through the same approval path as a native tool call: an `ask`
+command that no session grant covers asks the turn's approver (the Workbench prompt on an interactive
+turn), and an approval that arrives after the turn ended counts as a denial.
+Each admitted call attempts to record a `tool_call` event in the session; a
+failed write is logged and does not fail the call. Codex's own report of an
+MCP call, kept as an `acp_tool` event, keeps the server and tool names and
+records the arguments and result as `[redacted]`. Codex
+is configured not to raise its own approval for these tools. Workbench's
+builtin tools are not offered, because Codex has its own shell and file tools.
+`[codex] workbench_tools = false` turns the bridge off.
+`[codex] tool_timeout_seconds` sets Codex's per-call timeout for bridged tools,
+from 1 through 3600 seconds; the default is 300. Time spent waiting on the
+approval prompt counts toward the timeout.
+
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with
 `/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local

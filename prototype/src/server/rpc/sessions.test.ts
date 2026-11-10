@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type {
-  WorkbenchProjectSessions,
-  WorkbenchSessionSummary,
+import {
+  EMPTY_SESSION_LINEAGE,
+  type WorkbenchProjectSessions,
+  type WorkbenchSessionSummary,
 } from "../../store/mod.ts";
 import { RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
@@ -21,6 +22,7 @@ function handlers(overrides: Partial<SessionsHandlerDeps> = {}) {
     fetchSessionWorkspaceRecord: () =>
       Promise.resolve({ exists: false, workspace: null }),
     fetchSessionLastRun: () => Promise.resolve(null),
+    fetchSessionLineage: () => Promise.resolve({ ...EMPTY_SESSION_LINEAGE }),
     countSessionEvents: () => Promise.resolve(0),
     ...overrides,
   });
@@ -69,9 +71,55 @@ test("sessions/inspect returns session summary, workspace, recorded model, and e
     workspace: "/workspaces/project",
     model: "claude-sonnet-5",
     runner: null,
+    parentSessionId: null,
+    depth: null,
+    label: null,
+    effort: null,
+    route: null,
+    family: null,
     exists: true,
     eventCount: 1,
   });
+});
+
+test("sessions/inspect reports the lineage the session's first start recorded", async () => {
+  const sessionIds: string[] = [];
+  const result = await callRpc(
+    handlers({
+      fetchSessionLineage: ({ sessionId }) => {
+        sessionIds.push(sessionId);
+        return Promise.resolve({
+          parentSessionId: "01COORDINATOR",
+          depth: 1,
+          label: "lineage-fields",
+          effort: "high",
+          route: "acp",
+          family: "gpt",
+        });
+      },
+    }),
+    "sessions/inspect",
+    { sessionId: "01TEST_SESSION" },
+  ) as Record<string, unknown>;
+  assert.deepStrictEqual(sessionIds, ["01TEST_SESSION"]);
+  assert.deepStrictEqual(
+    {
+      parentSessionId: result.parentSessionId,
+      depth: result.depth,
+      label: result.label,
+      effort: result.effort,
+      route: result.route,
+      family: result.family,
+    },
+    {
+      parentSessionId: "01COORDINATOR",
+      depth: 1,
+      label: "lineage-fields",
+      effort: "high",
+      route: "acp",
+      family: "gpt",
+    },
+  );
 });
 
 test("sessions/inspect rejects C1 control characters in identifiers", async () => {

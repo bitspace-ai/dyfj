@@ -113,6 +113,8 @@ export interface ParsedArgs {
   prompt?: string;
   /** Canonical session id for `dyfj sessions show <ref> --events`. */
   sessionEventsId?: string;
+  /** Canonical session id for `dyfj sessions show <ref>`, without `--events`. */
+  sessionShowId?: string;
   json: boolean;
   overrides: Partial<CliConfig>;
   launcherAutostarted?: true;
@@ -164,7 +166,7 @@ function parseSessionsCommand(
       json,
       overrides,
       error:
-        `unknown sessions subcommand: ${positional[1]} (expected 'show <session> --events')`,
+        `unknown sessions subcommand: ${positional[1]} (expected 'show <session> [--events]')`,
     };
   }
   if (positional.length < 3) {
@@ -183,18 +185,13 @@ function parseSessionsCommand(
       error: "sessions show takes a single session id or slug",
     };
   }
-  if (!events) {
-    return {
-      command: "help",
-      json,
-      overrides,
-      error: "sessions show requires --events",
-    };
-  }
   try {
+    const sessionId = normalizeSessionRef(positional[2], "sessions show");
     return {
       command: "sessions",
-      sessionEventsId: normalizeSessionRef(positional[2], "sessions show"),
+      ...(events
+        ? { sessionEventsId: sessionId }
+        : { sessionShowId: sessionId }),
       json,
       overrides,
     };
@@ -559,6 +556,8 @@ Usage:
   dyfj stop                 stop the running local runtime at the socket
   dyfj models               list available model slugs
   dyfj sessions             list sessions
+  dyfj sessions show <ref> [--json]
+                            print a session's workspace, model and lineage
   dyfj sessions show <ref> --events [--json]
                             print a session's recorded turns and tool events
   dyfj dev                  launcher only: work on the harness; reload the
@@ -624,5 +623,5 @@ Options:
   --no-autostart   launcher only: do not auto-start a runtime for this call (env DYFJ_AUTOSTART=0)
   --parse-check    launcher-internal, first argument only: validate the rest and exit 0/2
   --events         with 'sessions show <ref>': print recorded turns and tool events
-  --json           one-shot or 'sessions show --events': print the full result as JSON
+  --json           one-shot or 'sessions show': print the result as JSON
   -h, --help       show this help`;

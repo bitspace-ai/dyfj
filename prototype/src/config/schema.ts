@@ -58,8 +58,9 @@ export function codexReasoningEffortRefusal(source: string): string {
  * domains — so the thin client never has to load the engine's schema. `test`
  * keys are set only by test harnesses; the runtime policy never forwards them
  * to the runtime, and a read of one outside a test treats the key as absent.
- * `tooling` keys are read only by the test and gate programs under
- * `prototype/scripts`; the runtime policy never forwards them either. `dev`
+ * `tooling` keys are read only by the programs under `prototype/scripts`
+ * (the test and gate programs, and the tool-bridge shim); the runtime policy
+ * never forwards them either. `dev`
  * keys are read by the runtime but set only by `dyfj dev` on a runtime it
  * starts itself; the runtime policy never forwards them, so an ambient value
  * never reaches a runtime started any other way.
@@ -569,6 +570,17 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     envVar: "DYFJ_LANE_PARENT_PID",
     domain: "tooling",
     type: "number",
+    kind: "value",
+  },
+  // The session token of the Workbench tool bridge's shim
+  // (prototype/scripts/workbench-tool-bridge-shim.ts). The runtime writes it
+  // into the Codex config's entry for the shim, and Codex sets it for the shim
+  // it starts; the runtime itself never reads it.
+  {
+    key: "workbenchBridgeToken",
+    envVar: "DYFJ_WORKBENCH_BRIDGE_TOKEN",
+    domain: "tooling",
+    type: "string",
     kind: "value",
   },
 ];

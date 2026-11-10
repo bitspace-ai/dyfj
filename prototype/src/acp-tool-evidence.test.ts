@@ -279,3 +279,72 @@ describe("ACP tool evidence capture", () => {
     });
   });
 });
+
+// codex-acp 2.5.0's report of an MCP tool call, as its McpToolReporter
+// renders it: a start with the `mcp.<server>.<tool>` title and the raw input,
+// then an update with the raw input again and the opaque result.
+describe("ACP evidence of an MCP tool call", () => {
+  const canary = "Private comment for Dana about the Q3 layoffs";
+  const start = {
+    sessionUpdate: "tool_call",
+    toolCallId: "mcp-1",
+    title: "mcp.workbench.mcp_linear_save_comment",
+    kind: "execute",
+    status: "in_progress",
+    rawInput: {
+      server: "workbench",
+      tool: "mcp_linear_save_comment",
+      arguments: { issueId: "BIT-1", body: canary },
+    },
+  };
+  const end = (status: "completed" | "failed") => ({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "mcp-1",
+    status,
+    rawInput: start.rawInput,
+    rawOutput: {
+      result: status === "completed"
+        ? { content: [{ type: "text", text: `posted: ${canary}` }] }
+        : null,
+      error: status === "failed" ? { message: `refused: ${canary}` } : null,
+    },
+  });
+  const keptInput = JSON.stringify({
+    server: "workbench",
+    tool: "mcp_linear_save_comment",
+    arguments: "[redacted]",
+  });
+
+  for (const status of ["completed", "failed"] as const) {
+    it(`keeps the server and tool names but not the arguments or result of a ${status} call`, () => {
+      const accumulator = newAcpToolEvidenceAccumulator();
+      applyAcpToolPatch(accumulator, start);
+      applyAcpToolPatch(accumulator, end(status));
+      const evidence = finishAcpToolEvidence(accumulator);
+      assert.ok(!JSON.stringify(evidence).includes(canary));
+      const [call] = evidence.calls;
+      assert.equal(call.title, "mcp.workbench.mcp_linear_save_comment");
+      assert.equal(call.status, status);
+      assert.equal(call.rawInputJson, keptInput);
+      assert.equal(call.rawOutputJson, JSON.stringify("[redacted]"));
+      assert.deepEqual(call.problems, []);
+    });
+  }
+
+  it("keeps no arguments of a call that never finished", () => {
+    const accumulator = newAcpToolEvidenceAccumulator();
+    applyAcpToolPatch(accumulator, start);
+    const evidence = finishAcpToolEvidence(accumulator);
+    assert.ok(!JSON.stringify(evidence).includes(canary));
+    assert.equal(evidence.calls[0].rawInputJson, keptInput);
+  });
+
+  it("redacts an update whose raw input names an MCP call without the title", () => {
+    const accumulator = newAcpToolEvidenceAccumulator();
+    applyAcpToolPatch(accumulator, { ...start, title: "save a comment" });
+    applyAcpToolPatch(accumulator, end("completed"));
+    assert.ok(
+      !JSON.stringify(finishAcpToolEvidence(accumulator)).includes(canary),
+    );
+  });
+});

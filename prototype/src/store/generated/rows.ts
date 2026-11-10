@@ -151,6 +151,13 @@ export const EVENT_PERMISSION_VERDICT_VALUES = [
 export type EventPermissionVerdict =
   (typeof EVENT_PERMISSION_VERDICT_VALUES)[number];
 
+/** `events.turn_route`, in declaration order. */
+export const EVENT_TURN_ROUTE_VALUES = [
+  "native",
+  "acp",
+] as const;
+export type EventTurnRoute = (typeof EVENT_TURN_ROUTE_VALUES)[number];
+
 /** `events.cost_basis`, in declaration order. */
 export const EVENT_COST_BASIS_VALUES = [
   "provider_billed",
@@ -225,6 +232,12 @@ export const EVENT_COLUMNS = [
   "runner_route_source",
   "runner_auth_type",
   "permission_verdict",
+  "parent_session_id",
+  "lineage_depth",
+  "lineage_label",
+  "reasoning_effort",
+  "turn_route",
+  "model_family",
   "tokens_input",
   "tokens_output",
   "tokens_cache_read",
@@ -302,6 +315,12 @@ export const EVENT_COLUMN_SPECS: Readonly<
   runner_route_source: { kind: "enum", nullable: true },
   runner_auth_type: { kind: "enum", nullable: true },
   permission_verdict: { kind: "enum", nullable: true },
+  parent_session_id: { kind: "text", nullable: true },
+  lineage_depth: { kind: "int", nullable: true },
+  lineage_label: { kind: "text", nullable: true },
+  reasoning_effort: { kind: "text", nullable: true },
+  turn_route: { kind: "enum", nullable: true },
+  model_family: { kind: "text", nullable: true },
   tokens_input: { kind: "int", nullable: true },
   tokens_output: { kind: "int", nullable: true },
   tokens_cache_read: { kind: "int", nullable: true },
@@ -371,6 +390,12 @@ export interface EventRow {
   runner_route_source: EventRunnerRouteSource | null;
   runner_auth_type: EventRunnerAuthType | null;
   permission_verdict: EventPermissionVerdict | null;
+  parent_session_id: string | null;
+  lineage_depth: number | null;
+  lineage_label: string | null;
+  reasoning_effort: string | null;
+  turn_route: EventTurnRoute | null;
+  model_family: string | null;
   tokens_input: number | null;
   tokens_output: number | null;
   tokens_cache_read: number | null;
@@ -443,6 +468,12 @@ export interface EventInsert {
   runner_route_source?: EventRunnerRouteSource | null;
   runner_auth_type?: EventRunnerAuthType | null;
   permission_verdict?: EventPermissionVerdict | null;
+  parent_session_id?: string | null;
+  lineage_depth?: number | null;
+  lineage_label?: string | null;
+  reasoning_effort?: string | null;
+  turn_route?: EventTurnRoute | null;
+  model_family?: string | null;
   tokens_input?: number | null;
   tokens_output?: number | null;
   tokens_cache_read?: number | null;

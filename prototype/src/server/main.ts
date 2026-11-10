@@ -19,6 +19,7 @@
  * Allowed dependencies: every lower layer. Nothing imports `server/`.
  */
 
+import { dirname } from "node:path";
 import process from "node:process";
 import type { WorkbenchModel } from "../providers/mod.ts";
 import {
@@ -29,11 +30,13 @@ import {
   type EventInsert,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionLastRun,
+  fetchWorkbenchSessionLineage,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   createStoreProbe,
   type SessionLastRun,
+  type SessionLineage,
   type Store,
   type StoreStatus,
   type WorkbenchProjectSessions,
@@ -48,6 +51,10 @@ import {
   serveUnixJsonRpc,
 } from "../transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
+import {
+  type ExternalAgentToolBridge,
+  WorkbenchToolBridge,
+} from "../workbench-tool-bridge.ts";
 import {
   baseRuntimePolicy,
   type CodeFingerprint,
@@ -152,6 +159,9 @@ export interface WorkbenchUnixServerOptions {
   fetchSessionLastRun?: (
     input: { sessionId: string },
   ) => Promise<SessionLastRun | null>;
+  fetchSessionLineage?: (
+    input: { sessionId: string },
+  ) => Promise<SessionLineage>;
   fetchSessionRecord?: (
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
@@ -213,7 +223,12 @@ export interface WorkbenchUnixServerOptions {
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>;
+  > & Partial<
+    Pick<
+      WorkbenchConfig,
+      "codexReasoningEffort" | "codexWorkbenchTools" | "codexToolTimeoutSeconds"
+    >
+  >;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */
   acpSessions?: AcpSessionHandleMap;
   /**
@@ -329,7 +344,11 @@ function buildHandlers(
     (async () => (await loadPickerCatalog(store)).models);
   const listSessions = options.listSessions ??
     ((query: { project?: string; limit?: number }) =>
-      listWorkbenchSessions({ ...query, sessions: store().sessions }));
+      listWorkbenchSessions({
+        ...query,
+        sessions: store().sessions,
+        events: store().events,
+      }));
   const fetchSessionEvents = options.fetchSessionEvents ??
     ((input: SessionEventsRequest) =>
       fetchWorkbenchSessionEvents({ ...input, events: store().events }));
@@ -345,6 +364,9 @@ function buildHandlers(
   const fetchSessionLastRun = options.fetchSessionLastRun ??
     ((input: { sessionId: string }) =>
       fetchWorkbenchSessionLastRun({ ...input, events: store().events }));
+  const fetchSessionLineage = options.fetchSessionLineage ??
+    ((input: { sessionId: string }) =>
+      fetchWorkbenchSessionLineage({ ...input, events: store().events }));
   const countSessionEvents = options.countSessionEvents ??
     ((input: { sessionId: string }) =>
       countWorkbenchSessionEvents({ ...input, events: store().events }));
@@ -390,6 +412,7 @@ function buildHandlers(
       fetchSessionRecord,
       fetchSessionWorkspaceRecord,
       fetchSessionLastRun,
+      fetchSessionLineage,
       countSessionEvents,
     }),
     ...buildEventsHandlers({ fetchSessionEvents }),
@@ -417,6 +440,7 @@ function composeTurnRuntime(
   sandbox?: CommandSandbox,
   publish?: PublishServerPorts,
   storeForImplementer?: () => Store,
+  toolBridge?: ExternalAgentToolBridge,
 ): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
@@ -424,6 +448,7 @@ function composeTurnRuntime(
         store: store(),
         sessionMap: acpSessions,
         ...(policy === undefined ? {} : { runPolicy: policy }),
+        ...(toolBridge === undefined ? {} : { toolBridge }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the
@@ -485,6 +510,32 @@ export async function serveWorkbenchUnix(
   // One set of session owners per engine, shared by the turn handlers and
   // the runtime they run.
   const owners = options.owners ?? new SessionOwners();
+  // The Workbench tool bridge for Codex ChatGPT sessions, started by the
+  // first Codex turn that has a tool to offer. Its socket directory sits
+  // beside the runtime socket unless that path is too long for a socket.
+  let bridgeStart: Promise<WorkbenchToolBridge> | undefined;
+  const toolBridge: ExternalAgentToolBridge | undefined =
+    options.engineConfig?.codexWorkbenchTools === false ? undefined : {
+      bridge: async () => {
+        // A bridge that closed itself is replaced, once, by the next turn.
+        const pending = bridgeStart;
+        const current = await pending?.catch(() => undefined);
+        if (current?.closed && bridgeStart === pending) bridgeStart = undefined;
+        bridgeStart ??= WorkbenchToolBridge.start(dirname(socketPath)).catch(
+          (error) => {
+            bridgeStart = undefined;
+            throw new Error(
+              "The Workbench tool bridge for Codex could not start " +
+                `(${summarizeError(error)}). Set [codex] workbench_tools = ` +
+                "false to run Codex without Workbench tools.",
+            );
+          },
+        );
+        return bridgeStart;
+      },
+      toolTimeoutSeconds: options.engineConfig?.codexToolTimeoutSeconds ?? 300,
+      sessionGrants: (sessionId) => owners.sessionGrants(sessionId),
+    };
   const runRuntime = options.runRuntime ??
     composeTurnRuntime(
       () => options.store,
@@ -495,6 +546,7 @@ export async function serveWorkbenchUnix(
       options.sandbox,
       options.publish,
       () => options.store!,
+      toolBridge,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -585,6 +637,8 @@ export async function serveWorkbenchUnix(
       } catch (error) {
         shutdownError = error;
       }
+      // After the ACP sessions, so no Codex is left holding a bridge socket.
+      await (await bridgeStart?.catch(() => undefined))?.close();
       await transportClosed;
       if (shutdownError !== undefined) throw shutdownError;
     },
