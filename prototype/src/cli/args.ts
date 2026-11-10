@@ -9,7 +9,8 @@ import {
   codexReasoningEffortRefusal,
   isCodexReasoningEffort,
 } from "../config/mod.ts";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
+import process from "node:process";
 import {
   type AdditionalRootRequest,
   MAX_ADDITIONAL_ROOTS,
@@ -295,6 +296,7 @@ export function resolveAdditionalRoots(
   flagged: readonly AdditionalRootRequest[] | undefined,
   env: { get(key: string): string | undefined },
   cwd: string,
+  platform: string = process.platform,
 ): AdditionalRootRequest[] {
   const typed = flagged ?? fromEnv(env.get("DYFJ_ADD_DIRS") ?? "");
   const home = env.get("HOME");
@@ -302,6 +304,12 @@ export function resolveAdditionalRoots(
     const expanded = home !== undefined && (path === "~" || path.startsWith("~/"))
       ? home + path.slice(1)
       : path;
+    // Windows resolves `..` by name, so resolving here picks the directory
+    // the filesystem would, and qualifies `\\repo` and `D:repo` with the
+    // client's drive and directory.
+    if (platform === "win32") {
+      return { path: win32.resolve(cwd, expanded), readOnly };
+    }
     // Joined, not resolved: folding `..` here could pick another directory
     // than the filesystem does through a symlink. The runtime canonicalizes.
     return {

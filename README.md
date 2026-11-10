@@ -1454,7 +1454,9 @@ A session can use more than one directory. `--add-dir <path>` (on `dyfj`,
 `dyfj exec` and the Rust REPL) adds a read-write root beside the workspace, and
 `--add-dir <path>:ro` a read-only one. The flag can be repeated up to 16 times;
 without it, `DYFJ_ADD_DIRS` (comma-separated, same `:ro` suffix) applies. The
-client joins a relative path to its working directory and sends the roots on every turn: they are not
+client joins a relative path to its working directory (on Windows it
+resolves the path, so a root without a drive takes the client's drive) and
+sends the roots on every turn: they are not
 stored with the session, so a resumed session has the roots its client names.
 The runtime takes them from a loopback caller only. Before a turn runs, it
 refuses every added root when it has no absolute `HOME`, and otherwise

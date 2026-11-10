@@ -127,9 +127,10 @@ function under(path: string, ...children: string[]): string {
 }
 
 /**
- * The protected paths, each in its lexical form and its canonical forms (see
- * `canonicalForms`), so a root that would contain one once it is created is
- * refused too. Throws `AdditionalRootRefusedError` without an absolute
+ * The protected paths, each in its lexical form, its canonical forms (see
+ * `canonicalForms`) and the canonical forms of the directory holding it, so
+ * a root that would contain one once it is created, or that holds a
+ * protected symlink through an aliased parent, is refused too. Throws `AdditionalRootRefusedError` without an absolute
  * `HOME`.
  */
 export async function protectedPaths(
@@ -162,6 +163,11 @@ export async function protectedPaths(
   for (const path of listed) {
     resolved.add(resolve(path));
     for (const form of await canonicalForms(path)) resolved.add(form);
+    // Where the entry itself sits: when the path is a symlink, its target's
+    // forms above miss the directory that holds the link.
+    for (const form of await canonicalForms(dirname(path))) {
+      resolved.add(join(form, basename(path)));
+    }
   }
   return [...resolved];
 }

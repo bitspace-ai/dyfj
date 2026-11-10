@@ -4,7 +4,8 @@
  * The UDS handler passes its JSON-RPC params here; the per-session lock and
  * resume reconstruction happen later, in `executeTurn` (`turn.ts`).
  */
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
+import process from "node:process";
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
 import {
   type AdditionalRootRequest,
@@ -179,8 +180,19 @@ function buildRuntimeInputFromJson(
  * `{ path: <absolute path>, readOnly?: boolean }` objects. The runtime admits
  * each one later, for a loopback caller only.
  */
+/**
+ * True when `path` names one location on its own: absolute, and on Windows
+ * also carrying a drive or UNC prefix (`\\repo` and `D:repo` depend on the
+ * caller's current drive or directory).
+ */
+function fullyQualified(path: string, platform: string): boolean {
+  if (platform !== "win32") return isAbsolute(path);
+  return win32.isAbsolute(path) && /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(path);
+}
+
 export function parseAdditionalRoots(
   value: unknown,
+  platform: string = process.platform,
 ): { roots: AdditionalRootRequest[] } | { error: string } {
   if (value === undefined) return { roots: [] };
   if (!Array.isArray(value) || value.length > MAX_ADDITIONAL_ROOTS) {
@@ -198,7 +210,7 @@ export function parseAdditionalRoots(
     if (Object.keys(rest).length > 0) {
       return { error: "additionalRoots entries take only path and readOnly" };
     }
-    if (typeof path !== "string" || !isAbsolute(path)) {
+    if (typeof path !== "string" || !fullyQualified(path, platform)) {
       return { error: "additionalRoots paths must be absolute" };
     }
     if (readOnly !== undefined && typeof readOnly !== "boolean") {

@@ -663,6 +663,24 @@ describe("--add-dir", () => {
     );
   });
 
+  it("on Windows, qualifies a root with the client's drive", () => {
+    assert.deepStrictEqual(
+      resolveAdditionalRoots(
+        [
+          { path: "\\other-repo", readOnly: false },
+          { path: "..\\wt", readOnly: true },
+        ],
+        new Map(),
+        "D:\\work\\main-repo",
+        "win32",
+      ),
+      [
+        { path: "D:\\other-repo", readOnly: false },
+        { path: "D:\\work\\wt", readOnly: true },
+      ],
+    );
+  });
+
   it("reads DYFJ_ADD_DIRS when no flag is given, and flags replace it", () => {
     const env = new Map([["DYFJ_ADD_DIRS", "/a, ,/b:ro"]]);
     assert.deepStrictEqual(resolveConfig({}, env, false, "/cwd").additionalRoots, [

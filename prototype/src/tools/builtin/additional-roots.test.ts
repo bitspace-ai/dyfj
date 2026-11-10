@@ -157,6 +157,26 @@ describe("admitAdditionalRoots", () => {
     );
   });
 
+  it("refuses the real checkout behind an aliased parent of a .env symlink", async () => {
+    const real = join(base, "real-checkout");
+    await mkdir(join(real, "prototype"), { recursive: true });
+    const alias = join(base, "alias-checkout");
+    await symlink(real, alias);
+    const secrets = join(base, "alias-secrets");
+    await mkdir(secrets);
+    await writeFile(join(secrets, "runtime.env"), "CANARY_TOKEN=not-a-secret\n");
+    await symlink(join(secrets, "runtime.env"), join(real, "prototype", ".env"));
+    await assert.rejects(
+      admitAdditionalRoots([{ path: real, readOnly: true }], {
+        protectedPaths: await protectedPaths({
+          home,
+          prototypeRoot: join(alias, "prototype"),
+        }),
+      }),
+      refused(1),
+    );
+  });
+
   it("refuses a chain of dangling symlinks too long to follow", async () => {
     const checkout = join(base, "long-chain", "prototype");
     await mkdir(checkout, { recursive: true });

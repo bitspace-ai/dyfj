@@ -308,6 +308,15 @@ describe("parseAdditionalRoots", () => {
     assert.deepStrictEqual(parseAdditionalRoots(undefined), { roots: [] });
   });
 
+  it("on Windows, takes only drive- or UNC-qualified paths", () => {
+    for (const path of ["C:\\repo", "D:/repo", "\\\\host\\share\\repo"]) {
+      assert.ok("roots" in parseAdditionalRoots([{ path }], "win32"), path);
+    }
+    for (const path of ["\\repo", "/repo", "D:repo"]) {
+      assert.ok("error" in parseAdditionalRoots([{ path }], "win32"), path);
+    }
+  });
+
   it("refuses a malformed list", () => {
     for (
       const value of [
