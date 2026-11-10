@@ -9,8 +9,10 @@ import {
   MAX_SESSION_EVENT_INPUT_BYTES,
   MAX_SESSION_EVENT_LINE_BYTES,
   projectSessionEventsReadback,
+  projectSessionShow,
   runSessionEvents,
   runSessions,
+  runSessionShow,
   type SessionEventsReadback,
 } from "./sessions.ts";
 
@@ -822,5 +824,172 @@ describe("runSessionEvents over UDS", () => {
       MAX_SESSION_EVENT_INPUT_BYTES,
     );
     assert.strictEqual(fourthTool.input?.endsWith("…"), true);
+  });
+});
+
+describe("dyfj sessions show <ref>", () => {
+  function inspectConnect(
+    inspect: unknown,
+    calls: Array<[string, unknown]> = [],
+  ): ConnectFn {
+    return (_socketPath: string) =>
+      Promise.resolve({
+        request: (method: string, params?: unknown) => {
+          calls.push([method, params]);
+          return Promise.resolve(inspect);
+        },
+        close: () => {},
+      });
+  }
+
+  const SESSION = "01KTZ1XWCN7JMGS5E8KAKFEZKR";
+  const base = {
+    session: { sessionId: SESSION, slug: "workbench-01ktz1xwcn7jmgs5e8kakfezkr" },
+    workspace: "/workspaces/dyfj",
+    model: null,
+    runner: "codex-chatgpt",
+    exists: true,
+    eventCount: 7,
+  };
+
+  it("prints the lineage the session's first start recorded", async () => {
+    const calls: Array<[string, unknown]> = [];
+    const { io, stdout } = fakeIo();
+    const code = await runSessionShow(
+      SESSION,
+      cfg(),
+      io,
+      false,
+      inspectConnect({
+        ...base,
+        parentSessionId: "01KTZ1XWCN7JMGS5E8KAKFEZKS",
+        depth: 1,
+        label: "lineage\u001b[31m-\u2028fie\u202Elds",
+        effort: "high",
+        route: "acp",
+        family: "gpt",
+      }, calls),
+    );
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(calls, [["sessions/inspect", { sessionId: SESSION }]]);
+    assert.strictEqual(
+      stdout.join(""),
+      [
+        `Session ${SESSION}`,
+        "  Slug:       workbench-01ktz1xwcn7jmgs5e8kakfezkr",
+        "  Workspace:  /workspaces/dyfj",
+        "  Runner:     codex-chatgpt",
+        "  Events:     7",
+        "  Parent:     01KTZ1XWCN7JMGS5E8KAKFEZKS",
+        "  Depth:      1",
+        // The escape, line-separator and direction controls are removed;
+        // the rest of the label stays.
+        "  Label:      lineage[31m-fields",
+        "  Effort:     high",
+        "  Route:      acp",
+        "  Family:     gpt",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("prints (none) for a session that recorded no lineage", async () => {
+    const { io, stdout } = fakeIo();
+    const code = await runSessionShow(
+      SESSION,
+      cfg(),
+      io,
+      true,
+      // An older runtime sends no lineage keys at all.
+      inspectConnect({ ...base, runner: null, model: "local-model" }),
+    );
+    assert.strictEqual(code, 0);
+    assert.deepStrictEqual(JSON.parse(stdout.join("")), {
+      sessionId: SESSION,
+      slug: "workbench-01ktz1xwcn7jmgs5e8kakfezkr",
+      workspace: "/workspaces/dyfj",
+      model: "local-model",
+      runner: null,
+      eventCount: 7,
+      parentSessionId: null,
+      depth: null,
+      label: null,
+      effort: null,
+      route: null,
+      family: null,
+    });
+    const text = fakeIo();
+    await runSessionShow(
+      SESSION,
+      cfg(),
+      text.io,
+      false,
+      inspectConnect({ ...base, runner: null, model: "local-model" }),
+    );
+    const out = text.stdout.join("");
+    for (const field of ["Parent", "Depth", "Label", "Effort", "Route", "Family"]) {
+      assert.ok(
+        out.includes(`  ${field}:`.padEnd(14) + "(none)"),
+        `expected ${field} to read (none) in ${JSON.stringify(out)}`,
+      );
+    }
+  });
+
+  it("fails for a session the store does not have", async () => {
+    const { io, stderr } = fakeIo();
+    const code = await runSessionShow(
+      SESSION,
+      cfg(),
+      io,
+      false,
+      inspectConnect({ session: null, workspace: null, exists: false, eventCount: 0 }),
+    );
+    assert.strictEqual(code, 1);
+    assert.deepStrictEqual(stderr, [`dyfj: no session ${SESSION}`]);
+  });
+});
+
+describe("projectSessionShow text fields", () => {
+  const label = (value: string) =>
+    projectSessionShow("01KTZ1XWCN7JMGS5E8KAKFEZKR", { label: value }).label;
+  const bytes = (text: string) => new TextEncoder().encode(text).byteLength;
+
+  it("keeps a value of exactly 256 UTF-8 bytes whole", () => {
+    assert.strictEqual(label("a".repeat(256)), "a".repeat(256));
+  });
+
+  it("clips a longer value to 256 bytes ending in an ellipsis", () => {
+    const out = label("a".repeat(257))!;
+    assert.strictEqual(out, `${"a".repeat(253)}…`);
+    assert.strictEqual(bytes(out), 256);
+  });
+
+  it("reads a bounded prefix of a very long value", () => {
+    const out = label(`${"ab\u0007".repeat(1_000_000)}`)!;
+    assert.ok(out.endsWith("…"));
+    assert.ok(bytes(out) <= 256);
+    assert.ok(!out.includes("\u0007"));
+  });
+
+  it("marks a value cut at the scan bound even when the rest is controls", () => {
+    assert.strictEqual(label(`x${"\u0007".repeat(5000)}y`), "x…");
+  });
+
+  it("does not leave half a surrogate pair when the scan bound splits one", () => {
+    // The 1,023 controls are removed, so only the split pair's high half
+    // could reach the output.
+    assert.strictEqual(label(`${"\u0007".repeat(1023)}😀tail`), "…");
+  });
+
+  it("reads a value cut to nothing at the scan bound as an ellipsis", () => {
+    assert.strictEqual(label(`${"\u0007".repeat(1024)}visible`), "…");
+    assert.strictEqual(label("\u0007\u0007"), null);
+  });
+
+  it("removes the Arabic letter mark and other bidirectional controls", () => {
+    assert.strictEqual(
+      label("a\u061Cb\u200Ec\u200Fd\u202Ae\u2066f\u2069g"),
+      "abcdefg",
+    );
   });
 });

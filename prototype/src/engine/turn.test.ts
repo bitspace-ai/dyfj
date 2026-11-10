@@ -27,6 +27,7 @@ function eventsReturning(rows: Record<string, string>[]): EventReader {
     exists: () => Promise.resolve(false),
     countBySession: () => Promise.resolve(rows.length),
     latestRun: () => Promise.resolve(null),
+    lineage: () => Promise.resolve(new Map()),
     bySession: () => Promise.resolve(rows.map((row) => ({ ...row }))),
   };
 }

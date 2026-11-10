@@ -29,11 +29,13 @@ import {
   type EventInsert,
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionLastRun,
+  fetchWorkbenchSessionLineage,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspaceRecord,
   listWorkbenchSessions,
   createStoreProbe,
   type SessionLastRun,
+  type SessionLineage,
   type Store,
   type StoreStatus,
   type WorkbenchProjectSessions,
@@ -152,6 +154,9 @@ export interface WorkbenchUnixServerOptions {
   fetchSessionLastRun?: (
     input: { sessionId: string },
   ) => Promise<SessionLastRun | null>;
+  fetchSessionLineage?: (
+    input: { sessionId: string },
+  ) => Promise<SessionLineage>;
   fetchSessionRecord?: (
     input: { sessionId: string },
   ) => Promise<WorkbenchSessionSummary | null>;
@@ -329,7 +334,11 @@ function buildHandlers(
     (async () => (await loadPickerCatalog(store)).models);
   const listSessions = options.listSessions ??
     ((query: { project?: string; limit?: number }) =>
-      listWorkbenchSessions({ ...query, sessions: store().sessions }));
+      listWorkbenchSessions({
+        ...query,
+        sessions: store().sessions,
+        events: store().events,
+      }));
   const fetchSessionEvents = options.fetchSessionEvents ??
     ((input: SessionEventsRequest) =>
       fetchWorkbenchSessionEvents({ ...input, events: store().events }));
@@ -345,6 +354,9 @@ function buildHandlers(
   const fetchSessionLastRun = options.fetchSessionLastRun ??
     ((input: { sessionId: string }) =>
       fetchWorkbenchSessionLastRun({ ...input, events: store().events }));
+  const fetchSessionLineage = options.fetchSessionLineage ??
+    ((input: { sessionId: string }) =>
+      fetchWorkbenchSessionLineage({ ...input, events: store().events }));
   const countSessionEvents = options.countSessionEvents ??
     ((input: { sessionId: string }) =>
       countWorkbenchSessionEvents({ ...input, events: store().events }));
@@ -390,6 +402,7 @@ function buildHandlers(
       fetchSessionRecord,
       fetchSessionWorkspaceRecord,
       fetchSessionLastRun,
+      fetchSessionLineage,
       countSessionEvents,
     }),
     ...buildEventsHandlers({ fetchSessionEvents }),

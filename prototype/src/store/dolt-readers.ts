@@ -22,6 +22,9 @@ import {
   invalidAsOfError,
   isValidAsOfTimestamp,
   SESSION_EVENT_COLUMNS,
+  SESSION_LINEAGE_COLUMNS,
+  type SessionLineage,
+  sessionLineageFromText,
 } from "./port.ts";
 import {
   EVENT_COLUMN_SPECS,
@@ -141,6 +144,26 @@ export function doltEventReader(pool: DoltSelect): EventReader {
       return row.event_type === "agent_response"
         ? { kind: "runner", profile: row.runner_profile ?? "" }
         : { kind: "model", slug: row.model_id! };
+    },
+    async lineage(sessionIds) {
+      const out = new Map<string, SessionLineage>();
+      const ids = [...new Set(sessionIds)];
+      if (ids.length === 0) return out;
+      const columns = SESSION_LINEAGE_COLUMNS.join(", ");
+      const rows = await queryText(
+        pool,
+        `SELECT session_id, ${columns} FROM (` +
+          `SELECT session_id, ${columns}, ROW_NUMBER() OVER (` +
+          "PARTITION BY session_id ORDER BY created_at, event_id) AS start_rank " +
+          "FROM events WHERE event_type = 'session_start' " +
+          `AND session_id IN (${placeholders(ids)})` +
+          ") AS starts WHERE start_rank = 1;",
+        ids,
+      );
+      for (const row of rows) {
+        out.set(row.session_id!, sessionLineageFromText(row));
+      }
+      return out;
     },
   };
 }

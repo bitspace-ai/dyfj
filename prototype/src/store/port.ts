@@ -142,6 +142,69 @@ export interface EventReader {
    * whose call failed, never dispatched or was cancelled, does not count.
    */
   latestRun(sessionId: string): Promise<SessionLastRun | null>;
+  /**
+   * The lineage columns of each named session's earliest `session_start`
+   * event, ordered by `created_at` then `event_id`. A session with no
+   * `session_start` event has no entry. Columns the event left unset are
+   * null.
+   */
+  lineage(sessionIds: readonly string[]): Promise<Map<string, SessionLineage>>;
+}
+
+/**
+ * A session's lineage and posture, as its earliest `session_start` event
+ * recorded them. Every field is null for a session recorded before the
+ * columns existed, or whose start set none of them.
+ */
+export interface SessionLineage {
+  /** The coordinator session that dispatched this one. */
+  parentSessionId: string | null;
+  /** Depth below the coordinator; a direct child is 1. */
+  depth: number | null;
+  /** The coordinator's label for this session. */
+  label: string | null;
+  /** The reasoning effort the runtime passed, not the value requested. */
+  effort: string | null;
+  /** The route the session runs on. */
+  route: "native" | "acp" | null;
+  /** The model family, from the model catalog. */
+  family: string | null;
+}
+
+/** The lineage of a session that recorded none. */
+export const EMPTY_SESSION_LINEAGE: Readonly<SessionLineage> = Object.freeze({
+  parentSessionId: null,
+  depth: null,
+  label: null,
+  effort: null,
+  route: null,
+  family: null,
+});
+
+/** The `events` columns `EventReader.lineage` reads. */
+export const SESSION_LINEAGE_COLUMNS = [
+  "parent_session_id",
+  "lineage_depth",
+  "lineage_label",
+  "reasoning_effort",
+  "turn_route",
+  "model_family",
+] as const satisfies readonly EventColumn[];
+
+/** Map one row of `SESSION_LINEAGE_COLUMNS`, NULL rendered as "", to a lineage. */
+export function sessionLineageFromText(row: TextRow): SessionLineage {
+  const text = (value: string | undefined) =>
+    value === undefined || value === "" ? null : value;
+  const depth = text(row.lineage_depth);
+  const route = text(row.turn_route);
+  return {
+    parentSessionId: text(row.parent_session_id),
+    depth: depth === null ? null : Number(depth),
+    label: text(row.lineage_label),
+    effort: text(row.reasoning_effort),
+    route: route === "native" || route === "acp" ? route : null,
+    family: text(row.model_family),
+  };
 }
 
 /** What a session last ran on: a native model, or an external-agent runner. */
