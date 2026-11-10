@@ -1,10 +1,12 @@
 import type { CostBasis, WorkbenchSessionEvent } from "../contract/mod.ts";
-import type {
-  EventReader,
-  Journal,
-  SessionLastRun,
-  SessionReader,
-  TextRow,
+import {
+  EMPTY_SESSION_LINEAGE,
+  type EventReader,
+  type Journal,
+  type SessionLastRun,
+  type SessionLineage,
+  type SessionReader,
+  type TextRow,
 } from "./port.ts";
 
 export interface WorkbenchSessionContentInput {
@@ -120,6 +122,18 @@ export async function fetchWorkbenchSessionLastRun(
   return await input.events.latestRun(input.sessionId);
 }
 
+/**
+ * A session's lineage and posture, from its earliest `session_start` event.
+ * Every field is null when that event set none of them, or when the session
+ * has no `session_start` event.
+ */
+export async function fetchWorkbenchSessionLineage(
+  input: { sessionId: string; events: EventReader },
+): Promise<SessionLineage> {
+  const lineage = await input.events.lineage([input.sessionId]);
+  return lineage.get(input.sessionId) ?? { ...EMPTY_SESSION_LINEAGE };
+}
+
 export async function fetchWorkbenchSessionRecord(
   input: { sessionId: string; sessions: SessionReader },
 ): Promise<WorkbenchSessionSummary | null> {
@@ -176,6 +190,13 @@ export interface WorkbenchSessionSummary {
   status: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The coordinator session that dispatched this one, from its earliest
+   * `session_start` event; null when it records none. Set by
+   * `listWorkbenchSessions`; absent from a single-session record, where
+   * `sessions/inspect` reports the full lineage instead.
+   */
+  parentSessionId?: string | null;
 }
 
 export interface WorkbenchProjectSessions {
@@ -222,6 +243,7 @@ export async function listWorkbenchSessions(options: {
   project?: string;
   limit?: number;
   sessions: SessionReader;
+  events: EventReader;
 }): Promise<WorkbenchProjectSessions[]> {
   const limit = Math.floor(
     Math.min(
@@ -238,6 +260,9 @@ export async function listWorkbenchSessions(options: {
     ...(options.project !== undefined ? { project: options.project } : {}),
     limit,
   });
+  const lineage = await options.events.lineage(
+    rows.map((row) => row.session_id!),
+  );
   const groups = new Map<string, WorkbenchProjectSessions>();
   for (const row of rows) {
     const project = row.project === "" ? null : row.project;
@@ -256,6 +281,7 @@ export async function listWorkbenchSessions(options: {
       status: row.status || "active",
       createdAt: normalizeSessionTimestamp(row.created_at),
       updatedAt: normalizeSessionTimestamp(row.updated_at),
+      parentSessionId: lineage.get(row.session_id!)?.parentSessionId ?? null,
     });
   }
   // Sort sessions within each group by latest activity

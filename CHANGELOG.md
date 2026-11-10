@@ -62,6 +62,27 @@ README are tracked separately in its Revision history section.
   - Builtin commands (`bash`, file, git and memory tools) are not offered:
     Codex has its own shell and file tools.
 
+- **Lineage fields on `session_start`, and their readback.** Migration
+  `026_events_session_lineage.sql` adds six nullable `events` columns:
+  `parent_session_id`, `lineage_depth`, `lineage_label`, `reasoning_effort`,
+  `turn_route` (`native` or `acp`) and `model_family`. They are for a
+  dispatched session's record of the coordinator that started it, its depth
+  below it, the coordinator's label for it, and the effort, route and model
+  family it runs on. No code writes them yet. Reads take them from a
+  session's earliest `session_start` event:
+  - `sessions/inspect` adds `parentSessionId`, `depth`, `label`, `effort`,
+    `route` and `family`.
+  - `sessions/list`, and so `surface/snapshot`, add `parentSessionId` to each
+    session.
+  - `dyfj sessions show <ref> [--json]`, without `--events`, prints the
+    session's slug, workspace, model or runner, event count and the six
+    fields. Before, `sessions show` required `--events`.
+
+  A session recorded before the migration, or whose first start set none of
+  the columns, reads all six as null, and `dyfj sessions show` prints
+  `(none)`. The runtime refuses to start against a database that lacks the
+  new columns, so apply the migration to an existing database first.
+
 - **Parked approvals: a turn the runtime starts itself waits for the operator.**
   A turn with no client connection (a headless turn) now runs under a parking
   approver. Once the turn has announced its session, each of its approval

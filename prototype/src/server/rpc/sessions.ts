@@ -1,9 +1,10 @@
 // The `sessions` namespace: the bounded, activity-ordered session list and
-// one session's summary, workspace, recorded model and event count.
+// one session's summary, workspace, recorded model, lineage and event count.
 
 import {
   compareSessionActivity,
   type SessionLastRun,
+  type SessionLineage,
   type WorkbenchProjectSessions,
   type WorkbenchSessionSummary,
 } from "../../store/mod.ts";
@@ -34,6 +35,13 @@ export interface SessionsHandlerDeps {
   fetchSessionLastRun: (
     input: { sessionId: string },
   ) => Promise<SessionLastRun | null>;
+  /**
+   * The session's lineage and posture, from its earliest `session_start`
+   * event; every field null when it records none.
+   */
+  fetchSessionLineage: (
+    input: { sessionId: string },
+  ) => Promise<SessionLineage>;
   countSessionEvents: (input: { sessionId: string }) => Promise<number>;
 }
 
@@ -137,12 +145,14 @@ export function buildSessionsHandlers(deps: SessionsHandlerDeps): RpcHandlers {
         required: true,
         maxLen: 256,
       })!;
-      const [session, workspaceRec, lastRun, eventCount] = await Promise.all([
-        deps.fetchSessionRecord({ sessionId }),
-        deps.fetchSessionWorkspaceRecord({ sessionId }),
-        deps.fetchSessionLastRun({ sessionId }),
-        deps.countSessionEvents({ sessionId }),
-      ]);
+      const [session, workspaceRec, lastRun, lineage, eventCount] =
+        await Promise.all([
+          deps.fetchSessionRecord({ sessionId }),
+          deps.fetchSessionWorkspaceRecord({ sessionId }),
+          deps.fetchSessionLastRun({ sessionId }),
+          deps.fetchSessionLineage({ sessionId }),
+          deps.countSessionEvents({ sessionId }),
+        ]);
       return {
         session,
         workspace: workspaceRec.workspace,
@@ -150,6 +160,14 @@ export function buildSessionsHandlers(deps: SessionsHandlerDeps): RpcHandlers {
         // runner profile when its latest turn ran on one; one is null.
         model: lastRun?.kind === "model" ? lastRun.slug : null,
         runner: lastRun?.kind === "runner" ? lastRun.profile : null,
+        // Lineage and posture from the session's earliest session_start
+        // event; null for a session that recorded none.
+        parentSessionId: lineage.parentSessionId,
+        depth: lineage.depth,
+        label: lineage.label,
+        effort: lineage.effort,
+        route: lineage.route,
+        family: lineage.family,
         exists: session !== null || workspaceRec.exists,
         eventCount,
       };

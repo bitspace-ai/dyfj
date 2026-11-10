@@ -1,8 +1,9 @@
 /**
- * `dyfj sessions` and `dyfj sessions show <ref> --events [--json]`:
- * list sessions grouped by project, or read back up to 1,000 persisted events
- * for one session as ordered turns and tool events over the runtime's UDS
- * JSON-RPC seam.
+ * `dyfj sessions`, `dyfj sessions show <ref> [--json]` and
+ * `dyfj sessions show <ref> --events [--json]`: list sessions grouped by
+ * project, show one session's workspace, model and lineage, or read back up
+ * to 1,000 persisted events for one session as ordered turns and tool events
+ * over the runtime's UDS JSON-RPC seam.
  */
 
 import {
@@ -643,6 +644,149 @@ export async function runSessionEvents(
     } else {
       io.out(`${formatSessionEventsReadback(readback)}\n`);
     }
+    return 0;
+  } catch (error) {
+    const line = socketError(error, config);
+    if (json) {
+      io.out(`${JSON.stringify({ error: line.replace(/^dyfj: /, "") })}\n`);
+    }
+    io.err(line);
+    return 1;
+  }
+}
+
+/** What `dyfj sessions show <ref>` prints, from `sessions/inspect`. */
+export interface SessionShowView {
+  sessionId: string;
+  slug: string | null;
+  workspace: string | null;
+  model: string | null;
+  runner: string | null;
+  eventCount: number;
+  parentSessionId: string | null;
+  depth: number | null;
+  label: string | null;
+  effort: string | null;
+  route: string | null;
+  family: string | null;
+}
+
+/** Longest value `dyfj sessions show` prints for one field, in UTF-8 bytes. */
+const MAX_SESSION_SHOW_VALUE_BYTES = 256;
+
+/** Code units of a stored value `showText` reads before it sanitizes. */
+const MAX_SESSION_SHOW_SCAN_CHARS = MAX_SESSION_SHOW_VALUE_BYTES * 4;
+
+/**
+ * A stored text field for one line of output. It reads at most
+ * `MAX_SESSION_SHOW_SCAN_CHARS` code units, removes C0 and C1 controls,
+ * U+2028 and U+2029, and the bidirectional marks and controls U+061C,
+ * U+200E, U+200F, U+202A to U+202E and U+2066 to U+2069, trims surrounding
+ * whitespace, and clips the result to `MAX_SESSION_SHOW_VALUE_BYTES` UTF-8
+ * bytes. A value it cut, at the scan bound or the byte bound, ends in an
+ * ellipsis; one cut to nothing reads as the ellipsis alone. Non-text values,
+ * and values that are empty once sanitized and not cut, read as null.
+ */
+function showText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const cut = value.length > MAX_SESSION_SHOW_SCAN_CHARS;
+  let scanned = cut ? value.slice(0, MAX_SESSION_SHOW_SCAN_CHARS) : value;
+  // Drop a high surrogate the slice separated from its pair.
+  if (cut && /[\uD800-\uDBFF]$/.test(scanned)) scanned = scanned.slice(0, -1);
+  const clean = scanned.replace(
+    /[\x00-\x1F\x7F-\x9F\u061C\u2028\u2029\u200E\u200F\u202A-\u202E\u2066-\u2069]/g,
+    "",
+  ).trim();
+  // A value cut at the scan bound reads as an ellipsis, not as absent.
+  if (clean.length === 0) return cut ? ELLIPSIS : null;
+  if (!cut && clipToUtf8Bytes(clean, MAX_SESSION_SHOW_VALUE_BYTES) === null) {
+    return clean;
+  }
+  const clipped = clipToUtf8Bytes(
+    clean,
+    MAX_SESSION_SHOW_VALUE_BYTES - ELLIPSIS_UTF8_BYTES,
+  );
+  return `${clipped ?? clean}${ELLIPSIS}`;
+}
+
+function showNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/** Project a `sessions/inspect` response to the fields `sessions show` prints. */
+export function projectSessionShow(
+  sessionId: string,
+  inspect: Record<string, unknown>,
+): SessionShowView {
+  const session = inspect.session !== null &&
+      typeof inspect.session === "object"
+    ? inspect.session as Record<string, unknown>
+    : {};
+  return {
+    sessionId,
+    slug: showText(session.slug),
+    workspace: showText(inspect.workspace),
+    model: showText(inspect.model),
+    runner: showText(inspect.runner),
+    eventCount: showNumber(inspect.eventCount) ?? 0,
+    parentSessionId: showText(inspect.parentSessionId),
+    depth: showNumber(inspect.depth),
+    label: showText(inspect.label),
+    effort: showText(inspect.effort),
+    route: showText(inspect.route),
+    family: showText(inspect.family),
+  };
+}
+
+export function formatSessionShow(view: SessionShowView): string {
+  const value = (v: string | number | null) => v === null ? "(none)" : `${v}`;
+  return [
+    `Session ${view.sessionId}`,
+    `  Slug:       ${value(view.slug)}`,
+    `  Workspace:  ${value(view.workspace)}`,
+    view.runner === null
+      ? `  Model:      ${value(view.model)}`
+      : `  Runner:     ${view.runner}`,
+    `  Events:     ${view.eventCount}`,
+    `  Parent:     ${value(view.parentSessionId)}`,
+    `  Depth:      ${value(view.depth)}`,
+    `  Label:      ${value(view.label)}`,
+    `  Effort:     ${value(view.effort)}`,
+    `  Route:      ${value(view.route)}`,
+    `  Family:     ${value(view.family)}`,
+  ].join("\n");
+}
+
+export async function runSessionShow(
+  sessionId: string,
+  config: CliConfig,
+  io: Io,
+  json = false,
+  connect: ConnectFn = connectUnixClient,
+): Promise<number> {
+  try {
+    const client = await connect(config.socket);
+    let inspect: Record<string, unknown>;
+    try {
+      const response = await client.request("sessions/inspect", { sessionId });
+      inspect = response !== null && typeof response === "object"
+        ? response as Record<string, unknown>
+        : {};
+    } finally {
+      client.close();
+    }
+    if (inspect.exists !== true) {
+      const message = `no session ${sessionId}`;
+      if (json) io.out(`${JSON.stringify({ error: message })}\n`);
+      io.err(`dyfj: ${message}`);
+      return 1;
+    }
+    const view = projectSessionShow(sessionId, inspect);
+    io.out(
+      json
+        ? `${JSON.stringify(view, null, 2)}\n`
+        : `${formatSessionShow(view)}\n`,
+    );
     return 0;
   } catch (error) {
     const line = socketError(error, config);
