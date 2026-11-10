@@ -16,8 +16,9 @@ README are tracked separately in its Revision history section.
   one, repeatable up to 16 times, on `dyfj`, `dyfj exec` and the Rust REPL;
   `DYFJ_ADD_DIRS` (comma-separated) applies when no flag is given. The client
   sends the roots on every turn; they are not stored with the session. The
-  runtime takes them from a loopback caller only, and refuses, before the turn
-  runs, a root that is not a directory or that is, contains or sits inside
+  runtime takes them from a loopback caller only, refuses them all without an
+  absolute `HOME`, and refuses, before the turn runs, a root that is not a
+  directory or that is, contains or sits inside
   `~/.dyfj` (with the Codex runner home), `~/.config/dyfj`, `DYFJ_ROOT` or the
   file behind the runtime checkout's `prototype/.env`, comparing canonical
   paths. On the native route the six file tools take an optional `root`

@@ -268,7 +268,7 @@ mod tests {
             session.additional_roots,
             vec![root("/op-home/main-repo/../wt", false), root("/op-home/ref", true)]
         );
-        let from_env = super::parse_args(&[], env(&[("DYFJ_ADD_DIRS", "/a, ,/b:ro")]), Some("/cwd".into()))
+        let from_env = super::parse_args(&[], env(&[("DYFJ_ADD_DIRS", "/a, ,/b:ro ")]), Some("/cwd".into()))
             .unwrap()
             .unwrap();
         assert_eq!(from_env.additional_roots, vec![root("/a", false), root("/b", true)]);

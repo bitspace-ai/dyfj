@@ -281,8 +281,9 @@ function applyValueFlag(
  * Undefined when the path is empty.
  */
 export function parseAddDir(value: string): AdditionalRootRequest | undefined {
-  const readOnly = value.endsWith(":ro");
-  const path = (readOnly ? value.slice(0, -":ro".length) : value).trim();
+  const trimmed = value.trim();
+  const readOnly = trimmed.endsWith(":ro");
+  const path = (readOnly ? trimmed.slice(0, -":ro".length) : trimmed).trim();
   return path === "" ? undefined : { path, readOnly };
 }
 

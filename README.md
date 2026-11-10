@@ -1457,6 +1457,7 @@ without it, `DYFJ_ADD_DIRS` (comma-separated, same `:ro` suffix) applies. The
 client joins a relative path to its working directory and sends the roots on every turn: they are not
 stored with the session, so a resumed session has the roots its client names.
 The runtime takes them from a loopback caller only. Before a turn runs, it
+refuses every added root when it has no absolute `HOME`, and otherwise
 resolves each root to its canonical path and refuses one that is not a
 directory, or that is, contains or sits inside `~/.dyfj` (which holds the Codex
 runner home), `~/.config/dyfj`, `DYFJ_ROOT`, or the file behind the runtime

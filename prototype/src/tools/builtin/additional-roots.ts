@@ -9,15 +9,18 @@
  * (`~/.dyfj`, which holds the runner homes), `~/.config/dyfj`, the config
  * root `DYFJ_ROOT`, the Codex runner home, or the file behind the runtime
  * checkout's `prototype/.env`. The check compares canonical paths, so a
- * symlink to a protected path is refused like the path itself. It runs when
- * the turn starts; a path that changes after that is caught, for the native
- * file tools, by their own per-call containment checks.
+ * symlink to a protected path is refused like the path itself. Without an
+ * absolute `HOME` every added root is refused, since the home-directory
+ * paths cannot be located. The check runs when the turn starts and keeps no
+ * directory identity: afterwards the native file tools rely on their own
+ * per-call containment checks, and their root anchor is set when a tool first
+ * touches the root.
  *
  * The primary workspace is not checked here: this module covers added roots
  * only.
  */
 
-import { realpath, stat } from "node:fs/promises";
+import { lstat, readlink, realpath, stat } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -59,42 +62,73 @@ export function runtimePrototypeRoot(): string {
 }
 
 /**
- * `path` with its deepest existing ancestor canonicalized and the missing
- * rest appended, so a path that does not exist yet is compared in the same
- * spelling as a canonical root (a symlinked home, for example).
+ * Canonical spellings of the absolute `path`: its realpath when it resolves;
+ * otherwise the realpath of the nearest ancestor that resolves, walking the
+ * path as written (no lexical `..` folding first, so `link/..` follows the
+ * link), with the unresolved rest appended. A dangling symlink on the way
+ * also contributes its target's spellings, up to a bounded depth.
  */
-async function canonical(path: string): Promise<string> {
-  let existing = resolve(path);
+async function canonicalForms(path: string, depth = 0): Promise<string[]> {
+  try {
+    return [await realpath(path)];
+  } catch {
+    // Not resolvable as a whole: walk up below.
+  }
+  const forms: string[] = [];
+  let existing = path;
   const missing: string[] = [];
   for (;;) {
+    if (depth < 8) {
+      try {
+        if ((await lstat(existing)).isSymbolicLink()) {
+          const target = await readlink(existing);
+          const absolute = isAbsolute(target)
+            ? target
+            : `${dirname(existing)}${sep}${target}`;
+          const rest = missing.length === 0 ? "" : sep + missing.join(sep);
+          forms.push(...await canonicalForms(absolute + rest, depth + 1));
+        }
+      } catch {
+        // Absent: keep walking up.
+      }
+    }
+    const parent = dirname(existing);
+    if (parent === existing) return [...forms, resolve(path)];
+    missing.unshift(basename(existing));
+    existing = parent;
     try {
-      return join(await realpath(existing), ...missing);
+      return [...forms, join(await realpath(existing), ...missing)];
     } catch {
-      const parent = dirname(existing);
-      if (parent === existing) return resolve(path);
-      missing.unshift(basename(existing));
-      existing = parent;
+      // Keep walking up.
     }
   }
 }
 
+/** `path` and `child` joined without folding `..` segments. */
+function under(path: string, ...children: string[]): string {
+  return [path.replace(/[\\/]+$/, ""), ...children].join(sep);
+}
+
 /**
- * The protected paths, each in its lexical form and in its canonical form.
- * For a path that does not exist yet, the canonical form canonicalizes its
- * deepest existing ancestor, so a root that would contain it once created is
- * refused too.
+ * The protected paths, each in its lexical form and its canonical forms (see
+ * `canonicalForms`), so a root that would contain one once it is created is
+ * refused too. Throws `AdditionalRootRefusedError` without an absolute
+ * `HOME`.
  */
 export async function protectedPaths(
   inputs: ProtectedPathInputs,
 ): Promise<string[]> {
-  const listed: string[] = [];
-  if (inputs.home !== undefined && isAbsolute(inputs.home)) {
-    listed.push(
-      join(inputs.home, ".dyfj"),
-      join(inputs.home, ".dyfj", "runner-homes"),
-      join(inputs.home, ".config", "dyfj"),
+  if (inputs.home === undefined || !isAbsolute(inputs.home)) {
+    throw new AdditionalRootRefusedError(
+      "Additional roots need an absolute HOME, to locate the paths the " +
+        "runtime protects",
     );
   }
+  const listed = [
+    under(inputs.home, ".dyfj"),
+    under(inputs.home, ".dyfj", "runner-homes"),
+    under(inputs.home, ".config", "dyfj"),
+  ];
   if (
     inputs.dyfjRoot !== undefined && inputs.dyfjRoot !== "" &&
     isAbsolute(inputs.dyfjRoot)
@@ -102,12 +136,12 @@ export async function protectedPaths(
     listed.push(inputs.dyfjRoot);
   }
   if (inputs.prototypeRoot !== undefined) {
-    listed.push(join(inputs.prototypeRoot, ".env"));
+    listed.push(under(inputs.prototypeRoot, ".env"));
   }
   const resolved = new Set<string>();
   for (const path of listed) {
     resolved.add(resolve(path));
-    resolved.add(await canonical(path));
+    for (const form of await canonicalForms(path)) resolved.add(form);
   }
   return [...resolved];
 }
@@ -150,7 +184,7 @@ export async function admitAdditionalRoots(
   }
   const primary = options.primary === undefined
     ? undefined
-    : await canonical(options.primary);
+    : (await canonicalForms(options.primary))[0];
   const byPath = new Map<string, boolean>();
   for (const [index, root] of requested.entries()) {
     const position = index + 1;

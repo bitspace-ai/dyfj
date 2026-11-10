@@ -629,6 +629,7 @@ describe("--add-dir", () => {
     assert.deepStrictEqual(parseAddDir("/a"), { path: "/a", readOnly: false });
     assert.deepStrictEqual(parseAddDir("/a:ro"), { path: "/a", readOnly: true });
     assert.strictEqual(parseAddDir(""), undefined);
+    assert.deepStrictEqual(parseAddDir(" /a:ro "), { path: "/a", readOnly: true });
   });
 
   it("makes paths absolute against the cwd and the home directory", () => {

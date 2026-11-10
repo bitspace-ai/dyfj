@@ -28,7 +28,8 @@ pub const MAX_ADDITIONAL_ROOTS: usize = 16;
 /// One extra root beside the workspace (`--add-dir`), sent on every turn.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddedRoot {
-    /// Absolute, as the client resolved it; the runtime admits it per turn.
+    /// As the client resolved it: absolute when it was typed absolute or a
+    /// working directory was known. The runtime refuses a relative one.
     pub path: String,
     pub read_only: bool,
 }
@@ -37,6 +38,7 @@ pub struct AddedRoot {
 /// `None` when the path is empty. Mirrors `parseAddDir` in
 /// `prototype/src/cli/args.ts`.
 pub fn parse_add_dir(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
     let (path, read_only) = match value.strip_suffix(":ro") {
         Some(path) => (path, true),
         None => (value, false),

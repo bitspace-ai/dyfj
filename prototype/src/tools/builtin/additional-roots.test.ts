@@ -116,6 +116,46 @@ describe("admitAdditionalRoots", () => {
     );
   });
 
+  it("refuses every root without an absolute HOME", async () => {
+    for (const missing of [undefined, "relative/home"]) {
+      await assert.rejects(
+        protectedPaths({ home: missing, prototypeRoot: proto }),
+        AdditionalRootRefusedError,
+      );
+    }
+  });
+
+  it("follows a symlink before a .. segment in a protected path", async () => {
+    const real = join(base, "srv", "app");
+    await mkdir(real, { recursive: true });
+    await mkdir(join(base, "srv", "config"));
+    await mkdir(join(base, "work"));
+    await symlink(real, join(base, "work", "link"));
+    await assert.rejects(
+      admitAdditionalRoots([{ path: join(base, "srv", "config"), readOnly: false }], {
+        protectedPaths: await protectedPaths({
+          home,
+          dyfjRoot: `${base}/work/link/../config`,
+        }),
+      }),
+      refused(1),
+    );
+  });
+
+  it("protects the target of a dangling .env symlink", async () => {
+    const checkout = join(base, "dangling-checkout", "prototype");
+    await mkdir(checkout, { recursive: true });
+    const secrets = join(base, "secrets");
+    await mkdir(secrets);
+    await symlink(join(secrets, "runtime.env"), join(checkout, ".env"));
+    await assert.rejects(
+      admitAdditionalRoots([{ path: secrets, readOnly: false }], {
+        protectedPaths: await protectedPaths({ home, prototypeRoot: checkout }),
+      }),
+      refused(1),
+    );
+  });
+
   it("refuses DYFJ_ROOT when it is set", async () => {
     const configRoot = join(base, "config-root");
     await mkdir(configRoot);
