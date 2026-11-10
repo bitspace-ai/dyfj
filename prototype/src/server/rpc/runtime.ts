@@ -9,6 +9,7 @@ import {
   type WorkbenchModel,
 } from "../../providers/mod.ts";
 import {
+  type CodexReasoningEffort,
   AGENT_DEFAULTS,
   BUDGET_DEFAULTS,
   type CodeFingerprint,
@@ -75,6 +76,8 @@ export interface WorkbenchRuntimeStatus {
   maxToolSteps: number;
   /** The highest tool-step limit a session may set (`/steps N`). */
   maxToolStepsCeiling: number;
+  /** The effort a Codex ChatGPT turn runs at when it names none. */
+  codexReasoningEffort: CodexReasoningEffort;
   models: { total: number; local: number; hosted: number };
   autostarted?: boolean;
   /** Present only when a declared secret pointer failed to resolve at start. */
@@ -126,7 +129,7 @@ export interface RuntimePosture {
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  >;
+  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>;
   defaultCompanionModel?: string | null;
   permissionLevel?: PermissionLevel;
   /** Whether the runtime was started via background autostart. */
@@ -249,6 +252,8 @@ export function runtimeStatus(
       AGENT_DEFAULTS.maxToolSteps,
     maxToolStepsCeiling: options.engineConfig?.maxToolStepsCeiling ??
       AGENT_DEFAULTS.maxToolStepsCeiling,
+    codexReasoningEffort: options.engineConfig?.codexReasoningEffort ??
+      "medium",
     // Locality counts use the same provider+loopback classification as
     // `models/list[].local` and the bare-turn route — never the tier label,
     // which is catalog metadata a mis-tiered row can get wrong.

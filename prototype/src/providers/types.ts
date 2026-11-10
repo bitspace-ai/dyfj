@@ -3,6 +3,7 @@
  * selection, the turn parameters and result, the agent-loop message shape and
  * tool definitions. Plain data; no behavior.
  */
+import type { CodexReasoningEffort } from "../config/mod.ts";
 import type { CostBasis } from "../contract/mod.ts";
 import type { HttpTransport } from "./http.ts";
 
@@ -55,6 +56,11 @@ export interface WorkbenchRoutingOptions {
   tier?: 0 | 1 | 2;
   hint?: "code" | "chat" | "reasoning";
   fast?: boolean;
+  /**
+   * Codex ChatGPT route only: the turn's `model_reasoning_effort`. Route
+   * resolution refuses it on any other route.
+   */
+  reasoningEffort?: CodexReasoningEffort;
 }
 
 export interface WorkbenchSelection {

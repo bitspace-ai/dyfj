@@ -9,6 +9,18 @@
 
 use serde_json::{Map, Value, json};
 
+/// The reasoning efforts the Codex ChatGPT route accepts
+/// (`CODEX_REASONING_EFFORTS` in `prototype/src/config/schema.ts`).
+pub const REASONING_EFFORTS: [&str; 4] = ["low", "medium", "high", "xhigh"];
+
+/// The slug prefix of the Codex ChatGPT route's models.
+pub const CODEX_MODEL_PREFIX: &str = "codex-chatgpt/";
+
+/// True when `slug` names a model on the Codex ChatGPT route.
+pub fn is_codex_model(slug: &str) -> bool {
+    slug.starts_with(CODEX_MODEL_PREFIX)
+}
+
 /// Where the session's model came from, so the posture line can say so.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ModelOrigin {
@@ -41,6 +53,10 @@ pub struct Session {
     pub default_model: Option<String>,
     /// Fast speed tier for models that advertise it. `None` sends nothing.
     pub fast: Option<bool>,
+    /// The reasoning effort on the Codex ChatGPT route (`--effort`,
+    /// `/effort`), sent on every turn. `None` leaves the runtime's configured
+    /// default.
+    pub effort: Option<String>,
     /// This session's tool-step limit (`--tool-steps`, `/steps`), sent on
     /// every turn. `None` leaves the runtime's configured limit.
     pub max_tool_steps: Option<u32>,
@@ -81,6 +97,9 @@ impl Session {
         }
         if let Some(fast) = self.fast {
             routing.insert("fast".into(), Value::Bool(fast));
+        }
+        if let Some(effort) = &self.effort {
+            routing.insert("reasoningEffort".into(), Value::String(effort.clone()));
         }
         if !routing.is_empty() {
             body["routingOptions"] = Value::Object(routing);
@@ -282,6 +301,21 @@ mod tests {
     }
 
     /// The target session's history was built on its recorded model, so a
+    /// The effort rides the turn's routing options, as the TypeScript client
+    /// sends it.
+    #[test]
+    fn the_sessions_effort_rides_the_routing_options() {
+        let session = Session {
+            model: Some("codex-chatgpt/gpt-6.1-sol".into()),
+            effort: Some("xhigh".into()),
+            ..Session::default()
+        };
+        assert_eq!(
+            session.turn_body("hi", "t-1")["routingOptions"],
+            json!({"modelId": "codex-chatgpt/gpt-6.1-sol", "reasoningEffort": "xhigh"})
+        );
+    }
+
     /// switch routes there even over a model chosen for the previous one.
     #[test]
     fn switching_restores_the_target_sessions_recorded_model() {

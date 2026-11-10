@@ -13,7 +13,7 @@ import {
   sourceTreeHash,
 } from "../config/mod.ts";
 import { connectUnixClient } from "../transport/mod.ts";
-import type { CliConfig } from "./args.ts";
+import { CODEX_MODEL_PREFIX, type CliConfig } from "./args.ts";
 import { formatBudgetLine, type SessionBudget } from "./budget.ts";
 import type { ConnectFn, Io } from "./io.ts";
 import { socketError } from "./render/errors.ts";
@@ -39,6 +39,11 @@ export interface SessionPosture {
   /** Standing workspace-instruction trust from engine config (trust_workspace_instructions). */
   trustWorkspaceInstructions?: boolean;
   fast?: boolean;
+  /**
+   * The reasoning effort the next turn runs at, on a codex-chatgpt model
+   * only: the session's own, else the runtime's configured default.
+   */
+  effort?: string;
   /** The code the runtime loaded; absent from an older runtime. */
   runtimeFingerprint?: unknown;
   /** Whether `dyfj` autostarted the runtime; absent from an older runtime. */
@@ -88,7 +93,10 @@ export function formatPostureLine(posture: SessionPosture): string {
     : posture.local
     ? "local"
     : "hosted";
-  const speed = posture.fast === true ? " · ⚡ fast" : "";
+  const speed = (posture.effort === undefined
+    ? ""
+    : ` · effort ${posture.effort}`) +
+    (posture.fast === true ? " · ⚡ fast" : "");
   const paid = posture.approvePaidSession
     ? "paid approved (session)"
     : posture.approvePaidDefault === true
@@ -186,6 +194,15 @@ export async function fetchSessionPosture(
         permissionLevel: runtime?.permissionLevel,
         trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
         ...(config.fast !== undefined ? { fast: config.fast } : {}),
+        ...(config.runner === "codex-chatgpt" ||
+            slug?.startsWith(CODEX_MODEL_PREFIX) === true
+          ? {
+            effort: config.effort ??
+              (typeof runtime?.codexReasoningEffort === "string"
+                ? runtime.codexReasoningEffort
+                : "medium"),
+          }
+          : {}),
         ...((config.toolSteps ?? runtime?.maxToolSteps) !== undefined
           ? { maxToolSteps: config.toolSteps ?? runtime?.maxToolSteps }
           : {}),

@@ -106,3 +106,10 @@ export async function runModels(
   }
   return 0;
 }
+
+/** True when the catalog row advertises the fast speed tier. */
+export function isModelRowFastCapable(model?: ModelRow): boolean {
+  if (!model) return false;
+  return Array.isArray(model.capabilities) &&
+    model.capabilities.includes("fast-speed");
+}

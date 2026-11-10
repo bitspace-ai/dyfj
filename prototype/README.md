@@ -266,6 +266,7 @@ The operator commands are:
 dyfj                      # streaming multi-turn REPL; autostarts the runtime
 dyfj exec "Summarize this repository"
 dyfj --model codex-chatgpt/gpt-6.1-terra --approve-paid --fast exec "Fast one-shot turn"
+dyfj --model codex-chatgpt/gpt-6.1-sol --approve-paid --effort xhigh exec "Plan this change"
 dyfj --runner fixture exec "Exercise the local ACP fixture"
 dyfj --runner codex-chatgpt --approve-paid exec "Inspect this repository"
 dyfj status
@@ -278,6 +279,8 @@ dyfj sessions show <session> --events [--json]
 Inside the REPL, `/session` prints the current session id, `/model` shows or
 switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
 toggles the fast speed tier for supported models,
+`/effort [low|medium|high|xhigh|default]` shows or sets the reasoning effort of
+a `codex-chatgpt/*` model from the next turn (see the root README),
 `/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
 entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
 cleanly. `/idea mark|list|show` marks and reviews candidate ideas for the

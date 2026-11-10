@@ -299,6 +299,45 @@ const table = (t: Record<string, unknown>) => () => t;
     });
   }
 
+  test("loadConfig Codex reasoning effort: unset by default; TOML and env layers set it with env precedence", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(cfg.codexReasoningEffort, null);
+    const fileCfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({ codex: { reasoning_effort: "high" } }),
+    });
+    assert.strictEqual(fileCfg.codexReasoningEffort, "high");
+    const envCfg = await loadConfig({
+      env: env({ ...HOME, DYFJ_CODEX_REASONING_EFFORT: "xhigh" }),
+      readTextFile: present,
+      parseToml: table({ codex: { reasoning_effort: "high" } }),
+    });
+    assert.strictEqual(envCfg.codexReasoningEffort, "xhigh");
+  });
+
+  test("loadConfig Codex reasoning effort: refuses a level the route does not accept", async () => {
+    assert.match(
+      (await captureRejection(() =>
+        loadConfig({
+          env: env(HOME),
+          readTextFile: present,
+          parseToml: table({ codex: { reasoning_effort: "max" } }),
+        })
+      ) as Error).message,
+      /\[codex\]\.reasoning_effort must be low, medium, high, or xhigh/,
+    );
+    assert.match(
+      (await captureRejection(() =>
+        loadConfig({
+          env: env({ ...HOME, DYFJ_CODEX_REASONING_EFFORT: "minimal" }),
+          readTextFile: notFound,
+        })
+      ) as Error).message,
+      /DYFJ_CODEX_REASONING_EFFORT must be low, medium, high, or xhigh/,
+    );
+  });
+
   test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     assert.strictEqual(cfg.maxToolStepsCeiling, 64);
