@@ -62,6 +62,23 @@ describe("createBusySpinner", () => {
     assert.deepStrictEqual(ticks, []);
   });
 
+  it("hold pauses and blocks start until every hold is released", () => {
+    const { spinner, writes, ticks } = harness();
+    spinner.start();
+    const releaseA = spinner.hold();
+    const releaseB = spinner.hold();
+    spinner.start();
+    releaseA();
+    releaseA();
+    spinner.start();
+    assert.deepStrictEqual(writes, [`${ERASE}⠋ working… 0s`, ERASE]);
+    assert.deepStrictEqual(ticks.length, 1);
+    releaseB();
+    spinner.start();
+    assert.deepStrictEqual(ticks.length, 2);
+    assert.deepStrictEqual(writes.at(-1), `${ERASE}⠙ working… 0s`);
+  });
+
   it("pause erases the line and start resumes without resetting elapsed time", () => {
     let now = 0;
     const { spinner, writes, ticks, cleared } = harness({ nowMs: () => now });

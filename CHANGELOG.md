@@ -481,6 +481,14 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **The CLI's busy spinner no longer redraws over an open approval prompt
+  (BIT-906).** While a mid-turn approval prompt waited for an answer,
+  incoming `agentProgress` events, visible runtime events and streamed output
+  each restarted the spinner, and its line erase hid the prompt's choices.
+  The spinner now has a `hold()`: the approval handler takes it before the
+  prompt and releases it after the answer, and `start()` does nothing while
+  a hold is open. The Rust REPL was not affected.
+
 - **`scratch-runtime.ts down` checks the supervisor's start time, and `up`
   survives a restrictive umask (BIT-851).** `up` records its own process start
   time (`ps -o lstart=`, in UTC) in the state file. Before signalling, `down`

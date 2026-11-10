@@ -4,6 +4,7 @@ import { supersedeEvent } from "../../../testing/builders/turn-client.ts";
 import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
 import type { Io } from "../io.ts";
+import { createBusySpinner } from "./busy-spinner.ts";
 import { createTurnOutputHandlers } from "./turn-output.ts";
 import {
   createTurnSpinner,
@@ -62,6 +63,10 @@ describe("spinnerGuardedTurnHandlers", () => {
       pause: () => calls.push("pause"),
       stop: () => calls.push("stop"),
       updateLabel: (label: string) => calls.push(`label:${label}`),
+      hold: () => {
+        calls.push("hold");
+        return () => calls.push("release");
+      },
     };
   }
 
@@ -212,7 +217,7 @@ describe("spinnerGuardedTurnHandlers", () => {
     assert.deepStrictEqual(calls, ["pause", "label:working…", "start"]);
   });
 
-  it("stops the spinner before delegating a mid-turn approval", async () => {
+  it("holds the spinner while delegating a mid-turn approval", async () => {
     const calls: string[] = [];
     const { io } = fakeIo();
     const output = createTurnOutputHandlers(cfg(), io);
@@ -227,12 +232,68 @@ describe("spinnerGuardedTurnHandlers", () => {
     );
     const verdict = await handlers.onApproval({ kind: "tool" });
     assert.deepStrictEqual(calls, [
-      "pause",
+      "hold",
       "approval",
+      "release",
       "label:working…",
       "start",
     ]);
     assert.deepStrictEqual(verdict, { decision: "approve" });
+  });
+
+  it("keeps the spinner off the terminal while an approval prompt is open", async () => {
+    const writes: string[] = [];
+    let activeTimers = 0;
+    const spinner = createBusySpinner({
+      write: (text) => writes.push(text),
+      enabled: true,
+      color: false,
+      setIntervalFn: () => {
+        activeTimers += 1;
+        return activeTimers;
+      },
+      clearIntervalFn: () => {
+        activeTimers -= 1;
+      },
+    });
+    const { io } = fakeIo();
+    const output = createTurnOutputHandlers(cfg(), io, {
+      beforeWrite: () => spinner.pause(),
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
+    });
+    let answer: (verdict: { decision: "deny"; reason: string }) => void =
+      () => {};
+    const handlers = spinnerGuardedTurnHandlers(
+      spinner,
+      output,
+      io,
+      () => new Promise((resolve) => (answer = resolve)),
+    );
+    spinner.start();
+    const pending = handlers.onApproval({ kind: "tool" });
+    const writesAtPrompt = writes.length;
+    assert.strictEqual(activeTimers, 0);
+
+    // Socket events keep arriving while the operator reads the prompt.
+    handlers.onEvent({ type: "agentProgress", title: "Linear write" });
+    handlers.onEvent({ type: "toolCallStarted", commandId: "read_file" });
+    handlers.onDelta("streamed line\n");
+
+    assert.strictEqual(activeTimers, 0);
+    assert.deepStrictEqual(writes.slice(writesAtPrompt), []);
+
+    answer({ decision: "deny", reason: "operator" });
+    assert.deepStrictEqual(await pending, {
+      decision: "deny",
+      reason: "operator",
+    });
+    // The spinner resumes once the prompt settles.
+    assert.strictEqual(activeTimers, 1);
+    assert.match(writes.at(-1) ?? "", /working…/);
+    spinner.stop();
   });
 });
 
