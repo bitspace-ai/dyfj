@@ -56,6 +56,40 @@ export interface SessionPosture {
   budget?: SessionBudget;
   /** The tool sandbox segment (BIT-662); absent from an older runtime. */
   sandbox?: string;
+  /** The workspace, listed with the added roots when there are any. */
+  workspace?: string;
+  /** Extra roots the client sends (--add-dir); absent when there are none. */
+  additionalRoots?: readonly { path: string; readOnly: boolean }[];
+}
+
+/** `text` without C0/C1 control characters, for printing to the terminal. */
+export function stripControls(text: string): string {
+  return text.replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "");
+}
+
+/** One `/session` line per added root, read-only ones marked. */
+export function addedRootLines(
+  roots: readonly { path: string; readOnly: boolean }[] | undefined,
+): string[] {
+  return (roots ?? []).map((root) =>
+    `added root: ${stripControls(root.path)}${root.readOnly ? " (read-only)" : ""}`
+  );
+}
+
+/**
+ * "roots: <workspace>, <root>, <root> (read-only)", or null without added
+ * roots. The paths are the ones the client sends; the runtime admits them
+ * when a turn starts.
+ */
+export function formatRoots(
+  workspace: string | undefined,
+  roots: readonly { path: string; readOnly: boolean }[] | undefined,
+): string | null {
+  if (roots === undefined || roots.length === 0) return null;
+  const listed = roots.map((root) =>
+    root.readOnly ? `${root.path} (read-only)` : root.path
+  );
+  return `roots: ${[workspace ?? "(session workspace)", ...listed].join(", ")}`;
 }
 
 /**
@@ -116,10 +150,12 @@ export function formatPostureLine(posture: SessionPosture): string {
   const steps = posture.maxToolSteps === undefined
     ? ""
     : ` · ${formatToolSteps(posture.maxToolSteps, posture.maxToolStepsCeiling)}`;
+  const roots = formatRoots(posture.workspace, posture.additionalRoots);
   return `posture: ${posture.slug} · ${tier} · ${locality}${speed} · ${paid} · ` +
     `permission ${posture.permissionLevel ?? "unknown"} · ` +
     (posture.sandbox === undefined ? "" : `${posture.sandbox} · `) +
-    `workspace instructions: ${workspace}${steps}`;
+    `workspace instructions: ${workspace}${steps}` +
+    (roots === null ? "" : ` · ${roots}`);
 }
 
 /** The posture's sandbox field, absent when the runtime reports no sandbox. */
@@ -217,6 +253,14 @@ export async function fetchSessionPosture(
           : {}),
         ...sandboxField(runtime?.sandbox),
         ...sessionBudget(config, runtime),
+        ...(config.additionalRoots === undefined
+          ? {}
+          : {
+            additionalRoots: config.additionalRoots,
+            ...(config.sessionId === undefined && config.workspace !== undefined
+              ? { workspace: config.workspace }
+              : {}),
+          }),
       };
     } finally {
       client.close();

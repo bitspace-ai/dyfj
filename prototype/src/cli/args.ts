@@ -9,7 +9,12 @@ import {
   codexReasoningEffortRefusal,
   isCodexReasoningEffort,
 } from "../config/mod.ts";
-import { SESSION_ID_SHAPE } from "../contract/mod.ts";
+import { isAbsolute, resolve } from "node:path";
+import {
+  type AdditionalRootRequest,
+  MAX_ADDITIONAL_ROOTS,
+  SESSION_ID_SHAPE,
+} from "../contract/mod.ts";
 import { resolveSocketPath } from "../transport/mod.ts";
 import {
   BUDGET_FLAGS,
@@ -34,6 +39,11 @@ export interface CliConfig {
   workspace?: string;
   /** True when workspace came from --workspace/DYFJ_WORKSPACE, not the cwd default. */
   workspaceExplicit?: boolean;
+  /**
+   * Extra roots beside the workspace (--add-dir, else DYFJ_ADD_DIRS), sent
+   * on every turn. Absolute after resolveConfig; as typed in overrides.
+   */
+  additionalRoots?: AdditionalRootRequest[];
   /** Unix socket path for the JSON-RPC seam. */
   socket: string;
   /**
@@ -117,6 +127,7 @@ const VALUE_FLAGS = new Set([
   "--hint",
   "--session",
   "--workspace",
+  "--add-dir",
   "--runner",
   "--tool-steps",
   "--effort",
@@ -219,7 +230,15 @@ function applyValueFlag(
       return thrown instanceof Error ? thrown.message : String(thrown);
     }
   } else if (arg === "--workspace") overrides.workspace = value;
-  else if (arg === "--effort") {
+  else if (arg === "--add-dir") {
+    const root = parseAddDir(value);
+    if (root === undefined) return "--add-dir expects <path> or <path>:ro";
+    const roots = [...(overrides.additionalRoots ?? []), root];
+    if (roots.length > MAX_ADDITIONAL_ROOTS) {
+      return `--add-dir may be given at most ${MAX_ADDITIONAL_ROOTS} times`;
+    }
+    overrides.additionalRoots = roots;
+  } else if (arg === "--effort") {
     if (!isCodexReasoningEffort(value)) {
       return codexReasoningEffortRefusal("--effort");
     }
@@ -255,6 +274,45 @@ function applyValueFlag(
     overrides.hint = value;
   }
   return undefined;
+}
+
+/**
+ * One `--add-dir` value: `<path>` is read-write, `<path>:ro` read-only.
+ * Undefined when the path is empty.
+ */
+export function parseAddDir(value: string): AdditionalRootRequest | undefined {
+  const readOnly = value.endsWith(":ro");
+  const path = (readOnly ? value.slice(0, -":ro".length) : value).trim();
+  return path === "" ? undefined : { path, readOnly };
+}
+
+/**
+ * The session's extra roots: the --add-dir flags when any were given, else
+ * the comma-separated DYFJ_ADD_DIRS. Each path is made absolute against the
+ * client's cwd; a leading `~/` is the home directory. Empty entries in the
+ * variable are skipped, and entries past the limit are dropped (the runtime
+ * refuses more than the limit).
+ */
+export function resolveAdditionalRoots(
+  flagged: readonly AdditionalRootRequest[] | undefined,
+  env: { get(key: string): string | undefined },
+  cwd: string,
+): AdditionalRootRequest[] {
+  const typed = flagged ??
+    (env.get("DYFJ_ADD_DIRS") ?? "").split(",")
+      .map((entry) => parseAddDir(entry))
+      .filter((root): root is AdditionalRootRequest => root !== undefined)
+      .slice(0, MAX_ADDITIONAL_ROOTS);
+  const home = env.get("HOME");
+  return typed.map(({ path, readOnly }) => {
+    const expanded = home !== undefined && (path === "~" || path.startsWith("~/"))
+      ? home + path.slice(1)
+      : path;
+    return {
+      path: isAbsolute(expanded) ? resolve(expanded) : resolve(cwd, expanded),
+      readOnly,
+    };
+  });
 }
 
 /** The slug prefix of the Codex ChatGPT route's models. */
@@ -438,6 +496,11 @@ export function resolveConfig(
       ? hintEnv
       : undefined;
   const explicitWorkspace = overrides.workspace ?? env.get("DYFJ_WORKSPACE");
+  const additionalRoots = resolveAdditionalRoots(
+    overrides.additionalRoots,
+    env,
+    cwd,
+  );
   return {
     mode: overrides.mode ?? "turn",
     model: overrides.model ?? env.get("DYFJ_WORKBENCH_MODEL"),
@@ -450,6 +513,7 @@ export function resolveConfig(
     // is always sent on a new session (buildTurnBody).
     workspace: explicitWorkspace ?? cwd,
     workspaceExplicit: explicitWorkspace !== undefined,
+    ...(additionalRoots.length === 0 ? {} : { additionalRoots }),
     socket: overrides.socket ?? resolveSocketPath(env),
     // Turns always use the UDS seam. unix remains set so REPL idea/packet
     // extras use JSON-RPC; tests may pass unix: false for the in-process registry.
@@ -508,6 +572,7 @@ REPL commands:
   /budget [<limit> <usd>]   show the spend limits, or set one for this session:
                             turn, session, day, per-call or runaway
   /session                  show the current session id (for --session resume)
+                            and the session's added roots
   /friction <sev> [--escaped] <text...>
                             post a daily-driver friction entry
   /help                     list the REPL commands
@@ -533,6 +598,15 @@ Options:
                    codex-chatgpt requires trusted workspace config)
   --session <ref>  resume a session (accepts the id or the slug from 'dyfj sessions')
   --workspace <d>  dir to scope file tools to (default: cwd, env DYFJ_WORKSPACE)
+  --add-dir <d>[:ro]
+                   another root this session may use, read-write, or read-only
+                   with :ro; repeatable, up to 16 (env DYFJ_ADD_DIRS, comma-
+                   separated). Sent on every turn, not stored with the session.
+                   The runtime refuses a root that is, contains or sits inside
+                   ~/.dyfj, ~/.config/dyfj, DYFJ_ROOT or the runtime's
+                   prototype/.env. Native file tools reach a root through their
+                   root argument; on codex-chatgpt only read-write roots are
+                   sent, as writable roots
   --approve-paid   opt into paid (hosted) inference (loopback only; persists in REPL)
   --no-autostart   launcher only: do not auto-start a runtime for this call (env DYFJ_AUTOSTART=0)
   --parse-check    launcher-internal, first argument only: validate the rest and exit 0/2

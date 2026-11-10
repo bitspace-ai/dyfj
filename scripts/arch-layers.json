@@ -159,6 +159,8 @@
     "prototype/src/acp-fixture-command.ts": "runners/acp",
     "prototype/src/acp-session-map.ts": "runners/acp",
     "prototype/src/acp-history-bounds.ts": "runners/acp",
+    "prototype/src/acp-runner-roots.ts": "runners/acp",
+    "prototype/src/acp-session-roots.ts": "runners/acp",
     "prototype/src/acp-tool-evidence.ts": "runners/acp",
     "prototype/src/acp-tool-evidence-record.ts": "runners/acp",
     "prototype/src/codex-home-config.ts": "runners/acp",

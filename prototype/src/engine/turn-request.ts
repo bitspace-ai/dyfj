@@ -6,7 +6,9 @@
  */
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
 import {
+  type AdditionalRootRequest,
   CODEX_WORKSPACE_TRUST_REQUIRED,
+  MAX_ADDITIONAL_ROOTS,
   type PaidEscalationVerdict,
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
@@ -24,6 +26,8 @@ export interface TurnRequestBody {
   routingOptions?: unknown;
   sessionId?: unknown;
   workspace?: unknown;
+  /** Extra roots beside the workspace: `[{ path, readOnly }]`. */
+  additionalRoots?: unknown;
   runner?: unknown;
   // explicit per-turn paid-inference opt-in + per-turn budget override.
   // Both are honored only on the loopback transport (see resolveTurnFromBody /
@@ -131,6 +135,8 @@ function buildRuntimeInputFromJson(
   if (body.workspace !== undefined && typeof body.workspace !== "string") {
     return { error: "workspace must be a string" };
   }
+  const additionalRoots = parseAdditionalRoots(body.additionalRoots);
+  if ("error" in additionalRoots) return additionalRoots;
   if (
     body.turnId !== undefined &&
     !isValidTurnId(body.turnId)
@@ -161,7 +167,45 @@ function buildRuntimeInputFromJson(
     ...(typeof body.workspace === "string"
       ? { workspaceRoot: body.workspace }
       : {}),
+    ...(additionalRoots.roots.length === 0
+      ? {}
+      : { additionalRoots: additionalRoots.roots }),
   };
+}
+
+/**
+ * The request's extra roots: an array of at most `MAX_ADDITIONAL_ROOTS`
+ * `{ path: <absolute path>, readOnly?: boolean }` objects. The runtime admits
+ * each one later, for a loopback caller only.
+ */
+export function parseAdditionalRoots(
+  value: unknown,
+): { roots: AdditionalRootRequest[] } | { error: string } {
+  if (value === undefined) return { roots: [] };
+  if (!Array.isArray(value) || value.length > MAX_ADDITIONAL_ROOTS) {
+    return {
+      error:
+        `additionalRoots must be an array of at most ${MAX_ADDITIONAL_ROOTS} roots`,
+    };
+  }
+  const roots: AdditionalRootRequest[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return { error: "additionalRoots entries must be objects" };
+    }
+    const { path, readOnly, ...rest } = entry as Record<string, unknown>;
+    if (Object.keys(rest).length > 0) {
+      return { error: "additionalRoots entries take only path and readOnly" };
+    }
+    if (typeof path !== "string" || !path.startsWith("/")) {
+      return { error: "additionalRoots paths must be absolute" };
+    }
+    if (readOnly !== undefined && typeof readOnly !== "boolean") {
+      return { error: "additionalRoots readOnly must be a boolean" };
+    }
+    roots.push({ path, readOnly: readOnly === true });
+  }
+  return { roots };
 }
 
 export function parseBudgetOverride(

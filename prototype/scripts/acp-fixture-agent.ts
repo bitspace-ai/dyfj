@@ -51,7 +51,12 @@ void (async () => {
 
 const sessions = new Map<
   string,
-  { cwd: string; cancel: PromiseWithResolvers<void>; cancelled: boolean }
+  {
+    cwd: string;
+    additionalDirectories: readonly string[];
+    cancel: PromiseWithResolvers<void>;
+    cancelled: boolean;
+  }
 >();
 let nextSession = 1;
 let authenticationStatusRead = false;
@@ -111,7 +116,11 @@ const app = agent({ name: "dyfj-acp-fixture" })
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         promptCapabilities: {},
-        sessionCapabilities: { close: {} },
+        // Additional directories only when a test asks for them, so the
+        // capability list other tests record stays the same.
+        sessionCapabilities: process.env.ACP_FIXTURE_ADDITIONAL_DIRECTORIES === "yes"
+          ? { close: {}, additionalDirectories: {} }
+          : { close: {} },
       },
       agentInfo: { name: "dyfj-acp-fixture", version: "1.0.0" },
     };
@@ -163,6 +172,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
     const sessionId = `fixture-${nextSession++}`;
     sessions.set(sessionId, {
       cwd: params.cwd,
+      additionalDirectories: params.additionalDirectories ?? [],
       cancel: Promise.withResolvers<void>(),
       cancelled: false,
     });
@@ -776,6 +786,13 @@ const app = agent({ name: "dyfj-acp-fixture" })
       }
       await chunk(context, params.sessionId, "first|");
       await chunk(context, params.sessionId, `cwd=${fixture.cwd}|`);
+      if (fixture.additionalDirectories.length > 0) {
+        await chunk(
+          context,
+          params.sessionId,
+          `dirs=${fixture.additionalDirectories.join(",")}|`,
+        );
+      }
       await chunk(context, params.sessionId, "last");
       return { stopReason: "end_turn" };
     },

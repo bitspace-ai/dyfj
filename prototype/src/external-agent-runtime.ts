@@ -82,10 +82,8 @@ import {
   createWorkbenchSession,
   errorEvent,
   type EventInsert,
-  fetchWorkbenchSessionWorkspaceRecord,
   runnerSelectedEvent,
   sessionEndEvent,
-  type SessionReader,
   sessionStartEvent,
   type Store,
   toolCallEvent,
@@ -104,7 +102,6 @@ import {
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeRequest,
-  workspaceRootForTransport,
 } from "./contract/mod.ts";
 import {
   CODEX_DISABLED_FEATURES,
@@ -114,6 +111,7 @@ import {
 } from "./codex-home-config.ts";
 import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
 import { writePrivateFile } from "./private-file.ts";
+import { resolveRunnerWorkspace, withAddedRoots } from "./acp-runner-roots.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -678,38 +676,6 @@ export function reconstructAcpContinuityPrompt(input: {
   return { prompt: reconstructed, toolExchanges };
 }
 
-async function resolveWorkspace(
-  input: ExternalAgentRuntimeInput,
-  authContext: WorkbenchAuthContext,
-  sessions: SessionReader,
-): Promise<string> {
-  let requested = input.workspaceRoot;
-  if (input.sessionId !== undefined) {
-    const stored = await fetchWorkbenchSessionWorkspaceRecord({
-      sessionId: input.sessionId,
-      sessions,
-    });
-    if (!stored.exists) {
-      throw new DomainError("Workbench session not found");
-    }
-    if (stored.workspace === null) {
-      throw new DomainError("Workbench session has no persisted workspace");
-    }
-    requested = stored.workspace;
-  }
-  const selected = workspaceRootForTransport(
-    requested,
-    authContext.transport,
-  ) ?? input.rootOverride ?? process.cwd();
-  try {
-    const resolved = await realpath(selected);
-    if ((await stat(resolved)).isDirectory()) return resolved;
-  } catch {
-    // The fixed error below must not disclose the selected host path.
-  }
-  throw new DomainError("External-agent workspace is not a directory");
-}
-
 function receiptText(input: {
   sessionId: string;
   traceId: string;
@@ -758,6 +724,9 @@ function receiptText(input: {
       formatHistoryOmissionSummary(input.historyOmission),
     ]),
     `Workspace: ${input.workspaceEvidence}`,
+    ...(input.profile.additionalDirectories === undefined ? [] : [
+      `Additional writable roots: ${input.profile.additionalDirectories.length}`,
+    ]),
     `Transport: ${input.profile.transport}`,
     `Access route: ${route.accessRoute ?? "unverified"}`,
     `Route evidence: ${input.routeEvidence?.source ?? "unavailable"}`,
@@ -878,8 +847,8 @@ export async function runExternalAgentWorkbenchRuntime(
       throw new DomainError(CODEX_WORKSPACE_TRUST_REQUIRED);
     }
     assertAcpPromptWithinLimit(input.prompt);
-    workspace = await resolveWorkspace(input, authContext, store.sessions);
-    profile = dependencies.resolveProfile === undefined
+    workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
+    profile = await withAddedRoots(input, authContext, dependencies.resolveProfile === undefined
       ? input.runner.profile === "fixture"
         ? fixtureProfile(workspace)
         : await codexChatGptProfile(workspace, {
@@ -887,7 +856,7 @@ export async function runExternalAgentWorkbenchRuntime(
           fast: input.routingOptions?.fast,
           reasoningEffort: input.routingOptions?.reasoningEffort,
         })
-      : await dependencies.resolveProfile(input.runner.profile, workspace);
+      : await dependencies.resolveProfile(input.runner.profile, workspace));
   } catch (error) {
     closeCancellation();
     throw error;

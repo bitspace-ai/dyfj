@@ -30,7 +30,7 @@ fn resolve_socket_path(env: impl Fn(&str) -> Option<String>) -> Result<String> {
 }
 
 pub const USAGE: &str = "\
-usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [--tool-steps <N>] [--budget-<limit> <usd>] [--session <id>] [--workspace <dir>]
+usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [--tool-steps <N>] [--budget-<limit> <usd>] [--session <id>] [--workspace <dir>] [--add-dir <dir>[:ro]]
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
@@ -41,7 +41,10 @@ usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [
                     this session's spend limits (default: the runtime's [budget] config);
                     runaway is spend with no tool progress
   --session <id>    resume a runtime session, on the model it last ran on unless --model names one
-  --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)";
+  --workspace <d>   scope a new session's file tools to this directory (default: cwd; env DYFJ_WORKSPACE)
+  --add-dir <d>[:ro]
+                    another root this session may use, read-write or read-only with :ro; repeatable,
+                    up to 16, sent on every turn (env DYFJ_ADD_DIRS, comma-separated)";
 
 /// Build the starting session from the command line and environment.
 /// `Ok(None)` means help was asked for.
@@ -54,9 +57,10 @@ pub fn parse_args(
     let mut session = Session {
         model: set("DYFJ_WORKBENCH_MODEL"),
         default_model: set("DYFJ_WORKBENCH_MODEL"),
-        workspace: set("DYFJ_WORKSPACE").or(cwd),
+        workspace: set("DYFJ_WORKSPACE").or(cwd.clone()),
         ..Session::default()
     };
+    let mut flagged_roots: Option<Vec<(String, bool)>> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         let mut value = |flag: &str| {
@@ -74,6 +78,18 @@ pub fn parse_args(
                 session.model_pinned = true;
             }
             "--workspace" => session.workspace = Some(value("--workspace")?),
+            "--add-dir" => {
+                let root = crate::session::parse_add_dir(&value("--add-dir")?)
+                    .ok_or("--add-dir expects <path> or <path>:ro")?;
+                let roots = flagged_roots.get_or_insert_with(Vec::new);
+                roots.push(root);
+                if roots.len() > crate::session::MAX_ADDITIONAL_ROOTS {
+                    return Err(format!(
+                        "--add-dir may be given at most {} times",
+                        crate::session::MAX_ADDITIONAL_ROOTS
+                    ));
+                }
+            }
             "--effort" => session.effort = Some(effort::level_flag(value("--effort")?)?),
             "--tool-steps" => {
                 let raw = value("--tool-steps")?;
@@ -109,6 +125,23 @@ pub fn parse_args(
             other => return Err(format!("unknown argument {other}")),
         }
     }
+    // The flags replace DYFJ_ADD_DIRS, as --workspace replaces DYFJ_WORKSPACE.
+    let typed = flagged_roots.unwrap_or_else(|| {
+        set("DYFJ_ADD_DIRS")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(crate::session::parse_add_dir)
+            .take(crate::session::MAX_ADDITIONAL_ROOTS)
+            .collect()
+    });
+    let home = env("HOME");
+    session.additional_roots = typed
+        .into_iter()
+        .map(|(path, read_only)| crate::session::AddedRoot {
+            path: crate::session::absolute_root(&path, cwd.as_deref(), home.as_deref()),
+            read_only,
+        })
+        .collect();
     effort::check_startup(&session)?;
     // A resumed session keeps the workspace stored on its row; the runtime
     // never moves it, so a local default here would only misreport it.
@@ -216,6 +249,34 @@ mod tests {
         assert_eq!(session.id.as_deref(), Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H"));
         // A resumed session's workspace is the one stored on its row.
         assert_eq!(session.workspace, None);
+    }
+
+    /// `--add-dir` collects absolute roots, read-only with `:ro`, and replaces
+    /// `DYFJ_ADD_DIRS`, which applies when no flag is given.
+    #[test]
+    fn added_roots_come_from_the_flags_else_the_environment() {
+        use crate::session::AddedRoot;
+        let root = |path: &str, read_only| AddedRoot { path: path.into(), read_only };
+        let session = super::parse_args(
+            &args(&["--add-dir", "../wt", "--add-dir", "~/ref:ro", "--session", "01J9ZQ4W8X6V5T3R2P1N0M9K8H"]),
+            env(&[("HOME", "/op-home"), ("DYFJ_ADD_DIRS", "/ignored")]),
+            Some("/op-home/main-repo".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            session.additional_roots,
+            vec![root("/op-home/main-repo/../wt", false), root("/op-home/ref", true)]
+        );
+        let from_env = super::parse_args(&[], env(&[("DYFJ_ADD_DIRS", "/a, ,/b:ro")]), Some("/cwd".into()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(from_env.additional_roots, vec![root("/a", false), root("/b", true)]);
+        let err = super::parse_args(&args(&["--add-dir", ":ro"]), env(&[]), None).unwrap_err();
+        assert!(err.contains("--add-dir expects"), "{err}");
+        let many: Vec<String> = (0..17).flat_map(|_| ["--add-dir".to_string(), "/x".to_string()]).collect();
+        let err = super::parse_args(&many, env(&[]), None).unwrap_err();
+        assert!(err.contains("at most 16"), "{err}");
     }
 
     /// A malformed id fails at startup rather than at the first turn, and the

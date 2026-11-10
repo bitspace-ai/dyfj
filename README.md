@@ -1450,6 +1450,32 @@ effort, and the runtime reuses a warm Codex session only for the same
 profile, so a turn at another effort than the last does not continue in the
 last turn's warm session.
 
+A session can use more than one directory. `--add-dir <path>` (on `dyfj`,
+`dyfj exec` and the Rust REPL) adds a read-write root beside the workspace, and
+`--add-dir <path>:ro` a read-only one. The flag can be repeated up to 16 times;
+without it, `DYFJ_ADD_DIRS` (comma-separated, same `:ro` suffix) applies. The
+client makes each path absolute and sends the roots on every turn: they are not
+stored with the session, so a resumed session has the roots its client names.
+The runtime takes them from a loopback caller only. Before a turn runs, it
+resolves each root to its canonical path and refuses one that is not a
+directory, or that is, contains or sits inside `~/.dyfj` (which holds the Codex
+runner home), `~/.config/dyfj`, `DYFJ_ROOT`, or the file behind the runtime
+checkout's `prototype/.env`. So the main checkout cannot be an added root; a
+worktree can. On the native route, the file tools (`read_file`, `list_files`,
+`grep_files`, `glob_files`, `write_file`, `edit_file`) take an optional `root`
+argument naming an added root, and each root keeps the tools' own per-call
+containment checks; `write_file` and `edit_file` refuse a read-only root
+before any approval prompt. `bash` and `git` stay on the workspace. On the
+Codex route, read-write roots are sent as the ACP session's
+`additionalDirectories` and added to Codex's workspace-write writable roots;
+the run stops before the session starts if the agent does not advertise
+`sessionCapabilities.additionalDirectories`. Read-only roots are not sent,
+because Codex would make them writable. Codex's workspace-write sandbox reads
+outside its writable roots whether or not roots are added. The posture line
+ends with `roots: <workspace>, <root>, …` and `/session` prints one
+`added root:` line per root; the external-agent receipt counts the writable
+roots sent.
+
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with
 `/bin/sleep` available for the process-group probe, and the operator home is absolute and contains neither comma nor colon, through a local
@@ -2116,7 +2142,7 @@ available (`DYFJ_REPL_BIN`, else `core/target/release/dyfj-repl` beside the
 prototype, else `dyfj-repl` on `PATH`; build it with
 `cargo build --release -p dyfj-repl`), both stdin and stdout are a terminal,
 every argument is one it takes (`--model`, `--approve-paid`, `--fast`,
-`--effort`, `--session`, `--workspace`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
+`--effort`, `--session`, `--workspace`, `--add-dir`, `--socket`), and neither `DYFJ_WORKBENCH_TIER` nor
 `DYFJ_WORKBENCH_HINT` holds a value the TypeScript client applies (a tier of
 0, 1 or 2; a hint of `code`, `chat` or `reasoning`), since only it reads them.
 Otherwise, and with `DYFJ_REPL=ts`,

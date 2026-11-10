@@ -51,9 +51,11 @@ import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
 import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
 import {
+  addedRootLines,
   fetchSessionPosture,
   formatPostureLine,
   openReplSession,
+  stripControls,
 } from "./cli/posture.ts";
 
 export {
@@ -412,9 +414,7 @@ export async function handleReplSessionCommand(
     if (!sessionState.sessionId) {
       io.err("no session yet — send a prompt first");
     } else {
-      const cleanSessionId = (sessionState.sessionId ?? "")
-        .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
-        .trim();
+      const cleanSessionId = stripControls(sessionState.sessionId ?? "").trim();
       io.err(`session: ${cleanSessionId}`);
       if (sessionState.turnCount === 0 && config.unix) {
         try {
@@ -427,9 +427,7 @@ export async function handleReplSessionCommand(
               io.err(`events: ${inspect.eventCount}`);
             }
             if (inspect.workspace) {
-              const cleanWorkspace = inspect.workspace
-                .replace(/[\x00-\x1F\x7F-\x9F\x1B]/g, "")
-                .trim();
+              const cleanWorkspace = stripControls(inspect.workspace).trim();
               io.err(`workspace: ${cleanWorkspace}`);
             }
           } finally {
@@ -449,6 +447,7 @@ export async function handleReplSessionCommand(
         `resume later with: dyfj --session ${formatShellArg(cleanSessionId)}`,
       );
     }
+    for (const line of addedRootLines(config.additionalRoots)) io.err(line);
     return true;
   }
 

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { describe, it, test } from "node:test";
 import {
   PAID_ESCALATION_NOT_APPROVED,
   PAID_ESCALATION_REMOTE_DENIED,
   paidEscalationVerdict,
+  parseAdditionalRoots,
   parseBudgetOverride,
   resolveTurnFromBody,
 } from "./turn-request.ts";
@@ -296,4 +297,29 @@ test("resolveTurnFromBody lets an explicit Codex runner carry a reasoning effort
       },
     },
   );
+});
+
+describe("parseAdditionalRoots", () => {
+  it("accepts absolute roots, read-only when asked", () => {
+    assert.deepStrictEqual(
+      parseAdditionalRoots([{ path: "/a" }, { path: "/b", readOnly: true }]),
+      { roots: [{ path: "/a", readOnly: false }, { path: "/b", readOnly: true }] },
+    );
+    assert.deepStrictEqual(parseAdditionalRoots(undefined), { roots: [] });
+  });
+
+  it("refuses a malformed list", () => {
+    for (
+      const value of [
+        "/a",
+        [{ path: "relative" }],
+        [{ path: "/a", readOnly: "yes" }],
+        [{ path: "/a", extra: 1 }],
+        [null],
+        Array.from({ length: 17 }, () => ({ path: "/a" })),
+      ]
+    ) {
+      assert.ok("error" in parseAdditionalRoots(value), JSON.stringify(value));
+    }
+  });
 });

@@ -267,6 +267,7 @@ dyfj                      # streaming multi-turn REPL; autostarts the runtime
 dyfj exec "Summarize this repository"
 dyfj --model codex-chatgpt/gpt-6.1-terra --approve-paid --fast exec "Fast one-shot turn"
 dyfj --model codex-chatgpt/gpt-6.1-sol --approve-paid --effort xhigh exec "Plan this change"
+dyfj --workspace ~/work/main-repo --add-dir ~/work/other-repo --add-dir ~/notes:ro
 dyfj --runner fixture exec "Exercise the local ACP fixture"
 dyfj --runner codex-chatgpt --approve-paid exec "Inspect this repository"
 dyfj status

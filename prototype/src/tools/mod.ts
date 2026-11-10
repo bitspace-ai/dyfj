@@ -104,6 +104,13 @@ export {
   MAX_LISTED_MODELS,
 } from "./builtin/models.ts";
 export { RootAnchors } from "./builtin/root-anchors.ts";
+export {
+  AdditionalRootRefusedError,
+  admitAdditionalRoots,
+  protectedPaths,
+  type ProtectedPathInputs,
+  runtimePrototypeRoot,
+} from "./builtin/additional-roots.ts";
 export type {
   ExecutorConnection,
   ExecutorDialer,

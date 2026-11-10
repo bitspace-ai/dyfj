@@ -43,6 +43,7 @@ import {
   verifiedRouteFacts,
 } from "./external-agent-runtime.ts";
 import { fixtureAgentCommand } from "./acp-fixture-command.ts";
+import { withAddedRoots } from "./acp-runner-roots.ts";
 import {
   type CommitBatch,
   type CommitOptions,
@@ -994,6 +995,44 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await readFile(bashProfile, "utf8"),
         `export PATH='${home}/.dyfj/runner-homes/codex-chatgpt/bin:/usr/bin:/bin'\n`,
       );
+      assert.strictEqual(profile.additionalDirectories, undefined);
+      assert.strictEqual(
+        JSON.parse(profile.environment.CODEX_CONFIG!).sandbox_workspace_write,
+        undefined,
+      );
+      const rootsBase = await realpath(await mkdtemp(join(tmpdir(), "tmp-roots-")));
+      try {
+        await mkdir(join(rootsBase, "worktree"));
+        await mkdir(join(rootsBase, "reference"));
+        const rooted = await withAddedRoots(
+          {
+            additionalRoots: [
+              { path: join(rootsBase, "worktree"), readOnly: false },
+              { path: join(rootsBase, "reference"), readOnly: true },
+            ],
+          },
+          {
+            transport: "loopback",
+            authnStatus: "authenticated",
+            authnMechanism: "local_user",
+            authnIssuerRef: "local_os",
+            authzBasis: "user_consent",
+          },
+          profile,
+        );
+        assert.deepStrictEqual(rooted.additionalDirectories, [
+          join(rootsBase, "worktree"),
+        ]);
+        const config = JSON.parse(rooted.environment.CODEX_CONFIG!);
+        assert.deepStrictEqual(config.sandbox_workspace_write, {
+          writable_roots: [join(rootsBase, "worktree")],
+        });
+        // The rest of the Codex configuration is unchanged.
+        const { sandbox_workspace_write: _added, ...rest } = config;
+        assert.deepStrictEqual(rest, JSON.parse(profile.environment.CODEX_CONFIG!));
+      } finally {
+        await rm(rootsBase, { recursive: true });
+      }
     } finally {
       await rm(root, { recursive: true });
     }
@@ -2072,6 +2111,87 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     } finally {
       await rm(workspace, { recursive: true });
     }
+  });
+
+  it("sends only read-write added roots to the runner and counts both", async () => {
+    const h = createHarness();
+    const base = await realpath(await mkdtemp(join(tmpdir(), "tmp-roots-")));
+    try {
+      for (const dir of ["workspace", "worktree", "reference"]) {
+        await mkdir(join(base, dir));
+      }
+      const result = await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "ordered response",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        workspaceRoot: join(base, "workspace"),
+        additionalRoots: [
+          { path: join(base, "worktree"), readOnly: false },
+          { path: join(base, "reference"), readOnly: true },
+        ],
+      }, {
+        resolveProfile: (_slug, workspace) => {
+          const profile = fixtureProfile(workspace);
+          return Promise.resolve({
+            ...profile,
+            environment: {
+              ...profile.environment,
+              ACP_FIXTURE_ADDITIONAL_DIRECTORIES: "yes",
+            },
+          });
+        },
+      });
+      assertContains(result.text, `dirs=${join(base, "worktree")}|`);
+      assertContains(result.receipt, "Additional writable roots: 1");
+      assert.ok(!result.text.includes(join(base, "reference")));
+    } finally {
+      await rm(base, { recursive: true });
+    }
+  });
+
+  it("refuses an added root over a protected path before the runner starts", async () => {
+    // The checkout holds prototype/.env (a protected path, by its lexical
+    // form when absent); the home directory holds ~/.dyfj.
+    for (const path of [dirname(process.cwd()), process.env.HOME!]) {
+      const h = createHarness();
+      await assert.rejects(
+        runExternalAgentWorkbenchRuntime(h, {
+          mode: "turn",
+          prompt: "ordered response",
+          routingOptions: {},
+          runner: { kind: "acp", profile: "fixture" },
+          workspaceRoot: process.cwd(),
+          additionalRoots: [{ path, readOnly: true }],
+        }),
+        (error: unknown) =>
+          error instanceof DomainError &&
+          error.message.startsWith("Additional root 1 is refused"),
+      );
+      assert.deepStrictEqual(h.createdSessions, []);
+      assert.deepStrictEqual(h.events, []);
+    }
+  });
+
+  it("ignores added roots from a remote caller", async () => {
+    const h = createHarness();
+    await assert.rejects(
+      runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "ordered response",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        additionalRoots: [{ path: process.env.HOME!, readOnly: false }],
+        authContext: {
+          transport: "remote",
+          authnStatus: "authenticated",
+          authnMechanism: "api_key",
+          authnIssuerRef: "test",
+          authzBasis: "api_key",
+        },
+      }),
+      /unavailable to remote callers/,
+    );
   });
 
   it("rejects an oversized prompt before writing session state", async () => {

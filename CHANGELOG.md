@@ -11,6 +11,25 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Let one session use more than one directory.** `--add-dir <path>` adds a
+  read-write root beside the workspace and `--add-dir <path>:ro` a read-only
+  one, repeatable up to 16 times, on `dyfj`, `dyfj exec` and the Rust REPL;
+  `DYFJ_ADD_DIRS` (comma-separated) applies when no flag is given. The client
+  sends the roots on every turn; they are not stored with the session. The
+  runtime takes them from a loopback caller only, and refuses, before the turn
+  runs, a root that is not a directory or that is, contains or sits inside
+  `~/.dyfj` (with the Codex runner home), `~/.config/dyfj`, `DYFJ_ROOT` or the
+  file behind the runtime checkout's `prototype/.env`, comparing canonical
+  paths. On the native route the six file tools take an optional `root`
+  argument naming an added root, and `write_file` and `edit_file` refuse a
+  read-only root before any prompt; `bash` and `git` stay on the workspace. On
+  the Codex route, read-write roots go to the ACP session as
+  `additionalDirectories` and into Codex's workspace-write writable roots, and
+  the run stops if the agent does not advertise support for them; read-only
+  roots are not sent. The posture line and `/session` list the roots, and the
+  external-agent receipt counts the writable roots sent. The launcher passes
+  `--add-dir` to the Rust REPL.
+
 - **Parked approvals: a turn the runtime starts itself waits for the operator.**
   A turn with no client connection (a headless turn) now runs under a parking
   approver. Once the turn has announced its session, each of its approval

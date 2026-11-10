@@ -37,6 +37,8 @@ export interface TurnRequest {
   sessionId?: string;
   /** Working directory to scope the server's read-only file tools to. */
   workspace?: string;
+  /** Extra roots beside the workspace, sent on every turn. */
+  additionalRoots?: { path: string; readOnly: boolean }[];
   /** Experimental external-agent profile selector. */
   runner?: "fixture" | "codex-chatgpt";
   /**
@@ -84,6 +86,10 @@ export function buildTurnBody(
   // is local, so the implicit cwd default is always eligible.
   if (config.workspace !== undefined && sessionId === undefined) {
     body.workspace = config.workspace;
+  }
+  // Not stored with the session, so sent on new and resumed turns alike.
+  if (config.additionalRoots !== undefined && config.additionalRoots.length > 0) {
+    body.additionalRoots = config.additionalRoots.map((root) => ({ ...root }));
   }
   // Per-turn paid opt-in; the engine ignores it on non-loopback transports.
   if (config.approvePaid) body.approvePaidInference = true;

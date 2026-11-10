@@ -59,6 +59,14 @@ export interface WorkbenchRuntimeRequest {
    */
   workspaceRoot?: string;
   /**
+   * Extra roots the session may use beside its workspace (`--add-dir`),
+   * as the client sent them. Honored only for a loopback operator, like
+   * `workspaceRoot`, and only after the runtime admits each one
+   * (`tools/builtin/additional-roots.ts`). Not stored on the session row:
+   * the client sends them on every turn.
+   */
+  additionalRoots?: readonly AdditionalRootRequest[];
+  /**
    * Standing operator elevation of the workspace's AGENTS.md into the
    * system prompt (engine config, default off; loopback only — resolved at
    * the transport boundary). Without it, no workspace instructions are
@@ -100,6 +108,36 @@ export interface WorkbenchRuntimeRequest {
    * is absent.
    */
   rootOverride?: string;
+}
+
+/** The most extra roots one turn may ask for. */
+export const MAX_ADDITIONAL_ROOTS = 16;
+
+/** One extra root a turn asks for: an absolute path, read-write or read-only. */
+export interface AdditionalRootRequest {
+  path: string;
+  readOnly: boolean;
+}
+
+/**
+ * An extra root the runtime admitted: its canonical path, the short name the
+ * native file tools address it by, and whether it is read-only.
+ */
+export interface AdmittedAdditionalRoot {
+  name: string;
+  path: string;
+  readOnly: boolean;
+}
+
+/**
+ * The extra roots a caller on `transport` may ask for: all of them for a
+ * loopback operator, none for anyone else (see `workspaceRootForTransport`).
+ */
+export function additionalRootsForTransport(
+  requested: readonly AdditionalRootRequest[] | undefined,
+  transport: WorkbenchAuthContext["transport"],
+): readonly AdditionalRootRequest[] {
+  return transport === "loopback" ? requested ?? [] : [];
 }
 
 /**

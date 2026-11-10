@@ -549,6 +549,23 @@ describe("socketTurn", () => {
 });
 
 describe("buildTurnBody", () => {
+  it("sends the added roots on new and resumed turns", () => {
+    const additionalRoots = [{ path: "/wt", readOnly: false }, {
+      path: "/ref",
+      readOnly: true,
+    }];
+    assert.deepStrictEqual(
+      buildTurnBody("hi", cfg({ additionalRoots }), "01ABCDEF0123456789ABCDEF01")
+        .additionalRoots,
+      additionalRoots,
+    );
+    assert.deepStrictEqual(
+      buildTurnBody("hi", cfg({ additionalRoots })).additionalRoots,
+      additionalRoots,
+    );
+    assert.strictEqual(buildTurnBody("hi", cfg({})).additionalRoots, undefined);
+  });
+
   it("selects the fixture runner without sending model routing", () => {
     assert.deepStrictEqual(
       buildTurnBody(
