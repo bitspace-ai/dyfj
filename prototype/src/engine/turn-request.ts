@@ -4,9 +4,13 @@
  * The UDS handler passes its JSON-RPC params here; the per-session lock and
  * resume reconstruction happen later, in `executeTurn` (`turn.ts`).
  */
+import { isAbsolute, win32 } from "node:path";
+import process from "node:process";
 import type { WorkbenchRoutingOptions } from "../providers/mod.ts";
 import {
+  type AdditionalRootRequest,
   CODEX_WORKSPACE_TRUST_REQUIRED,
+  MAX_ADDITIONAL_ROOTS,
   type PaidEscalationVerdict,
   SESSION_ID_SHAPE,
 } from "../contract/mod.ts";
@@ -24,6 +28,8 @@ export interface TurnRequestBody {
   routingOptions?: unknown;
   sessionId?: unknown;
   workspace?: unknown;
+  /** Extra roots beside the workspace: `[{ path, readOnly }]`. */
+  additionalRoots?: unknown;
   runner?: unknown;
   // explicit per-turn paid-inference opt-in + per-turn budget override.
   // Both are honored only on the loopback transport (see resolveTurnFromBody /
@@ -131,6 +137,8 @@ function buildRuntimeInputFromJson(
   if (body.workspace !== undefined && typeof body.workspace !== "string") {
     return { error: "workspace must be a string" };
   }
+  const additionalRoots = parseAdditionalRoots(body.additionalRoots);
+  if ("error" in additionalRoots) return additionalRoots;
   if (
     body.turnId !== undefined &&
     !isValidTurnId(body.turnId)
@@ -161,7 +169,56 @@ function buildRuntimeInputFromJson(
     ...(typeof body.workspace === "string"
       ? { workspaceRoot: body.workspace }
       : {}),
+    ...(additionalRoots.roots.length === 0
+      ? {}
+      : { additionalRoots: additionalRoots.roots }),
   };
+}
+
+/**
+ * The request's extra roots: an array of at most `MAX_ADDITIONAL_ROOTS`
+ * `{ path: <absolute path>, readOnly?: boolean }` objects. The runtime admits
+ * each one later, for a loopback caller only.
+ */
+/**
+ * True when `path` names one location on its own: absolute, and on Windows
+ * also carrying a drive or UNC prefix (`\\repo` and `D:repo` depend on the
+ * caller's current drive or directory).
+ */
+function fullyQualified(path: string, platform: string): boolean {
+  if (platform !== "win32") return isAbsolute(path);
+  return win32.isAbsolute(path) && /^(?:[A-Za-z]:[\\/]|[\\/]{2}[^\\/])/.test(path);
+}
+
+export function parseAdditionalRoots(
+  value: unknown,
+  platform: string = process.platform,
+): { roots: AdditionalRootRequest[] } | { error: string } {
+  if (value === undefined) return { roots: [] };
+  if (!Array.isArray(value) || value.length > MAX_ADDITIONAL_ROOTS) {
+    return {
+      error:
+        `additionalRoots must be an array of at most ${MAX_ADDITIONAL_ROOTS} roots`,
+    };
+  }
+  const roots: AdditionalRootRequest[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return { error: "additionalRoots entries must be objects" };
+    }
+    const { path, readOnly, ...rest } = entry as Record<string, unknown>;
+    if (Object.keys(rest).length > 0) {
+      return { error: "additionalRoots entries take only path and readOnly" };
+    }
+    if (typeof path !== "string" || !fullyQualified(path, platform)) {
+      return { error: "additionalRoots paths must be absolute" };
+    }
+    if (readOnly !== undefined && typeof readOnly !== "boolean") {
+      return { error: "additionalRoots readOnly must be a boolean" };
+    }
+    roots.push({ path, readOnly: readOnly === true });
+  }
+  return { roots };
 }
 
 export function parseBudgetOverride(

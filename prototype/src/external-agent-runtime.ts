@@ -82,10 +82,8 @@ import {
   createWorkbenchSession,
   errorEvent,
   type EventInsert,
-  fetchWorkbenchSessionWorkspaceRecord,
   runnerSelectedEvent,
   sessionEndEvent,
-  type SessionReader,
   sessionStartEvent,
   type Store,
   toolCallEvent,
@@ -104,7 +102,6 @@ import {
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeRequest,
-  workspaceRootForTransport,
 } from "./contract/mod.ts";
 import {
   CODEX_DISABLED_FEATURES,
@@ -125,6 +122,7 @@ import {
   codexWorkbenchToolsConfig,
   type ExternalAgentToolBridge,
 } from "./workbench-tool-bridge.ts";
+import { resolveRunnerWorkspace, withAddedRoots } from "./acp-runner-roots.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -654,38 +652,6 @@ export function reconstructAcpContinuityPrompt(input: {
   return { prompt: reconstructed, toolExchanges };
 }
 
-async function resolveWorkspace(
-  input: ExternalAgentRuntimeInput,
-  authContext: WorkbenchAuthContext,
-  sessions: SessionReader,
-): Promise<string> {
-  let requested = input.workspaceRoot;
-  if (input.sessionId !== undefined) {
-    const stored = await fetchWorkbenchSessionWorkspaceRecord({
-      sessionId: input.sessionId,
-      sessions,
-    });
-    if (!stored.exists) {
-      throw new DomainError("Workbench session not found");
-    }
-    if (stored.workspace === null) {
-      throw new DomainError("Workbench session has no persisted workspace");
-    }
-    requested = stored.workspace;
-  }
-  const selected = workspaceRootForTransport(
-    requested,
-    authContext.transport,
-  ) ?? input.rootOverride ?? process.cwd();
-  try {
-    const resolved = await realpath(selected);
-    if ((await stat(resolved)).isDirectory()) return resolved;
-  } catch {
-    // The fixed error below must not disclose the selected host path.
-  }
-  throw new DomainError("External-agent workspace is not a directory");
-}
-
 function receiptText(input: {
   sessionId: string;
   traceId: string;
@@ -734,6 +700,9 @@ function receiptText(input: {
       formatHistoryOmissionSummary(input.historyOmission),
     ]),
     `Workspace: ${input.workspaceEvidence}`,
+    ...(input.profile.additionalDirectories === undefined ? [] : [
+      `Additional writable roots: ${input.profile.additionalDirectories.length}`,
+    ]),
     `Transport: ${input.profile.transport}`,
     `Access route: ${route.accessRoute ?? "unverified"}`,
     `Route evidence: ${input.routeEvidence?.source ?? "unavailable"}`,
@@ -809,18 +778,20 @@ export interface ExternalAgentRuntimeDependencies {
   toolBridge?: ExternalAgentToolBridge;
 }
 
-/** The turn's execution profile; `codex` is what a Codex profile is built from. */
+/** The turn's execution profile, with its admitted added roots; `codex` is what a Codex profile is built from. */
 async function resolveTurnProfile(
   input: ExternalAgentRuntimeInput,
   dependencies: ExternalAgentRuntimeDependencies,
   workspace: string,
   codex: CodexChatGptProfileOptions,
+  authContext: WorkbenchAuthContext,
 ): Promise<AcpExecutionProfile> {
-  if (dependencies.resolveProfile !== undefined) {
-    return await dependencies.resolveProfile(input.runner.profile, workspace, codex.workbenchTools);
-  }
-  if (input.runner.profile === "fixture") return fixtureProfile(workspace);
-  return await codexChatGptProfile(workspace, codex);
+  const base = dependencies.resolveProfile !== undefined
+    ? await dependencies.resolveProfile(input.runner.profile, workspace, codex.workbenchTools)
+    : input.runner.profile === "fixture"
+    ? fixtureProfile(workspace)
+    : await codexChatGptProfile(workspace, codex);
+  return await withAddedRoots(input, authContext, base);
 }
 
 export async function runExternalAgentWorkbenchRuntime(
@@ -873,14 +844,14 @@ export async function runExternalAgentWorkbenchRuntime(
       throw new DomainError(CODEX_WORKSPACE_TRUST_REQUIRED);
     }
     assertAcpPromptWithinLimit(input.prompt);
-    workspace = await resolveWorkspace(input, authContext, store.sessions);
+    workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
     bridged = await bindCodexTurn(dependencies.toolBridge, sessionId, input);
     profile = await resolveTurnProfile(input, dependencies, workspace, {
       modelName: modelSlug?.slice("codex-chatgpt/".length),
       fast: input.routingOptions?.fast,
       reasoningEffort: input.routingOptions?.reasoningEffort,
       workbenchTools: bridged?.workbenchTools,
-    });
+    }, authContext);
   } catch (error) {
     closeCancellation();
     throw error;

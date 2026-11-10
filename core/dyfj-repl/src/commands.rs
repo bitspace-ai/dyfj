@@ -361,7 +361,7 @@ async fn run_unprompted(command: Command, client: &Client, session: &mut Session
         Command::Budget(target) => budget(client, session, target).await,
         Command::ReceiptSteps => receipt_steps(session),
         Command::Evidence => print_evidence(session.last_evidence.as_deref()),
-        Command::SessionShow => session_show(session),
+        Command::SessionShow => session.show(),
         Command::SessionList => session_list(client).await,
         Command::SessionSwitch(id) => session_switch(client, session, id).await,
         Command::Friction { .. } | Command::IdeaMark(_) => unreachable!("dispatched by run"),
@@ -898,19 +898,6 @@ async fn budget(client: &Client, session: &mut Session, target: Option<(crate::b
         Some(line) => eprintln!("{line}"),
         None => eprintln!("budget: this runtime reports no spend limits"),
     }
-}
-
-fn session_show(session: &Session) {
-    let Some(id) = &session.id else {
-        eprintln!("no session yet; send a prompt first");
-        return;
-    };
-    eprintln!("session: {}", visible(id));
-    eprintln!(
-        "turns here: {} · spend here: ${:.4}",
-        session.turns, session.spend_usd
-    );
-    eprintln!("resume later with: dyfj-repl --session {}", visible(id));
 }
 
 async fn session_list(client: &Client) {

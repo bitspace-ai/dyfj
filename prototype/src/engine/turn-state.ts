@@ -13,6 +13,7 @@
  */
 import type { BudgetTracker, SpendBaselines } from "../budget/mod.ts";
 import type {
+  AdmittedAdditionalRoot,
   AutoApprovals,
   CostBasis,
   TurnStepUsage,
@@ -199,6 +200,8 @@ export interface TurnState {
   workspaceRootIdentity: WorkspaceRootIdentity | undefined;
   /** A requested workspace failed to resolve; see `buildContext`. */
   workspaceResolutionFailed: boolean;
+  /** The extra roots admitted for the file tools; empty when none. */
+  additionalRoots: readonly AdmittedAdditionalRoot[];
   systemPrompt: string;
   /** The text the model receives as the user turn. */
   modelPrompt: string;
@@ -271,6 +274,7 @@ export function newTurnState(
     workspaceRoot: session.fallbackRoot,
     workspaceRootIdentity: undefined,
     workspaceResolutionFailed: false,
+    additionalRoots: [],
     systemPrompt: "",
     // Prior conversation rides in the transcript as real messages, so the
     // prompt is just the current message.

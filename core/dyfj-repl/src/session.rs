@@ -21,6 +21,76 @@ pub fn is_codex_model(slug: &str) -> bool {
     slug.starts_with(CODEX_MODEL_PREFIX)
 }
 
+/// The most extra roots one turn may send (`MAX_ADDITIONAL_ROOTS` in
+/// `prototype/src/contract/runtime.ts`).
+pub const MAX_ADDITIONAL_ROOTS: usize = 16;
+
+/// One extra root beside the workspace (`--add-dir`), sent on every turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddedRoot {
+    /// As the client resolved it: absolute when it was typed absolute or a
+    /// working directory was known. The runtime refuses a relative one.
+    pub path: String,
+    pub read_only: bool,
+}
+
+/// One `--add-dir` value: `<path>` is read-write, `<path>:ro` read-only.
+/// `None` when the path is empty. Mirrors `parseAddDir` in
+/// `prototype/src/cli/args.ts`.
+pub fn parse_add_dir(value: &str) -> Option<(String, bool)> {
+    let value = value.trim();
+    let (path, read_only) = match value.strip_suffix(":ro") {
+        Some(path) => (path, true),
+        None => (value, false),
+    };
+    let path = path.trim();
+    (!path.is_empty()).then(|| (path.to_string(), read_only))
+}
+
+/// `path` made absolute: a leading `~/` is `home`, and a relative path joins
+/// `cwd` when there is one. A Windows path with a drive but no root
+/// (`D:repo`) or a root but no drive (`\repo`) is resolved against the
+/// process's current directory for that drive.
+pub fn absolute_root(path: &str, cwd: Option<&str>, home: Option<&str>) -> String {
+    let expanded = match (home, path.strip_prefix('~')) {
+        (Some(home), Some(rest)) if rest.is_empty() || rest.starts_with('/') => format!("{home}{rest}"),
+        _ => path.to_string(),
+    };
+    let candidate = std::path::Path::new(&expanded);
+    let partly_qualified = !candidate.is_absolute()
+        && (candidate.has_root()
+            || matches!(candidate.components().next(), Some(std::path::Component::Prefix(_))));
+    if partly_qualified {
+        if let Ok(resolved) = std::path::absolute(candidate) {
+            return resolved.to_string_lossy().into_owned();
+        }
+    }
+    match cwd {
+        Some(cwd) if !std::path::Path::new(&expanded).is_absolute() => std::path::Path::new(cwd)
+            .join(&expanded)
+            .to_string_lossy()
+            .into_owned(),
+        _ => expanded,
+    }
+}
+
+/// "roots: <workspace>, <root>, <root> (read-only)", or `None` without added
+/// roots. Mirrors `formatRoots` in `prototype/src/cli/posture.ts`.
+pub fn roots_segment(workspace: Option<&str>, roots: &[AddedRoot]) -> Option<String> {
+    if roots.is_empty() {
+        return None;
+    }
+    let mut listed = vec![workspace.unwrap_or("(session workspace)").to_string()];
+    listed.extend(roots.iter().map(|root| {
+        if root.read_only {
+            format!("{} (read-only)", root.path)
+        } else {
+            root.path.clone()
+        }
+    }));
+    Some(format!("roots: {}", listed.join(", ")))
+}
+
 /// Where the session's model came from, so the posture line can say so.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ModelOrigin {
@@ -70,6 +140,9 @@ pub struct Session {
     /// NEW session: the runtime stores it on the session row, and a resumed
     /// session reads it back.
     pub workspace: Option<String>,
+    /// Extra roots beside the workspace (`--add-dir`, else `DYFJ_ADD_DIRS`).
+    /// Not stored with the session, so sent on every turn.
+    pub additional_roots: Vec<AddedRoot>,
     /// Running sum of per-turn cost, in USD, since this session began here.
     pub spend_usd: f64,
     pub turns: u32,
@@ -112,6 +185,14 @@ impl Session {
                 }
             }
         }
+        if !self.additional_roots.is_empty() {
+            body["additionalRoots"] = Value::Array(
+                self.additional_roots
+                    .iter()
+                    .map(|root| json!({"path": root.path, "readOnly": root.read_only}))
+                    .collect(),
+            );
+        }
         if self.approve_paid {
             body["approvePaidInference"] = Value::Bool(true);
         }
@@ -122,6 +203,23 @@ impl Session {
             body["budget"] = budget;
         }
         body
+    }
+
+    /// `/session`: the session id and its spend here, and every added root.
+    pub fn show(&self) {
+        use crate::approval::visible;
+        match &self.id {
+            None => eprintln!("no session yet; send a prompt first"),
+            Some(id) => {
+                eprintln!("session: {}", visible(id));
+                eprintln!("turns here: {} · spend here: ${:.4}", self.turns, self.spend_usd);
+                eprintln!("resume later with: dyfj-repl --session {}", visible(id));
+            }
+        }
+        for root in &self.additional_roots {
+            let access = if root.read_only { " (read-only)" } else { "" };
+            eprintln!("added root: {}{access}", visible(&root.path));
+        }
     }
 
     /// Fold a completed turn's receipt into the session.
@@ -202,6 +300,41 @@ mod tests {
             body,
             json!({"prompt": "hi", "mode": "turn", "turnId": "t-1"})
         );
+    }
+
+    /// Added roots are not stored with the session, so a resumed turn sends
+    /// them too.
+    #[test]
+    fn added_roots_ride_every_turn() {
+        let session = Session {
+            id: Some("S1".into()),
+            additional_roots: vec![
+                super::AddedRoot { path: "/wt".into(), read_only: false },
+                super::AddedRoot { path: "/ref".into(), read_only: true },
+            ],
+            ..Session::default()
+        };
+        assert_eq!(
+            session.turn_body("hi", "t-1")["additionalRoots"],
+            json!([{"path": "/wt", "readOnly": false}, {"path": "/ref", "readOnly": true}])
+        );
+    }
+
+    #[test]
+    fn the_roots_segment_lists_every_root() {
+        let roots = [
+            super::AddedRoot { path: "/wt".into(), read_only: false },
+            super::AddedRoot { path: "/ref".into(), read_only: true },
+        ];
+        assert_eq!(
+            super::roots_segment(Some("/ws"), &roots).as_deref(),
+            Some("roots: /ws, /wt, /ref (read-only)")
+        );
+        assert_eq!(
+            super::roots_segment(None, &roots[..1]).as_deref(),
+            Some("roots: (session workspace), /wt")
+        );
+        assert_eq!(super::roots_segment(Some("/ws"), &[]), None);
     }
 
     #[test]

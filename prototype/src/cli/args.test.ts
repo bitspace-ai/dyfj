@@ -1,7 +1,13 @@
 import { captureThrow } from "../../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeSessionRef, parseArgs, resolveConfig } from "./args.ts";
+import {
+  normalizeSessionRef,
+  parseAddDir,
+  parseArgs,
+  resolveAdditionalRoots,
+  resolveConfig,
+} from "./args.ts";
 
 describe("parseArgs", () => {
   it("bare args is the REPL", () => {
@@ -611,5 +617,92 @@ describe("parseArgs for stop subcommand", () => {
       ),
       `expected parsed.error ?? "" to include "--launcher-autostarted is valid only with start"`,
     );
+  });
+});
+
+describe("--add-dir", () => {
+  it("collects repeated flags, read-only with :ro", () => {
+    const parsed = parseArgs(["--add-dir", "../wt", "--add-dir", "/ref:ro"]);
+    assert.strictEqual(parsed.error, undefined);
+    assert.deepStrictEqual(parsed.overrides.additionalRoots, [
+      { path: "../wt", readOnly: false },
+      { path: "/ref", readOnly: true },
+    ]);
+  });
+
+  it("refuses an empty path and more than 16 roots", () => {
+    assert.match(parseArgs(["--add-dir", ":ro"]).error ?? "", /--add-dir expects/);
+    const many = Array.from({ length: 17 }, () => ["--add-dir", "/x"]).flat();
+    assert.match(parseArgs(many).error ?? "", /at most 16/);
+  });
+
+  it("parses one value", () => {
+    assert.deepStrictEqual(parseAddDir("/a"), { path: "/a", readOnly: false });
+    assert.deepStrictEqual(parseAddDir("/a:ro"), { path: "/a", readOnly: true });
+    assert.strictEqual(parseAddDir(""), undefined);
+    assert.deepStrictEqual(parseAddDir(" /a:ro "), { path: "/a", readOnly: true });
+  });
+
+  it("makes paths absolute against the cwd and the home directory", () => {
+    const env = new Map([["HOME", "/op-home"]]);
+    assert.deepStrictEqual(
+      resolveAdditionalRoots(
+        [
+          { path: "../wt", readOnly: false },
+          { path: "~/ref", readOnly: true },
+          { path: "/abs/./x", readOnly: false },
+        ],
+        env,
+        "/op-home/projects/main-repo",
+      ),
+      [
+        { path: "/op-home/projects/main-repo/../wt", readOnly: false },
+        { path: "/op-home/ref", readOnly: true },
+        { path: "/abs/./x", readOnly: false },
+      ],
+    );
+  });
+
+  it("on Windows, qualifies a root with the client's drive", () => {
+    assert.deepStrictEqual(
+      resolveAdditionalRoots(
+        [
+          { path: "\\other-repo", readOnly: false },
+          { path: "..\\wt", readOnly: true },
+        ],
+        new Map(),
+        "D:\\work\\main-repo",
+        "win32",
+      ),
+      [
+        { path: "D:\\other-repo", readOnly: false },
+        { path: "D:\\work\\wt", readOnly: true },
+      ],
+    );
+  });
+
+  it("reads DYFJ_ADD_DIRS when no flag is given, and flags replace it", () => {
+    const env = new Map([["DYFJ_ADD_DIRS", "/a, ,/b:ro"]]);
+    assert.deepStrictEqual(resolveConfig({}, env, false, "/cwd").additionalRoots, [
+      { path: "/a", readOnly: false },
+      { path: "/b", readOnly: true },
+    ]);
+    assert.deepStrictEqual(
+      resolveConfig(
+        { additionalRoots: [{ path: "/c", readOnly: false }] },
+        env,
+        false,
+        "/cwd",
+      ).additionalRoots,
+      [{ path: "/c", readOnly: false }],
+    );
+    assert.strictEqual(
+      resolveConfig({}, new Map(), false, "/cwd").additionalRoots,
+      undefined,
+    );
+    const many = new Map([["DYFJ_ADD_DIRS", ",".repeat(5) + Array.from({ length: 40 }, (_, i) => `/r${i}`).join(",")]]);
+    const roots = resolveConfig({}, many, false, "/cwd").additionalRoots!;
+    assert.strictEqual(roots.length, 16);
+    assert.strictEqual(roots[0].path, "/r0");
   });
 });

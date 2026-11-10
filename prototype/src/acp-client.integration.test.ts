@@ -1082,6 +1082,42 @@ describe("runAcpAgent", () => {
     }
   });
 
+  it("sends the profile's additional directories on session/new", async () => {
+    const extra = [`${process.cwd()}/src`, `${process.cwd()}/scripts`];
+    const result = await runAcpAgent({
+      profile: fixtureProfile({
+        additionalDirectories: extra,
+        environment: fixtureEnvironment({
+          ACP_FIXTURE_ADDITIONAL_DIRECTORIES: "yes",
+        }),
+      }),
+      prompt: "ordered response",
+    });
+    assert.strictEqual(
+      result.text,
+      `first|cwd=${process.cwd()}|dirs=${extra.join(",")}|last`,
+    );
+  });
+
+  it("refuses additional directories an agent does not advertise", async () => {
+    await expectContainedFailure({
+      prompt: "unused",
+      phase: "session",
+      profile: { additionalDirectories: [`${process.cwd()}/src`] },
+      message: "ACP agent does not support additional directories",
+    });
+  });
+
+  it("refuses a relative additional directory", async () => {
+    await assert.rejects(
+      runAcpAgent({
+        profile: fixtureProfile({ additionalDirectories: ["src"] }),
+        prompt: "unused",
+      }),
+      /additional directories must be absolute/,
+    );
+  });
+
   it("bounds session creation and reaps the child", async () => {
     await expectContainedFailure({
       prompt: "unused",

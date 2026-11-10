@@ -24,6 +24,7 @@ import {
   SUMMARY_TRUST_POLICY,
 } from "../context/mod.ts";
 import {
+  admitAdditionalRoots,
   buildMemoryContextSourceLines,
   buildMemorySearch,
   buildSystemPrompt,
@@ -33,9 +34,12 @@ import {
   loadIndexedMemories,
   loadInjectedMemories,
   memorySearchConfigFromEnv,
+  protectedPaths,
+  runtimePrototypeRoot,
   type ToolCatalogPorts,
 } from "../tools/mod.ts";
 import {
+  additionalRootsForTransport,
   buildHistoryOmissionNotice,
   hasOperatorClearance,
   historyOmissionForDelivery,
@@ -113,6 +117,7 @@ export async function buildContext(
   ports: NativeTurnPorts,
 ): Promise<void> {
   await resolveWorkspace(state);
+  await admitRoots(state, input, ports);
   if (state.session.usesRepoAskContext) {
     await buildAskContext(state, input, ports);
   } else {
@@ -189,6 +194,36 @@ async function resolveWorkspace(state: TurnState): Promise<void> {
   }
   if (!usesRepoAskContext || !state.workspaceResolutionFailed) {
     log(`Workspace: ${state.workspaceRoot}\n`);
+  }
+}
+
+/**
+ * Admit the turn's extra roots (`--add-dir`) for the file tools. Only a
+ * loopback operator's are considered; a refused root fails the turn before
+ * any tool runs.
+ */
+async function admitRoots(
+  state: TurnState,
+  input: WorkbenchRuntimeInput,
+  ports: NativeTurnPorts,
+): Promise<void> {
+  const requested = additionalRootsForTransport(
+    input.additionalRoots,
+    state.session.authContext.transport,
+  );
+  if (requested.length === 0) return;
+  state.additionalRoots = await admitAdditionalRoots(requested, {
+    primary: state.workspaceRoot,
+    protectedPaths: await protectedPaths({
+      home: ports.env.get("HOME"),
+      dyfjRoot: ports.env.get("DYFJ_ROOT"),
+      prototypeRoot: runtimePrototypeRoot(),
+    }),
+  });
+  for (const root of state.additionalRoots) {
+    state.session.log(
+      `Added root ${root.name}${root.readOnly ? " (read-only)" : ""}: ${root.path}`,
+    );
   }
 }
 
@@ -324,6 +359,7 @@ async function buildCompanionContext(
       allowedMemorySlugs: memoryIndex.map((entry) => entry.slug),
       // Workspace file, exec and git tools, scoped to the resolved root.
       workspaceRoot: state.workspaceRoot,
+      additionalRoots: state.additionalRoots,
     },
     externalMcpCommandsForTransport(
       input.externalMcpCommands ?? [],

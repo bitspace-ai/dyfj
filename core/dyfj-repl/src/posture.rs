@@ -294,6 +294,9 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
             None => parts.push(format!("{steps} tool steps")),
         }
     }
+    if let Some(roots) = crate::session::roots_segment(session.workspace.as_deref(), &session.additional_roots) {
+        parts.push(visible(&roots));
+    }
     parts.push(socket.to_string());
     format!("posture: {}", parts.join(" · "))
 }
@@ -407,6 +410,19 @@ mod tests {
         assert!(rendered.contains("paid approved"), "{rendered}");
         assert!(rendered.contains("32 tool steps"), "{rendered}");
         assert!(rendered.contains("/tmp/s.sock"), "{rendered}");
+    }
+
+    #[test]
+    fn lists_the_added_roots_before_the_socket() {
+        let session = Session {
+            workspace: Some("/ws".into()),
+            additional_roots: vec![crate::session::AddedRoot { path: "/wt".into(), read_only: true }],
+            ..Session::default()
+        };
+        let rendered = line(&json!({"runtime": {}}), &session, "/tmp/s.sock");
+        assert!(rendered.ends_with("roots: /ws, /wt (read-only) · /tmp/s.sock"), "{rendered}");
+        let bare = line(&json!({"runtime": {}}), &Session::default(), "/tmp/s.sock");
+        assert!(!bare.contains("roots:"), "{bare}");
     }
 
     /// The session's own tool-step limit replaces the runtime's, and the

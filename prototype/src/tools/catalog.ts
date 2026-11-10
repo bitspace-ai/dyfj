@@ -20,6 +20,8 @@ import {
   defineWriteFile,
 } from "./builtin/file.ts";
 import type { RootAnchors, WorkspaceRoot } from "./builtin/root-anchors.ts";
+import { multiRootTool } from "./builtin/multi-root.ts";
+import type { AdmittedAdditionalRoot } from "../contract/mod.ts";
 import { defineBash } from "./builtin/exec.ts";
 import type { ExecutorDialer } from "./builtin/executor-transport.ts";
 import type { CommandSandbox } from "./builtin/srt-sandbox.ts";
@@ -103,6 +105,12 @@ export interface PublishCatalogPorts {
 export interface ToolCatalogConfig {
   /** When set, register the workspace file, exec and git tools rooted here. */
   workspaceRoot?: string;
+  /**
+   * Admitted extra roots (`--add-dir`): the workspace file tools also reach
+   * these, by name, through their `root` argument. Bash and git stay on
+   * `workspaceRoot`.
+   */
+  additionalRoots?: readonly AdmittedAdditionalRoot[];
   /** The slugs `memory.read` accepts; any slug when absent. */
   allowedMemorySlugs?: readonly string[];
 }
@@ -144,19 +152,30 @@ function workspaceFileTool(
     root: WorkspaceRoot,
     opts: { dialExecutor?: ExecutorDialer; env?: Env; sandbox?: CommandSandbox },
   ) => CommandDefinition,
+  writes = false,
 ): ToolCatalogEntry {
-  return ({ workspaceRoot, rootAnchors, dialExecutor, env, sandbox }) => {
+  return (
+    { workspaceRoot, additionalRoots, rootAnchors, dialExecutor, env, sandbox },
+  ) => {
     if (workspaceRoot === undefined) return undefined;
     if (rootAnchors === undefined) {
       throw new Error(
         "tool catalog: the workspace file tools need root anchors",
       );
     }
-    return define(rootAnchors.root(workspaceRoot), {
+    const opts = {
       ...(dialExecutor === undefined ? {} : { dialExecutor }),
       ...(env === undefined ? {} : { env }),
       ...(sandbox === undefined ? {} : { sandbox }),
-    });
+    };
+    return multiRootTool(
+      define(rootAnchors.root(workspaceRoot), opts),
+      (additionalRoots ?? []).map((root) => ({
+        root,
+        command: define(rootAnchors.root(root.path), opts),
+      })),
+      writes,
+    );
   };
 }
 
@@ -169,8 +188,8 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
   workspaceFileTool(defineListFiles),
   workspaceFileTool(defineGrepFiles),
   workspaceFileTool(defineGlobFiles),
-  workspaceFileTool(defineWriteFile),
-  workspaceFileTool(defineEditFile),
+  workspaceFileTool(defineWriteFile, true),
+  workspaceFileTool(defineEditFile, true),
   workspaceTool(defineBash),
   workspaceTool(defineGit),
   ({ listModels }) =>

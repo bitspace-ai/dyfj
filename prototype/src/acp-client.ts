@@ -32,6 +32,7 @@ import {
 import process from "node:process";
 import { Readable, Writable } from "node:stream";
 import { collectBoundedStderr, settlesWithin } from "./acp-child-io.ts";
+import { acpSessionBuilder, assertAbsoluteSessionRoots } from "./acp-session-roots.ts";
 import {
   type AcpToolEvidence,
   applyAcpToolPatch,
@@ -91,6 +92,8 @@ export interface AcpExecutionProfile {
   args: string[];
   environment: Record<string, string>;
   workspace: string;
+  /** Writable roots beside `workspace` (`acp-session-roots.ts`). */
+  additionalDirectories?: readonly string[];
   transport: "local_stdio";
   accessRoute: ExternalAgentAccessRoute;
   costBasis: ExternalAgentCostBasis;
@@ -594,12 +597,7 @@ function assertProfile(profile: AcpExecutionProfile): void {
   ) {
     throw new AcpRunnerError("ACP profile command must be absolute", "spawn");
   }
-  if (
-    !isAbsolute(profile.workspace) &&
-    !(process.platform === "win32" && win32.isAbsolute(profile.workspace))
-  ) {
-    throw new AcpRunnerError("ACP workspace must be absolute", "session");
-  }
+  assertAbsoluteSessionRoots(profile);
   for (const key of Object.keys(profile.environment)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
       throw new AcpRunnerError(
@@ -1675,7 +1673,7 @@ class LiveAcpSession implements AcpSessionHandle {
             this.#startAbort?.removeEventListener("abort", forwardRouteAbort);
           }
           const session = await withTimeout(
-            abortableLifecycle(context.buildSession(profile.workspace).start()),
+            abortableLifecycle(acpSessionBuilder(context, profile, initialized).start()),
             profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
             "session",
           );

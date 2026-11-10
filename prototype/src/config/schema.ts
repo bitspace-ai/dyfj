@@ -429,6 +429,13 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
   },
   {
+    key: "additionalRoots",
+    envVar: "DYFJ_ADD_DIRS",
+    domain: "client",
+    type: "string",
+    kind: "value",
+  },
+  {
     key: "clientModel",
     envVar: "DYFJ_WORKBENCH_MODEL",
     domain: "client",

@@ -141,6 +141,13 @@ export function canonicalExecutionProfileDigest(
     command: profile.command,
     args: profile.args,
     environment,
+    // Only when set, so a profile without added roots keeps its digest.
+    // Read-only roots are never sent to the agent, so they are not part of
+    // the key: a change of read-only roots reuses the warm session.
+    ...(profile.additionalDirectories === undefined ||
+        profile.additionalDirectories.length === 0
+      ? {}
+      : { additionalDirectories: [...profile.additionalDirectories] }),
     transport: profile.transport,
     accessRoute: profile.accessRoute,
     costBasis: profile.costBasis,
