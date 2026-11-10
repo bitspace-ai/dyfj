@@ -24,6 +24,19 @@ function registry(options: { timeoutMs?: number; failWrites?: boolean } = {}) {
   return { parked, events };
 }
 
+// A park's timeout is an `AbortSignal.timeout`, whose timer does not keep the
+// process alive (the runtime's socket does). Hold a referenced timer while a
+// test waits on one, so the wait ends by the timeout and not by the event loop
+// emptying.
+async function keptAlive<T>(waiting: Promise<T>): Promise<T> {
+  const handle = setInterval(() => {}, 1_000);
+  try {
+    return await waiting;
+  } finally {
+    clearInterval(handle);
+  }
+}
+
 // The park writes its event before the request is listed, so wait for it.
 async function untilPending(parked: ParkedApprovals, sessionId: string) {
   for (let i = 0; i < 100; i++) {
@@ -106,7 +119,7 @@ test("a second answer for the same approval is refused", async () => {
 
 test("a park that times out denies, and records the timeout", async () => {
   const { parked, events } = registry({ timeoutMs: 5 });
-  const response = await parked.park(at, toolRequest) as {
+  const response = await keptAlive(parked.park(at, toolRequest)) as {
     decision: string;
     reason: string;
   };
@@ -225,7 +238,9 @@ test("the timeout also bounds a park whose record never lands", async () => {
     writeEvent: writes.writeEvent,
     timeoutMs: 5,
   });
-  const response = await parked.park(at, toolRequest) as { decision: string };
+  const response = await keptAlive(parked.park(at, toolRequest)) as {
+    decision: string;
+  };
   assert.equal(response.decision, "deny");
   assert.deepStrictEqual(parked.pending("S1"), []);
 });

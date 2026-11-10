@@ -9,9 +9,11 @@
 --
 -- `approval_parked` records that a request was parked: `resource` is the
 -- approval id and `content` names its kind. The request's arguments are not
--- recorded here. `approval_resolved` records how it ended: the operator's
--- verdict, a timeout, or a cancellation, in `permission_verdict`. It is a
--- best-effort write: a failed one is logged and leaves no event.
+-- recorded here. `approval_resolved` records how it ended: its verdict in
+-- `permission_verdict` (a timeout is recorded as `denied`, a cancellation as
+-- `cancelled`), and its cause (`operator`, `timeout` or `cancel`) in
+-- `content`. It is a best-effort write: a failed one is logged and leaves no
+-- event.
 
 ALTER TABLE events
   MODIFY COLUMN event_type ENUM(
