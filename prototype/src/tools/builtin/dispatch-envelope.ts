@@ -10,6 +10,7 @@ import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   type AcpToolEvidenceReason,
   type WorkbenchSessionEvent,
+  type WorkbenchAuthContext,
 } from "../../contract/mod.ts";
 import {
   containsSensitiveShape,
@@ -174,6 +175,19 @@ export interface DispatchSendInput {
 export interface DispatchSendResult {
   child: string;
   state: "running";
+}
+
+/** The runtime's factory for dispatch ports bound to one coordinator turn. */
+export interface DispatchSessionFactory {
+  forSession(context: {
+    parentSessionId: string;
+    traceId: string;
+    turnRootSpanId: string;
+    principalId: string;
+    authContext: WorkbenchAuthContext;
+    depth: number;
+    abortSignal?: AbortSignal;
+  }): DispatchSessionPorts | undefined;
 }
 
 /**

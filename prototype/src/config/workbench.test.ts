@@ -427,3 +427,39 @@ const table = (t: Record<string, unknown>) => () => t;
     });
   }
 }
+
+for (const [wait, timeout] of [[50, 50], [51, 50], [300, undefined], [undefined, 50]] as const) {
+  test(`loadConfig: disabled bridge permits dispatch wait ${wait ?? "default"} at or above Codex timeout ${timeout ?? "default"}`, async () => {
+    const config = await loadConfig({
+      env: env(HOME), readTextFile: present,
+      parseToml: table({
+        dispatch: { roots: ["/tmp/worktrees"], ...(wait === undefined ? {} : { max_wait_seconds: wait }) },
+        codex: { workbench_tools: false, ...(timeout === undefined ? {} : { tool_timeout_seconds: timeout }) },
+      }),
+    });
+    assert.equal(config.codexWorkbenchTools, false);
+    assert.equal(config.codexToolTimeoutSeconds, timeout ?? 300);
+  });
+
+  test(`loadConfig: dispatch wait ${wait ?? "default"} must be below Codex timeout ${timeout ?? "default"}`, async () => {
+    await assert.rejects(loadConfig({
+      env: env(HOME), readTextFile: present,
+      parseToml: table({
+        dispatch: { roots: ["/tmp/worktrees"], ...(wait === undefined ? {} : { max_wait_seconds: wait }) },
+        codex: { ...(timeout === undefined ? {} : { tool_timeout_seconds: timeout }) },
+      }),
+    }), /dispatch.*max_wait_seconds.*codex.*tool_timeout_seconds/);
+  });
+}
+
+test("loadConfig: dispatch timeout defaults and a strictly smaller wait load", async () => {
+  for (const [wait, timeout] of [[undefined, undefined], [49, 50]] as const) {
+    await loadConfig({
+      env: env(HOME), readTextFile: present,
+      parseToml: table({
+        dispatch: { roots: ["/tmp/worktrees"], ...(wait === undefined ? {} : { max_wait_seconds: wait }) },
+        codex: { ...(timeout === undefined ? {} : { tool_timeout_seconds: timeout }) },
+      }),
+    });
+  }
+});

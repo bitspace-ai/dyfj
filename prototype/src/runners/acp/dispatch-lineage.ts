@@ -14,10 +14,38 @@ import {
   createWorkbenchSession,
   type EventInsert,
   fetchWorkbenchSessionLineage,
+  resolveWorkbenchDispatchDepth,
   sessionStartEvent,
   type Store,
 } from "../../store/mod.ts";
-import { DISPATCH_CHILD_CONTEXT_LINE } from "../../tools/mod.ts";
+import { DISPATCH_CHILD_CONTEXT_LINE, type DispatchSessionFactory } from "../../tools/mod.ts";
+import {
+  bindCodexTurn,
+  type CodexTurnTools,
+  type ExternalAgentToolBridge,
+} from "../../workbench-tool-bridge.ts";
+
+/** Bind coordinator tools using runtime-owned session identity and persisted depth. */
+export async function bindExternalAgentTools(
+  input: CodexTurnTools & { sessionId?: string; dispatchRecord?: DispatchRecord },
+  dependencies: { store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge },
+  context: Omit<Parameters<DispatchSessionFactory["forSession"]>[0], "depth">,
+) {
+  let dispatch;
+  if (context.authContext.transport === "loopback" &&
+      input.runner.profile === "codex-chatgpt" && dependencies.toolBridge !== undefined &&
+      dependencies.dispatch !== undefined) {
+    const depth = await resolveWorkbenchDispatchDepth({
+      dispatchRecord: input.dispatchRecord,
+      resumingSession: input.sessionId !== undefined,
+      sessionId: context.parentSessionId,
+      events: dependencies.store.events,
+    });
+    if (depth === 0) dispatch = dependencies.dispatch.forSession({ ...context, depth });
+  }
+  return await bindCodexTurn(dependencies.toolBridge, context.parentSessionId, { ...input, dispatch });
+}
+
 
 export function prependChildContextLine(
   prompt: string,
