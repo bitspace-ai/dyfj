@@ -1688,6 +1688,108 @@ describe("server dispatch end-to-end (BIT-907)", () => {
     }
   });
 
+  it("refuses a follow-up when the child's workspace was replaced by a symlink or removed between turns", async () => {
+    const coordWs = makeDir(ROOT, "coord-moved-ws");
+    const childWs = makeDir(ALLOWED_ROOT, "child-moved");
+    const outsideWs = makeDir(OUTSIDE_ROOT, "moved-target");
+    const sendCall = (id: string) => ({
+      toolCalls: [{
+        id,
+        name: "dispatch/send",
+        arguments: { child: "mover", message: "read your workspace again" },
+      }],
+    });
+    const provider = createRoutedProvider({
+      coordinator: [
+        {
+          toolCalls: [{
+            id: "m-start",
+            name: "dispatch/start",
+            arguments: {
+              label: "mover",
+              task: "mover-task",
+              model: LOCAL_MODEL.slug,
+              workspace: childWs,
+            },
+          }],
+        },
+        {
+          toolCalls: [{
+            id: "m-wait",
+            name: "dispatch/wait",
+            arguments: { children: ["mover"], mode: "all", timeoutSeconds: 5 },
+          }],
+        },
+        { content: "started" },
+        sendCall("m-send-symlink"),
+        { content: "symlink checked" },
+        sendCall("m-send-missing"),
+        { content: "missing checked" },
+      ],
+      childByMatch: [{ match: "mover-task", steps: [{ content: "first turn" }] }],
+    });
+    const harness = await startHarness({ http: provider.http });
+    const approvals: string[] = [];
+    const client = await harness.connectClient({
+      approval: (params) => {
+        approvals.push(String((params as Record<string, unknown>)["commandId"]));
+        return { decision: "approve" };
+      },
+    });
+    const followUp = async (sessionId: string, prompt: string) =>
+      await client.peer.request("turn", {
+        sessionId,
+        prompt,
+        workspace: coordWs,
+        routingOptions: { modelId: LOCAL_MODEL.slug },
+      }) as { text: string };
+
+    try {
+      const first = await client.peer.request("turn", {
+        prompt: "start the child",
+        workspace: coordWs,
+        routingOptions: { modelId: LOCAL_MODEL.slug },
+      }) as { text: string; sessionId: string };
+      assert.strictEqual(first.text, "started");
+
+      // The approved workspace becomes a symlink to a directory outside
+      // [dispatch].roots.
+      rmSync(childWs, { recursive: true, force: true });
+      symlinkSync(outsideWs, childWs);
+      assert.strictEqual(
+        (await followUp(first.sessionId, "send after symlink")).text,
+        "symlink checked",
+      );
+      const symlinkMsg = String(
+        provider.coordinatorRequests[4]!.messages.find((m) =>
+          m.tool_call_id === "m-send-symlink"
+        )?.content ?? "",
+      );
+      assert.match(symlinkMsg, /cannot accept a follow-up/);
+      assert.match(symlinkMsg, /outside the configured \[dispatch\]\.roots/);
+
+      // The approved workspace is gone.
+      unlinkSync(childWs);
+      assert.strictEqual(
+        (await followUp(first.sessionId, "send after removal")).text,
+        "missing checked",
+      );
+      const missingMsg = String(
+        provider.coordinatorRequests[6]!.messages.find((m) =>
+          m.tool_call_id === "m-send-missing"
+        )?.content ?? "",
+      );
+      assert.match(missingMsg, /workspace is not an accessible directory/);
+
+      // Both sends were refused in precheck: no prompt, no child turn.
+      assert.deepStrictEqual(approvals, ["dispatch/start"]);
+      assert.strictEqual(provider.childRequests.length, 1);
+    } finally {
+      await client.close();
+      await harness.close();
+    }
+  });
+
   it("registers none of the dispatch/* tools when [dispatch] is not configured", async () => {
     const coordWs = makeDir(ROOT, "coord-unconfigured");
     const provider = createRoutedProvider({

@@ -210,6 +210,35 @@ async function resolveExistingDispatchRoots(
   return resolved;
 }
 
+/**
+ * Re-check a live child's saved workspace and extra roots before a follow-up
+ * turn. They must still be accessible directories inside `[dispatch].roots`,
+ * clear of protected paths, and still resolve to exactly the canonical paths
+ * approved at `dispatch/start`: a directory that was removed or replaced by a
+ * symlink since then refuses the follow-up instead of moving the child.
+ */
+export async function revalidateChildPaths(input: {
+  config: DispatchConfig;
+  env: Env;
+  workspace: string;
+  roots: readonly string[];
+}): Promise<string | null> {
+  const checked = await validateDispatchPaths({
+    config: input.config,
+    env: input.env,
+    workspace: input.workspace,
+    roots: input.roots,
+    occupiedWorkspaces: new Set(),
+  });
+  if ("refusal" in checked) return checked.refusal;
+  const same = checked.workspace === input.workspace &&
+    checked.roots.length === input.roots.length &&
+    checked.roots.every((root, i) => root === input.roots[i]);
+  return same
+    ? null
+    : "its workspace or extra roots no longer resolve to the approved paths";
+}
+
 async function validateDispatchPaths(input: {
   config: DispatchConfig;
   env: Env;

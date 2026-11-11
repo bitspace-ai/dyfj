@@ -135,7 +135,7 @@ export async function promptMidTurnApproval(
   const title = typeof r.title === "string"
     ? r.title
     : String(r.commandId ?? "tool");
-  io.err(`\n⚠  approve ${title}?`);
+  io.err(`\n⚠  approve ${escapeApprovalText(title)}?`);
   io.err(
     formatApprovalArgs(
       r.arguments,
@@ -206,15 +206,33 @@ function spendApprovalUnavailable(crossedScopes: unknown): string {
     (unknown.size === 0 ? "" : `; ${count} more ${verb} unknown`);
 }
 
+/**
+ * `text` with every C0/C1 control character except newline shown as a visible
+ * `\xNN` escape, so model-influenced approval text (a task preview, a command)
+ * cannot clear, move over or hide the prompt the operator is answering.
+ */
+export function escapeApprovalText(text: string): string {
+  return text.replace(
+    /[\x00-\x09\x0B-\x1F\x7F-\x9F]/g,
+    (c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, "0")}`,
+  );
+}
+
 function formatApprovalArgs(args: unknown, previewChars = 200): string {
-  if (typeof args !== "object" || args === null) return `   ${String(args)}`;
+  if (typeof args !== "object" || args === null) {
+    return `   ${escapeApprovalText(String(args))}`;
+  }
   const lines: string[] = [];
   for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
     const preview = raw.length > previewChars
       ? `${raw.slice(0, previewChars)}… (${raw.length} chars)`
       : raw;
-    lines.push(`   ${key}: ${preview.replace(/\n/g, "\n     ")}`);
+    lines.push(
+      `   ${escapeApprovalText(key)}: ${
+        escapeApprovalText(preview).replace(/\n/g, "\n     ")
+      }`,
+    );
   }
   return lines.join("\n");
 }

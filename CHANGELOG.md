@@ -41,7 +41,12 @@ README are tracked separately in its Revision history section.
     never `message` (the precheck reads `message` only to check its type and
     size). The grant covers one child label for the coordinator session, and
     `dispatch/send` refuses while the child is `running` or
-    `awaiting_approval`. `dispatch/wait` and `dispatch/read` are `allow`.
+    `awaiting_approval`. Before each follow-up it re-checks the child's
+    workspace and extra roots, and refuses if one is no longer an accessible
+    directory inside `[dispatch].roots` or no longer resolves to the path
+    approved at start. The TypeScript approval prompt shows control
+    characters in any argument (such as the task preview) as visible `\xNN`
+    escapes. `dispatch/wait` and `dispatch/read` are `allow`.
   - **Headless child turns and parked approvals.** Child turns run headless
     under `ParkedApprovals`, never under the coordinator's client approver,
     session grants or paid posture. A child's first turn starts a new session

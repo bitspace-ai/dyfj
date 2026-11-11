@@ -56,6 +56,7 @@ import {
   classifyTurnFailure,
   classifyTurnReceipt,
   planDispatchStart,
+  revalidateChildPaths,
 } from "./dispatch-plan.ts";
 import type { HeadlessTurn, HeadlessTurns } from "./headless-turn.ts";
 import type {
@@ -883,6 +884,15 @@ export class DispatchService implements DispatchEnginePorts {
     }
     if (entry.state !== "idle") {
       return `child "${safeLabel}" is ${entry.state} and cannot accept a follow-up`;
+    }
+    const pathRefusal = await revalidateChildPaths({
+      config: this.#config,
+      env: this.#env,
+      workspace: entry.workspace,
+      roots: entry.roots,
+    });
+    if (pathRefusal !== null) {
+      return `child "${safeLabel}" cannot accept a follow-up: ${pathRefusal}`;
     }
     return null;
   }
