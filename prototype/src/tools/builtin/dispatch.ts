@@ -278,7 +278,7 @@ function defineDispatchWait(
       properties: {
         children: {
           anyOf: [
-            { type: "string", enum: ["all"] },
+            { type: "string", pattern: DISPATCH_LABEL_SCHEMA_PATTERN },
             {
               type: "array",
               maxItems: 32,
@@ -289,7 +289,7 @@ function defineDispatchWait(
             },
           ],
           description:
-            'Child labels to watch, or "all" (default "all"). Only this coordinator\'s children.',
+            'One child label, a list of child labels, or "all" (default "all"). Only this coordinator\'s children.',
         },
         mode: {
           type: "string",
@@ -317,17 +317,22 @@ function defineDispatchWait(
     },
     executor: async (call) => {
       const rawChildren = call.arguments["children"] ?? "all";
+      // A single label string is accepted as a one-element list; the string
+      // "all" keeps its meaning of every child.
+      const listed = typeof rawChildren === "string" && rawChildren !== "all"
+        ? [rawChildren]
+        : rawChildren;
       if (
-        rawChildren !== "all" &&
-        (!Array.isArray(rawChildren) || rawChildren.length === 0)
+        listed !== "all" &&
+        (!Array.isArray(listed) || listed.length === 0)
       ) {
         throw new CommandExecutionError(
-          'dispatch/wait refused: children must be "all" or a non-empty list of child labels',
+          'dispatch/wait refused: children must be "all", a child label, or a non-empty list of child labels',
         );
       }
-      const children: "all" | readonly string[] = rawChildren === "all"
+      const children: "all" | readonly string[] = listed === "all"
         ? "all"
-        : (rawChildren as string[]);
+        : (listed as string[]);
       const mode = call.arguments["mode"] === "all" ? "all" : "any";
       const timeoutSeconds = call.arguments["timeoutSeconds"];
       if (

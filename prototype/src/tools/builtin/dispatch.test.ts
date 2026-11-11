@@ -706,3 +706,47 @@ describe("dispatch approval and session-grant posture", () => {
     assert.deepStrictEqual(prompts[1]!.arguments, { child: "review" });
   });
 });
+
+describe("dispatch/wait children argument", () => {
+  it('accepts one label as a string, a list, or "all", and passes the watched set on', async () => {
+    const seen: unknown[] = [];
+    const base = stubPorts();
+    const registry = createCommandRegistry();
+    for (
+      const cmd of defineDispatchTools(
+        stubPorts({
+          wait: (input) => {
+            seen.push(input.children);
+            return base.wait(input);
+          },
+        }),
+      )
+    ) {
+      registry.register(cmd);
+    }
+    const noPrompt: ConfirmToolApproval = () =>
+      Promise.reject(new Error("dispatch/wait must not prompt"));
+
+    for (const children of ["writer", ["writer", "impl"], "all", undefined]) {
+      const res = await invokeCommand(
+        registry,
+        makeCall("dispatch/wait", {
+          ...(children === undefined ? {} : { children }),
+          timeoutSeconds: 5,
+        }),
+        noPrompt,
+        { loopback: true },
+      );
+      assert.strictEqual(res.isError, false);
+    }
+    assert.deepStrictEqual(seen, [["writer"], ["writer", "impl"], "all", "all"]);
+
+    const bad = await invokeCommand(
+      registry,
+      makeCall("dispatch/wait", { children: "Not A Label", timeoutSeconds: 5 }),
+      noPrompt,
+      { loopback: true },
+    );
+    assert.strictEqual(bad.isError, true);
+  });
+});
