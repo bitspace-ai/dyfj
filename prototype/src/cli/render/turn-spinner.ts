@@ -233,10 +233,13 @@ export function spinnerGuardedTurnHandlers(
       }
     },
     onApproval: async (request) => {
-      spinner.pause();
+      // Events keep arriving while the prompt waits; each calls start(). The
+      // hold keeps those redraws from erasing the prompt's choices.
+      const release = spinner.hold();
       try {
         return await onApproval(request);
       } finally {
+        release();
         spinner.updateLabel("working…");
         spinner.start();
       }

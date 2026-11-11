@@ -46,6 +46,13 @@ export interface BusySpinner {
    * the elapsed-time counter. Repaints immediately when already spinning.
    */
   updateLabel(newLabel: string): void;
+  /**
+   * Pause and keep the spinner off the terminal until the returned release
+   * runs, so another component (an approval prompt) can own the line. start()
+   * is a no-op while any hold is open. Release does not restart the spinner;
+   * the holder calls start() afterwards. Each release counts once.
+   */
+  hold(): () => void;
 }
 
 export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
@@ -60,6 +67,7 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
   let frame = 0;
   let stopped = false;
   let startedAtMs: number | null = null;
+  let holds = 0;
 
   function paint(): void {
     const elapsedSec = startedAtMs === null
@@ -72,19 +80,21 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
     );
   }
 
+  function pause(): void {
+    if (stopped || timer === null) return;
+    clearIntervalFn(timer);
+    timer = null;
+    options.write(ERASE_LINE);
+  }
+
   return {
     start(): void {
-      if (!options.enabled || stopped || timer !== null) return;
+      if (!options.enabled || stopped || holds > 0 || timer !== null) return;
       startedAtMs ??= nowMs();
       paint();
       timer = setIntervalFn(paint, intervalMs);
     },
-    pause(): void {
-      if (stopped || timer === null) return;
-      clearIntervalFn(timer);
-      timer = null;
-      options.write(ERASE_LINE);
-    },
+    pause,
     stop(): void {
       if (stopped) return;
       stopped = true;
@@ -100,6 +110,16 @@ export function createBusySpinner(options: BusySpinnerOptions): BusySpinner {
       if (timer !== null) {
         paint();
       }
+    },
+    hold(): () => void {
+      holds += 1;
+      pause();
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        holds -= 1;
+      };
     },
   };
 }
