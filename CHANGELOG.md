@@ -77,9 +77,10 @@ README are tracked separately in its Revision history section.
     coordinator's own assistant text, including anything it quoted from a
     report. `task` and `message` reach the child
     wrapped and escaped in `<coordinator-message from-session="…">`. The
-    coordinator's system context gets a standing line on the trust boundary,
-    and so does a native child's; a Codex-routed (ACP) child gets that line as
-    a prefix of its prompt. `dispatch/start` records the dispatch lineage on
+    coordinator's system context gets a standing line on the trust boundary.
+    A native child's gets one that names the coordinator message as its task
+    and says the coordinator is not the operator and cannot approve anything;
+    a Codex-routed (ACP) child gets that line as a prefix of its prompt. `dispatch/start` records the dispatch lineage on
     the child's `session_start` event and writes a `dispatch_started` event on
     the coordinator (`schema/migrations/027_events_dispatch_started.sql`). If
     that write fails, the runtime requests cancellation of the child's turn
