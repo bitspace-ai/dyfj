@@ -1,6 +1,6 @@
 /**
- * Envelope rendering, catalog family derivation, and bounded turn/tool-event
- * projection for coordinator dispatch (BIT-907).
+ * Envelope rendering and bounded turn/tool-event projection for coordinator
+ * dispatch (BIT-907).
  */
 
 import type { DispatchConfig } from "../../config/mod.ts";
@@ -29,6 +29,9 @@ export const MAX_DISPATCH_REPORT_BYTES = 16 * 1024;
 
 /** Maximum extra roots (`roots`) a `dispatch/start` call may request. */
 export const MAX_DISPATCH_ROOTS = 4;
+
+/** Maximum tool events returned per turn by `dispatch/read` (the most recent ones). */
+export const MAX_DISPATCH_TOOL_EVENTS_PER_TURN = 50;
 
 /** Maximum turn count (`turns`) a `dispatch/read` call may request. */
 export const MAX_DISPATCH_READ_TURNS = 20;
@@ -84,7 +87,7 @@ export interface DispatchStartPlan {
   model: string;
   effort: string | null;
   route: "native" | "acp";
-  family: string;
+  family: string | null;
   workspace: string;
   roots: readonly string[];
   approvePaid: boolean;
@@ -98,7 +101,7 @@ export interface DispatchStartResult {
   model: string;
   effort: string | null;
   route: "native" | "acp";
-  family: string;
+  family: string | null;
   workspace: string;
   state: "running";
 }
@@ -131,7 +134,10 @@ export interface DispatchReadTurn {
   turnId: string;
   report: string;
   truncated: boolean;
+  /** The turn's most recent tool events, at most `MAX_DISPATCH_TOOL_EVENTS_PER_TURN`. */
   toolEvents: DispatchToolEvent[];
+  /** Earlier tool events of the turn left out by that cap. */
+  toolEventsOmitted: number;
 }
 
 export interface DispatchReadInput {
@@ -150,7 +156,7 @@ export interface DispatchReadResult {
   model: string;
   effort: string | null;
   route: "native" | "acp";
-  family: string;
+  family: string | null;
   state: DispatchChildState;
   turns: DispatchReadTurn[];
 }
@@ -176,7 +182,14 @@ export interface DispatchSessionPorts {
   checkStart(
     input: DispatchStartInput,
   ): Promise<{ plan: DispatchStartPlan } | { refusal: string }>;
-  start(input: DispatchStartInput): Promise<DispatchStartResult>;
+  /**
+   * Launch a child. `approved` is the plan the operator approved; the launch
+   * is refused unless re-resolving the plan now yields the same plan.
+   */
+  start(
+    input: DispatchStartInput,
+    approved: DispatchStartPlan,
+  ): Promise<DispatchStartResult>;
   wait(
     input: DispatchWaitInput,
     signal?: AbortSignal,
@@ -193,7 +206,8 @@ export interface DispatchSessionPorts {
  */
 export function escapeDispatchEnvelopeText(text: string): string {
   return text.replace(
-    /<(\s*\/?\s*(?:child-report|coordinator-message))/gi,
+    // One whitespace run per position, so the match is linear in the input.
+    /<(\s*(?:\/\s*)?(?:child-report|coordinator-message))/gi,
     "&lt;$1",
   );
 }
@@ -241,8 +255,11 @@ export function renderCoordinatorMessage(input: {
 
 /**
  * Format a `DispatchReadResult` for the coordinator model's tool message and
- * durable `tool_call` record: structured dispatch metadata and value-checked
- * tool events, followed by the child's report inside `renderChildReport`.
+ * durable `tool_call` record. The JSON header carries only runtime-owned
+ * dispatch metadata (lineage, catalog pins and live state). Everything derived
+ * from the child's persisted events (turn ids, report text and tool events) is
+ * rendered inside the one `renderChildReport` envelope, so no child-derived
+ * text reaches the coordinator model outside it.
  */
 export function formatDispatchReadResult(result: DispatchReadResult): string {
   const header = JSON.stringify({
@@ -253,21 +270,9 @@ export function formatDispatchReadResult(result: DispatchReadResult): string {
     route: result.route,
     family: result.family,
     state: result.state,
-    turns: result.turns.map((turn) => ({
-      turnId: turn.turnId,
-      truncated: turn.truncated,
-      toolEvents: turn.toolEvents,
-    })),
+    turnCount: result.turns.length,
   });
-  const body = result.turns.length === 0
-    ? ""
-    : result.turns.length === 1
-    ? result.turns[0].report
-    : result.turns
-      .map((turn) =>
-        `[turn ${turn.turnId}${turn.truncated ? ", truncated" : ""}]\n${turn.report}`
-      )
-      .join("\n\n");
+  const body = result.turns.map(renderReadTurn).join("\n\n");
   return `${header}\n${renderChildReport({
     sessionId: result.child.sessionId,
     label: result.child.label,
@@ -275,69 +280,33 @@ export function formatDispatchReadResult(result: DispatchReadResult): string {
   })}`;
 }
 
-/**
- * Derive the canonical model family strictly from the catalog entry (`provider`
- * and `slug`), never from model-reported text.
- */
-export function modelFamilyFromCatalog(entry: {
-  slug: string;
-  provider: string;
-}): string {
-  const provider = entry.provider.trim().toLowerCase();
-  const slug = entry.slug.trim().toLowerCase();
-
-  if (provider === "anthropic" || slug.startsWith("anthropic/")) {
-    return "claude";
+function renderReadTurn(turn: DispatchReadTurn): string {
+  const lines = [
+    `[turn ${turn.turnId}${turn.truncated ? ", truncated" : ""}]`,
+    turn.report,
+  ];
+  if (turn.toolEvents.length > 0 || turn.toolEventsOmitted > 0) {
+    lines.push("[tool events]");
+    for (const event of turn.toolEvents) {
+      lines.push(`- ${event.toolName} (${event.status}): ${event.summary}`);
+    }
+    if (turn.toolEventsOmitted > 0) {
+      lines.push(`- ${turn.toolEventsOmitted} earlier tool events omitted`);
+    }
   }
-  if (
-    provider === "openai" ||
-    provider === "codex-chatgpt" ||
-    slug.startsWith("openai/") ||
-    slug.startsWith("codex-chatgpt/")
-  ) {
-    return "gpt";
-  }
-  if (provider === "google" || slug.startsWith("google/")) {
-    return "gemini";
-  }
-  if (provider === "xai" || slug.startsWith("x-ai/")) {
-    return "grok";
-  }
-  if (slug.startsWith("deepseek/") || slug.includes("/deepseek")) {
-    return "deepseek";
-  }
-  if (slug.startsWith("qwen/") || slug.includes("/qwen")) {
-    return "qwen";
-  }
-  if (slug.startsWith("meta-llama/") || slug.includes("/llama")) {
-    return "llama";
-  }
-  if (slug.startsWith("meta/muse") || slug.includes("/muse")) {
-    return "muse";
-  }
-  if (slug.startsWith("minimax/")) {
-    return "minimax";
-  }
-  if (slug.startsWith("mistralai/") || slug.includes("/mistral")) {
-    return "mistral";
-  }
-  if (slug.startsWith("moonshotai/") || slug.includes("/kimi")) {
-    return "kimi";
-  }
-  if (slug.startsWith("z-ai/") || slug.includes("/glm")) {
-    return "glm";
-  }
-  if (slug === "fixture") {
-    return "fixture";
-  }
-  const slash = slug.indexOf("/");
-  const vendor = slash > 0 ? slug.slice(0, slash) : provider || slug;
-  return sanitizeBoundaryText(vendor, 64) || "unknown";
+  return lines.join("\n");
 }
 
 const MAX_TOOL_NAME_BYTES = 128;
 const MAX_TOOL_TITLE_BYTES = 160;
-const MAX_TOOL_STATUS_BYTES = 32;
+// ACP tool-call statuses a history-gap record may carry. Any other value is
+// child-influenced free text and is replaced by "partial" or "rejected".
+const GAP_TOOL_STATUSES: ReadonlySet<string> = new Set([
+  "pending",
+  "in_progress",
+  "completed",
+  "failed",
+]);
 const MAX_TOOL_SUMMARY_BYTES = 240;
 const MAX_PREVIEW_BUILD_CHARS = 384;
 const MAX_PREVIEW_DEPTH = 3;
@@ -380,7 +349,10 @@ function clipWithEllipsis(value: string, maxBytes: number): string {
 
 function sanitizeToolField(value: unknown, maxBytes: number): string | null {
   if (typeof value !== "string") return null;
-  const cleaned = stripControlChars(value).trim();
+  // Only a bounded prefix can survive the byte limit or the sensitive-shape
+  // scan, so neither the strip nor the encode walks the whole field.
+  const cleaned = stripControlChars(value.slice(0, MAX_SENSITIVE_SCAN_CHARS))
+    .trim();
   if (cleaned.length === 0) return null;
   if (containsSensitiveShape(cleaned.slice(0, MAX_SENSITIVE_SCAN_CHARS))) {
     return null;
@@ -616,8 +588,12 @@ function projectSingleToolEvent(
         sanitizeToolField(args.toolName, MAX_TOOL_NAME_BYTES) ??
           ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
       ),
-      status: sanitizeToolField(args.status, MAX_TOOL_STATUS_BYTES) ??
-        (rejected ? "rejected" : "partial"),
+      status: typeof args.status === "string" &&
+          GAP_TOOL_STATUSES.has(args.status)
+        ? args.status
+        : rejected
+        ? "rejected"
+        : "partial",
       summary: escapeDispatchEnvelopeText(summaryText || reason),
     };
   }
@@ -648,7 +624,10 @@ function projectSingleToolEvent(
 
 /**
  * Project a child session's persisted events into bounded per-turn reports and
- * value-checked tool summaries for `dispatch/read`.
+ * value-checked tool summaries for `dispatch/read`. Each turn bucket holds at
+ * most `MAX_DISPATCH_TOOL_EVENTS_PER_TURN` of its most recent tool-call events
+ * (the input is the child session's event page, at most 5,000 events), and
+ * only the selected turns are projected.
  */
 export function projectChildTurnsForRead(
   events: readonly WorkbenchSessionEvent[],
@@ -661,7 +640,8 @@ export function projectChildTurnsForRead(
     turnId: string;
     isExternal: boolean;
     rawReport: string;
-    toolEvents: DispatchToolEvent[];
+    toolCalls: WorkbenchSessionEvent[];
+    toolCallsOmitted: number;
   }
 
   const byTrace = new Map<string, TurnBucket>();
@@ -686,7 +666,8 @@ export function projectChildTurnsForRead(
         turnId: traceId,
         isExternal: false,
         rawReport: "",
-        toolEvents: [],
+        toolCalls: [],
+        toolCallsOmitted: 0,
       };
       byTrace.set(traceId, bucket);
       ordered.push(bucket);
@@ -712,7 +693,11 @@ export function projectChildTurnsForRead(
       event.eventType === "tool_call" &&
       event.toolName !== "repo_context.load"
     ) {
-      bucket.toolEvents.push(projectSingleToolEvent(event, bucket.isExternal));
+      bucket.toolCalls.push(event);
+      if (bucket.toolCalls.length > MAX_DISPATCH_TOOL_EVENTS_PER_TURN) {
+        bucket.toolCalls.shift();
+        bucket.toolCallsOmitted += 1;
+      }
     }
   }
 
@@ -722,18 +707,36 @@ export function projectChildTurnsForRead(
   const selected = ordered.slice(-count);
 
   return selected.map((bucket) => {
-    const encoded = new TextEncoder().encode(bucket.rawReport);
-    const truncated = encoded.byteLength > MAX_DISPATCH_REPORT_BYTES;
-    const report = truncated
-      ? new TextDecoder("utf-8").decode(
-        utf8SafePrefix(encoded, MAX_DISPATCH_REPORT_BYTES),
-      )
-      : bucket.rawReport;
+    const { report, truncated } = capReport(bucket.rawReport);
     return {
       turnId: bucket.turnId,
       report,
       truncated,
-      toolEvents: options.includeToolEvents ? bucket.toolEvents : [],
+      toolEvents: bucket.toolCalls.map((event) =>
+        projectSingleToolEvent(event, bucket.isExternal)
+      ),
+      toolEventsOmitted: bucket.toolCallsOmitted,
     };
   });
+}
+
+/**
+ * Cap a report at `MAX_DISPATCH_REPORT_BYTES` UTF-8 bytes without encoding the
+ * whole of an oversized report: a UTF-16 code unit is at least one UTF-8 byte,
+ * so only the first `MAX_DISPATCH_REPORT_BYTES` code units can survive the cap.
+ */
+function capReport(raw: string): { report: string; truncated: boolean } {
+  const head = raw.length > MAX_DISPATCH_REPORT_BYTES
+    ? raw.slice(0, MAX_DISPATCH_REPORT_BYTES)
+    : raw;
+  const encoded = new TextEncoder().encode(head);
+  if (head.length === raw.length && encoded.byteLength <= MAX_DISPATCH_REPORT_BYTES) {
+    return { report: raw, truncated: false };
+  }
+  return {
+    report: new TextDecoder("utf-8").decode(
+      utf8SafePrefix(encoded, MAX_DISPATCH_REPORT_BYTES),
+    ),
+    truncated: true,
+  };
 }

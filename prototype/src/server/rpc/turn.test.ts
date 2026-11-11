@@ -13,7 +13,11 @@ import type { CommandDefinition } from "../../tools/mod.ts";
 import { type RpcContext, RpcErrorCode } from "../../transport/mod.ts";
 import { callRpc, rpcFailure } from "../../../testing/builders/rpc.ts";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
-import { buildTurnHandlers, type TurnHandlerDeps } from "./turn.ts";
+import {
+  buildTurnHandlers,
+  createSessionEventHub,
+  type TurnHandlerDeps,
+} from "./turn.ts";
 
 // The runtime fakes return receipt-shaped stubs, not full results.
 const result = (value: unknown) => value as WorkbenchRuntimeResult;
@@ -1003,4 +1007,48 @@ test("eight idle external-agent sessions fill capacity", async () => {
   } finally {
     await map.shutdown();
   }
+});
+
+test("session event hub delivers a notice to idle attached clients while another client runs a turn", async () => {
+  const hub = createSessionEventHub();
+  const notified: Array<{ peer: string; params: unknown }> = [];
+  const peer = (name: string): RpcContext => ({
+    notify: (_method, params) => {
+      notified.push({ peer: name, params });
+      return Promise.resolve();
+    },
+    request: () => Promise.reject(new Error("unused")),
+  });
+  const running = peer("running");
+  const idle = peer("idle");
+  const elsewhere = peer("elsewhere");
+  hub.bindPeer(running, "s1");
+  hub.bindPeer(idle, "s1");
+  hub.bindPeer(elsewhere, "s2");
+  const sinkEvents: unknown[] = [];
+  const detach = hub.attachTurn("s1", running, (event) => {
+    sinkEvents.push(event);
+  });
+
+  const event = {
+    type: "childApprovalParked",
+    sessionId: "s1",
+    childSessionId: "c1",
+    label: "impl",
+  } as const;
+  hub.emit("s1", event);
+  // The running client hears it once, through its turn's sink; the idle
+  // client on the same session hears it as a stream notification.
+  assert.deepStrictEqual(sinkEvents, [event]);
+  assert.deepStrictEqual(notified, [
+    { peer: "idle", params: { t: "event", event } },
+  ]);
+
+  detach();
+  notified.length = 0;
+  hub.emit("s1", event);
+  assert.deepStrictEqual(
+    notified.map((n) => n.peer).sort(),
+    ["idle", "running"],
+  );
 });

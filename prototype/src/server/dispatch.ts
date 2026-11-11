@@ -115,22 +115,40 @@ interface ChildEntry {
   readonly model: string;
   readonly effort: string | null;
   readonly route: "native" | "acp";
-  readonly family: string;
+  readonly family: string | null;
   readonly workspace: string;
   readonly roots: readonly string[];
   readonly approvePaid: boolean;
   state: DispatchChildState;
   turnInFlight: boolean;
   released: boolean;
+  /** Started, but its `dispatch_started` record could not be written. */
+  abandoned: boolean;
   idleSinceMs: number | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
 }
 
 function isLiveChild(entry: ChildEntry): boolean {
+  if (entry.abandoned) return false;
   if (entry.state === "running" || entry.state === "awaiting_approval") {
     return true;
   }
   return entry.state === "idle" && !entry.released;
+}
+
+/** Whether two resolved launch plans pin the same child launch. */
+function sameStartPlan(a: DispatchStartPlan, b: DispatchStartPlan): boolean {
+  return (
+    a.label === b.label &&
+    a.model === b.model &&
+    a.effort === b.effort &&
+    a.route === b.route &&
+    a.family === b.family &&
+    a.workspace === b.workspace &&
+    a.approvePaid === b.approvePaid &&
+    a.roots.length === b.roots.length &&
+    a.roots.every((root, i) => root === b.roots[i])
+  );
 }
 
 export class DispatchService implements DispatchEnginePorts {
@@ -198,7 +216,7 @@ export class DispatchService implements DispatchEnginePorts {
       depth: context.depth,
       abortSignal: context.abortSignal,
       checkStart: (input) => this.#checkStart(context, input),
-      start: (input) => this.#start(context, input),
+      start: (input, approved) => this.#start(context, input, approved),
       wait: (input, signal) => this.#wait(context, input, signal),
       read: (input) => this.#read(context, input),
       checkSend: (child) => this.#checkSend(context, child),
@@ -432,12 +450,23 @@ export class DispatchService implements DispatchEnginePorts {
   async #start(
     context: CoordinatorContext,
     input: DispatchStartInput,
+    approved: DispatchStartPlan,
   ): Promise<DispatchStartResult> {
     const checked = await this.#checkStart(context, input);
     if ("refusal" in checked) {
       throw new CommandExecutionError(checked.refusal);
     }
     const { plan } = checked;
+    // The operator approved `approved`. A path retargeted (a symlink, say) or
+    // a catalog change while the prompt was open would launch something else,
+    // so the launch is refused unless the fresh plan is the approved one.
+    if (!sameStartPlan(plan, approved)) {
+      throw new CommandExecutionError(
+        `child "${sanitizeBoundaryText(plan.label, 64)}" was not started: ` +
+          "its launch plan changed after approval (workspace, roots, model, " +
+          "effort, route or paid posture); start it again to review the new plan",
+      );
+    }
 
     let startingSet = this.#startingByCoordinator.get(context.parentSessionId);
     if (startingSet === undefined) {
@@ -497,6 +526,7 @@ export class DispatchService implements DispatchEnginePorts {
           : "running",
         turnInFlight: true,
         released: false,
+        abandoned: false,
         idleSinceMs: null,
         idleTimer: null,
       };
@@ -528,12 +558,16 @@ export class DispatchService implements DispatchEnginePorts {
       const childSessionId = await started.recorded;
       const entry = registerChild(childSessionId);
       this.#attachTurnSettlement(entry, started);
-      await this.#commitDispatchStarted(
-        context,
-        childSessionId,
-        plan,
-        dispatchRecord,
-      );
+      try {
+        await this.#commitDispatchStarted(
+          context,
+          childSessionId,
+          plan,
+          dispatchRecord,
+        );
+      } catch (error) {
+        throw this.#abandonUnrecordedChild(entry, started, error);
+      }
 
       return {
         child: { sessionId: childSessionId, label: plan.label },
@@ -561,13 +595,52 @@ export class DispatchService implements DispatchEnginePorts {
     }
   }
 
+  /**
+   * The child was started but its coordinator-side `dispatch_started` record
+   * could not be written. An unrecorded child must not keep its slot or keep
+   * running: request cancellation of its turn, free the slot now, and return
+   * an error that names the child session and says whether the cancellation
+   * took effect. A turn that already ended keeps the state it ended in.
+   */
+  #abandonUnrecordedChild(
+    entry: ChildEntry,
+    turn: HeadlessTurn,
+    error: unknown,
+  ): CommandExecutionError {
+    entry.abandoned = true;
+    entry.released = true;
+    this.#clearIdleTimer(entry);
+    let outcome: string;
+    if (!entry.turnInFlight) {
+      // The turn already settled; settlement will not run again to drop the
+      // warm external-agent handle.
+      void this.#releaseExternalAgentSession?.(entry.sessionId).catch(() => {});
+      outcome = `Its turn had already ended (${entry.state}); its slot was released.`;
+    } else if (turn.ticket.cancel()) {
+      entry.state = "cancelled";
+      outcome = "Cancellation of its turn was requested and its slot released.";
+    } else {
+      outcome =
+        "Cancellation of its turn was declined, so it may still finish; its " +
+        "slot was released.";
+    }
+    this.#wakeWaiters(entry.parentSessionId);
+    return new CommandExecutionError(
+      `child "${sanitizeBoundaryText(entry.label, 64)}" (session ` +
+        `${entry.sessionId}) started, but its dispatch record could not be ` +
+        `written: ${summarizeError(error)}. ${outcome} Nothing else was started.`,
+    );
+  }
+
   #attachTurnSettlement(entry: ChildEntry, turn: HeadlessTurn): void {
     void turn.result.then(
       (receipt) => {
         entry.turnInFlight = false;
         const next = classifyTurnReceipt(receipt);
-        entry.state = next;
-        if (next === "idle") {
+        entry.state = entry.state === "cancelled" && entry.abandoned
+          ? "cancelled"
+          : next;
+        if (next === "idle" && !entry.abandoned) {
           this.#armIdleTimer(entry);
         } else {
           this.#clearIdleTimer(entry);
@@ -860,6 +933,9 @@ export class DispatchService implements DispatchEnginePorts {
     } catch (error) {
       entry.turnInFlight = false;
       entry.state = classifyTurnFailure(error, started.ticket.signal.aborted);
+      // The settlement handler that drops a warm external-agent handle is not
+      // attached yet, so drop it here.
+      void this.#releaseExternalAgentSession?.(entry.sessionId).catch(() => {});
       this.#wakeWaiters(entry.parentSessionId);
       if (error instanceof DomainError) {
         throw new CommandExecutionError(error.message);

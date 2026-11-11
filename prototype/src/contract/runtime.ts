@@ -38,7 +38,7 @@ export interface DispatchRecord {
   model: string;
   effort: string | null;
   route: "native" | "acp";
-  family: string;
+  family: string | null;
   workspace: string;
   roots: readonly string[];
   taskSha256: string;

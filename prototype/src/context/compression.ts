@@ -124,6 +124,23 @@ export function partitionForCompression(
 }
 
 /**
+ * Tool results that carry a dispatched child session's text. Compression never
+ * copies their bodies, because both the compressor's input and the summary it
+ * returns are user-role messages, and child text must reach the coordinator
+ * model only in tool role. This covers the result bodies only: the
+ * coordinator's own assistant text is copied as usual, including anything it
+ * quoted from a report.
+ */
+export const CHILD_REPORT_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "dispatch/read",
+]);
+
+/** What compression renders in place of a withheld child-report tool result. */
+export const CHILD_REPORT_WITHHELD =
+  "[child-session report withheld from compression; call dispatch/read again " +
+  "to see it]";
+
+/**
  * Render elder messages into a plain-text transcript for the compressor to
  * summarize. Roles are labelled; tool calls and results are flattened to short
  * lines. This is content, not a prompt — the framing that it is untrusted lives
@@ -152,6 +169,13 @@ export function renderTranscriptForCompression(
       for (const call of message.toolCalls ?? []) {
         parts.push(`Assistant tool call: ${call.name}`);
       }
+    } else if (CHILD_REPORT_TOOL_NAMES.has(message.name)) {
+      // A child session's report reaches the coordinator only as a tool-role
+      // message (BIT-907). The compressor's input is a user-role message and
+      // its summary re-enters the transcript in user role, so the report is
+      // withheld here rather than copied into user-role text. The child's
+      // turns stay in its own session log, and dispatch/read returns them.
+      parts.push(`Tool result (${message.name}): ${CHILD_REPORT_WITHHELD}`);
     } else {
       // role === "tool"
       parts.push(`Tool result (${message.name}): ${message.content}`);

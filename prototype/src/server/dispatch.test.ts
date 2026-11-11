@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -813,7 +819,7 @@ describe("server dispatch end-to-end (BIT-907)", () => {
         model: LOCAL_MODEL.slug,
         effort: null,
         route: "native",
-        family: "ollama",
+        family: null,
         workspace: childWs,
         roots: [childExtraRoot],
         taskSha256: expectedSha,
@@ -844,7 +850,7 @@ describe("server dispatch end-to-end (BIT-907)", () => {
           label: "impl",
           effort: null,
           route: "native",
-          family: "ollama",
+          family: null,
         },
       );
 
@@ -861,7 +867,7 @@ describe("server dispatch end-to-end (BIT-907)", () => {
         model: LOCAL_MODEL.slug,
         effort: null,
         route: "native",
-        family: "ollama",
+        family: null,
         workspace: childWs,
         roots: [childExtraRoot],
         taskSha256: expectedSha,
@@ -1090,8 +1096,13 @@ describe("server dispatch end-to-end (BIT-907)", () => {
       );
       assert.ok(readBothMsg.includes("first turn report after write"));
       assert.ok(readBothMsg.includes("second turn report"));
-      assert.ok(readBothMsg.includes("\"toolName\":\"write_file\""));
-      assert.ok(readBothMsg.includes("\"status\":\"completed\""));
+      // Tool events ride inside the envelope, never in the JSON header.
+      const envelopeStart = readBothMsg.indexOf("<child-report ");
+      assert.ok(envelopeStart > 0);
+      assert.ok(!readBothMsg.slice(0, envelopeStart).includes("write_file"));
+      assert.ok(
+        readBothMsg.slice(envelopeStart).includes("- write_file (completed): "),
+      );
     } finally {
       await operatorClient.close();
       await client.close();
@@ -1410,6 +1421,268 @@ describe("server dispatch end-to-end (BIT-907)", () => {
       }
     } finally {
       releaseSlowChild();
+      await client.close();
+      await harness.close();
+    }
+  });
+
+  it("refuses a dispatch/start whose launch plan changed while approval was pending", async () => {
+    const coordWs = makeDir(ROOT, "coord-retarget");
+    const approvedTarget = makeDir(ALLOWED_ROOT, "child-approved");
+    const otherTarget = makeDir(ALLOWED_ROOT, "child-other");
+    const link = join(ALLOWED_ROOT, "retarget-link");
+    symlinkSync(approvedTarget, link);
+
+    const provider = createRoutedProvider({
+      coordinator: [
+        {
+          toolCalls: [{
+            id: "r-start",
+            name: "dispatch/start",
+            arguments: {
+              label: "moved",
+              task: "retarget task",
+              model: LOCAL_MODEL.slug,
+              workspace: link,
+            },
+          }],
+        },
+        { content: "retarget checked" },
+      ],
+      defaultChild: [{ content: "must not run" }],
+    });
+    const harness = await startHarness({ http: provider.http });
+    const shown: Array<Record<string, unknown>> = [];
+    const client = await harness.connectClient({
+      approval: (params) => {
+        shown.push(
+          (params as Record<string, unknown>)["arguments"] as Record<
+            string,
+            unknown
+          >,
+        );
+        // The symlink is retargeted to another allowed directory while the
+        // operator is looking at the prompt.
+        unlinkSync(link);
+        symlinkSync(otherTarget, link);
+        return { decision: "approve" };
+      },
+    });
+
+    try {
+      const receipt = await client.peer.request("turn", {
+        prompt: "start a child",
+        workspace: coordWs,
+        routingOptions: { modelId: LOCAL_MODEL.slug },
+      }) as { text: string; sessionId: string };
+      assert.strictEqual(receipt.text, "retarget checked");
+      assert.strictEqual(shown.length, 1);
+      assert.strictEqual(shown[0]!["workspace"], approvedTarget);
+
+      const startMsg = String(
+        provider.coordinatorRequests[1]!.messages.find((m) =>
+          m.tool_call_id === "r-start"
+        )?.content ?? "",
+      );
+      assert.match(startMsg, /launch plan changed after approval/);
+      assert.strictEqual(provider.childRequests.length, 0);
+
+      const coordEvents = (await client.peer.request("events/query", {
+        sessionId: receipt.sessionId,
+      }) as { events: Array<Record<string, unknown>> }).events;
+      assert.ok(
+        !coordEvents.some((e) => e["eventType"] === "dispatch_started"),
+      );
+    } finally {
+      await client.close();
+      await harness.close();
+    }
+  });
+
+  it("cancels a started child and frees its slot when its dispatch record cannot be written", async () => {
+    const coordWs = makeDir(ROOT, "coord-unrecorded");
+    const lostWs = makeDir(ALLOWED_ROOT, "child-lost");
+    const nextWs = makeDir(ALLOWED_ROOT, "child-next");
+    const neverReleased = new Promise<void>(() => {});
+
+    const provider = createRoutedProvider({
+      coordinator: [
+        {
+          toolCalls: [{
+            id: "u-start",
+            name: "dispatch/start",
+            arguments: {
+              label: "lost",
+              task: "lost-task",
+              model: LOCAL_MODEL.slug,
+              workspace: lostWs,
+            },
+          }],
+        },
+        {
+          toolCalls: [
+            {
+              id: "u-read",
+              name: "dispatch/read",
+              arguments: { child: "lost" },
+            },
+            {
+              id: "u-next",
+              name: "dispatch/start",
+              arguments: {
+                label: "next",
+                task: "next-task",
+                model: LOCAL_MODEL.slug,
+                workspace: nextWs,
+              },
+            },
+          ],
+        },
+        { content: "unrecorded checked" },
+      ],
+      childByMatch: [
+        { match: "lost-task", steps: [{ content: "lost", gate: neverReleased }] },
+        { match: "next-task", steps: [{ content: "next done" }] },
+      ],
+    });
+    const harness = await startHarness({
+      http: provider.http,
+      dispatch: { maxChildren: 1, maxWaitSeconds: 50, roots: [ALLOWED_ROOT] },
+    });
+    const commit = harness.store.journal.commit;
+    let failedOnce = false;
+    harness.store.journal.commit = (batch, opts) => {
+      if (!failedOnce && JSON.stringify(batch).includes("dispatch_started")) {
+        failedOnce = true;
+        return Promise.reject(new Error("journal unavailable"));
+      }
+      return commit(batch, opts);
+    };
+    const client = await harness.connectClient({
+      approval: () => ({ decision: "approve" }),
+    });
+
+    try {
+      const receipt = await client.peer.request("turn", {
+        prompt: "start children",
+        workspace: coordWs,
+        routingOptions: { modelId: LOCAL_MODEL.slug },
+      }) as { text: string };
+      assert.strictEqual(receipt.text, "unrecorded checked");
+      assert.ok(failedOnce);
+
+      const step2 = provider.coordinatorRequests[1]!.messages;
+      const startMsg = String(
+        step2.find((m) => m.tool_call_id === "u-start")?.content ?? "",
+      );
+      assert.match(startMsg, /dispatch record could not be written/);
+      assert.match(startMsg, /Cancellation of its turn was requested and its slot released/);
+
+      const step3 = provider.coordinatorRequests[2]!.messages;
+      const readMsg = String(
+        step3.find((m) => m.tool_call_id === "u-read")?.content ?? "",
+      );
+      const header = JSON.parse(readMsg.slice(0, readMsg.indexOf("\n"))) as {
+        state: string;
+      };
+      assert.strictEqual(header.state, "cancelled");
+      // With max_children = 1, the next start runs only if the slot was freed.
+      const nextMsg = String(
+        step3.find((m) => m.tool_call_id === "u-next")?.content ?? "",
+      );
+      assert.match(nextMsg, /"state":"running"/);
+    } finally {
+      await client.close();
+      await harness.close();
+    }
+  });
+
+  it("reports a child that already finished, not cancelled, when its dispatch record cannot be written", async () => {
+    const coordWs = makeDir(ROOT, "coord-finished");
+    const quickWs = makeDir(ALLOWED_ROOT, "child-quick");
+    const nextWs = makeDir(ALLOWED_ROOT, "child-after-quick");
+    const provider = createRoutedProvider({
+      coordinator: [
+        {
+          toolCalls: [{
+            id: "q-start",
+            name: "dispatch/start",
+            arguments: {
+              label: "quick",
+              task: "quick-task",
+              model: LOCAL_MODEL.slug,
+              workspace: quickWs,
+            },
+          }],
+        },
+        {
+          toolCalls: [
+            { id: "q-read", name: "dispatch/read", arguments: { child: "quick" } },
+            {
+              id: "q-next",
+              name: "dispatch/start",
+              arguments: {
+                label: "after",
+                task: "after-task",
+                model: LOCAL_MODEL.slug,
+                workspace: nextWs,
+              },
+            },
+          ],
+        },
+        { content: "finished checked" },
+      ],
+      childByMatch: [
+        { match: "quick-task", steps: [{ content: "quick done" }] },
+        { match: "after-task", steps: [{ content: "after done" }] },
+      ],
+    });
+    const harness = await startHarness({
+      http: provider.http,
+      dispatch: { maxChildren: 1, maxWaitSeconds: 50, roots: [ALLOWED_ROOT] },
+    });
+    const commit = harness.store.journal.commit;
+    let failedOnce = false;
+    harness.store.journal.commit = async (batch, opts) => {
+      if (!failedOnce && JSON.stringify(batch).includes("dispatch_started")) {
+        failedOnce = true;
+        // Let the child's turn finish before the record write fails.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        throw new Error("journal unavailable");
+      }
+      return await commit(batch, opts);
+    };
+    const client = await harness.connectClient({
+      approval: () => ({ decision: "approve" }),
+    });
+
+    try {
+      const receipt = await client.peer.request("turn", {
+        prompt: "start a quick child",
+        workspace: coordWs,
+        routingOptions: { modelId: LOCAL_MODEL.slug },
+      }) as { text: string };
+      assert.strictEqual(receipt.text, "finished checked");
+      const step2 = provider.coordinatorRequests[1]!.messages;
+      const startMsg = String(
+        step2.find((m) => m.tool_call_id === "q-start")?.content ?? "",
+      );
+      assert.match(startMsg, /dispatch record could not be written/);
+      assert.match(startMsg, /turn had already ended \(idle\)/);
+      const step3 = provider.coordinatorRequests[2]!.messages;
+      const readMsg = String(
+        step3.find((m) => m.tool_call_id === "q-read")?.content ?? "",
+      );
+      const header = JSON.parse(readMsg.slice(0, readMsg.indexOf("\n"))) as {
+        state: string;
+      };
+      assert.strictEqual(header.state, "idle");
+      assert.match(readMsg, /quick done/);
+      const nextMsg = String(
+        step3.find((m) => m.tool_call_id === "q-next")?.content ?? "",
+      );
+      assert.match(nextMsg, /"state":"running"/);
+    } finally {
       await client.close();
       await harness.close();
     }

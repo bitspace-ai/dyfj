@@ -31,7 +31,6 @@ import {
   type DispatchChildState,
   type DispatchStartInput,
   type DispatchStartPlan,
-  modelFamilyFromCatalog,
   overlapsProtectedPath,
   pathWithin,
   protectedPaths,
@@ -369,7 +368,10 @@ export async function planDispatchStart(options: {
       model: model.slug,
       effort,
       route,
-      family: modelFamilyFromCatalog(model),
+      // The model catalog has no family field, and the runtime does not decide
+      // families (see publish-implementer.ts). Record null rather than a guess
+      // in the immutable log until the catalog carries one.
+      family: null,
       workspace: pathCheck.workspace,
       roots: pathCheck.roots,
       approvePaid: options.input.approvePaid === true,

@@ -34,8 +34,14 @@ import {
 
 export * from "./dispatch-envelope.ts";
 
-function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).byteLength;
+/**
+ * Whether `text` is longer than `maxBytes` in UTF-8. A UTF-16 code unit encodes
+ * to at least one UTF-8 byte, so text with more code units than `maxBytes` is
+ * refused without encoding it, and any encoding done is bounded by the limit.
+ */
+function exceedsUtf8Limit(text: string, maxBytes: number): boolean {
+  if (text.length > maxBytes) return true;
+  return new TextEncoder().encode(text).byteLength > maxBytes;
 }
 
 function parseStartInput(
@@ -55,7 +61,7 @@ function parseStartInput(
   if (typeof task !== "string") {
     return { refusal: "task must be a string" };
   }
-  if (utf8ByteLength(task) > MAX_DISPATCH_TASK_BYTES) {
+  if (exceedsUtf8Limit(task, MAX_DISPATCH_TASK_BYTES)) {
     return {
       refusal: `task exceeds the ${MAX_DISPATCH_TASK_BYTES}-byte (32 KiB) limit`,
     };
@@ -111,7 +117,10 @@ function parseStartInput(
 function defineDispatchStart(
   ports: DispatchSessionPorts,
 ): CommandDefinition<DispatchStartResult> {
+  // The plan the precheck resolved, and the plan the operator was shown. The
+  // executor launches only if a fresh resolution still equals the shown plan.
   const cachedPlans = new WeakMap<CommandCall, DispatchStartPlan>();
+  const approvedPlans = new WeakMap<CommandCall, DispatchStartPlan>();
   return {
     id: "dispatch/start",
     title: "Start a child session",
@@ -169,8 +178,9 @@ function defineDispatchStart(
       effects: ["run.process", "write.filesystem", "emit.event"],
       defaultDecision: "ask",
       resources: ["dispatch:child"],
-      // Declaring external network keeps every operator-posture auto-allow path
-      // off dispatch/start so it prompts every time.
+      // The child's turns may call a remote provider. Prompting on every call
+      // comes from `defaultDecision: "ask"`: every auto-allow path in the
+      // policy requires `defaultDecision: "allow"`.
       network: "external",
       filesystem: "write",
       cost: "none",
@@ -208,6 +218,7 @@ function defineDispatchStart(
         0,
         DISPATCH_TASK_APPROVAL_PREVIEW_CHARS,
       );
+      if (plan !== undefined) approvedPlans.set(call, plan);
       if (plan === undefined) {
         return {
           label: parsed.input.label,
@@ -240,7 +251,13 @@ function defineDispatchStart(
           `dispatch/start refused: ${parsed.refusal}`,
         );
       }
-      return await ports.start(parsed.input);
+      const approved = approvedPlans.get(call);
+      if (approved === undefined) {
+        throw new CommandExecutionError(
+          "dispatch/start refused: no approved launch plan for this call",
+        );
+      }
+      return await ports.start(parsed.input, approved);
     },
   };
 }
@@ -443,10 +460,10 @@ function defineDispatchSend(
       cost: "none",
     },
     grantable: true,
-    // Session grant covers one child label on this coordinator session and
-    // never reads message text.
+    // A session grant covers one child label on this coordinator session; the
+    // grant key and the approval prompt never carry message text. The precheck
+    // reads the message only to enforce its type and size limit.
     grantArguments: ["child"],
-    // Approval path never reads message text.
     approvalArguments: (call) => ({
       child: call.arguments["child"],
     }),
@@ -468,7 +485,7 @@ function defineDispatchSend(
       if (typeof message !== "string") {
         return "dispatch/send refused: message must be a string";
       }
-      if (utf8ByteLength(message) > MAX_DISPATCH_TASK_BYTES) {
+      if (exceedsUtf8Limit(message, MAX_DISPATCH_TASK_BYTES)) {
         return `dispatch/send refused: message exceeds the ${MAX_DISPATCH_TASK_BYTES}-byte (32 KiB) limit`;
       }
       const refusal = await ports.checkSend(child);
@@ -492,7 +509,7 @@ function defineDispatchSend(
           "dispatch/send refused: message must be a string",
         );
       }
-      if (utf8ByteLength(message) > MAX_DISPATCH_TASK_BYTES) {
+      if (exceedsUtf8Limit(message, MAX_DISPATCH_TASK_BYTES)) {
         throw new CommandExecutionError(
           `dispatch/send refused: message exceeds the ${MAX_DISPATCH_TASK_BYTES}-byte (32 KiB) limit`,
         );

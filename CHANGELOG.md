@@ -14,43 +14,72 @@ README are tracked separately in its Revision history section.
 - **Coordinator dispatch tools for native sessions (`BIT-907`).** When a
   `[dispatch]` section (`max_children`, `max_wait_seconds`, `roots`) is
   configured in `~/.dyfj/config.toml`, a natively routed coordinator session at
-  dispatch depth `0` gets four bounded tools: `dispatch/start`, `dispatch/wait`,
+  dispatch depth `0` gets four tools: `dispatch/start`, `dispatch/wait`,
   `dispatch/read` and `dispatch/send` (exposing them to Codex-routed
   coordinators is deferred). Dispatch depth is fixed at `1`: child sessions get
-  none of the four tools and cannot start grandchildren.
+  none of the four tools and cannot start grandchildren. The bounds are on
+  concurrency (`max_children`), wait time (`max_wait_seconds`), task and
+  message size (32 KiB), report text (16 KiB per turn), turns per read (20) and
+  tool events per turn (the 50 most recent).
   - **Width and slot release.** Live width counts children in `running`,
-    `awaiting_approval` or `idle`, and releases slots when a child ends in
-    `failed` or `cancelled`, or after 30 minutes `idle` (also dropping any warm
-    external-agent handle for that child session). There is no `dispatch/close`
-    tool.
+    `awaiting_approval` or `idle`, and frees a slot when a child ends in
+    `failed` or `cancelled`, or after 30 minutes `idle`. Freeing a slot also
+    asks the runtime to drop any warm external-agent handle for that child
+    session; that drop is best effort and its failure is not reported. Ended
+    children stay in the runtime's memory until it restarts. There is no
+    `dispatch/close` tool.
   - **Approval and precheck posture.** `dispatch/start` asks every time, is
     never session-grantable, runs its precheck before prompting (refusing width
     overflow, duplicate labels or live child workspaces, unknown/unroutable
     models, workspaces or extra roots resolving outside `[dispatch].roots`, or a
     paid model without `approvePaid: true`), and shows label, model, effort,
-    route, family, workspace and the first 400 characters of `task`.
-    `dispatch/send` asks without reading `message`, may be granted per child
-    label for the coordinator session, and refuses while the child is `running`
-    or `awaiting_approval`. `dispatch/wait` and `dispatch/read` are `allow`.
+    route, family, workspace and the first 400 characters of `task`. After
+    approval it resolves the launch plan again and refuses to start the child
+    if the plan no longer matches the one the operator approved (for example, a
+    workspace symlink retargeted while the prompt was open). The
+    `dispatch/send` prompt and its session grant carry only the child label,
+    never `message` (the precheck reads `message` only to check its type and
+    size). The grant covers one child label for the coordinator session, and
+    `dispatch/send` refuses while the child is `running` or
+    `awaiting_approval`. `dispatch/wait` and `dispatch/read` are `allow`.
   - **Headless child turns and parked approvals.** Child turns run headless
-    under `ParkedApprovals` with a fresh session id and empty session grants,
-    never under the coordinator's client approver or paid posture; operators
-    answer child approvals only by attaching to the child session
-    (`approvals/pending`, `approvals/answer`). When a child parks an approval,
-    connected coordinator clients receive a `childApprovalParked` runtime event
-    and print a one-line notice (`<label> (child) is waiting for approval: dyfj
-    --session <id>`) carrying no prompt text and never sent to the coordinator
-    model.
+    under `ParkedApprovals`, never under the coordinator's client approver,
+    session grants or paid posture. A child's first turn starts a new session
+    with empty session grants. `dispatch/send` runs a follow-up turn in that
+    same child session, so grants the operator gave the child carry over to
+    its follow-ups. Operators answer child approvals only by attaching to the
+    child session (`approvals/pending`, `approvals/answer`). When a child parks
+    an approval, the runtime sends a `childApprovalParked` runtime event to
+    each client running a turn on the coordinator session and to each other
+    client that has run a turn there on its current connection (the runtime
+    keeps the 64 most recent such connections). A client that only attached
+    and has not yet sent a turn does not receive it. The client prints a
+    one-line notice (`<label> (child) is waiting for approval: dyfj --session
+    <id>`). The notice carries no prompt text and is never sent to the
+    coordinator model.
   - **Envelopes and lineage records.** Child text reaches the coordinator model
-    only through `dispatch/read` (16 KiB UTF-8 cap per turn, bounded value-checked
-    tool events), wrapped by `renderChildReport` in `<child-report ...
-    trust="data-not-instructions">` with `<child-report`, `</child-report`,
-    `<coordinator-message` and `</coordinator-message` escaped; `task` and
-    `message` reach the child wrapped and escaped in `<coordinator-message
-    from-session="…">`. Standing system-context lines state the trust boundary
-    on each side. `dispatch/start` records the dispatch lineage on the child's
-    `session_start` event and writes a `dispatch_started` event on the
-    coordinator (`schema/migrations/027_events_dispatch_started.sql`).
+    only through `dispatch/read`. Its result is a JSON header of runtime-owned
+    metadata (lineage, model, effort, route, family, state, turn count),
+    followed by one `<child-report ... trust="data-not-instructions">` envelope
+    built by `renderChildReport`. Everything derived from the child's events
+    (turn ids, report text and tool-event summaries) is inside the envelope,
+    with `<child-report`, `</child-report`, `<coordinator-message` and
+    `</coordinator-message` escaped. Context compression withholds
+    `dispatch/read` result bodies from its input, so the user-role summary it
+    produces is not built from them. Compression still copies the
+    coordinator's own assistant text, including anything it quoted from a
+    report. `task` and `message` reach the child
+    wrapped and escaped in `<coordinator-message from-session="…">`. The
+    coordinator's system context gets a standing line on the trust boundary,
+    and so does a native child's; a Codex-routed (ACP) child gets that line as
+    a prefix of its prompt. `dispatch/start` records the dispatch lineage on
+    the child's `session_start` event and writes a `dispatch_started` event on
+    the coordinator (`schema/migrations/027_events_dispatch_started.sql`). If
+    that write fails, the runtime frees the child's slot and requests
+    cancellation of its turn. The error names the child session and says
+    whether the turn was cancelled, had already ended, or declined
+    cancellation and may still finish. `family` is `null` until the model catalog
+    records a family; the runtime does not infer one.
 
 - **Let one session use more than one directory.** `--add-dir <path>` adds a
   read-write root beside the workspace and `--add-dir <path>:ro` a read-only

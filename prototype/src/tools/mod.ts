@@ -125,7 +125,6 @@ export {
   MAX_DISPATCH_REPORT_BYTES,
   MAX_DISPATCH_ROOTS,
   MAX_DISPATCH_TASK_BYTES,
-  modelFamilyFromCatalog,
   projectChildTurnsForRead,
   renderChildReport,
   renderCoordinatorMessage,

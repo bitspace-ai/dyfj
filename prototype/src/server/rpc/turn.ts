@@ -33,13 +33,17 @@ export type { TurnPosture } from "./turn-core.ts";
 
 /**
  * Delivers out-of-band session-scoped runtime notices (such as a child
- * session parking on an approval) to any client currently running a turn on,
- * or sitting attached to, `sessionId`.
+ * session parking on an approval) to the clients of `sessionId` it knows:
+ * each client running a turn there gets the notice once, through its turn's
+ * sink, and each other connection that has run a turn there (`bindPeer`, the
+ * 64 most recent) gets it as a `stream` notification. A connection that has
+ * not yet run a turn on the session is not known and gets nothing.
  */
 export interface SessionEventHub {
   emit(sessionId: string, event: WorkbenchRuntimeEvent): void;
   attachTurn(
     sessionId: string,
+    ctx: RpcContext,
     sink: (event: WorkbenchRuntimeEvent) => void,
   ): () => void;
   bindPeer(ctx: RpcContext, sessionId: string): void;
@@ -50,22 +54,22 @@ const MAX_IDLE_SESSION_PEERS = 64;
 export function createSessionEventHub(): SessionEventHub {
   const activeSinks = new Map<
     string,
-    Set<(event: WorkbenchRuntimeEvent) => void>
+    Map<RpcContext, (event: WorkbenchRuntimeEvent) => void>
   >();
   const peerSessions = new Map<RpcContext, string>();
 
   return {
-    attachTurn(sessionId, sink) {
+    attachTurn(sessionId, ctx, sink) {
       let sinks = activeSinks.get(sessionId);
       if (sinks === undefined) {
-        sinks = new Set();
+        sinks = new Map();
         activeSinks.set(sessionId, sinks);
       }
-      sinks.add(sink);
+      sinks.set(ctx, sink);
       return () => {
         const current = activeSinks.get(sessionId);
-        if (current === undefined) return;
-        current.delete(sink);
+        if (current === undefined || current.get(ctx) !== sink) return;
+        current.delete(ctx);
         if (current.size === 0) activeSinks.delete(sessionId);
       };
     },
@@ -80,18 +84,15 @@ export function createSessionEventHub(): SessionEventHub {
     },
     emit(sessionId, event) {
       const sinks = activeSinks.get(sessionId);
-      if (sinks !== undefined && sinks.size > 0) {
-        for (const sink of [...sinks]) {
-          try {
-            sink(event);
-          } catch {
-            // A broken sink never blocks delivery to other listeners.
-          }
+      for (const sink of [...(sinks?.values() ?? [])]) {
+        try {
+          sink(event);
+        } catch {
+          // A broken sink never blocks delivery to other listeners.
         }
-        return;
       }
       for (const [ctx, boundSessionId] of [...peerSessions.entries()]) {
-        if (boundSessionId !== sessionId) continue;
+        if (boundSessionId !== sessionId || sinks?.has(ctx) === true) continue;
         ctx.notify(
           "stream",
           { t: "event", event } satisfies TurnStreamFrame,
@@ -224,6 +225,7 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
         if (deps.sessionEvents !== undefined) {
           detachSessionEvents = deps.sessionEvents.attachTurn(
             sessionId,
+            ctx,
             (event) => {
               void baseFrames.onRuntimeEvent?.(event);
             },

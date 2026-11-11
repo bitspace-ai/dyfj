@@ -10,8 +10,8 @@
 // core refuses a turn that names it while it is marked. Text deltas have no
 // reader; the turn's events are in the log.
 //
-// This is a runtime service, not an RPC method. Nothing starts a headless turn
-// yet; a coordinator's dispatch tools are its intended caller.
+// This is a runtime service, not an RPC method. Its caller is the coordinator
+// dispatch service (`dispatch.ts`), which starts each child turn through it.
 
 import type { DispatchRecord } from "../contract/mod.ts";
 import type {

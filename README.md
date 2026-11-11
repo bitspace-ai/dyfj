@@ -1238,9 +1238,10 @@ headless turns under `ParkedApprovals` (exposing `dispatch/*` to Codex-routed
 coordinators is deferred; child sessions receive none of the four tools, inherit
 neither paid approval nor session grants, exchange text only through escaped
 `<coordinator-message>` and `<child-report>` envelopes, release their width slot
-and any warm external-agent handle on `failed`, `cancelled`, or 30 minutes
-`idle`, and notify connected coordinator REPLs with one prompt-free line when a
-child parks an approval); plus streaming `turn` and cancellation
+on `failed`, `cancelled`, or 30 minutes `idle` with a best-effort drop of any
+warm external-agent handle, and notify coordinator REPLs that are running or
+have run a turn on that session with one prompt-free line when a child parks an
+approval); plus streaming `turn` and cancellation
 `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications,
 each tagged with the request's `turnId` when it named one, so a client can drop
