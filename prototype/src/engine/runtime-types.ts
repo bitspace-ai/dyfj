@@ -11,10 +11,12 @@ import type {
   AcpPermissionSelection,
   AcpRunnerSelection,
   AutoApprovals,
+  DispatchRecord,
   ExternalAgentWorkbenchRuntimeResult,
   NativeTurnReceipt,
   PaidEscalationVerdict,
   Runner,
+  WorkbenchAuthContext,
   WorkbenchRuntimeEvent,
   WorkbenchRuntimeMode,
   WorkbenchRuntimeRequest,
@@ -28,6 +30,7 @@ import type {
   CommandDefinition,
   ConfirmToolApproval,
   CommandSandbox,
+  DispatchSessionPorts,
   ExecutorDialer,
   PublishCatalogPorts,
   RootAnchors,
@@ -38,6 +41,23 @@ import type {
  * the runtime's registry (both process-wide), plus the turn's session id.
  */
 export type PublishEnginePorts = Omit<PublishCatalogPorts, "sessionId">;
+
+/**
+ * Per-turn factory for a coordinator session's `dispatch/*` tools (BIT-907).
+ * Returns `undefined` when `[dispatch]` is not configured or the session is
+ * not eligible to coordinate children.
+ */
+export interface DispatchEnginePorts {
+  forSession(context: {
+    parentSessionId: string;
+    traceId: string;
+    turnRootSpanId: string;
+    principalId: string;
+    authContext: WorkbenchAuthContext;
+    depth: number;
+    abortSignal?: AbortSignal;
+  }): DispatchSessionPorts | undefined;
+}
 import type {
   BudgetTallyMode,
   CodexReasoningEffort,
@@ -238,6 +258,16 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
   dailyLimitUsd?: number;
   turnLimitUsd?: number;
   runawayStallUsd?: number;
+  /**
+   * Dispatched-child lineage record (BIT-907), populated only by the runtime's
+   * headless child launcher and never parsed from client RPC bodies.
+   */
+  dispatchRecord?: DispatchRecord;
+  /**
+   * In-process hook called once a turn's `session_start` event and (for new
+   * sessions) `sessions` row have been durably committed.
+   */
+  onSessionRecorded?: (sessionId: string) => void | Promise<void>;
 }
 
 export interface NativeWorkbenchRuntimeResult extends NativeTurnReceipt {
@@ -326,6 +356,11 @@ export interface WorkbenchRuntimeServices {
    * `[publish]` section - leaves the publish tools unregistered.
    */
   publish?: PublishEnginePorts;
+  /**
+   * The coordinator dispatch tools' shared dependencies (BIT-907). Absent - no
+   * `[dispatch]` section - leaves the dispatch tools unregistered.
+   */
+  dispatch?: DispatchEnginePorts;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

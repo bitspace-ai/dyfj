@@ -173,7 +173,16 @@ async fn main() -> Result<()> {
             pending = Some(answer);
         }
         let Some(read) = pending.as_mut() else { continue };
-        let outcome = match link::await_prompt(&client, &mut incoming, read, &mut orphans, &mut exit).await {
+        let outcome = match link::await_prompt(
+            &client,
+            &mut incoming,
+            read,
+            &mut orphans,
+            &mut exit,
+            session.id.as_deref(),
+        )
+        .await
+        {
             link::Prompted::Read(outcome) => outcome,
             link::Prompted::Exit => break,
             // Back to the top, where the disconnect is announced; the prompt

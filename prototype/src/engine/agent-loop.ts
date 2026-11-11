@@ -21,13 +21,13 @@
 import {
   modelStreamsToolCalls,
   ProviderContextExceededError,
-  type ProviderReplay,
   type WorkbenchMessage,
   type WorkbenchToolCall,
   type WorkbenchTurnParams,
 } from "../providers/mod.ts";
 import { sanitizeBoundaryText } from "../kernel/mod.ts";
 import {
+  type CommandDefinition,
   fixedOperatorReason,
   invokeCommandWithEvent,
   operatorFailureReason,
@@ -54,8 +54,10 @@ import { emitRuntimeEvent } from "./runtime-events.ts";
 import type { ToolResultSummary } from "./runtime-types.ts";
 import {
   estimateRuntimeInputCount,
+  toolStepToMessages,
   transcriptEstimateText,
 } from "./transcript.ts";
+export { toolStepToMessages } from "./transcript.ts";
 import {
   commitEvent,
   type RecentToolCall,
@@ -145,7 +147,9 @@ export async function agentLoop(
   ) {
     showProgress(turn, result, streaming);
     const step = await runToolStep(turn, result, messages, seenToolCalls);
-    if (step !== "aborted") noteToolProgress(state, step, progressSeen);
+    if (step !== "aborted") {
+      noteToolProgress(state, step, progressSeen, seenToolCalls);
+    }
     if (step === "aborted") {
       result = { ...result, stopReason: "aborted", toolCalls: undefined };
       break;
@@ -241,6 +245,8 @@ function abortedIfCancelled(
 
 /** Tools whose success changes the workspace, so a repeated call is new work. */
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+/** Tools whose success starts a child turn, making prior waits/reads stale. */
+const DISPATCH_TURN_TOOLS = new Set(["dispatch/start", "dispatch/send"]);
 
 /**
  * Mark the step on the tracker when it made tool progress, so the runaway
@@ -248,25 +254,41 @@ const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  * calls is new this turn (by tool name and arguments) and the tool did not
  * report it as an error. A write or edit that succeeded always counts, and
  * clears the calls seen so far: re-running the tests after an edit is new
- * work. Calls the tool rejects or refuses, and exact repeats, are not
- * progress. A bash exit status or a file tool's "not found" reply is output,
- * not an error, so it does not stop a new call from counting.
+ * work. Starting or messaging a child session also clears this turn's seen
+ * calls so waiting on or reading that child again is not treated as a repeat,
+ * and a `dispatch/wait` that timed out with children still running may be
+ * called again for the next wait window.
  */
 function noteToolProgress(
   state: TurnState,
   step: ToolStep,
   progressSeen: Set<string>,
+  seenToolCalls: Set<string>,
 ): void {
   let progress = false;
   for (const [index, call] of step.requestedToolCalls.entries()) {
     const summary = step.stepResults[index];
     if (summary === undefined || summary.isError) continue;
+    if (DISPATCH_TURN_TOOLS.has(call.name)) {
+      progressSeen.clear();
+      seenToolCalls.clear();
+      progress = true;
+      continue;
+    }
     if (WRITE_TOOLS.has(call.name)) {
       progressSeen.clear();
       progress = true;
       continue;
     }
     const signature = `${call.name}:${JSON.stringify(call.arguments)}`;
+    if (
+      call.name === "dispatch/wait" &&
+      summary.result.includes('"timedOut":true')
+    ) {
+      seenToolCalls.delete(signature);
+      progress = true;
+      continue;
+    }
     if (!progressSeen.has(signature)) {
       progressSeen.add(signature);
       progress = true;
@@ -454,7 +476,7 @@ async function invokeTool(
       commandId: toolCall.name,
       callId: toolCall.id,
       isError: commandResult.isError,
-      result: commandResultText(commandResult),
+      result: commandResultText(command, commandResult),
       ...(approvalDenied ? { approvalDenied: true } : {}),
     };
   } catch (err) {
@@ -950,50 +972,14 @@ export function handoffInstruction(reasonText: string): string {
     "mark anything you infer as inferred.";
 }
 
-/**
- * Turn one agent-loop step into transcript messages: the assistant turn that
- * requested the tools (its text plus the tool-call intentions) followed by one
- * `tool` message per result, each linked back to its call by id. Appending
- * these to the running history is what lets the next step see the model's own
- * prior reasoning and the matching results — instead of a flattened summary
- * string that drops the trail and invites confabulation. The reply's
- * `replay`, when it has one, rides on the assistant turn so the adapter can
- * send the reply back as the model produced it (Anthropic thinking blocks);
- * it lives only in this in-memory transcript, never in the event log.
- */
-export function toolStepToMessages(
-  assistantText: string,
-  toolCalls: WorkbenchToolCall[] | undefined,
-  stepResults: ToolResultSummary[],
-  replay?: ProviderReplay,
-): WorkbenchMessage[] {
-  const messages: WorkbenchMessage[] = [
-    {
-      role: "assistant",
-      content: assistantText,
-      toolCalls,
-      ...(replay === undefined ? {} : { replay }),
-    },
-  ];
-  for (const result of stepResults) {
-    messages.push({
-      role: "tool",
-      toolCallId: result.callId,
-      name: result.commandId,
-      content: result.result,
-      ...(result.isError ? { isError: true } : {}),
-      ...(result.trimmedFrom === undefined
-        ? {}
-        : { trimmedFrom: result.trimmedFrom }),
-    });
-  }
-  return messages;
-}
-
 function commandResultText(
+  command: CommandDefinition | undefined,
   result: { isError: boolean; reason?: string; result?: unknown },
 ): string {
   if (result.isError) return result.reason ?? "command failed";
+  if (command?.modelResult !== undefined) {
+    return command.modelResult(result.result);
+  }
   return typeof result.result === "string"
     ? result.result
     : JSON.stringify(result.result);

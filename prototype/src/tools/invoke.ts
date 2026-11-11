@@ -63,13 +63,24 @@ export function approvalDeniedReason(
 }
 
 /**
- * The key a session grant matches: the command id and every argument, with
+ * The key a session grant matches: the command id and every argument (or only
+ * `grantArguments` when the command scopes grants to specific parameters), with
  * object keys sorted so argument order does not matter. Values must match
  * exactly, so `npm test` does not cover `npm test; rm x`.
  */
-export function sessionGrantKey(call: CommandCall, scope?: string): string {
+export function sessionGrantKey(
+  call: CommandCall,
+  scope?: string,
+  grantArguments?: readonly string[],
+): string {
+  const keys = grantArguments === undefined
+    ? Object.keys(call.arguments).sort()
+    : [...grantArguments].sort();
   const args = Object.fromEntries(
-    Object.keys(call.arguments).sort().map((key) => [key, call.arguments[key]]),
+    keys.filter((key) => Object.hasOwn(call.arguments, key)).map((key) => [
+      key,
+      call.arguments[key],
+    ]),
   );
   return JSON.stringify(
     scope === undefined ? [call.commandId, args] : [call.commandId, args, scope],
@@ -268,7 +279,7 @@ async function runApproved<TResult>(
   const scope = grantScope(containment);
   const grantKey = grants === undefined || scope === null
     ? undefined
-    : sessionGrantKey(call, scope);
+    : sessionGrantKey(call, scope, command.grantArguments);
   if (ask && grantKey !== undefined && grants?.has(grantKey) === true) {
     // The operator allowed this exact call for the rest of the session.
     authzBasis = "policy:allow:session-grant";
@@ -278,11 +289,14 @@ async function runApproved<TResult>(
     // an unapproved or channel-less call never executes. The arguments have
     // been validated by now, so a per-call title sees only values the schema
     // allows.
+    const approvalArgs = command.approvalArguments === undefined
+      ? call.arguments
+      : await command.approvalArguments(call);
     const verdict = await confirmApproval({
       commandId: call.commandId,
       callId: call.callId,
       title: command.approvalTitle?.(call) ?? command.title,
-      arguments: call.arguments,
+      arguments: approvalArgs,
       ...(grantKey === undefined ? {} : { grantable: true }),
     });
     if (verdict.decision !== "approve") {

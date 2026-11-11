@@ -29,6 +29,10 @@ import type { Env } from "../config/mod.ts";
 import { defineGit } from "./builtin/git.ts";
 import { definePublishTools } from "./builtin/publish.ts";
 import {
+  defineDispatchTools,
+  type DispatchSessionPorts,
+} from "./builtin/dispatch.ts";
+import {
   type CatalogListing,
   defineWorkbenchModels,
 } from "./builtin/models.ts";
@@ -83,6 +87,12 @@ export interface ToolCatalogPorts {
    * Absent leaves the tool unregistered.
    */
   listModels?: () => Promise<CatalogListing>;
+  /**
+   * The coordinator dispatch tools' ports (BIT-907), supplied only when
+   * `[dispatch]` is configured and the session's dispatch depth is 0. Absent
+   * leaves all four `dispatch/*` tools unregistered.
+   */
+  dispatch?: DispatchSessionPorts;
 }
 
 /** What the publish tools need, resolved by the caller that passes them. */
@@ -228,6 +238,18 @@ function publishTools(
   });
 }
 
+/**
+ * The coordinator dispatch tools (BIT-907): `dispatch/start`, `dispatch/wait`,
+ * `dispatch/read` and `dispatch/send`. Registered only when `[dispatch]` is
+ * configured and the session's dispatch depth is 0.
+ */
+function dispatchTools(
+  { dispatch }: ToolCatalogDependencies,
+): readonly CommandDefinition[] {
+  if (dispatch === undefined || dispatch.depth !== 0) return [];
+  return defineDispatchTools(dispatch);
+}
+
 /** Commands registered as a group: several from one dependency decision. */
 export type ToolCatalogGroup = (
   deps: ToolCatalogDependencies,
@@ -236,6 +258,7 @@ export type ToolCatalogGroup = (
 /** The builtin groups, registered after `BUILTIN_TOOLS`, in this order. */
 export const BUILTIN_GROUPS: readonly ToolCatalogGroup[] = [
   publishTools,
+  dispatchTools,
 ];
 
 /**

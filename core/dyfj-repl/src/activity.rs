@@ -118,11 +118,50 @@ pub fn describe(event: &Value) -> Option<String> {
             };
             Some(format!("  {mark} {} (external agent)", agent_progress_title(event)))
         }
+        "childApprovalParked" => child_approval_parked(event),
         // Bookkeeping the operator does not need narrated. Observed on a live
         // runtime: sessionStart, inputReceived, contextBuilt, modelSelected,
         // beforeProviderRequest, afterProviderResponse, turnCompleted.
         _ => None,
     }
+}
+
+/// One-line operator notice built strictly from validated label + session id
+/// fields when a dispatched child session parks on an approval. Never carries
+/// prompt text or option ids.
+pub fn child_approval_parked(event: &Value) -> Option<String> {
+    if event.get("type").and_then(Value::as_str) != Some("childApprovalParked") {
+        return None;
+    }
+    let label = event.get("label").and_then(Value::as_str)?;
+    if !is_child_label(label) {
+        return None;
+    }
+    let child_id = event.get("childSessionId").and_then(Value::as_str)?;
+    if !is_session_id(child_id) {
+        return None;
+    }
+    Some(format!(
+        "{label} (child) is waiting for approval: dyfj --session {child_id}"
+    ))
+}
+
+fn is_child_label(label: &str) -> bool {
+    let mut chars = label.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if label.len() > 32 || !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+fn is_session_id(id: &str) -> bool {
+    id.len() == 26
+        && id
+            .chars()
+            .all(|c| c.is_ascii_digit() || (c.is_ascii_alphabetic() && !"IiLlOoUu".contains(c)))
 }
 
 /// How a completed call turned out, as its line marks it.
@@ -645,5 +684,36 @@ mod tests {
     fn an_untitled_external_agent_call_still_ends_with_a_line() {
         let line = describe(&json!({"type": "agentProgress", "kind": "tool_call", "status": "failed"}));
         assert_eq!(line.as_deref(), Some("  ✗ external tool (external agent)"));
+    }
+
+    #[test]
+    fn child_approval_parked_renders_one_line_notice_without_prompt_text() {
+        let line = describe(&json!({
+            "type": "childApprovalParked",
+            "sessionId": "01J00000000000000000000000",
+            "childSessionId": "01J00000000000000000000001",
+            "label": "impl",
+            "prompt": "ignored-untrusted-prompt"
+        }));
+        assert_eq!(
+            line.as_deref(),
+            Some("impl (child) is waiting for approval: dyfj --session 01J00000000000000000000001")
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "childApprovalParked",
+                "childSessionId": "01J00000000000000000000001",
+                "label": "../bad"
+            })),
+            None
+        );
+        assert_eq!(
+            describe(&json!({
+                "type": "childApprovalParked",
+                "childSessionId": "bad-id",
+                "label": "impl"
+            })),
+            None
+        );
     }
 }

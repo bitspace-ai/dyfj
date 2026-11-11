@@ -88,6 +88,7 @@ export async function runWorkbenchRuntime(
       : { dialExecutor: services.dialExecutor }),
     ...(services.sandbox === undefined ? {} : { sandbox: services.sandbox }),
     ...(services.publish === undefined ? {} : { publish: services.publish }),
+    ...(services.dispatch === undefined ? {} : { dispatch: services.dispatch }),
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     policy,
@@ -126,6 +127,7 @@ async function runNativeWorkbenchRuntime(
   try {
     await buildContext(state, runtimeInput, ports);
     await recordNewSession(state, ports);
+    await runtimeInput.onSessionRecorded?.(session.sessionId);
     const route = await budgetGate(state, runtimeInput, ports);
     const routed: RoutedTurn = {
       state,

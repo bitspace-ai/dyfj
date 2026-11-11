@@ -10,9 +10,10 @@
 // core refuses a turn that names it while it is marked. Text deltas have no
 // reader; the turn's events are in the log.
 //
-// This is a runtime service, not an RPC method. Nothing starts a headless turn
-// yet; a coordinator's dispatch tools are its intended caller.
+// This is a runtime service, not an RPC method. Its caller is the coordinator
+// dispatch service (`dispatch.ts`), which starts each child turn through it.
 
+import type { DispatchRecord } from "../contract/mod.ts";
 import type {
   FrameSink,
   SessionOwners,
@@ -24,6 +25,13 @@ import type { ParkedApprovals, ParkSite } from "./parked-approvals.ts";
 import { approverOver } from "./rpc/approval.ts";
 import { buildTurnCore, type TurnCoreDeps } from "./rpc/turn-core.ts";
 
+export interface HeadlessTurnOptions {
+  /** Dispatched-child lineage record for turn 1 of a child session. */
+  dispatchRecord?: DispatchRecord;
+  /** Synchronous callback invoked when the session record is committed. */
+  onSessionRecorded?: (sessionId: string) => void;
+}
+
 export interface HeadlessTurn {
   /** The turn's cancel signal. */
   ticket: TurnTicket;
@@ -32,12 +40,20 @@ export interface HeadlessTurn {
    * ends before its session starts.
    */
   session: Promise<string>;
+  /**
+   * The turn's session id once its `session_start` event (and new `sessions`
+   * row) has been durably committed. Rejects if the turn ends before recording.
+   */
+  recorded: Promise<string>;
   /** The turn's receipt. */
   result: Promise<WorkbenchRuntimeResult>;
 }
 
 export interface HeadlessTurns {
-  start(body: TurnRequestBody): HeadlessTurn | { error: string };
+  start(
+    body: TurnRequestBody,
+    options?: HeadlessTurnOptions,
+  ): HeadlessTurn | { error: string };
 }
 
 /**
@@ -77,7 +93,7 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
   const core = buildTurnCore(deps);
   const parked = deps.parkedApprovals;
   return {
-    start: (body) => {
+    start: (body, options) => {
       const resolved = core.resolve(body);
       if ("error" in resolved) return resolved;
       const ticket = deps.owners.admit();
@@ -103,6 +119,14 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
       // unhandled rejection behind.
       session.catch(() => {});
 
+      let markRecorded!: (sessionId: string) => void;
+      let unrecorded!: (error: Error) => void;
+      const recorded = new Promise<string>((resolve, reject) => {
+        markRecorded = resolve;
+        unrecorded = reject;
+      });
+      recorded.catch(() => {});
+
       const frames: FrameSink = {
         onRuntimeEvent: (event) => {
           if (event.type !== "sessionStart") return;
@@ -121,18 +145,40 @@ export function buildHeadlessTurns(deps: HeadlessTurnDeps): HeadlessTurns {
         { tool: PARK_FAILED, budget: PARK_FAILED },
       );
 
-      const result = core.run(resolved, { ticket, approver, frames });
+      const resolvedWithHooks = {
+        ...resolved,
+        runtimeInput: {
+          ...resolved.runtimeInput,
+          ...(options?.dispatchRecord === undefined
+            ? {}
+            : { dispatchRecord: options.dispatchRecord }),
+          onSessionRecorded: (sessionId: string) => {
+            options?.onSessionRecorded?.(sessionId);
+            markRecorded(sessionId);
+          },
+        },
+      };
+
+      const result = core.run(resolvedWithHooks, { ticket, approver, frames });
       void result.then(
         () => {
           leave();
           unannounced(new Error("the turn ended before its session started"));
+          unrecorded(
+            new Error("the turn ended before its session was recorded"),
+          );
         },
-        () => {
+        (error: unknown) => {
           leave();
           unannounced(new Error("the turn failed before its session started"));
+          unrecorded(
+            error instanceof Error
+              ? error
+              : new Error("the turn failed before its session was recorded"),
+          );
         },
       );
-      return { ticket, session, result };
+      return { ticket, session, recorded, result };
     },
   };
 }

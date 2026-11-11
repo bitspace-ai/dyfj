@@ -1284,9 +1284,10 @@ test("the committed exceptions record the oversized Rust REPL modules", async ()
     ),
   ) as SizeException[];
   const paths = committed.filter((e) => e.path.endsWith(".rs")).map((e) => e.path);
-  for (const f of ["commands.rs", "main.rs", "link.rs"]) {
+  for (const f of ["commands.rs", "main.rs"]) {
     assert.ok(paths.includes(`core/dyfj-repl/src/${f}`), f);
   }
+  assert.ok(!paths.includes("core/dyfj-repl/src/link.rs"), "link.rs fits under the limit");
 });
 
 test("a non-Rust, non-.ts module such as .tsx still gets the function limit", () => {

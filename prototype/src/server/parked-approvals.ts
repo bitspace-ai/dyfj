@@ -45,6 +45,13 @@ export interface ParkedApproval {
   request: unknown;
 }
 
+/** Observed change in a session's parked-approval set. */
+export interface ParkedApprovalChange {
+  sessionId: string;
+  hasPending: boolean;
+  newlyParked: boolean;
+}
+
 export interface ParkedApprovalsDeps {
   /** Append one event to the log; a rejection means it was not recorded. */
   writeEvent: (event: EventInsert) => Promise<void>;
@@ -164,6 +171,7 @@ export class ParkedApprovals {
   readonly #bySession = new Map<string, Map<string, Entry>>();
   /** Requests per session whose `approval_parked` write has not settled. */
   readonly #recording = new Map<string, number>();
+  readonly #listeners = new Set<(change: ParkedApprovalChange) => void>();
   readonly #writeEvent: ParkedApprovalsDeps["writeEvent"];
   readonly #auth: WorkbenchAuthContext;
   readonly #timeoutMs: number;
@@ -174,6 +182,27 @@ export class ParkedApprovals {
     this.#auth = deps.authContext ?? LOCAL_AUTH;
     this.#timeoutMs = deps.timeoutMs ?? DEFAULT_PARK_TIMEOUT_MS;
     this.#now = deps.now ?? (() => new Date());
+  }
+
+  /**
+   * Observe changes to sessions' parked-approval sets. Returns an unsubscribe
+   * function.
+   */
+  subscribe(listener: (change: ParkedApprovalChange) => void): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  #notify(change: ParkedApprovalChange): void {
+    for (const listener of [...this.#listeners]) {
+      try {
+        listener(change);
+      } catch {
+        // An observer error must never interfere with parking or resolution.
+      }
+    }
   }
 
   /**
@@ -283,6 +312,13 @@ export class ParkedApprovals {
       // Either may have fired between the record landing and these listeners.
       if (signal?.aborted) onCancel();
       else if (timedOut.aborted) onTimeout();
+      else {
+        this.#notify({
+          sessionId: site.sessionId,
+          hasPending: true,
+          newlyParked: true,
+        });
+      }
     });
   }
 
@@ -328,6 +364,11 @@ export class ParkedApprovals {
     const session = this.#bySession.get(sessionId);
     if (session?.delete(approvalId) !== true) return false;
     if (session.size === 0) this.#bySession.delete(sessionId);
+    this.#notify({
+      sessionId,
+      hasPending: this.hasPending(sessionId),
+      newlyParked: false,
+    });
     return true;
   }
 

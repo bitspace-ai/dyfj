@@ -11,7 +11,11 @@
  */
 import { realpath, stat } from "node:fs/promises";
 import { generateSpanId, generateULID } from "../kernel/mod.ts";
-import { memoryClearanceFor, toolCallEvent } from "../store/mod.ts";
+import {
+  fetchWorkbenchSessionLineage,
+  memoryClearanceFor,
+  toolCallEvent,
+} from "../store/mod.ts";
 import {
   buildAskSystemPrompt,
   buildContextSourceLines,
@@ -29,6 +33,8 @@ import {
   buildMemorySearch,
   buildSystemPrompt,
   buildToolCatalog,
+  DISPATCH_CHILD_CONTEXT_LINE,
+  DISPATCH_COORDINATOR_CONTEXT_LINE,
   executeReadMemory,
   externalMcpCommandsForTransport,
   loadIndexedMemories,
@@ -332,6 +338,25 @@ async function buildCompanionContext(
     `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
       `(${transport} clearance)\n`,
   );
+  const dispatchDepth = input.dispatchRecord !== undefined
+    ? input.dispatchRecord.depth
+    : session.resumingSession
+    ? (await fetchWorkbenchSessionLineage({
+      sessionId: session.sessionId,
+      events: ports.store.events,
+    })).depth ?? 0
+    : 0;
+  const dispatchSession = dispatchDepth === 0 && transport === "loopback"
+    ? ports.dispatch?.forSession({
+      parentSessionId: session.sessionId,
+      traceId: session.traceId,
+      turnRootSpanId: session.turnRootSpanId,
+      principalId: session.principalId,
+      authContext: session.authContext,
+      depth: dispatchDepth,
+      abortSignal: input.abortSignal,
+    })
+    : undefined;
   const toolPorts: ToolCatalogPorts = {
     readMemory: (slug) => executeReadMemory(memories, slug, clearance),
     searchMemory: memoryRecall(state, input, ports),
@@ -344,6 +369,7 @@ async function buildCompanionContext(
     ...(ports.publish === undefined
       ? {}
       : { publish: { ...ports.publish, sessionId: session.sessionId } }),
+    ...(dispatchSession === undefined ? {} : { dispatch: dispatchSession }),
     // The model catalog, offered on a loopback turn only: its provider rows
     // say which providers this runtime routes to (BIT-817).
     ...(transport === "loopback"
@@ -377,6 +403,11 @@ async function buildCompanionContext(
   // that backs the summary marker — even when no summary is present this
   // turn, so a later compression is always covered.
   state.systemPrompt += `\n\n${SUMMARY_TRUST_POLICY}`;
+  if (dispatchSession !== undefined) {
+    state.systemPrompt += `\n\n${DISPATCH_COORDINATOR_CONTEXT_LINE}`;
+  } else if (dispatchDepth >= 1) {
+    state.systemPrompt += `\n\n${DISPATCH_CHILD_CONTEXT_LINE}`;
+  }
   await emitRuntimeEvent(input.frames?.onRuntimeEvent, {
     type: "contextBuilt",
     sessionId: session.sessionId,

@@ -78,13 +78,10 @@ import {
   agentPermissionEvent,
   agentResponseEvent,
   buildWorkbenchSessionContent,
-  buildWorkbenchSessionSlug,
-  createWorkbenchSession,
   errorEvent,
   type EventInsert,
   runnerSelectedEvent,
   sessionEndEvent,
-  sessionStartEvent,
   type Store,
   toolCallEvent,
   updateWorkbenchSession,
@@ -93,6 +90,7 @@ import {
   ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
   type AcpRunnerSelection,
   CODEX_WORKSPACE_TRUST_REQUIRED,
+  type DispatchRecord,
   DomainError,
   type ExternalAgentWorkbenchRuntimeResult,
   formatHistoryOmissionSummary,
@@ -103,6 +101,10 @@ import {
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeRequest,
 } from "./contract/mod.ts";
+import {
+  openExternalAgentSession,
+  prependChildContextLine,
+} from "./runners/acp/dispatch-lineage.ts";
 import {
   CODEX_DISABLED_FEATURES,
   CODEX_HOME_CONFIG_TOML,
@@ -149,6 +151,8 @@ export interface ExternalAgentRuntimeInput
     onTextDelta?: (delta: string) => void;
     onRuntimeEvent?: (event: WorkbenchRuntimeEvent) => void | Promise<void>;
   };
+  dispatchRecord?: DispatchRecord;
+  onSessionRecorded?: (sessionId: string) => void | Promise<void>;
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
@@ -924,36 +928,26 @@ export async function runExternalAgentWorkbenchRuntime(
       sessionId,
       promptLength: input.prompt.length,
     });
-    await writeEvent(sessionStartEvent({
-      event_id: generateULID(),
-      session_id: sessionId,
-      trace_id: traceId,
-      span_id: rootSpanId,
-      principal_id: principalId,
-      principal_type: "human",
-      action: "start",
-      resource: "workbench_session",
-      authz_basis: authContext.authzBasis,
-      ...authnFields,
-      content: input.prompt,
-    }));
-    sessionStartWritten = true;
-    if (input.sessionId === undefined) {
-      await createWorkbenchSession({
-        journal: store.journal,
+    const { isDispatchedChild, sessionCreated: createdSession } =
+      await openExternalAgentSession({
+        store,
         sessionId,
-        slug: buildWorkbenchSessionSlug(sessionId),
-        taskDescription: input.prompt,
-        content: buildWorkbenchSessionContent({
-          mode: input.mode,
-          prompt: input.prompt,
-          traceId,
-          contextSources: [],
-        }),
+        isNewSession: input.sessionId === undefined,
+        traceId,
+        rootSpanId,
+        principalId,
+        authContext,
+        mode: input.mode,
+        prompt: input.prompt,
         workspace,
+        dispatchRecord: input.dispatchRecord,
+        onSessionStartWritten: () => {
+          sessionStartWritten = true;
+        },
+        onSessionRecorded: input.onSessionRecorded,
+        writeEvent,
       });
-      sessionCreated = true;
-    }
+    sessionCreated = createdSession;
 
     const onProgress = (progress: AcpProgressUpdate) =>
       emitRuntimeEvent(input.frames?.onRuntimeEvent, {
@@ -1006,20 +1000,26 @@ export async function runExternalAgentWorkbenchRuntime(
         prompt: input.prompt,
       });
       projectedToolExchanges = projection.toolExchanges;
-      return prependHistoryOmissionNotice(
-        projection.prompt,
-        historyOmissionForDelivery(
-          input.historyOmission,
-          "projected-transcript",
+      return prependChildContextLine(
+        prependHistoryOmissionNotice(
+          projection.prompt,
+          historyOmissionForDelivery(
+            input.historyOmission,
+            "projected-transcript",
+          ),
         ),
+        isDispatchedChild,
       );
     };
-    let directPrompt = prependHistoryOmissionNotice(
-      input.prompt,
-      historyOmissionForDelivery(
-        input.historyOmission,
-        "no-prior-transcript",
+    let directPrompt = prependChildContextLine(
+      prependHistoryOmissionNotice(
+        input.prompt,
+        historyOmissionForDelivery(
+          input.historyOmission,
+          "no-prior-transcript",
+        ),
       ),
+      isDispatchedChild,
     );
     if (
       dependencies.sessionMap === undefined && reconstructPrompt !== undefined
@@ -1053,12 +1053,15 @@ export async function runExternalAgentWorkbenchRuntime(
         sessionId,
         workspace,
         profile,
-        prompt: prependHistoryOmissionNotice(
-          input.prompt,
-          historyOmissionForDelivery(
-            input.historyOmission,
-            "warm-no-replay",
+        prompt: prependChildContextLine(
+          prependHistoryOmissionNotice(
+            input.prompt,
+            historyOmissionForDelivery(
+              input.historyOmission,
+              "warm-no-replay",
+            ),
           ),
+          isDispatchedChild,
         ),
         reconstructPrompt,
         onContinuity: (evidence) => {

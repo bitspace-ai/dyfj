@@ -7,6 +7,7 @@
 import {
   isSupersedingRetryStarted,
   type TurnStreamFrame,
+  type WorkbenchRuntimeEvent,
 } from "../../contract/mod.ts";
 import {
   type FrameSink,
@@ -30,7 +31,83 @@ import {
 
 export type { TurnPosture } from "./turn-core.ts";
 
-export type TurnHandlerDeps = TurnCoreDeps;
+/**
+ * Delivers out-of-band session-scoped runtime notices (such as a child
+ * session parking on an approval) to the clients of `sessionId` it knows:
+ * each client running a turn there gets the notice once, through its turn's
+ * sink, and each other connection whose latest turn ran there (`bindPeer`
+ * keeps one session per connection, for the 64 most recent connections) gets
+ * it as a `stream` notification. A connection that has not run a turn on the
+ * session, or has since run one on another session, gets nothing.
+ */
+export interface SessionEventHub {
+  emit(sessionId: string, event: WorkbenchRuntimeEvent): void;
+  attachTurn(
+    sessionId: string,
+    ctx: RpcContext,
+    sink: (event: WorkbenchRuntimeEvent) => void,
+  ): () => void;
+  bindPeer(ctx: RpcContext, sessionId: string): void;
+}
+
+const MAX_IDLE_SESSION_PEERS = 64;
+
+export function createSessionEventHub(): SessionEventHub {
+  const activeSinks = new Map<
+    string,
+    Map<RpcContext, (event: WorkbenchRuntimeEvent) => void>
+  >();
+  const peerSessions = new Map<RpcContext, string>();
+
+  return {
+    attachTurn(sessionId, ctx, sink) {
+      let sinks = activeSinks.get(sessionId);
+      if (sinks === undefined) {
+        sinks = new Map();
+        activeSinks.set(sessionId, sinks);
+      }
+      sinks.set(ctx, sink);
+      return () => {
+        const current = activeSinks.get(sessionId);
+        if (current === undefined || current.get(ctx) !== sink) return;
+        current.delete(ctx);
+        if (current.size === 0) activeSinks.delete(sessionId);
+      };
+    },
+    bindPeer(ctx, sessionId) {
+      peerSessions.delete(ctx);
+      peerSessions.set(ctx, sessionId);
+      while (peerSessions.size > MAX_IDLE_SESSION_PEERS) {
+        const oldest = peerSessions.keys().next().value;
+        if (oldest === undefined) break;
+        peerSessions.delete(oldest);
+      }
+    },
+    emit(sessionId, event) {
+      const sinks = activeSinks.get(sessionId);
+      for (const sink of [...(sinks?.values() ?? [])]) {
+        try {
+          sink(event);
+        } catch {
+          // A broken sink never blocks delivery to other listeners.
+        }
+      }
+      for (const [ctx, boundSessionId] of [...peerSessions.entries()]) {
+        if (boundSessionId !== sessionId || sinks?.has(ctx) === true) continue;
+        ctx.notify(
+          "stream",
+          { t: "event", event } satisfies TurnStreamFrame,
+        ).catch(() => {
+          peerSessions.delete(ctx);
+        });
+      }
+    },
+  };
+}
+
+export interface TurnHandlerDeps extends TurnCoreDeps {
+  sessionEvents?: SessionEventHub;
+}
 
 // The turn's approver: each decision goes to the connected client as a
 // server-initiated `approval` request, bounded by the turn's cancel signal.
@@ -138,13 +215,44 @@ export function buildTurnHandlers(deps: TurnHandlerDeps): RpcHandlers {
         activeTurns.set(ctx, contextTurns);
       }
       contextTurns.set(activeKey, activeTurn);
+      const baseFrames = streamFrames(ctx, turnId);
+      let detachSessionEvents = () => {};
+      let boundSessionId: string | undefined;
+      const bindSession = (sessionId: string) => {
+        if (boundSessionId === sessionId) return;
+        boundSessionId = sessionId;
+        deps.sessionEvents?.bindPeer(ctx, sessionId);
+        detachSessionEvents();
+        if (deps.sessionEvents !== undefined) {
+          detachSessionEvents = deps.sessionEvents.attachTurn(
+            sessionId,
+            ctx,
+            (event) => {
+              void baseFrames.onRuntimeEvent?.(event);
+            },
+          );
+        }
+      };
+      if (resolved.sessionId !== undefined) {
+        bindSession(resolved.sessionId);
+      }
+      const frames: FrameSink = {
+        onTextDelta: baseFrames.onTextDelta,
+        onRuntimeEvent: (event) => {
+          if (event.type === "sessionStart") {
+            bindSession(event.sessionId);
+          }
+          return baseFrames.onRuntimeEvent?.(event);
+        },
+      };
       try {
         return await core.run(resolved, {
           ticket: activeTurn,
           approver: clientApprover(ctx, activeTurn),
-          frames: streamFrames(ctx, turnId),
+          frames,
         });
       } finally {
+        detachSessionEvents();
         const contextTurns = activeTurns.get(ctx);
         if (contextTurns?.get(activeKey) === activeTurn) {
           contextTurns.delete(activeKey);

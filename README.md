@@ -1229,7 +1229,19 @@ for `dyfj stop`; the narrow operator-approved `friction/post` method;
 which list and answer the approval requests a runtime-started (headless) turn
 has parked for its session (a `turn` naming a session with one waiting, or
 with a headless turn running, is refused, so text cannot answer it; the Rust REPL asks them on `--session`
-attach and before each message on that session); plus streaming `turn` and cancellation
+attach and before each message on that session). When `[dispatch]`
+(`max_children`, `max_wait_seconds`, `roots`) is configured in
+`~/.dyfj/config.toml`, a natively routed session at dispatch depth `0` also gets
+four coordinator tools - `dispatch/start`, `dispatch/wait`, `dispatch/read`, and
+`dispatch/send` - that start and follow up with depth-`1` child sessions as
+headless turns under `ParkedApprovals` (exposing `dispatch/*` to Codex-routed
+coordinators is deferred; child sessions receive none of the four tools, inherit
+neither paid approval nor session grants, exchange text only through escaped
+`<coordinator-message>` and `<child-report>` envelopes, release their width slot
+on `failed`, `cancelled`, or 30 minutes `idle` with a best-effort drop of any
+warm external-agent handle, and notify coordinator REPLs that are running or
+have run a turn on that session with one prompt-free line when a child parks an
+approval); plus streaming `turn` and cancellation
 `turn/cancel` methods
 (intermediate text deltas and runtime events arrive as `stream` notifications,
 each tagged with the request's `turnId` when it named one, so a client can drop
@@ -3092,3 +3104,8 @@ Document revisions only. Code and behavior changes are tracked in
   not reported by the one-shot turn, and its slot is free. The slot is free
   once teardown removes the handle; a rejected close that leaves the handle
   alive keeps its slot.
+- 2026-11-10 - The JSON-RPC seam section documents `[dispatch]` and the four
+  `dispatch/*` coordinator tools for natively routed depth-0 sessions, headless
+  child turns under `ParkedApprovals`, `<coordinator-message>` and
+  `<child-report>` envelopes, 30-minute idle slot release, and the prompt-free
+  child-parked notice.

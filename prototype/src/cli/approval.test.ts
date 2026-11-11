@@ -7,6 +7,25 @@ import { LIMIT_REASON_FLAGS } from "./budget.ts";
 import type { Io } from "./io.ts";
 
 describe("promptMidTurnApproval", () => {
+  it("shows terminal controls in a dispatch/start task preview as visible escapes", async () => {
+    const { io, stderr } = fakeIo(["n"]);
+    await promptMidTurnApproval(io, {
+      commandId: "dispatch/start",
+      callId: "c1",
+      title: "Start child session impl",
+      arguments: {
+        label: "impl",
+        task: "\u001b[2J\u001b[Hlooks safe\rapproved\u009b2K\nline two",
+      },
+    }, true);
+    const out = stderr.join("\n");
+    for (const control of ["\u001b", "\r", "\u009b"]) {
+      assert.ok(!out.includes(control), JSON.stringify(control));
+    }
+    assert.ok(out.includes("\\x1b[2J\\x1b[Hlooks safe\\x0dapproved\\x9b2K"));
+    assert.ok(out.includes("\n     line two"));
+  });
+
   const acpPermissionRequest = {
     kind: "external_agent_permission",
     title: "Run shell command?",

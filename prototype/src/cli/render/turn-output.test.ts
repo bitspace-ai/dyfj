@@ -172,6 +172,37 @@ describe("formatRuntimeEvent", () => {
       null,
     );
   });
+
+  it("renders a one-line childApprovalParked notice from validated label and session id only", () => {
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "childApprovalParked",
+        sessionId: "01J00000000000000000000000",
+        childSessionId: "01J00000000000000000000001",
+        label: "impl",
+        prompt: "must-never-render",
+      }),
+      "impl (child) is waiting for approval: dyfj --session 01J00000000000000000000001",
+    );
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "childApprovalParked",
+        sessionId: "01J00000000000000000000000",
+        childSessionId: "01J00000000000000000000001",
+        label: "Bad Label!",
+      }),
+      null,
+    );
+    assert.strictEqual(
+      formatRuntimeEvent({
+        type: "childApprovalParked",
+        sessionId: "01J00000000000000000000000",
+        childSessionId: "not-a-ulid",
+        label: "impl",
+      }),
+      null,
+    );
+  });
 });
 
 describe("handleTurnRuntimeEvent", () => {

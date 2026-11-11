@@ -17,12 +17,15 @@ function describeExpectedArguments(schema: JsonSchemaObject): string {
   if (properties.length === 0) return "{} (no arguments)";
   const required = new Set(schema.required ?? []);
   const shape = properties
-    .map(([name, property]) =>
-      `"${name}": ${property.type} (${
+    .map(([name, property]) => {
+      const typeName = property.anyOf !== undefined
+        ? property.anyOf.map((branch) => branch.type ?? "value").join(" | ")
+        : (property.type ?? "value");
+      return `"${name}": ${typeName} (${
         [required.has(name) ? "required" : "optional", describeBounds(property)]
           .filter((part) => part !== "").join(", ")
-      })`
-    )
+      })`;
+    })
     .join(", ");
   const descriptions = properties
     .filter(([, property]) => property.description)
@@ -131,6 +134,16 @@ function validateCommandArgumentValue(
   value: unknown,
   field: string,
 ): string | null {
+  // A value must match one `anyOf` branch and every sibling constraint.
+  if (
+    property.anyOf !== undefined &&
+    property.anyOf.length > 0 &&
+    !property.anyOf.some((branch) =>
+      validateCommandArgumentValue(branch, value, field) === null
+    )
+  ) {
+    return `${field} does not match any allowed shape`;
+  }
   const actualType = Array.isArray(value)
     ? "array"
     : value === null
@@ -140,7 +153,7 @@ function validateCommandArgumentValue(
     if (actualType !== "number" || !Number.isInteger(value)) {
       return `${field} must be an integer`;
     }
-  } else if (actualType !== property.type) {
+  } else if (property.type !== undefined && actualType !== property.type) {
     return `${field} must be a ${property.type}`;
   }
   if (

@@ -200,7 +200,25 @@ function propertyProblems(
   property: JsonSchemaProperty,
 ): string[] {
   const problems: string[] = [];
-  if (!PROPERTY_TYPES.has(property.type)) {
+  if (property.anyOf !== undefined) {
+    if (!Array.isArray(property.anyOf) || property.anyOf.length === 0) {
+      return [`${where}.anyOf must be a non-empty array`];
+    }
+    for (const [index, branch] of property.anyOf.entries()) {
+      problems.push(...propertyProblems(`${where}.anyOf[${index}]`, branch));
+    }
+    if (
+      property.description !== undefined &&
+      typeof property.description !== "string"
+    ) {
+      problems.push(`${where}.description must be a string`);
+    }
+    if (property.redact !== undefined && typeof property.redact !== "boolean") {
+      problems.push(`${where}.redact must be a boolean`);
+    }
+    return problems;
+  }
+  if (property.type === undefined || !PROPERTY_TYPES.has(property.type)) {
     return [`${where}.type is not a supported type`];
   }
   if (
@@ -305,7 +323,7 @@ function harness(
   const stub: CommandDefinition = {
     ...command,
     ...(options.acceptAnyArguments === true
-      ? { inputSchema: { type: "object" } }
+      ? { inputSchema: { type: "object" }, precheck: undefined }
       : {}),
     executor: () => {
       state.executorCalls++;
@@ -377,12 +395,24 @@ function wrongTypedArguments(
   schema: JsonSchemaObject,
 ): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(schema.properties ?? {}).map(([name, property]) => [
-      name,
-      property.type === "string"
-        ? [argumentSentinel(name)]
-        : argumentSentinel(name),
-    ]),
+    Object.entries(schema.properties ?? {}).map(([name, property]) => {
+      if (property.anyOf !== undefined) {
+        const branchTypes = new Set(property.anyOf.map((branch) => branch.type));
+        if (!branchTypes.has("object")) {
+          return [name, { sentinel: argumentSentinel(name) }];
+        }
+        if (!branchTypes.has("array")) {
+          return [name, [argumentSentinel(name)]];
+        }
+        return [name, argumentSentinel(name)];
+      }
+      return [
+        name,
+        property.type === "string"
+          ? [argumentSentinel(name)]
+          : argumentSentinel(name),
+      ];
+    }),
   );
 }
 
