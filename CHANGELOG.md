@@ -567,6 +567,12 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Readable external-agent permission prompts in the Rust REPL (`BIT-926`).**
+  Prompts name the session's model when available, show received input fields
+  in full with decoded strings and marked continuation lines, and explain
+  each offered permission option. Nonempty invalid selections get another
+  attempt, up to three attempts total; empty input still rejects immediately.
+
 - **Nine dependency bumps in one change (BIT-860).** The runtime's own ACP
   client moves from `@agentclientprotocol/sdk` 1.8.0 to 2.1.0, the version the
   Codex adapter already carries. SDK 2.0 removed the legacy connection classes,
