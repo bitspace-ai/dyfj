@@ -21,7 +21,7 @@
 
 import { dirname } from "node:path";
 import process from "node:process";
-import type { WorkbenchModel } from "../providers/mod.ts";
+import type { HttpTransport, WorkbenchModel } from "../providers/mod.ts";
 import {
   checkColumnsAtBoot,
   countWorkbenchSessionEvents,
@@ -49,6 +49,7 @@ import {
   resolveSocketPath,
   type RpcHandlers,
   serveUnixJsonRpc,
+  type SocketHost,
 } from "../transport/mod.ts";
 import { runExternalAgentWorkbenchRuntime } from "../external-agent-runtime.ts";
 import {
@@ -59,8 +60,10 @@ import {
   baseRuntimePolicy,
   type CodeFingerprint,
   codeFingerprint,
+  type DispatchConfig,
   type Env,
   loadConfig,
+  loadDispatchConfig,
   loadMcpServersConfig,
   loadNetworkAllow,
   loadPublishConfig,
@@ -123,7 +126,11 @@ import {
   buildEventsHandlers,
   type SessionEventsRequest,
 } from "./rpc/events.ts";
-import { buildTurnHandlers } from "./rpc/turn.ts";
+import {
+  buildTurnHandlers,
+  createSessionEventHub,
+  type SessionEventHub,
+} from "./rpc/turn.ts";
 import { buildApprovalsHandlers } from "./rpc/approvals.ts";
 import { UDS_LOOPBACK_AUTH } from "./rpc/turn-core.ts";
 import {
@@ -131,6 +138,7 @@ import {
   HeadlessSessions,
   type HeadlessTurns,
 } from "./headless-turn.ts";
+import { DispatchService, type DispatchServerOptions } from "./dispatch.ts";
 import { ParkedApprovals } from "./parked-approvals.ts";
 
 export interface WorkbenchUnixServerOptions {
@@ -255,6 +263,15 @@ export interface WorkbenchUnixServerOptions {
    */
   publish?: PublishServerPorts;
   /**
+   * The operator's `[dispatch]` section, loaded once at boot (BIT-907). Absent,
+   * the four `dispatch/*` tools are not registered at all.
+   */
+  dispatch?: DispatchConfig | DispatchServerOptions;
+  /** Optional provider HTTP transport override for hermetic server tests. */
+  http?: HttpTransport;
+  /** Optional socket host override for in-memory server tests. */
+  socketHost?: SocketHost;
+  /**
    * The Dolt store's health for `runtime/status`: a `SELECT 1` through the
    * runtime's own pool, at most one outstanding. Absent, the status reports no store segment, which is
    * what every store-less caller (tests over `MemoryStore`) wants.
@@ -275,6 +292,18 @@ async function bootPublish(): Promise<PublishServerPorts | undefined> {
   // turn that opened them.
   console.error("dyfj runtime: publish tools enabled from [publish]");
   return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
+}
+
+/**
+ * The operator's `[dispatch]` section, parsed and validated once (BIT-907).
+ * Absent, the dispatch tools are not registered. A malformed section fails the
+ * boot loudly, like every other config section.
+ */
+async function bootDispatch(): Promise<DispatchConfig | undefined> {
+  const config = await loadDispatchConfig();
+  if (config === null) return undefined;
+  console.error("dyfj runtime: dispatch tools enabled from [dispatch]");
+  return config;
 }
 
 /** What the server holds for the publish tools across turns. */
@@ -335,6 +364,7 @@ function buildHandlers(
   lifetime: RuntimeLifetime,
   acpSessions: AcpSessionHandleMap,
   parkedApprovals: ParkedApprovals,
+  sessionEvents: SessionEventHub,
 ): { handlers: RpcHandlers; headlessTurns: HeadlessTurns } {
   const store = () => requireStore(options);
   const loadCatalog = options.loadModels === undefined
@@ -423,7 +453,7 @@ function buildHandlers(
       linear,
       toolApprover: rpcToolApprover,
     }),
-    ...buildTurnHandlers(turnDeps),
+    ...buildTurnHandlers({ ...turnDeps, sessionEvents }),
     ...buildApprovalsHandlers({ parked: parkedApprovals }),
   };
   return { handlers, headlessTurns: buildHeadlessTurns(turnDeps) };
@@ -441,6 +471,8 @@ function composeTurnRuntime(
   publish?: PublishServerPorts,
   storeForImplementer?: () => Store,
   toolBridge?: ExternalAgentToolBridge,
+  dispatch?: DispatchService,
+  http?: HttpTransport,
 ): TurnRuntime {
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
@@ -482,9 +514,11 @@ function composeTurnRuntime(
               }),
           },
         }),
+      ...(dispatch === undefined ? {} : { dispatch }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
+      ...(http === undefined ? {} : { http }),
     });
 }
 
@@ -497,6 +531,43 @@ export interface WorkbenchUnixServer {
    */
   startHeadlessTurn: HeadlessTurns["start"];
   close(options?: { disconnectPeers?: boolean }): Promise<void>;
+}
+
+function buildDispatchService(
+  options: WorkbenchUnixServerOptions & { store: Store },
+  parkedApprovals: ParkedApprovals,
+  acpSessions: AcpSessionHandleMap,
+  sessionEvents: SessionEventHub,
+  headlessTurns: () => HeadlessTurns,
+): DispatchService | undefined {
+  if (options.dispatch === undefined) return undefined;
+  const dispatchOptions: DispatchServerOptions = "config" in options.dispatch
+    ? options.dispatch
+    : { config: options.dispatch };
+  return new DispatchService({
+    config: dispatchOptions.config,
+    clock: dispatchOptions.clock,
+    idleTtlMs: dispatchOptions.idleTtlMs,
+    store: () => requireStore(options),
+    headlessTurns,
+    parkedApprovals,
+    fetchSessionEvents: options.fetchSessionEvents ??
+      ((input) =>
+        fetchWorkbenchSessionEvents({
+          ...input,
+          events: requireStore(options).events,
+        })),
+    loadModels: options.loadModels,
+    releaseExternalAgentSession: (sessionId) =>
+      acpSessions.dropSession(sessionId),
+    notifySessionEvent: (sessionId, event) =>
+      sessionEvents.emit(sessionId, event),
+    env: options.env,
+    trustWorkspaceInstructions:
+      options.engineConfig?.trustWorkspaceInstructions === true,
+    defaultCodexReasoningEffort:
+      options.engineConfig?.codexReasoningEffort ?? undefined,
+  });
 }
 
 export async function serveWorkbenchUnix(
@@ -536,6 +607,29 @@ export async function serveWorkbenchUnix(
       toolTimeoutSeconds: options.engineConfig?.codexToolTimeoutSeconds ?? 300,
       sessionGrants: (sessionId) => owners.sessionGrants(sessionId),
     };
+  // The approval requests of headless turns, waiting for the operator. One
+  // registry per engine: the turn core reads it to refuse text sent to a
+  // waiting session, and the approvals methods answer from it.
+  const parkedApprovals = new ParkedApprovals({
+    writeEvent: async (event) => {
+      await options.store.journal.commit({ events: [event] });
+    },
+    authContext: UDS_LOOPBACK_AUTH,
+  });
+  const sessionEvents = createSessionEventHub();
+  let headlessTurnsRef: HeadlessTurns | undefined;
+  const dispatchService = buildDispatchService(
+    options,
+    parkedApprovals,
+    acpSessions,
+    sessionEvents,
+    () => {
+      if (headlessTurnsRef === undefined) {
+        throw new Error("HeadlessTurns is not initialized");
+      }
+      return headlessTurnsRef;
+    },
+  );
   const runRuntime = options.runRuntime ??
     composeTurnRuntime(
       () => options.store,
@@ -547,6 +641,8 @@ export async function serveWorkbenchUnix(
       options.publish,
       () => options.store!,
       toolBridge,
+      dispatchService,
+      options.http,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -563,15 +659,6 @@ export async function serveWorkbenchUnix(
   // Assigned once the socket is bound, before any request can arrive.
   let stopAccepting = () => {};
   const onShutdown = options.onShutdown;
-  // The approval requests of headless turns, waiting for the operator. One
-  // registry per engine: the turn core reads it to refuse text sent to a
-  // waiting session, and the approvals methods answer from it.
-  const parkedApprovals = new ParkedApprovals({
-    writeEvent: async (event) => {
-      await options.store.journal.commit({ events: [event] });
-    },
-    authContext: UDS_LOOPBACK_AUTH,
-  });
   const { handlers, headlessTurns } = buildHandlers(
     {
       ...options,
@@ -592,9 +679,12 @@ export async function serveWorkbenchUnix(
     lifetime,
     acpSessions,
     parkedApprovals,
+    sessionEvents,
   );
+  headlessTurnsRef = headlessTurns;
   const transport = await serveUnixJsonRpc(socketPath, {
     handlers,
+    ...(options.socketHost === undefined ? {} : { host: options.socketHost }),
     onConnectionsChanged: (count) => lifetime.clientsChanged(count),
     onParseError: options.onParseError,
     onRequestSettled: async (req, res) => {
@@ -623,9 +713,10 @@ export async function serveWorkbenchUnix(
 
   return {
     socketPath,
-    startHeadlessTurn: (body) => headlessTurns.start(body),
+    startHeadlessTurn: (body, opts) => headlessTurns.start(body, opts),
     async close(options: { disconnectPeers?: boolean } = {}) {
       lifetime.dispose();
+      dispatchService?.close();
       // Closing the transport first stops admitting connections before the
       // ACP cleanup is awaited; one not yet admitted is closed, as if it had
       // arrived after the stop. The asking client's
@@ -689,6 +780,7 @@ async function main(): Promise<void> {
   });
   console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
   const publish = await bootPublish();
+  const dispatch = await bootDispatch();
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
@@ -793,6 +885,7 @@ async function main(): Promise<void> {
       // connection config: one account, one pool, one answer.
       storeProbe: createStoreProbe(pool),
       ...(publish === undefined ? {} : { publish }),
+      ...(dispatch === undefined ? {} : { dispatch }),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.

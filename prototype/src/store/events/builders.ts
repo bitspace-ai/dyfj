@@ -147,6 +147,16 @@ export function approvalResolvedEvent(
 }
 
 /**
+ * A coordinator session started a child session (`dispatch/start`); `resource`
+ * is the child's session id and `content` carries the dispatch record.
+ */
+export function dispatchStartedEvent(
+  fields: EventFieldsWith<"resource" | "content">,
+): TypedEventInsert<"dispatch_started"> {
+  return build("dispatch_started", fields);
+}
+
+/**
  * One builder per event type. A new `event_type` in the DDL fails typecheck
  * here until it has a builder.
  */
@@ -167,4 +177,5 @@ export const EVENT_BUILDERS: {
   agent_response: agentResponseEvent,
   approval_parked: approvalParkedEvent,
   approval_resolved: approvalResolvedEvent,
+  dispatch_started: dispatchStartedEvent,
 };

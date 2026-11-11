@@ -33,7 +33,8 @@ export type JsonSchemaObject = {
 };
 
 export type JsonSchemaProperty = {
-  type: "string" | "number" | "integer" | "boolean" | "object" | "array";
+  type?: "string" | "number" | "integer" | "boolean" | "object" | "array";
+  anyOf?: JsonSchemaProperty[];
   pattern?: string;
   description?: string;
   required?: string[];
@@ -183,10 +184,30 @@ export interface CommandDefinition<TResult = unknown> {
   /**
    * The approval prompt may offer "allow this exact call for the rest of the
    * session" (BIT-707). The grant matches the command id and every argument
-   * exactly, lives in the runtime's memory for that session only, and is
-   * never persisted.
+   * (or `grantArguments` when set) exactly, lives in the runtime's memory for
+   * that session only, and is never persisted.
    */
   grantable?: boolean;
+  /**
+   * Argument names that scope a session grant on a `grantable` command
+   * (for example `["child"]` on `dispatch/send`, BIT-907). When absent, a
+   * session grant matches every argument on the call.
+   */
+  grantArguments?: readonly string[];
+  /**
+   * Projects or enriches the arguments sent to the approval prompt when policy
+   * decides `ask` (BIT-907). Called only after `precheck` passes and no session
+   * grant matched. Absent, the prompt receives `call.arguments`.
+   */
+  approvalArguments?: (
+    call: CommandCall,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  /**
+   * Formats a successful `TResult` into the string placed on the model's tool
+   * message and recorded in `tool_call.tool_result`, while preserving the
+   * typed `TResult` on `invokeCommand` (BIT-907).
+   */
+  modelResult?: (result: unknown) => string;
   /**
    * A pre-flight check that runs before the approval prompt. When it returns
    * a non-null string, the engine treats the call as denied with that reason

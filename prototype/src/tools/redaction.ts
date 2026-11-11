@@ -116,6 +116,8 @@ export function redactCommandResult(
   }
   return command?.redactResult
     ? REDACTED
+    : command?.modelResult !== undefined
+    ? command.modelResult(result.result)
     : formatCommandResult(result.result);
 }
 

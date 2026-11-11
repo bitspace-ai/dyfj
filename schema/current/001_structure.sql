@@ -21,7 +21,8 @@ CREATE TABLE events (
         'agent_permission',
         'agent_response',
         'approval_parked',
-        'approval_resolved'
+        'approval_resolved',
+        'dispatch_started'
     ) NOT NULL,
     created_at                TIMESTAMP(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
 

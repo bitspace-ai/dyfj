@@ -4,7 +4,10 @@
  */
 
 import process from "node:process";
-import { isSupersedingRetryStarted } from "../../contract/mod.ts";
+import {
+  isSupersedingRetryStarted,
+  SESSION_ID_SHAPE,
+} from "../../contract/mod.ts";
 import { sanitizeBoundaryText } from "../../kernel/mod.ts";
 import type { CliConfig } from "../args.ts";
 import type { Io } from "../io.ts";
@@ -123,6 +126,18 @@ export function formatRuntimeEvent(
   event: Record<string, unknown>,
 ): string | null {
   if (event.type === "turnAborted") return "[interrupted]";
+  if (event.type === "childApprovalParked") {
+    const label = typeof event.label === "string" &&
+        /^[a-z0-9][a-z0-9-]{0,31}$/.test(event.label)
+      ? event.label
+      : null;
+    const childSessionId = typeof event.childSessionId === "string" &&
+        SESSION_ID_SHAPE.test(event.childSessionId)
+      ? event.childSessionId
+      : null;
+    if (label === null || childSessionId === null) return null;
+    return `${label} (child) is waiting for approval: dyfj --session ${childSessionId}`;
+  }
   if (event.type === "toolStepStarted") {
     const step = typeof event.step === "number" ? event.step : "?";
     const count = typeof event.toolCallCount === "number"

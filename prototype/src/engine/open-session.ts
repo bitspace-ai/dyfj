@@ -226,6 +226,9 @@ async function announceTurn(
     sessionId: session.sessionId,
     promptLength: session.prompt.length,
   });
+  const dispatchRecord = !session.resumingSession
+    ? input.dispatchRecord
+    : undefined;
   // Integrity: a failed write fails the turn.
   await writeMaybe(() =>
     commitEvent(
@@ -241,6 +244,18 @@ async function announceTurn(
         resource: "workbench_session",
         authz_basis: session.authContext.authzBasis,
         ...session.authnEventFields,
+        ...(dispatchRecord === undefined
+          ? {}
+          : {
+            parent_session_id: dispatchRecord.parentSessionId,
+            lineage_depth: dispatchRecord.depth,
+            lineage_label: dispatchRecord.label,
+            model_id: dispatchRecord.model,
+            reasoning_effort: dispatchRecord.effort,
+            turn_route: dispatchRecord.route,
+            model_family: dispatchRecord.family,
+            tool_arguments: JSON.stringify(dispatchRecord),
+          }),
         // The operator's prompt rides on session_start so a conversation
         // transcript can be rebuilt from events alone (resume, inspector).
         content: session.prompt,

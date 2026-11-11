@@ -136,7 +136,12 @@ export async function promptMidTurnApproval(
     ? r.title
     : String(r.commandId ?? "tool");
   io.err(`\n⚠  approve ${title}?`);
-  io.err(formatApprovalArgs(r.arguments));
+  io.err(
+    formatApprovalArgs(
+      r.arguments,
+      r.commandId === "dispatch/start" ? 400 : 200,
+    ),
+  );
   // Only a request the runtime marks grantable offers "allow for the rest of
   // the session"; elsewhere `s` is not consent and denies like any other line.
   const grantable = r.grantable === true;
@@ -201,13 +206,13 @@ function spendApprovalUnavailable(crossedScopes: unknown): string {
     (unknown.size === 0 ? "" : `; ${count} more ${verb} unknown`);
 }
 
-function formatApprovalArgs(args: unknown): string {
+function formatApprovalArgs(args: unknown, previewChars = 200): string {
   if (typeof args !== "object" || args === null) return `   ${String(args)}`;
   const lines: string[] = [];
   for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
-    const preview = raw.length > 200
-      ? `${raw.slice(0, 200)}… (${raw.length} chars)`
+    const preview = raw.length > previewChars
+      ? `${raw.slice(0, previewChars)}… (${raw.length} chars)`
       : raw;
     lines.push(`   ${key}: ${preview.replace(/\n/g, "\n     ")}`);
   }

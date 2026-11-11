@@ -96,6 +96,40 @@ export {
 } from "./builtin/publish.ts";
 export { resolveImplementer } from "./builtin/publish-implementer.ts";
 export { PublishTickets, type PublishPhase, type PublishTicketView } from "./builtin/publish-tickets.ts";
+export {
+  defineDispatchTools,
+  DISPATCH_CHILD_CONTEXT_LINE,
+  DISPATCH_COORDINATOR_CONTEXT_LINE,
+  DISPATCH_LABEL_PATTERN,
+  DISPATCH_LABEL_SCHEMA_PATTERN,
+  DISPATCH_REASONING_EFFORTS,
+  DISPATCH_TASK_APPROVAL_PREVIEW_CHARS,
+  type DispatchChildState,
+  type DispatchReadInput,
+  type DispatchReadResult,
+  type DispatchReadTurn,
+  type DispatchReasoningEffort,
+  type DispatchSendInput,
+  type DispatchSendResult,
+  type DispatchSessionPorts,
+  type DispatchSettledChild,
+  type DispatchStartInput,
+  type DispatchStartPlan,
+  type DispatchStartResult,
+  type DispatchToolEvent,
+  type DispatchWaitInput,
+  type DispatchWaitResult,
+  escapeDispatchEnvelopeText,
+  formatDispatchReadResult,
+  MAX_DISPATCH_READ_TURNS,
+  MAX_DISPATCH_REPORT_BYTES,
+  MAX_DISPATCH_ROOTS,
+  MAX_DISPATCH_TASK_BYTES,
+  modelFamilyFromCatalog,
+  projectChildTurnsForRead,
+  renderChildReport,
+  renderCoordinatorMessage,
+} from "./builtin/dispatch.ts";
 export { executeReadMemory } from "./builtin/memory.ts";
 export {
   type CatalogListing,
@@ -107,6 +141,8 @@ export { RootAnchors } from "./builtin/root-anchors.ts";
 export {
   AdditionalRootRefusedError,
   admitAdditionalRoots,
+  overlapsProtectedPath,
+  pathWithin,
   protectedPaths,
   type ProtectedPathInputs,
   runtimePrototypeRoot,

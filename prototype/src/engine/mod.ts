@@ -86,6 +86,7 @@ export {
 export type {
   Approver,
   CancellationWindow,
+  DispatchEnginePorts,
   ExternalAgentRunner,
   FrameSink,
   NativeWorkbenchRuntimeResult,

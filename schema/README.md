@@ -43,7 +43,10 @@ representing opaque inner activity as a provider call or model response.
 Approvals that a runtime-started turn parks for the operator are recorded as
 `approval_parked` (the approval id and its kind, never the request's
 arguments) and `approval_resolved` (the verdict, from an answer, a timeout or
-a cancellation).
+a cancellation). Coordinator dispatches record `dispatch_started` on the
+coordinator session (`027_events_dispatch_started.sql`) alongside the child's
+`session_start` lineage columns (`parent_session_id`, `lineage_depth`,
+`lineage_label`, `reasoning_effort`, `turn_route`, `model_family`).
 
 The historical replay files are provenance and validation input. They include
 the earlier reflection/skills/capability experiments, authn metadata, model

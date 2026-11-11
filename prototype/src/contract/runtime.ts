@@ -27,6 +27,24 @@ export interface AcpRunnerSelection {
 }
 
 /**
+ * Immutable lineage and launch pins recorded when a coordinator starts a child
+ * session (`dispatch/start`, BIT-907). Plain JSON data shared across `tools/`,
+ * `engine/`, and `server/`.
+ */
+export interface DispatchRecord {
+  parentSessionId: string;
+  depth: 1;
+  label: string;
+  model: string;
+  effort: string | null;
+  route: "native" | "acp";
+  family: string;
+  workspace: string;
+  roots: readonly string[];
+  taskSha256: string;
+}
+
+/**
  * How the caller of a runtime turn was identified and why the call was
  * permitted. Populated by transport layers (HTTP bearer auth); absent for
  * direct CLI invocation, which is authenticated by the local OS session.
@@ -418,6 +436,18 @@ export type WorkbenchRuntimeEvent =
     title?: string;
     name?: string;
     status?: string;
+  }
+  | {
+    /**
+     * Operator-only notice emitted to a coordinator session when one of its
+     * dispatched child sessions parks on a tool/permission/spend approval
+     * (BIT-907). Carries no prompt content, option ids, or approval handle,
+     * and never enters the coordinator model's transcript.
+     */
+    type: "childApprovalParked";
+    sessionId: string;
+    childSessionId: string;
+    label: string;
   };
 
 export type ExternalAgentWorkbenchRuntimeResult = ExternalAgentTurnReceipt;

@@ -113,6 +113,18 @@ export {
   type SandboxConfig,
 } from "./sandbox-config.ts";
 export {
+  DEFAULT_DISPATCH_MAX_CHILDREN,
+  DEFAULT_DISPATCH_MAX_WAIT_SECONDS,
+  type DispatchConfig,
+  loadDispatchConfig,
+  MAX_DISPATCH_CONFIG_ROOTS,
+  MAX_DISPATCH_MAX_CHILDREN,
+  MAX_DISPATCH_MAX_WAIT_SECONDS,
+  MIN_DISPATCH_MAX_CHILDREN,
+  MIN_DISPATCH_MAX_WAIT_SECONDS,
+  parseDispatchConfig,
+} from "./dispatch-config.ts";
+export {
   DEFAULT_GATE_TIMEOUT_MS,
   DEFAULT_TICKET_TTL_MS,
   defaultPublishReportPath,

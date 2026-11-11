@@ -24,7 +24,10 @@ import type {
   ExecutorDialer,
   RootAnchors,
 } from "../tools/mod.ts";
-import type { PublishEnginePorts } from "./runtime-types.ts";
+import type {
+  DispatchEnginePorts,
+  PublishEnginePorts,
+} from "./runtime-types.ts";
 import type {
   HistoryOmissionReceipt,
   WorkbenchAuthContext,
@@ -77,6 +80,8 @@ export interface NativeTurnPorts {
   sandbox?: CommandSandbox;
   /** The publish tools' config and ticket registry (BIT-786); see `ToolCatalogPorts`. */
   publish?: PublishEnginePorts;
+  /** The coordinator dispatch tools' service (BIT-907); see `ToolCatalogPorts`. */
+  dispatch?: DispatchEnginePorts;
   /** The runtime policy memory recall is checked against; the base when absent. */
   policy?: RuntimePolicy;
 }
