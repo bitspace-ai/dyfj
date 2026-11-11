@@ -130,7 +130,8 @@ interface ChildEntry {
 }
 
 function isLiveChild(entry: ChildEntry): boolean {
-  if (entry.abandoned) return false;
+  // An abandoned child holds its slot until its turn has actually ended.
+  if (entry.abandoned) return entry.turnInFlight;
   if (entry.state === "running" || entry.state === "awaiting_approval") {
     return true;
   }
@@ -598,10 +599,11 @@ export class DispatchService implements DispatchEnginePorts {
 
   /**
    * The child was started but its coordinator-side `dispatch_started` record
-   * could not be written. An unrecorded child must not keep its slot or keep
-   * running: request cancellation of its turn, free the slot now, and return
-   * an error that names the child session and says whether the cancellation
-   * took effect. A turn that already ended keeps the state it ended in.
+   * could not be written. An unrecorded child must not keep running or be
+   * reused: request cancellation of its turn, keep its slot only until that
+   * turn ends, and return an error that names the child session and says
+   * whether the cancellation took effect. A turn that already ended keeps the
+   * state it ended in.
    */
   #abandonUnrecordedChild(
     entry: ChildEntry,
@@ -619,11 +621,13 @@ export class DispatchService implements DispatchEnginePorts {
       outcome = `Its turn had already ended (${entry.state}); its slot was released.`;
     } else if (turn.ticket.cancel()) {
       entry.state = "cancelled";
-      outcome = "Cancellation of its turn was requested and its slot released.";
+      outcome =
+        "Cancellation of its turn was requested; its slot is freed when the " +
+        "turn ends.";
     } else {
       outcome =
         "Cancellation of its turn was declined, so it may still finish; its " +
-        "slot was released.";
+        "slot is freed when the turn ends.";
     }
     this.#wakeWaiters(entry.parentSessionId);
     return new CommandExecutionError(
@@ -871,6 +875,12 @@ export class DispatchService implements DispatchEnginePorts {
       return (
         `child "${safeLabel}" is waiting for operator approval; nothing was ` +
         `sent (answer via dyfj --session ${entry.sessionId})`
+      );
+    }
+    if (entry.abandoned) {
+      return (
+        `child "${safeLabel}" has no dispatch record (writing it failed at ` +
+        "start) and cannot accept a follow-up"
       );
     }
     if (entry.turnInFlight || entry.state === "running") {

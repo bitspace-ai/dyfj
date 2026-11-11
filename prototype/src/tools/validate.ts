@@ -134,12 +134,14 @@ function validateCommandArgumentValue(
   value: unknown,
   field: string,
 ): string | null {
-  if (property.anyOf !== undefined && property.anyOf.length > 0) {
-    for (const branch of property.anyOf) {
-      if (validateCommandArgumentValue(branch, value, field) === null) {
-        return null;
-      }
-    }
+  // A value must match one `anyOf` branch and every sibling constraint.
+  if (
+    property.anyOf !== undefined &&
+    property.anyOf.length > 0 &&
+    !property.anyOf.some((branch) =>
+      validateCommandArgumentValue(branch, value, field) === null
+    )
+  ) {
     return `${field} does not match any allowed shape`;
   }
   const actualType = Array.isArray(value)

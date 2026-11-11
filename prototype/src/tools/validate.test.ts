@@ -235,3 +235,25 @@ describe("declared numeric bounds", () => {
     );
   });
 });
+
+describe("anyOf", () => {
+  it("requires one matching branch and every sibling constraint", () => {
+    const schema: JsonSchemaObject = {
+      type: "object",
+      properties: {
+        turns: {
+          type: "integer",
+          minimum: 1,
+          anyOf: [{ type: "number" }],
+        },
+      },
+    };
+    assert.strictEqual(validateCommandArguments(schema, { turns: 2 }), null);
+    assert.notStrictEqual(validateCommandArguments(schema, { turns: 0.5 }), null);
+    assert.notStrictEqual(validateCommandArguments(schema, { turns: 0 }), null);
+    assert.notStrictEqual(
+      validateCommandArguments(schema, { turns: "2" }),
+      null,
+    );
+  });
+});

@@ -500,12 +500,31 @@ describe("dispatch turn projection", () => {
         toolIsError: false,
       }),
     ];
+    events.push(sessionEvent({
+      eventId: "g3",
+      traceId: "turn-1",
+      eventType: "tool_call",
+      runnerKind: "external_agent",
+      toolName: "acp.history_unavailable",
+      toolCallId: "g3",
+      toolArguments: {
+        outcome: "rejected",
+        reason: "credential_shaped",
+        status: "completed",
+        toolName: "shell",
+        title: "build",
+      },
+      toolResult: "",
+      toolIsError: false,
+    }));
     const [turn] = projectChildTurnsForRead(events, {
       turns: "last",
       includeToolEvents: true,
     });
     assert.strictEqual(turn!.toolEvents[0]!.status, "partial");
     assert.strictEqual(turn!.toolEvents[1]!.status, "in_progress");
+    // Rejected evidence always reads as rejected, whatever status it claims.
+    assert.strictEqual(turn!.toolEvents[2]!.status, "rejected");
   });
 
   it("returns at most the most recent tool events per turn and counts the rest", () => {

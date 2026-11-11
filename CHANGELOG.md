@@ -18,9 +18,10 @@ README are tracked separately in its Revision history section.
   `dispatch/read` and `dispatch/send` (exposing them to Codex-routed
   coordinators is deferred). Dispatch depth is fixed at `1`: child sessions get
   none of the four tools and cannot start grandchildren. The bounds are on
-  concurrency (`max_children`), wait time (`max_wait_seconds`), task and
-  message size (32 KiB), report text (16 KiB per turn), turns per read (20) and
-  tool events per turn (the 50 most recent).
+  live children (`max_children`), wait time (`max_wait_seconds`), task and
+  message size (32 KiB), report text (16 KiB per turn, before envelope
+  escaping), turns per read (20) and tool events per turn (the 50 most
+  recent).
   - **Width and slot release.** Live width counts children in `running`,
     `awaiting_approval` or `idle`, and frees a slot when a child ends in
     `failed` or `cancelled`, or after 30 minutes `idle`. Freeing a slot also
@@ -44,9 +45,9 @@ README are tracked separately in its Revision history section.
     `awaiting_approval`. Before each follow-up it re-checks the child's
     workspace and extra roots, and refuses if one is no longer an accessible
     directory inside `[dispatch].roots` or no longer resolves to the path
-    approved at start. The TypeScript approval prompt shows control
-    characters in any argument (such as the task preview) as visible `\xNN`
-    escapes. `dispatch/wait` and `dispatch/read` are `allow`.
+    approved at start. The TypeScript approval prompt shows C0/C1 control
+    characters other than newline in its title and arguments (such as the
+    task preview) as visible `\xNN` escapes. `dispatch/wait` and `dispatch/read` are `allow`.
   - **Headless child turns and parked approvals.** Child turns run headless
     under `ParkedApprovals`, never under the coordinator's client approver,
     session grants or paid posture. A child's first turn starts a new session
@@ -56,9 +57,10 @@ README are tracked separately in its Revision history section.
     child session (`approvals/pending`, `approvals/answer`). When a child parks
     an approval, the runtime sends a `childApprovalParked` runtime event to
     each client running a turn on the coordinator session and to each other
-    client that has run a turn there on its current connection (the runtime
-    keeps the 64 most recent such connections). A client that only attached
-    and has not yet sent a turn does not receive it. The client prints a
+    connection whose latest turn ran on that session (the runtime keeps the
+    64 most recent connections). A client that only attached and has not
+    sent a turn there, or has since run a turn on another session, does not
+    receive it. The client prints a
     one-line notice (`<label> (child) is waiting for approval: dyfj --session
     <id>`). The notice carries no prompt text and is never sent to the
     coordinator model.
@@ -80,10 +82,11 @@ README are tracked separately in its Revision history section.
     a prefix of its prompt. `dispatch/start` records the dispatch lineage on
     the child's `session_start` event and writes a `dispatch_started` event on
     the coordinator (`schema/migrations/027_events_dispatch_started.sql`). If
-    that write fails, the runtime frees the child's slot and requests
-    cancellation of its turn. The error names the child session and says
-    whether the turn was cancelled, had already ended, or declined
-    cancellation and may still finish. `family` is `null` until the model catalog
+    that write fails, the runtime requests cancellation of the child's turn
+    and frees its slot once that turn ends. `dispatch/read` still reads the
+    child, but `dispatch/send` refuses it. The error names the child session and says whether
+    the turn was cancelled, had already ended, or declined cancellation and
+    may still finish. `family` is `null` until the model catalog
     records a family; the runtime does not infer one.
 
 - **Let one session use more than one directory.** `--add-dir <path>` adds a

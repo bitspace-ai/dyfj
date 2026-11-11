@@ -1576,7 +1576,7 @@ describe("server dispatch end-to-end (BIT-907)", () => {
         step2.find((m) => m.tool_call_id === "u-start")?.content ?? "",
       );
       assert.match(startMsg, /dispatch record could not be written/);
-      assert.match(startMsg, /Cancellation of its turn was requested and its slot released/);
+      assert.match(startMsg, /Cancellation of its turn was requested; its slot is freed when the turn ends/);
 
       const step3 = provider.coordinatorRequests[2]!.messages;
       const readMsg = String(
@@ -1618,6 +1618,11 @@ describe("server dispatch end-to-end (BIT-907)", () => {
         {
           toolCalls: [
             { id: "q-read", name: "dispatch/read", arguments: { child: "quick" } },
+            {
+              id: "q-send",
+              name: "dispatch/send",
+              arguments: { child: "quick", message: "more" },
+            },
             {
               id: "q-next",
               name: "dispatch/start",
@@ -1678,6 +1683,10 @@ describe("server dispatch end-to-end (BIT-907)", () => {
       };
       assert.strictEqual(header.state, "idle");
       assert.match(readMsg, /quick done/);
+      const sendMsg = String(
+        step3.find((m) => m.tool_call_id === "q-send")?.content ?? "",
+      );
+      assert.match(sendMsg, /has no dispatch record/);
       const nextMsg = String(
         step3.find((m) => m.tool_call_id === "q-next")?.content ?? "",
       );

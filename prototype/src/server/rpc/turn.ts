@@ -35,9 +35,10 @@ export type { TurnPosture } from "./turn-core.ts";
  * Delivers out-of-band session-scoped runtime notices (such as a child
  * session parking on an approval) to the clients of `sessionId` it knows:
  * each client running a turn there gets the notice once, through its turn's
- * sink, and each other connection that has run a turn there (`bindPeer`, the
- * 64 most recent) gets it as a `stream` notification. A connection that has
- * not yet run a turn on the session is not known and gets nothing.
+ * sink, and each other connection whose latest turn ran there (`bindPeer`
+ * keeps one session per connection, for the 64 most recent connections) gets
+ * it as a `stream` notification. A connection that has not run a turn on the
+ * session, or has since run one on another session, gets nothing.
  */
 export interface SessionEventHub {
   emit(sessionId: string, event: WorkbenchRuntimeEvent): void;

@@ -209,7 +209,9 @@ function spendApprovalUnavailable(crossedScopes: unknown): string {
 /**
  * `text` with every C0/C1 control character except newline shown as a visible
  * `\xNN` escape, so model-influenced approval text (a task preview, a command)
- * cannot clear, move over or hide the prompt the operator is answering.
+ * cannot clear the screen or move the cursor over the prompt the operator is
+ * answering. Newlines stay literal (indented), so a long multi-line value can
+ * still push earlier prompt lines up the screen.
  */
 export function escapeApprovalText(text: string): string {
   return text.replace(

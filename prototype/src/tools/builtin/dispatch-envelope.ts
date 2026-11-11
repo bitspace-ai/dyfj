@@ -24,7 +24,11 @@ export const DISPATCH_LABEL_PATTERN = new RegExp(DISPATCH_LABEL_SCHEMA_PATTERN);
 /** Maximum UTF-8 byte length for `dispatch/start` `task` and `dispatch/send` `message`: 32 KiB. */
 export const MAX_DISPATCH_TASK_BYTES = 32 * 1024;
 
-/** Maximum UTF-8 byte length per turn report returned by `dispatch/read`: 16 KiB. */
+/**
+ * Maximum UTF-8 byte length per turn report returned by `dispatch/read`, before
+ * envelope escaping: 16 KiB. Escaping (`<` to `&lt;` in envelope tags) can make
+ * the rendered report longer.
+ */
 export const MAX_DISPATCH_REPORT_BYTES = 16 * 1024;
 
 /** Maximum extra roots (`roots`) a `dispatch/start` call may request. */
@@ -588,11 +592,10 @@ function projectSingleToolEvent(
         sanitizeToolField(args.toolName, MAX_TOOL_NAME_BYTES) ??
           ACP_TOOL_HISTORY_UNAVAILABLE_NAME,
       ),
-      status: typeof args.status === "string" &&
-          GAP_TOOL_STATUSES.has(args.status)
-        ? args.status
-        : rejected
+      status: rejected
         ? "rejected"
+        : typeof args.status === "string" && GAP_TOOL_STATUSES.has(args.status)
+        ? args.status
         : "partial",
       summary: escapeDispatchEnvelopeText(summaryText || reason),
     };
