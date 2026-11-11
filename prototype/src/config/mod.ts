@@ -66,7 +66,10 @@ export {
 } from "./toml.ts";
 export {
   CONFIG_DEFAULTS,
+  DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
   loadConfig,
+  MAX_CODEX_INTERACTIVE_IDLE_SECONDS,
+  MIN_CODEX_INTERACTIVE_IDLE_SECONDS,
   type WorkbenchConfig,
 } from "./workbench.ts";
 export {

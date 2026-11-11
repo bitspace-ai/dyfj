@@ -105,6 +105,7 @@ import {
   openExternalAgentSession,
   prependChildContextLine,
 } from "./runners/acp/dispatch-lineage.ts";
+import { selectExternalAgentIdleTtlMs } from "./runners/acp/idle-limit.ts";
 import {
   CODEX_DISABLED_FEATURES,
   CODEX_HOME_CONFIG_TOML,
@@ -153,6 +154,7 @@ export interface ExternalAgentRuntimeInput
   };
   dispatchRecord?: DispatchRecord;
   onSessionRecorded?: (sessionId: string) => void | Promise<void>;
+  codexInteractiveIdleSeconds?: number;
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
@@ -1053,6 +1055,7 @@ export async function runExternalAgentWorkbenchRuntime(
         sessionId,
         workspace,
         profile,
+        idleTtlMs: selectExternalAgentIdleTtlMs(input, isDispatchedChild),
         prompt: prependChildContextLine(
           prependHistoryOmissionNotice(
             input.prompt,

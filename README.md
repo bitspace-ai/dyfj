@@ -1406,7 +1406,12 @@ tool-argument depth/node limit, or when retained history carries one of the
 explicitly checked credential shapes. The notice is included in the final ACP
 prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
 acquired handle, the existing error lifecycle closes and removes that handle
-without deleting persisted events. Idle handles retire on a TTL. A one-shot
+without deleting persisted events. Idle handles retire on a per-session idle
+limit chosen from the most recent turn that released the handle: `[codex]
+interactive_idle_seconds` (60 through 86400 seconds, default 14400, 4 hours)
+after an interactive turn on the `codex-chatgpt` runner, and 5 minutes
+(`DEFAULT_ACP_IDLE_TTL_MS`) after a one-shot turn, a dispatched child turn, or
+any turn on another runner. A one-shot
 `exec`, `ask`, or `-p` turn closes that session's idle external-agent handle
 before the receipt returns, while the session lock is still held. Cleanup
 waits for every matching entry still retained — an idle handle, a close
@@ -1422,11 +1427,19 @@ disconnect. A one-shot turn that fails requests that same close before its
 error returns; if the close also fails, the turn's error is the one returned
 and the slot may still be held.
 An interactive turn does
-not release its handle. That idle handle stays until the idle TTL, a runtime
-stop, or a later one-shot turn on the same session. An idle live
-session keeps a capacity slot while a client can still resume it. A small
-resident-session bound fails closed without evicting a session a client can
-resume. UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight
+not release its handle when the turn ends. That idle handle stays until its
+idle limit expires, a new session closes it at capacity, a runtime stop, or a
+later one-shot turn on the same session (and a later dispatched turn on that
+session resets its idle limit to 5 minutes). An idle live session keeps one of
+the map's 8 capacity slots (`DEFAULT_ACP_SESSION_CAPACITY`), as does an entry
+whose close is still in progress. When `acquire` needs a new entry at capacity
+and at least one entry is idle, it closes the idle entry with the earliest idle
+deadline within the shutdown close bound, writes one content-free runtime log
+line, and then starts the new session; active entries are never closed for
+capacity, and `acquire` fails closed with `AcpSessionCapacityError` when no
+entry is idle or when that close fails or times out. After an idle-limit or
+capacity close, the next turn on that Workbench session opens a replacement
+handle and reports `reconstructed`. UDS close, a foreground SIGINT, or `dyfj stop` wait for in-flight
 creation and for every started close to settle, then surface a retained close
 failure rather than
 reporting success. A shutdown failure exits with status 1. On an interactive
@@ -1514,7 +1527,11 @@ builtin tools are not offered, because Codex has its own shell and file tools.
 `[codex] workbench_tools = false` turns the bridge off.
 `[codex] tool_timeout_seconds` sets Codex's per-call timeout for bridged tools,
 from 1 through 3600 seconds; the default is 300. Time spent waiting on the
-approval prompt counts toward the timeout.
+approval prompt counts toward the timeout. `[codex] interactive_idle_seconds`
+sets how long an idle `codex-chatgpt` agent session stays warm after an
+interactive turn (neither one-shot nor dispatched), as an integer from 60
+through 86400 seconds; the default is 14400 (4 hours), while one-shot turns,
+dispatched child turns, and other runners keep the 5-minute idle limit.
 
 `--runner codex-chatgpt` is an experimental ACP route on supported non-Windows
 systems where `/bin/kill` supports negative process-group signaling, with
@@ -3109,3 +3126,10 @@ Document revisions only. Code and behavior changes are tracked in
   child turns under `ParkedApprovals`, `<coordinator-message>` and
   `<child-report>` envelopes, 30-minute idle slot release, and the prompt-free
   child-parked notice.
+- 2026-11-11 - The external-agent section documents per-session idle limits
+  chosen by the most recent turn (`[codex] interactive_idle_seconds`, 60
+  through 86400 seconds, default 14400, after interactive `codex-chatgpt`
+  turns; 5 minutes after one-shot turns, dispatched child turns, and other
+  runners) and earliest-idle-deadline reclamation at the 8-session capacity
+  bound with fail-closed active/close-error refusal and `reconstructed`
+  follow-up continuity.

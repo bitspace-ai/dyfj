@@ -512,7 +512,7 @@ test("twelve one-shot turns on one runtime leave no live external-agent session"
   assert.equal(runtime.creates(), 12);
 });
 
-test("idle external-agent sessions without a release fill capacity", async () => {
+test("idle external-agent sessions at capacity close the oldest idle entry for a new session", async () => {
   const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
   const runtime = countingAcpRuntime(map);
   await using started = await startServer("server-exec-capacity", {
@@ -524,13 +524,12 @@ test("idle external-agent sessions without a release fill capacity", async () =>
     await client.peer.request("turn", { prompt: `keep ${i}` });
   }
   assert.equal(map.size, 8);
-  const error = await client.peer.request("turn", { prompt: "one more" }).then(
-    () => undefined,
-    (reason: unknown) => reason,
-  );
-  assert.ok(error instanceof RpcError);
-  assert.match(error.message, /External-agent session capacity reached/);
+  const ninth = await client.peer.request("turn", { prompt: "one more" }) as {
+    sessionId: string;
+  };
+  assert.equal(typeof ninth.sessionId, "string");
   assert.equal(map.size, 8);
+  assert.equal(runtime.creates(), 9);
 });
 
 // A headless turn over the real composition: its approval parks in the

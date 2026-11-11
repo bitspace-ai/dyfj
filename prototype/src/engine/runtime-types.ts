@@ -207,6 +207,11 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    */
   defaultCodexReasoningEffort?: CodexReasoningEffort;
   /**
+   * Configured idle limit in seconds for an interactive Codex ChatGPT session
+   * ([codex] interactive_idle_seconds), resolved at the boundary.
+   */
+  codexInteractiveIdleSeconds?: number;
+  /**
    * Set by the engine, never by a caller: the session's recorded model this
    * resumed turn was routed to because it named none (`session-model.ts`).
    */

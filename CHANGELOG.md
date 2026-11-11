@@ -567,6 +567,26 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Longer interactive Codex idle continuity and idle-session eviction at
+  capacity (`BIT-924`).** `AcpSessionHandleMap` now arms each released handle's
+  idle timer from the idle limit of its most recent turn rather than one fixed
+  5-minute TTL for every entry. Interactive turns on `codex-chatgpt` (neither
+  one-shot via `releaseExternalAgentSession` nor dispatched child turns) keep
+  their handle warm for `[codex] interactive_idle_seconds` in
+  `~/.dyfj/config.toml` (an integer from 60 through 86400 seconds, default
+  14400, 4 hours); out-of-range or non-integer values fail config loading with
+  an error naming `[codex].interactive_idle_seconds`. One-shot turns,
+  dispatched child turns, and other runners keep the 5-minute idle limit, and a
+  later dispatched turn on an interactive session resets its idle limit to 5
+  minutes. The 8-session capacity bound stays in place (closing entries
+  included): when `acquire` needs a new entry at capacity and at least one
+  entry is idle, it closes the idle entry with the earliest idle deadline
+  within the shutdown close bound, writes one content-free runtime log line,
+  and starts the new session; active entries are never closed for capacity,
+  `acquire` still throws `AcpSessionCapacityError` when no entry is idle or
+  when that close fails or times out, and a later turn on an evicted or
+  idle-expired Workbench session still reports `reconstructed`.
+
 - **Nine dependency bumps in one change (BIT-860).** The runtime's own ACP
   client moves from `@agentclientprotocol/sdk` 1.8.0 to 2.1.0, the version the
   Codex adapter already carries. SDK 2.0 removed the legacy connection classes,

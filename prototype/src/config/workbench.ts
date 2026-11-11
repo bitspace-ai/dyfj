@@ -105,10 +105,21 @@ export interface WorkbenchConfig {
    * ([codex] tool_timeout_seconds), from 1 through 3600.
    */
   codexToolTimeoutSeconds: number;
+  /**
+   * How long, in seconds, the runtime keeps an idle Codex ChatGPT session
+   * after an interactive turn ([codex] interactive_idle_seconds), from 60
+   * through 86400.
+   */
+  codexInteractiveIdleSeconds: number;
 }
 
 /** The highest `[codex] tool_timeout_seconds` the loader accepts. */
 export const MAX_CODEX_TOOL_TIMEOUT_SECONDS = 3600;
+
+/** Bounds and default for `[codex] interactive_idle_seconds`. */
+export const MIN_CODEX_INTERACTIVE_IDLE_SECONDS = 60;
+export const MAX_CODEX_INTERACTIVE_IDLE_SECONDS = 86_400;
+export const DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS = 14_400;
 
 export const CONFIG_DEFAULTS: WorkbenchConfig = {
   defaultCompanionModel: null,
@@ -127,6 +138,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   codexReasoningEffort: null,
   codexWorkbenchTools: true,
   codexToolTimeoutSeconds: 300,
+  codexInteractiveIdleSeconds: DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
 };
 
 function validateCodexToolTimeout(value: number, source: string): number {
@@ -142,12 +154,66 @@ function validateCodexToolTimeout(value: number, source: string): number {
   return value;
 }
 
+function validateCodexInteractiveIdleSeconds(
+  value: number,
+  source: string,
+): number {
+  if (
+    !Number.isInteger(value) ||
+    value < MIN_CODEX_INTERACTIVE_IDLE_SECONDS ||
+    value > MAX_CODEX_INTERACTIVE_IDLE_SECONDS
+  ) {
+    throw new Error(
+      `config: invalid Codex interactive idle limit from ${source} (expected ` +
+        `an integer from ${MIN_CODEX_INTERACTIVE_IDLE_SECONDS} through ` +
+        `${MAX_CODEX_INTERACTIVE_IDLE_SECONDS} seconds)`,
+    );
+  }
+  return value;
+}
+
 function validateCodexReasoningEffort(
   value: string,
   source: string,
 ): CodexReasoningEffort {
   if (isCodexReasoningEffort(value)) return value;
   throw new Error(`config: ${codexReasoningEffortRefusal(source)}`);
+}
+
+function applyCodexFileConfig(
+  config: WorkbenchConfig,
+  table: Record<string, unknown>,
+  fileLabel: string,
+): void {
+  const fileEffort = readString(table, "codex", "reasoning_effort");
+  if (fileEffort !== undefined) {
+    config.codexReasoningEffort = validateCodexReasoningEffort(
+      fileEffort,
+      `${fileLabel} [codex].reasoning_effort`,
+    );
+  }
+  const fileWorkbenchTools = readBoolean(table, "codex", "workbench_tools");
+  if (fileWorkbenchTools !== undefined) {
+    config.codexWorkbenchTools = fileWorkbenchTools;
+  }
+  const fileToolTimeout = readNumber(table, "codex", "tool_timeout_seconds");
+  if (fileToolTimeout !== undefined) {
+    config.codexToolTimeoutSeconds = validateCodexToolTimeout(
+      fileToolTimeout,
+      `${fileLabel} [codex].tool_timeout_seconds`,
+    );
+  }
+  const fileInteractiveIdle = readNumber(
+    table,
+    "codex",
+    "interactive_idle_seconds",
+  );
+  if (fileInteractiveIdle !== undefined) {
+    config.codexInteractiveIdleSeconds = validateCodexInteractiveIdleSeconds(
+      fileInteractiveIdle,
+      `${fileLabel} [codex].interactive_idle_seconds`,
+    );
+  }
 }
 
 /**
@@ -249,24 +315,7 @@ export async function loadConfig(
         `${configLabel(path)} [agent].max_tool_steps`,
       );
     }
-    const fileEffort = readString(table, "codex", "reasoning_effort");
-    if (fileEffort !== undefined) {
-      config.codexReasoningEffort = validateCodexReasoningEffort(
-        fileEffort,
-        `${configLabel(path)} [codex].reasoning_effort`,
-      );
-    }
-    const fileWorkbenchTools = readBoolean(table, "codex", "workbench_tools");
-    if (fileWorkbenchTools !== undefined) {
-      config.codexWorkbenchTools = fileWorkbenchTools;
-    }
-    const fileToolTimeout = readNumber(table, "codex", "tool_timeout_seconds");
-    if (fileToolTimeout !== undefined) {
-      config.codexToolTimeoutSeconds = validateCodexToolTimeout(
-        fileToolTimeout,
-        `${configLabel(path)} [codex].tool_timeout_seconds`,
-      );
-    }
+    applyCodexFileConfig(config, table, configLabel(path));
     const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");
     if (fileCeiling !== undefined) {
       config.maxToolStepsCeiling = validateMaxToolSteps(

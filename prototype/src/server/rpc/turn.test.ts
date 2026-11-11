@@ -990,21 +990,32 @@ test("a failed one-shot turn still releases its external-agent session", async (
   }
 });
 
-test("eight idle external-agent sessions fill capacity", async () => {
+test("at capacity, a new interactive turn closes an idle external-agent session; active sessions refuse", async () => {
   const map = new AcpSessionHandleMap({ capacity: 8, idleTtlMs: 60_000 });
   const runtime = sessionMapRuntime(map);
   const rpc = handlers(runtime.runRuntime, {
     releaseExternalAgentSession: (sessionId) => map.dropSession(sessionId),
   });
+  const logged: string[] = [];
+  const restore = console.error;
+  console.error = (...args: unknown[]) => {
+    logged.push(args.map(String).join(" "));
+  };
   try {
     for (let i = 0; i < 8; i++) {
       await callRpc(rpc, "turn", { prompt: `keep ${i}` }, client());
     }
     assert.equal(map.size, 8);
-    const failure = await rpcFailure(rpc, "turn", { prompt: "one more" });
-    assert.match(failure.message, /External-agent session capacity reached/);
+    await callRpc(rpc, "turn", { prompt: "one more" }, client());
     assert.equal(map.size, 8);
+    assert.equal(runtime.creates(), 9);
+    assert.ok(
+      logged.some((line) =>
+        line.includes("closed idle external-agent session for capacity")
+      ),
+    );
   } finally {
+    console.error = restore;
     await map.shutdown();
   }
 });

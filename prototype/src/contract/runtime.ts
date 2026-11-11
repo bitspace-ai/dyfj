@@ -126,6 +126,11 @@ export interface WorkbenchRuntimeRequest {
    * is absent.
    */
   rootOverride?: string;
+  /**
+   * Whether the caller asked for this turn's external-agent session to be
+   * released when the turn ends (one-shot turn).
+   */
+  releaseExternalAgentSession?: boolean;
 }
 
 /** The most extra roots one turn may ask for. */

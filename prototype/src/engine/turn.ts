@@ -183,6 +183,8 @@ export interface ExecuteTurnDeps {
   maxToolStepsCeiling?: number;
   /** The configured effort for a Codex ChatGPT turn that names none. */
   defaultCodexReasoningEffort?: CodexReasoningEffort;
+  /** Configured idle limit in seconds for an interactive Codex ChatGPT session. */
+  codexInteractiveIdleSeconds?: number;
   /**
    * Close the turn's idle external-agent handle before the session lock is
    * released. The server passes the ACP session map's `dropSession`. Absent
@@ -206,7 +208,12 @@ export function engineConfigToTurnDeps(
     | "defaultRunawayStallUsd"
     | "maxToolSteps"
     | "maxToolStepsCeiling"
-  > & Partial<Pick<WorkbenchConfig, "codexReasoningEffort">>,
+  > & Partial<
+    Pick<
+      WorkbenchConfig,
+      "codexReasoningEffort" | "codexInteractiveIdleSeconds"
+    >
+  >,
 ): Pick<
   ExecuteTurnDeps,
   | "defaultCompanionModel"
@@ -221,6 +228,7 @@ export function engineConfigToTurnDeps(
   | "maxToolSteps"
   | "maxToolStepsCeiling"
   | "defaultCodexReasoningEffort"
+  | "codexInteractiveIdleSeconds"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -237,6 +245,9 @@ export function engineConfigToTurnDeps(
     ...(config.codexReasoningEffort
       ? { defaultCodexReasoningEffort: config.codexReasoningEffort }
       : {}),
+    ...(config.codexInteractiveIdleSeconds === undefined
+      ? {}
+      : { codexInteractiveIdleSeconds: config.codexInteractiveIdleSeconds }),
   };
 }
 
@@ -339,6 +350,9 @@ function runExecuteTurn(
   return deps.runRuntime({
     ...resolved.runtimeInput,
     ...resume,
+    ...(resolved.releaseExternalAgentSession
+      ? { releaseExternalAgentSession: true }
+      : {}),
     // The turn's cancel signal. Only a turn with a client turn id can be
     // cancelled by id, so only that turn reports its cancellation window
     // closing.
@@ -364,6 +378,9 @@ function runExecuteTurn(
     ...(deps.defaultCodexReasoningEffort === undefined
       ? {}
       : { defaultCodexReasoningEffort: deps.defaultCodexReasoningEffort }),
+    ...(deps.codexInteractiveIdleSeconds === undefined
+      ? {}
+      : { codexInteractiveIdleSeconds: deps.codexInteractiveIdleSeconds }),
     // config-file budget defaults override the env-only boundary resolver
     ...(deps.defaultSessionBudgetUsd !== undefined
       ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }

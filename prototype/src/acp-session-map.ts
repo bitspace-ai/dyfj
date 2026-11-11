@@ -123,6 +123,8 @@ interface MapEntry {
   createPromise?: Promise<AcpSessionHandle>;
   idleGeneration: number;
   idleTimer?: unknown;
+  idleTtlMs?: number;
+  idleDeadlineMs?: number;
   /** The close already running for this entry, if one is in progress. */
   closePromise?: Promise<void>;
 }
@@ -212,26 +214,31 @@ export class AcpSessionHandleMap {
       onRouteVerified?: AcpRunInput["onRouteVerified"];
     },
   ): Promise<AcpSessionHandle> {
-    if (this.#shuttingDown) throw new AcpSessionShutdownError();
     const key = encodeAcpSessionHandleKey(input);
-    const existing = this.#entries.get(key);
-    if (existing !== undefined) {
-      if (existing.state === "creating" || existing.state === "active") {
-        throw new AcpSessionBusyError();
-      }
-      if (existing.state === "closing") throw new AcpSessionBusyError();
-      if (existing.state === "idle" && existing.handle !== undefined) {
-        this.#disarmIdleTimer(existing);
-        if (existing.handle.isAlive) {
-          existing.state = "active";
-          return existing.handle;
+    while (true) {
+      if (this.#shuttingDown) throw new AcpSessionShutdownError();
+      const existing = this.#entries.get(key);
+      if (existing !== undefined) {
+        if (existing.state === "creating" || existing.state === "active") {
+          throw new AcpSessionBusyError();
         }
-        this.#entries.delete(key);
-        void existing.handle.close().catch(() => {});
+        if (existing.state === "closing") throw new AcpSessionBusyError();
+        if (existing.state === "idle" && existing.handle !== undefined) {
+          this.#disarmIdleTimer(existing);
+          if (existing.handle.isAlive) {
+            existing.state = "active";
+            return existing.handle;
+          }
+          this.#entries.delete(key);
+          void existing.handle.close().catch(() => {});
+        }
       }
-    }
-    if (this.#entries.size >= this.#capacity) {
-      throw new AcpSessionCapacityError();
+      if (this.#entries.size < this.#capacity) break;
+      const victim = this.#earliestIdleEntry();
+      if (victim === undefined) {
+        throw new AcpSessionCapacityError();
+      }
+      await this.#closeIdleForCapacity(victim);
     }
     const entry: MapEntry = { key, state: "creating", idleGeneration: 0 };
     this.#entries.set(key, entry);
@@ -269,7 +276,7 @@ export class AcpSessionHandleMap {
     }
   }
 
-  release(handle: AcpSessionHandle): void {
+  release(handle: AcpSessionHandle, idleTtlMs?: number): void {
     const entry = this.#entryForHandle(handle);
     if (entry === undefined) return;
     if (entry.state !== "active") return;
@@ -277,8 +284,10 @@ export class AcpSessionHandleMap {
       void this.#removeAndClose(entry).catch(() => {});
       return;
     }
+    const ttlMs = idleTtlMs ?? this.#idleTtlMs;
     entry.state = "idle";
-    this.#armIdleTimer(entry);
+    entry.idleTtlMs = ttlMs;
+    this.#armIdleTimer(entry, ttlMs);
   }
 
   /**
@@ -334,6 +343,8 @@ export class AcpSessionHandleMap {
     input: AcpSessionHandleKey & AcpPromptInput & {
       create?: () => Promise<AcpSessionHandle>;
       onRouteVerified?: AcpRunInput["onRouteVerified"];
+      /** Idle limit in milliseconds applied when this turn releases the handle. */
+      idleTtlMs?: number;
       /**
        * Bounded projection of the Workbench session's prior turns, supplied
        * only when the session has history to carry. Called just once, and only
@@ -414,7 +425,7 @@ export class AcpSessionHandleMap {
       await this.drop(handle);
       throw error;
     } finally {
-      this.release(handle);
+      this.release(handle, input.idleTtlMs);
     }
   }
 
@@ -448,15 +459,54 @@ export class AcpSessionHandleMap {
     return undefined;
   }
 
-  #armIdleTimer(entry: MapEntry): void {
+  #earliestIdleEntry(): MapEntry | undefined {
+    let earliest: MapEntry | undefined;
+    for (const entry of this.#entries.values()) {
+      if (entry.state !== "idle") continue;
+      if (
+        earliest === undefined ||
+        (entry.idleDeadlineMs ?? Infinity) <
+          (earliest.idleDeadlineMs ?? Infinity)
+      ) {
+        earliest = entry;
+      }
+    }
+    return earliest;
+  }
+
+  async #closeIdleForCapacity(entry: MapEntry): Promise<void> {
+    const close = this.#removeAndClose(entry);
+    let timer: unknown;
+    try {
+      await Promise.race([
+        close,
+        new Promise<never>((_, reject) => {
+          timer = this.#setTimeout(() => {
+            reject(new AcpSessionCapacityError());
+          }, this.#shutdownTimeoutMs);
+        }),
+      ]);
+    } catch {
+      throw new AcpSessionCapacityError();
+    } finally {
+      if (timer !== undefined) this.#clearTimeout(timer);
+    }
+    console.error(
+      "[acp-session-map] closed idle external-agent session for capacity",
+    );
+  }
+
+  #armIdleTimer(entry: MapEntry, idleTtlMs: number = this.#idleTtlMs): void {
     this.#disarmIdleTimer(entry);
     const generation = ++entry.idleGeneration;
+    entry.idleDeadlineMs = this.#now() + idleTtlMs;
     entry.idleTimer = this.#setTimeout(() => {
       void this.#onIdleTimeout(entry, generation).catch(() => {});
-    }, this.#idleTtlMs);
+    }, idleTtlMs);
   }
 
   #disarmIdleTimer(entry: MapEntry): void {
+    entry.idleDeadlineMs = undefined;
     if (entry.idleTimer === undefined) return;
     this.#clearTimeout(entry.idleTimer);
     entry.idleTimer = undefined;
