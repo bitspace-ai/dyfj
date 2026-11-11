@@ -1323,9 +1323,14 @@ the runner advertises ACP `session/load` and Workbench can verify the resumed
 external session identity, which no currently pinned adapter provides. The
 runner receipt records that state, the durable-resume status, the count of
 projected messages and tool exchanges, and the prior and new external session
-identifiers. The terminal client also prints the continuity state, whether the
-native session was new, reused, or replaced, and the ACP tool-evidence count in
-each external-agent footer. Workbench merges each real ACP `tool_call` with its
+identifiers. Both the TypeScript terminal client and the Rust REPL print the
+continuity state, whether the native session was new, reused, or replaced,
+and the ACP tool-evidence counts in each external-agent footer. The Rust
+footer also shows the model slug (or runner profile), reported session cost
+or cost basis, agent-reported token usage and context-window use when
+available, any history-omission summary, and elapsed time. At startup, the
+Rust REPL labels a model as `external agent` when the runtime catalog
+identifies its API as ACP. Workbench merges each real ACP `tool_call` with its
 `tool_call_update` patches and judges every call on its own. A call is
 persisted as a replayable tool request/result pair (`recorded`) only when it
 has a well-formed call id and tool name that sanitizing leaves unchanged, a
@@ -3109,3 +3114,6 @@ Document revisions only. Code and behavior changes are tracked in
   child turns under `ParkedApprovals`, `<coordinator-message>` and
   `<child-report>` envelopes, 30-minute idle slot release, and the prompt-free
   child-parked notice.
+- 2026-11-11 - Document the external-agent footer shared by the TypeScript
+  terminal client and Rust REPL, including the Rust receipt fields and their
+  runtime-reported accounting basis, plus the Rust startup route label.
