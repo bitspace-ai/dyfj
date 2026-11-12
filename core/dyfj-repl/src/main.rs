@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
-    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket, control.is_some());
+    posture::show_startup(&client, &client.request("runtime/status", json!({})).await, &session, &socket, control.is_some()).await;
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
     }
