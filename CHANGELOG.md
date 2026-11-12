@@ -591,6 +591,14 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **External-agent receipts in the Rust REPL (`BIT-927`).** Each footer now
+  shows the routed model or runner profile, reported session cost or cost
+  basis, agent-reported tokens, context-window use, continuity and native
+  session state, recorded tool-evidence counts, history omissions and elapsed
+  time when available. The startup posture identifies external agents from
+  the runtime model catalog. Subscription quota is labelled without estimating
+  a dollar cost; missing fields do not invent numeric values.
+
 - **The CLI's busy spinner no longer redraws over an open approval prompt
   (BIT-906).** While a mid-turn approval prompt waited for an answer,
   incoming `agentProgress` events, visible runtime events and streamed output
