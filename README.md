@@ -1323,9 +1323,17 @@ the runner advertises ACP `session/load` and Workbench can verify the resumed
 external session identity, which no currently pinned adapter provides. The
 runner receipt records that state, the durable-resume status, the count of
 projected messages and tool exchanges, and the prior and new external session
-identifiers. The terminal client also prints the continuity state, whether the
-native session was new, reused, or replaced, and the ACP tool-evidence count in
-each external-agent footer. Workbench merges each real ACP `tool_call` with its
+identifiers. Both the TypeScript terminal client and the Rust REPL print an
+external-agent footer after each turn. Both footers show the model slug (or
+the runner profile), the reported session cost or the cost basis, token
+usage and context-window use when the agent reports them, the continuity
+state, whether the native session was new, reused, or replaced, the ACP
+tool-evidence counts, any history-omission summary, and the elapsed time.
+The TypeScript footer also shows the protocol version, the transport, the
+access route and the route reason. The Rust footer marks token usage as
+agent-reported. At startup, the
+Rust REPL labels a model as `external agent` when the runtime catalog
+identifies its API as ACP. Workbench merges each real ACP `tool_call` with its
 `tool_call_update` patches and judges every call on its own. A call is
 persisted as a replayable tool request/result pair (`recorded`) only when it
 has a well-formed call id and tool name that sanitizing leaves unchanged, a
@@ -3109,3 +3117,6 @@ Document revisions only. Code and behavior changes are tracked in
   child turns under `ParkedApprovals`, `<coordinator-message>` and
   `<child-report>` envelopes, 30-minute idle slot release, and the prompt-free
   child-parked notice.
+- 2026-11-11 - Document the external-agent footer shared by the TypeScript
+  terminal client and Rust REPL, including the Rust receipt fields and their
+  runtime-reported accounting basis, plus the Rust startup route label.

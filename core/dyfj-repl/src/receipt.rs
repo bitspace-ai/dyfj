@@ -45,18 +45,8 @@ fn tokens(receipt: &Value, key: &str) -> u64 {
 /// running spend including this turn, shown only when the runtime sends no
 /// session figure of its own.
 pub fn line(receipt: &Value, repl_total: f64) -> String {
-    if receipt.get("runner").is_some() {
-        // External-agent receipts carry their own cost semantics. That route
-        // is deferred for the daily driver, so this front-end names it rather
-        // than rendering half of it.
-        // The model slug Workbench selected for the runner, when the runtime
-        // reports one as a string; otherwise the runner profile.
-        let runner = receipt
-            .pointer("/runner/modelSlug")
-            .and_then(Value::as_str)
-            .or_else(|| receipt.pointer("/runner/profile").and_then(Value::as_str))
-            .unwrap_or("external runner");
-        return format!("— {} · external runner receipt", visible(runner));
+    if let Some(runner) = receipt.get("runner") {
+        return runner_line(receipt, runner);
     }
 
     let mut parts: Vec<String> = Vec::new();
@@ -157,6 +147,96 @@ pub fn line(receipt: &Value, repl_total: f64) -> String {
     format!("— {}", parts.join(" · "))
 }
 
+/// External-agent accounting stays separate from native USD and token totals.
+/// Missing or malformed numeric fields never become invented zeroes.
+fn runner_line(receipt: &Value, runner: &Value) -> String {
+    let text = |path: &str| runner.pointer(path).and_then(Value::as_str);
+    let number = |path: &str| runner.pointer(path).and_then(Value::as_u64);
+    let mut parts = vec![visible(
+        text("/modelSlug").or_else(|| text("/profile")).unwrap_or("external runner"),
+    )];
+    let reported_cost = runner.pointer("/sessionCost/amount")
+        .and_then(Value::as_f64).filter(|n| n.is_finite() && *n >= 0.0)
+        .zip(text("/sessionCost/currency"));
+    parts.push(match reported_cost {
+        Some((amount, "USD")) => format!("session cost {}", usd(amount)),
+        Some((amount, currency)) => format!("session cost {amount} {}", visible(currency)),
+        None => match text("/costBasis") {
+            Some("local_free") => "$0".into(),
+            Some("subscription_quota") => "subscription quota (USD not reported)".into(),
+            Some("metered_usd") => "USD not reported".into(),
+            _ => "cost unknown".into(),
+        },
+    });
+    if let (Some(input), Some(output)) = (number("/usage/input"), number("/usage/output")) {
+        let mut usage = format!("{}→{} tok", count(input), count(output));
+        if let Some(reasoning) = number("/usage/reasoning").filter(|n| *n > 0) {
+            usage.push_str(&format!(" (+{} reasoning)", count(reasoning)));
+        }
+        usage.push_str(" (agent-reported)");
+        parts.push(usage);
+    }
+    if let (Some(used), Some(size)) = (number("/contextWindow/used"), number("/contextWindow/size")) {
+        parts.push(format!("ctx {}/{}", count(used), count(size)));
+    }
+    let state = text("/continuity/state");
+    let mut continuity = state.map(|s| format!("continuity {}", visible(s)))
+        .unwrap_or_else(|| "continuity unestablished".into());
+    if state == Some("reconstructed") {
+        match (number("/continuity/priorMessagesProjected"), number("/continuity/toolExchangesProjected")) {
+            (Some(messages), Some(tools)) => continuity.push_str(&format!(" {messages}msg/{tools}tool")),
+            (Some(messages), None) => continuity.push_str(&format!(" {messages}msg")),
+            (None, Some(tools)) => continuity.push_str(&format!(" {tools}tool")),
+            _ => {}
+        }
+    }
+    parts.push(continuity);
+    parts.push(match state {
+        Some("new") => "native session new",
+        Some("warm-reused" | "durably-resumed") => "native session reused",
+        Some("reconstructed") => "native session replaced",
+        _ => "native session unverified",
+    }.into());
+    let tools = match (text("/toolEvidence/status"), number("/toolEvidence/observedCalls")) {
+        (Some("unavailable"), Some(observed)) => Some(format!("ACP tools unavailable ({observed} observed)")),
+        (Some("complete" | "partial"), Some(observed)) => number("/toolEvidence/recordedCalls").and_then(|recorded| {
+            let prefix = format!("ACP tools {recorded}/{observed} recorded");
+            if text("/toolEvidence/status") == Some("partial") {
+                number("/toolEvidence/partialCalls").zip(number("/toolEvidence/rejectedCalls"))
+                    .map(|(partial, rejected)| format!("{prefix} ({partial} partial, {rejected} rejected)"))
+            } else {
+                Some(prefix)
+            }
+        }),
+        _ => None,
+    };
+    parts.push(tools.unwrap_or_else(|| "ACP tools unreported".into()));
+    if let Some(history) = receipt.get("historyOmission").and_then(history_omission_summary) {
+        parts.push(history);
+    }
+    if let Some(elapsed) = number("/elapsedMs") {
+        parts.push(format!("{elapsed}ms"));
+    }
+    format!("— {}", parts.join(" · "))
+}
+
+/// The TypeScript contract's `formatHistoryOmissionSummary` wording, when
+/// the runtime supplies the counts needed to make that disclosure.
+fn history_omission_summary(history: &Value) -> Option<String> {
+    let number = |key: &str| history.get(key).and_then(Value::as_u64);
+    let counted = |n: u64, noun: &str| format!("{n} {noun}{}", if n == 1 { "" } else { "s" });
+    let records = counted(number("detectedInHistory")?, "record");
+    let malformed = counted(number("malformedToolRecords")?, "malformed tool record");
+    let gaps = counted(number("gapMarkers")?, "gap marker");
+    let unknown = if history.get("callsUnknown")?.as_bool()? {
+        "; number of lost calls unknown (possibly zero)"
+    } else { "" };
+    let selected = number("withheldFromProjection")?;
+    let pairs = number("projectedPairs")?;
+    let delivery = visible(history.get("historyDelivery")?.as_str()?);
+    Some(format!("Tool evidence withheld: {records} ({malformed}, {gaps}{unknown}); selected window {selected}; valid projected pairs {pairs}; history delivery {delivery}; notice composed for this request"))
+}
+
 /// The share of the turn's input served from cache, in whole percent, rounded
 /// as the TypeScript line's `Math.round` rounds.
 fn cached_percent(input: u64, read: u64, write: u64) -> u64 {
@@ -231,17 +311,77 @@ mod tests {
         })
     }
 
+    fn runner_receipt() -> serde_json::Value {
+        json!({
+            "runner": {
+                "profile": "fixture", "modelSlug": "fixture/model",
+                "protocol": "acp", "protocolVersion": 1, "transport": "local_stdio",
+                "accessRoute": "local", "costBasis": "metered_usd",
+                "sessionCost": {"amount": 0.125, "currency": "USD"},
+                "usage": {"input": 1200, "output": 50, "reasoning": 7},
+                "contextWindow": {"used": 2400, "size": 32000},
+                "continuity": {"state": "warm-reused"},
+                "toolEvidence": {"status": "partial", "observedCalls": 4,
+                    "recordedCalls": 2, "partialCalls": 1, "rejectedCalls": 1},
+                "elapsedMs": 1234
+            },
+            "historyOmission": {"detectedInHistory": 2, "malformedToolRecords": 1,
+                "gapMarkers": 1, "callsUnknown": true, "withheldFromProjection": 1,
+                "projectedPairs": 3, "historyDelivery": "warm-no-replay"},
+            "route": {"reason": "fixture_route"}
+        })
+    }
+
     #[test]
-    fn external_runner_receipt_names_the_routed_model() {
-        let with_slug = json!({"runner": {"profile": "codex-chatgpt", "modelSlug": "codex-chatgpt/gpt-6.1-sol"}});
-        assert_eq!(
-            line(&with_slug, 0.0),
-            "— codex-chatgpt/gpt-6.1-sol · external runner receipt"
-        );
-        let without = json!({"runner": {"profile": "codex-chatgpt"}});
-        assert_eq!(line(&without, 0.0), "— codex-chatgpt · external runner receipt");
-        let null_slug = json!({"runner": {"profile": "codex-chatgpt", "modelSlug": null}});
-        assert_eq!(line(&null_slug, 0.0), "— codex-chatgpt · external runner receipt");
+    fn runner_warm_reused_renders_reported_fields_in_order() {
+        assert_eq!(line(&runner_receipt(), 99.0),
+            "— fixture/model · session cost $0.1250 · 1,200→50 tok (+7 reasoning) (agent-reported) · ctx 2,400/32,000 · continuity warm-reused · native session reused · ACP tools 2/4 recorded (1 partial, 1 rejected) · Tool evidence withheld: 2 records (1 malformed tool record, 1 gap marker; number of lost calls unknown (possibly zero)); selected window 1; valid projected pairs 3; history delivery warm-no-replay; notice composed for this request · 1234ms");
+    }
+
+    #[test]
+    fn runner_reconstructed_shows_projected_counts() {
+        let mut r = runner_receipt();
+        r["runner"]["continuity"] = json!({"state": "reconstructed",
+            "priorMessagesProjected": 12, "toolExchangesProjected": 3});
+        assert!(line(&r, 0.0).contains("continuity reconstructed 12msg/3tool · native session replaced"), "{}", line(&r, 0.0));
+    }
+
+    #[test]
+    fn runner_without_usage_or_context_has_no_placeholder_numbers() {
+        let r = json!({"runner": {"profile": "fixture", "costBasis": "unknown"}});
+        assert_eq!(line(&r, 99.0), "— fixture · cost unknown · continuity unestablished · native session unverified · ACP tools unreported");
+        let malformed = json!({"runner": {"profile": "fixture", "usage": {}, "contextWindow": {},
+            "sessionCost": {}, "continuity": {"state": "reconstructed"}, "toolEvidence": {}, "elapsedMs": "bad"}});
+        assert_eq!(line(&malformed, 99.0), "— fixture · cost unknown · continuity reconstructed · native session replaced · ACP tools unreported");
+    }
+
+    #[test]
+    fn runner_subscription_quota_has_no_dollar_figure() {
+        let r = json!({"runner": {"profile": "subscription", "costBasis": "subscription_quota", "elapsedMs": 2}});
+        let rendered = line(&r, 99.0);
+        assert!(!rendered.contains('$'), "{rendered}");
+        assert_eq!(rendered, "— subscription · subscription quota (USD not reported) · continuity unestablished · native session unverified · ACP tools unreported · 2ms");
+    }
+
+    #[test]
+    fn runner_hostile_model_slug_stays_visible_in_the_full_footer() {
+        let r = json!({"runner": {"profile": "fixture", "modelSlug": "evil\u{1b}[2J\nmodel", "costBasis": "unknown"}});
+        let rendered = line(&r, 0.0);
+        assert!(!rendered.chars().any(char::is_control), "{rendered:?}");
+        assert_eq!(rendered, format!("— {} · cost unknown · continuity unestablished · native session unverified · ACP tools unreported", crate::approval::visible("evil\u{1b}[2J\nmodel")));
+    }
+
+    #[test]
+    fn runner_cost_bases_sessions_and_tool_evidence_follow_typescript_wording() {
+        for (basis, expected) in [("local_free", "$0"), ("metered_usd", "USD not reported"), ("unknown", "cost unknown")] {
+            let mut r = json!({"runner": {"profile": "fixture", "modelSlug": null, "costBasis": basis,
+                "continuity": {"state": "new"}, "toolEvidence": {"status": "complete", "observedCalls": 0, "recordedCalls": 0}}});
+            assert_eq!(line(&r, 99.0), format!("— fixture · {expected} · continuity new · native session new · ACP tools 0/0 recorded"));
+            r["runner"]["continuity"]["state"] = json!("durably-resumed");
+            r["runner"]["toolEvidence"] = json!({"status": "unavailable", "observedCalls": 2});
+            r["runner"]["sessionCost"] = json!({"amount": 1.5, "currency": "EUR\u{1b}"});
+            assert_eq!(line(&r, 0.0), format!("— fixture · session cost 1.5 {} · continuity durably-resumed · native session reused · ACP tools unavailable (2 observed)", crate::approval::visible("EUR\u{1b}")));
+        }
     }
 
     #[test]

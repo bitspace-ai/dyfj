@@ -14,12 +14,29 @@ use std::path::{Path, PathBuf};
 pub const FINGERPRINT_UNKNOWN: &str = "unknown";
 
 /// Print the posture line for a `runtime/status` answer, with any warnings
-/// it carries, or say the posture is unavailable. Shown at startup and again
-/// when the REPL re-attaches to a restarted runtime. `dev` is whether
+/// it carries, or say the posture is unavailable. At startup the catalog
+/// also identifies the selected model's API. `dev` is whether
 /// `dyfj dev` supervises this REPL, which changes how a runtime behind the
 /// working tree catches up.
+pub async fn show_startup(client: &crate::client::Client, status: &anyhow::Result<Value>, session: &Session, socket: &str, dev: bool) {
+    // The status describes the default's tier and locality, but only the
+    // catalog names its API. Use that runtime fact rather than slug naming.
+    let catalog = if status.is_ok() {
+        client.request("models/list", serde_json::json!({})).await.ok()
+    } else {
+        None
+    };
+    let rows = catalog.as_ref().and_then(|v| v.get("models"))
+        .and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
+    show_with_models(status, session, socket, dev, rows);
+}
+
 pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str, dev: bool) {
-    let (out, err) = render(status, session, socket, &local_source_hash(), dev);
+    show_with_models(status, session, socket, dev, &[]);
+}
+
+fn show_with_models(status: &anyhow::Result<Value>, session: &Session, socket: &str, dev: bool, rows: &[Value]) {
+    let (out, err) = render_with_models(status, session, socket, &local_source_hash(), dev, rows);
     for line in out {
         println!("{line}");
     }
@@ -30,6 +47,7 @@ pub fn show(status: &anyhow::Result<Value>, session: &Session, socket: &str, dev
 
 /// What `show` prints, to stdout and to stderr, given this checkout's source
 /// hash.
+#[cfg(test)]
 fn render(
     status: &anyhow::Result<Value>,
     session: &Session,
@@ -37,9 +55,20 @@ fn render(
     local_hash: &str,
     dev: bool,
 ) -> (Vec<String>, Vec<String>) {
+    render_with_models(status, session, socket, local_hash, dev, &[])
+}
+
+fn render_with_models(
+    status: &anyhow::Result<Value>,
+    session: &Session,
+    socket: &str,
+    local_hash: &str,
+    dev: bool,
+    rows: &[Value],
+) -> (Vec<String>, Vec<String>) {
     match status {
         Ok(status) => (
-            std::iter::once(line_with_local_hash(status, session, socket, local_hash, dev))
+            std::iter::once(line_with_models(status, session, socket, local_hash, dev, rows))
                 .chain(crate::budget::line(status, &session.budget))
                 .collect(),
             unresolved_pointer_warnings(status),
@@ -77,8 +106,13 @@ fn local_source_hash() -> String {
 /// reporting one should cost a narrower line, not a failed startup. When the
 /// runtime's code differs from this checkout's (`local_hash`), a warning line
 /// follows.
+#[cfg(test)]
 pub fn line_with_local_hash(status: &Value, session: &Session, socket: &str, local_hash: &str, dev: bool) -> String {
-    let posture = posture_line(status, session, socket);
+    line_with_models(status, session, socket, local_hash, dev, &[])
+}
+
+fn line_with_models(status: &Value, session: &Session, socket: &str, local_hash: &str, dev: bool, rows: &[Value]) -> String {
+    let posture = posture_line_with_models(status, session, socket, rows);
     match freshness_warning(status, local_hash, dev) {
         Some(warning) => format!("{posture}\n{warning}"),
         None => posture,
@@ -221,7 +255,7 @@ pub fn switch_line(session: &Session, rows: &[Value]) -> String {
     format!("posture: {}", parts.join(" · "))
 }
 
-fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
+fn posture_line_with_models(status: &Value, session: &Session, socket: &str, rows: &[Value]) -> String {
     let runtime = status.get("runtime").unwrap_or(status);
     let mut parts: Vec<String> = Vec::new();
 
@@ -248,6 +282,13 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
             parts.push("restored from session".into());
         }
     }
+    let active = session.model.as_deref().or(default_slug);
+    if rows.iter().any(|row| {
+        row.get("slug").and_then(Value::as_str).is_some_and(|slug| Some(slug) == active)
+            && row.get("api").and_then(Value::as_str) == Some("acp")
+    }) {
+        parts.push("external agent".into());
+    }
     // A resumed session with no recorded model runs on the default, as every
     // resume did before the runtime recorded one; say so rather than imply
     // the default is the model its history was built on.
@@ -259,7 +300,6 @@ fn posture_line(status: &Value, session: &Session, socket: &str) -> String {
     // it is why a hosted turn is refused. An absent field narrows the line.
     // The effort the next turn runs at, on a Codex model only: the
     // session's own, else the runtime's configured default.
-    let active = session.model.as_deref().or(default_slug);
     if active.is_some_and(crate::session::is_codex_model) {
         let effort = session
             .effort
@@ -353,6 +393,23 @@ mod tests {
     use super::{line, unresolved_pointer_warnings};
     use crate::session::Session;
     use serde_json::json;
+
+    #[test]
+    fn catalog_marks_the_chosen_or_default_acp_model_as_external() {
+        let status = json!({"runtime": {"defaultTurnModel": {"slug": "fixture"}}});
+        let rows = vec![json!({"slug": "fixture", "api": "acp"}),
+            json!({"slug": "native", "api": "openai-completions"})];
+        assert!(super::posture_line_with_models(&status, &Session::default(), "/tmp/s.sock", &rows)
+            .contains("fixture · external agent"));
+        let chosen = Session { model: Some("fixture".into()), ..Session::default() };
+        assert!(super::posture_line_with_models(&json!({}), &chosen, "/tmp/s.sock", &rows)
+            .contains("fixture (chosen) · external agent"));
+        let native = Session { model: Some("native".into()), ..Session::default() };
+        assert!(!super::posture_line_with_models(&status, &native, "/tmp/s.sock", &rows)
+            .contains("external agent"));
+        assert!(!super::posture_line_with_models(&status, &Session::default(), "/tmp/s.sock", &[])
+            .contains("external agent"));
+    }
 
     #[test]
     fn names_each_secret_that_failed_at_start_and_how_to_recover() {
