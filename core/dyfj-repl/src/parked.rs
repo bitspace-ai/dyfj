@@ -33,7 +33,12 @@ pub enum Attached {
     Unavailable,
 }
 
+#[cfg(test)]
 pub async fn answer_parked(client: &Client, input: &mpsc::Sender<Ask>, session_id: &str) -> Attached {
+    answer_parked_for_agent(client, input, session_id, None).await
+}
+
+pub async fn answer_parked_for_agent(client: &Client, input: &mpsc::Sender<Ask>, session_id: &str, model: Option<&str>) -> Attached {
     let listed = match client
         .request("approvals/pending", json!({"sessionId": session_id}))
         .await
@@ -65,7 +70,7 @@ pub async fn answer_parked(client: &Client, input: &mpsc::Sender<Ask>, session_i
             continue;
         };
         let request = parked.get("request").cloned().unwrap_or(Value::Null);
-        let verdict = match approval::ask_while_connected(client, input, &request).await {
+        let verdict = match approval::ask_while_connected(client, input, &request, model).await {
             Asked::Disconnected => return Attached::Unavailable,
             Asked::Answered(Outcome::Cancelled) => {
                 eprintln!("left waiting; it is asked again before your next message, or when you attach");
@@ -93,9 +98,14 @@ pub async fn answer_parked(client: &Client, input: &mpsc::Sender<Ask>, session_i
 /// attach, including the next one a parked turn raised after an answer. The
 /// runtime refuses a turn while one waits. False when the operator left one
 /// parked, so the message is not sent.
+#[cfg(test)]
 pub async fn clear_to_send(client: &Client, input: &mpsc::Sender<Ask>, session_id: Option<&str>) -> bool {
+    clear_to_send_for_agent(client, input, session_id, None).await
+}
+
+pub async fn clear_to_send_for_agent(client: &Client, input: &mpsc::Sender<Ask>, session_id: Option<&str>, model: Option<&str>) -> bool {
     let Some(id) = session_id else { return true };
-    if answer_parked(client, input, id).await == Attached::LeftParked {
+    if answer_parked_for_agent(client, input, id, model).await == Attached::LeftParked {
         eprintln!("nothing was sent");
         return false;
     }

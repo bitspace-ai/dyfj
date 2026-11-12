@@ -1442,8 +1442,10 @@ failure rather than
 reporting success. A shutdown failure exits with status 1. On an interactive
 Unix-socket client, every accepted ACP option (up to 16) is rendered as a
 numbered choice and the exact selected option identifier is returned to the
-agent; invalid input re-prompts within that same exchange up to three times
-before failing closed. Empty or closed input, a non-interactive client, or an
+agent. For external-agent permission choices, both the TypeScript CLI and the
+Rust REPL allow at most three selection attempts in the same exchange: a
+nonempty invalid answer asks again, and the third invalid answer rejects.
+Empty or closed input, a non-interactive client, or an
 unavailable approval handler selects the request's rejection option when one
 exists, otherwise the request is cancelled. Empty option lists and empty or
 duplicate identifiers fail at protocol ingress. This selection contract is
@@ -1451,6 +1453,12 @@ common to every ACP profile. Transport (`local_stdio`) remains distinct from the
 selected access route (`local_sidecar`) and its cost basis (`local_free`). The
 fixture is protocol coverage, not evidence for a vendor agent or subscription
 route.
+
+The Rust REPL names the asking external agent using the session's model slug
+when available, displays object input as fields with decoded string values
+and marked continuation lines, and describes each offered option's effect.
+It shows received fields in full; input it cannot read as an object is shown
+raw with a notice about the runtime's input limit.
 
 Codex turns run at the reasoning effort the operator chooses. `--effort
 <low|medium|high|xhigh>` (on `dyfj`, `dyfj exec` and the Rust REPL) and the
@@ -3137,3 +3145,5 @@ Document revisions only. Code and behavior changes are tracked in
   tools for loopback Codex coordinators at depth 0, the bridge's approval and
   child-report behavior, and the dispatch wait versus Codex tool timeout rule
   when the bridge is enabled.
+- 2026-11-11 - The external-agent section describes the Rust REPL's permission
+  display and clarifies that both clients allow three selection attempts.

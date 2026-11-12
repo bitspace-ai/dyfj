@@ -2,7 +2,8 @@
 //!
 //! Fail-closed. A yes/no request is approved only by `y` or `yes`; a choice
 //! request is answered by a valid option number, which selects rather than
-//! approves. Any other line denies. Ctrl-C does not deny: the caller cancels
+//! approves. External-agent choices allow three attempts; an empty line denies
+//! immediately. Other requests deny on any invalid line. Ctrl-C does not deny: the caller cancels
 //! the turn. Ctrl-D, a failed read, and a terminal that has gone away deny,
 //! with a reason that does not say the operator declined.
 //!
@@ -11,6 +12,7 @@
 //! than swallowing it.
 
 use crate::client::{Client, Verdict};
+use crate::approval_external::{is_external, option_description};
 use crate::terminal::{Ask, ReadOutcome};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -205,12 +207,21 @@ fn title_of(params: &Value) -> &str {
         .unwrap_or("approval request")
 }
 
+#[cfg(test)]
 pub async fn ask(input: &mpsc::Sender<Ask>, params: &Value) -> Outcome {
+    ask_for_agent(input, params, None).await
+}
+
+async fn ask_for_agent(input: &mpsc::Sender<Ask>, params: &Value, model: Option<&str>) -> Outcome {
     if let Some(authorises) = spending_request(params) {
         return spending(input, params, authorises).await;
     }
 
-    let preamble = format!("\n⚠  {}\n", describe(params));
+    let preamble = if is_external(params) {
+        crate::approval_external::preamble(params, model)
+    } else {
+        format!("\n⚠  {}\n", describe(params))
+    };
     decide(input, params, preamble).await
 }
 
@@ -226,7 +237,7 @@ pub enum Asked {
 /// Ask an approval question, giving up on it if the runtime disconnects
 /// first. The read itself cannot be abandoned (see `terminal::spawn`), so the
 /// question stays on screen; this only stops waiting for it.
-pub async fn ask_while_connected(client: &Client, input: &mpsc::Sender<Ask>, params: &Value) -> Asked {
+pub async fn ask_while_connected(client: &Client, input: &mpsc::Sender<Ask>, params: &Value, model: Option<&str>) -> Asked {
     tokio::select! {
         biased;
         () = client.closed() => {
@@ -236,7 +247,7 @@ pub async fn ask_while_connected(client: &Client, input: &mpsc::Sender<Ask>, par
             );
             Asked::Disconnected
         }
-        outcome = ask(input, params) => Asked::Answered(outcome),
+        outcome = ask_for_agent(input, params, model) => Asked::Answered(outcome),
     }
 }
 
@@ -280,9 +291,14 @@ async fn decide(input: &mpsc::Sender<Ask>, params: &Value, mut preamble: String)
         return yes_no(input, &preamble).await;
     }
     for (index, (_, name)) in choices.iter().enumerate() {
-        preamble.push_str(&format!("   {}. {}\n", index + 1, visible(name)));
+        preamble.push_str(&format!("   {}. {}", index + 1, visible(name)));
+        if is_external(params) {
+            let kind = params["options"][index]["kind"].as_str().unwrap_or_default();
+            preamble.push_str(&format!(" — {}", option_description(kind)));
+        }
+        preamble.push('\n');
     }
-    select(input, &preamble, &choices).await
+    select(input, &preamble, &choices, if is_external(params) { 3 } else { 1 }).await
 }
 
 async fn yes_no(input: &mpsc::Sender<Ask>, preamble: &str) -> Outcome {
@@ -312,21 +328,29 @@ async fn yes_no_or_session(input: &mpsc::Sender<Ask>, preamble: &str) -> Outcome
     }
 }
 
-async fn select(input: &mpsc::Sender<Ask>, preamble: &str, choices: &[(String, String)]) -> Outcome {
+async fn select(input: &mpsc::Sender<Ask>, preamble: &str, choices: &[(String, String)], attempts: usize) -> Outcome {
     let prompt = format!("   select [1-{}] (default reject): ", choices.len());
-    match read(input, preamble, &prompt).await {
-        ReadResult::Line(answer) => match answer.trim().parse::<usize>() {
-            Ok(index) if index >= 1 && index <= choices.len() => {
-                Outcome::Verdict(Verdict::select(choices[index - 1].0.clone()))
+    let retry = format!("   Enter a number from 1 to {}.\n", choices.len());
+    for attempt in 0..attempts {
+        match read(input, if attempt == 0 { preamble } else { &retry }, &prompt).await {
+            ReadResult::Line(answer) => {
+                let answer = answer.trim();
+                if answer.is_empty() {
+                    return Outcome::Verdict(Verdict::deny("operator declined"));
+                }
+                if let Ok(index) = answer.parse::<usize>()
+                    && index >= 1 && index <= choices.len()
+                {
+                    return Outcome::Verdict(Verdict::select(choices[index - 1].0.clone()));
+                }
             }
-            // An unparseable or out-of-range answer is not a choice.
-            _ => Outcome::Verdict(Verdict::deny("operator declined")),
-        },
-        ReadResult::Cancelled => Outcome::Cancelled,
-        ReadResult::Unavailable => {
-            Outcome::Verdict(Verdict::deny("approval prompt was not answered"))
+            ReadResult::Cancelled => return Outcome::Cancelled,
+            ReadResult::Unavailable => {
+                return Outcome::Verdict(Verdict::deny("approval prompt was not answered"));
+            }
         }
     }
+    Outcome::Verdict(Verdict::deny("operator declined"))
 }
 
 fn is_yes(answer: &str) -> bool {
