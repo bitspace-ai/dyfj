@@ -112,6 +112,7 @@ export {
   type DispatchSendInput,
   type DispatchSendResult,
   type DispatchSessionPorts,
+  type DispatchSessionFactory,
   type DispatchSettledChild,
   type DispatchStartInput,
   type DispatchStartPlan,

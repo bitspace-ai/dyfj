@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Coordinator dispatch tools on the Codex route (`BIT-928`).** Loopback
+  depth-0 sessions with `[dispatch]` configured receive `dispatch_start`,
+  `dispatch_wait`, `dispatch_read` and `dispatch_send` through the Workbench
+  bridge, including without MCP servers. Calls retain Workbench approvals and
+  session grants; start always asks. Child reports use the existing escaped
+  envelope, with the standing data-only guidance in the tool descriptions.
+  Children receive no dispatch tools, and `workbench_tools = false` disables
+  them along with other bridge tools. When the bridge is enabled, config load requires
+  `[dispatch] max_wait_seconds` to be strictly below
+  `[codex] tool_timeout_seconds` (defaults 50 and 300 seconds).
+
 - **Coordinator dispatch tools for native sessions (`BIT-907`).** When a
   `[dispatch]` section (`max_children`, `max_wait_seconds`, `roots`) is
   configured in `~/.dyfj/config.toml`, a natively routed coordinator session at
