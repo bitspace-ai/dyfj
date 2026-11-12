@@ -102,6 +102,7 @@ import {
   type WorkbenchRuntimeRequest,
 } from "./contract/mod.ts";
 import {
+  bindExternalAgentTools,
   openExternalAgentSession,
   prependChildContextLine,
 } from "./runners/acp/dispatch-lineage.ts";
@@ -119,7 +120,6 @@ import {
   writePrivateFile,
 } from "./private-file.ts";
 import {
-  bindCodexTurn,
   type CodexTurnTools,
   type CodexWorkbenchToolsOptions,
   codexWorkbenchToolsConfig,
@@ -766,6 +766,8 @@ async function emitRuntimeEvent(
 
 /** What `runExternalAgentWorkbenchRuntime` runs against. */
 export interface ExternalAgentRuntimeDependencies {
+  /** The same per-session dispatch factory used by native turns. */
+  dispatch?: import("./tools/mod.ts").DispatchSessionFactory;
   /** The store every event, session row and workspace read goes through. */
   store: Store;
   resolveProfile?: (
@@ -800,6 +802,15 @@ async function resolveTurnProfile(
   return await withAddedRoots(input, authContext, base);
 }
 
+/** Catalog slug recorded for a Codex turn, including the legacy runner selector. */
+function externalModelSlug(input: ExternalAgentRuntimeInput): string | undefined {
+  return input.runner.profile === "codex-chatgpt"
+    ? input.routingOptions.modelId?.startsWith("codex-chatgpt/")
+      ? input.routingOptions.modelId
+      : "codex-chatgpt/gpt-6.1-terra"
+    : undefined;
+}
+
 export async function runExternalAgentWorkbenchRuntime(
   input: ExternalAgentRuntimeInput,
   dependencies: ExternalAgentRuntimeDependencies,
@@ -830,13 +841,12 @@ export async function runExternalAgentWorkbenchRuntime(
   } satisfies WorkbenchAuthContext;
   let workspace: string;
   let profile: AcpExecutionProfile;
-  let bridged: Awaited<ReturnType<typeof bindCodexTurn>>;
+  let bridged: Awaited<ReturnType<typeof bindExternalAgentTools>>;
   const sessionId = input.sessionId ?? input.newSessionId ?? generateULID();
-  const modelSlug = input.runner.profile === "codex-chatgpt"
-    ? input.routingOptions.modelId?.startsWith("codex-chatgpt/")
-      ? input.routingOptions.modelId
-      : "codex-chatgpt/gpt-6.1-terra"
-    : undefined;
+  const traceId = generateTraceId();
+  const rootSpanId = generateSpanId();
+  const principalId = input.principalId ?? "user";
+  const modelSlug = externalModelSlug(input);
   try {
     if (authContext.transport !== "loopback") {
       throw new DomainError(
@@ -851,7 +861,10 @@ export async function runExternalAgentWorkbenchRuntime(
     }
     assertAcpPromptWithinLimit(input.prompt);
     workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
-    bridged = await bindCodexTurn(dependencies.toolBridge, sessionId, input);
+    bridged = await bindExternalAgentTools(input, dependencies, {
+      parentSessionId: sessionId, traceId, turnRootSpanId: rootSpanId,
+      principalId, authContext, abortSignal: input.abortSignal,
+    });
     profile = await resolveTurnProfile(input, dependencies, workspace, {
       modelName: modelSlug?.slice("codex-chatgpt/".length),
       fast: input.routingOptions?.fast,
@@ -863,9 +876,6 @@ export async function runExternalAgentWorkbenchRuntime(
     throw error;
   }
 
-  const traceId = generateTraceId();
-  const rootSpanId = generateSpanId();
-  const principalId = input.principalId ?? "user";
   const workspaceEvidence = sanitizeBoundaryText(workspace, 1_024);
   const startedAt = Date.now();
   const authnFields = {

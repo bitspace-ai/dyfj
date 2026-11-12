@@ -56,11 +56,15 @@ level = "strict"
 # ([[mcp.servers]] below; two whose tool names collide once `.` becomes `_`
 # are both left out) through the Workbench tool bridge: a runtime-hosted
 # MCP server that runs each call through Workbench's own approvals, as a
-# native tool call does. Set false to give Codex no Workbench tools.
+# native tool call does. It also offers dispatch_start/wait/read/send when
+# [dispatch] is configured and the session is at depth 0, even without MCP.
+# Set false to give Codex no Workbench tools, including dispatch.
 # workbench_tools = true
 # Codex's per-call timeout for a bridged tool, in seconds: an integer from 1
 # through 3600. A call that waits on the Workbench approval prompt counts
-# toward it.
+# toward it. If [dispatch] is configured and workbench_tools is enabled,
+# max_wait_seconds must be strictly below this timeout, or config load fails.
+# The defaults, 50 and 300 seconds, satisfy this rule.
 # tool_timeout_seconds = 300
 # How long an idle codex-chatgpt agent session stays warm after an interactive
 # turn, in seconds: an integer from 60 through 86400 (default 14400, 4 hours).

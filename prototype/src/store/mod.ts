@@ -50,6 +50,7 @@ export {
   fetchWorkbenchSessionEvents,
   fetchWorkbenchSessionLastRun,
   fetchWorkbenchSessionLineage,
+  resolveWorkbenchDispatchDepth,
   fetchWorkbenchSessionRecord,
   fetchWorkbenchSessionWorkspace,
   fetchWorkbenchSessionWorkspaceRecord,

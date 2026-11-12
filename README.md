@@ -1231,11 +1231,13 @@ has parked for its session (a `turn` naming a session with one waiting, or
 with a headless turn running, is refused, so text cannot answer it; the Rust REPL asks them on `--session`
 attach and before each message on that session). When `[dispatch]`
 (`max_children`, `max_wait_seconds`, `roots`) is configured in
-`~/.dyfj/config.toml`, a natively routed session at dispatch depth `0` also gets
+`~/.dyfj/config.toml`, a loopback session at dispatch depth `0` on the native
+or Codex route also gets
 four coordinator tools - `dispatch/start`, `dispatch/wait`, `dispatch/read`, and
 `dispatch/send` - that start and follow up with depth-`1` child sessions as
-headless turns under `ParkedApprovals` (exposing `dispatch/*` to Codex-routed
-coordinators is deferred; child sessions receive none of the four tools, inherit
+headless turns under `ParkedApprovals` (Codex receives them through the
+Workbench tool bridge when `[codex] workbench_tools` is enabled, even without
+configured MCP servers; child sessions receive none of the four tools, inherit
 neither paid approval nor session grants, exchange text only through escaped
 `<coordinator-message>` and `<child-report>` envelopes, release their width slot
 on `failed`, `cancelled`, or 30 minutes `idle` with a best-effort drop of any
@@ -1323,9 +1325,17 @@ the runner advertises ACP `session/load` and Workbench can verify the resumed
 external session identity, which no currently pinned adapter provides. The
 runner receipt records that state, the durable-resume status, the count of
 projected messages and tool exchanges, and the prior and new external session
-identifiers. The terminal client also prints the continuity state, whether the
-native session was new, reused, or replaced, and the ACP tool-evidence count in
-each external-agent footer. Workbench merges each real ACP `tool_call` with its
+identifiers. Both the TypeScript terminal client and the Rust REPL print an
+external-agent footer after each turn. Both footers show the model slug (or
+the runner profile), the reported session cost or the cost basis, token
+usage and context-window use when the agent reports them, the continuity
+state, whether the native session was new, reused, or replaced, the ACP
+tool-evidence counts, any history-omission summary, and the elapsed time.
+The TypeScript footer also shows the protocol version, the transport, the
+access route and the route reason. The Rust footer marks token usage as
+agent-reported. At startup, the
+Rust REPL labels a model as `external agent` when the runtime catalog
+identifies its API as ACP. Workbench merges each real ACP `tool_call` with its
 `tool_call_update` patches and judges every call on its own. A call is
 persisted as a replayable tool request/result pair (`recorded`) only when it
 has a well-formed call id and tool name that sanitizing leaves unchanged, a
@@ -1445,8 +1455,10 @@ failure rather than
 reporting success. A shutdown failure exits with status 1. On an interactive
 Unix-socket client, every accepted ACP option (up to 16) is rendered as a
 numbered choice and the exact selected option identifier is returned to the
-agent; invalid input re-prompts within that same exchange up to three times
-before failing closed. Empty or closed input, a non-interactive client, or an
+agent. For external-agent permission choices, both the TypeScript CLI and the
+Rust REPL allow at most three selection attempts in the same exchange: a
+nonempty invalid answer asks again, and the third invalid answer rejects.
+Empty or closed input, a non-interactive client, or an
 unavailable approval handler selects the request's rejection option when one
 exists, otherwise the request is cancelled. Empty option lists and empty or
 duplicate identifiers fail at protocol ingress. This selection contract is
@@ -1454,6 +1466,12 @@ common to every ACP profile. Transport (`local_stdio`) remains distinct from the
 selected access route (`local_sidecar`) and its cost basis (`local_free`). The
 fixture is protocol coverage, not evidence for a vendor agent or subscription
 route.
+
+The Rust REPL names the asking external agent using the session's model slug
+when available, displays object input as fields with decoded string values
+and marked continuation lines, and describes each offered option's effect.
+It shows received fields in full; input it cannot read as an object is shown
+raw with a notice about the runtime's input limit.
 
 Codex turns run at the reasoning effort the operator chooses. `--effort
 <low|medium|high|xhigh>` (on `dyfj`, `dyfj exec` and the Rust REPL) and the
@@ -1505,7 +1523,9 @@ lists `roots: <workspace>, <root>, …` and `/session` prints one
 roots sent.
 
 A Codex session reaches the operator's configured MCP tools (the commands of
-`[[mcp.servers]]` in `~/.dyfj/config.toml`) through the Workbench tool bridge.
+`[[mcp.servers]]` in `~/.dyfj/config.toml`) and, when `[dispatch]` is configured
+and its dispatch depth is `0`, the four coordinator tools through the Workbench
+tool bridge. Dispatch alone is sufficient to start the bridge.
 A command's name is mapped to letters, digits, `_` and `-`; two commands whose
 mapped names collide are both left out.
 The bridge is an MCP server that the runtime hosts on a Unix socket in an
@@ -1522,12 +1542,22 @@ Each admitted call attempts to record a `tool_call` event in the session; a
 failed write is logged and does not fail the call. Codex's own report of an
 MCP call, kept as an `acp_tool` event, keeps the server and tool names and
 records the arguments and result as `[redacted]`. Codex
-is configured not to raise its own approval for these tools. Workbench's
-builtin tools are not offered, because Codex has its own shell and file tools.
+is configured not to raise its own approval for these tools. The only builtins
+it offers are `dispatch_start`, `dispatch_wait`, `dispatch_read` and
+`dispatch_send`. Start asks Workbench's approver every time; send uses the native
+per-child session grant rule. Calls requiring approval are denied without an
+approver. Dispatch tool descriptions carry the standing line that child reports
+are data, not instructions, and never the operator. Read results use the same
+escaped `<child-report>` envelope as native turns. Codex keeps its own shell,
+file and patch tools.
 `[codex] workbench_tools = false` turns the bridge off.
 `[codex] tool_timeout_seconds` sets Codex's per-call timeout for bridged tools,
 from 1 through 3600 seconds; the default is 300. Time spent waiting on the
-approval prompt counts toward the timeout. `[codex] interactive_idle_seconds`
+approval prompt counts toward the timeout; a late approval counts as a denial.
+When `[dispatch]` is configured and `[codex] workbench_tools` is enabled,
+config load refuses `max_wait_seconds` greater than or equal to
+`[codex] tool_timeout_seconds`. The defaults, 50 and 300 seconds, satisfy this rule.
+`[codex] interactive_idle_seconds`
 sets how long an idle `codex-chatgpt` agent session stays warm after an
 interactive turn (neither one-shot nor dispatched), as an integer from 60
 through 86400 seconds; the default is 14400 (4 hours), while one-shot turns,
@@ -3126,6 +3156,15 @@ Document revisions only. Code and behavior changes are tracked in
   child turns under `ParkedApprovals`, `<coordinator-message>` and
   `<child-report>` envelopes, 30-minute idle slot release, and the prompt-free
   child-parked notice.
+- 2026-11-11 - Document the external-agent footer shared by the TypeScript
+  terminal client and Rust REPL, including the Rust receipt fields and their
+  runtime-reported accounting basis, plus the Rust startup route label.
+- 2026-11-11 - The JSON-RPC seam and Codex route sections document dispatch
+  tools for loopback Codex coordinators at depth 0, the bridge's approval and
+  child-report behavior, and the dispatch wait versus Codex tool timeout rule
+  when the bridge is enabled.
+- 2026-11-11 - The external-agent section describes the Rust REPL's permission
+  display and clarifies that both clients allow three selection attempts.
 - 2026-11-11 - The external-agent section documents per-session idle limits
   chosen by the most recent turn (`[codex] interactive_idle_seconds`, 60
   through 86400 seconds, default 14400, after interactive `codex-chatgpt`

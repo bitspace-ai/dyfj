@@ -30,7 +30,7 @@ import type {
   CommandDefinition,
   ConfirmToolApproval,
   CommandSandbox,
-  DispatchSessionPorts,
+  DispatchSessionFactory,
   ExecutorDialer,
   PublishCatalogPorts,
   RootAnchors,
@@ -47,17 +47,8 @@ export type PublishEnginePorts = Omit<PublishCatalogPorts, "sessionId">;
  * Returns `undefined` when `[dispatch]` is not configured or the session is
  * not eligible to coordinate children.
  */
-export interface DispatchEnginePorts {
-  forSession(context: {
-    parentSessionId: string;
-    traceId: string;
-    turnRootSpanId: string;
-    principalId: string;
-    authContext: WorkbenchAuthContext;
-    depth: number;
-    abortSignal?: AbortSignal;
-  }): DispatchSessionPorts | undefined;
-}
+export type DispatchEnginePorts = DispatchSessionFactory;
+
 import type {
   BudgetTallyMode,
   CodexReasoningEffort,

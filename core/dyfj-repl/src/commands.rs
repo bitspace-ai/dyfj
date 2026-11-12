@@ -614,6 +614,7 @@ async fn request_answering_approvals(
     prompter: Prompter<'_>,
     method: &str,
     params: Value,
+    model: Option<&str>,
 ) -> anyhow::Result<Value> {
     let pending = client.request(method, params);
     tokio::pin!(pending);
@@ -638,7 +639,7 @@ async fn request_answering_approvals(
                     let _ = respond.send(Verdict::deny("operator interrupted the command"));
                 }
                 Some(Incoming::Approval { params, respond }) => {
-                    match approval::ask_while_connected(client, prompter.input, &params).await {
+                    match approval::ask_while_connected(client, prompter.input, &params, model).await {
                         // The runtime went away with the question open. It is
                         // not answered (the responder is dropped, and nothing
                         // is written to a closed connection); the request
@@ -1002,7 +1003,7 @@ async fn friction(
     let context = friction_context(session, id);
     let params =
         json!({"severity": severity, "escaped": escaped, "text": text, "context": context});
-    match request_answering_approvals(client, prompter, "friction/post", params).await {
+    match request_answering_approvals(client, prompter, "friction/post", params, session.model.as_deref()).await {
         Ok(v) => {
             eprintln!("{}", visible(str_field(&v, "firstLine")));
             eprintln!("comment id: {}", visible(str_field(&v, "commentId")));

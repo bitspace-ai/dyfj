@@ -45,6 +45,9 @@ import type { PermissionLevel } from "./config/mod.ts";
 import { generateSpanId } from "./kernel/mod.ts";
 import type { EventInsert } from "./store/mod.ts";
 import {
+  buildToolCatalog,
+  DISPATCH_COORDINATOR_CONTEXT_LINE,
+  type DispatchSessionPorts,
   type CommandDefinition,
   type CommandPolicyContext,
   type ConfirmToolApproval,
@@ -95,11 +98,12 @@ const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 
 /**
  * Whether the bridge offers `command` to Codex: the operator's configured
- * MCP servers' commands (`mcp.<server>.<tool>`). Codex has its own shell,
- * file and patch tools, so Workbench's builtins stay off.
+ * MCP servers' commands (`mcp.<server>.<tool>`) and the four coordinator
+ * dispatch tools. Codex keeps its own shell, file and patch tools.
  */
 export function isBridgedCommand(command: CommandDefinition): boolean {
-  return command.id.startsWith("mcp.");
+  return command.id.startsWith("mcp.") ||
+    ["dispatch/start", "dispatch/wait", "dispatch/read", "dispatch/send"].includes(command.id);
 }
 
 /**
@@ -138,7 +142,9 @@ export function bridgedTools(
     tools.push({
       name,
       commandId: command.id,
-      description: command.description,
+      description: command.id.startsWith("dispatch/")
+        ? `${command.description} ${DISPATCH_COORDINATOR_CONTEXT_LINE}`
+        : command.description,
       inputSchema: command.inputSchema,
     });
   }
@@ -569,8 +575,11 @@ export class WorkbenchToolBridge {
     if (result.isError) {
       return textResult(result.reason ?? "command failed", true);
     }
+    const command = turn.commands.find((entry) => entry.id === tool.commandId);
     return textResult(
-      typeof result.result === "string"
+      command?.modelResult !== undefined
+        ? command.modelResult(result.result)
+        : typeof result.result === "string"
         ? result.result
         : JSON.stringify(result.result),
       false,
@@ -647,6 +656,8 @@ export interface CodexTurnTools {
   runner: { profile: string };
   /** Boot-discovered external MCP commands, offered through the bridge. */
   externalMcpCommands?: readonly CommandDefinition[];
+  /** Dispatch ports bound by the runtime to this coordinator turn. */
+  dispatch?: DispatchSessionPorts;
   /** The turn's tool approver; an `ask` command is denied when it is absent. */
   approver?: { confirmToolApproval?: ConfirmToolApproval };
   /** The operator's permission posture ("strict" when absent). */
@@ -672,7 +683,7 @@ export interface BoundCodexTurn {
 /**
  * Bind a Codex ChatGPT turn's session to the runtime's bridge, starting the
  * bridge on first use. Undefined when there is no bridge, the turn is not on
- * the Codex route, or no configured MCP command would be offered. The
+ * the Codex route, or no MCP or dispatch command would be offered. The
  * external route serves loopback callers only, so every configured MCP
  * command passes the turn's clearance.
  */
@@ -681,7 +692,9 @@ export async function bindCodexTurn(
   sessionId: string,
   input: CodexTurnTools,
 ): Promise<BoundCodexTurn | undefined> {
-  const commands = input.externalMcpCommands ?? [];
+  const commands = buildToolCatalog(
+    { dispatch: input.dispatch }, {}, input.externalMcpCommands ?? [], [],
+  ).list();
   if (
     dependency === undefined || input.runner.profile !== "codex-chatgpt" ||
     bridgedTools(commands).length === 0

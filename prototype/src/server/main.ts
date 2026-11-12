@@ -484,6 +484,7 @@ function composeTurnRuntime(
         sessionMap: acpSessions,
         ...(policy === undefined ? {} : { runPolicy: policy }),
         ...(toolBridge === undefined ? {} : { toolBridge }),
+        ...(dispatch === undefined ? {} : { dispatch }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the

@@ -6,6 +6,10 @@
 
 mod activity;
 mod approval;
+mod approval_external;
+mod approval_fields;
+#[cfg(test)]
+mod approval_external_tests;
 mod args;
 mod budget;
 mod client;
@@ -94,7 +98,7 @@ async fn main() -> Result<()> {
     // Ask the runtime what it is before the first turn. Without this the
     // operator cannot tell which model they are talking to, or whether a
     // runtime answered at all.
-    posture::show(&client.request("runtime/status", json!({})).await, &session, &socket, control.is_some());
+    posture::show_startup(&client, &client.request("runtime/status", json!({})).await, &session, &socket, control.is_some()).await;
     if !commands::startup_model_ok(&client, &session).await {
         std::process::exit(2);
     }
@@ -104,7 +108,7 @@ async fn main() -> Result<()> {
     // Attaching to a session: a turn the runtime started there may be waiting
     // for an approval that only an attached operator can give.
     if let Some(id) = session.id.clone() {
-        parked::answer_parked(&client, &input, &id).await;
+        parked::answer_parked_for_agent(&client, &input, &id, session.model.as_deref()).await;
     }
 
     // Ctrl-C reaches us two different ways, and the split is structural rather
@@ -264,7 +268,7 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        if !parked::clear_to_send(&client, &input, session.id.as_deref()).await {
+        if !parked::clear_to_send_for_agent(&client, &input, session.id.as_deref(), session.model.as_deref()).await {
             continue;
         }
         run_turn(
@@ -436,7 +440,7 @@ async fn run_turn(
                         // ends as interrupted. The question stays on screen
                         // until answered, because the read cannot be
                         // abandoned; that answer goes nowhere.
-                        match approval::ask_while_connected(client, input, &params).await {
+                        match approval::ask_while_connected(client, input, &params, session.model.as_deref()).await {
                             approval::Asked::Disconnected => {
                                 return interrupted(wrote_any, &mut view, session);
                             }

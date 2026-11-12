@@ -1,4 +1,4 @@
-import type { CostBasis, WorkbenchSessionEvent } from "../contract/mod.ts";
+import type { CostBasis, DispatchRecord, WorkbenchSessionEvent } from "../contract/mod.ts";
 import {
   EMPTY_SESSION_LINEAGE,
   type EventReader,
@@ -132,6 +132,20 @@ export async function fetchWorkbenchSessionLineage(
 ): Promise<SessionLineage> {
   const lineage = await input.events.lineage([input.sessionId]);
   return lineage.get(input.sessionId) ?? { ...EMPTY_SESSION_LINEAGE };
+}
+
+/** Resolve turn depth from its dispatch record, then resumed lineage, then 0. */
+export async function resolveWorkbenchDispatchDepth(input: {
+  dispatchRecord?: DispatchRecord;
+  resumingSession: boolean;
+  sessionId: string;
+  events: EventReader;
+}): Promise<number> {
+  if (input.dispatchRecord !== undefined) return input.dispatchRecord.depth;
+  if (input.resumingSession) {
+    return (await fetchWorkbenchSessionLineage(input)).depth ?? 0;
+  }
+  return 0;
 }
 
 export async function fetchWorkbenchSessionRecord(

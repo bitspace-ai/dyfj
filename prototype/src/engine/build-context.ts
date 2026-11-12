@@ -12,7 +12,7 @@
 import { realpath, stat } from "node:fs/promises";
 import { generateSpanId, generateULID } from "../kernel/mod.ts";
 import {
-  fetchWorkbenchSessionLineage,
+  resolveWorkbenchDispatchDepth,
   memoryClearanceFor,
   toolCallEvent,
 } from "../store/mod.ts";
@@ -338,14 +338,12 @@ async function buildCompanionContext(
     `Loaded ${coreMemories.length} core memories, ${memoryIndex.length} index entries ` +
       `(${transport} clearance)\n`,
   );
-  const dispatchDepth = input.dispatchRecord !== undefined
-    ? input.dispatchRecord.depth
-    : session.resumingSession
-    ? (await fetchWorkbenchSessionLineage({
-      sessionId: session.sessionId,
-      events: ports.store.events,
-    })).depth ?? 0
-    : 0;
+  const dispatchDepth = await resolveWorkbenchDispatchDepth({
+    dispatchRecord: input.dispatchRecord,
+    resumingSession: session.resumingSession,
+    sessionId: session.sessionId,
+    events: ports.store.events,
+  });
   const dispatchSession = dispatchDepth === 0 && transport === "loopback"
     ? ports.dispatch?.forSession({
       parentSessionId: session.sessionId,

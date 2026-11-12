@@ -13,6 +13,7 @@
  * overrides (the last applied above this, at the turn boundary).
  */
 
+import { parseDispatchConfig } from "./dispatch-config.ts";
 import { processEnv } from "./env.ts";
 import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import {
@@ -97,7 +98,8 @@ export interface WorkbenchConfig {
   codexReasoningEffort: CodexReasoningEffort | null;
   /**
    * Whether a Codex ChatGPT session reaches the operator's configured MCP
-   * tools through the Workbench tool bridge ([codex] workbench_tools).
+   * tools and eligible dispatch tools through the Workbench tool bridge
+   * ([codex] workbench_tools).
    */
   codexWorkbenchTools: boolean;
   /**
@@ -170,6 +172,21 @@ function validateCodexInteractiveIdleSeconds(
     );
   }
   return value;
+}
+
+function validateDispatchTimeout(
+  table: Record<string, unknown> | null,
+  path: string,
+  env: import("./env.ts").Env,
+  timeout: number,
+  bridgeEnabled: boolean,
+): void {
+  const dispatch = parseDispatchConfig(table, path, env);
+  if (bridgeEnabled && dispatch !== null && dispatch.maxWaitSeconds >= timeout) {
+    throw new Error(
+      "config: [dispatch] max_wait_seconds must be below [codex] tool_timeout_seconds",
+    );
+  }
 }
 
 function validateCodexReasoningEffort(
@@ -395,6 +412,10 @@ export async function loadConfig(
   validateToolStepsWithinCeiling(
     config.maxToolSteps,
     config.maxToolStepsCeiling,
+  );
+
+  validateDispatchTimeout(
+    table, path, env, config.codexToolTimeoutSeconds, config.codexWorkbenchTools,
   );
 
   return config;
