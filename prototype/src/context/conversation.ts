@@ -27,6 +27,7 @@ export function buildConversationMessages(
   options: {
     maxTurns?: number;
     onOmission?: (omission: HistoryOmissionProjection | undefined) => void;
+    onTurnCapDropped?: (droppedMessages: number) => void;
     replayToolResult?: (event: WorkbenchSessionEvent & {
       toolCallId: string;
       toolName: string;
@@ -164,9 +165,14 @@ export function buildConversationMessages(
   const selected = pinnedSummary !== null && items[0] === pinnedSummary
     ? [pinnedSummary, ...sliceProjectionToRecentTurns(items.slice(1), maxTurns)]
     : sliceProjectionToRecentTurns(items, maxTurns);
+  const totalMessages = items.reduce(
+    (sum, item) => sum + (item.kind === "message" ? 1 : 0),
+    0,
+  );
   const messages = selected.flatMap((item) =>
     item.kind === "message" ? [item.message] : []
   );
+  options.onTurnCapDropped?.(totalMessages - messages.length);
   const detectedInHistory = malformedToolRecords + gapMarkers;
   const omission = detectedInHistory === 0 ? undefined : {
     detectedInHistory,

@@ -92,11 +92,10 @@ import {
   CODEX_WORKSPACE_TRUST_REQUIRED,
   type DispatchRecord,
   DomainError,
+  type ExternalAgentTranscriptLeftOutCause,
   type ExternalAgentWorkbenchRuntimeResult,
   formatHistoryOmissionSummary,
-  historyOmissionForDelivery,
   type HistoryOmissionReceipt,
-  prependHistoryOmissionNotice,
   type WorkbenchAuthContext,
   type WorkbenchRuntimeEvent,
   type WorkbenchRuntimeRequest,
@@ -104,8 +103,18 @@ import {
 import {
   bindExternalAgentTools,
   openExternalAgentSession,
-  prependChildContextLine,
 } from "./runners/acp/dispatch-lineage.ts";
+import {
+  collectPairedExchangeCalls,
+  fitsFinalPromptLimit,
+  formatReconstructedTranscriptPrompt,
+  isHistoryFieldByteLimitError,
+  prepareAcpTurnContinuity,
+  type ReconstructedAcpContinuity,
+  selectNewestExchange,
+  validateTurnCapDroppedMessages,
+} from "./runners/acp/continuity-reconstruction.ts";
+export type { ReconstructedAcpContinuity };
 import { selectExternalAgentIdleTtlMs } from "./runners/acp/idle-limit.ts";
 import {
   CODEX_DISABLED_FEATURES,
@@ -505,10 +514,10 @@ export async function codexChatGptProfile(
 }
 
 /**
- * Upper bound on the prior messages one reconstruction may project. The event
- * replay that feeds it is already turn-capped; this is the adapter's own
- * bound, so an unexpectedly long transcript fails closed instead of being
- * silently trimmed into a plausible-looking but incomplete antecedent.
+ * Upper bound on the prior messages one reconstruction sends. When a session's
+ * history exceeds this bound, reconstruction keeps the newest contiguous run
+ * of whole exchanges that fits and discloses the left-out count in both the
+ * transcript header and the receipt.
  */
 export const MAX_RECONSTRUCTED_PRIOR_MESSAGES = 32;
 
@@ -582,80 +591,153 @@ function toolExchangeLines(
 
 /**
  * Project Workbench-owned history into the prompt for a replacement native
- * session. This is the adapter's projection of the session's own turns to its
- * own route — it introduces no new destination and no new source — and it
- * fails closed rather than degrade: unpaired, malformed, secret-bearing, or
- * oversized history stops the turn before the agent starts, because a silently
- * shortened or reordered antecedent is the defect this path exists to prevent.
+ * session. Reconstruction walks exchanges from newest to oldest and keeps the
+ * newest contiguous run of whole exchanges that fits the 32-message bound,
+ * per-message and per-tool-field byte bounds, and the final ACP prompt limit.
+ * Whenever any prior message was left out by the engine turn cap or by those
+ * size bounds, the header states that the transcript is shortened and gives
+ * the exact counts; when not even the newest exchange fits, the operator's
+ * prompt is sent with that header and no transcript.
  *
- * Tool history is carried as bounded historical evidence rather than refused:
- * the receiving agent is told the records are Workbench's, not its own, and
- * nothing here re-executes a recorded call.
+ * Every exchange that is sent has passed the pairing, malformed-record,
+ * argument-complexity, and credential-shape checks, and a failure on any of
+ * those checks stops the turn before the agent starts. An exchange left out
+ * for the message limit or a byte limit is not checked past that point and is
+ * never sent; an exchange that passes every check and is then left out for the
+ * prompt limit has already been checked, so a failed check on it still fails
+ * the turn. Tool history is carried as bounded historical evidence rather than
+ * re-executed.
  */
 export function reconstructAcpContinuityPrompt(input: {
   priorMessages: readonly WorkbenchMessage[];
   prompt: string;
-}): { prompt: string; toolExchanges: number } {
-  if (input.priorMessages.length > MAX_RECONSTRUCTED_PRIOR_MESSAGES) {
-    throw new DomainError(
-      "ACP continuity reconstruction exceeded the prior-message limit",
-    );
-  }
-  const lines: string[] = [...RECONSTRUCTION_HEADER_LINES];
+  turnCapDroppedMessages?: number;
+  decorateFinalPrompt?: (
+    reconstructedPrompt: string,
+    toolExchanges: number,
+  ) => string;
+}): ReconstructedAcpContinuity {
+  const turnCapDropped = validateTurnCapDroppedMessages(
+    input.turnCapDroppedMessages,
+  );
+  const decorateFinalPrompt = input.decorateFinalPrompt ?? ((value) => value);
+  const keptExchanges: string[][] = [];
   const seenCallIds = new Set<string>();
+  let keptMessages = 0;
   let toolExchanges = 0;
-  for (let index = 0; index < input.priorMessages.length; index++) {
-    const message = input.priorMessages[index];
-    if (message.role === "user" || message.role === "assistant") {
-      if (message.content !== "") {
-        lines.push(
-          message.role === "user" ? "Operator (history):" : "Agent (history):",
-          ...quotedHistoryLines(
-            boundedHistoryField(
-              message.content,
-              MAX_HISTORY_MESSAGE_BYTES,
-              "history message",
+  let stopCause:
+    | Exclude<ExternalAgentTranscriptLeftOutCause, "turn_cap">
+    | undefined;
+
+  let cursor = input.priorMessages.length;
+  while (cursor > 0) {
+    const selected = selectNewestExchange(
+      input.priorMessages,
+      cursor,
+      keptMessages,
+      MAX_RECONSTRUCTED_PRIOR_MESSAGES,
+    );
+    if (selected.kind === "stop_message_limit") {
+      stopCause = "message_limit";
+      break;
+    }
+
+    const exchangeCallIds = collectPairedExchangeCalls(
+      selected.assistantMessage,
+      selected.toolResults,
+      seenCallIds,
+    );
+    const renderedLines: string[] = [];
+    try {
+      if (selected.newest.role === "user") {
+        if (selected.newest.content !== "") {
+          renderedLines.push(
+            "Operator (history):",
+            ...quotedHistoryLines(
+              boundedHistoryField(
+                selected.newest.content,
+                MAX_HISTORY_MESSAGE_BYTES,
+                "history message",
+              ),
             ),
-          ),
-        );
-      }
-      if (message.role !== "assistant") continue;
-      for (const call of message.toolCalls ?? []) {
-        // The wire invariant this replays: a tool result immediately follows
-        // the assistant message that requested it, carrying the same call id.
-        // Anything else leaves the association unprovable, so it fails rather
-        // than being guessed at.
-        const paired = input.priorMessages[index + 1];
-        if (
-          paired === undefined || paired.role !== "tool" ||
-          paired.toolCallId !== call.id || seenCallIds.has(call.id)
-        ) {
-          throw new DomainError(
-            "ACP continuity reconstruction found unpaired tool history",
           );
         }
-        seenCallIds.add(call.id);
-        index += 1;
-        lines.push(...toolExchangeLines(call, paired));
-        toolExchanges += 1;
+      } else if (selected.assistantMessage !== undefined) {
+        if (selected.assistantMessage.content !== "") {
+          renderedLines.push(
+            "Agent (history):",
+            ...quotedHistoryLines(
+              boundedHistoryField(
+                selected.assistantMessage.content,
+                MAX_HISTORY_MESSAGE_BYTES,
+                "history message",
+              ),
+            ),
+          );
+        }
+        const calls = selected.assistantMessage.toolCalls ?? [];
+        for (let index = 0; index < calls.length; index++) {
+          renderedLines.push(
+            ...toolExchangeLines(calls[index], selected.toolResults[index]),
+          );
+        }
       }
-      continue;
+    } catch (error) {
+      if (isHistoryFieldByteLimitError(error)) {
+        stopCause = "byte_limit";
+        break;
+      }
+      throw error;
     }
-    // A tool result reached here without the request that produced it.
-    throw new DomainError(
-      "ACP continuity reconstruction found unpaired tool history",
-    );
+
+    const candidateShown = keptMessages + selected.messageCount;
+    const candidateToolExchanges = toolExchanges + exchangeCallIds.size;
+    const candidatePrompt = formatReconstructedTranscriptPrompt({
+      headerLines: RECONSTRUCTION_HEADER_LINES,
+      footerLine: RECONSTRUCTION_FOOTER,
+      exchangeLines: [renderedLines, ...keptExchanges],
+      priorMessagesLeftOut: turnCapDropped + selected.exchangeStart,
+      priorMessagesShown: candidateShown,
+      prompt: input.prompt,
+    });
+    if (
+      !fitsFinalPromptLimit(
+        decorateFinalPrompt(candidatePrompt, candidateToolExchanges),
+      )
+    ) {
+      stopCause = "prompt_limit";
+      break;
+    }
+
+    keptExchanges.unshift(renderedLines);
+    keptMessages = candidateShown;
+    toolExchanges = candidateToolExchanges;
+    for (const id of exchangeCallIds) seenCallIds.add(id);
+    cursor = selected.exchangeStart;
   }
-  lines.push(RECONSTRUCTION_FOOTER, `Operator (current turn): ${input.prompt}`);
-  const reconstructed = lines.join("\n");
-  try {
-    assertAcpPromptWithinLimit(reconstructed);
-  } catch {
-    throw new DomainError(
-      "ACP continuity reconstruction exceeded the prompt limit",
-    );
-  }
-  return { prompt: reconstructed, toolExchanges };
+
+  const priorMessagesLeftOut = turnCapDropped +
+    (input.priorMessages.length - keptMessages);
+  const leftOutCauses: ExternalAgentTranscriptLeftOutCause[] = [];
+  if (turnCapDropped > 0) leftOutCauses.push("turn_cap");
+  if (stopCause !== undefined) leftOutCauses.push(stopCause);
+
+  const reconstructed = formatReconstructedTranscriptPrompt({
+    headerLines: RECONSTRUCTION_HEADER_LINES,
+    footerLine: RECONSTRUCTION_FOOTER,
+    exchangeLines: keptExchanges,
+    priorMessagesLeftOut,
+    priorMessagesShown: keptMessages,
+    prompt: input.prompt,
+  });
+  assertAcpPromptWithinLimit(decorateFinalPrompt(reconstructed, toolExchanges));
+  return {
+    prompt: reconstructed,
+    priorMessagesProjected: keptMessages,
+    toolExchanges,
+    priorMessagesLeftOut,
+    leftOutCauses,
+  };
 }
 
 function receiptText(input: {
@@ -668,6 +750,8 @@ function receiptText(input: {
   continuity?: AcpContinuityEvidence;
   priorMessagesProjected?: number;
   toolExchangesProjected?: number;
+  priorMessagesLeftOut?: number;
+  leftOutCauses?: readonly ExternalAgentTranscriptLeftOutCause[];
   priorExternalSessionId?: string;
   toolEvidence: PreparedAcpToolEvidence;
   historyOmission?: HistoryOmissionReceipt;
@@ -693,7 +777,15 @@ function receiptText(input: {
         input.priorMessagesProjected !== undefined
         ? ` (${input.priorMessagesProjected} prior messages projected, ${
           input.toolExchangesProjected ?? 0
-        } tool exchanges)`
+        } tool exchanges${
+          (input.priorMessagesLeftOut ?? 0) > 0
+            ? `; shortened, ${input.priorMessagesLeftOut} left out${
+              input.leftOutCauses !== undefined && input.leftOutCauses.length > 0
+                ? `: ${input.leftOutCauses.join(", ")}`
+                : ""
+            }`
+            : ""
+        })`
         : ""
     }`,
     ...(input.continuity === undefined ? [] : [
@@ -886,13 +978,6 @@ export async function runExternalAgentWorkbenchRuntime(
   let sessionStartWritten = false;
   let sessionCreated = false;
   let verifiedRouteEvidence: AcpRouteEvidence | undefined;
-  // Undecided until a native session is actually prompted: an aborted or
-  // failed turn must not claim a continuity state it never reached.
-  let continuity: AcpContinuityEvidence | undefined;
-  let historyOmission: HistoryOmissionReceipt | undefined;
-  // Counted by the projection itself, so the receipt reports the tool evidence
-  // actually carried rather than what the transcript happened to contain.
-  let projectedToolExchanges = 0;
   const priorExternalSessionId = input.priorExternalSessionId === undefined
     ? undefined
     : sanitizeBoundaryText(input.priorExternalSessionId, 256);
@@ -1002,62 +1087,15 @@ export async function runExternalAgentWorkbenchRuntime(
       );
       verifiedRouteEvidence = evidence;
     };
-    // Prior messages of this Workbench session. A live native handle carries them
-    // in its own inner history; a replacement session has none, so the
-    // reconstruction below is what keeps the follow-up referential.
-    const priorMessages = input.conversationMessages ?? [];
-    const reconstructPrompt = priorMessages.length === 0 ? undefined : () => {
-      const projection = reconstructAcpContinuityPrompt({
-        priorMessages,
-        prompt: input.prompt,
-      });
-      projectedToolExchanges = projection.toolExchanges;
-      return prependChildContextLine(
-        prependHistoryOmissionNotice(
-          projection.prompt,
-          historyOmissionForDelivery(
-            input.historyOmission,
-            "projected-transcript",
-          ),
-        ),
-        isDispatchedChild,
-      );
-    };
-    let directPrompt = prependChildContextLine(
-      prependHistoryOmissionNotice(
-        input.prompt,
-        historyOmissionForDelivery(
-          input.historyOmission,
-          "no-prior-transcript",
-        ),
-      ),
+    const turnContinuity = prepareAcpTurnContinuity({
+      prompt: input.prompt,
+      conversationMessages: input.conversationMessages,
+      turnCapDroppedMessages: input.turnCapDroppedMessages,
+      historyOmission: input.historyOmission,
       isDispatchedChild,
-    );
-    if (
-      dependencies.sessionMap === undefined && reconstructPrompt !== undefined
-    ) {
-      // Every direct run starts a fresh native session: there is no handle to
-      // reuse and no loaded session identity to verify, so the transcript is
-      // projected before the agent is started.
-      directPrompt = reconstructPrompt();
-      continuity = {
-        state: "reconstructed",
-        durableResume: "unavailable-client-verification",
-      };
-      historyOmission = historyOmissionForDelivery(
-        input.historyOmission,
-        "projected-transcript",
-      );
-    } else if (dependencies.sessionMap === undefined) {
-      continuity = { state: "new", durableResume: "not-required" };
-      historyOmission = historyOmissionForDelivery(
-        input.historyOmission,
-        "no-prior-transcript",
-      );
-    }
-    if (dependencies.sessionMap === undefined) {
-      assertAcpPromptWithinLimit(directPrompt);
-    }
+      hasSessionMap: dependencies.sessionMap !== undefined,
+      reconstruct: reconstructAcpContinuityPrompt,
+    });
     const releaseBridgeTurn = bridged?.activate(traceId, rootSpanId, writeEvent);
     // Via `then`: a runner that throws synchronously still releases the turn.
     const result = await Promise.resolve().then(() => dependencies.sessionMap !== undefined
@@ -1066,28 +1104,9 @@ export async function runExternalAgentWorkbenchRuntime(
         workspace,
         profile,
         idleTtlMs: selectExternalAgentIdleTtlMs(input, isDispatchedChild),
-        prompt: prependChildContextLine(
-          prependHistoryOmissionNotice(
-            input.prompt,
-            historyOmissionForDelivery(
-              input.historyOmission,
-              "warm-no-replay",
-            ),
-          ),
-          isDispatchedChild,
-        ),
-        reconstructPrompt,
-        onContinuity: (evidence) => {
-          continuity = evidence;
-          historyOmission = historyOmissionForDelivery(
-            input.historyOmission,
-            evidence.state === "reconstructed"
-              ? "projected-transcript"
-              : evidence.state === "new"
-              ? "no-prior-transcript"
-              : "warm-no-replay",
-          );
-        },
+        prompt: turnContinuity.warmPrompt,
+        reconstructPrompt: turnContinuity.reconstructPrompt,
+        onContinuity: (evidence) => turnContinuity.onWarmMapContinuity(evidence),
         abortSignal: input.abortSignal,
         onTextDelta: input.frames?.onTextDelta,
         onProgress,
@@ -1097,7 +1116,7 @@ export async function runExternalAgentWorkbenchRuntime(
       })
       : (dependencies.runAgent ?? runAcpAgent)({
         profile,
-        prompt: directPrompt,
+        prompt: turnContinuity.directPrompt,
         abortSignal: input.abortSignal,
         onTextDelta: input.frames?.onTextDelta,
         onProgress,
@@ -1178,6 +1197,7 @@ export async function runExternalAgentWorkbenchRuntime(
       }
     }
     const route = verifiedRouteFacts(profile, verifiedRouteEvidence);
+    const continuityCounts = turnContinuity.counts();
     let receipt = receiptText({
       sessionId,
       traceId,
@@ -1185,12 +1205,11 @@ export async function runExternalAgentWorkbenchRuntime(
       workspaceEvidence,
       result,
       routeEvidence: verifiedRouteEvidence,
-      continuity,
-      priorMessagesProjected: priorMessages.length,
-      toolExchangesProjected: projectedToolExchanges,
+      continuity: turnContinuity.continuity,
+      ...continuityCounts,
       priorExternalSessionId,
       toolEvidence,
-      historyOmission,
+      historyOmission: turnContinuity.historyOmission,
     });
     await writeEvent(agentResponseEvent({
       event_id: generateULID(),
@@ -1261,12 +1280,11 @@ export async function runExternalAgentWorkbenchRuntime(
         workspaceEvidence,
         result,
         routeEvidence: verifiedRouteEvidence,
-        continuity,
-        priorMessagesProjected: priorMessages.length,
-        toolExchangesProjected: projectedToolExchanges,
+        continuity: turnContinuity.continuity,
+        ...continuityCounts,
         priorExternalSessionId,
         toolEvidence,
-        historyOmission,
+        historyOmission: turnContinuity.historyOmission,
         sessionProjectionSkipped: true,
       });
     }
@@ -1315,21 +1333,8 @@ export async function runExternalAgentWorkbenchRuntime(
           ? {}
           : { accessRoute: route.accessRoute }),
         costBasis: route.costBasis,
-        ...(continuity === undefined ? {} : {
-          continuity: {
-            state: continuity.state,
-            claimSource: "workbench_observed" as const,
-            durableResume: continuity.durableResume,
-            ...(continuity.state === "reconstructed"
-              ? {
-                priorMessagesProjected: priorMessages.length,
-                toolExchangesProjected: projectedToolExchanges,
-              }
-              : {}),
-            ...(priorExternalSessionId === undefined
-              ? {}
-              : { priorExternalSessionId }),
-          },
+        ...(turnContinuity.continuity === undefined ? {} : {
+          continuity: turnContinuity.receiptContinuity(priorExternalSessionId),
         }),
         evidence: {
           source: "acp",
@@ -1367,7 +1372,9 @@ export async function runExternalAgentWorkbenchRuntime(
       },
       route: { reason: "explicit_external_agent" },
       context: { sources: [] },
-      ...(historyOmission === undefined ? {} : { historyOmission }),
+      ...(turnContinuity.historyOmission === undefined
+        ? {}
+        : { historyOmission: turnContinuity.historyOmission }),
     };
   } catch (error) {
     try {

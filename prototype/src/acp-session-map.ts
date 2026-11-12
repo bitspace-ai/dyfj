@@ -123,7 +123,6 @@ interface MapEntry {
   createPromise?: Promise<AcpSessionHandle>;
   idleGeneration: number;
   idleTimer?: unknown;
-  idleTtlMs?: number;
   idleDeadlineMs?: number;
   /** The close already running for this entry, if one is in progress. */
   closePromise?: Promise<void>;
@@ -286,7 +285,6 @@ export class AcpSessionHandleMap {
     }
     const ttlMs = idleTtlMs ?? this.#idleTtlMs;
     entry.state = "idle";
-    entry.idleTtlMs = ttlMs;
     this.#armIdleTimer(entry, ttlMs);
   }
 
@@ -357,14 +355,14 @@ export class AcpSessionHandleMap {
       onContinuity?: (evidence: AcpContinuityEvidence) => void;
     },
   ): Promise<AcpRunResult> {
-    const startedAt = Date.now();
+    const startedAt = this.#now();
     const abortedResult = (): AcpRunResult => ({
       text: "",
       stopReason: "aborted",
       protocolVersion: undefined,
       externalSessionId: undefined,
       capabilities: [],
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs: this.#now() - startedAt,
     });
     const key = encodeAcpSessionHandleKey(input);
     const prior = this.#entries.get(key);

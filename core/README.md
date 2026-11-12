@@ -52,7 +52,7 @@ During a turn, `n` at `approve? [y/N]` denies that call. Ctrl-C at that prompt c
 
 The receipt line's `session $…` is the runtime's figure (`cost.sessionUsd`): every paid call the session has recorded, failed and halted turns included, the same figure the session envelope and the runaway-spend halt check. A runtime that sends none gets this REPL's own sum of its completed turns, shown as `repl total $…`.
 
-External-runner (ACP) receipts are named rather than rendered; that route is deferred for daily use and stays in the TypeScript client.
+On an external-agent (ACP) turn, the receipt line prints the runner's model slug or profile, reported session cost or cost basis, agent-reported token usage (`input`, `output`, and `reasoning`) and context-window use (`used`/`size`) when reported, continuity state, whether the native session is new, reused, replaced or unverified, ACP tool-evidence counts, any history-omission summary, and elapsed milliseconds when reported. On a reconstructed turn, the continuity segment adds the projected message and tool-exchange counts (`<n>msg/<m>tool`), followed by `(shortened, <k> left out)` when `priorMessagesLeftOut` is positive.
 
 `cargo run` requires `DATABASE_URL` and a running Dolt SQL server. It inserts one `session_start` event, reads it back, and prints a match result. The ignored integration tests exercise the same live-Dolt path:
 

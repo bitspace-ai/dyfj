@@ -84,6 +84,7 @@ async function buildResume(
       | "conversationMessages"
       | "priorExternalSessionId"
       | "historyOmission"
+      | "turnCapDroppedMessages"
     >
   >
 > {
@@ -100,9 +101,13 @@ async function buildResume(
     }
   }
   let historyOmission: HistoryOmissionProjection | undefined;
+  let turnCapDroppedMessages = 0;
   const conversationMessages = buildConversationMessages(priorEvents, {
     onOmission: (omission) => {
       historyOmission = omission;
+    },
+    onTurnCapDropped: (dropped) => {
+      turnCapDroppedMessages = dropped;
     },
     replayToolResult: (event) =>
       event.toolIsError === true || event.toolResult !== REDACTED
@@ -123,6 +128,7 @@ async function buildResume(
     sessionId,
     conversationMessages,
     ...(historyOmission === undefined ? {} : { historyOmission }),
+    ...(turnCapDroppedMessages === 0 ? {} : { turnCapDroppedMessages }),
     ...(priorExternalSessionId === undefined ? {} : { priorExternalSessionId }),
   };
 }

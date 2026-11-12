@@ -1324,12 +1324,17 @@ session without prior turns is `new`; and `durably-resumed` is claimed only when
 the runner advertises ACP `session/load` and Workbench can verify the resumed
 external session identity, which no currently pinned adapter provides. The
 runner receipt records that state, the durable-resume status, the count of
-projected messages and tool exchanges, and the prior and new external session
+projected messages and tool exchanges actually sent, any count and cause codes
+of prior messages left out when the transcript was shortened
+(`priorMessagesLeftOut`, `leftOutCauses`: `turn_cap`, `message_limit`,
+`byte_limit`, `prompt_limit`), and the prior and new external session
 identifiers. Both the TypeScript terminal client and the Rust REPL print an
 external-agent footer after each turn. Both footers show the model slug (or
 the runner profile), the reported session cost or the cost basis, token
 usage and context-window use when the agent reports them, the continuity
-state, whether the native session was new, reused, or replaced, the ACP
+state (adding `(shortened, <n> left out)` after `reconstructed <n>msg/<m>tool`
+when prior messages were left out), whether the native session was new,
+reused, or replaced, the ACP
 tool-evidence counts, any history-omission summary, and the elapsed time.
 The TypeScript footer also shows the protocol version, the transport, the
 access route and the route reason. The Rust footer marks token usage as
@@ -1408,15 +1413,37 @@ may repeat. Quotation prevents historical content from forging the record
 structure; it is not a semantic prompt-injection boundary, so ordinary tool
 permission policy remains authoritative for anything the receiving agent may
 propose. History reconstruction refuses when withholding leaves nothing to
-project or when a retained request/result pairing is unrepresentable. Existing
-downstream bounds remain unchanged: a reconstruction is also refused before any
-prompt reaches the agent when it exceeds the ACP prompt limit, the 32-message
-projection bound, a per-message bound, a per-field tool bound, or the
-tool-argument depth/node limit, or when retained history carries one of the
-explicitly checked credential shapes. The notice is included in the final ACP
-prompt-size check. Its overhead can therefore refuse a near-limit turn; for an
-acquired handle, the existing error lifecycle closes and removes that handle
-without deleting persisted events. Idle handles retire on a per-session idle
+project or when a retained request/result pairing is
+unrepresentable. To fit size limits without stranding an older session after an
+idle close, reconstruction walks prior messages from newest to oldest one whole
+exchange at a time (one operator message, or one agent message together with all
+of its paired tool results) and keeps the newest unbroken run that fits the
+32-message bound, the 32 KiB per-message bound, the per-field tool byte bounds,
+and the final 60,000-byte ACP prompt limit (including the transcript header, any
+shortened-transcript label, any history-omission notice, and any dispatched
+child context line). When not even the newest exchange fits, Workbench sends the
+operator's prompt with the shortened-transcript header and zero projected
+messages rather than failing the turn; only an operator prompt whose own text
+and required framing exceed the ACP prompt limit fails on size. `buildConversationMessages`
+also reports how many prior messages its 10-turn cap dropped without changing
+what native routes receive, and reconstruction folds that count into the same
+accounting. Whenever any prior message was left out by the turn cap or by
+reconstruction's size bounds, fixed lines in the transcript header tell the
+agent that the transcript is shortened, give the left-out and shown counts, and
+note that the shown part may start mid-session with an agent message or a tool
+record whose earlier context is absent; no text from a left-out message is
+included. On a reconstructed turn that carries a history-omission notice, both
+the notice's valid-pair count and the receipt's `historyOmission.projectedPairs`
+record the number of tool pairs actually sent (`toolExchangesProjected`), while
+the remaining omission fields continue to describe stored history. Every
+exchange that is sent has passed the pairing, malformed-record,
+argument-complexity, and credential-shape checks, and a failure on any of those
+checks refuses the turn before any prompt reaches the agent (closing and
+removing any acquired handle without deleting persisted events). An exchange
+left out because of the 32-message bound or a per-message or tool-field byte
+bound is not checked past that point and is never sent; an exchange that passes
+every check and is then left out for the ACP prompt limit has already been
+checked, so a failed check on it still refuses the turn. Idle handles retire on a per-session idle
 limit chosen from the most recent turn that released the handle: `[codex]
 interactive_idle_seconds` (60 through 86400 seconds, default 14400, 4 hours)
 after an interactive turn on the `codex-chatgpt` runner, and 5 minutes
@@ -3172,3 +3199,11 @@ Document revisions only. Code and behavior changes are tracked in
   runners) and earliest-idle-deadline reclamation at the 8-session capacity
   bound with fail-closed active/close-error refusal and `reconstructed`
   follow-up continuity.
+- 2026-11-12 - The external-agent section documents shortened transcript
+  reconstruction across the 10-turn conversation cap, 32-message bound,
+  per-message/tool-field byte bounds, and final 60,000-byte ACP prompt limit,
+  including whole-exchange selection, the shortened-transcript header lines,
+  `priorMessagesLeftOut` and `leftOutCauses` receipt fields, the TypeScript and
+  Rust REPL footer additions, the sent-pair count on reconstructed
+  history-omission notices and receipts, and the check order across sent versus
+  message-, byte-, and prompt-limited exchanges.

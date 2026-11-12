@@ -3558,7 +3558,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     }
   });
 
-  it("an oversized reconstruction fails before the agent is prompted", async () => {
+  it("a refused reconstruction reaps the replacement handle, while an oversized prior message shortens and runs", async () => {
     const h = createHarness();
     const workspace = process.cwd();
     const { directory: methodLogDirectory, path: methodLog } = await tempFile();
@@ -3575,7 +3575,12 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           sessionId: "01ACPSESSION000000000000103",
           workspaceRoot: workspace,
           conversationMessages: [
-            { role: "user", content: "x".repeat(60_001) },
+            {
+              role: "tool",
+              toolCallId: "orphan",
+              name: "read_file",
+              content: "unpaired",
+            },
           ],
         }, { sessionMap: map, resolveProfile: () => profile }), DomainError);
       // The replacement session was created and then reaped; no prompt — and
@@ -3584,6 +3589,27 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assertContains(methods, "session/new");
       assertNotContains(methods, "session/prompt");
       assert.strictEqual(map.size, 0);
+
+      const shortened = await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "FIXTURE_RECALL which codename did I give this project?",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000104",
+        workspaceRoot: workspace,
+        conversationMessages: [
+          { role: "user", content: "x".repeat(60_001) },
+        ],
+      }, { sessionMap: map, resolveProfile: () => profile });
+      assert.strictEqual(shortened.stopReason, "stop");
+      assert.strictEqual(shortened.text, "recalled=none");
+      assert.partialDeepStrictEqual(asRecord(shortened.runner.continuity), {
+        state: "reconstructed",
+        priorMessagesProjected: 0,
+        toolExchangesProjected: 0,
+        priorMessagesLeftOut: 1,
+        leftOutCauses: ["byte_limit"],
+      });
     } finally {
       await map.shutdown();
       await rm(methodLogDirectory, { recursive: true, force: true });
@@ -3641,6 +3667,59 @@ describe("runExternalAgentWorkbenchRuntime", () => {
     withheldFromProjection: 1,
     projectedPairs: 3,
   } as const;
+
+  function messagesWithThreeToolPairs(
+    firstUserText: string,
+  ): WorkbenchMessage[] {
+    return [
+      { role: "user", content: firstUserText },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: "omission-pair-1",
+          name: "read_file",
+          arguments: { path: "a.txt" },
+        }],
+      },
+      {
+        role: "tool",
+        toolCallId: "omission-pair-1",
+        name: "read_file",
+        content: "alpha",
+      },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: "omission-pair-2",
+          name: "read_file",
+          arguments: { path: "b.txt" },
+        }],
+      },
+      {
+        role: "tool",
+        toolCallId: "omission-pair-2",
+        name: "read_file",
+        content: "beta",
+      },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          id: "omission-pair-3",
+          name: "read_file",
+          arguments: { path: "c.txt" },
+        }],
+      },
+      {
+        role: "tool",
+        toolCallId: "omission-pair-3",
+        name: "read_file",
+        content: "gamma",
+      },
+    ];
+  }
 
   function sessionMapStub(
     state: "warm-reused" | "reconstructed",
@@ -3713,7 +3792,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       runner: { kind: "acp", profile: "fixture" },
       sessionId: "01ACPSESSION000000000000140",
       workspaceRoot: process.cwd(),
-      conversationMessages: [{ role: "user", content: "persisted antecedent" }],
+      conversationMessages: messagesWithThreeToolPairs("persisted antecedent"),
       historyOmission: omission,
     }, { sessionMap: sessionMapStub("reconstructed", prompts) });
     assert.match(
@@ -3781,7 +3860,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           role: "user",
           content: "persisted antecedent",
         }],
-        historyOmission: omission,
+        historyOmission: { ...omission, projectedPairs: 0 },
       }, { sessionMap: map });
 
       assert.deepStrictEqual(prompts?.length, 1);
@@ -3847,7 +3926,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       routingOptions: {},
       runner: { kind: "acp", profile: "fixture" },
       workspaceRoot: process.cwd(),
-      conversationMessages: [{ role: "user", content: "prior" }],
+      conversationMessages: messagesWithThreeToolPairs("prior"),
       historyOmission: omission,
     }, { runAgent });
     assert.strictEqual(prompts[0], "plain prompt");
@@ -3907,7 +3986,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           state === "warm-reused" ? "0" : "1"
         }`,
         workspaceRoot: process.cwd(),
-        conversationMessages: [{ role: "user", content: "prior" }],
+        conversationMessages: messagesWithThreeToolPairs("prior"),
         historyOmission: omission,
       }, { sessionMap: sessionMapStub(state, []) });
       return result.historyOmission;
@@ -4496,47 +4575,87 @@ describe("reconstructed tool history", () => {
     ], "unpaired tool history");
   });
 
-  it("empty and oversized tool metadata fails before model work", async () => {
-    const h = createHarness();
-    for (
-      const requestId of [
-        "",
-        "x".repeat(MAX_HISTORY_TOOL_CALL_ID_BYTES + 1),
-      ]
-    ) {
-      await refusedBeforeModelWork(
-        h,
-        toolHistory({ requestId }),
-        requestId === "" ? "malformed tool history" : "tool call id limit",
-      );
-    }
-    for (
-      const requestName of [
-        "",
-        "x".repeat(MAX_HISTORY_TOOL_NAME_BYTES + 1),
-      ]
-    ) {
-      await refusedBeforeModelWork(
-        h,
-        toolHistory({ requestName }),
-        requestName === "" ? "malformed tool history" : "tool name limit",
-      );
-    }
+  async function shortenedWithoutTranscript(
+    h: Harness,
+    priorMessages: WorkbenchMessage[],
+    expectedCause: string,
+  ): Promise<void> {
+    let promptSeen = "";
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "what did the notes say?",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000120",
+      workspaceRoot: process.cwd(),
+      conversationMessages: priorMessages,
+    }, {
+      runAgent: (agentInput) => {
+        promptSeen = agentInput.prompt;
+        return Promise.resolve({
+          text: "continued with shortened header",
+          stopReason: "stop",
+          acpStopReason: "end_turn",
+          protocolVersion: 1,
+          externalSessionId: "fixture-shortened",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    assert.strictEqual(result.stopReason, "stop");
+    assertContains(promptSeen, "This transcript is shortened.");
+    assertContains(
+      promptSeen,
+      `Prior messages left out: ${priorMessages.length}. Prior messages shown: 0.`,
+    );
+    assertNotContains(promptSeen, "Operator (history):");
+    assertNotContains(promptSeen, "Agent (history):");
+    assertNotContains(promptSeen, "Tool request (history)");
+    assert.partialDeepStrictEqual(asRecord(result.runner.continuity), {
+      state: "reconstructed",
+      priorMessagesProjected: 0,
+      toolExchangesProjected: 0,
+      priorMessagesLeftOut: priorMessages.length,
+      leftOutCauses: [expectedCause],
+    });
+  }
+
+  it("empty tool metadata fails before model work while oversized tool metadata shortens", async () => {
+    await refusedBeforeModelWork(
+      createHarness(),
+      toolHistory({ requestId: "" }),
+      "malformed tool history",
+    );
+    await shortenedWithoutTranscript(
+      createHarness(),
+      toolHistory({ requestId: "x".repeat(MAX_HISTORY_TOOL_CALL_ID_BYTES + 1) }),
+      "byte_limit",
+    );
+    await refusedBeforeModelWork(
+      createHarness(),
+      toolHistory({ requestName: "" }),
+      "malformed tool history",
+    );
+    await shortenedWithoutTranscript(
+      createHarness(),
+      toolHistory({ requestName: "x".repeat(MAX_HISTORY_TOOL_NAME_BYTES + 1) }),
+      "byte_limit",
+    );
   });
 
-  it("oversized, cyclic, and over-deep arguments fail before model work", async () => {
-    const h = createHarness();
-    await refusedBeforeModelWork(
-      h,
+  it("cyclic and over-deep arguments fail before model work while oversized arguments shorten", async () => {
+    await shortenedWithoutTranscript(
+      createHarness(),
       toolHistory({
         arguments: { value: "x".repeat(MAX_HISTORY_TOOL_ARGUMENTS_BYTES) },
       }),
-      "tool argument limit",
+      "byte_limit",
     );
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
     await refusedBeforeModelWork(
-      h,
+      createHarness(),
       toolHistory({ arguments: cyclic }),
       "malformed tool history",
     );
@@ -4548,39 +4667,77 @@ describe("reconstructed tool history", () => {
       cursor = next;
     }
     await refusedBeforeModelWork(
-      h,
+      createHarness(),
       toolHistory({ arguments: deep }),
       "tool argument complexity limit",
     );
   });
 
-  it("an oversized tool field fails before model work", async () => {
+  it("an oversized tool field shortens the transcript and runs the turn", async () => {
     const h = createHarness();
-    await refusedBeforeModelWork(
+    await shortenedWithoutTranscript(
       h,
       toolHistory({ result: "x".repeat(MAX_HISTORY_TOOL_RESULT_BYTES + 1) }),
-      "tool result limit",
+      "byte_limit",
     );
   });
 
-  it("an oversized history message fails before model work", async () => {
+  it("an oversized history message shortens the transcript and runs the turn", async () => {
     const h = createHarness();
-    await refusedBeforeModelWork(
+    await shortenedWithoutTranscript(
       h,
       [{ role: "user", content: "x".repeat(MAX_HISTORY_MESSAGE_BYTES + 1) }],
-      "history message limit",
+      "byte_limit",
     );
   });
 
-  it("too many prior messages fail before model work", async () => {
+  it("too many prior messages shorten the transcript and run the turn", async () => {
     const h = createHarness();
-    await refusedBeforeModelWork(
-      h,
-      Array.from(
-        { length: MAX_RECONSTRUCTED_PRIOR_MESSAGES + 1 },
-        () => ({ role: "user" as const, content: "hello" }),
-      ),
-      "prior-message limit",
+    let promptSeen = "";
+    const priorMessages = Array.from(
+      { length: MAX_RECONSTRUCTED_PRIOR_MESSAGES + 1 },
+      (_, index) => ({
+        role: "user" as const,
+        content: `entry-${String(index + 1).padStart(2, "0")}`,
+      }),
     );
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "what did the notes say?",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000121",
+      workspaceRoot: process.cwd(),
+      conversationMessages: priorMessages,
+    }, {
+      runAgent: (agentInput) => {
+        promptSeen = agentInput.prompt;
+        return Promise.resolve({
+          text: "answered from newest 32",
+          stopReason: "stop",
+          acpStopReason: "end_turn",
+          protocolVersion: 1,
+          externalSessionId: "fixture-shortened-32",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    assert.strictEqual(result.stopReason, "stop");
+    assertContains(promptSeen, "This transcript is shortened.");
+    assertContains(
+      promptSeen,
+      `Prior messages left out: 1. Prior messages shown: ${MAX_RECONSTRUCTED_PRIOR_MESSAGES}.`,
+    );
+    assertNotContains(promptSeen, "entry-01");
+    assertContains(promptSeen, "  | entry-02");
+    assertContains(promptSeen, "  | entry-33");
+    assert.partialDeepStrictEqual(asRecord(result.runner.continuity), {
+      state: "reconstructed",
+      priorMessagesProjected: MAX_RECONSTRUCTED_PRIOR_MESSAGES,
+      toolExchangesProjected: 0,
+      priorMessagesLeftOut: 1,
+      leftOutCauses: ["message_limit"],
+    });
   });
 });

@@ -578,6 +578,40 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Shortened reconstructed transcripts on external-agent sessions (`BIT-924`).**
+  When a session's external-agent handle is gone and prior messages exceed a
+  reconstruction size limit, `reconstructAcpContinuityPrompt` now walks prior
+  messages from newest to oldest one whole exchange at a time (one operator
+  message, or one agent message with all of its paired tool results) and keeps
+  the newest contiguous part that fits the 32-message bound, per-message and
+  per-tool-field byte bounds, and the final 60,000-byte ACP prompt limit
+  (including the header, shortened-transcript label, history-omission notice,
+  and dispatched-child context line when present). When not even the newest
+  exchange fits, Workbench sends the operator's prompt with the shortened
+  header and no transcript rather than failing the turn, failing on size only
+  when the operator's prompt and framing alone exceed the prompt limit.
+  `buildConversationMessages` also reports how many prior messages its 10-turn
+  cap dropped without changing what native model routes receive, and that count
+  reaches reconstruction. Whenever any prior message was left out, fixed header
+  lines tell the agent that the transcript is shortened and give the left-out
+  and shown counts with no text from left-out messages, `runner.continuity`
+  adds `priorMessagesLeftOut` and `leftOutCauses` (`turn_cap`, `message_limit`,
+  `byte_limit`, `prompt_limit`) while `priorMessagesProjected` and
+  `toolExchangesProjected` count what was sent, and both the TypeScript client
+  and Rust REPL footers append `(shortened, <n> left out)` after
+  `reconstructed <n>msg/<m>tool`. On a reconstructed turn carrying a
+  history-omission notice, both the notice and `historyOmission.projectedPairs`
+  count the tool pairs that are sent (`toolExchangesProjected`). Engine-built
+  turns with nothing left out keep their existing prompt, receipt, and footer.
+  Every exchange that is sent has passed the pairing, malformed-record,
+  argument-complexity, and credential-shape checks, and a failed check fails the
+  turn; an exchange left out for the message limit or a byte limit is not
+  checked further and is never sent, whereas an exchange that passes every check
+  and is then left out for the prompt limit has already been checked so a failed
+  check on it still fails the turn. `AcpSessionHandleMap` also removes the
+  unread `idleTtlMs` entry field and measures aborted-turn `elapsedMs` from its
+  injected clock.
+
 - **Longer interactive Codex idle continuity and idle-session eviction at
   capacity (`BIT-924`).** `AcpSessionHandleMap` now arms each released handle's
   idle timer from the idle limit of its most recent turn rather than one fixed
