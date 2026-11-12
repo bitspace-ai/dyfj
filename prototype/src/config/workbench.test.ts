@@ -369,6 +369,34 @@ const table = (t: Record<string, unknown>) => () => t;
     }
   });
 
+  test("loadConfig Codex interactive idle limit: accepts 60 and 86400, refuses 59 and 86401, and defaults to 14400", async () => {
+    const absent = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(absent.codexInteractiveIdleSeconds, 14_400);
+
+    for (const valid of [60, 86_400]) {
+      const loaded = await loadConfig({
+        env: env(HOME),
+        readTextFile: present,
+        parseToml: table({ codex: { interactive_idle_seconds: valid } }),
+      });
+      assert.strictEqual(loaded.codexInteractiveIdleSeconds, valid);
+    }
+
+    for (const invalid of [59, 86_401, 120.5]) {
+      assert.match(
+        (await captureRejection(() =>
+          loadConfig({
+            env: env(HOME),
+            readTextFile: present,
+            parseToml: table({ codex: { interactive_idle_seconds: invalid } }),
+          })
+        ) as Error).message,
+        /\[codex\]\.interactive_idle_seconds/,
+        String(invalid),
+      );
+    }
+  });
+
   test("loadConfig agent tool-step ceiling: defaults to 64; TOML and env layers override it with env precedence", async () => {
     const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
     assert.strictEqual(cfg.maxToolStepsCeiling, 64);

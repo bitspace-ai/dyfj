@@ -234,7 +234,10 @@ export interface WorkbenchUnixServerOptions {
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexWorkbenchTools" | "codexToolTimeoutSeconds"
+      | "codexReasoningEffort"
+      | "codexWorkbenchTools"
+      | "codexToolTimeoutSeconds"
+      | "codexInteractiveIdleSeconds"
     >
   >;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */

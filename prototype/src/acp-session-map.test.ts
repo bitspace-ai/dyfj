@@ -776,7 +776,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
     }
   });
 
-  it("capacity fails closed without eviction", async () => {
+  it("capacity refuses a new session while an active session holds the slot", async () => {
     const profile = fixtureProfile();
     const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });
     const first = fakeHandle();
@@ -786,7 +786,6 @@ describe("AcpSessionHandleMap lifecycle", () => {
         ...acquireKey(profile, "s1"),
         create: () => Promise.resolve(first),
       });
-      map.release(first);
       await assert.rejects(
         () =>
           map.acquire({
@@ -796,7 +795,7 @@ describe("AcpSessionHandleMap lifecycle", () => {
         AcpSessionCapacityError,
       );
       assert.strictEqual(first.isAlive, true);
-      assert.strictEqual(map.stateFor(acquireKey(profile, "s1")), "idle");
+      assert.strictEqual(map.stateFor(acquireKey(profile, "s1")), "active");
       assert.strictEqual(map.size, 1);
     } finally {
       await map.shutdown();
@@ -1309,6 +1308,208 @@ describe("AcpSessionHandleMap one-shot release", () => {
       assert.strictEqual(map.size, 1);
       assert.strictEqual(handle.isAlive, true);
     } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("at capacity with two idle entries, a new session closes the entry with the earliest idle deadline and starts while the other stays", async () => {
+    const profile = fixtureProfile();
+    let currentMs = 10_000;
+    let nextTimerId = 1;
+    const timers = new Map<number, () => void>();
+    const map = new AcpSessionHandleMap({
+      capacity: 2,
+      now: () => currentMs,
+      setTimeout: (cb) => {
+        const id = nextTimerId++;
+        timers.set(id, cb);
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id as number);
+      },
+    });
+    const first = fakeHandle();
+    const second = fakeHandle();
+    const third = fakeHandle();
+    const logged: string[] = [];
+    const restoreError = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    try {
+      // Entry 1 is inserted first with a 4-hour idle limit (deadline 14_410_000).
+      await map.runTurn({
+        ...acquireKey(profile, "secret-session-alpha"),
+        prompt: "secret-prompt-alpha",
+        idleTtlMs: 14_400_000,
+        create: () => Promise.resolve(first),
+      });
+      currentMs += 1_000;
+      // Entry 2 is inserted second with a 5-minute idle limit (deadline 311_000, earlier).
+      await map.runTurn({
+        ...acquireKey(profile, "secret-session-beta"),
+        prompt: "secret-prompt-beta",
+        idleTtlMs: 300_000,
+        create: () => Promise.resolve(second),
+      });
+      assert.strictEqual(map.size, 2);
+
+      const started = await map.acquire({
+        ...acquireKey(profile, "secret-session-gamma"),
+        create: () => Promise.resolve(third),
+      });
+      assert.strictEqual(started, third);
+      assert.strictEqual(map.size, 2);
+      assert.strictEqual(second.isAlive, false);
+      assert.strictEqual(map.stateFor(acquireKey(profile, "secret-session-beta")), undefined);
+      assert.strictEqual(first.isAlive, true);
+      assert.strictEqual(map.stateFor(acquireKey(profile, "secret-session-alpha")), "idle");
+      assert.strictEqual(map.stateFor(acquireKey(profile, "secret-session-gamma")), "active");
+      assert.strictEqual(logged.length, 1);
+      assert.ok(!logged[0].includes("secret-session"));
+      assert.ok(!logged[0].includes("secret-prompt"));
+    } finally {
+      console.error = restoreError;
+      await map.shutdown();
+    }
+  });
+
+  it("at capacity with no idle entry, a new session gets AcpSessionCapacityError", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
+    const first = fakeHandle();
+    const second = fakeHandle();
+    const third = fakeHandle();
+    try {
+      await map.acquire({
+        ...acquireKey(profile, "active-1"),
+        create: () => Promise.resolve(first),
+      });
+      await map.acquire({
+        ...acquireKey(profile, "active-2"),
+        create: () => Promise.resolve(second),
+      });
+      await assert.rejects(
+        () =>
+          map.acquire({
+            ...acquireKey(profile, "active-3"),
+            create: () => Promise.resolve(third),
+          }),
+        AcpSessionCapacityError,
+      );
+      assert.strictEqual(map.size, 2);
+      assert.strictEqual(first.isAlive, true);
+      assert.strictEqual(second.isAlive, true);
+      assert.strictEqual(third.isAlive, true);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("at capacity, when the close of the chosen entry fails, the new session gets AcpSessionCapacityError and capacity is not exceeded", async () => {
+    const profile = fixtureProfile();
+    let closeAttempts = 0;
+    const failing = fakeHandle({
+      closeError: new Error("close boom"),
+      stayAliveOnCloseError: true,
+    });
+    const originalClose = failing.close.bind(failing);
+    const instrumentedFailing: AcpSessionHandle = {
+      get isAlive() {
+        return failing.isAlive;
+      },
+      get durableSessionLoad() {
+        return failing.durableSessionLoad;
+      },
+      prompt: (input) => failing.prompt(input),
+      close: () => {
+        closeAttempts += 1;
+        return originalClose();
+      },
+    };
+    const next = fakeHandle();
+    const map = new AcpSessionHandleMap({ capacity: 1, idleTtlMs: 60_000 });
+    let nextCreateCalled = false;
+    try {
+      await map.acquire({
+        ...acquireKey(profile, "victim"),
+        create: () => Promise.resolve(instrumentedFailing),
+      });
+      map.release(instrumentedFailing);
+      assert.strictEqual(map.size, 1);
+
+      await assert.rejects(
+        () =>
+          map.acquire({
+            ...acquireKey(profile, "challenger"),
+            create: () => {
+              nextCreateCalled = true;
+              return Promise.resolve(next);
+            },
+          }),
+        AcpSessionCapacityError,
+      );
+      assert.strictEqual(closeAttempts, 1);
+      assert.strictEqual(nextCreateCalled, false);
+      assert.ok(map.size <= 1);
+    } finally {
+      await map.shutdown().catch(() => {});
+    }
+  });
+
+  it("at capacity, when the close of the chosen entry times out, the new session gets AcpSessionCapacityError and capacity is not exceeded", async () => {
+    const profile = fixtureProfile();
+    const closeGate = Promise.withResolvers<void>();
+    const hanging = fakeHandle({
+      keepAliveDuringClose: true,
+      closeWait: closeGate.promise,
+    });
+    const timers = new Map<number, { ms: number; cb: () => void }>();
+    let nextTimerId = 1;
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 60_000,
+      shutdownTimeoutMs: 5_000,
+      setTimeout: (cb, ms) => {
+        const id = nextTimerId++;
+        timers.set(id, { ms, cb });
+        return id;
+      },
+      clearTimeout: (id) => {
+        timers.delete(id as number);
+      },
+    });
+    let nextCreateCalled = false;
+    try {
+      await map.acquire({
+        ...acquireKey(profile, "stalled"),
+        create: () => Promise.resolve(hanging),
+      });
+      map.release(hanging);
+      assert.strictEqual(map.size, 1);
+
+      const pending = map.acquire({
+        ...acquireKey(profile, "challenger"),
+        create: () => {
+          nextCreateCalled = true;
+          return Promise.resolve(fakeHandle());
+        },
+      });
+      // While close is in flight, the closing entry still holds its slot.
+      assert.strictEqual(map.stateFor(acquireKey(profile, "stalled")), "closing");
+      assert.strictEqual(map.size, 1);
+      for (const [id, timer] of [...timers]) {
+        if (timer.ms === 5_000) {
+          timers.delete(id);
+          timer.cb();
+        }
+      }
+      await assert.rejects(() => pending, AcpSessionCapacityError);
+      assert.strictEqual(nextCreateCalled, false);
+      assert.strictEqual(map.size, 1);
+    } finally {
+      closeGate.resolve();
       await map.shutdown();
     }
   });

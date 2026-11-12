@@ -67,7 +67,11 @@ import {
   type AcpSessionHandle,
   AcpSessionUpdateLimitError,
 } from "./acp-client.ts";
-import { AcpSessionBusyError, AcpSessionHandleMap } from "./acp-session-map.ts";
+import {
+  AcpSessionBusyError,
+  AcpSessionHandleMap,
+  DEFAULT_ACP_IDLE_TTL_MS,
+} from "./acp-session-map.ts";
 import { DomainError, summarizeError } from "./contract/mod.ts";
 import { buildConversationMessages } from "./context/conversation.ts";
 
@@ -3285,7 +3289,17 @@ describe("runExternalAgentWorkbenchRuntime", () => {
 
   it("idle retirement closes an unused warm ACP session", async () => {
     const h = createHarness();
-    const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 30 });
+    const idleTimers = injectedIdleTimers();
+    const armedDelays: number[] = [];
+    const map = new AcpSessionHandleMap({
+      capacity: 2,
+      idleTtlMs: 30,
+      setTimeout: (callback, ms) => {
+        armedDelays.push(ms);
+        return idleTimers.setTimeout(callback, ms);
+      },
+      clearTimeout: idleTimers.clearTimeout,
+    });
     try {
       await runExternalAgentWorkbenchRuntime(h, {
         mode: "turn",
@@ -3295,13 +3309,10 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         sessionId: "01ACPSESSION000000000000004",
         workspaceRoot: process.cwd(),
       }, { sessionMap: map });
-      // The type argument keeps `map.size` a number: the assertion would
-      // otherwise narrow it to 1 for the polling loop below.
-      assert.deepStrictEqual<number>(map.size, 1);
-      const retirementDeadline = Date.now() + 2_000;
-      while (map.size !== 0 && Date.now() < retirementDeadline) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
+      assert.strictEqual(map.size, 1);
+      assert.deepStrictEqual(armedDelays, [DEFAULT_ACP_IDLE_TTL_MS]);
+      idleTimers.fire();
+      await waitForRetiredHandles(map);
       assert.strictEqual(map.size, 0);
     } finally {
       await map.shutdown();

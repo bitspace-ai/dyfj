@@ -66,6 +66,10 @@ level = "strict"
 # max_wait_seconds must be strictly below this timeout, or config load fails.
 # The defaults, 50 and 300 seconds, satisfy this rule.
 # tool_timeout_seconds = 300
+# How long an idle codex-chatgpt agent session stays warm after an interactive
+# turn, in seconds: an integer from 60 through 86400 (default 14400, 4 hours).
+# One-shot turns and dispatched child turns keep the 5-minute idle limit.
+# interactive_idle_seconds = 14400
 
 [paid]
 # Standing paid-inference posture on loopback turns. When a request omits the
