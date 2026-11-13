@@ -4984,27 +4984,25 @@ describe("tool activity frames", () => {
         tool_arguments: e.tool_arguments, tool_result: e.tool_result, tool_is_error: e.tool_is_error,
       })) };
     assert.deepStrictEqual(record, {
-  "receipt": "External-agent turn receipt\nSession: 01ACPSESSION000000000000925\nTrace: <trace>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 0 recorded, 1 partial (missing_raw_output), 1 rejected (missing_raw_input) of 2\nWorkspace: <workspace>\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: 1 ms\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
+  "receipt": "External-agent turn receipt\nSession: 01ACPSESSION000000000000925\nTrace: <trace>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 1 recorded, 0 partial, 1 rejected (missing_raw_input) of 2\nWorkspace: <workspace>\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: 1 ms\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
   "evidence": {
     "status": "partial",
     "observedCalls": 2,
-    "recordedCalls": 0,
-    "partialCalls": 1,
+    "recordedCalls": 1,
+    "partialCalls": 0,
     "rejectedCalls": 1,
-    "partialReasons": {
-      "missing_raw_output": 1
-    },
+    "partialReasons": {},
     "rejectedReasons": {
       "missing_raw_input": 1
     }
   },
   "tools": [
     {
-      "tool_name": "acp.history_unavailable",
-      "tool_call_id": "<gap-id>",
-      "tool_arguments": "{\"outcome\":\"partial\",\"reason\":\"missing_raw_output\",\"toolCallId\":\"activity-command\",\"toolName\":\"acp.execute\",\"title\":\"Run greeting\",\"kind\":\"execute\",\"status\":\"completed\",\"input\":{\"command\":[\"printf\",\"hello\"],\"cwd\":\"/workspace\"}}",
-      "tool_result": "",
-      "tool_is_error": true
+      "tool_name": "acp.execute",
+      "tool_call_id": "activity-command",
+      "tool_arguments": "{\"title\":\"Run greeting\",\"kind\":\"execute\",\"input\":{\"command\":[\"printf\",\"hello\"],\"cwd\":\"/workspace\"}}",
+      "tool_result": "{\"exitCode\":0,\"output\":\"hello world\"}",
+      "tool_is_error": false
     },
     {
       "tool_name": "acp.history_unavailable",

@@ -1414,7 +1414,42 @@ has a well-formed call id and tool name that sanitizing leaves unchanged, a
 `completed` or `failed` status, an input whose combined title, kind and input
 record fits the 4 KiB argument bound and its node and depth limits, an output
 within the 8 KiB bound, no
-other capture problem, and values that pass the credential-shape gate. The gate
+other capture problem, and values that pass the credential-shape gate.
+For terminal commands, capture also reads `_meta.terminal_output_delta.data`
+(a string, appended in update order) and `_meta.terminal_exit.exit_code`
+(an integer or `null`). This protocol shape was checked against the
+`@agentclientprotocol/codex-acp` **2.5.0** bundle and exercised with the fixture
+agent through the real protocol parser; fixture tests also cover stored events.
+The maintainer verified terminal command evidence in an acceptance test with
+real agent turns on the `codex-chatgpt` route with adapter 2.5.0.
+When either key is present and valid, the output uses stable fields
+`exitCode` (default `null` when no exit was supplied) and `output` (default
+`""` when no text was supplied). Other fields from a checked `rawOutput`
+object are retained; terminal fields take precedence on a name collision.
+For example, an otherwise complete command can record
+`{"exitCode":0,"output":"fixture output\n"}` with no `rawOutput` in its
+updates. An exit with no output can also be recorded. Terminal text is read
+only from `terminal_output_delta`, and a call recorded with empty output
+means no text arrived under that key. Calls carrying only
+`rawOutput` keep their existing result shape. Capture ignores every other
+`_meta` key, including terminal ids and exit signals.
+
+Each call retains at most 8,192 UTF-8 bytes of terminal text. Once it exceeds
+that bound, capture stops appending; the assembled result passes through the
+same JSON bound and persistence checks as `rawOutput`, with JSON overhead and
+any other result fields counting toward the bound. A cut result stays
+`partial` with `oversized_output` and the existing truncation marker; a call
+without a final status stays a gap. Credential-shape checks cover each chunk
+of terminal text, and the kept output. For non-MCP calls, malformed terminal
+values or credential-shaped content in each chunk of terminal text, and the
+kept output, reject the call and discard its output; these problems cannot
+be cleared by a later terminal update. MCP calls
+instead retain the existing argument/result redaction, including for terminal
+metadata. The fixture's `FIXTURE_TERMINAL_COMMAND`
+scenario sends two output-only updates and a final exit/status update without
+`rawOutput`.
+
+The gate
 matches a fixed set of credential patterns. It reads each output whole before
 any cut, and reads the serialized form and every key and string of a value in
 three forms: as they are; as Workbench would store them (other control
@@ -1443,8 +1478,10 @@ or unfinished output) also keeps its checked input, and an oversized output is
 kept cut to the 8 KiB bound and ends with a truncation marker; a `rejected` call
 (credential-shaped, malformed, missing or oversized input) keeps no raw value.
 At capture, a call whose raw input or output still matches after its last
-patch keeps neither raw field; a later patch that replaces the matched field
-with a clean value clears that problem. The id, name, kind and title are
+patch keeps neither raw field; a later patch that replaces a matched
+`rawInput` or `rawOutput` field with a clean value clears that field's problem.
+Terminal text is append-only, so a later clean chunk cannot clear its problem.
+The id, name, kind and title are
 checked when the call is prepared for persisting: the tool name both as
 received and in its stored `acp.`-prefixed form, the title and kind both as
 received and as they would be stored, and the id as received. A match in any of
@@ -3333,3 +3370,10 @@ Document revisions only. Code and behavior changes are tracked in
   `Tool calls left out in shown part: <n>. Tool calls shown: <m>.` header line,
   the optional `toolCallsLeftOut` receipt count and receipt text, and the rule
   that a session whose text fills the 32-message bound sends no tool calls.
+
+- 2026-11-12 - The external-agent section documents terminal output and exit
+  capture from the codex-acp 2.5.0 metadata keys, the stable `exitCode` and
+  `output` result fields, and bounded accumulation. Fixture tests cover the
+  protocol parser and stored events. The maintainer verified terminal command
+  evidence in an acceptance test with real agent turns on the `codex-chatgpt`
+  route with adapter 2.5.0.

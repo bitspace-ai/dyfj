@@ -82,6 +82,14 @@ interface MutableAcpToolCallEvidence {
   /** Reset whenever a later patch replaces the field. */
   inputProblem?: AcpToolEvidenceReason;
   outputProblem?: AcpToolEvidenceReason;
+  /** One bounded prefix, never an unbounded list of streamed chunks. */
+  terminal?: {
+    output: string;
+    exitCode: number | null;
+    oversized: boolean;
+    /** Append-only data cannot be repaired by a later clean patch. */
+    problem?: "malformed" | "credential_shaped";
+  };
 }
 
 export interface AcpToolEvidenceAccumulator {
@@ -178,6 +186,94 @@ function truncatedToolOutput(json: string): string {
   return `${kept}${ACP_TOOL_OUTPUT_TRUNCATION_MARKER}`;
 }
 
+function jsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Check each chunk whole, including its join with the kept prefix, before cutting. */
+function patchTerminalOutput(call: MutableAcpToolCallEvidence, meta: unknown): void {
+  if (!jsonObject(meta)) return;
+  const hasOutput = Object.hasOwn(meta, "terminal_output_delta");
+  const hasExit = Object.hasOwn(meta, "terminal_exit");
+  if (!hasOutput && !hasExit) return;
+  const terminal = call.terminal ??= { output: "", exitCode: null, oversized: false };
+  if (terminal.problem !== undefined) return;
+  if (hasOutput) {
+    const delta = meta.terminal_output_delta;
+    if (!jsonObject(delta) || typeof delta.data !== "string") {
+      terminal.problem = "malformed";
+    } else {
+      const combined = terminal.output + delta.data;
+      const chunk = boundedJson(delta.data, true);
+      const checked = chunk.kind === "credential_shaped" || chunk.kind === "malformed"
+        ? chunk
+        : boundedJson(combined, true);
+      if (checked.kind === "credential_shaped" || checked.kind === "malformed") {
+        terminal.problem = checked.kind;
+      } else if (!terminal.oversized) {
+        const cut = clipToUtf8Bytes(combined, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES);
+        terminal.output = cut ?? combined;
+        terminal.oversized = cut !== null;
+      }
+    }
+  }
+  if (hasExit) {
+    const exit = meta.terminal_exit;
+    if (
+      !jsonObject(exit) ||
+      (exit.exit_code !== null && !Number.isInteger(exit.exit_code))
+    ) {
+      terminal.problem ??= "malformed";
+    } else if (terminal.problem === undefined) {
+      terminal.exitCode = exit.exit_code as number | null;
+    }
+  }
+  if (terminal.problem !== undefined) {
+    terminal.output = "";
+    terminal.exitCode = null;
+  }
+}
+
+/** The same serialization and bounds for raw output and assembled terminal output. */
+function captureOutput(call: MutableAcpToolCallEvidence, value: unknown): void {
+  const output = boundedJson(value, true);
+  delete call.rawOutputJson;
+  delete call.outputProblem;
+  if (output.kind === "ok") call.rawOutputJson = output.json;
+  else if (output.kind === "oversized") {
+    call.rawOutputJson = truncatedToolOutput(output.json);
+    call.outputProblem = "oversized_output";
+  } else {
+    call.outputProblem = output.kind === "oversized_dropped"
+      ? "oversized_output"
+      : output.kind;
+  }
+}
+
+/** Materialize only at the snapshot boundary, without retaining a second output copy. */
+function withTerminalOutput(call: MutableAcpToolCallEvidence): MutableAcpToolCallEvidence {
+  if (call.terminal === undefined) return call;
+  const result = { ...call };
+  if (call.terminal.problem !== undefined) {
+    delete result.rawOutputJson;
+    result.outputProblem = ACP_TOOL_EVIDENCE_REASONS.find((reason) =>
+      reason === call.outputProblem || reason === call.terminal!.problem
+    );
+  } else if (call.outputProblem === undefined) {
+    const raw: unknown = call.rawOutputJson === undefined ? undefined : JSON.parse(call.rawOutputJson);
+    captureOutput(result, {
+      ...(jsonObject(raw) ? raw : {}),
+      exitCode: call.terminal.exitCode,
+      output: call.terminal.output,
+    });
+    if (call.terminal.oversized && result.outputProblem === undefined) {
+      result.rawOutputJson = truncatedToolOutput(result.rawOutputJson!);
+      result.outputProblem = "oversized_output";
+    }
+  }
+  return result;
+}
+
 function optionalToolField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 &&
       utf8ByteLengthWithinLimit(value, MAX_ACP_TOOL_EVIDENCE_FIELD_BYTES) !==
@@ -239,8 +335,9 @@ function redactMcpCall(
     if (kept.kind === "ok") call.rawInputJson = kept.json;
     else call.inputProblem = "malformed";
   }
-  if (call.rawOutputJson !== undefined || call.outputProblem !== undefined) {
+  if (call.rawOutputJson !== undefined || call.outputProblem !== undefined || call.terminal !== undefined) {
     delete call.outputProblem;
+    delete call.terminal;
     call.rawOutputJson = JSON.stringify(ACP_MCP_REDACTED);
   }
 }
@@ -320,18 +417,11 @@ export function applyAcpToolPatch(
     }
   }
   if (Object.hasOwn(update, "rawOutput")) {
-    const output = boundedJson(update.rawOutput, true);
+    captureOutput(call, update.rawOutput);
+  }
+  patchTerminalOutput(call, update._meta);
+  if (call.terminal?.problem !== undefined) {
     delete call.rawOutputJson;
-    delete call.outputProblem;
-    if (output.kind === "ok") call.rawOutputJson = output.json;
-    else if (output.kind === "oversized") {
-      call.rawOutputJson = truncatedToolOutput(output.json);
-      call.outputProblem = "oversized_output";
-    } else {
-      call.outputProblem = output.kind === "oversized_dropped"
-        ? "oversized_output"
-        : output.kind;
-    }
   }
   if (call.mcp === true) {
     redactMcpCall(
@@ -365,7 +455,8 @@ export function finishAcpToolEvidence(
   accumulator: AcpToolEvidenceAccumulator,
 ): AcpToolEvidence {
   const calls: AcpToolCallEvidence[] = [];
-  for (const call of accumulator.entries) {
+  for (const entry of accumulator.entries) {
+    const call = withTerminalOutput(entry);
     const problems = callProblems(call);
     // A call whose raw input or output still matches after its last patch
     // keeps neither raw field, even the one that passed on its own. A later
