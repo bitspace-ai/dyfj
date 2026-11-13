@@ -377,11 +377,14 @@ describe("external-agent turn-kind idle limits", () => {
     };
   }
 
-  function codexKeyProfile(workspace: string): AcpExecutionProfile {
+  function codexKeyProfile(
+    workspace: string,
+    modelId?: string,
+  ): AcpExecutionProfile {
     return {
       slug: "codex-chatgpt",
       command: "/nonexistent/codex-acp",
-      args: [],
+      args: modelId === undefined ? [] : ["-c", `model="${modelId}"`],
       environment: {},
       workspace,
       transport: "local_stdio",
@@ -406,6 +409,7 @@ describe("external-agent turn-kind idle limits", () => {
   function fakeSessionHandle(
     externalSessionId: string,
     onPrompt?: (prompt: string) => void,
+    consumePromptError?: () => Error | undefined,
   ): AcpSessionHandle {
     let closed = false;
     return {
@@ -415,6 +419,10 @@ describe("external-agent turn-kind idle limits", () => {
       routeEvidence: { source: "profile_declared" },
       durableSessionLoad: false,
       prompt: (input: AcpPromptInput): Promise<AcpRunResult> => {
+        const injectedError = consumePromptError?.();
+        if (injectedError !== undefined) {
+          return Promise.reject(injectedError);
+        }
         assertAcpPromptWithinLimit(input.prompt);
         onPrompt?.(input.prompt);
         return Promise.resolve({
@@ -441,24 +449,33 @@ describe("external-agent turn-kind idle limits", () => {
     },
     run: (ctx: {
       map: AcpSessionHandleMap;
+      store: MemoryStore;
+      workspace: string;
       clock: ReturnType<typeof fakeClock>;
       handlesCreated: () => number;
       prompts: string[];
+      failNextPrompt: (error: Error) => void;
+      setSessionMap: (nextMap: AcpSessionHandleMap) => void;
       runTurn: (
         body: {
           prompt: string;
           runner?: "codex-chatgpt" | "fixture";
+          model?: string;
+          approvePaid?: boolean;
           sessionId?: string;
           releaseExternalAgentSession?: boolean;
         },
-        turnOptions?: { dispatchRecord?: DispatchRecord },
+        turnOptions?: {
+          dispatchRecord?: DispatchRecord;
+          events?: Array<Record<string, unknown>>;
+        },
       ) => Promise<ExternalAgentWorkbenchRuntimeResult>;
     }) => Promise<void>,
   ): Promise<void> {
     const workspace = await mkdtemp(join(tmpdir(), "dyfj-idle-limit-"));
     const clock = fakeClock();
     const prompts: string[] = [];
-    const map = new AcpSessionHandleMap({
+    let currentMap = new AcpSessionHandleMap({
       capacity: options.capacity ?? 4,
       ...(options.mapIdleTtlMs === undefined
         ? {}
@@ -468,29 +485,39 @@ describe("external-agent turn-kind idle limits", () => {
       clearTimeout: clock.clearTimeout,
     });
     let createdCount = 0;
-    const sessionMapWithFakeHandles = new Proxy(map, {
-      get(target, prop, receiver) {
-        if (prop === "runTurn") {
-          return (turnInput: Parameters<AcpSessionHandleMap["runTurn"]>[0]) =>
-            target.runTurn({
-              ...turnInput,
-              create: async () => {
-                const handle = fakeSessionHandle(
-                  `ext-${++createdCount}`,
-                  (prompt) => prompts.push(prompt),
-                );
-                await turnInput.onRouteVerified?.(
-                  { source: "profile_declared" },
-                  new AbortController().signal,
-                );
-                return handle;
-              },
-            });
-        }
-        const value = Reflect.get(target, prop, receiver);
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-    });
+    let nextPromptError: Error | undefined;
+    const consumePromptError = () => {
+      const error = nextPromptError;
+      nextPromptError = undefined;
+      return error;
+    };
+    const wrapSessionMap = (targetMap: AcpSessionHandleMap) =>
+      new Proxy(targetMap, {
+        get(target, prop, receiver) {
+          if (prop === "runTurn") {
+            return (turnInput: Parameters<AcpSessionHandleMap["runTurn"]>[0]) =>
+              target.runTurn({
+                ...turnInput,
+                create: async () => {
+                  const handle = fakeSessionHandle(
+                    `ext-${++createdCount}`,
+                    (prompt) => prompts.push(prompt),
+                    consumePromptError,
+                  );
+                  await turnInput.onRouteVerified?.(
+                    { source: "profile_declared" },
+                    new AbortController().signal,
+                  );
+                  return handle;
+                },
+              });
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    let sessionMapWithFakeHandles = wrapSessionMap(currentMap);
+    const initialMap = currentMap;
     const store = new MemoryStore();
     const owners = new SessionOwners();
     const configuredDeps = options.codexInteractiveIdleSeconds === undefined
@@ -512,16 +539,31 @@ describe("external-agent turn-kind idle limits", () => {
 
     try {
       await run({
-        map,
+        map: initialMap,
+        store,
+        workspace,
         clock,
         handlesCreated: () => createdCount,
         prompts,
+        failNextPrompt: (error) => {
+          nextPromptError = error;
+        },
+        setSessionMap: (nextMap) => {
+          currentMap = nextMap;
+          sessionMapWithFakeHandles = wrapSessionMap(nextMap);
+        },
         runTurn: async (body, turnOptions = {}) => {
+          const { model, approvePaid, ...restBody } = body;
           const resolved = resolveTurnFromBody(
             {
-              runner: body.runner ?? "codex-chatgpt",
+              ...(model === undefined
+                ? { runner: restBody.runner ?? "codex-chatgpt" }
+                : { routingOptions: { modelId: model } }),
+              ...(approvePaid === undefined
+                ? {}
+                : { approvePaidInference: approvePaid }),
               workspace,
-              ...body,
+              ...restBody,
             },
             true,
             { trustWorkspaceInstructions: true },
@@ -554,25 +596,40 @@ describe("external-agent turn-kind idle limits", () => {
                 loopback: true,
                 trustWorkspaceInstructions: true,
                 ...configuredDeps,
+                ...(turnOptions.events === undefined
+                  ? {}
+                  : {
+                    frames: {
+                      onRuntimeEvent: (event) => {
+                        turnOptions.events?.push(
+                          event as unknown as Record<string, unknown>,
+                        );
+                      },
+                    },
+                  }),
                 fetchSessionEvents: (input) =>
                   fetchWorkbenchSessionEvents({
                     ...input,
                     events: store.events,
                   }),
                 releaseExternalAgentSession: (sessionId) =>
-                  map.dropSession(sessionId),
+                  currentMap.dropSession(sessionId),
                 runRuntime: (runtimeInput) => {
-                  if (runtimeInput.runner?.kind !== "acp") {
+                  const runner = runtimeInput.runner ??
+                    (model !== undefined
+                      ? { kind: "acp" as const, profile: "codex-chatgpt" as const }
+                      : undefined);
+                  if (runner?.kind !== "acp") {
                     throw new Error("expected ACP runner");
                   }
                   return runExternalAgentWorkbenchRuntime(
-                    { ...runtimeInput, runner: runtimeInput.runner },
+                    { ...runtimeInput, runner },
                     {
                       store,
                       sessionMap: sessionMapWithFakeHandles,
                       resolveProfile: (slug, ws) =>
                         slug === "codex-chatgpt"
-                          ? codexKeyProfile(ws)
+                          ? codexKeyProfile(ws, runtimeInput.routingOptions.modelId)
                           : fixtureKeyProfile(ws),
                     },
                   );
@@ -586,7 +643,10 @@ describe("external-agent turn-kind idle limits", () => {
         },
       });
     } finally {
-      await map.shutdown();
+      if (currentMap !== initialMap) {
+        await currentMap.shutdown();
+      }
+      await initialMap.shutdown();
       await store.close();
       await rm(workspace, { recursive: true, force: true });
     }
@@ -789,6 +849,392 @@ describe("external-agent turn-kind idle limits", () => {
         assert.deepStrictEqual(continuity.leftOutCauses, ["turn_cap"]);
       },
     );
+  });
+
+  function reconstructingEvents(
+    events: ReadonlyArray<Record<string, unknown>>,
+  ): Array<Record<string, unknown>> {
+    return events.filter((event) => event.type === "continuityReconstructing");
+  }
+
+  it("after the idle timer closes a session's agent session, the next turn's event has reason idle_limit", async () => {
+    await withTurnHarness(
+      { codexInteractiveIdleSeconds: 600 },
+      async ({ runTurn, clock, map }) => {
+        const first = await runTurn({ prompt: "start interactive work" });
+        await clock.advance(600_000);
+        assert.strictEqual(map.size, 0);
+
+        const events: Array<Record<string, unknown>> = [];
+        await runTurn(
+          { prompt: "continue after expiry", sessionId: first.sessionId },
+          { events },
+        );
+        assert.deepStrictEqual(reconstructingEvents(events), [{
+          type: "continuityReconstructing",
+          sessionId: first.sessionId,
+          reason: "idle_limit",
+          priorMessagesProjected: 2,
+          priorMessagesLeftOut: 0,
+        }]);
+      },
+    );
+  });
+
+  it("after an idle entry is closed for capacity, the next turn on that session has reason capacity", async () => {
+    await withTurnHarness({ capacity: 1 }, async ({ runTurn }) => {
+      const firstA = await runTurn({ prompt: "session A turn 1" });
+      await runTurn({ prompt: "session B evicts A" });
+
+      const events: Array<Record<string, unknown>> = [];
+      await runTurn(
+        { prompt: "session A turn 2", sessionId: firstA.sessionId },
+        { events },
+      );
+      assert.deepStrictEqual(reconstructingEvents(events), [{
+        type: "continuityReconstructing",
+        sessionId: firstA.sessionId,
+        reason: "capacity",
+        priorMessagesProjected: 2,
+        priorMessagesLeftOut: 0,
+      }]);
+    });
+  });
+
+  it("after a turn fails and its handle is dropped, the next turn has reason agent_session_failed", async () => {
+    await withTurnHarness({}, async ({ runTurn, failNextPrompt, map }) => {
+      const first = await runTurn({ prompt: "turn 1 succeeds" });
+      assert.strictEqual(map.size, 1);
+
+      failNextPrompt(
+        Object.assign(new Error("agent process died"), { phase: "protocol" }),
+      );
+      await assert.rejects(() =>
+        runTurn({ prompt: "turn 2 fails", sessionId: first.sessionId })
+      );
+      assert.strictEqual(map.size, 0);
+
+      const events: Array<Record<string, unknown>> = [];
+      const third = await runTurn(
+        { prompt: "turn 3 recovers", sessionId: first.sessionId },
+        { events },
+      );
+      assert.strictEqual(third.runner.continuity?.state, "reconstructed");
+      assert.strictEqual(third.runner.continuity?.priorMessagesProjected, 3);
+      assert.deepStrictEqual(reconstructingEvents(events), [{
+        type: "continuityReconstructing",
+        sessionId: first.sessionId,
+        reason: "agent_session_failed",
+        priorMessagesProjected: 3,
+        priorMessagesLeftOut: 0,
+      }]);
+    });
+  });
+
+  it("a turn on the same session with a changed profile has reason agent_settings_changed both while the older session is idle and after it was removed", async () => {
+    await withTurnHarness(
+      { codexInteractiveIdleSeconds: 600 },
+      async ({ runTurn, clock, map }) => {
+        const liveSession = await runTurn({
+          prompt: "turn 1 on terra",
+          model: "codex-chatgpt/gpt-6.1-terra",
+          approvePaid: true,
+        });
+        assert.strictEqual(map.size, 1);
+
+        const whileIdleEvents: Array<Record<string, unknown>> = [];
+        await runTurn(
+          {
+            prompt: "turn 2 on sol while terra is idle",
+            model: "codex-chatgpt/gpt-6.1-sol",
+            approvePaid: true,
+            sessionId: liveSession.sessionId,
+          },
+          { events: whileIdleEvents },
+        );
+        assert.deepStrictEqual(reconstructingEvents(whileIdleEvents), [{
+          type: "continuityReconstructing",
+          sessionId: liveSession.sessionId,
+          reason: "agent_settings_changed",
+          priorMessagesProjected: 2,
+          priorMessagesLeftOut: 0,
+        }]);
+
+        const removedSession = await runTurn({
+          prompt: "turn 1 before removal",
+          model: "codex-chatgpt/gpt-6.1-terra",
+          approvePaid: true,
+        });
+        await clock.advance(600_000);
+        assert.strictEqual(map.size, 0);
+
+        const afterRemovedEvents: Array<Record<string, unknown>> = [];
+        await runTurn(
+          {
+            prompt: "turn 2 on sol after terra expired",
+            model: "codex-chatgpt/gpt-6.1-sol",
+            approvePaid: true,
+            sessionId: removedSession.sessionId,
+          },
+          { events: afterRemovedEvents },
+        );
+        assert.deepStrictEqual(reconstructingEvents(afterRemovedEvents), [{
+          type: "continuityReconstructing",
+          sessionId: removedSession.sessionId,
+          reason: "agent_settings_changed",
+          priorMessagesProjected: 2,
+          priorMessagesLeftOut: 0,
+        }]);
+      },
+    );
+  });
+
+  it("after dropSession, the next turn has reason released", async () => {
+    await withTurnHarness({}, async ({ runTurn, map }) => {
+      const first = await runTurn({ prompt: "turn before release" });
+      await map.dropSession(first.sessionId);
+      assert.strictEqual(map.size, 0);
+
+      const events: Array<Record<string, unknown>> = [];
+      await runTurn(
+        { prompt: "follow-up after dropSession", sessionId: first.sessionId },
+        { events },
+      );
+      assert.deepStrictEqual(reconstructingEvents(events), [{
+        type: "continuityReconstructing",
+        sessionId: first.sessionId,
+        reason: "released",
+        priorMessagesProjected: 2,
+        priorMessagesLeftOut: 0,
+      }]);
+    });
+  });
+
+  it("a new map with a session that has earlier turns gives reason not_held", async () => {
+    await withTurnHarness(
+      {},
+      async ({ runTurn, clock, setSessionMap, store, workspace }) => {
+        const first = await runTurn({ prompt: "turn before restart" });
+        const freshMap = new AcpSessionHandleMap({
+          capacity: 4,
+          now: clock.now,
+          setTimeout: clock.setTimeout,
+          clearTimeout: clock.clearTimeout,
+        });
+        setSessionMap(freshMap);
+
+        const events: Array<Record<string, unknown>> = [];
+        await runTurn(
+          { prompt: "turn after restart", sessionId: first.sessionId },
+          { events },
+        );
+        assert.deepStrictEqual(reconstructingEvents(events), [{
+          type: "continuityReconstructing",
+          sessionId: first.sessionId,
+          reason: "not_held",
+          priorMessagesProjected: 2,
+          priorMessagesLeftOut: 0,
+        }]);
+
+        const noMapEvents: Array<Record<string, unknown>> = [];
+        await runExternalAgentWorkbenchRuntime(
+          {
+            mode: "turn",
+            prompt: "direct path without map",
+            routingOptions: {},
+            runner: { kind: "acp", profile: "fixture" },
+            sessionId: first.sessionId,
+            workspaceRoot: workspace,
+            conversationMessages: [
+              { role: "user", content: "earlier question" },
+              { role: "assistant", content: "earlier answer" },
+            ],
+            frames: {
+              onRuntimeEvent: (event) => {
+                noMapEvents.push(event as unknown as Record<string, unknown>);
+              },
+            },
+          },
+          {
+            store,
+            resolveProfile: (_slug, ws) => fixtureKeyProfile(ws),
+            runAgent: () =>
+              Promise.resolve({
+                text: "done",
+                stopReason: "stop",
+                capabilities: [],
+                elapsedMs: 1,
+              }),
+          },
+        );
+        assert.deepStrictEqual(reconstructingEvents(noMapEvents), [{
+          type: "continuityReconstructing",
+          sessionId: first.sessionId,
+          reason: "not_held",
+          priorMessagesProjected: 2,
+          priorMessagesLeftOut: 0,
+        }]);
+      },
+    );
+  });
+
+  it("a new turn and a warm-reused turn emit no continuityReconstructing event", async () => {
+    await withTurnHarness(
+      { codexInteractiveIdleSeconds: 600 },
+      async ({ runTurn, clock }) => {
+        const newEvents: Array<Record<string, unknown>> = [];
+        const first = await runTurn(
+          { prompt: "first turn" },
+          { events: newEvents },
+        );
+        assert.strictEqual(first.runner.continuity?.state, "new");
+        assert.ok(newEvents.some((event) => event.type === "sessionStart"));
+        assert.deepStrictEqual(reconstructingEvents(newEvents), []);
+
+        const warmEvents: Array<Record<string, unknown>> = [];
+        const second = await runTurn(
+          { prompt: "warm follow-up", sessionId: first.sessionId },
+          { events: warmEvents },
+        );
+        assert.strictEqual(second.runner.continuity?.state, "warm-reused");
+        assert.ok(warmEvents.some((event) => event.type === "inputReceived"));
+        assert.deepStrictEqual(reconstructingEvents(warmEvents), []);
+
+        await clock.advance(600_000);
+        const reconstructedEvents: Array<Record<string, unknown>> = [];
+        const third = await runTurn(
+          { prompt: "reconstructed follow-up", sessionId: first.sessionId },
+          { events: reconstructedEvents },
+        );
+        assert.strictEqual(third.runner.continuity?.state, "reconstructed");
+        assert.strictEqual(reconstructingEvents(reconstructedEvents).length, 1);
+      },
+    );
+  });
+
+  it("a turn whose reconstruction fails emits no continuityReconstructing event", async () => {
+    await withTurnHarness({}, async ({ runTurn, map, store, workspace }) => {
+      const seeded = await runTurn({ prompt: "seed session" });
+      const sessionId = seeded.sessionId;
+      await map.dropSession(sessionId);
+      const secretHistory: WorkbenchMessage[] = [
+        {
+          role: "assistant",
+          content: "reading secret config",
+          toolCalls: [{
+            id: "secret-1",
+            name: "read_file",
+            arguments: { flag: "password=abcdefgh12345678" },
+          }],
+        },
+        {
+          role: "tool",
+          toolCallId: "secret-1",
+          name: "read_file",
+          content: "small output",
+        },
+      ];
+
+      const failedMapEvents: Array<Record<string, unknown>> = [];
+      const realRunTurn = map.runTurn.bind(map);
+      const stubbedMap = new Proxy(map, {
+        get(target, prop, receiver) {
+          if (prop === "runTurn") {
+            return (turnInput: Parameters<AcpSessionHandleMap["runTurn"]>[0]) =>
+              realRunTurn({
+                ...turnInput,
+                create: () => Promise.resolve(fakeSessionHandle("ext-fail-1")),
+              });
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+      await assert.rejects(
+        () =>
+          runExternalAgentWorkbenchRuntime(
+            {
+              mode: "turn",
+              prompt: "continue after bad history",
+              routingOptions: {},
+              runner: { kind: "acp", profile: "fixture" },
+              sessionId,
+              workspaceRoot: workspace,
+              conversationMessages: secretHistory,
+              frames: {
+                onRuntimeEvent: (event) => {
+                  failedMapEvents.push(
+                    event as unknown as Record<string, unknown>,
+                  );
+                },
+              },
+            },
+            {
+              store,
+              sessionMap: stubbedMap,
+              resolveProfile: (_slug, ws) => fixtureKeyProfile(ws),
+            },
+          ),
+        DomainError,
+      );
+      assert.ok(failedMapEvents.some((event) => event.type === "turnFailed"));
+      assert.deepStrictEqual(reconstructingEvents(failedMapEvents), []);
+
+      const failedDirectEvents: Array<Record<string, unknown>> = [];
+      await assert.rejects(
+        () =>
+          runExternalAgentWorkbenchRuntime(
+            {
+              mode: "turn",
+              prompt: "continue direct after bad history",
+              routingOptions: {},
+              runner: { kind: "acp", profile: "fixture" },
+              sessionId,
+              workspaceRoot: workspace,
+              conversationMessages: secretHistory,
+              frames: {
+                onRuntimeEvent: (event) => {
+                  failedDirectEvents.push(
+                    event as unknown as Record<string, unknown>,
+                  );
+                },
+              },
+            },
+            {
+              store,
+              resolveProfile: (_slug, ws) => fixtureKeyProfile(ws),
+              runAgent: () =>
+                Promise.reject(new Error("agent must not be called")),
+            },
+          ),
+        DomainError,
+      );
+      assert.deepStrictEqual(reconstructingEvents(failedDirectEvents), []);
+
+      const validEvents: Array<Record<string, unknown>> = [];
+      await runExternalAgentWorkbenchRuntime(
+        {
+          mode: "turn",
+          prompt: "continue with clean history",
+          routingOptions: {},
+          runner: { kind: "acp", profile: "fixture" },
+          sessionId,
+          workspaceRoot: workspace,
+          conversationMessages: [{ role: "user", content: "clean antecedent" }],
+          frames: {
+            onRuntimeEvent: (event) => {
+              validEvents.push(event as unknown as Record<string, unknown>);
+            },
+          },
+        },
+        {
+          store,
+          sessionMap: stubbedMap,
+          resolveProfile: (_slug, ws) => fixtureKeyProfile(ws),
+        },
+      );
+      assert.strictEqual(reconstructingEvents(validEvents).length, 1);
+    });
   });
 });
 

@@ -12,6 +12,7 @@ import {
 } from "./acp-client.ts";
 import type { RuntimePolicy } from "./config/mod.ts";
 import {
+  type ContinuityReconstructionReason,
   DomainError,
   type ExternalAgentContinuityState,
   type ExternalAgentDurableResumeStatus,
@@ -20,6 +21,7 @@ import {
 export const DEFAULT_ACP_SESSION_CAPACITY = 8;
 export const DEFAULT_ACP_IDLE_TTL_MS = 5 * 60_000;
 export const DEFAULT_ACP_SHUTDOWN_TIMEOUT_MS = 8_000;
+export const MAX_ACP_REMOVED_SESSION_RECORDS = 256;
 
 export class AcpSessionBusyError extends DomainError {
   override readonly name = "AcpSessionBusyError";
@@ -116,6 +118,18 @@ export interface AcpSessionHandleMapOptions {
 
 type HandleState = "creating" | "idle" | "active" | "closing" | "closed";
 
+type RecordedSessionRemovalCause =
+  | "idle_limit"
+  | "capacity"
+  | "agent_session_failed"
+  | "released";
+
+interface RemovedSessionRecord {
+  readonly sessionId: string;
+  readonly key: string;
+  readonly cause: RecordedSessionRemovalCause;
+}
+
 interface MapEntry {
   key: string;
   state: HandleState;
@@ -126,6 +140,10 @@ interface MapEntry {
   idleDeadlineMs?: number;
   /** The close already running for this entry, if one is in progress. */
   closePromise?: Promise<void>;
+  /** Whether this live entry was the most recent handle activated for its Workbench session. */
+  isLatestForSession?: boolean;
+  /** Cause recorded when `#performClose` removes this entry from `#entries`. */
+  removalCause?: RecordedSessionRemovalCause;
 }
 
 export function canonicalExecutionProfileDigest(
@@ -183,6 +201,7 @@ export class AcpSessionHandleMap {
   readonly #setTimeout: (callback: () => void, ms: number) => unknown;
   readonly #clearTimeout: (id: unknown) => void;
   readonly #entries = new Map<string, MapEntry>();
+  readonly #removedSessions = new Map<string, RemovedSessionRecord>();
   #shuttingDown = false;
 
   constructor(options: AcpSessionHandleMapOptions = {}) {
@@ -200,6 +219,10 @@ export class AcpSessionHandleMap {
 
   get size(): number {
     return this.#entries.size;
+  }
+
+  get removedSessionCount(): number {
+    return this.#removedSessions.size;
   }
 
   stateFor(input: AcpSessionHandleKey): HandleState | undefined {
@@ -226,9 +249,11 @@ export class AcpSessionHandleMap {
           this.#disarmIdleTimer(existing);
           if (existing.handle.isAlive) {
             existing.state = "active";
+            this.#markLatestForSession(input.sessionId, existing);
             return existing.handle;
           }
           this.#entries.delete(key);
+          this.#recordRemoval(existing, "agent_session_failed");
           void existing.handle.close().catch(() => {});
         }
       }
@@ -250,7 +275,7 @@ export class AcpSessionHandleMap {
         onBroken: () => {
           if (this.#entries.get(key) !== entry) return;
           if (entry.state === "creating" || entry.state === "closing") return;
-          void this.#removeAndClose(entry).catch(() => {});
+          void this.#removeAndClose(entry, "agent_session_failed").catch(() => {});
         },
       }));
     const createPromise = create();
@@ -262,6 +287,7 @@ export class AcpSessionHandleMap {
         throw new AcpSessionShutdownError();
       }
       entry.state = "active";
+      this.#markLatestForSession(input.sessionId, entry);
       return handle;
     } catch (error) {
       if (
@@ -280,7 +306,7 @@ export class AcpSessionHandleMap {
     if (entry === undefined) return;
     if (entry.state !== "active") return;
     if (!handle.isAlive) {
-      void this.#removeAndClose(entry).catch(() => {});
+      void this.#removeAndClose(entry, "agent_session_failed").catch(() => {});
       return;
     }
     const ttlMs = idleTtlMs ?? this.#idleTtlMs;
@@ -311,11 +337,11 @@ export class AcpSessionHandleMap {
       if (entry.state === "closing") {
         // A settled failure clears closePromise and leaves the entry. Retry
         // that close. An in-progress close is joined.
-        waits.push(entry.closePromise ?? this.#removeAndClose(entry));
+        waits.push(entry.closePromise ?? this.#removeAndClose(entry, "released"));
         continue;
       }
       if (entry.state !== "idle" || entry.handle === undefined) continue;
-      waits.push(this.drop(entry.handle));
+      waits.push(this.#removeAndClose(entry, "released"));
     }
     const settled = await Promise.allSettled(waits);
     const failure = settled.find((result) => result.status === "rejected");
@@ -334,7 +360,7 @@ export class AcpSessionHandleMap {
       }
       return;
     }
-    await this.#removeAndClose(entry);
+    await this.#removeAndClose(entry, "agent_session_failed");
   }
 
   async runTurn(
@@ -352,7 +378,10 @@ export class AcpSessionHandleMap {
        */
       reconstructPrompt?: () => string;
       /** Observed continuity for this turn, reported before the prompt. */
-      onContinuity?: (evidence: AcpContinuityEvidence) => void;
+      onContinuity?: (
+        evidence: AcpContinuityEvidence,
+        reconstructionReason?: ContinuityReconstructionReason,
+      ) => unknown;
     },
   ): Promise<AcpRunResult> {
     const startedAt = this.#now();
@@ -365,6 +394,7 @@ export class AcpSessionHandleMap {
       elapsedMs: this.#now() - startedAt,
     });
     const key = encodeAcpSessionHandleKey(input);
+    const priorLatestKey = this.#latestKeyForSession(input.sessionId);
     const prior = this.#entries.get(key);
     const idleHandle = prior?.state === "idle" ? prior.handle : undefined;
     let handle: AcpSessionHandle;
@@ -416,7 +446,14 @@ export class AcpSessionHandleMap {
       const prompt = continuity.state === "reconstructed"
         ? input.reconstructPrompt!()
         : input.prompt;
-      input.onContinuity?.(continuity);
+      const reconstructionReason = continuity.state === "reconstructed"
+        ? this.#selectReconstructionReason(
+          input.sessionId,
+          key,
+          priorLatestKey,
+        )
+        : undefined;
+      await input.onContinuity?.(continuity, reconstructionReason);
       return await handle.prompt({ ...input, prompt });
     } catch (error) {
       if (isTurnAborted(error)) return abortedResult();
@@ -472,8 +509,65 @@ export class AcpSessionHandleMap {
     return earliest;
   }
 
+  #markLatestForSession(sessionId: string, latest: MapEntry): void {
+    for (const entry of this.#entries.values()) {
+      if (sessionIdFromHandleKey(entry.key) === sessionId) {
+        entry.isLatestForSession = entry === latest;
+      }
+    }
+  }
+
+  #latestKeyForSession(sessionId: string): string | undefined {
+    for (const entry of this.#entries.values()) {
+      if (
+        entry.isLatestForSession === true &&
+        entry.handle !== undefined &&
+        sessionIdFromHandleKey(entry.key) === sessionId
+      ) {
+        return entry.key;
+      }
+    }
+    return this.#removedSessions.get(sessionId)?.key;
+  }
+
+  #selectReconstructionReason(
+    sessionId: string,
+    key: string,
+    priorLatestKey: string | undefined,
+  ): ContinuityReconstructionReason {
+    if (priorLatestKey !== undefined && priorLatestKey !== key) {
+      return "agent_settings_changed";
+    }
+    return this.#removedSessions.get(sessionId)?.cause ?? "not_held";
+  }
+
+  #recordRemoval(
+    entry: MapEntry,
+    cause: RecordedSessionRemovalCause | undefined,
+  ): void {
+    if (
+      cause === undefined ||
+      entry.handle === undefined ||
+      entry.isLatestForSession !== true
+    ) return;
+    const sessionId = sessionIdFromHandleKey(entry.key);
+    if (sessionId === undefined) return;
+    this.#removedSessions.delete(sessionId);
+    if (this.#removedSessions.size >= MAX_ACP_REMOVED_SESSION_RECORDS) {
+      const oldest = this.#removedSessions.keys().next();
+      if (!oldest.done) {
+        this.#removedSessions.delete(oldest.value);
+      }
+    }
+    this.#removedSessions.set(sessionId, {
+      sessionId,
+      key: entry.key,
+      cause,
+    });
+  }
+
   async #closeIdleForCapacity(entry: MapEntry): Promise<void> {
-    const close = this.#removeAndClose(entry);
+    const close = this.#removeAndClose(entry, "capacity");
     let timer: unknown;
     try {
       await Promise.race([
@@ -515,7 +609,7 @@ export class AcpSessionHandleMap {
     if (this.#entries.get(entry.key) !== entry) return;
     if (entry.idleGeneration !== generation) return;
     if (entry.state !== "idle") return;
-    await this.#removeAndClose(entry);
+    await this.#removeAndClose(entry, "idle_limit");
   }
 
   async #closeForShutdown(entry: MapEntry): Promise<void> {
@@ -534,8 +628,12 @@ export class AcpSessionHandleMap {
    * instead of starting another. After it settles, a new call can run again,
    * which is how shutdown retries a close that left the handle alive.
    */
-  #removeAndClose(entry: MapEntry): Promise<void> {
+  #removeAndClose(
+    entry: MapEntry,
+    cause?: RecordedSessionRemovalCause,
+  ): Promise<void> {
     if (entry.closePromise !== undefined) return entry.closePromise;
+    entry.removalCause = cause;
     const promise = this.#performClose(entry);
     entry.closePromise = promise;
     const clear = () => {
@@ -560,12 +658,14 @@ export class AcpSessionHandleMap {
       entry.state = "closed";
       if (this.#entries.get(entry.key) === entry) {
         this.#entries.delete(entry.key);
+        this.#recordRemoval(entry, entry.removalCause);
       }
       throw error;
     }
     entry.state = "closed";
     if (this.#entries.get(entry.key) === entry) {
       this.#entries.delete(entry.key);
+      this.#recordRemoval(entry, entry.removalCause);
     }
   }
 }

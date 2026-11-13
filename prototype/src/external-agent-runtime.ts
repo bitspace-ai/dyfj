@@ -1106,7 +1106,13 @@ export async function runExternalAgentWorkbenchRuntime(
         idleTtlMs: selectExternalAgentIdleTtlMs(input, isDispatchedChild),
         prompt: turnContinuity.warmPrompt,
         reconstructPrompt: turnContinuity.reconstructPrompt,
-        onContinuity: (evidence) => turnContinuity.onWarmMapContinuity(evidence),
+        onContinuity: async (evidence, reason) => {
+          turnContinuity.onWarmMapContinuity(evidence);
+          const event = turnContinuity.reconstructingEvent(sessionId, reason);
+          if (event !== undefined) {
+            await emitRuntimeEvent(input.frames?.onRuntimeEvent, event);
+          }
+        },
         abortSignal: input.abortSignal,
         onTextDelta: input.frames?.onTextDelta,
         onProgress,
@@ -1114,19 +1120,25 @@ export async function runExternalAgentWorkbenchRuntime(
         onPermissionVerdict: writePermissionVerdict,
         onRouteVerified,
       })
-      : (dependencies.runAgent ?? runAcpAgent)({
-        profile,
-        prompt: turnContinuity.directPrompt,
-        abortSignal: input.abortSignal,
-        onTextDelta: input.frames?.onTextDelta,
-        onProgress,
-        confirmPermission: withholdSavedApprovals(profile, input.approver),
-        onPermissionVerdict: writePermissionVerdict,
-        onRouteVerified,
-        ...(dependencies.runPolicy === undefined
-          ? {}
-          : { runPolicy: dependencies.runPolicy }),
-      })).finally(() => releaseBridgeTurn?.());
+      : (async () => {
+        const event = turnContinuity.reconstructingEvent(sessionId);
+        if (event !== undefined) {
+          await emitRuntimeEvent(input.frames?.onRuntimeEvent, event);
+        }
+        return await (dependencies.runAgent ?? runAcpAgent)({
+          profile,
+          prompt: turnContinuity.directPrompt,
+          abortSignal: input.abortSignal,
+          onTextDelta: input.frames?.onTextDelta,
+          onProgress,
+          confirmPermission: withholdSavedApprovals(profile, input.approver),
+          onPermissionVerdict: writePermissionVerdict,
+          onRouteVerified,
+          ...(dependencies.runPolicy === undefined
+            ? {}
+            : { runPolicy: dependencies.runPolicy }),
+        });
+      })()).finally(() => releaseBridgeTurn?.());
     closeCancellation();
     const toolEvidence = prepareAcpToolEvidence(result.toolEvidence);
     // A gap marker is never replayed as a tool exchange. For a call that was

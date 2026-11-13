@@ -5,6 +5,7 @@
 import { assertAcpPromptWithinLimit } from "../../acp-client.ts";
 import type { AcpContinuityEvidence } from "../../acp-session-map.ts";
 import {
+  type ContinuityReconstructionReason,
   DomainError,
   type ExternalAgentTranscriptLeftOutCause,
   type ExternalAgentTurnReceipt,
@@ -12,6 +13,7 @@ import {
   type HistoryOmissionProjection,
   type HistoryOmissionReceipt,
   prependHistoryOmissionNotice,
+  type WorkbenchRuntimeEvent,
 } from "../../contract/mod.ts";
 import type { WorkbenchMessage } from "../../providers/mod.ts";
 import { prependChildContextLine } from "./dispatch-lineage.ts";
@@ -214,6 +216,10 @@ export interface PreparedAcpTurnContinuity {
   continuity?: AcpContinuityEvidence;
   historyOmission?: HistoryOmissionReceipt;
   onWarmMapContinuity(evidence: AcpContinuityEvidence): void;
+  reconstructingEvent(
+    sessionId: string,
+    reason?: ContinuityReconstructionReason,
+  ): WorkbenchRuntimeEvent | undefined;
   counts(): {
     priorMessagesProjected: number;
     toolExchangesProjected: number;
@@ -344,6 +350,14 @@ export function prepareAcpTurnContinuity(input: {
     onWarmMapContinuity(evidence: AcpContinuityEvidence) {
       continuity = evidence;
     },
+    reconstructingEvent: (sessionId, reason) =>
+      buildContinuityReconstructingEvent(
+        continuity,
+        sessionId,
+        reason,
+        priorMessagesProjected,
+        priorMessagesLeftOut,
+      ),
     counts() {
       return {
         priorMessagesProjected,
@@ -372,5 +386,22 @@ export function prepareAcpTurnContinuity(input: {
           : { priorExternalSessionId }),
       };
     },
+  };
+}
+
+function buildContinuityReconstructingEvent(
+  continuity: AcpContinuityEvidence | undefined,
+  sessionId: string,
+  reason: ContinuityReconstructionReason = "not_held",
+  priorMessagesProjected: number,
+  priorMessagesLeftOut: number,
+): WorkbenchRuntimeEvent | undefined {
+  if (continuity?.state !== "reconstructed") return undefined;
+  return {
+    type: "continuityReconstructing",
+    sessionId,
+    reason,
+    priorMessagesProjected,
+    priorMessagesLeftOut,
   };
 }
