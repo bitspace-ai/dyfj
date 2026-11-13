@@ -1372,6 +1372,8 @@ describe("runAcpAgent", () => {
         kind: "tool_call",
         title: "Inspecting codebase",
         name: "grep_search",
+        toolCallId: "call-1",
+        toolKind: undefined,
         status: "in_progress",
       },
     ]);

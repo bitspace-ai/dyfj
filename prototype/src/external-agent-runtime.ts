@@ -1050,10 +1050,7 @@ export async function runExternalAgentWorkbenchRuntime(
       emitRuntimeEvent(input.frames?.onRuntimeEvent, {
         type: "agentProgress",
         sessionId,
-        kind: progress.kind,
-        title: progress.title,
-        name: progress.name,
-        status: progress.status,
+        ...progress,
       });
     const onRouteVerified = async (
       evidence: AcpRouteEvidence,

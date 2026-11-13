@@ -45,6 +45,7 @@ pub struct StatusLine {
     last_frame: Instant,
     step: Option<i64>,
     calls: usize,
+    agent_calls: Vec<(Option<String>, String)>,
     /// Whether the cursor is at the start of a line, so the status line can
     /// be drawn without overwriting text.
     at_line_start: bool,
@@ -63,6 +64,7 @@ impl StatusLine {
             last_frame: now,
             step: None,
             calls: 0,
+            agent_calls: Vec::new(),
             at_line_start: true,
             shown: false,
             cancelling: false,
@@ -104,23 +106,48 @@ impl StatusLine {
                 self.enter(Phase::Tool { label: activity::call_label(event) }, now);
             }
             Some("toolCallCompleted") => self.enter(Phase::Runtime, now),
-            Some("agentProgress") => {
-                let tool_call = event.get("kind").and_then(Value::as_str) == Some("tool_call");
-                let ended = matches!(
-                    event.get("status").and_then(Value::as_str),
-                    Some("completed" | "failed")
-                );
-                match (tool_call, ended) {
-                    // The agent's call ended; nothing runs until its next frame.
-                    (true, true) => self.enter(Phase::Runtime, now),
-                    (true, false) => {
-                        let title = activity::agent_progress_title(event);
-                        self.enter(Phase::Tool { label: format!("external agent: {title}") }, now);
-                    }
-                    (false, _) => self.enter(Phase::Tool { label: "external agent".into() }, now),
-                }
-            }
+            Some("agentProgress") => self.observe_agent_progress(event, now),
             _ => {}
+        }
+    }
+
+    fn observe_agent_progress(&mut self, event: &Value, now: Instant) {
+        // With only legacy frames there is no stable identity: preserve the
+        // older runtime's status behavior, including titleless updates.
+        if activity::agent_progress_id(event).is_none() && self.agent_calls.is_empty() {
+            let tool = event.get("kind").and_then(Value::as_str) == Some("tool_call");
+            if tool && activity::agent_progress_ended(event) {
+                self.enter(Phase::Runtime, now);
+            } else {
+                let label = if tool {
+                    format!("external agent: {}", activity::agent_progress_title(event))
+                } else { "external agent".into() };
+                self.enter(Phase::Tool { label }, now);
+            }
+            return;
+        }
+        if event.get("kind").and_then(Value::as_str) == Some("tool_call") {
+            let id = activity::agent_progress_id(event).map(str::to_string);
+            let title = activity::agent_progress_title(event);
+            let index = self.agent_calls.iter().rposition(|(key, label)| {
+                if id.is_some() { *key == id } else { key.is_none() && *label == title }
+            });
+            if activity::agent_progress_ended(event) {
+                if let Some(index) = index { self.agent_calls.remove(index); }
+            } else if let Some(index) = index {
+                if event.get("title").is_some() || event.get("name").is_some() {
+                    self.agent_calls[index].1 = title;
+                }
+            } else {
+                self.agent_calls.push((id, title));
+            }
+        }
+        if let Some((_, title)) = self.agent_calls.last() {
+            self.enter(Phase::Tool { label: format!("external agent: {title}") }, now);
+        } else if activity::agent_progress_ended(event) {
+            self.enter(Phase::Runtime, now);
+        } else {
+            self.enter(Phase::Tool { label: "external agent".into() }, now);
         }
     }
 
@@ -247,6 +274,35 @@ mod tests {
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
+    }
+
+    #[test]
+    fn most_recent_running_call_survives_other_frames() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        let frame = |id: &str, title: &str, status: &str| json!({"type":"agentProgress", "kind":"tool_call",
+            "toolCallId":id, "title":title, "status":status});
+        line.observe_event(&frame("a", "First", "in_progress"), t0);
+        line.observe_event(&frame("b", "Second", "in_progress"), t0);
+        line.observe_event(&frame("a", "First renamed", "in_progress"), t0);
+        assert!(line.text(t0).unwrap().contains("Second"));
+        line.observe_event(&frame("a", "First renamed", "completed"), t0);
+        assert!(line.text(t0).unwrap().contains("Second"));
+        line.observe_event(&json!({"type":"agentProgress", "kind":"thought"}), t0);
+        assert!(line.text(t0).unwrap().contains("Second"));
+        line.observe_event(&frame("b", "Second", "completed"), t0);
+        assert!(line.text(t0).unwrap().contains("runtime working"));
+    }
+
+    #[test]
+    fn legacy_titleless_updates_keep_the_previous_status_behavior() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        line.observe_event(&json!({"type":"agentProgress", "kind":"tool_call", "title":"Command", "status":"in_progress"}), t0);
+        line.observe_event(&json!({"type":"agentProgress", "kind":"tool_call"}), t0);
+        assert!(line.text(t0).unwrap().contains("external tool"));
+        line.observe_event(&json!({"type":"agentProgress", "kind":"tool_call", "status":"completed"}), t0);
+        assert!(line.text(t0).unwrap().contains("runtime working"));
     }
 
     #[test]

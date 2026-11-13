@@ -1305,6 +1305,45 @@ prints `{"error": "<the stderr line without its dyfj: prefix>"}` on stdout as
 well as the line on stderr, and exits 1. Remote reach can layer on
 the same contract through a tailnet transport.
 
+External-agent tool progress is display only: `agentProgress` frames carry the
+merged `title`, `name`, `status`, and optional `toolCallId` and `toolKind`.
+For a usable call ID, a frame is sent at first sight and on changes to the
+received title or status; output-only patches send no frame. IDs are limited to 128 UTF-8 bytes;
+empty, oversized or credential-shaped IDs use the legacy per-update path
+without an ID or any summary fields (`input`, `cwd`, `locations`,
+`inputWithheld`). Tool kinds are limited to 128 bytes. The first available input
+summary accompanies the first frame that can carry it, without causing an
+extra frame: `input` is a command string (or string array joined with spaces),
+`cwd` its directory when different from the workspace (ignoring trailing
+slashes), and `locations` the first three string paths. Paths inside the
+workspace are relative; paths outside it, equal to it, or containing a `..`
+component retain their received spelling before display sanitizing and cutting.
+No filesystem resolution is performed. Each workspace path followed by `/` is
+removed from the displayed title before cutting. Each summary
+value is terminal-sanitized and limited to 240 UTF-8 bytes; a trailing `…`
+within the limit marks a cut, including on tool kinds. The existing raw and terminal-sanitized credential checks, plus
+`historyTextContainsSecretShape`, read every full command, directory and
+location before workspace shortening or cutting; a match withholds the entire
+summary and sets `inputWithheld: true`, never sending a scrubbed summary.
+After scrubbing, titles and names that still match the history credential
+check become `[withheld]`; a matching tool kind is omitted. MCP calls carry none of these summary fields. A call
+with neither a command nor locations carries no summary.
+
+The Rust REPL prints `▸ <title> (external agent)` when an identified call first
+appears running. It compares the input with the frame's title after display
+sanitizing and before cutting, and omits an equal input. The second line shows
+a differing input with optional `[in <cwd>]`, a directory alone, or
+comma-separated locations; with none of these, no second line is printed. Withheld input is labelled
+`(input withheld: it matched a credential pattern)`. It prints the existing
+`✓` or `✗` line at completion; a call first seen completed has only that line.
+The lines and evidence summary pair by ID, with title fallback for older
+frames. For identified calls, the status line keeps the most recently started running call named
+until it ends, then returns to an earlier running call or `runtime working`.
+Frames without IDs retain completion-only scrollback. The TypeScript client
+uses the merged title for its spinner and prints no new line. Tool output and
+raw thought text never enter these frames; progress is neither persisted nor
+replayed, and does not change recorded tool evidence, receipts or agent prompts.
+
 `--runner fixture` selects the deterministic external-agent test path instead of
 the native model loop. Workbench launches the local fixture directly over ACP v1
 stdio with a cleared, profile-selected environment and the resolved workspace,
@@ -2262,8 +2301,9 @@ counted as failures, a command whose exit status was not reported marked `?`
 and never counted as ok, files the file tools wrote, commands and their exit
 status, files no command reported exit 0 after, calls that went wrong, or that
 no tools ran, and a line saying the record does not check the reply's claims),
-ACP tool calls on the external-agent route named in the status line, as a
-line when each ends, and in the evidence as the agent reported them,
+ACP tool calls on the external-agent route named in the status line, with
+start lines and bounded input summaries when identified progress supplies them,
+completion lines, and evidence as the agent reported it,
 a per-turn receipt line with the turn's cost, the session's
 spend as the runtime's envelope counts it, and prompt-cache tokens, a reason on
 each failed tool call's `✗` line,
@@ -3238,3 +3278,12 @@ Document revisions only. Code and behavior changes are tracked in
   precedence, pre-prompt event ordering ahead of `agentProgress` and text
   deltas, and the pre-output `· agent session replaced: ...` notice line in the
   TypeScript terminal client and Rust REPL.
+
+
+- 2026-11-12 - The external-agent and core-client sections describe merged
+  tool progress, bounded input summaries, credential withholding, ID pairing,
+  start/completion lines, and compatibility with frames without call IDs.
+- 2026-11-13 - The tool-activity documentation describes input/title display
+  comparison, workspace-relative paths, workspace directory omission, history
+  credential checks with fixed metadata withholding, and summary-free progress
+  for calls without usable IDs.

@@ -450,6 +450,16 @@ export type WorkbenchRuntimeEvent =
      */
     type: "agentProgress";
     sessionId: string;
+    /** Stable call identity, at most 128 UTF-8 bytes; oversized IDs are omitted. */
+    toolCallId?: string;
+    /** At most 128 UTF-8 bytes, with a trailing ellipsis on a cut. */
+    toolKind?: string;
+    /** Display-only input: sanitized, at most 240 bytes including any ellipsis. */
+    input?: string;
+    cwd?: string;
+    /** First three paths, each at most 240 bytes including any ellipsis. */
+    locations?: string[];
+    inputWithheld?: boolean;
     kind: "thought" | "tool_call";
     title?: string;
     name?: string;

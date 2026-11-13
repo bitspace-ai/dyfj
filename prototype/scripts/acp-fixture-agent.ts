@@ -205,6 +205,55 @@ const app = agent({ name: "dyfj-acp-fixture" })
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("");
+      if (prompt.includes("FIXTURE_TOOL_ACTIVITY")) {
+        const secret = "sk-" + "a".repeat(24);
+        const credential = prompt.includes("CONTROL") ? `sk-${String.fromCharCode(27)}${"a".repeat(24)}` : secret;
+        const command = prompt.includes("SECRET") ? `echo ${"x".repeat(250)} ${credential}`
+          : prompt.includes("LONG") ? `echo ${"🦀".repeat(80)}`
+          : ["printf", "hello"];
+        const id = prompt.includes("NO_ID") ? "" : prompt.includes("LONG_ID") ? "🦀".repeat(33) : "activity-command";
+        const delayed = prompt.includes("DEFERRED");
+        const cwd = prompt.includes("CWD_CREDENTIAL") ? `/workspace/${secret}`
+          : prompt.includes("WORKSPACE") ? process.cwd() : "/workspace";
+        const mcp = prompt.includes("MCP");
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call", toolCallId: id,
+            title: mcp ? "mcp.fixture.run" : prompt.includes("TITLE_CREDENTIAL") ? `Run ${secret}` : "Run greeting", kind: "execute",
+            status: "in_progress",
+            ...(delayed ? {} : { rawInput: mcp ? { server: "fixture", tool: "run", arguments: { command }, command, cwd }
+              : prompt.includes("ONLY_CWD") ? { cwd } : { command, cwd } }),
+          },
+        });
+        for (const text of ["hello", " world"]) {
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: { sessionUpdate: "tool_call_update", toolCallId: id,
+              _meta: { terminal_output: { terminal_id: id, data: text } },
+              ...(delayed && text === "hello" ? { rawInput: { command, cwd } } : {}),
+              ...(delayed && text === " world" ? { title: "Greeting renamed" } : {}) },
+          });
+        }
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "tool_call_update", toolCallId: id,
+            status: "completed", _meta: { terminal_exit: { terminal_id: id, exit_code: 0, signal: null } } },
+        });
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "tool_call", toolCallId: "activity-read",
+            title: prompt.includes("WORKSPACE") ? `Read file '${cwd}/CHANGELOG.md'` : "Read notes", kind: "read", status: "in_progress",
+            locations: [{ path: prompt.includes("WORKSPACE") ? `${cwd}/CHANGELOG.md` : "notes.txt" }, { path: "README.md" },
+              ...(prompt.includes("PATH_CREDENTIAL") ? [{ path: "third" }, { path: secret }] : [])] },
+        });
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "tool_call_update", toolCallId: "activity-read", status: "completed" },
+        });
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_USAGE")) {
         await context.notify(methods.client.session.update, {
           sessionId: params.sessionId,
