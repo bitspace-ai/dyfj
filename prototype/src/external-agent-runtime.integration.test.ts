@@ -4234,6 +4234,96 @@ describe("reconstructed tool history", () => {
     }
   });
 
+  it("with the fixture agent, continuityReconstructing reaches the event sink before the first agentProgress and text delta with the receipt's counts", async () => {
+    const h = createHarness();
+    const workspace = process.cwd();
+    const idleTimers = injectedIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 2,
+      idleTtlMs: 1,
+      setTimeout: idleTimers.setTimeout,
+      clearTimeout: idleTimers.clearTimeout,
+    });
+    const sessionId = "01ACPSESSION000000000000131";
+    try {
+      await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "seed initial session",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: workspace,
+      }, { sessionMap: map });
+      idleTimers.fire();
+      await waitForRetiredHandles(map);
+      h.events.length = 0;
+
+      const priorMessages: WorkbenchMessage[] = Array.from(
+        { length: MAX_RECONSTRUCTED_PRIOR_MESSAGES + 3 },
+        (_, index) => ({
+          role: "user" as const,
+          content: `history-${String(index + 1).padStart(2, "0")}`,
+        }),
+      );
+      const sequence: string[] = [];
+      const reconstructingObserved: Array<Record<string, unknown>> = [];
+
+      const second = await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "FIXTURE_THOUGHT_AND_PROGRESS",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId,
+        workspaceRoot: workspace,
+        conversationMessages: priorMessages,
+        frames: {
+          onRuntimeEvent: async (event) => {
+            const record = event as unknown as Record<string, unknown>;
+            if (record.type === "continuityReconstructing") {
+              await new Promise((resolve) => setTimeout(resolve, 25));
+              reconstructingObserved.push(record);
+              sequence.push("continuityReconstructing");
+            } else if (record.type === "agentProgress") {
+              sequence.push("agentProgress");
+            }
+          },
+          onTextDelta: (text) => {
+            if (text.length > 0) {
+              sequence.push("textDelta");
+            }
+          },
+        },
+      }, { sessionMap: map });
+
+      assert.strictEqual(reconstructingObserved.length, 1);
+      const firstProgressIndex = sequence.indexOf("agentProgress");
+      const firstTextIndex = sequence.indexOf("textDelta");
+      const reconstructingIndex = sequence.indexOf("continuityReconstructing");
+      assert.ok(reconstructingIndex >= 0, `sequence=${sequence.join(",")}`);
+      assert.ok(firstProgressIndex > reconstructingIndex, `sequence=${sequence.join(",")}`);
+      assert.ok(firstTextIndex > reconstructingIndex, `sequence=${sequence.join(",")}`);
+
+      assert.deepStrictEqual(reconstructingObserved[0], {
+        type: "continuityReconstructing",
+        sessionId,
+        reason: "idle_limit",
+        priorMessagesProjected: second.runner.continuity?.priorMessagesProjected,
+        priorMessagesLeftOut: second.runner.continuity?.priorMessagesLeftOut,
+      });
+      assert.strictEqual(
+        reconstructingObserved[0].priorMessagesProjected,
+        MAX_RECONSTRUCTED_PRIOR_MESSAGES,
+      );
+      assert.strictEqual(reconstructingObserved[0].priorMessagesLeftOut, 3);
+      assertContains(
+        second.receipt,
+        `Continuity: reconstructed (${MAX_RECONSTRUCTED_PRIOR_MESSAGES} prior messages projected, 0 tool exchanges; shortened, 3 left out: message_limit)`,
+      );
+    } finally {
+      await map.shutdown();
+    }
+  });
+
   it("credential-shaped ACP evidence persists only safe fields and a reason", async () => {
     const h = createHarness();
     const result = await runExternalAgentWorkbenchRuntime(h, {

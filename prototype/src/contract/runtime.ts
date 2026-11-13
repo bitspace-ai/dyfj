@@ -238,6 +238,14 @@ export type ContextCompressionTrigger =
   | "context_overflow"
   | "request_fit";
 
+export type ContinuityReconstructionReason =
+  | "agent_settings_changed"
+  | "idle_limit"
+  | "capacity"
+  | "agent_session_failed"
+  | "released"
+  | "not_held";
+
 export type WorkbenchRuntimeEvent =
   | { type: "sessionStart"; sessionId: string; traceId: string; mode: string }
   | { type: "inputReceived"; sessionId: string; promptLength: number }
@@ -458,6 +466,18 @@ export type WorkbenchRuntimeEvent =
     sessionId: string;
     childSessionId: string;
     label: string;
+  }
+  | {
+    /**
+     * Operator-only notice emitted once on a reconstructed external-agent turn
+     * after the rebuilt transcript prompt is prepared and before it is sent to
+     * the agent (BIT-924). Carries codes and counts only.
+     */
+    type: "continuityReconstructing";
+    sessionId: string;
+    reason: ContinuityReconstructionReason;
+    priorMessagesProjected: number;
+    priorMessagesLeftOut: number;
   };
 
 export type ExternalAgentWorkbenchRuntimeResult = ExternalAgentTurnReceipt;

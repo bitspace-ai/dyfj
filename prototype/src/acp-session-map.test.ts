@@ -22,6 +22,7 @@ import {
   AcpSessionShutdownError,
   canonicalExecutionProfileDigest,
   encodeAcpSessionHandleKey,
+  MAX_ACP_REMOVED_SESSION_RECORDS,
   selectAcpContinuity,
 } from "./acp-session-map.ts";
 import {
@@ -1547,6 +1548,323 @@ describe("session-map failures reaching the operator", () => {
       });
       assert.strictEqual(result.stopReason, "aborted");
       assert.strictEqual(result.elapsedMs, 1_234);
+    } finally {
+      await map.shutdown();
+    }
+  });
+});
+
+describe("AcpSessionHandleMap removal-record bound", () => {
+  it("evicts the oldest removal record past 256 sessions so the oldest session gives not_held and record count stays at the bound", async () => {
+    const profile = fixtureProfile();
+    const map = new AcpSessionHandleMap({ capacity: 4, idleTtlMs: 60_000 });
+    assert.strictEqual(MAX_ACP_REMOVED_SESSION_RECORDS, 256);
+    try {
+      for (let index = 0; index <= MAX_ACP_REMOVED_SESSION_RECORDS; index++) {
+        const sessionId = `session-${String(index).padStart(3, "0")}`;
+        await map.runTurn({
+          ...acquireKey(profile, sessionId),
+          prompt: "turn 1",
+          create: () => Promise.resolve(fakeHandle()),
+        });
+        await map.dropSession(sessionId);
+      }
+      assert.strictEqual(
+        map.removedSessionCount,
+        MAX_ACP_REMOVED_SESSION_RECORDS,
+      );
+
+      const reasons: unknown[] = [];
+      await map.runTurn({
+        ...acquireKey(profile, "session-001"),
+        prompt: "follow-up within bound",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + follow-up within bound",
+        onContinuity: (_evidence, reason) => reasons.push(reason),
+      });
+      await map.runTurn({
+        ...acquireKey(profile, "session-000"),
+        prompt: "follow-up past bound",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + follow-up past bound",
+        onContinuity: (_evidence, reason) => reasons.push(reason),
+      });
+      assert.deepStrictEqual(reasons, ["released", "not_held"]);
+      await map.dropSession("session-000");
+      assert.strictEqual(
+        map.removedSessionCount,
+        MAX_ACP_REMOVED_SESSION_RECORDS,
+      );
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("replaces an older removal record for the same session and records dead-handle removals as agent_session_failed", async () => {
+    const profile = fixtureProfile();
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 2,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    try {
+      await map.runTurn({
+        ...acquireKey(profile, "same-session"),
+        prompt: "turn 1",
+        create: () => Promise.resolve(fakeHandle()),
+      });
+      const idleTimer = [...timers.values()][0];
+      idleTimer?.();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.strictEqual(map.removedSessionCount, 1);
+
+      let firstReason: unknown;
+      await map.runTurn({
+        ...acquireKey(profile, "same-session"),
+        prompt: "turn 2",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 2",
+        onContinuity: (_evidence, reason) => {
+          firstReason = reason;
+        },
+      });
+      assert.strictEqual(firstReason, "idle_limit");
+      await map.dropSession("same-session");
+      assert.strictEqual(map.removedSessionCount, 1);
+
+      let secondReason: unknown;
+      let deadOnAcquire = false;
+      const dyingIdleHandle: AcpSessionHandle = {
+        get isAlive() {
+          return !deadOnAcquire;
+        },
+        durableSessionLoad: false,
+        prompt: () =>
+          Promise.resolve({
+            text: "ok",
+            stopReason: "stop",
+            capabilities: [],
+            elapsedMs: 1,
+          }),
+        close: () => {
+          deadOnAcquire = true;
+          return Promise.resolve();
+        },
+      };
+      await map.runTurn({
+        ...acquireKey(profile, "same-session"),
+        prompt: "turn 3",
+        create: () => Promise.resolve(dyingIdleHandle),
+        reconstructPrompt: () => "transcript + turn 3",
+        onContinuity: (_evidence, reason) => {
+          secondReason = reason;
+        },
+      });
+      assert.strictEqual(secondReason, "released");
+
+      deadOnAcquire = true;
+      let thirdReason: unknown;
+      await map.runTurn({
+        ...acquireKey(profile, "same-session"),
+        prompt: "turn 4 after dead idle handle",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 4",
+        onContinuity: (_evidence, reason) => {
+          thirdReason = reason;
+        },
+      });
+      assert.strictEqual(thirdReason, "agent_session_failed");
+      assert.strictEqual(map.removedSessionCount, 1);
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("keeps agent_session_failed for the most recent settings when an older idle session expires afterward", async () => {
+    const profileA = fixtureProfile();
+    const profileB = { ...profileA, args: [...profileA.args, "--model-b"] };
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 4,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    try {
+      await map.runTurn({
+        ...acquireKey(profileA, "seq-1-session"),
+        prompt: "turn 1 with settings A",
+        create: () => Promise.resolve(fakeHandle()),
+      });
+      const timerA = [...timers.values()][0];
+      assert.ok(timerA !== undefined);
+
+      const failingHandleB: AcpSessionHandle = {
+        isAlive: true,
+        durableSessionLoad: false,
+        prompt: () => Promise.reject(new Error("turn B failed")),
+        close: () => Promise.resolve(),
+      };
+      await assert.rejects(
+        () =>
+          map.runTurn({
+            ...acquireKey(profileB, "seq-1-session"),
+            prompt: "turn 2 with settings B",
+            create: () => Promise.resolve(failingHandleB),
+            reconstructPrompt: () => "transcript + turn 2",
+          }),
+        /turn B failed/,
+      );
+      assert.strictEqual(map.size, 1);
+
+      timerA();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.strictEqual(map.size, 0);
+
+      let nextReason: unknown;
+      await map.runTurn({
+        ...acquireKey(profileB, "seq-1-session"),
+        prompt: "turn 3 still with settings B",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 3",
+        onContinuity: (_evidence, reason) => {
+          nextReason = reason;
+        },
+      });
+      assert.strictEqual(nextReason, "agent_session_failed");
+    } finally {
+      await map.shutdown();
+    }
+  });
+
+  it("records released against the most recent settings after dropSession even when the older entry closes last", async () => {
+    const profileA = fixtureProfile();
+    const profileB = { ...profileA, args: [...profileA.args, "--model-b"] };
+
+    async function prepareDroppedTwoKeySession(): Promise<AcpSessionHandleMap> {
+      const map = new AcpSessionHandleMap({ capacity: 4, idleTtlMs: 60_000 });
+      const closeOrder: string[] = [];
+      let finishCloseA!: () => void;
+      const closeAGate = new Promise<void>((resolve) => {
+        finishCloseA = resolve;
+      });
+      const handleA: AcpSessionHandle = {
+        isAlive: true,
+        durableSessionLoad: false,
+        prompt: () =>
+          Promise.resolve({
+            text: "ok-a",
+            stopReason: "stop",
+            capabilities: [],
+            elapsedMs: 1,
+          }),
+        close: async () => {
+          await closeAGate;
+          closeOrder.push("A");
+        },
+      };
+      const handleB: AcpSessionHandle = {
+        isAlive: true,
+        durableSessionLoad: false,
+        prompt: () =>
+          Promise.resolve({
+            text: "ok-b",
+            stopReason: "stop",
+            capabilities: [],
+            elapsedMs: 1,
+          }),
+        close: () => {
+          closeOrder.push("B");
+          globalThis.setTimeout(() => finishCloseA(), 5);
+          return Promise.resolve();
+        },
+      };
+
+      await map.runTurn({
+        ...acquireKey(profileA, "seq-2-session"),
+        prompt: "turn 1 with settings A",
+        create: () => Promise.resolve(handleA),
+      });
+      await map.runTurn({
+        ...acquireKey(profileB, "seq-2-session"),
+        prompt: "turn 2 with settings B",
+        create: () => Promise.resolve(handleB),
+        reconstructPrompt: () => "transcript + turn 2",
+      });
+      assert.strictEqual(map.size, 2);
+
+      await map.dropSession("seq-2-session");
+      assert.strictEqual(map.size, 0);
+      assert.deepStrictEqual(closeOrder, ["B", "A"]);
+      return map;
+    }
+
+    const mapForLatest = await prepareDroppedTwoKeySession();
+    const mapForOlder = await prepareDroppedTwoKeySession();
+    try {
+      let latestReason: unknown;
+      await mapForLatest.runTurn({
+        ...acquireKey(profileB, "seq-2-session"),
+        prompt: "turn 3 with most recent settings B",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 3 B",
+        onContinuity: (_evidence, reason) => {
+          latestReason = reason;
+        },
+      });
+      assert.strictEqual(latestReason, "released");
+
+      let olderReason: unknown;
+      await mapForOlder.runTurn({
+        ...acquireKey(profileA, "seq-2-session"),
+        prompt: "turn 3 with older settings A",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 3 A",
+        onContinuity: (_evidence, reason) => {
+          olderReason = reason;
+        },
+      });
+      assert.strictEqual(olderReason, "agent_settings_changed");
+    } finally {
+      await mapForLatest.shutdown();
+      await mapForOlder.shutdown();
+    }
+  });
+
+  it("leaves removedSessionCount unchanged when an older entry is removed while the most recent one is held", async () => {
+    const profileA = fixtureProfile();
+    const profileB = { ...profileA, args: [...profileA.args, "--model-b"] };
+    const { timers, setTimeout, clearTimeout } = fakeIdleTimers();
+    const map = new AcpSessionHandleMap({
+      capacity: 4,
+      idleTtlMs: 1_000,
+      setTimeout,
+      clearTimeout,
+    });
+    try {
+      await map.runTurn({
+        ...acquireKey(profileA, "seq-3-session"),
+        prompt: "turn 1 with settings A",
+        create: () => Promise.resolve(fakeHandle()),
+      });
+      const timerA = [...timers.values()][0];
+      assert.ok(timerA !== undefined);
+
+      await map.runTurn({
+        ...acquireKey(profileB, "seq-3-session"),
+        prompt: "turn 2 with settings B",
+        create: () => Promise.resolve(fakeHandle()),
+        reconstructPrompt: () => "transcript + turn 2",
+      });
+      assert.strictEqual(map.size, 2);
+      assert.strictEqual(map.removedSessionCount, 0);
+
+      timerA();
+      await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+      assert.strictEqual(map.size, 1);
+      assert.strictEqual(map.removedSessionCount, 0);
     } finally {
       await map.shutdown();
     }

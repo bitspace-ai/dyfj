@@ -119,10 +119,44 @@ pub fn describe(event: &Value) -> Option<String> {
             Some(format!("  {mark} {} (external agent)", agent_progress_title(event)))
         }
         "childApprovalParked" => child_approval_parked(event),
+        "continuityReconstructing" => continuity_reconstructing(event),
         // Bookkeeping the operator does not need narrated. Observed on a live
         // runtime: sessionStart, inputReceived, contextBuilt, modelSelected,
         // beforeProviderRequest, afterProviderResponse, turnCompleted.
         _ => None,
+    }
+}
+
+/// One-line operator notice before agent output on a reconstructed ACP turn.
+/// Built from fixed reason codes and message counts only; an unrecognized
+/// reason renders `reason not reported` rather than dropping the line.
+fn continuity_reconstructing(event: &Value) -> Option<String> {
+    let projected = event.get("priorMessagesProjected").and_then(Value::as_u64)?;
+    let left_out = event.get("priorMessagesLeftOut").and_then(Value::as_u64)?;
+    let phrase = match event.get("reason").and_then(Value::as_str) {
+        Some("idle_limit") => "it was closed after the idle limit",
+        Some("capacity") => "it was closed to make room for another session",
+        Some("agent_settings_changed") => {
+            "the model, effort, workspace or another agent setting changed"
+        }
+        Some("agent_session_failed") => "it ended with an error",
+        Some("released") => "the runtime released it after a one-shot or dispatched turn",
+        Some("not_held") => "this runtime holds no agent session for it (for example after a restart)",
+        _ => "reason not reported",
+    };
+    let noun = if projected == 1 {
+        "earlier message"
+    } else {
+        "earlier messages"
+    };
+    if left_out > 0 {
+        Some(format!(
+            "· agent session replaced: {phrase}. Sending {projected} {noun}, {left_out} left out."
+        ))
+    } else {
+        Some(format!(
+            "· agent session replaced: {phrase}. Sending {projected} {noun}."
+        ))
     }
 }
 
@@ -715,5 +749,115 @@ mod tests {
             })),
             None
         );
+    }
+
+    #[test]
+    fn continuity_reconstructing_renders_each_reason_left_out_singular_and_unknown_code() {
+        let cases = [
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "idle_limit",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: it was closed after the idle limit. Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "capacity",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: it was closed to make room for another session. Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "agent_settings_changed",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: the model, effort, workspace or another agent setting changed. Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "agent_session_failed",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: it ended with an error. Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "released",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: the runtime released it after a one-shot or dispatched turn. Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "not_held",
+                    "priorMessagesProjected": 4,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: this runtime holds no agent session for it (for example after a restart). Sending 4 earlier messages.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "idle_limit",
+                    "priorMessagesProjected": 20,
+                    "priorMessagesLeftOut": 4
+                }),
+                "· agent session replaced: it was closed after the idle limit. Sending 20 earlier messages, 4 left out.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "released",
+                    "priorMessagesProjected": 1,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: the runtime released it after a one-shot or dispatched turn. Sending 1 earlier message.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "not_held",
+                    "priorMessagesProjected": 1,
+                    "priorMessagesLeftOut": 2
+                }),
+                "· agent session replaced: this runtime holds no agent session for it (for example after a restart). Sending 1 earlier message, 2 left out.",
+            ),
+            (
+                json!({
+                    "type": "continuityReconstructing",
+                    "sessionId": "01J00000000000000000000000",
+                    "reason": "future_unknown_code",
+                    "priorMessagesProjected": 3,
+                    "priorMessagesLeftOut": 0
+                }),
+                "· agent session replaced: reason not reported. Sending 3 earlier messages.",
+            ),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(describe(&event).as_deref(), Some(expected));
+        }
     }
 }

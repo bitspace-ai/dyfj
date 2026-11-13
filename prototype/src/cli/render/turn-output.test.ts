@@ -203,6 +203,115 @@ describe("formatRuntimeEvent", () => {
       null,
     );
   });
+
+  it("renders continuityReconstructing with the same text for every reason, left-out count, singular count, and unknown code", () => {
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "idle_limit",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: it was closed after the idle limit. Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "capacity",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: it was closed to make room for another session. Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "agent_settings_changed",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: the model, effort, workspace or another agent setting changed. Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "agent_session_failed",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: it ended with an error. Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "released",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: the runtime released it after a one-shot or dispatched turn. Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "not_held",
+          priorMessagesProjected: 4,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: this runtime holds no agent session for it (for example after a restart). Sending 4 earlier messages.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "idle_limit",
+          priorMessagesProjected: 20,
+          priorMessagesLeftOut: 4,
+        },
+        "· agent session replaced: it was closed after the idle limit. Sending 20 earlier messages, 4 left out.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "released",
+          priorMessagesProjected: 1,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: the runtime released it after a one-shot or dispatched turn. Sending 1 earlier message.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "not_held",
+          priorMessagesProjected: 1,
+          priorMessagesLeftOut: 2,
+        },
+        "· agent session replaced: this runtime holds no agent session for it (for example after a restart). Sending 1 earlier message, 2 left out.",
+      ],
+      [
+        {
+          type: "continuityReconstructing",
+          sessionId: "01J00000000000000000000000",
+          reason: "future_unknown_code",
+          priorMessagesProjected: 3,
+          priorMessagesLeftOut: 0,
+        },
+        "· agent session replaced: reason not reported. Sending 3 earlier messages.",
+      ],
+    ];
+
+    for (const [event, expected] of cases) {
+      assert.strictEqual(formatRuntimeEvent(event), expected);
+    }
+  });
 });
 
 describe("handleTurnRuntimeEvent", () => {

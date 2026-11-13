@@ -286,5 +286,39 @@ export function formatRuntimeEvent(
     return `context: compressed ${turns} elder turn(s) ` +
       `(~${before} → ~${after} tokens)`;
   }
+  if (event.type === "continuityReconstructing") {
+    const projected = event.priorMessagesProjected;
+    const leftOut = event.priorMessagesLeftOut;
+    if (
+      typeof projected !== "number" || !Number.isInteger(projected) ||
+      projected < 0 ||
+      typeof leftOut !== "number" || !Number.isInteger(leftOut) || leftOut < 0
+    ) {
+      return null;
+    }
+    const phrase = continuityReconstructionPhrase(event.reason);
+    const noun = projected === 1 ? "earlier message" : "earlier messages";
+    const tail = leftOut > 0 ? `, ${leftOut} left out.` : ".";
+    return `· agent session replaced: ${phrase}. Sending ${projected} ${noun}${tail}`;
+  }
   return null;
+}
+
+function continuityReconstructionPhrase(reason: unknown): string {
+  switch (reason) {
+    case "idle_limit":
+      return "it was closed after the idle limit";
+    case "capacity":
+      return "it was closed to make room for another session";
+    case "agent_settings_changed":
+      return "the model, effort, workspace or another agent setting changed";
+    case "agent_session_failed":
+      return "it ended with an error";
+    case "released":
+      return "the runtime released it after a one-shot or dispatched turn";
+    case "not_held":
+      return "this runtime holds no agent session for it (for example after a restart)";
+    default:
+      return "reason not reported";
+  }
 }

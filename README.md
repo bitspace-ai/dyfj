@@ -1328,7 +1328,32 @@ projected messages and tool exchanges actually sent, any count and cause codes
 of prior messages left out when the transcript was shortened
 (`priorMessagesLeftOut`, `leftOutCauses`: `turn_cap`, `message_limit`,
 `byte_limit`, `prompt_limit`), and the prior and new external session
-identifiers. Both the TypeScript terminal client and the Rust REPL print an
+identifiers. On a `reconstructed` turn, after `reconstructPrompt` prepares the
+rebuilt prompt and before the prompt is sent to the agent, the runtime awaits
+one `continuityReconstructing` runtime event (`sessionId`, `reason`,
+`priorMessagesProjected`, `priorMessagesLeftOut`) so the client receives it
+before any `agentProgress` event or text delta of that turn (`new` and
+`warm-reused` turns, and turns whose reconstruction fails, emit no such event;
+headless turns drop it). `AcpSessionHandleMap` records the removal cause and
+handle key in memory against the Workbench session id when it removes that
+session's most recent live agent session (`idle_limit`, `capacity`,
+`agent_session_failed`, or `released`), bounded at
+`MAX_ACP_REMOVED_SESSION_RECORDS` (256 Workbench sessions, replacing any older
+record for the same session and dropping the oldest when exceeded; removing an
+older agent session, `shutdown`, and failed closes that leave the handle alive
+record nothing). For the turn being run, the map chooses `reason` from six
+fixed codes: `agent_settings_changed` when the Workbench session's most recent
+agent session, live or recorded, had a different key from this turn's key
+(taking precedence over any recorded cause), else the recorded cause, or
+`not_held` when the map holds no record for the session (for example after a
+runtime restart or eviction past the 256-session bound) or when no session map
+is used. On non-`--json` TypeScript terminal turns (`formatRuntimeEvent`) and
+in the Rust REPL (`activity::describe`), both clients print `· agent session
+replaced: <phrase>. Sending <N> earlier messages.` (`1 earlier message` when
+`<N>` is 1, and `, <M> left out.` in place of the final period when
+`priorMessagesLeftOut > 0`; an unrecognized reason code renders `reason not
+reported` rather than dropping the line). Both the TypeScript terminal client
+and the Rust REPL print an
 external-agent footer after each turn. Both footers show the model slug (or
 the runner profile), the reported session cost or the cost basis, token
 usage and context-window use when the agent reports them, the continuity
@@ -3207,3 +3232,9 @@ Document revisions only. Code and behavior changes are tracked in
   Rust REPL footer additions, the sent-pair count on reconstructed
   history-omission notices and receipts, and the check order across sent versus
   message-, byte-, and prompt-limited exchanges.
+- 2026-11-13 - The external-agent section documents the bounded 256-session
+  removal-cause record in `AcpSessionHandleMap`, the six
+  `continuityReconstructing` reason codes and `agent_settings_changed`
+  precedence, pre-prompt event ordering ahead of `agentProgress` and text
+  deltas, and the pre-output `· agent session replaced: ...` notice line in the
+  TypeScript terminal client and Rust REPL.

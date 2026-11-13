@@ -11,6 +11,27 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Pre-output reconstruction notice on external-agent turns (`BIT-924`).**
+  `AcpSessionHandleMap` keeps a bounded in-memory removal record
+  (`MAX_ACP_REMOVED_SESSION_RECORDS = 256` Workbench sessions, replacing older
+  records for the same session and evicting the oldest session past the bound)
+  recording the handle key and removal cause (`idle_limit`, `capacity`,
+  `agent_session_failed`, or `released`) whenever a Workbench session's most
+  recent live agent session is removed outside runtime shutdown (removing an
+  older agent session leaves any existing record unchanged). On a
+  `reconstructed` turn, after `reconstructPrompt` prepares the rebuilt
+  transcript and before sending the prompt to the agent, the runtime awaits one
+  `continuityReconstructing` event (`sessionId`, `reason`,
+  `priorMessagesProjected`, `priorMessagesLeftOut`) with `reason` chosen from `agent_settings_changed` (taking precedence when
+  the session's most recent live or recorded handle had a different key),
+  `idle_limit`, `capacity`, `agent_session_failed`, `released`, or `not_held`
+  (when no record exists or no session map is used). Both the non-`--json`
+  TypeScript terminal client (`formatRuntimeEvent`) and the Rust REPL
+  (`activity::describe`) print `· agent session replaced: <phrase>. Sending <N>
+  earlier messages.` (singular for `1`, appending `, <M> left out.` when
+  `priorMessagesLeftOut > 0`, and rendering `reason not reported` for an
+  unknown code) before any `agentProgress` event or text output of that turn.
+
 - **Coordinator dispatch tools on the Codex route (`BIT-928`).** Loopback
   depth-0 sessions with `[dispatch]` configured receive `dispatch_start`,
   `dispatch_wait`, `dispatch_read` and `dispatch_send` through the Workbench
