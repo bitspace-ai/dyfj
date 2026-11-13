@@ -113,6 +113,79 @@ describe("presentation", () => {
     assert.ok(!formatted.includes("notice included yes"));
   });
 
+  it("formatReceipt shows shortened reconstruction count and leaves unshortened reconstruction unchanged", () => {
+    const unshortened: TurnResult = {
+      sessionId: "01CLISESSION0000000000000001",
+      traceId: "0123456789abcdef0123456789abcdef",
+      stopReason: "stop",
+      text: "fixture output",
+      receipt: "External-agent turn receipt",
+      runner: {
+        kind: "external_agent",
+        profile: "fixture",
+        protocol: "acp",
+        protocolVersion: 1,
+        capabilities: [],
+        workspace: "/tmp/workspace",
+        transport: "local_stdio",
+        accessRoute: "local_sidecar",
+        costBasis: "local_free",
+        continuity: {
+          state: "reconstructed",
+          claimSource: "workbench_observed",
+          durableResume: "unavailable-client-verification",
+          priorMessagesProjected: 32,
+          toolExchangesProjected: 0,
+        },
+        evidence: {
+          source: "acp",
+          innerState: "opaque",
+          toolchainDirectoryCount: 0,
+        },
+        toolEvidence: {
+          status: "complete",
+          observedCalls: 0,
+          recordedCalls: 0,
+          partialCalls: 0,
+          rejectedCalls: 0,
+          partialReasons: {},
+          rejectedReasons: {},
+        },
+        elapsedMs: 15,
+      },
+      route: { reason: "explicit_external_agent" },
+      context: { sources: [] },
+    };
+    const shortened: TurnResult = {
+      ...unshortened,
+      runner: {
+        ...unshortened.runner,
+        continuity: {
+          ...unshortened.runner.continuity!,
+          priorMessagesLeftOut: 8,
+          leftOutCauses: ["message_limit"],
+        },
+      },
+    };
+    const plainLine = formatReceipt(unshortened, false);
+    assert.ok(
+      plainLine.includes(
+        "continuity reconstructed 32msg/0tool · native session replaced",
+      ),
+      plainLine,
+    );
+    assert.ok(!plainLine.includes("shortened"), plainLine);
+    assert.ok(!plainLine.includes("left out"), plainLine);
+
+    const shortenedLine = formatReceipt(shortened, false);
+    assert.ok(
+      shortenedLine.includes(
+        "continuity reconstructed 32msg/0tool (shortened, 8 left out) · native session replaced",
+      ),
+      shortenedLine,
+    );
+  });
+
   it("[case 15 footer] formatReceipt exposes native omission facts", () => {
     const formatted = formatReceipt(
       result({

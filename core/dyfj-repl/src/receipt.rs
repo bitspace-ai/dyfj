@@ -189,6 +189,9 @@ fn runner_line(receipt: &Value, runner: &Value) -> String {
             (None, Some(tools)) => continuity.push_str(&format!(" {tools}tool")),
             _ => {}
         }
+        if let Some(left_out) = number("/continuity/priorMessagesLeftOut").filter(|n| *n > 0) {
+            continuity.push_str(&format!(" (shortened, {left_out} left out)"));
+        }
     }
     parts.push(continuity);
     parts.push(match state {
@@ -344,6 +347,40 @@ mod tests {
         r["runner"]["continuity"] = json!({"state": "reconstructed",
             "priorMessagesProjected": 12, "toolExchangesProjected": 3});
         assert!(line(&r, 0.0).contains("continuity reconstructed 12msg/3tool · native session replaced"), "{}", line(&r, 0.0));
+    }
+
+    #[test]
+    fn runner_reconstructed_shortened_shows_left_out_count_from_numeric_field_only() {
+        let mut r = runner_receipt();
+        r["runner"]["continuity"] = json!({
+            "state": "reconstructed",
+            "priorMessagesProjected": 32,
+            "toolExchangesProjected": 0,
+            "priorMessagesLeftOut": 8,
+            "leftOutCauses": ["message_limit"],
+        });
+        let rendered = line(&r, 0.0);
+        assert!(
+            rendered.contains("continuity reconstructed 32msg/0tool (shortened, 8 left out) · native session replaced"),
+            "{rendered}"
+        );
+
+        r["runner"]["continuity"] = json!({
+            "state": "reconstructed",
+            "priorMessagesProjected": 12,
+            "toolExchangesProjected": 3,
+        });
+        let unshortened = line(&r, 0.0);
+        assert!(
+            unshortened.contains("continuity reconstructed 12msg/3tool · native session replaced"),
+            "{unshortened}"
+        );
+        assert!(!unshortened.contains("shortened"), "{unshortened}");
+
+        r["runner"]["continuity"]["priorMessagesLeftOut"] = json!("8\u{1b}[2J");
+        let non_numeric = line(&r, 0.0);
+        assert!(!non_numeric.contains("shortened"), "{non_numeric}");
+        assert!(!non_numeric.contains('\u{1b}'), "{non_numeric:?}");
     }
 
     #[test]

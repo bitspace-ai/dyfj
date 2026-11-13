@@ -1522,4 +1522,33 @@ describe("session-map failures reaching the operator", () => {
     assert.match(new AcpSessionCapacityError().message, /restart|end a session/i);
     assert.match(new AcpSessionShutdownError().message, /start it again|dyfj start/);
   });
+
+  it("runTurn measures an aborted turn's elapsedMs with the injected clock", async () => {
+    const profile = fixtureProfile();
+    let now = 10_000;
+    const map = new AcpSessionHandleMap({
+      capacity: 1,
+      idleTtlMs: 60_000,
+      now: () => now,
+    });
+    const abortController = new AbortController();
+    try {
+      const result = await map.runTurn({
+        ...acquireKey(profile, "aborted-clock"),
+        prompt: "cancel me",
+        abortSignal: abortController.signal,
+        create: () => {
+          now += 1_234;
+          abortController.abort();
+          const abortError = new Error("The operation was aborted");
+          abortError.name = "AbortError";
+          return Promise.reject(abortError);
+        },
+      });
+      assert.strictEqual(result.stopReason, "aborted");
+      assert.strictEqual(result.elapsedMs, 1_234);
+    } finally {
+      await map.shutdown();
+    }
+  });
 });

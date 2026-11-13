@@ -973,3 +973,28 @@ test("buildConversationMessages: truncation never orphans a tool result from its
     "call_1",
   );
 });
+
+test("buildConversationMessages: reports the prior-message count dropped by the turn cap without changing returned messages", () => {
+  const events = Array.from({ length: 12 }, (_, index) => [
+    event("session_start", `prompt ${index + 1}`),
+    event("agent_response", `reply ${index + 1}`),
+  ]).flat();
+  let dropped: number | undefined;
+  const baseline = buildConversationMessages(events);
+  const messages = buildConversationMessages(events, {
+    onTurnCapDropped: (count: number) => {
+      dropped = count;
+    },
+  });
+  assert.deepStrictEqual(messages, baseline);
+  assert.strictEqual(messages.length, 20);
+  assert.strictEqual(dropped, 4);
+
+  let fitDropped = -1;
+  buildConversationMessages(events.slice(0, 6), {
+    onTurnCapDropped: (count: number) => {
+      fitDropped = count;
+    },
+  });
+  assert.strictEqual(fitDropped, 0);
+});

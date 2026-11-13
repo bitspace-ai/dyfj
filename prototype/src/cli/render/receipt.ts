@@ -63,7 +63,12 @@ export function formatReceipt(
         continuity.state === "reconstructed"
           ? ` ${continuity.priorMessagesProjected ?? 0}msg/${
             continuity.toolExchangesProjected ?? 0
-          }tool`
+          }tool${
+            typeof continuity.priorMessagesLeftOut === "number" &&
+              continuity.priorMessagesLeftOut > 0
+              ? ` (shortened, ${continuity.priorMessagesLeftOut} left out)`
+              : ""
+          }`
           : ""
       }`;
     const nativeSession = continuity === undefined

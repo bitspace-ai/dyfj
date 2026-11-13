@@ -375,6 +375,20 @@ export type ExternalAgentDurableResumeStatus =
   | "verified";
 
 /**
+ * Fixed reason codes explaining why a reconstructed ACP transcript left out
+ * earlier prior messages. More than one may apply when both the engine's turn
+ * cap and a reconstruction limit shortened the session's history.
+ */
+export const EXTERNAL_AGENT_TRANSCRIPT_LEFT_OUT_CAUSES = [
+  "turn_cap",
+  "message_limit",
+  "byte_limit",
+  "prompt_limit",
+] as const;
+export type ExternalAgentTranscriptLeftOutCause =
+  typeof EXTERNAL_AGENT_TRANSCRIPT_LEFT_OUT_CAUSES[number];
+
+/**
  * Outer receipt for a turn whose inner loop is owned by an external agent.
  * Native model, tool-step, and USD-accounting fields remain intentionally
  * absent. Optional ACP usage is carried below with explicit source/stability
@@ -421,6 +435,17 @@ export interface ExternalAgentTurnReceipt {
        * made or may repeat.
        */
       toolExchangesProjected?: number;
+      /**
+       * Prior messages left out when reconstructing this session's transcript
+       * (across the engine turn cap and reconstruction bounds). Present only
+       * when at least one prior message was left out.
+       */
+      priorMessagesLeftOut?: number;
+      /**
+       * Fixed cause code(s) for `priorMessagesLeftOut`. Present only when
+       * `priorMessagesLeftOut` is present.
+       */
+      leftOutCauses?: ExternalAgentTranscriptLeftOutCause[];
       /** Last runner-reported external session id recorded for this session. */
       priorExternalSessionId?: string;
     };

@@ -106,6 +106,11 @@ export interface WorkbenchRuntimeRequest {
   /** Immutable-event omission facts computed by the resume projection. */
   historyOmission?: HistoryOmissionProjection;
   /**
+   * Number of prior messages dropped by `buildConversationMessages`'s turn cap
+   * before `conversationMessages` reached the runtime.
+   */
+  turnCapDroppedMessages?: number;
+  /**
    * Last runner-reported external session id recorded for this Workbench
    * session, assembled by the caller from prior events. Continuity evidence
    * only: it identifies the native session a replacement turn succeeds, and
