@@ -105,14 +105,10 @@ import {
   openExternalAgentSession,
 } from "./runners/acp/dispatch-lineage.ts";
 import {
-  collectPairedExchangeCalls,
-  fitsFinalPromptLimit,
-  formatReconstructedTranscriptPrompt,
-  isHistoryFieldByteLimitError,
   prepareAcpTurnContinuity,
   type ReconstructedAcpContinuity,
-  selectNewestExchange,
-  validateTurnCapDroppedMessages,
+  reconstructTwoPassTranscript,
+  type WorkbenchTextMessage,
 } from "./runners/acp/continuity-reconstruction.ts";
 export type { ReconstructedAcpContinuity };
 import { selectExternalAgentIdleTtlMs } from "./runners/acp/idle-limit.ts";
@@ -514,10 +510,12 @@ export async function codexChatGptProfile(
 }
 
 /**
- * Upper bound on the prior messages one reconstruction sends. When a session's
- * history exceeds this bound, reconstruction keeps the newest contiguous run
- * of whole exchanges that fits and discloses the left-out count in both the
- * transcript header and the receipt.
+ * Upper bound on the prior messages one reconstruction sends across both
+ * passes. The text pass keeps the newest unbroken run of text messages up to
+ * 32 (where tool results and agent messages with no text do not count), and
+ * the tool pass then adds whole call groups inside the kept span while total
+ * prior messages shown stay at most 32. A session whose text fills the 32
+ * prior-message bound sends no tool calls.
  */
 export const MAX_RECONSTRUCTED_PRIOR_MESSAGES = 32;
 
@@ -589,24 +587,48 @@ function toolExchangeLines(
   ];
 }
 
+function renderHistoryTextLines(message: WorkbenchTextMessage): string[] {
+  if (message.content === "") return [];
+  const bounded = boundedHistoryField(
+    message.content,
+    MAX_HISTORY_MESSAGE_BYTES,
+    "history message",
+  );
+  const label = message.role === "user"
+    ? "Operator (history):"
+    : "Agent (history):";
+  return [label, ...quotedHistoryLines(bounded)];
+}
+
 /**
  * Project Workbench-owned history into the prompt for a replacement native
- * session. Reconstruction walks exchanges from newest to oldest and keeps the
- * newest contiguous run of whole exchanges that fits the 32-message bound,
- * per-message and per-tool-field byte bounds, and the final ACP prompt limit.
- * Whenever any prior message was left out by the engine turn cap or by those
- * size bounds, the header states that the transcript is shortened and gives
- * the exact counts; when not even the newest exchange fits, the operator's
- * prompt is sent with that header and no transcript.
+ * session in two newest-to-oldest passes.
  *
- * Every exchange that is sent has passed the pairing, malformed-record,
- * argument-complexity, and credential-shape checks, and a failure on any of
- * those checks stops the turn before the agent starts. An exchange left out
- * for the message limit or a byte limit is not checked past that point and is
- * never sent; an exchange that passes every check and is then left out for the
- * prompt limit has already been checked, so a failed check on it still fails
- * the turn. Tool history is carried as bounded historical evidence rather than
- * re-executed.
+ * First, the text pass walks `priorMessages` from newest to oldest looking only
+ * at operator and agent text (tool results and agent messages with no text do
+ * not count toward the 32-message bound) and keeps the newest unbroken run of
+ * text that fits the 32-message bound, `MAX_HISTORY_MESSAGE_BYTES`, and the
+ * 60,000-byte ACP prompt limit. The span from the oldest kept text message to
+ * the newest prior message is the kept span; everything older is left out.
+ *
+ * Second, the tool pass checks structural pairing across the whole kept span
+ * and walks call groups inside it from newest to oldest, adding each call group
+ * whole while total prior messages shown stay at most 32, per-field byte limits
+ * hold, and the prompt with that group added fits the ACP prompt limit. A
+ * session whose text fills the 32-message bound sends no tool calls. Consecutive
+ * call groups left out inside the kept span are marked at that place with
+ * `[Tool calls left out: <n>]` and no content from them; when any tool call in
+ * the kept span is left out, the shortened-transcript header adds
+ * `Tool calls left out in shown part: <n>. Tool calls shown: <m>.` and the
+ * result and receipt carry `toolCallsLeftOut`.
+ *
+ * When `turnCapDroppedMessages` is zero and the complete, unlabelled transcript
+ * passes every check and fits every limit, the whole history is sent with no
+ * shortened label regardless of the size of its oldest exchange. Every call
+ * group reached by the walk passes pairing, malformed-record,
+ * argument-complexity, and credential-shape checks before measurement; a failed
+ * check fails the turn, while a call group never reached by the tool pass is
+ * neither rendered nor sent.
  */
 export function reconstructAcpContinuityPrompt(input: {
   priorMessages: readonly WorkbenchMessage[];
@@ -617,127 +639,14 @@ export function reconstructAcpContinuityPrompt(input: {
     toolExchanges: number,
   ) => string;
 }): ReconstructedAcpContinuity {
-  const turnCapDropped = validateTurnCapDroppedMessages(
-    input.turnCapDroppedMessages,
-  );
-  const decorateFinalPrompt = input.decorateFinalPrompt ?? ((value) => value);
-  const keptExchanges: string[][] = [];
-  const seenCallIds = new Set<string>();
-  let keptMessages = 0;
-  let toolExchanges = 0;
-  let stopCause:
-    | Exclude<ExternalAgentTranscriptLeftOutCause, "turn_cap">
-    | undefined;
-
-  let cursor = input.priorMessages.length;
-  while (cursor > 0) {
-    const selected = selectNewestExchange(
-      input.priorMessages,
-      cursor,
-      keptMessages,
-      MAX_RECONSTRUCTED_PRIOR_MESSAGES,
-    );
-    if (selected.kind === "stop_message_limit") {
-      stopCause = "message_limit";
-      break;
-    }
-
-    const exchangeCallIds = collectPairedExchangeCalls(
-      selected.assistantMessage,
-      selected.toolResults,
-      seenCallIds,
-    );
-    const renderedLines: string[] = [];
-    try {
-      if (selected.newest.role === "user") {
-        if (selected.newest.content !== "") {
-          renderedLines.push(
-            "Operator (history):",
-            ...quotedHistoryLines(
-              boundedHistoryField(
-                selected.newest.content,
-                MAX_HISTORY_MESSAGE_BYTES,
-                "history message",
-              ),
-            ),
-          );
-        }
-      } else if (selected.assistantMessage !== undefined) {
-        if (selected.assistantMessage.content !== "") {
-          renderedLines.push(
-            "Agent (history):",
-            ...quotedHistoryLines(
-              boundedHistoryField(
-                selected.assistantMessage.content,
-                MAX_HISTORY_MESSAGE_BYTES,
-                "history message",
-              ),
-            ),
-          );
-        }
-        const calls = selected.assistantMessage.toolCalls ?? [];
-        for (let index = 0; index < calls.length; index++) {
-          renderedLines.push(
-            ...toolExchangeLines(calls[index], selected.toolResults[index]),
-          );
-        }
-      }
-    } catch (error) {
-      if (isHistoryFieldByteLimitError(error)) {
-        stopCause = "byte_limit";
-        break;
-      }
-      throw error;
-    }
-
-    const candidateShown = keptMessages + selected.messageCount;
-    const candidateToolExchanges = toolExchanges + exchangeCallIds.size;
-    const candidatePrompt = formatReconstructedTranscriptPrompt({
-      headerLines: RECONSTRUCTION_HEADER_LINES,
-      footerLine: RECONSTRUCTION_FOOTER,
-      exchangeLines: [renderedLines, ...keptExchanges],
-      priorMessagesLeftOut: turnCapDropped + selected.exchangeStart,
-      priorMessagesShown: candidateShown,
-      prompt: input.prompt,
-    });
-    if (
-      !fitsFinalPromptLimit(
-        decorateFinalPrompt(candidatePrompt, candidateToolExchanges),
-      )
-    ) {
-      stopCause = "prompt_limit";
-      break;
-    }
-
-    keptExchanges.unshift(renderedLines);
-    keptMessages = candidateShown;
-    toolExchanges = candidateToolExchanges;
-    for (const id of exchangeCallIds) seenCallIds.add(id);
-    cursor = selected.exchangeStart;
-  }
-
-  const priorMessagesLeftOut = turnCapDropped +
-    (input.priorMessages.length - keptMessages);
-  const leftOutCauses: ExternalAgentTranscriptLeftOutCause[] = [];
-  if (turnCapDropped > 0) leftOutCauses.push("turn_cap");
-  if (stopCause !== undefined) leftOutCauses.push(stopCause);
-
-  const reconstructed = formatReconstructedTranscriptPrompt({
+  return reconstructTwoPassTranscript({
+    ...input,
     headerLines: RECONSTRUCTION_HEADER_LINES,
     footerLine: RECONSTRUCTION_FOOTER,
-    exchangeLines: keptExchanges,
-    priorMessagesLeftOut,
-    priorMessagesShown: keptMessages,
-    prompt: input.prompt,
+    maxPriorMessages: MAX_RECONSTRUCTED_PRIOR_MESSAGES,
+    renderHistoryText: renderHistoryTextLines,
+    renderToolExchange: toolExchangeLines,
   });
-  assertAcpPromptWithinLimit(decorateFinalPrompt(reconstructed, toolExchanges));
-  return {
-    prompt: reconstructed,
-    priorMessagesProjected: keptMessages,
-    toolExchanges,
-    priorMessagesLeftOut,
-    leftOutCauses,
-  };
 }
 
 function receiptText(input: {
@@ -751,6 +660,7 @@ function receiptText(input: {
   priorMessagesProjected?: number;
   toolExchangesProjected?: number;
   priorMessagesLeftOut?: number;
+  toolCallsLeftOut?: number;
   leftOutCauses?: readonly ExternalAgentTranscriptLeftOutCause[];
   priorExternalSessionId?: string;
   toolEvidence: PreparedAcpToolEvidence;
@@ -780,6 +690,10 @@ function receiptText(input: {
         } tool exchanges${
           (input.priorMessagesLeftOut ?? 0) > 0
             ? `; shortened, ${input.priorMessagesLeftOut} left out${
+              (input.toolCallsLeftOut ?? 0) > 0
+                ? `, ${input.toolCallsLeftOut} tool calls left out in shown part`
+                : ""
+            }${
               input.leftOutCauses !== undefined && input.leftOutCauses.length > 0
                 ? `: ${input.leftOutCauses.join(", ")}`
                 : ""

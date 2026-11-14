@@ -1366,7 +1366,10 @@ runner receipt records that state, the durable-resume status, the count of
 projected messages and tool exchanges actually sent, any count and cause codes
 of prior messages left out when the transcript was shortened
 (`priorMessagesLeftOut`, `leftOutCauses`: `turn_cap`, `message_limit`,
-`byte_limit`, `prompt_limit`), and the prior and new external session
+`byte_limit`, `prompt_limit`), any count of tool calls left out inside the
+shown part (`toolCallsLeftOut` on `runner.continuity` and `, <n> tool calls
+left out in shown part` in the receipt text when above zero, omitted when
+zero), and the prior and new external session
 identifiers. On a `reconstructed` turn, after `reconstructPrompt` prepares the
 rebuilt prompt and before the prompt is sent to the agent, the runtime awaits
 one `continuityReconstructing` runtime event (`sessionId`, `reason`,
@@ -1479,35 +1482,70 @@ permission policy remains authoritative for anything the receiving agent may
 propose. History reconstruction refuses when withholding leaves nothing to
 project or when a retained request/result pairing is
 unrepresentable. To fit size limits without stranding an older session after an
-idle close, reconstruction walks prior messages from newest to oldest one whole
-exchange at a time (one operator message, or one agent message together with all
-of its paired tool results) and keeps the newest unbroken run that fits the
-32-message bound, the 32 KiB per-message bound, the per-field tool byte bounds,
-and the final 60,000-byte ACP prompt limit (including the transcript header, any
-shortened-transcript label, any history-omission notice, and any dispatched
-child context line). When not even the newest exchange fits, Workbench sends the
-operator's prompt with the shortened-transcript header and zero projected
-messages rather than failing the turn; only an operator prompt whose own text
-and required framing exceed the ACP prompt limit fails on size. `buildConversationMessages`
-also reports how many prior messages its 10-turn cap dropped without changing
-what native routes receive, and reconstruction folds that count into the same
-accounting. Whenever any prior message was left out by the turn cap or by
-reconstruction's size bounds, fixed lines in the transcript header tell the
-agent that the transcript is shortened, give the left-out and shown counts, and
-note that the shown part may start mid-session with an agent message or a tool
-record whose earlier context is absent; no text from a left-out message is
-included. On a reconstructed turn that carries a history-omission notice, both
+idle close or letting a turn's recorded commands crowd out the operator's
+requests and earlier conversation, reconstruction (`src/runners/acp/continuity-reconstruction.ts`)
+handles complete transcripts without a shortened label and shortens oversized
+ones in two newest-to-oldest passes. When `buildConversationMessages` reports
+zero messages dropped by its 10-turn cap and the complete, unlabelled
+transcript passes every pairing, byte, argument-complexity, and
+credential-shape check and fits the 32-prior-message bound and the final
+60,000-byte ACP prompt limit (including the transcript header, any
+history-omission notice, and any dispatched child context line), Workbench
+sends the whole history with no shortened-transcript label, whatever the size
+of its oldest exchange. Otherwise, a first text pass walks `priorMessages` from
+newest to oldest looking only at operator and agent text (tool results do not
+count, and an agent message with tool calls and empty text does not count) and
+keeps the newest unbroken run of text that fits the 32-message bound, the 32
+KiB per-message bound, and the 60,000-byte ACP prompt limit measured as the
+prompt would be sent with that text and no tool calls. When the text pass stops
+on a message, the kept span runs from the oldest kept text message to the
+newest prior message (or is empty if no text message fits) and everything older
+is left out; when the text pass walks every text message without stopping, the
+kept span covers all `priorMessages`. Inside the kept span, structural pairing
+is checked across the whole span first (every tool result pairs with a call and
+no call id repeats; a broken pairing refuses the turn), and a second tool pass
+then walks call groups (each agent message's tool calls together with all of
+its paired tool results) from newest to oldest, adding a call group whole when
+total prior messages shown (adding the group's tool results, plus its agent
+message when that message has no text) stay at most 32, every per-field tool
+byte bound holds, and the prompt measured as it would be sent with that group
+added fits the 60,000-byte ACP prompt limit, stopping at the first call group
+that does not fit or exceeds a per-field byte bound. A session whose text fills
+the 32-message bound sends no tool calls. When not even the newest text message
+fits, Workbench sends the operator's prompt with the shortened-transcript
+header and zero projected messages rather than failing the turn; only an
+operator prompt whose own text and required framing exceed the ACP prompt limit
+fails on size. `buildConversationMessages` also reports how many prior messages
+its 10-turn cap dropped without changing what native routes receive, and
+reconstruction folds that count into `priorMessagesLeftOut`
+(`priorMessagesProjected` counts prior messages of which any part is sent,
+`priorMessagesLeftOut` counts every other prior message including tool results
+and text-free agent messages left out by the tool pass, `toolExchangesProjected`
+counts tool calls sent, `toolCallsLeftOut` counts tool calls left out inside
+the kept span, and `leftOutCauses` records `turn_cap`, the text-pass stop
+cause, and the tool-pass stop cause without duplicates). Whenever any prior
+message was left out, fixed lines in the transcript header tell the agent that
+the transcript is shortened, give `Prior messages left out: <n>. Prior messages
+shown: <m>.`, add `Tool calls left out in shown part: <c>. Tool calls shown:
+<t>.` when any tool call in the kept span was left out, and note that the shown
+part may start partway through the session with an agent message or a tool
+record whose request is not shown; inside the kept span, each run of one or
+more consecutive left-out call groups with no shown text between them is
+marked at that place by `[Tool calls left out: <n>]`, and no text, argument,
+result, name, or id of any left-out call or message is sent. Both clients, both
+footers, and `continuityReconstructing` remain unchanged on the two message
+counts. On a reconstructed turn that carries a history-omission notice, both
 the notice's valid-pair count and the receipt's `historyOmission.projectedPairs`
 record the number of tool pairs actually sent (`toolExchangesProjected`), while
-the remaining omission fields continue to describe stored history. Every
-exchange that is sent has passed the pairing, malformed-record,
-argument-complexity, and credential-shape checks, and a failure on any of those
-checks refuses the turn before any prompt reaches the agent (closing and
-removing any acquired handle without deleting persisted events). An exchange
-left out because of the 32-message bound or a per-message or tool-field byte
-bound is not checked past that point and is never sent; an exchange that passes
-every check and is then left out for the ACP prompt limit has already been
-checked, so a failed check on it still refuses the turn. Idle handles retire on a per-session idle
+the remaining omission fields continue to describe stored history. Every call
+group that the tool pass reaches is rendered through `toolExchangeLines` before
+prompt-limit measurement, so malformed records, over-complex arguments, and
+credential-shaped values refuse the turn before any prompt reaches the agent
+(closing and removing any acquired handle without deleting persisted events),
+including when that group is then left out for `prompt_limit`; a per-field byte
+limit on a call group stops the tool pass with `byte_limit` without failing the
+turn, and any call group older than where the tool pass stops (or outside the
+kept span) is neither rendered nor sent. Idle handles retire on a per-session idle
 limit chosen from the most recent turn that released the handle: `[codex]
 interactive_idle_seconds` (60 through 86400 seconds, default 14400, 4 hours)
 after an interactive turn on the `codex-chatgpt` runner, and 5 minutes
@@ -3287,3 +3325,11 @@ Document revisions only. Code and behavior changes are tracked in
   comparison, workspace-relative paths, workspace directory omission, history
   credential checks with fixed metadata withholding, and summary-free progress
   for calls without usable IDs.
+- 2026-11-13 - The external-agent section documents two-pass text-first
+  transcript reconstruction (`reconstructAcpContinuityPrompt` in
+  `src/runners/acp/continuity-reconstruction.ts`), the complete-transcript rule
+  that omits the shortened label whenever the complete unlabelled history fits
+  and passes every check, the `[Tool calls left out: <n>]` count line and
+  `Tool calls left out in shown part: <n>. Tool calls shown: <m>.` header line,
+  the optional `toolCallsLeftOut` receipt count and receipt text, and the rule
+  that a session whose text fills the 32-message bound sends no tool calls.

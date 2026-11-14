@@ -442,6 +442,12 @@ export interface ExternalAgentTurnReceipt {
        */
       priorMessagesLeftOut?: number;
       /**
+       * Prior tool calls left out inside the shown span of a reconstructed
+       * transcript. Present only when at least one tool call in the kept span
+       * was left out.
+       */
+      toolCallsLeftOut?: number;
+      /**
        * Fixed cause code(s) for `priorMessagesLeftOut`. Present only when
        * `priorMessagesLeftOut` is present.
        */
