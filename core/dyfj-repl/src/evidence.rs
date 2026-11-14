@@ -32,7 +32,7 @@ struct Call {
     /// Seconds into the turn when the call started and when it completed.
     started_at: Option<u64>,
     ended_at: Option<u64>,
-    /// An external agent's call, known by its title only.
+    /// An external agent's call, paired by ID when supplied, otherwise title.
     external: bool,
 }
 
@@ -120,40 +120,65 @@ impl Ledger {
         }
     }
 
-    /// An ACP tool-call progress frame. It carries no call id, so a frame is
-    /// matched to the latest unfinished call with the same title; a call
-    /// first seen at its end is recorded from that frame alone.
+    fn agent_call_index(&self, event: &Value) -> Option<usize> {
+        let title = activity::agent_progress_title(event);
+        self.calls.iter().rposition(|call| {
+            call.external && match activity::agent_progress_id(event) {
+                Some(id) => call.id == id,
+                None => call.id.is_empty() && call.outcome.is_none() && call.subject.as_deref() == Some(&title),
+            }
+        })
+    }
+
+    /// Render before observing the event: only the first frame starts a line,
+    /// and an identified completion uses that call's title if the frame lacks it.
+    pub fn activity_line(&self, event: &Value) -> Option<String> {
+        if event.get("type").and_then(Value::as_str) != Some("agentProgress") {
+            return activity::describe(event);
+        }
+        if let Some(index) = self.agent_call_index(event) {
+            let call = &self.calls[index];
+            if activity::agent_progress_id(event).is_some() {
+                if call.outcome.is_some() || !activity::agent_progress_ended(event) {
+                    return None;
+                }
+                let mut resolved = event.clone();
+                if event.get("title").is_none() && event.get("name").is_none() {
+                    resolved["title"] = serde_json::json!(call.subject);
+                }
+                return activity::describe(&resolved);
+            }
+        }
+        activity::describe(event)
+    }
+
+    /// A frame with an ID matches that call even when its title changes.
+    /// Older frames retain pairing by the latest unfinished matching title.
     fn observe_agent_call(&mut self, event: &Value, at: u64) {
         if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
             return;
         }
-        let title = activity::agent_progress_title(event);
-        let open = self.calls.iter().rposition(|call| {
-            call.external && call.outcome.is_none() && call.subject.as_deref() == Some(&title)
-        });
-        let outcome = match event.get("status").and_then(Value::as_str) {
-            Some("completed") => Outcome::Ok,
-            Some("failed") => Outcome::Failed,
-            _ => {
-                if open.is_none() {
-                    self.calls.push(Call {
-                        external: true,
-                        ..Call::started("agent".into(), Some(title), Some(at))
-                    });
-                }
-                return;
-            }
-        };
-        let index = open.unwrap_or_else(|| {
+        let ended = activity::agent_progress_ended(event);
+        let index = self.agent_call_index(event).unwrap_or_else(|| {
             self.calls.push(Call {
+                id: activity::agent_progress_id(event).unwrap_or_default().into(),
                 external: true,
-                ..Call::started("agent".into(), Some(title.clone()), None)
+                ..Call::started("agent".into(), Some(activity::agent_progress_title(event)), if ended { None } else { Some(at) })
             });
             self.calls.len() - 1
         });
         let call = &mut self.calls[index];
+        if event.get("title").is_some() || event.get("name").is_some() {
+            call.subject = Some(activity::agent_progress_title(event));
+        }
+        if !ended || call.outcome.is_some() {
+            return;
+        }
+        let outcome = if event.get("status").and_then(Value::as_str) == Some("failed") {
+            Outcome::Failed
+        } else { Outcome::Ok };
         call.outcome = Some(outcome);
-        call.line = Some(format!("{} {title} (external agent)", outcome.mark()));
+        call.line = Some(format!("{} {} (external agent)", outcome.mark(), call.subject.as_deref().unwrap_or("external tool")));
         call.ended_at = Some(at);
     }
 
@@ -403,6 +428,7 @@ fn listed_with(items: &[String], separator: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use crate::activity;
     use super::Ledger;
     use serde_json::{Value, json};
 
@@ -614,6 +640,50 @@ mod tests {
         assert_eq!(summary[2], "    commands: npm test → exit status not reported");
         assert_eq!(summary[3], "    no command reported exit 0 after these writes: a.rs");
         assert_eq!(ledger.every_call()[1], "  [0s] ? bash npm test (5ms) · exit status not reported");
+    }
+
+    #[test]
+    fn identified_activity_prints_start_input_end_and_counts_one_call() {
+        let start = json!({"type":"agentProgress", "kind":"tool_call", "toolCallId":"a",
+            "title":"Run greeting", "toolKind":"execute", "status":"in_progress",
+            "input":"printf hello", "cwd":"/workspace"});
+        let end = json!({"type":"agentProgress", "kind":"tool_call", "toolCallId":"a",
+            "title":"Run greeting", "toolKind":"execute", "status":"completed"});
+        assert_eq!(activity::describe(&start).as_deref(), Some("  ▸ Run greeting (external agent)\n      printf hello  [in /workspace]"));
+        assert_eq!(activity::describe(&end).as_deref(), Some("  ✓ Run greeting (external agent)"));
+        let mut ledger = Ledger::default();
+        ledger.observe(&start, 0);
+        ledger.observe(&end, 1);
+        assert_eq!(ledger.summary(1000)[0], "· evidence: 1 call: 1 ok · 1.0s");
+        assert!(!ledger.every_call().join("\n").contains("external tool"));
+    }
+
+    #[test]
+    fn overlapping_same_title_calls_pair_by_id() {
+        let frame = |id: &str, status: &str| json!({"type":"agentProgress", "kind":"tool_call",
+            "toolCallId":id, "title":"Command", "status":status});
+        let mut ledger = Ledger::default();
+        ledger.observe(&frame("a", "in_progress"), 0);
+        ledger.observe(&frame("b", "in_progress"), 1);
+        ledger.observe(&frame("a", "completed"), 2);
+        ledger.observe(&frame("b", "failed"), 3);
+        assert_eq!(ledger.every_call(), vec!["  [0s→2s] ✓ Command (external agent)", "  [1s→3s] ✗ Command (external agent)"]);
+    }
+
+    #[test]
+    fn activity_renders_withheld_and_locations_safely() {
+        let mut frame = json!({"type":"agentProgress", "kind":"tool_call", "toolCallId":"a",
+            "title":"Read notes", "status":"in_progress", "inputWithheld":true});
+        assert_eq!(activity::describe(&frame).as_deref(), Some("  ▸ Read notes (external agent)\n      (input withheld: it matched a credential pattern)"));
+        frame.as_object_mut().unwrap().remove("inputWithheld");
+        frame["locations"] = json!(["notes.txt", "README.md"]);
+        assert_eq!(activity::describe(&frame).as_deref(), Some("  ▸ Read notes (external agent)\n      notes.txt, README.md"));
+        frame["locations"] = json!([format!("a\n\u{1b}{}", "x".repeat(400)), "b", "c", "excluded"]);
+        let line = activity::describe(&frame).unwrap();
+        assert!(!line.contains('\u{1b}'));
+        assert!(!line.contains("excluded"));
+        assert_eq!(line.lines().count(), 2);
+        assert!(line.contains('…'));
     }
 
     /// An external agent's tool calls arrive as progress frames with a

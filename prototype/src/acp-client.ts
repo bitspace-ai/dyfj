@@ -1,6 +1,5 @@
 import {
   sanitizeBoundaryText,
-  takeCodePointPrefix,
   utf8ByteLengthWithinLimit,
 } from "./kernel/mod.ts";
 import {
@@ -117,12 +116,8 @@ export interface AcpPermissionVerdict {
   source: "operator" | "policy";
 }
 
-export interface AcpProgressUpdate {
-  kind: "thought" | "tool_call";
-  title?: string;
-  name?: string;
-  status?: string;
-}
+import { toolCallProgress, type AcpProgressUpdate, type ToolProgressState } from "./runners/acp/tool-progress.ts";
+export type { AcpProgressUpdate } from "./runners/acp/tool-progress.ts";
 
 /** Optional, currently unstable ACP prompt usage. Values are agent-reported. */
 export interface AcpTokenUsage {
@@ -958,14 +953,6 @@ function textFromUpdate(update: Record<string, unknown>): string | null {
     : null;
 }
 
-const MAX_PROGRESS_FIELD_CHARS = 256;
-
-function boundProgressField(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length === 0) return undefined;
-  return takeCodePointPrefix(value, MAX_PROGRESS_FIELD_CHARS).join("") ||
-    undefined;
-}
-
 function deliverProgress(
   onProgress: AcpRunInput["onProgress"],
   progress: AcpProgressUpdate,
@@ -982,24 +969,6 @@ function isThoughtUpdate(update: Record<string, unknown>): boolean {
   return update.sessionUpdate === "agent_thought_chunk" ||
     update.sessionUpdate === "thought_chunk";
 }
-
-function toolCallProgressFromUpdate(
-  update: Record<string, unknown>,
-): AcpProgressUpdate | null {
-  if (
-    update.sessionUpdate !== "tool_call" &&
-    update.sessionUpdate !== "tool_call_update"
-  ) {
-    return null;
-  }
-  return {
-    kind: "tool_call",
-    title: boundProgressField(update.title),
-    name: boundProgressField(update.name),
-    status: boundProgressField(update.status),
-  };
-}
-
 
 function nonnegativeSafeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
@@ -1342,6 +1311,7 @@ class LiveAcpSession implements AcpSessionHandle {
       let text = "";
       let usageSnapshot: AcpUsageSnapshot | undefined;
       const toolEvidence = newAcpToolEvidenceAccumulator();
+      const toolProgressStates = new Map<string, ToolProgressState>();
       let updateCount = 0;
       let pendingUpdate = session.nextUpdate();
       while (true) {
@@ -1426,11 +1396,13 @@ class LiveAcpSession implements AcpSessionHandle {
           if (isThoughtUpdate(updateRecord)) {
             deliverProgress(input.onProgress, { kind: "thought" });
           }
-          const toolProgress = toolCallProgressFromUpdate(updateRecord);
-          if (toolProgress !== null) {
-            deliverProgress(input.onProgress, toolProgress);
-          }
           applyAcpToolPatch(toolEvidence, updateRecord);
+          try {
+            const progress = toolCallProgress(updateRecord, toolEvidence, toolProgressStates, this.#profile.workspace);
+            if (progress !== null) deliverProgress(input.onProgress, progress);
+          } catch {
+            // Display construction, like its observer, must not fail a turn.
+          }
           pendingUpdate = session.nextUpdate();
           continue;
         }

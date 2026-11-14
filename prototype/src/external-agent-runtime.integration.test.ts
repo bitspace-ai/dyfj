@@ -61,6 +61,7 @@ import {
 } from "./store/mod.ts";
 import type { WorkbenchMessage } from "./providers/mod.ts";
 import {
+  runAcpAgent,
   ACP_TOOL_OUTPUT_TRUNCATION_MARKER,
   type AcpExecutionProfile,
   AcpProtocolMessageLimitError,
@@ -4829,5 +4830,137 @@ describe("reconstructed tool history", () => {
       priorMessagesLeftOut: 1,
       leftOutCauses: ["message_limit"],
     });
+  });
+});
+
+// Synthetic adapter-shaped updates; no operator session data is used.
+describe("tool activity frames", () => {
+  async function activity(suffix = "") {
+    const h = createHarness();
+    const frames: Array<Record<string, unknown>> = [];
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn", prompt: `FIXTURE_TOOL_ACTIVITY${suffix}`, routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" }, workspaceRoot: process.cwd(),
+      sessionId: "01ACPSESSION000000000000925",
+      frames: { onRuntimeEvent: (event) => { if (event.type === "agentProgress") frames.push(event); } },
+    }, { runAgent: async (input) => ({ ...await runAcpAgent(input), elapsedMs: 1 }) });
+    return { h, frames, result };
+  }
+  it("sends only merged start and end command frames", async () => {
+    const { frames } = await activity();
+    const calls = frames.filter((f) => f.toolCallId === "activity-command");
+    assert.strictEqual(calls.length, 2);
+    assert.partialDeepStrictEqual(calls[0], { title: "Run greeting", toolKind: "execute",
+      status: "in_progress", input: "printf hello", cwd: "/workspace" });
+    assert.partialDeepStrictEqual(calls[1], { title: "Run greeting", toolKind: "execute", status: "completed" });
+    assert.strictEqual(calls[1].input, undefined);
+    assert.strictEqual(frames.length, 4);
+    assert.ok(!JSON.stringify(frames).includes("hello world"));
+  });
+  it("uses the session workspace for progress summaries and titles", async () => {
+    const { frames } = await activity("_WORKSPACE");
+    const command = frames.find((frame) => frame.toolCallId === "activity-command");
+    assert.strictEqual(command?.cwd, undefined);
+    const read = frames.find((frame) => frame.toolCallId === "activity-read");
+    assert.strictEqual(read?.title, "Read file 'CHANGELOG.md'");
+    assert.deepStrictEqual(read?.locations, ["CHANGELOG.md", "README.md"]);
+  });
+  it("sends locations for the read call without input", async () => {
+    const { frames } = await activity();
+    const read = frames.find((f) => f.title === "Read notes");
+    assert.deepStrictEqual(read?.locations, ["notes.txt", "README.md"]);
+    assert.strictEqual(read?.input, undefined);
+  });
+  it("withholds the whole summary for a credential beyond the cut", async () => {
+    for (const suffix of ["_SECRET", "_CONTROL_SECRET"]) {
+    const { frames } = await activity(suffix);
+    assert.strictEqual(frames[0].inputWithheld, true);
+    for (const frame of frames.filter((f) => f.title !== "Read notes" && f.toolCallId !== "activity-read")) for (const field of ["input", "cwd", "locations"]) {
+      assert.strictEqual(frame[field], undefined);
+    }
+    assert.ok(!JSON.stringify(frames).includes("sk-" + "a".repeat(24)));
+    }
+  });
+  it("keeps MCP summaries absent", async () => {
+    const { frames } = await activity("_MCP");
+    for (const frame of frames.filter((f) => f.title === "mcp.fixture.run")) {
+      for (const field of ["input", "cwd", "locations", "inputWithheld"]) assert.strictEqual(frame[field], undefined);
+    }
+  });
+  it("marks a command cut at a UTF-8 boundary", async () => {
+    const { frames } = await activity("_LONG");
+    assert.strictEqual(frames[0].input, "echo " + "🦀".repeat(58) + "…");
+    assert.strictEqual(Buffer.byteLength(String(frames[0].input)), 240);
+  });
+  it("defers late input until a title or status frame", async () => {
+    const { frames } = await activity("_DEFERRED");
+    const calls = frames.filter((f) => f.toolCallId === "activity-command");
+    assert.strictEqual(calls.length, 3);
+    assert.strictEqual(calls[0].input, undefined);
+    assert.partialDeepStrictEqual(calls[1], { title: "Greeting renamed", status: "in_progress", input: "printf hello", cwd: "/workspace" });
+    assert.strictEqual(calls[2].input, undefined);
+    assert.strictEqual(calls[2].title, "Greeting renamed");
+  });
+  it("checks directories and undisplayed locations before cutting", async () => {
+    for (const [suffix, title] of [["_CWD_CREDENTIAL", "Run greeting"], ["_PATH_CREDENTIAL", "Read notes"]]) {
+      const { frames } = await activity(suffix);
+      const first = frames.find((f) => f.title === title);
+      assert.strictEqual(first?.inputWithheld, true);
+      for (const field of ["input", "cwd", "locations"]) assert.strictEqual(first?.[field], undefined);
+      assert.ok(!JSON.stringify(frames).includes("sk-" + "a".repeat(24)));
+    }
+  });
+  it("omits directory-only summaries and scrubs credential-shaped titles", async () => {
+    const { frames } = await activity("_ONLY_CWD");
+    for (const field of ["input", "cwd", "locations", "inputWithheld"]) assert.strictEqual(frames[0][field], undefined);
+    const titled = await activity("_TITLE_CREDENTIAL");
+    assert.ok(!JSON.stringify(titled.frames).includes("sk-" + "a".repeat(24)));
+  });
+  it("keeps unidentified updates compatible and IDs within 128 bytes", async () => {
+    for (const suffix of ["_NO_ID", "_LONG_ID"]) {
+      const { frames } = await activity(suffix);
+      assert.strictEqual(frames.length, 6);
+      assert.ok(frames.slice(0, 4).every((f) => f.toolCallId === undefined));
+    }
+  });
+  it("preserves fixture recorded tool evidence and receipt", async () => {
+    const { h, result } = await activity();
+    const record = { receipt: result.receipt.replace(/Trace: [^\n]+/, "Trace: <trace>").replace(process.cwd(), "<workspace>"), evidence: result.runner.toolEvidence,
+      tools: h.events.filter((e) => e.event_type === "tool_call").map((e) => ({
+        tool_name: e.tool_name, tool_call_id: e.tool_name === "acp.history_unavailable" ? "<gap-id>" : e.tool_call_id,
+        tool_arguments: e.tool_arguments, tool_result: e.tool_result, tool_is_error: e.tool_is_error,
+      })) };
+    assert.deepStrictEqual(record, {
+  "receipt": "External-agent turn receipt\nSession: 01ACPSESSION000000000000925\nTrace: <trace>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 0 recorded, 1 partial (missing_raw_output), 1 rejected (missing_raw_input) of 2\nWorkspace: <workspace>\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: 1 ms\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
+  "evidence": {
+    "status": "partial",
+    "observedCalls": 2,
+    "recordedCalls": 0,
+    "partialCalls": 1,
+    "rejectedCalls": 1,
+    "partialReasons": {
+      "missing_raw_output": 1
+    },
+    "rejectedReasons": {
+      "missing_raw_input": 1
+    }
+  },
+  "tools": [
+    {
+      "tool_name": "acp.history_unavailable",
+      "tool_call_id": "<gap-id>",
+      "tool_arguments": "{\"outcome\":\"partial\",\"reason\":\"missing_raw_output\",\"toolCallId\":\"activity-command\",\"toolName\":\"acp.execute\",\"title\":\"Run greeting\",\"kind\":\"execute\",\"status\":\"completed\",\"input\":{\"command\":[\"printf\",\"hello\"],\"cwd\":\"/workspace\"}}",
+      "tool_result": "",
+      "tool_is_error": true
+    },
+    {
+      "tool_name": "acp.history_unavailable",
+      "tool_call_id": "<gap-id>",
+      "tool_arguments": "{\"outcome\":\"rejected\",\"reason\":\"missing_raw_input\",\"toolCallId\":\"activity-read\",\"toolName\":\"acp.read\",\"title\":\"Read notes\",\"kind\":\"read\",\"status\":\"completed\"}",
+      "tool_result": "",
+      "tool_is_error": true
+    }
+  ]
+});
   });
 });

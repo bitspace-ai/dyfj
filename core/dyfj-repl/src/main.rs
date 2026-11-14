@@ -1143,6 +1143,7 @@ fn render(frame: StreamFrame, wrote_any: &mut bool, view: &mut TurnView) {
         // from this frame.
         StreamFrame::Event { event } => {
             let now = Instant::now();
+            let activity_line = view.ledger.activity_line(&event);
             view.ledger.observe(&event, view.status.elapsed(now).as_secs());
             view.status.observe_event(&event, now);
             // Supersession abandons what was already shown. Clearing
@@ -1173,7 +1174,7 @@ fn render(frame: StreamFrame, wrote_any: &mut bool, view: &mut TurnView) {
             // completed line follows; a started line as well would double
             // every call in scrollback.
             let started = event.get("type").and_then(Value::as_str) == Some("toolCallStarted");
-            if let Some(line) = activity::describe(&event)
+            if let Some(line) = activity_line
                 && !(started && view.status.enabled())
             {
                 view.line(&line);

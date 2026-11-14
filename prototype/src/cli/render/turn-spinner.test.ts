@@ -189,6 +189,35 @@ describe("spinnerGuardedTurnHandlers", () => {
     assert.deepStrictEqual(stderr, []);
   });
 
+  it("new tool activity fields only label the spinner", () => {
+    const calls: string[] = [];
+    const { io, stderr, stdout } = fakeIo();
+    const spinner = stubSpinner(calls);
+    const output = createTurnOutputHandlers(cfg(), io, {
+      beforeWrite: spinner.pause,
+      afterWrite: () => {
+        spinner.updateLabel("working…");
+        spinner.start();
+      },
+    });
+    const handlers = spinnerGuardedTurnHandlers(
+      spinner,
+      output,
+      io,
+      () => ({ decision: "deny" as const, reason: "n/a" }),
+    );
+    handlers.onEvent({
+      type: "agentProgress",
+      kind: "tool_call",
+      title: "Inspecting codebase",
+      toolCallId: "call-1", toolKind: "execute", status: "in_progress",
+      input: "printf hello", cwd: "/workspace", locations: ["a.ts"], inputWithheld: false,
+    });
+    assert.deepStrictEqual(calls, ["label:Inspecting codebase", "start"]);
+    assert.deepStrictEqual(stderr, []);
+    assert.deepStrictEqual(stdout, []);
+  });
+
   it("keeps spinning through an invisible event (modelSelected)", () => {
     const calls: string[] = [];
     const { io, stderr } = fakeIo();

@@ -104,20 +104,7 @@ pub fn describe(event: &Value) -> Option<String> {
         "unparsedToolCallMarkupDetected" => {
             Some("· the model wrote tool-call markup that ran no tools".into())
         }
-        // The external-agent (ACP) route reports its tool calls only as
-        // titled progress patches, with no call id. A call's end is a line;
-        // the status line names the one in progress.
-        "agentProgress" => {
-            if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
-                return None;
-            }
-            let mark = match event.get("status").and_then(Value::as_str) {
-                Some("completed") => "✓",
-                Some("failed") => "✗",
-                _ => return None,
-            };
-            Some(format!("  {mark} {} (external agent)", agent_progress_title(event)))
-        }
+        "agentProgress" => agent_progress_line(event),
         "childApprovalParked" => child_approval_parked(event),
         "continuityReconstructing" => continuity_reconstructing(event),
         // Bookkeeping the operator does not need narrated. Observed on a live
@@ -279,6 +266,59 @@ pub fn agent_progress_title(event: &Value) -> String {
         .and_then(Value::as_str)
         .filter(|title| !title.trim().is_empty())
         .map_or_else(|| "external tool".into(), |title| bounded(title, MAX_SUBJECT_CHARS))
+}
+
+/// Identity is used for pairing, never printed. Oversized or empty IDs use the
+/// legacy title fallback, matching the runtime's display identity bound.
+pub fn agent_progress_id(event: &Value) -> Option<&str> {
+    event.get("toolCallId").and_then(Value::as_str).filter(|id| !id.is_empty() && id.len() <= 128)
+}
+
+pub fn agent_progress_ended(event: &Value) -> bool {
+    matches!(event.get("status").and_then(Value::as_str), Some("completed" | "failed"))
+}
+
+fn agent_progress_line(event: &Value) -> Option<String> {
+    if event.get("kind").and_then(Value::as_str) != Some("tool_call") {
+        return None;
+    }
+    let mark = match event.get("status").and_then(Value::as_str) {
+        Some("completed") => "✓",
+        Some("failed") => "✗",
+        // An older runtime retains its completion-only scrollback behavior.
+        _ if agent_progress_id(event).is_some() => "▸",
+        _ => return None,
+    };
+    let mut line = format!("  {mark} {} (external agent)", agent_progress_title(event));
+    if agent_progress_ended(event) {
+        return Some(line);
+    }
+    let input = event.get("input").and_then(Value::as_str).filter(|input| {
+        event.get("title").and_then(Value::as_str).is_none_or(|title| {
+            crate::approval::visible(title) != crate::approval::visible(input)
+        })
+    });
+    let cwd = event.get("cwd").and_then(Value::as_str);
+    let detail = if event.get("inputWithheld").and_then(Value::as_bool) == Some(true) {
+        Some("(input withheld: it matched a credential pattern)".into())
+    } else if let Some(input) = input {
+        let mut detail = bounded(input, MAX_SUBJECT_CHARS);
+        if let Some(cwd) = cwd {
+            detail.push_str(&format!("  [in {}]", bounded(cwd, MAX_SUBJECT_CHARS)));
+        }
+        Some(detail)
+    } else if let Some(cwd) = cwd {
+        Some(format!("[in {}]", bounded(cwd, MAX_SUBJECT_CHARS)))
+    } else {
+        event.get("locations").and_then(Value::as_array).map(|paths| {
+            paths.iter().filter_map(Value::as_str).take(3)
+                .map(|path| bounded(path, MAX_SUBJECT_CHARS)).collect::<Vec<_>>().join(", ")
+        }).filter(|paths| !paths.is_empty())
+    };
+    if let Some(detail) = detail {
+        line.push_str(&format!("\n      {detail}"));
+    }
+    Some(line)
 }
 
 /// The longest subject a line shows, in characters. The runtime caps it at
@@ -696,6 +736,65 @@ mod tests {
             "isError": false, "durationMs": 2, "resultStatus": "did not run"
         }));
         assert_eq!(line.as_deref(), Some("  ! git status (2ms) · did not run"));
+    }
+
+    #[test]
+    fn external_agent_equal_input_is_omitted_after_sanitizing() {
+        for (title, input) in [("printf hello", "printf hello"), ("printf\thello", "printf hello")] {
+            let line = describe(&json!({
+                "type": "agentProgress", "kind": "tool_call", "toolCallId": "one",
+                "title": title, "input": input, "status": "in_progress"
+            }));
+            assert_eq!(line.as_deref(), Some("  ▸ printf hello (external agent)"));
+        }
+    }
+
+    #[test]
+    fn external_agent_equal_input_leaves_directory_only() {
+        let line = describe(&json!({
+            "type": "agentProgress", "kind": "tool_call", "toolCallId": "one",
+            "title": "pwd", "input": "pwd", "cwd": "/elsewhere", "status": "in_progress"
+        }));
+        assert_eq!(line.as_deref(), Some("  ▸ pwd (external agent)\n      [in /elsewhere]"));
+    }
+
+    #[test]
+    fn external_agent_different_input_is_compared_before_cutting() {
+        for cwd in [None, Some("/elsewhere")] {
+            let mut event = json!({
+                "type": "agentProgress", "kind": "tool_call", "toolCallId": "one",
+                "title": "exit 3", "input": "sh -c 'exit 3'", "status": "in_progress"
+            });
+            if let Some(cwd) = cwd { event["cwd"] = json!(cwd); }
+            let suffix = if cwd.is_some() { "  [in /elsewhere]" } else { "" };
+            assert_eq!(describe(&event).unwrap(), format!("  ▸ exit 3 (external agent)\n      sh -c 'exit 3'{suffix}"));
+        }
+        let prefix = "x".repeat(80);
+        let event = json!({
+            "type": "agentProgress", "kind": "tool_call", "toolCallId": "one",
+            "title": format!("{prefix}a"), "input": format!("{prefix}b"), "status": "in_progress"
+        });
+        assert_eq!(describe(&event).unwrap(), format!("  ▸ {prefix}… (external agent)\n      {prefix}…"));
+    }
+
+    #[test]
+    fn external_agent_constructed_command_and_read_lines() {
+        let mut lines = Vec::new();
+        for (id, title, input, locations, status) in [
+            ("one", "printf 'activity-one\\n'", Some("printf 'activity-one\\n'"), None, "completed"),
+            ("two", "exit 3", Some("sh -c 'exit 3'"), None, "failed"),
+            ("three", "Read file 'CHANGELOG.md'", None, Some(vec!["CHANGELOG.md"]), "completed"),
+        ] {
+            lines.push(describe(&json!({
+                "type": "agentProgress", "kind": "tool_call", "toolCallId": id,
+                "title": title, "input": input, "locations": locations, "status": "in_progress"
+            })).unwrap());
+            lines.push(describe(&json!({
+                "type": "agentProgress", "kind": "tool_call", "toolCallId": id,
+                "title": title, "status": status
+            })).unwrap());
+        }
+        assert_eq!(lines.join("\n"), "  ▸ printf 'activity-one\\n' (external agent)\n  ✓ printf 'activity-one\\n' (external agent)\n  ▸ exit 3 (external agent)\n      sh -c 'exit 3'\n  ✗ exit 3 (external agent)\n  ▸ Read file 'CHANGELOG.md' (external agent)\n      CHANGELOG.md\n  ✓ Read file 'CHANGELOG.md' (external agent)");
     }
 
     /// ACP progress names a call by title only; its end is one line.

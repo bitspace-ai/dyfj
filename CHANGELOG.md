@@ -32,6 +32,25 @@ README are tracked separately in its Revision history section.
   `priorMessagesLeftOut > 0`, and rendering `reason not reported` for an
   unknown code) before any `agentProgress` event or text output of that turn.
 
+- **External-agent tool activity (`BIT-925`).** Identified tool calls now
+  show a start line in the Rust REPL, with bounded command/directory or path
+  summaries when available, and pair their completion and evidence by call ID.
+  Progress uses merged titles and skips output-only patches, keeping running
+  calls named. The REPL omits input equal to the title after display sanitizing
+  and before cutting, retaining a directory-only line when supplied. The
+  runtime omits the workspace directory (ignoring trailing slashes), makes
+  interior paths relative unless they contain a `..` component, and removes
+  workspace prefixes followed by `/` from displayed titles; outside paths and
+  paths equal to the workspace keep their received spelling before display
+  sanitizing and cutting. Full summary values pass raw, sanitized and history
+  credential checks before shortening; matching summaries are withheld.
+  Scrubbed titles and names still matching the history check become
+  `[withheld]`, and matching tool kinds are omitted. Calls without usable IDs
+  send no summary fields. MCP arguments and tool output stay out of display
+  progress. The TypeScript client continues
+  to use progress only for its spinner. Frames remain display only, with no
+  change to recorded tool evidence or receipts.
+
 - **Coordinator dispatch tools on the Codex route (`BIT-928`).** Loopback
   depth-0 sessions with `[dispatch]` configured receive `dispatch_start`,
   `dispatch_wait`, `dispatch_read` and `dispatch_send` through the Workbench
