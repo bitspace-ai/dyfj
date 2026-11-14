@@ -112,6 +112,9 @@ impl StatusLine {
     }
 
     fn observe_agent_progress(&mut self, event: &Value, now: Instant) {
+        if event.get("kind").and_then(Value::as_str) == Some("plan") {
+            return;
+        }
         // With only legacy frames there is no stable identity: preserve the
         // older runtime's status behavior, including titleless updates.
         if activity::agent_progress_id(event).is_none() && self.agent_calls.is_empty() {
@@ -274,6 +277,16 @@ mod tests {
 
     fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
+    }
+
+    #[test]
+    fn plan_preserves_legacy_running_call() {
+        let t0 = Instant::now();
+        let mut line = StatusLine::new(true, t0);
+        line.observe_event(&json!({"type":"agentProgress", "kind":"tool_call", "title":"Editing files", "status":"in_progress"}), t0);
+        let before = line.text(t0);
+        line.observe_event(&json!({"type":"agentProgress", "kind":"plan", "plan":{"steps":[]}}), t0);
+        assert_eq!(line.text(t0), before);
     }
 
     #[test]

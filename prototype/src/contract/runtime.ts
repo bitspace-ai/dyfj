@@ -460,7 +460,22 @@ export type WorkbenchRuntimeEvent =
     /** First three paths, each at most 240 bytes including any ellipsis. */
     locations?: string[];
     inputWithheld?: boolean;
-    kind: "thought" | "tool_call";
+    /** Whole display plan: at most 20 steps, each content at most 160 UTF-8 bytes. */
+    plan?: { steps: { content: string; status: "pending" | "in_progress" | "completed" }[]; stepsOmitted?: number };
+    /** At most five paths (240 bytes each) and forty signed lines (200 bytes each). */
+    fileChanges?: {
+      files: {
+        path: string;
+        change: "add" | "delete" | "update";
+        added: number;
+        removed: number;
+        lines?: string[];
+        linesOmitted?: number;
+        withheld?: true;
+      }[];
+      filesOmitted?: number;
+    };
+    kind: "thought" | "tool_call" | "plan";
     title?: string;
     name?: string;
     status?: string;

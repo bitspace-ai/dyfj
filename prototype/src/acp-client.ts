@@ -116,7 +116,7 @@ export interface AcpPermissionVerdict {
   source: "operator" | "policy";
 }
 
-import { toolCallProgress, type AcpProgressUpdate, type ToolProgressState } from "./runners/acp/tool-progress.ts";
+import { agentProgress, type AcpProgressUpdate, type AcpProgressState } from "./runners/acp/tool-progress.ts";
 export type { AcpProgressUpdate } from "./runners/acp/tool-progress.ts";
 
 /** Optional, currently unstable ACP prompt usage. Values are agent-reported. */
@@ -1311,7 +1311,7 @@ class LiveAcpSession implements AcpSessionHandle {
       let text = "";
       let usageSnapshot: AcpUsageSnapshot | undefined;
       const toolEvidence = newAcpToolEvidenceAccumulator();
-      const toolProgressStates = new Map<string, ToolProgressState>();
+      const progressState: AcpProgressState = { tools: new Map() };
       let updateCount = 0;
       let pendingUpdate = session.nextUpdate();
       while (true) {
@@ -1398,7 +1398,7 @@ class LiveAcpSession implements AcpSessionHandle {
           }
           applyAcpToolPatch(toolEvidence, updateRecord);
           try {
-            const progress = toolCallProgress(updateRecord, toolEvidence, toolProgressStates, this.#profile.workspace);
+            const progress = agentProgress(updateRecord, toolEvidence, progressState, this.#profile.workspace);
             if (progress !== null) deliverProgress(input.onProgress, progress);
           } catch {
             // Display construction, like its observer, must not fail a turn.

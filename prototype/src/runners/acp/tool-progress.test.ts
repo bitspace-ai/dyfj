@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { it } from "node:test";
 import { applyAcpToolPatch, type AcpToolEvidenceAccumulator } from "../../acp-tool-evidence.ts";
+import * as progressModule from "./tool-progress.ts";
 import { toolCallProgress, type ToolProgressState } from "./tool-progress.ts";
 
 function turn(workspace = "/workspace") {
@@ -101,3 +102,96 @@ for (const [label, toolCallId] of [["empty", ""], ["oversized", "x".repeat(129)]
     }
   });
 }
+
+function diff(path: string, oldText: string | null, newText: string, kind = "update") {
+  return { type: "diff", path, oldText, newText, _meta: { kind } };
+}
+
+it("edit of six files sends five with one omitted", () => {
+  const frame = turn()({ kind: "edit", content: Array.from({ length: 6 }, (_, i) =>
+    diff(`/workspace/${i}.ts`, null, Array.from({ length: 20 }, () => "line").join("\n"), "add")) });
+  assert.strictEqual(frame?.fileChanges?.files.length, 5);
+  assert.strictEqual(frame.fileChanges.filesOmitted, 1);
+});
+
+it("edit of one hundred lines sends forty and omits sixty", () => {
+  const frame = turn()({ kind: "edit", content: Array.from({ length: 5 }, (_, i) =>
+    diff(`/workspace/${i}.ts`, null, Array.from({ length: 20 }, () => "line").join("\n"), "add")) });
+  assert.strictEqual(frame?.fileChanges?.files.flatMap(f => f.lines ?? []).length, 40);
+  assert.strictEqual(frame.fileChanges.files.reduce((n, f) => n + (f.linesOmitted ?? 0), 0), 60);
+});
+
+it("edit withholds whole text including credentials past line forty", () => {
+  for (const prefix of ["", "ordinary\n".repeat(45)]) {
+    const update = turn();
+    const frames = [
+      update({ kind: "edit", content: [diff("/workspace/a.ts", null, prefix + "TOKEN=made-up-925", "add")] }),
+      update({ sessionUpdate: "tool_call_update", status: "completed" }),
+    ];
+    assert.deepStrictEqual(frames[0]?.fileChanges?.files, [{
+      path: "a.ts", change: "add", added: prefix ? 46 : 1, removed: 0, withheld: true,
+    }]);
+    assert.ok(!JSON.stringify(frames).includes("made-up-925"));
+  }
+});
+
+it("edit omits credential paths and skips malformed entries", () => {
+  const frame = turn()({ kind: "edit", content: [
+    diff("TOKEN=made-up-925", null, "value", "add"),
+    diff("/workspace/safe.ts", "old\n", "new\n"),
+    { type: "diff", path: "bad", oldText: 1, newText: "new" },
+  ] });
+  assert.deepStrictEqual(frame?.fileChanges, {
+    files: [{ path: "safe.ts", change: "update", added: 1, removed: 1, lines: ["-old", "+new"] }],
+    filesOmitted: 1,
+  });
+});
+
+it("MCP content and unidentified or non-edit calls have no file changes", () => {
+  for (const patch of [
+    { title: "mcp.fixture.run" }, { toolCallId: "" }, { toolCallId: "x".repeat(129) }, { kind: "read" },
+  ]) {
+    assert.strictEqual(turn()({ kind: "edit", content: [diff("a", null, "new", "add")], ...patch })?.fileChanges, undefined);
+  }
+});
+
+it("late edit content waits for a changed frame and is sent once", () => {
+  const update = turn();
+  update({ kind: "edit" });
+  assert.strictEqual(update({ kind: "edit", content: [diff("a", "", "new")] }), null);
+  const next = update({ status: "completed" });
+  assert.strictEqual(next?.fileChanges?.files[0].added, 1);
+  assert.strictEqual(update({ status: "failed" })?.fileChanges, undefined);
+});
+
+it("root and empty workspaces preserve title slashes", () => {
+  for (const workspace of ["/", "", "///"]) {
+    assert.strictEqual(turn(workspace)({ title: "Read /src/a.ts" })?.title, "Read /src/a.ts");
+  }
+});
+
+it("checks displayed title after workspace removal", () => {
+  assert.strictEqual(turn("/workspace")({ title: "pass/workspace/word=made-up-925" })?.title, "[withheld]");
+});
+
+it("plan bounds entries and UTF-8 content and omits invalid steps", () => {
+  const entries = Array.from({ length: 25 }, () => ({ content: "🦀".repeat(50), status: "pending" }));
+  const frame = progressModule.planProgress({ entries });
+  assert.strictEqual(frame?.plan?.steps.length, 20);
+  assert.strictEqual(frame.plan.stepsOmitted, 5);
+  assert.strictEqual(frame.plan.steps[0].content, "🦀".repeat(39) + "…");
+  assert.ok(Buffer.byteLength(frame.plan.steps[0].content) <= 160);
+  assert.deepStrictEqual(progressModule.planProgress({ entries: [
+    { content: "ok", status: "completed" }, { content: 3, status: "pending" },
+    { content: "bad", status: "unknown" },
+  ] })?.plan, { steps: [{ content: "ok", status: "completed" }], stepsOmitted: 2 });
+  assert.strictEqual(progressModule.planProgress({ entries: null }), null);
+});
+
+it("plan checks whole credential content before cutting", () => {
+  const frame = progressModule.planProgress({ entries: [{
+    content: "x".repeat(200) + " TOKEN=made-up-925", status: "in_progress", priority: "medium",
+  }] });
+  assert.deepStrictEqual(frame, { kind: "plan", plan: { steps: [{ content: "[withheld]", status: "in_progress" }] } });
+  assert.ok(!JSON.stringify(frame).includes("made-up-925"));
+});

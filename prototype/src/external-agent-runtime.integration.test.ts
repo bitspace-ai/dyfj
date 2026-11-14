@@ -5015,3 +5015,65 @@ describe("tool activity frames", () => {
 });
   });
 });
+
+describe("plan and edit progress fixtures", () => {
+  async function run(prompt: string) {
+    const h = createHarness();
+    const frames: Array<Record<string, unknown>> = [];
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn", prompt, routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" }, workspaceRoot: process.cwd(),
+      sessionId: "01ACPSESSION000000000000925",
+      frames: { onRuntimeEvent: (event) => { if (event.type === "agentProgress") frames.push(event); } },
+    }, { runAgent: async (input) => ({ ...await runAcpAgent(input), elapsedMs: 1 }) });
+    return { h, frames, result };
+  }
+  it("fixture plan sends exactly first and changed plan", async () => {
+    const { frames } = await run("FIXTURE_PLAN_PROGRESS");
+    assert.deepStrictEqual(frames.map(f => f.plan), [
+      { steps: [{ content: "Inspect file", status: "completed" }, { content: "Edit file", status: "in_progress" }, { content: "Create file", status: "pending" }] },
+      { steps: [{ content: "Inspect file", status: "completed" }, { content: "Edit file", status: "completed" }, { content: "Create file", status: "pending" }] },
+    ]);
+  });
+  it("fixture edit aggregates two hunks without context and adds a file", async () => {
+    const { frames } = await run("FIXTURE_EDIT_PROGRESS");
+    assert.strictEqual(frames.length, 2);
+    assert.deepStrictEqual(frames[0].fileChanges, { files: [
+      { path: "src/a.ts", change: "update", added: 3, removed: 2, lines: ["-old", "+new", "+extra", "-before", "+after"] },
+      { path: "src/new.ts", change: "add", added: 1, removed: 0, lines: ["+created"] },
+    ] });
+    assert.strictEqual(frames[1].fileChanges, undefined);
+  });
+  it("fixture edit preserves recorded evidence and receipt baseline", async () => {
+    const { h, result } = await run("FIXTURE_EDIT_PROGRESS");
+    const record = {
+      receipt: result.receipt.replace(/Trace: [^\n]+/, "Trace: <trace>").replace(process.cwd(), "<workspace>"),
+      evidence: result.runner.toolEvidence,
+      tools: h.events.filter(e => e.event_type === "tool_call").map(e => ({
+        tool_name: e.tool_name, tool_arguments: e.tool_arguments, tool_result: e.tool_result, tool_is_error: e.tool_is_error,
+      })),
+    };
+    assert.deepStrictEqual(record, {
+  "receipt": "External-agent turn receipt\nSession: 01ACPSESSION000000000000925\nTrace: <trace>\nRunner: fixture over ACP v1\nACP stop reason: end_turn\nContinuity: new\nNative durable resume: not-required\nPrior external session: not recorded\nExternal session: fixture-1\nACP tool evidence: 0 recorded, 0 partial, 1 rejected (missing_raw_input) of 1\nWorkspace: <workspace>\nTransport: local_stdio\nAccess route: local_sidecar\nRoute evidence: profile_declared\nCost basis: local_free\nToolchain directories: 0\nOutcome: stop\nElapsed: 1 ms\nEvidence: Workbench observed the ACP exchange; the agent's inner state is opaque.",
+  "evidence": {
+    "status": "partial",
+    "observedCalls": 1,
+    "recordedCalls": 0,
+    "partialCalls": 0,
+    "rejectedCalls": 1,
+    "partialReasons": {},
+    "rejectedReasons": {
+      "missing_raw_input": 1
+    }
+  },
+  "tools": [
+    {
+      "tool_name": "acp.history_unavailable",
+      "tool_arguments": "{\"outcome\":\"rejected\",\"reason\":\"missing_raw_input\",\"toolCallId\":\"edit-1\",\"toolName\":\"acp.edit\",\"title\":\"Editing files\",\"kind\":\"edit\",\"status\":\"completed\"}",
+      "tool_result": "",
+      "tool_is_error": true
+    }
+  ]
+});
+  });
+});

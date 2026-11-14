@@ -205,6 +205,40 @@ const app = agent({ name: "dyfj-acp-fixture" })
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("");
+      if (prompt.includes("FIXTURE_PLAN_PROGRESS")) {
+        const entries = [
+          { content: "Inspect file", status: "completed" as const, priority: "medium" as const },
+          { content: "Edit file", status: "in_progress" as const, priority: "medium" as const },
+          { content: "Create file", status: "pending" as const, priority: "medium" as const },
+        ];
+        for (const plan of [entries, entries, entries.map((entry, i) =>
+          i === 1 ? { ...entry, status: "completed" as const } : entry)]) {
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId, update: { sessionUpdate: "plan", entries: plan },
+          });
+        }
+        return { stopReason: "end_turn" };
+      }
+      if (prompt.includes("FIXTURE_EDIT_PROGRESS")) {
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "tool_call", toolCallId: "edit-1",
+            title: "Editing files", kind: "edit", status: "in_progress",
+            content: [
+              { type: "diff", path: "src/a.ts", oldText: "context\nold\ntail\n",
+                newText: "context\nnew\nextra\ntail\n", _meta: { kind: "update" } },
+              { type: "diff", path: "src/a.ts", oldText: "second\nbefore\nend\n",
+                newText: "second\nafter\nend\n", _meta: { kind: "update" } },
+              { type: "diff", path: "src/new.ts", oldText: null,
+                newText: "created\n", _meta: { kind: "add" } },
+            ] },
+        });
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: { sessionUpdate: "tool_call_update", toolCallId: "edit-1", status: "completed" },
+        });
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_TOOL_ACTIVITY")) {
         const secret = "sk-" + "a".repeat(24);
         const credential = prompt.includes("CONTROL") ? `sk-${String.fromCharCode(27)}${"a".repeat(24)}` : secret;
