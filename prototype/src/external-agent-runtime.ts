@@ -118,6 +118,7 @@ import {
   refuseCodexCommandRules,
   withholdSavedApprovals,
 } from "./codex-home-config.ts";
+import { operatorAuthorizedToolchainDirectory, projectOperatorContext } from "./runners/acp/operator-context.ts";
 import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
 import {
   ensurePrivateDirectory,
@@ -160,6 +161,7 @@ export interface ExternalAgentRuntimeInput
   dispatchRecord?: DispatchRecord;
   onSessionRecorded?: (sessionId: string) => void | Promise<void>;
   codexInteractiveIdleSeconds?: number;
+  codexOperatorContext?: boolean;
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
@@ -233,53 +235,6 @@ async function operatorAuthorizedExecutable(pathValue: string | undefined) {
   throw new DomainError("Codex ACP executable is unavailable");
 }
 
-async function operatorAuthorizedToolchainDirectory(
-  pathValue: string | undefined,
-): Promise<string | undefined> {
-  if (pathValue === undefined || pathValue === "") return undefined;
-  if (
-    !pathValue.startsWith("/") || pathValue.includes(",") ||
-    pathValue.includes(":")
-  ) {
-    throw new DomainError(
-      "Codex ACP requires an absolute, delimiter-safe toolchain directory",
-    );
-  }
-  if (hasDotPathComponent(pathValue)) {
-    throw new DomainError(
-      "Codex ACP toolchain path must not contain dot components",
-    );
-  }
-  if (/^\/+$/u.test(pathValue)) {
-    throw new DomainError("Codex ACP toolchain directory is unavailable");
-  }
-  try {
-    const noFollowPath = pathValue.replace(/\/+$/, "");
-    const info = await lstat(noFollowPath);
-    if (info.isDirectory() && !info.isSymbolicLink()) {
-      const canonical = await realpath(noFollowPath);
-      if (canonical.includes(",") || canonical.includes(":")) {
-        throw new Error("canonical path contains an unsupported delimiter");
-      }
-      const canonicalInfo = await lstat(canonical);
-      if (
-        !canonicalInfo.isDirectory() || canonicalInfo.isSymbolicLink() ||
-        (process.platform !== "win32" &&
-          (canonicalInfo.uid !== process.getuid?.() ||
-            (canonicalInfo.mode & 0o100) === 0 ||
-            (canonicalInfo.mode & 0o022) !== 0)) ||
-        canonicalInfo.dev !== info.dev || canonicalInfo.ino !== info.ino
-      ) {
-        throw new Error("canonical directory authority changed");
-      }
-      return canonical;
-    }
-  } catch {
-    // Use the fixed diagnostic below instead of disclosing the supplied path.
-  }
-  throw new DomainError("Codex ACP toolchain directory is unavailable");
-}
-
 async function operatorAuthorizedRustupHomeDirectory(
   pathValue: string | undefined,
 ): Promise<string | undefined> {
@@ -341,6 +296,7 @@ export interface CodexChatGptProfileOptions {
   modelName?: string;
   reasoningEffort?: CodexReasoningEffort;
   fast?: boolean;
+  operatorContext?: boolean;
   /** The Workbench tool bridge this session's Codex reaches; absent, none. */
   workbenchTools?: CodexWorkbenchToolsOptions;
 }
@@ -464,6 +420,9 @@ export async function codexChatGptProfile(
     0o600,
     "Codex ACP private configuration is unavailable",
   );
+  const operatorContext = await projectOperatorContext(
+    operatorHome, isolatedHome, codexHome, options.operatorContext ?? true,
+  );
   const codexConfig: Record<string, unknown> = {
     model: options.modelName ?? "gpt-6.1-terra",
     model_reasoning_effort: options.reasoningEffort ?? "medium",
@@ -506,6 +465,7 @@ export async function codexChatGptProfile(
     sessionUpdatePolicy: "long_running",
     protocolMessagePolicy: "long_running",
     toolchainDirectoryCount,
+    operatorContext,
   };
 }
 
@@ -732,6 +692,9 @@ function receiptText(input: {
       `ACP cumulative session cost: ${input.result.usageSnapshot.cost.amount} ${input.result.usageSnapshot.cost.currency}`,
     ]),
     `Toolchain directories: ${input.profile.toolchainDirectoryCount ?? 0}`,
+    ...(input.profile.operatorContext === undefined ? [] : [
+      `Operator context: ${input.profile.operatorContext.join(", ") || "none"}`,
+    ]),
     `Outcome: ${input.result.stopReason}`,
     `Elapsed: ${input.result.elapsedMs} ms`,
     ...(input.sessionProjectionSkipped
@@ -875,6 +838,7 @@ export async function runExternalAgentWorkbenchRuntime(
       modelName: modelSlug?.slice("codex-chatgpt/".length),
       fast: input.routingOptions?.fast,
       reasoningEffort: input.routingOptions?.reasoningEffort,
+      operatorContext: input.codexOperatorContext,
       workbenchTools: bridged?.workbenchTools,
     }, authContext);
   } catch (error) {

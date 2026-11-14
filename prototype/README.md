@@ -488,6 +488,54 @@ cd prototype
 npm run codex-chatgpt-login
 ```
 
+By default, `[codex] operator_context = true` projects two operator-owned
+sources into the dedicated `home` directory: a mode `0600` copy of
+`~/.codex/AGENTS.md` at `home/.codex/AGENTS.md`, and a symbolic link from
+`home/.agents/skills` to the canonical `~/.agents/skills` directory. The global
+instructions copy is refreshed when each Codex turn's profile is built, only
+when its content differs; an agent session already running keeps what it
+loaded. Skills are reached through the link, so the operator's skill files
+are the ones used. Workbench does not read their content during projection.
+The link points at the operator's own skills directory; only that
+directory itself is checked. The link does not make the skills read-only. A write to them is subject
+to the same sandbox and approval rules as any write outside the workspace.
+
+The `AGENTS.md` file in the dedicated Codex home and the symbolic link
+named `skills` in the dedicated home's `.agents` directory belong to
+Workbench. Workbench overwrites or removes them: a file at the
+instructions destination or a link at the skills destination placed
+there by hand is replaced on the first Codex turn, or removed when the
+setting is off or the source is missing or unacceptable.
+
+Sources must resolve to account-owned files/directories without group or other
+write permission; instructions must be a regular file of at most 65,536 bytes,
+and skills pass the toolchain directory checks, including owner search
+permission and delimiter-safe canonical paths. Missing or unacceptable sources
+remove their projections without failing the turn.
+When a destination in the dedicated home cannot be written or removed,
+or the dedicated home's `.agents` directory fails the private-directory
+check, the Codex turn fails with a fixed diagnostic. This check runs
+whenever that `.agents` directory exists, with the setting on or off.
+A real file or directory at the skills destination is left untouched and
+is not counted as projected.
+Set `[codex] operator_context = false` to remove the instructions copy and the
+skills link on the next profile build. Changes to which kinds are projected
+replace a retained agent session; instruction content changes alone do not.
+The receipt reports kinds only, such as `Operator context: instructions, skills`
+or `Operator context: none`.
+
+The operator's Codex configuration, hooks, saved rules, memories and sign-in
+are still not used, nor are entries from the operator's `.codex/skills`.
+The dedicated home retains its own configuration and separately established
+sign-in.
+
+The maintainer verified in an acceptance test with a real agent session
+on the `codex-chatgpt` route with adapter 2.5.0 that the session
+receives the global instructions and shared skills, and that the
+instructions copy follows an edit. Disabling the setting and the
+`Operator context:` receipt line are covered by tests with temporary
+homes only.
+
 The login runs the adapter on `DYFJ_NODE_PATH` when it is set, and otherwise on the Node running the script.
 
 The Workbench tool bridge (`src/workbench-tool-bridge.ts`) gives Codex the

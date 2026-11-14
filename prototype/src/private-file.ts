@@ -12,7 +12,7 @@ import { DomainError } from "./contract/mod.ts";
  */
 export async function writePrivateFile(
   path: string,
-  content: string,
+  content: string | Uint8Array,
   mode: number,
   diagnostic: string,
 ): Promise<void> {

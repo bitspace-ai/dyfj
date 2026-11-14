@@ -202,6 +202,7 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * ([codex] interactive_idle_seconds), resolved at the boundary.
    */
   codexInteractiveIdleSeconds?: number;
+  codexOperatorContext?: boolean;
   /**
    * Set by the engine, never by a caller: the session's recorded model this
    * resumed turn was routed to because it named none (`session-model.ts`).
