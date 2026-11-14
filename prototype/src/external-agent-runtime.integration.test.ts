@@ -4712,13 +4712,66 @@ describe("reconstructed tool history", () => {
     });
   }
 
+  async function shortenedToolCallLeftOut(
+    h: Harness,
+    priorMessages: WorkbenchMessage[],
+    expectedCause: string,
+  ): Promise<void> {
+    let promptSeen = "";
+    const result = await runExternalAgentWorkbenchRuntime(h, {
+      mode: "turn",
+      prompt: "what did the notes say?",
+      routingOptions: {},
+      runner: { kind: "acp", profile: "fixture" },
+      sessionId: "01ACPSESSION000000000000120",
+      workspaceRoot: process.cwd(),
+      conversationMessages: priorMessages,
+    }, {
+      runAgent: (agentInput) => {
+        promptSeen = agentInput.prompt;
+        return Promise.resolve({
+          text: "continued with text kept and tool call left out",
+          stopReason: "stop",
+          acpStopReason: "end_turn",
+          protocolVersion: 1,
+          externalSessionId: "fixture-shortened-tool",
+          capabilities: [],
+          elapsedMs: 1,
+        });
+      },
+    });
+    assert.strictEqual(result.stopReason, "stop");
+    assertContains(promptSeen, "This transcript is shortened.");
+    assertContains(
+      promptSeen,
+      "Prior messages left out: 1. Prior messages shown: 2.",
+    );
+    assertContains(
+      promptSeen,
+      "Tool calls left out in shown part: 1. Tool calls shown: 0.",
+    );
+    assertContains(promptSeen, "Operator (history):\n  | check the project notes");
+    assertContains(promptSeen, "Agent (history):\n  | reading them now");
+    assertContains(promptSeen, "[Tool calls left out: 1]");
+    assertNotContains(promptSeen, "Tool request (history)");
+    assertNotContains(promptSeen, "Tool result (history)");
+    assert.partialDeepStrictEqual(asRecord(result.runner.continuity), {
+      state: "reconstructed",
+      priorMessagesProjected: 2,
+      toolExchangesProjected: 0,
+      priorMessagesLeftOut: 1,
+      toolCallsLeftOut: 1,
+      leftOutCauses: [expectedCause],
+    });
+  }
+
   it("empty tool metadata fails before model work while oversized tool metadata shortens", async () => {
     await refusedBeforeModelWork(
       createHarness(),
       toolHistory({ requestId: "" }),
       "malformed tool history",
     );
-    await shortenedWithoutTranscript(
+    await shortenedToolCallLeftOut(
       createHarness(),
       toolHistory({ requestId: "x".repeat(MAX_HISTORY_TOOL_CALL_ID_BYTES + 1) }),
       "byte_limit",
@@ -4728,7 +4781,7 @@ describe("reconstructed tool history", () => {
       toolHistory({ requestName: "" }),
       "malformed tool history",
     );
-    await shortenedWithoutTranscript(
+    await shortenedToolCallLeftOut(
       createHarness(),
       toolHistory({ requestName: "x".repeat(MAX_HISTORY_TOOL_NAME_BYTES + 1) }),
       "byte_limit",
@@ -4736,7 +4789,7 @@ describe("reconstructed tool history", () => {
   });
 
   it("cyclic and over-deep arguments fail before model work while oversized arguments shorten", async () => {
-    await shortenedWithoutTranscript(
+    await shortenedToolCallLeftOut(
       createHarness(),
       toolHistory({
         arguments: { value: "x".repeat(MAX_HISTORY_TOOL_ARGUMENTS_BYTES) },
@@ -4766,7 +4819,7 @@ describe("reconstructed tool history", () => {
 
   it("an oversized tool field shortens the transcript and runs the turn", async () => {
     const h = createHarness();
-    await shortenedWithoutTranscript(
+    await shortenedToolCallLeftOut(
       h,
       toolHistory({ result: "x".repeat(MAX_HISTORY_TOOL_RESULT_BYTES + 1) }),
       "byte_limit",

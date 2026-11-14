@@ -618,6 +618,48 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Two-pass text-first transcript reconstruction and unlabelled complete
+  transcripts on external-agent sessions (`BIT-939`).**
+  `reconstructAcpContinuityPrompt` (`prototype/src/external-agent-runtime.ts`,
+  with two-pass selection helpers in
+  `prototype/src/runners/acp/continuity-reconstruction.ts`) selects operator and
+  agent text before tool calls so recorded commands on a busy turn no longer
+  crowd out the operator's request for that turn or earlier conversation:
+  - **Complete transcripts carry no shortened label.** When
+    `turnCapDroppedMessages` is zero and the complete, unlabelled transcript
+    passes every pairing, byte, argument-complexity, and credential-shape check
+    and fits `MAX_RECONSTRUCTED_PRIOR_MESSAGES` (32) and the 60,000-byte ACP
+    prompt limit, the whole history is sent with no shortened label regardless
+    of the size of its oldest exchange, including when the operator's prompt
+    leaves less room than the shortened label would take.
+  - **Text pass, then tool pass.** Otherwise a newest-to-oldest text pass keeps
+    the newest unbroken run of operator and agent text that fits 32 prior
+    messages (tool results and agent messages with tool calls and empty text do
+    not count), `MAX_HISTORY_MESSAGE_BYTES` (32 KiB), and the 60,000-byte
+    prompt limit measured with that text and no tool calls, defining the kept
+    span and leaving out everything older. Structural pairing is checked across
+    the whole kept span, and a newest-to-oldest tool pass then adds whole call
+    groups inside the kept span while total prior messages shown stay at most
+    32, per-field byte bounds hold, and the prompt with that group added fits
+    the 60,000-byte limit. A session whose text fills the 32-message bound
+    sends no tool calls.
+  - **Marks, header label, and receipt count.** Inside the kept span, each run
+    of one or more consecutive left-out call groups with no shown text between
+    them is marked at that place by `[Tool calls left out: <n>]` with no text,
+    argument, result, name, or id from any left-out call. When any tool call in
+    the kept span was left out, `shortenedTranscriptHeaderLines` adds
+    `Tool calls left out in shown part: <n>. Tool calls shown: <m>.`,
+    `ReconstructedAcpContinuity` reports `toolCallsLeftOut`, and when above
+    zero `runner.continuity` adds `toolCallsLeftOut` and the receipt text adds
+    `, <n> tool calls left out in shown part` (both omitted when zero).
+    `leftOutCauses` keeps its existing codes (`turn_cap`, `message_limit`,
+    `byte_limit`, `prompt_limit`) without duplicates, and every call group
+    reached by the tool pass still runs malformed-record, argument-complexity,
+    and credential-shape checks before prompt-limit measurement while unreached
+    call groups are neither rendered nor sent. Neither the Rust REPL, the
+    TypeScript client, the turn footers, nor `continuityReconstructing`
+    changes.
+
 - **Shortened reconstructed transcripts on external-agent sessions (`BIT-924`).**
   When a session's external-agent handle is gone and prior messages exceed a
   reconstruction size limit, `reconstructAcpContinuityPrompt` now walks prior
