@@ -159,6 +159,7 @@ function progressSpinnerLabel(event: Record<string, unknown>): string | null {
     : null;
   const kind = nested?.kind ?? event.kind;
   if (kind === "thought") return "thinking…";
+  if (kind === "plan") return "planning…";
   return sanitizeSpinnerLabel(nested?.title ?? event.title) ??
     sanitizeSpinnerLabel(nested?.name ?? event.name) ??
     sanitizeSpinnerLabel(nested?.status ?? event.status);

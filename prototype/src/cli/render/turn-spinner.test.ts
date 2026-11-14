@@ -189,6 +189,22 @@ describe("spinnerGuardedTurnHandlers", () => {
     assert.deepStrictEqual(stderr, []);
   });
 
+  it("plan and file changes print nothing and plan labels planning", () => {
+    const calls: string[] = [];
+    const { io, stderr, stdout } = fakeIo();
+    const spinner = stubSpinner(calls);
+    const output = createTurnOutputHandlers(cfg(), io);
+    const handlers = spinnerGuardedTurnHandlers(spinner, output, io,
+      () => ({ decision: "deny" as const, reason: "n/a" }));
+    handlers.onEvent({ type: "agentProgress", kind: "plan", title: "not a tool",
+      plan: { steps: [{ content: "Edit", status: "pending" }] } });
+    handlers.onEvent({ type: "agentProgress", kind: "tool_call", title: "Editing files",
+      fileChanges: { files: [{ path: "a", change: "add", added: 1, removed: 0, lines: ["+new"] }] } });
+    assert.deepStrictEqual(stdout, []);
+    assert.deepStrictEqual(stderr, []);
+    assert.deepStrictEqual(calls, ["label:planning…", "start", "label:Editing files", "start"]);
+  });
+
   it("new tool activity fields only label the spinner", () => {
     const calls: string[] = [];
     const { io, stderr, stdout } = fakeIo();

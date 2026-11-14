@@ -643,6 +643,18 @@ mod tests {
     }
 
     #[test]
+    fn plan_keeps_evidence_unchanged() {
+        let mut ledger = Ledger::default();
+        ledger.observe(&json!({"type":"agentProgress", "kind":"tool_call", "toolCallId":"a",
+            "title":"Editing files", "status":"in_progress"}), 0);
+        let before = ledger.summary(1000);
+        let calls = ledger.every_call();
+        ledger.observe(&json!({"type":"agentProgress", "kind":"plan", "plan":{"steps":[]}}), 1);
+        assert_eq!(ledger.summary(1000), before);
+        assert_eq!(ledger.every_call(), calls);
+    }
+
+    #[test]
     fn identified_activity_prints_start_input_end_and_counts_one_call() {
         let start = json!({"type":"agentProgress", "kind":"tool_call", "toolCallId":"a",
             "title":"Run greeting", "toolKind":"execute", "status":"in_progress",

@@ -11,6 +11,25 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **External-agent plans and file changes (`BIT-925`).** Display-only progress
+  carries deduplicated plans (20 steps, 160 UTF-8 bytes per content) and
+  identified non-MCP edit summaries (five paths at 240 bytes, 40 signed lines
+  per call at 200 bytes each), with omission counts. Credential-shaped plan
+  content becomes `[withheld]`; matching diff text shows path and counts only,
+  with a withholding marker; matching paths are omitted. The Rust REPL shows
+  plans and edit details without counting plans as calls. Edit details
+  arriving on a call's completion frame are not shown. Empty plans with no
+  omission count print nothing, and zero-count updates have no suffix on
+  their path line.
+  The TypeScript
+  client prints no new lines and labels plan activity `planning…`.
+  Root/empty workspace titles retain slashes, and displayed titles pass
+  credential checks after workspace-prefix removal and before cutting.
+  Evidence, receipts, prompts and capabilities are unchanged. The maintainer verified the file-change display in an acceptance test
+  with real agent turns on the `codex-chatgpt` route with adapter 2.5.0.
+  Plan display is covered by fixture tests only; no plan update from a
+  real agent has been observed.
+
 - **Pre-output reconstruction notice on external-agent turns (`BIT-924`).**
   `AcpSessionHandleMap` keeps a bounded in-memory removal record
   (`MAX_ACP_REMOVED_SESSION_RECORDS = 256` Workbench sessions, replacing older

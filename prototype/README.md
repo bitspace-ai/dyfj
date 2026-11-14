@@ -373,7 +373,9 @@ slashes), and paths inside the workspace are relative; outside paths, paths
 equal to the workspace and paths with a `..` component keep their received
 spelling before display sanitizing and cutting. No filesystem resolution is
 performed. Each workspace path followed by `/` is removed from the displayed
-title before cutting. Each summary value is terminal-sanitized and capped at
+title before cutting unless the workspace is root or empty after trimming
+trailing slashes. The displayed title also passes the command-summary
+credential checks before cutting. Each summary value is terminal-sanitized and capped at
 240 UTF-8 bytes, including a trailing `…` when cut. The full command, directory and all
 location paths pass the raw and terminal-sanitized credential checks plus
 `historyTextContainsSecretShape` before workspace shortening or cutting; a
@@ -392,6 +394,60 @@ completion-only scrollback. No output or thought text is added to progress;
 progress is not recorded, replayed or added to the agent prompt or receipt.
 `FIXTURE_TOOL_ACTIVITY` exercises a shell start, two output-only patches, a
 titleless completion, and a read call with locations but no raw input.
+
+Plan updates use `agentProgress.kind: "plan"` with `plan.steps` containing
+only content and status: `pending`, `in_progress` or `completed`. The runtime
+considers the first 20 entries, sanitizes content to 160 UTF-8 bytes including
+any trailing ellipsis, and counts invalid entries and entries beyond 20 in
+`stepsOmitted` (absent at zero). Non-array entries emit nothing. Whole content
+passes the command-summary credential checks before cutting; a match becomes
+`[withheld]`. A plan identical to the previous plan sent emits no frame.
+The Rust REPL prints `  · plan (external agent)`, then `[x]`, `[>]` or
+`[ ]` steps and, when supplied, `… N more steps`. Plans leave its running
+call and evidence summary unchanged. The TypeScript spinner says `planning…`
+and prints no plan lines.
+
+Identified, non-MCP edit calls may carry `fileChanges` once, on the first
+otherwise-emitted frame after diff entries are available. No extra frame is
+sent solely for these changes. Files are grouped by received path in order,
+with up to five displayed paths, each workspace-relative by the locations
+rule and bounded to 240 UTF-8 bytes. Each file has `change` (`add`, `delete`
+or `update`), `added` and `removed` counts. Updates drop shared leading
+and trailing lines from each hunk before counting. At most 40 signed display
+lines are sent per call, filled path by path, each sanitized and bounded to
+200 UTF-8 bytes including sign and any ellipsis. A final newline does not add
+an empty line. `linesOmitted` and `filesOmitted` report positive omissions.
+The full path and both full texts of each displayed path's entries pass the
+command-summary credential checks before cutting. A matching path is omitted
+and counted in `filesOmitted`; a diff whose text matches a credential pattern
+shows its path and counts only, with `withheld: true`, never scrubbed text.
+
+Under a running edit's start line, the Rust REPL replaces input details with
+the file paths, nonzero `+added -removed` counts, `added, ` or `deleted, `
+labels, signed lines, omission counts, and
+`(content withheld: it matched a credential pattern)` where applicable.
+Every new text field uses the REPL's existing sanitizing and 80-character
+subject limit plus an ellipsis; it also limits the arrays to 20 steps,
+five files and 40 lines. Numeric counts are read as unsigned integers. A
+plan with no renderable steps and no omission count prints nothing. An
+update's path line has no suffix when both counts are zero.
+A call first seen completed still prints only its completion line. Edit
+details arriving on a call's completion frame are not shown.
+The TypeScript client prints no file-change lines. Older Rust clients ignore
+plans in scrollback and ignore file-change fields; new clients retain the
+existing behavior with older runtimes.
+
+These are display-only edit contents, not command output or tool evidence.
+The event log, receipt, recorded evidence, agent prompt and capability
+advertisement are unchanged; raw thought text stays unrendered, unpersisted
+and unreplayed. The maintainer verified the file-change display in an acceptance test
+with real agent turns on the `codex-chatgpt` route with adapter 2.5.0.
+Plan display is covered by fixture tests only; no plan update from a
+real agent has been observed.
+
+`FIXTURE_PLAN_PROGRESS` sends a three-status plan, its duplicate and a status
+change. `FIXTURE_EDIT_PROGRESS` sends a two-hunk update and an added file, then
+a status-only completion.
 
 External-agent tool evidence merges each call's updates and records only calls
 with a final `completed` or `failed` status, checked identity and input, and
