@@ -41,6 +41,36 @@ async function deleteSession(sql: FixtureSql, sessionId: string) {
 }
 
 describe("external ACP runner persistence (integration)", () => {
+  it("records fixture terminal output and exit code in the receipt and stored event", () =>
+    withFixture(async (store, sql) => {
+      const result = await runExternalAgentWorkbenchRuntime({
+        mode: "turn",
+        prompt: "FIXTURE_TERMINAL_COMMAND",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        workspaceRoot: process.cwd(),
+      }, { store });
+      try {
+        assert.deepStrictEqual(result.runner.toolEvidence, {
+          status: "complete", observedCalls: 1, recordedCalls: 1,
+          partialCalls: 0, rejectedCalls: 0, partialReasons: {}, rejectedReasons: {},
+        });
+        assert.ok(result.receipt.includes("ACP tool evidence: 1 recorded, 0 partial, 0 rejected of 1"));
+        const events = await fetchWorkbenchSessionEvents({
+          sessionId: result.sessionId, events: store.events,
+        });
+        assert.partialDeepStrictEqual(events.find((event) => event.eventType === "tool_call")!, {
+          toolCallId: "fixture-terminal-command",
+          toolName: "acp.execute",
+          toolResult: '{"exitCode":0,"output":"fixture output\\n"}',
+          toolIsError: false,
+          toolHistoryValid: true,
+        });
+      } finally {
+        await deleteSession(sql, result.sessionId);
+      }
+    }));
+
   it("round-trips typed runner and permission evidence through Dolt", () =>
     withFixture(async (store, sql) => {
       const result = await runExternalAgentWorkbenchRuntime({

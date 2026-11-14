@@ -733,6 +733,17 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Terminal command evidence on the Codex route (`BIT-936`).** ACP capture
+  accepts streamed terminal output and exit metadata in the shape emitted by
+  codex-acp 2.5.0. Otherwise complete calls can be recorded with `exitCode` and
+  `output`, including an exit with no text. Accumulation and assembled output
+  remain bounded; cut or unfinished calls remain gaps. Non-MCP calls reject
+  malformed terminal values or credential-shaped content in each chunk of
+  terminal text, and the kept output; MCP results retain the existing
+  redaction. Fixture tests cover the protocol parser and stored events. The
+  maintainer verified terminal command evidence in an acceptance test with
+  real agent turns on the `codex-chatgpt` route with adapter 2.5.0.
+
 - **External-agent receipts in the Rust REPL (`BIT-927`).** Each footer now
   shows the routed model or runner profile, reported session cost or cost
   basis, agent-reported tokens, context-window use, continuity and native

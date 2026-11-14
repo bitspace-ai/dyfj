@@ -230,7 +230,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
           await context.notify(methods.client.session.update, {
             sessionId: params.sessionId,
             update: { sessionUpdate: "tool_call_update", toolCallId: id,
-              _meta: { terminal_output: { terminal_id: id, data: text } },
+              _meta: { terminal_output_delta: { data: text, terminal_id: id } },
               ...(delayed && text === "hello" ? { rawInput: { command, cwd } } : {}),
               ...(delayed && text === " world" ? { title: "Greeting renamed" } : {}) },
           });
@@ -686,6 +686,43 @@ const app = agent({ name: "dyfj-acp-fixture" })
         });
         await fixture.cancel.promise;
         return { stopReason: "cancelled" };
+      }
+      if (prompt.includes("FIXTURE_TERMINAL_COMMAND")) {
+        const toolCallId = "fixture-terminal-command";
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "printf fixture output",
+            kind: "execute",
+            status: "in_progress",
+            rawInput: { command: "printf 'fixture output\\n'" },
+          },
+        });
+        for (const data of ["fixture ", "output\n"]) {
+          await context.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "tool_call_update",
+              toolCallId,
+              _meta: { terminal_output_delta: { data, terminal_id: toolCallId } },
+            },
+          });
+        }
+        await context.notify(methods.client.session.update, {
+          sessionId: params.sessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            _meta: {
+              terminal_exit: { exit_code: 0, signal: null, terminal_id: toolCallId },
+            },
+          },
+        });
+        await chunk(context, params.sessionId, "recorded");
+        return { stopReason: "end_turn" };
       }
       // Per-call evidence scenarios. Each names its calls by role so a test
       // can check that one bad call leaves the others recorded.
