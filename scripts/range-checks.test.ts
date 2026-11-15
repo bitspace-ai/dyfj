@@ -642,6 +642,354 @@ test("diff.whitespace reports class and line, never content", async () => {
   }
 });
 
+test("diff.whitespace fails locally on an untracked file ending with a blank line without echoing content", async () => {
+  const secretish = `password-shaped ${awsKeyFixture()}`;
+  const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    await writeFile(`${dir}/new-eof.txt`, `first-sentinel\n${secretish}\n\n`);
+    const local = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), local.out),
+      1,
+    );
+    assert.match(
+      local.text(),
+      /new-eof\.txt:3: diff\.whitespace\/new-blank-line-at-EOF/,
+    );
+    if (
+      local.text().includes("first-sentinel") ||
+      local.text().includes(secretish)
+    ) {
+      throw new Error("untracked line content reached range-check output");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("diff.whitespace fails locally on trailing whitespace in an untracked file without echoing content", async () => {
+  const secretish = `password-shaped ${awsKeyFixture()}`;
+  const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    await writeFile(
+      `${dir}/new-trailing.txt`,
+      `first-sentinel\n${secretish}   \n`,
+    );
+    const local = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), local.out),
+      1,
+    );
+    assert.match(
+      local.text(),
+      /new-trailing\.txt:2: diff\.whitespace\/trailing-whitespace/,
+    );
+    if (
+      local.text().includes("first-sentinel") ||
+      local.text().includes(secretish)
+    ) {
+      throw new Error("untracked line content reached range-check output");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("diff.whitespace ignores untracked files excluded by .gitignore", async () => {
+  const { dir } = await makeRangeFixture(
+    { "a.txt": "alpha\n", ".gitignore": "ignored-local/\n*.ignored\n" },
+    {},
+  );
+  try {
+    await mkdir(`${dir}/ignored-local`);
+    await writeFile(`${dir}/ignored-local/bad.txt`, "trailing   \n\n");
+    await writeFile(`${dir}/note.ignored`, "trailing   \n\n");
+
+    const ignoredOnly = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), ignoredOnly.out),
+      0,
+    );
+    assert.match(ignoredOnly.text(), /diff\.whitespace: clean/);
+
+    await writeFile(`${dir}/visible.txt`, "trailing   \n");
+    const withUnignored = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), withUnignored.out),
+      1,
+    );
+    assert.match(
+      withUnignored.text(),
+      /visible\.txt:1: diff\.whitespace\/trailing-whitespace/,
+    );
+    if (
+      withUnignored.text().includes("ignored-local") ||
+      withUnignored.text().includes("note.ignored")
+    ) {
+      throw new Error("ignored untracked path reached diff.whitespace output");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test(
+  "diff.whitespace does not follow an untracked symbolic link",
+  { skip: process.platform === "win32" },
+  async () => {
+    const outside = await mkdtemp(join(tmpdir(), "dyfj-ws-outside-"));
+    const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+    try {
+      await writeFile(`${outside}/target.txt`, "trailing   \n\n");
+      for (
+        const [target, linkName] of [
+          [`${outside}/target.txt`, "link.txt"],
+          [`${outside}/missing.txt`, "dangling.txt"],
+        ] as const
+      ) {
+        const ln = spawnSync("ln", ["-s", target, `${dir}/${linkName}`], {
+          env: { PATH: process.env.PATH ?? "" },
+          stdio: "ignore",
+        });
+        if (ln.status !== 0) {
+          throw new Error(`ln -s failed (exit ${ln.status})`);
+        }
+      }
+
+      const linkOnly = captureOut();
+      assert.deepStrictEqual(
+        await runRangeCheck("diff.whitespace", dir, envOf({}), linkOnly.out),
+        0,
+      );
+      assert.match(linkOnly.text(), /diff\.whitespace: clean/);
+
+      await writeFile(`${dir}/regular.txt`, "trailing   \n\n");
+      const withControl = captureOut();
+      assert.deepStrictEqual(
+        await runRangeCheck("diff.whitespace", dir, envOf({}), withControl.out),
+        1,
+      );
+      assert.match(
+        withControl.text(),
+        /regular\.txt:1: diff\.whitespace\/trailing-whitespace/,
+      );
+      assert.match(
+        withControl.text(),
+        /regular\.txt:2: diff\.whitespace\/new-blank-line-at-EOF/,
+      );
+      if (
+        withControl.text().includes("link.txt") ||
+        withControl.text().includes("dangling.txt")
+      ) {
+        throw new Error("untracked symlink produced a whitespace finding");
+      }
+    } finally {
+      await rm(dir, { recursive: true });
+      await rm(outside, { recursive: true });
+    }
+  },
+);
+
+test("diff.whitespace reports the same findings for an untracked file and once tracked", async () => {
+  const { dir, base } = await makeBaseFixture({ "a.txt": "alpha\n" });
+  try {
+    const content = [
+      "alpha",
+      "trailing   ",
+      " \tspace-before-tab",
+      `${"<".repeat(7)} branch`,
+      "=".repeat(7),
+      `${">".repeat(7)} base`,
+      "",
+      "",
+    ].join("\n");
+    await writeFile(`${dir}/sample.txt`, content);
+
+    const untrackedOut = captureOut();
+    const untrackedCode = await runRangeCheck(
+      "diff.whitespace",
+      dir,
+      envOf({ DYFJ_GATE_RANGE_BASE: base }),
+      untrackedOut.out,
+    );
+
+    await commitAll(dir, "track sample");
+    const trackedHits = await whitespaceHits(dir, fixtureRange(base));
+    assert.deepStrictEqual(trackedHits, [
+      {
+        path: "sample.txt",
+        line: 2,
+        rule: "diff.whitespace/trailing-whitespace",
+      },
+      {
+        path: "sample.txt",
+        line: 3,
+        rule: "diff.whitespace/space-before-tab-in-indent",
+      },
+      {
+        path: "sample.txt",
+        line: 4,
+        rule: "diff.whitespace/leftover-conflict-marker",
+      },
+      {
+        path: "sample.txt",
+        line: 5,
+        rule: "diff.whitespace/leftover-conflict-marker",
+      },
+      {
+        path: "sample.txt",
+        line: 6,
+        rule: "diff.whitespace/leftover-conflict-marker",
+      },
+      {
+        path: "sample.txt",
+        line: 7,
+        rule: "diff.whitespace/new-blank-line-at-EOF",
+      },
+    ]);
+
+    const trackedOut = captureOut();
+    const trackedCode = await runRangeCheck(
+      "diff.whitespace",
+      dir,
+      envOf({ DYFJ_GATE_RANGE_BASE: base }),
+      trackedOut.out,
+    );
+    assert.deepStrictEqual(trackedCode, 1);
+    assert.deepStrictEqual(untrackedCode, trackedCode);
+    assert.deepStrictEqual(untrackedOut.text(), trackedOut.text());
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("diff.whitespace produces no finding for a clean untracked file", async () => {
+  const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    await writeFile(`${dir}/clean-new.txt`, "first line\n\tindented\nlast\n");
+    await writeFile(`${dir}/empty-new.txt`, "");
+
+    const cleanOut = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), cleanOut.out),
+      0,
+    );
+    assert.match(cleanOut.text(), /diff\.whitespace: clean/);
+
+    await writeFile(`${dir}/dirty-new.txt`, "trailing   \n");
+    const mixedOut = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), mixedOut.out),
+      1,
+    );
+    assert.match(
+      mixedOut.text(),
+      /dirty-new\.txt:1: diff\.whitespace\/trailing-whitespace/,
+    );
+    if (
+      mixedOut.text().includes("clean-new.txt") ||
+      mixedOut.text().includes("empty-new.txt")
+    ) {
+      throw new Error("clean untracked file produced a whitespace finding");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("an oversized untracked file fails the local diff.whitespace check", async () => {
+  const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    await writeFile(
+      `${dir}/oversized.txt`,
+      `${"x".repeat(MAX_UNTRACKED_FILE_BYTES - 1)} word\ntrailing   \n`,
+    );
+    const local = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), local.out),
+      1,
+    );
+    assert.match(local.text(), /diff\.whitespace: incomplete coverage/);
+    assert.match(
+      local.text(),
+      /oversized\.txt: read only its leading bytes/,
+    );
+    if (local.text().includes("diff.whitespace: clean")) {
+      throw new Error("partial coverage reported as a clean check");
+    }
+    if (local.text().includes("diff.whitespace/trailing-whitespace")) {
+      throw new Error("mid-line read bound fabricated a trailing-whitespace hit");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("an overflowing untracked count fails the local diff.whitespace check", async () => {
+  const { dir } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    for (let index = 0; index <= MAX_UNTRACKED_FILES; index++) {
+      await writeFile(
+        `${dir}/file-${String(index).padStart(6, "0")}.txt`,
+        "alpha\n",
+      );
+    }
+    const local = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck("diff.whitespace", dir, envOf({}), local.out),
+      1,
+    );
+    assert.match(local.text(), /diff\.whitespace: incomplete coverage/);
+    assert.match(
+      local.text(),
+      /untracked inventory reached its file-count bound/,
+    );
+    if (local.text().includes("diff.whitespace: clean")) {
+      throw new Error("capped inventory reported as a clean check");
+    }
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("an authoritative diff.whitespace run does not check untracked files", async () => {
+  const { dir, range } = await makeRangeFixture({ "a.txt": "alpha\n" }, {});
+  try {
+    const base = range.diffArgs[0] ?? "";
+    await writeFile(`${dir}/untracked.txt`, "trailing   \n\n");
+    await writeFile(
+      `${dir}/oversized.bin`,
+      `${"x".repeat(MAX_UNTRACKED_FILE_BYTES)}x\n`,
+    );
+
+    const local = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck(
+        "diff.whitespace",
+        dir,
+        envOf({ DYFJ_GATE_RANGE_BASE: base }),
+        local.out,
+      ),
+      1,
+    );
+
+    const ci = captureOut();
+    assert.deepStrictEqual(
+      await runRangeCheck(
+        "diff.whitespace",
+        dir,
+        envOf({ GITHUB_ACTIONS: "true", DYFJ_GATE_RANGE_BASE: base }),
+        ci.out,
+      ),
+      0,
+    );
+    assert.match(ci.text(), /diff\.whitespace: clean/);
+    assert.deepStrictEqual(await isWorktreeClean(dir), false);
+  } finally {
+    await rm(dir, { recursive: true });
+  }
+});
+
 test("markdown.links validates changed repository-relative links", async () => {
   const doc = [
     "[ok](target.md)",
