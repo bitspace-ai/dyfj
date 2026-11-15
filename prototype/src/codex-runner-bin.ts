@@ -11,6 +11,7 @@
 import { dirname, join } from "node:path";
 import { realpath, stat, unlink } from "node:fs/promises";
 import process from "node:process";
+import { codexPathSyntax } from "./config/mod.ts";
 import { DomainError } from "./contract/mod.ts";
 import { writePrivateFile } from "./private-file.ts";
 
@@ -142,4 +143,63 @@ async function removePrivateShim(
     if (code === "ENOENT") return;
     throw new DomainError(diagnostic);
   }
+}
+
+export interface CodexPathEvidence {
+  operatorDirectories: number;
+  operatorDropped: number;
+  extraDirectories: number;
+  extraDropped: number;
+  environmentNamesAdded: number;
+}
+
+async function acceptedPathDirectory(path: string): Promise<string | undefined> {
+  if (!codexPathSyntax(path)) return undefined;
+  try {
+    const canonical = await realpath(path);
+    if (!codexPathSyntax(canonical)) return undefined;
+    const info = await stat(canonical);
+    if (!info.isDirectory() || (info.uid !== process.getuid?.() && info.uid !== 0) || (info.mode & 0o002) !== 0) return undefined;
+    return canonical;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function composeCodexPath(input: {
+  minimalPath: string;
+  mode: "operator" | "minimal";
+  runtimePath: string;
+  extraPath: readonly string[];
+}): Promise<{ path: string; evidence: CodexPathEvidence }> {
+  const evidence: CodexPathEvidence = { operatorDirectories: 0, operatorDropped: 0, extraDirectories: 0, extraDropped: 0, environmentNamesAdded: 0 };
+  if (input.mode === "minimal") return { path: input.minimalPath, evidence };
+  const entries: string[] = [];
+  const seen = new Set<string>();
+  const add = async (entry: string) => {
+    const canonical = await realpath(entry).catch(() => entry);
+    if (seen.has(canonical)) return false;
+    seen.add(canonical); entries.push(entry); return true;
+  };
+  const minimal = input.minimalPath.split(":");
+  for (const entry of minimal.slice(0,-2)) await add(entry);
+  for (const [source, values] of [["operator", input.runtimePath.split(":")], ["extra", input.extraPath]] as const) {
+    for (const entry of values) {
+      const accepted = await acceptedPathDirectory(entry);
+      if (accepted === undefined) { evidence[source === "operator" ? "operatorDropped" : "extraDropped"]++; continue; }
+      if (await add(accepted)) evidence[source === "operator" ? "operatorDirectories" : "extraDirectories"]++;
+    }
+  }
+  for (const entry of ["/usr/bin", "/bin"]) await add(entry);
+  return { path: entries.join(":"), evidence };
+}
+
+/** One owner per runtime; no path or environment content enters this sink. */
+export function codexExtraPathReporter(say: (line: string) => void): (count: number) => void {
+  const seen = new Set<number>();
+  return count => {
+    if (count === 0 || seen.has(count)) return;
+    seen.add(count);
+    say(`Codex extra PATH directories dropped: ${count}`);
+  };
 }

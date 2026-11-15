@@ -192,6 +192,9 @@ export interface ExecuteTurnDeps {
   /** Configured idle limit in seconds for an interactive Codex ChatGPT session. */
   codexInteractiveIdleSeconds?: number;
   codexOperatorContext?: boolean;
+  codexPath?: "operator" | "minimal";
+  codexExtraPath?: string[];
+  codexEnvAllow?: string[];
   /**
    * Close the turn's idle external-agent handle before the session lock is
    * released. The server passes the ACP session map's `dropSession`. Absent
@@ -218,7 +221,7 @@ export function engineConfigToTurnDeps(
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext"
+      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
     >
   >,
 ): Pick<
@@ -236,7 +239,7 @@ export function engineConfigToTurnDeps(
   | "maxToolStepsCeiling"
   | "defaultCodexReasoningEffort"
   | "codexInteractiveIdleSeconds"
-  | "codexOperatorContext"
+  | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -253,6 +256,9 @@ export function engineConfigToTurnDeps(
     ...(config.codexReasoningEffort
       ? { defaultCodexReasoningEffort: config.codexReasoningEffort }
       : {}),
+    ...(config.codexPath === undefined ? {} : { codexPath: config.codexPath }),
+    ...(config.codexExtraPath === undefined ? {} : { codexExtraPath: config.codexExtraPath }),
+    ...(config.codexEnvAllow === undefined ? {} : { codexEnvAllow: config.codexEnvAllow }),
     ...(config.codexOperatorContext === undefined
       ? {}
       : { codexOperatorContext: config.codexOperatorContext }),
@@ -389,6 +395,9 @@ function runExecuteTurn(
     ...(deps.defaultCodexReasoningEffort === undefined
       ? {}
       : { defaultCodexReasoningEffort: deps.defaultCodexReasoningEffort }),
+    ...(deps.codexPath === undefined ? {} : { codexPath: deps.codexPath }),
+    ...(deps.codexExtraPath === undefined ? {} : { codexExtraPath: deps.codexExtraPath }),
+    ...(deps.codexEnvAllow === undefined ? {} : { codexEnvAllow: deps.codexEnvAllow }),
     ...(deps.codexOperatorContext === undefined
       ? {}
       : { codexOperatorContext: deps.codexOperatorContext }),

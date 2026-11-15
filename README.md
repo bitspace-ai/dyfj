@@ -1827,8 +1827,9 @@ when its content differs; an agent session already running keeps what it
 loaded. Skills are reached through the link, so the operator's skill files
 are the ones used. Workbench does not read their content during projection.
 The link points at the operator's own skills directory; only that
-directory itself is checked. The link does not make the skills read-only. A write to them is subject
-to the same sandbox and approval rules as any write outside the workspace.
+directory itself is checked. The link does not make the skills read-only.
+A write to them is subject to the same sandbox and approval rules as any write
+outside the workspace.
 
 The `AGENTS.md` file in the dedicated Codex home and the symbolic link
 named `skills` in the dedicated home's `.agents` directory belong to
@@ -1839,7 +1840,9 @@ setting is off or the source is missing or unacceptable.
 
 Sources must resolve to account-owned files/directories without group or other
 write permission; instructions must be a regular file of at most 65,536 bytes,
-and skills pass the toolchain directory checks, including owner search
+and their parent operator `.codex` must itself be an account-owned directory
+without group or other write permission. On a platform without a numeric user
+id, instructions are not projected. Skills pass the toolchain directory checks, including owner search
 permission and delimiter-safe canonical paths. Missing or unacceptable sources
 remove their projections without failing the turn.
 When a destination in the dedicated home cannot be written or removed,
@@ -1849,7 +1852,8 @@ whenever that `.agents` directory exists, with the setting on or off.
 A real file or directory at the skills destination is left untouched and
 is not counted as projected.
 Set `[codex] operator_context = false` to remove the instructions copy and the
-skills link on the next profile build. Changes to which kinds are projected
+skills link on the next profile build, along with an empty dedicated-home
+`.agents` directory. Changes to which kinds are projected
 replace a retained agent session; instruction content changes alone do not.
 The receipt reports kinds only, such as `Operator context: instructions, skills`
 or `Operator context: none`.
@@ -1878,33 +1882,75 @@ mismatched UID or group/other write mode bits. The executable directory must
 grant owner search permission; the Rustup state directory must grant owner read,
 write, and search permissions. The later child access is still by pathname:
 ancestor ownership and ACLs are not validated, and the selected inode is not
-pinned against replacement after profile construction. Workbench places a
-private Node shim first in the child `PATH`, and private `npm` and `npx`
-shims when a sibling's ordinary mode bits let this process's effective
-credentials execute it and both that path and its canonical path are free of
-comma and colon, then the optional executable directory, `/usr/bin`, and
-`/bin`. Selecting Node does not add that executable's directory. An
-operator-selected toolchain directory can still be that parent.
-Access-control lists are not consulted, and the real user and group ids are
-not read. The
-child `HOME` stays the dedicated runner home, and the allowlisted environment
-does not name the operator's `~/.dyfj/config.toml`. It also writes that exact
-path to the dedicated home's private `.zprofile` and `.bash_profile` so those
-macOS login shells reset earlier `path_helper` changes. It does not dynamically derive and
-add an arbitrary parent directory from the selected Node executable; the fixed
-`/usr/bin` and `/bin` entries remain, and an operator may explicitly select
-another directory as the toolchain. It sets `RUSTUP_HOME` to the selected state
-directory and gives the child a separate persistent `CARGO_HOME` inside its
-private runner home. It does not project the operator's Cargo home or attest
-binaries; the existing Workbench ACP action-approval plumbing is unchanged. The
-dedicated receipt evidence fields disclose only how many distinct canonical
-operator directories were projected; agent-produced text is not a redaction
-boundary.
+pinned against replacement after profile construction. Workbench writes private
+Node, npm and npx shims when the selected executable and eligible siblings pass
+the existing checks. The child HOME remains the dedicated runner home.
 
-The project configuration pins adapter version `1.11.0` exactly, and the root
+After upgrade, `[codex] path = "operator"` is the default: the child can
+find programs in accepted operator directories. Its `PATH` contains the runner
+bin first, the optional `DYFJ_CODEX_TOOLCHAIN_PATH` directory, accepted entries
+of the runtime `PATH` in order, accepted `[codex] extra_path` entries in order,
+then `/usr/bin` and `/bin`. Canonical duplicates are omitted. Workbench's Node
+shim stays first. The runtime `PATH` is inherited from the process that started
+the runtime; starting it from a different shell can give a different result.
+Selecting Node does not by itself add its parent directory.
+
+Runtime and extra entries must be absolute, have no `.` or `..` component,
+and contain neither comma nor colon before or after canonicalisation. The
+canonical target must be a directory owned by the account or superuser, with
+other-write mode bit `0o002` clear. Group-writable directories, including an
+account-owned directory with mode `0775`, are accepted. This differs from the
+explicit toolchain directory's stricter rule above. ACLs and ancestor ownership
+are not checked. Unacceptable entries from either source are left out and never
+fail the turn. `[codex] extra_path` defaults to `[]`, allows at most 16 strings,
+and rejects invalid path syntax at config load with an entry position, never
+the path. Availability and ownership are checked again at each turn.
+
+`path = "minimal"` restores the previous runner-bin, optional toolchain,
+`/usr/bin`, `/bin` path and ignores `extra_path`. Both modes write the same
+shell-quoted child `PATH` to the dedicated home's `.zprofile` and
+`.bash_profile`, including entries containing spaces. With operator mode and
+no `DYFJ_CODEX_RUSTUP_HOME` selection, an acceptable operator `~/.rustup` becomes
+`RUSTUP_HOME`; a missing or unacceptable fallback is silently skipped. Explicit
+Rustup selection keeps its existing validation. `CARGO_HOME` remains private.
+
+`[codex] env_allow` defaults to `[]` and accepts at most 32 portable environment
+names (`[A-Za-z_][A-Za-z0-9_]*`). Present names pass their values from the
+runtime's environment to the environment of the adapter process; absent names
+are skipped. The names are a heuristic filter, not a guarantee that no
+sensitive value can be allowed.
+Configuration refuses names Workbench sets (`HOME`, `CODEX_HOME`, `CODEX_PATH`,
+`CARGO_HOME`, `RUSTUP_HOME`, `PATH`, `CODEX_CONFIG`, `NO_BROWSER`,
+`INITIAL_AGENT_MODE`, `USER`), names beginning `CODEX_` or `DYFJ_`, and names
+containing `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `CREDENTIAL` or `AUTH`
+in any letter case. It also refuses `NODE_OPTIONS`, `BASH_ENV`, `ENV`, and
+names beginning `LD_` or `DYLD_`, in any letter case. Refusal diagnostics name
+only portable names; other invalid entries are identified by position without
+echoing their text. Diagnostics never include environment values.
+
+Receipts give counts only: `Toolchain directories:` retains its count of
+distinct selected toolchain and Rustup directories; `Operator PATH directories:`
+and `Extra PATH directories:` give directories used and entries dropped as
+unacceptable; duplicates are omitted without being counted;
+`Environment names added:` gives the number passed. The runtime log reports
+`Codex extra PATH directories dropped: <n>` once for each nonzero count seen
+in that runtime. Neither evidence nor that log line contains paths, names or
+values. Changed child environment or `PATH` replaces a retained session.
+A program found on this `PATH` still runs inside Codex's sandbox and still
+asks for approval where it did before: this makes programs findable and grants
+nothing.
+
+The maintainer verified in an acceptance test with a real agent session on
+the `codex-chatgpt` route with adapter 2.5.0 that the child's `PATH` holds the
+operator's directories behind the runner bin, that the operator's tools
+resolve and run without a `PATH` set by hand, and that `RUSTUP_HOME` is the
+operator's. `extra_path`, `env_allow`, minimal mode and the receipt lines are
+covered by tests with temporary directories only.
+
+The project configuration pins adapter version `2.5.0` exactly, and the root
 `package-lock.json` records its transitive graph and registry integrity. The runtime reads
 the installed package metadata and rejects metadata that does not declare
-version `1.11.0`.
+version `2.5.0`.
 
 On start and autostart routes, the launcher considers `DYFJ_NODE_PATH` first and
 otherwise asks ambient `PATH` for Node. It projects the optional executable
@@ -3487,3 +3533,14 @@ Document revisions only. Code and behavior changes are tracked in
   projection, its opt-out, refresh timing and retained-session behavior.
   Clarify destination ownership, destination failures and the skills link's
   write permissions, and record maintainer acceptance-test verification.
+
+- 2026-11-14 - Document the default operator PATH, optional extra directories
+  and environment names, minimal mode, Rustup fallback, count evidence and
+  unchanged sandbox approvals. Correct the Codex adapter pin to 2.5.0 and
+  clarify instruction-source directory checks and empty projection cleanup.
+  The maintainer verified in an acceptance test with a real agent session on
+  the `codex-chatgpt` route with adapter 2.5.0 that the child's `PATH` holds the
+  operator's directories behind the runner bin, that the operator's tools
+  resolve and run without a `PATH` set by hand, and that `RUSTUP_HOME` is the
+  operator's. `extra_path`, `env_allow`, minimal mode and the receipt lines are
+  covered by tests with temporary directories only.
