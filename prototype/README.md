@@ -493,9 +493,12 @@ After upgrade, `[codex] path = "operator"` is the default: the child can
 find programs in accepted operator directories. Its `PATH` contains the runner
 bin first, the optional `DYFJ_CODEX_TOOLCHAIN_PATH` directory, accepted entries
 of the runtime `PATH` in order, accepted `[codex] extra_path` entries in order,
-then `/usr/bin` and `/bin`. Canonical duplicates are omitted. Workbench's Node
-shim stays first. The runtime `PATH` is inherited from the process that started
-the runtime; starting it from a different shell can give a different result.
+then the fixed entries `/usr/bin` and `/bin`, always last and exactly as
+written, even when one resolves to the other. Runtime `PATH` and `extra_path`
+entries that resolve to either fixed directory are omitted and counted as
+neither used nor dropped. Other canonical duplicates are also omitted.
+Workbench's Node shim stays first. The runtime `PATH` is inherited from the
+process that started the runtime; starting it from a different shell can give a different result.
 Selecting Node does not by itself add its parent directory.
 
 Runtime and extra entries must be absolute, have no `.` or `..` component,

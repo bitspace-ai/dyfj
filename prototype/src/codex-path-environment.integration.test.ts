@@ -7,6 +7,7 @@ import { MapEnv } from "../testing/fakes/map-env.ts";
 import { loadConfig } from "./config/workbench.ts";
 import { codexChatGptProfile, type CodexChatGptProfileOptions, runExternalAgentWorkbenchRuntime } from "./external-agent-runtime.ts";
 import { canonicalExecutionProfileDigest } from "./acp-session-map.ts";
+import { composeCodexPath } from "./codex-runner-bin.ts";
 import { MemoryStore } from "./store/mod.ts";
 
 async function fixture() {
@@ -188,3 +189,40 @@ for (const entry of ["NAME=value", "BAD-NAME"]) {
     });
   });
 }
+
+check("fixed PATH entries stay last and do not count toward either source", async f => {
+  const first = await f.dir("first");
+  const second = await f.dir("second");
+  const extra = await f.dir("extra");
+  const result = await composeCodexPath({
+    minimalPath: `${f.bin}:/usr/bin:/bin`,
+    mode: "operator",
+    runtimePath: `${first}:/usr/bin:${second}:/bin`,
+    extraPath: ["/usr/bin", extra, "/bin"],
+  });
+  assert.equal(result.path, `${f.bin}:${first}:${second}:${extra}:/usr/bin:/bin`);
+  assert.deepEqual(result.evidence, {
+    operatorDirectories: 2, operatorDropped: 0,
+    extraDirectories: 1, extraDropped: 0, environmentNamesAdded: 0,
+  });
+});
+
+check("symbolic-link duplicates share the fixed-entry exclusion and source counts", async f => {
+  const directory = await f.dir("tools");
+  const extra = await f.dir("extra");
+  const alias = join(f.root, "tools-link");
+  const fixedAlias = join(f.root, "system-bin-link");
+  await symlink(directory, alias);
+  await symlink("/usr/bin", fixedAlias);
+  const result = await composeCodexPath({
+    minimalPath: `${f.bin}:/usr/bin:/bin`,
+    mode: "operator",
+    runtimePath: `${fixedAlias}:${directory}:${alias}:/bin`,
+    extraPath: [alias, fixedAlias, extra],
+  });
+  assert.equal(result.path, `${f.bin}:${directory}:${extra}:/usr/bin:/bin`);
+  assert.deepEqual(result.evidence, {
+    operatorDirectories: 1, operatorDropped: 0,
+    extraDirectories: 1, extraDropped: 0, environmentNamesAdded: 0,
+  });
+});

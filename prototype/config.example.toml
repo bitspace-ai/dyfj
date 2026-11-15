@@ -66,8 +66,11 @@ level = "strict"
 # projections. Operator Codex config, hooks, rules, memories and sign-in stay out.
 # operator_context = true
 # Default after upgrade: runner bin (Node shim first), selected toolchain,
-# accepted runtime PATH entries, extra_path, then /usr/bin and /bin.
-# Canonical duplicates are omitted. Minimal ignores extra_path.
+# accepted runtime PATH entries, extra_path, then /usr/bin and /bin, always
+# last and exactly as written, even when one resolves to the other.
+# Runtime PATH and extra_path entries resolving to either fixed directory
+# are omitted and counted as neither used nor dropped. Other canonical
+# duplicates are also omitted. Minimal ignores extra_path.
 # path = "operator"
 # At most 16 absolute paths, without comma, colon or dot components.
 # At each turn, canonical directories must be account/root owned and not

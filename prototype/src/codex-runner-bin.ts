@@ -183,6 +183,11 @@ export async function composeCodexPath(input: {
   };
   const minimal = input.minimalPath.split(":");
   for (const entry of minimal.slice(0,-2)) await add(entry);
+  // Reserve targets and spellings so the fixed suffix survives merged /usr.
+  for (const entry of ["/usr/bin", "/bin"]) {
+    seen.add(entry);
+    seen.add(await realpath(entry).catch(() => entry));
+  }
   for (const [source, values] of [["operator", input.runtimePath.split(":")], ["extra", input.extraPath]] as const) {
     for (const entry of values) {
       const accepted = await acceptedPathDirectory(entry);
@@ -190,7 +195,7 @@ export async function composeCodexPath(input: {
       if (await add(accepted)) evidence[source === "operator" ? "operatorDirectories" : "extraDirectories"]++;
     }
   }
-  for (const entry of ["/usr/bin", "/bin"]) await add(entry);
+  entries.push("/usr/bin", "/bin");
   return { path: entries.join(":"), evidence };
 }
 

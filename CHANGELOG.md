@@ -13,9 +13,12 @@ README are tracked separately in its Revision history section.
 
 - **Codex operator PATH and environment (`BIT-946`).** The default child PATH
   now includes accepted runtime directories and optional `[codex] extra_path`
-  entries after Workbench's Node shim and explicit toolchain. Canonical
-  duplicates and unacceptable entries are omitted; receipts count, for each
-  source, the directories used and the entries dropped as unacceptable.
+  entries after Workbench's Node shim and explicit toolchain, followed by
+  the fixed entries `/usr/bin` and `/bin`, always last and exactly as written,
+  even when one resolves to the other. Runtime PATH and extra entries resolving
+  to either fixed directory are omitted and counted as neither used nor dropped.
+  Other canonical duplicates and unacceptable entries are omitted; receipts
+  count, for each source, the directories used and the entries dropped as unacceptable.
   Duplicates are omitted without being counted. Runtime logs count dropped
   extras. `path = "minimal"`
   preserves the previous PATH and ignores extras. Operator mode uses an
