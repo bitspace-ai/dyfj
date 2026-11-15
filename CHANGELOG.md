@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Native git on the Codex bridge (`BIT-954`).** Codex turns with a primary
+  workspace receive typed status, diff, log, add and commit operations through
+  the Workbench tool bridge, using native git's containment and approval rules.
+  Sandboxed operator calls on the local socket run without a prompt; sandboxed
+  writes require a linked worktree. Added directories and Codex's own shell
+  sandbox are unchanged. Tests cover this change.
+  In one real Codex session in a linked worktree, the maintainer verified
+  that the bridged `git` tool staged and committed a file with no approval
+  prompt. In a main checkout, the tool's `commit` was refused with the
+  main-checkout message.
+
 - **Codex operator PATH and environment (`BIT-946`).** The default child PATH
   now includes accepted runtime directories and optional `[codex] extra_path`
   entries after Workbench's Node shim and explicit toolchain, followed by

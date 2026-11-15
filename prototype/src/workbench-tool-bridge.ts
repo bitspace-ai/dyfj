@@ -55,7 +55,9 @@ import {
   invokeCommandWithEvent,
   type JsonSchemaObject,
   type SessionGrants,
+  type ToolCatalogPorts,
 } from "./tools/mod.ts";
+import { defineGit } from "./tools/builtin/git.ts";
 import {
   type ByteConnection,
   type ConnectionListener,
@@ -99,10 +101,11 @@ const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 /**
  * Whether the bridge offers `command` to Codex: the operator's configured
  * MCP servers' commands (`mcp.<server>.<tool>`) and the four coordinator
- * dispatch tools. Codex keeps its own shell, file and patch tools.
+ * dispatch tools, plus the workspace's bounded git tool. Codex keeps its own
+ * shell, file and patch tools.
  */
 export function isBridgedCommand(command: CommandDefinition): boolean {
-  return command.id.startsWith("mcp.") ||
+  return command.id === "git" || command.id.startsWith("mcp.") ||
     ["dispatch/start", "dispatch/wait", "dispatch/read", "dispatch/send"].includes(command.id);
 }
 
@@ -654,6 +657,8 @@ export function codexWorkbenchToolsConfig(
 /** What `bindCodexTurn` reads from an external-agent turn. */
 export interface CodexTurnTools {
   runner: { profile: string };
+  /** The resolved primary workspace, never an added directory. */
+  workspaceRoot?: string;
   /** Boot-discovered external MCP commands, offered through the bridge. */
   externalMcpCommands?: readonly CommandDefinition[];
   /** Dispatch ports bound by the runtime to this coordinator turn. */
@@ -683,7 +688,7 @@ export interface BoundCodexTurn {
 /**
  * Bind a Codex ChatGPT turn's session to the runtime's bridge, starting the
  * bridge on first use. Undefined when there is no bridge, the turn is not on
- * the Codex route, or no MCP or dispatch command would be offered. The
+ * the Codex route, or no git, MCP or dispatch command would be offered. The
  * external route serves loopback callers only, so every configured MCP
  * command passes the turn's clearance.
  */
@@ -691,9 +696,16 @@ export async function bindCodexTurn(
   dependency: ExternalAgentToolBridge | undefined,
   sessionId: string,
   input: CodexTurnTools,
+  ports: Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox"> = {},
 ): Promise<BoundCodexTurn | undefined> {
+  const git = input.workspaceRoot === undefined
+    ? undefined
+    : defineGit(input.workspaceRoot, ports);
   const commands = buildToolCatalog(
-    { dispatch: input.dispatch }, {}, input.externalMcpCommands ?? [], [],
+    { dispatch: input.dispatch },
+    {},
+    input.externalMcpCommands ?? [],
+    [() => git],
   ).list();
   if (
     dependency === undefined || input.runner.profile !== "codex-chatgpt" ||

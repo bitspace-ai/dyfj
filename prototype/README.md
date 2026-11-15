@@ -616,14 +616,30 @@ The login runs the adapter on `DYFJ_NODE_PATH` when it is set, and otherwise on 
 
 The Workbench tool bridge (`src/workbench-tool-bridge.ts`) gives Codex the
 operator's configured MCP tools and the four dispatch tools when `[dispatch]`
-is configured and the loopback session's dispatch depth is 0. Dispatch alone
-starts the bridge, without an MCP server. Codex sees `dispatch_start`,
-`dispatch_wait`, `dispatch_read` and `dispatch_send`; no other builtin is
-bridged. The runtime binds the connection to its session with a token, and no
+is configured and the loopback session's dispatch depth is 0. A resolved primary
+workspace also supplies the native `git` tool and starts the bridge without
+MCP or dispatch. Codex sees `git`, `dispatch_start`, `dispatch_wait`,
+`dispatch_read` and `dispatch_send`; bash and file tools are not bridged.
+Git takes typed `status`, `diff`, `log`, `add` and `commit` arguments, with no
+amend, network subcommands or history rewriting. It uses the primary workspace,
+never an added directory, and shares native git's environment, executor dialer,
+srt sandbox and pinned workspace layout. With srt on, operator turns on the
+local socket run without a prompt; strict turns ask unless an existing grant
+covers the call. Without containment git always asks; an isolated executor
+retains the native attested-envelope rule. Sandboxed add and commit require a
+linked worktree; read operations still work in a main checkout. Hooks retain
+the native containment and network limits. Shell git commands inside Codex
+keep their existing sandbox and approval behavior. Tests cover the bridge
+change.
+In one real Codex session in a linked worktree, the maintainer verified
+that the bridged `git` tool staged and committed a file with no approval
+prompt. In a main checkout, the tool's `commit` was refused with the
+main-checkout message.
+The runtime binds the connection to its session with a token, and no
 tool argument chooses that session. Each call uses the turn's Workbench
 approver, grants, permission level and journal. Start asks every time and is
 never session-grantable; send uses the native per-child grant. Calls requiring
-approval are denied without an approver. Child sessions get none of these
+approval are denied without an approver. Child sessions get none of the dispatch
 tools, and the bridge exposes no parked-approval answer operation or prompt
 content. Dispatch tool descriptions carry the shared standing child-report
 line; read results use the existing escaped `<child-report>` formatter.
