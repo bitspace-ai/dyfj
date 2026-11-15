@@ -8,6 +8,8 @@ import {
 } from "./kernel/mod.ts";
 import {
   type CodexReasoningEffort,
+  type Env,
+  codexEnvironmentNameAllowed,
   processEnv,
   type RuntimePolicy,
 } from "./config/mod.ts";
@@ -119,7 +121,7 @@ import {
   withholdSavedApprovals,
 } from "./codex-home-config.ts";
 import { operatorAuthorizedToolchainDirectory, projectOperatorContext } from "./runners/acp/operator-context.ts";
-import { writeCodexRunnerBin } from "./codex-runner-bin.ts";
+import { composeCodexPath, writeCodexRunnerBin } from "./codex-runner-bin.ts";
 import {
   ensurePrivateDirectory,
   requireOwnedDirectory,
@@ -162,6 +164,9 @@ export interface ExternalAgentRuntimeInput
   onSessionRecorded?: (sessionId: string) => void | Promise<void>;
   codexInteractiveIdleSeconds?: number;
   codexOperatorContext?: boolean;
+  codexPath?: "operator" | "minimal";
+  codexExtraPath?: string[];
+  codexEnvAllow?: string[];
 }
 
 export function fixtureProfile(workspace: string): AcpExecutionProfile {
@@ -297,6 +302,10 @@ export interface CodexChatGptProfileOptions {
   reasoningEffort?: CodexReasoningEffort;
   fast?: boolean;
   operatorContext?: boolean;
+  path?: "operator" | "minimal";
+  extraPath?: readonly string[];
+  envAllow?: readonly string[];
+  env?: Env;
   /** The Workbench tool bridge this session's Codex reaches; absent, none. */
   workbenchTools?: CodexWorkbenchToolsOptions;
 }
@@ -341,7 +350,8 @@ export async function codexChatGptProfile(
   workspace: string,
   options: CodexChatGptProfileOptions = {},
 ): Promise<AcpExecutionProfile> {
-  const operatorHome = options.home ?? processEnv.get("HOME");
+  const env = options.env ?? processEnv;
+  const operatorHome = options.home ?? env.get("HOME");
   if (
     operatorHome === undefined || !operatorHome.startsWith("/") ||
     operatorHome.includes(",") || operatorHome.includes(":")
@@ -379,19 +389,21 @@ export async function codexChatGptProfile(
     join(packageRoot, "dist", "index.js"),
   );
   const nodePath = await operatorAuthorizedExecutable(
-    options.nodePath ?? processEnv.get("DYFJ_NODE_PATH"),
+    options.nodePath ?? env.get("DYFJ_NODE_PATH"),
   );
   const codexPath = await bundledCodexExecutable(packageRoot);
   const toolchainPath = await operatorAuthorizedToolchainDirectory(
-    options.toolchainPath ?? processEnv.get("DYFJ_CODEX_TOOLCHAIN_PATH"),
+    options.toolchainPath ?? env.get("DYFJ_CODEX_TOOLCHAIN_PATH"),
   );
-  const rustupHome = await operatorAuthorizedRustupHomeDirectory(
-    options.rustupHome ?? processEnv.get("DYFJ_CODEX_RUSTUP_HOME"),
-  );
+  const selectedRustup = options.rustupHome ?? env.get("DYFJ_CODEX_RUSTUP_HOME");
+  let rustupHome = await operatorAuthorizedRustupHomeDirectory(selectedRustup);
+  if ((options.path ?? "operator") === "operator" && selectedRustup === undefined) {
+    rustupHome = await operatorAuthorizedRustupHomeDirectory(join(operatorHome, ".rustup")).catch(() => undefined);
+  }
   const projectedDirectories = new Set<string>();
   if (toolchainPath !== undefined) projectedDirectories.add(toolchainPath);
   if (rustupHome !== undefined) projectedDirectories.add(rustupHome);
-  const toolchainDirectoryCount = projectedDirectories.size as 0 | 1 | 2;
+  const toolchainDirectoryCount = projectedDirectories.size;
 
   await ensurePrivateDirectory(dyfjRoot, false);
   await ensurePrivateDirectory(runnerHomes, false);
@@ -401,10 +413,15 @@ export async function codexChatGptProfile(
   await ensurePrivateDirectory(codexHome);
   await refuseCodexCommandRules(codexHome);
   await ensurePrivateDirectory(cargoHome);
-  const childPath = await writeCodexRunnerBin({
+  const minimalPath = await writeCodexRunnerBin({
     runnerBin,
     nodePath,
     toolchainPath,
+  });
+  const { path: childPath, evidence: pathEvidence } = await composeCodexPath({
+    minimalPath, mode: options.path ?? "operator",
+    runtimePath: (options.path ?? "operator") === "operator" ? env.get("PATH") ?? "" : "",
+    extraPath: options.extraPath ?? [],
   });
   for (const profileName of [".zprofile", ".bash_profile"]) {
     await writePrivateFile(
@@ -449,8 +466,13 @@ export async function codexChatGptProfile(
     CODEX_CONFIG: JSON.stringify(codexConfig),
   };
   if (rustupHome !== undefined) environment.RUSTUP_HOME = rustupHome;
-  const user = processEnv.get("USER");
+  const user = env.get("USER");
   if (user !== undefined) environment.USER = user;
+  for (const name of new Set(options.envAllow ?? [])) {
+    if (!codexEnvironmentNameAllowed(name)) continue;
+    const value = env.get(name);
+    if (value !== undefined) { environment[name] = value; pathEvidence.environmentNamesAdded++; }
+  }
   return {
     slug: "codex-chatgpt",
     command: nodePath,
@@ -465,6 +487,7 @@ export async function codexChatGptProfile(
     sessionUpdatePolicy: "long_running",
     protocolMessagePolicy: "long_running",
     toolchainDirectoryCount,
+    pathEvidence,
     operatorContext,
   };
 }
@@ -692,6 +715,11 @@ function receiptText(input: {
       `ACP cumulative session cost: ${input.result.usageSnapshot.cost.amount} ${input.result.usageSnapshot.cost.currency}`,
     ]),
     `Toolchain directories: ${input.profile.toolchainDirectoryCount ?? 0}`,
+    ...(input.profile.pathEvidence === undefined ? [] : [
+    `Operator PATH directories: ${input.profile.pathEvidence?.operatorDirectories ?? 0} (${input.profile.pathEvidence?.operatorDropped ?? 0} dropped)`,
+    `Extra PATH directories: ${input.profile.pathEvidence?.extraDirectories ?? 0} (${input.profile.pathEvidence?.extraDropped ?? 0} dropped)`,
+    `Environment names added: ${input.profile.pathEvidence?.environmentNamesAdded ?? 0}`,
+    ]),
     ...(input.profile.operatorContext === undefined ? [] : [
       `Operator context: ${input.profile.operatorContext.join(", ") || "none"}`,
     ]),
@@ -739,6 +767,8 @@ export interface ExternalAgentRuntimeDependencies {
   dispatch?: import("./tools/mod.ts").DispatchSessionFactory;
   /** The store every event, session row and workspace read goes through. */
   store: Store;
+  env?: Env;
+  reportExtraPathDropped?: (count: number) => void;
   resolveProfile?: (
     profile: "fixture" | "codex-chatgpt",
     workspace: string,
@@ -768,6 +798,7 @@ async function resolveTurnProfile(
     : input.runner.profile === "fixture"
     ? fixtureProfile(workspace)
     : await codexChatGptProfile(workspace, codex);
+  dependencies.reportExtraPathDropped?.(base.pathEvidence?.extraDropped ?? 0);
   return await withAddedRoots(input, authContext, base);
 }
 
@@ -839,6 +870,10 @@ export async function runExternalAgentWorkbenchRuntime(
       fast: input.routingOptions?.fast,
       reasoningEffort: input.routingOptions?.reasoningEffort,
       operatorContext: input.codexOperatorContext,
+      path: input.codexPath,
+      extraPath: input.codexExtraPath,
+      envAllow: input.codexEnvAllow,
+      env: dependencies.env,
       workbenchTools: bridged?.workbenchTools,
     }, authContext);
   } catch (error) {

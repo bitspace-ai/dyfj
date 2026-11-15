@@ -11,6 +11,31 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Codex operator PATH and environment (`BIT-946`).** The default child PATH
+  now includes accepted runtime directories and optional `[codex] extra_path`
+  entries after Workbench's Node shim and explicit toolchain, followed by
+  the fixed entries `/usr/bin` and `/bin`, always last and exactly as written,
+  even when one resolves to the other. Runtime PATH and extra entries resolving
+  to either fixed directory are omitted and counted as neither used nor dropped.
+  Other canonical duplicates and unacceptable entries are omitted; receipts
+  count, for each source, the directories used and the entries dropped as unacceptable.
+  Duplicates are omitted without being counted. Runtime logs count dropped
+  extras. `path = "minimal"`
+  preserves the previous PATH and ignores extras. Operator mode uses an
+  acceptable operator Rustup home when none is explicitly selected.
+  `[codex] env_allow` forwards present runtime values for selected portable
+  names into the adapter process environment, refusing Workbench-owned,
+  credential-like and process-loading names. The names are a heuristic filter,
+  not a guarantee that no sensitive value can be allowed. Programs remain
+  subject to Codex's sandbox and approval rules. Operator instructions require
+  an account-owned parent directory without shared write permission.
+  The maintainer verified in an acceptance test with a real agent session on
+  the `codex-chatgpt` route with adapter 2.5.0 that the child's `PATH` holds the
+  operator's directories behind the runner bin, that the operator's tools
+  resolve and run without a `PATH` set by hand, and that `RUSTUP_HOME` is the
+  operator's. `extra_path`, `env_allow`, minimal mode and the receipt lines are
+  covered by tests with temporary directories only.
+
 - **Codex operator context (`BIT-946`).** The private runner home receives a
   refreshed private copy of acceptable operator global instructions and a link
   to acceptable shared skills by default. `[codex] operator_context = false`

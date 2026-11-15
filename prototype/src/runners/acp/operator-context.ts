@@ -28,6 +28,8 @@ export async function projectOperatorContext(
   let skills: string | undefined;
   if (enabled) {
     try {
+      const parent = await lstat(join(operatorHome, ".codex"));
+      if (!parent.isDirectory() || !ownedWithoutSharedWrite(parent)) throw new Error("unavailable instructions directory");
       const source = await realpath(join(operatorHome, ".codex", "AGENTS.md"));
       const info = await lstat(source);
       if (info.isFile() && ownedWithoutSharedWrite(info) && info.size <= 65_536) {

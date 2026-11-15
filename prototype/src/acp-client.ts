@@ -105,7 +105,8 @@ export interface AcpExecutionProfile {
   terminationTimeoutMs?: number;
   sessionUpdatePolicy?: "standard" | "long_running";
   protocolMessagePolicy?: "standard" | "long_running";
-  toolchainDirectoryCount?: 0 | 1 | 2;
+  toolchainDirectoryCount?: number;
+  pathEvidence?: import("./codex-runner-bin.ts").CodexPathEvidence;
   operatorContext?: Array<"instructions" | "skills">;
 }
 

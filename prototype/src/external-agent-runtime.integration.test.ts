@@ -946,6 +946,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         ambient,
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: root,
             nodePath,
@@ -1072,6 +1073,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         { DYFJ_OPERATOR_SENTINEL: marker },
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: root,
             nodePath,
@@ -1120,6 +1122,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       // bit is unset.
       await chmod(`${root}/npm`, 0o641);
       const profile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: root,
         nodePath,
@@ -1164,6 +1167,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await writeFile(`${runnerBin}/npx`, "#!/bin/sh\nprintf 'stale\\n'\n");
       await chmod(`${runnerBin}/npx`, 0o700);
       const profile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: root,
         nodePath,
@@ -1192,6 +1196,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await chmod(target, 0o700);
       assert.strictEqual(await symlinkThroughBash(target, `${root}/npm`), true);
       const profile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: root,
         nodePath,
@@ -1246,6 +1251,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: root,
             nodePath,
@@ -1264,6 +1270,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: root,
             nodePath,
@@ -1297,6 +1304,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         { PATH: `${home}/ambient-bin` },
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath,
@@ -1375,6 +1383,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         }
       }
       const sharedDirectoryProfile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath,
@@ -1384,6 +1393,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.strictEqual(sharedDirectoryProfile.toolchainDirectoryCount, 1);
 
       const fastSolProfile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath,
@@ -1405,6 +1415,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       // the token in the shim's own environment entry. The Codex home's
       // config.toml is unchanged, and no other environment value names it.
       const bridgedProfile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath,
@@ -1768,6 +1779,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await assert.rejects(
           () =>
             codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -1795,6 +1807,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await assert.rejects(
           () =>
             codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -1859,6 +1872,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           let failure: Error | undefined;
           try {
             await codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -1874,6 +1888,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         for (const name of dotted) {
           const selected = `${home}/${name}`;
           const profile = await codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath,
@@ -1927,6 +1942,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await assert.rejects(
           () =>
             codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -1956,6 +1972,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await assert.rejects(
           () =>
             codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -1988,6 +2005,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       );
       await chmod(nodePath, 0o700);
       const profile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath,
@@ -2066,6 +2084,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: root,
             nodePath: process.execPath,
@@ -2088,6 +2107,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await chmod(target, 0o700);
       assert.strictEqual(await symlinkThroughBash(target, executable), true);
       const profile = await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath: executable,
@@ -2113,6 +2133,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         await assert.rejects(
           () =>
             codexChatGptProfile(process.cwd(), {
+              path: "minimal",
               home,
               prototypeRoot: process.cwd(),
               nodePath,
@@ -2127,6 +2148,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath: nonExecutable,
@@ -2146,6 +2168,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath: process.execPath,
@@ -2164,6 +2187,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath: process.execPath,
@@ -2195,6 +2219,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath,
@@ -2227,6 +2252,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await chmod(dyfjRoot, 0o755);
       await chmod(runnerHomes, 0o750);
       await codexChatGptProfile(process.cwd(), {
+        path: "minimal",
         home,
         prototypeRoot: process.cwd(),
         nodePath,
@@ -2254,6 +2280,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath,
@@ -2278,6 +2305,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await chmod(nodePath, 0o700);
       const start = () =>
         codexChatGptProfile(process.cwd(), {
+          path: "minimal",
           home,
           prototypeRoot: process.cwd(),
           nodePath,
@@ -2312,6 +2340,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       await assert.rejects(
         () =>
           codexChatGptProfile(process.cwd(), {
+            path: "minimal",
             home,
             prototypeRoot: process.cwd(),
             nodePath,

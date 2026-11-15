@@ -48,7 +48,7 @@ async function fixture() {
   const build = async (operatorContext = true) => {
     const before = await trees();
     try {
-      return await codexChatGptProfile(root, { home, prototypeRoot: root, nodePath: join(root, "node"), toolchainPath: "", rustupHome: "", operatorContext });
+      return await codexChatGptProfile(root, { path: "minimal", home, prototypeRoot: root, nodePath: join(root, "node"), toolchainPath: "", rustupHome: "", operatorContext });
     } finally {
       assert.deepStrictEqual(await trees(), before, "operator trees unchanged");
     }

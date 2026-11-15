@@ -221,3 +221,5 @@ export {
   secretsRunGrant,
   unavailableSecretPointers,
 } from "./secrets.ts";
+
+export { codexPathSyntax, codexEnvironmentNameAllowed } from "./codex-environment.ts";

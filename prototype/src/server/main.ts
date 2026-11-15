@@ -1,3 +1,4 @@
+import { codexExtraPathReporter } from "../codex-runner-bin.ts";
 /**
  * server/ (L5): the engine server's composition root
  * (specs/01-architecture.md §7).
@@ -237,6 +238,9 @@ export interface WorkbenchUnixServerOptions {
       | "codexReasoningEffort"
       | "codexWorkbenchTools"
       | "codexOperatorContext"
+      | "codexPath"
+      | "codexExtraPath"
+      | "codexEnvAllow"
       | "codexToolTimeoutSeconds"
       | "codexInteractiveIdleSeconds"
     >
@@ -478,10 +482,13 @@ function composeTurnRuntime(
   dispatch?: DispatchService,
   http?: HttpTransport,
 ): TurnRuntime {
+  const reportExtraPathDropped = codexExtraPathReporter(line => console.error(line));
   const externalAgentRunner: ExternalAgentRunner = {
     run: (input) =>
       runExternalAgentWorkbenchRuntime(input, {
         store: store(),
+        env,
+        reportExtraPathDropped,
         sessionMap: acpSessions,
         ...(policy === undefined ? {} : { runPolicy: policy }),
         ...(toolBridge === undefined ? {} : { toolBridge }),

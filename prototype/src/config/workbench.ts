@@ -13,6 +13,7 @@
  * overrides (the last applied above this, at the turn boundary).
  */
 
+import { readCodexEnvironmentConfig } from "./codex-environment.ts";
 import { parseDispatchConfig } from "./dispatch-config.ts";
 import { processEnv } from "./env.ts";
 import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
@@ -104,6 +105,9 @@ export interface WorkbenchConfig {
   codexWorkbenchTools: boolean;
   /** Project operator instructions and shared skills into the private home. */
   codexOperatorContext: boolean;
+  codexPath: "operator" | "minimal";
+  codexExtraPath: string[];
+  codexEnvAllow: string[];
   /**
    * Codex's per-call timeout, in seconds, for a bridged Workbench tool
    * ([codex] tool_timeout_seconds), from 1 through 3600.
@@ -142,6 +146,9 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   codexReasoningEffort: null,
   codexWorkbenchTools: true,
   codexOperatorContext: true,
+  codexPath: "operator",
+  codexExtraPath: [],
+  codexEnvAllow: [],
   codexToolTimeoutSeconds: 300,
   codexInteractiveIdleSeconds: DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
 };
@@ -205,6 +212,7 @@ function applyCodexFileConfig(
   table: Record<string, unknown>,
   fileLabel: string,
 ): void {
+  Object.assign(config, readCodexEnvironmentConfig(table));
   const fileEffort = readString(table, "codex", "reasoning_effort");
   if (fileEffort !== undefined) {
     config.codexReasoningEffort = validateCodexReasoningEffort(
