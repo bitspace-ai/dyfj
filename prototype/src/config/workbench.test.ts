@@ -491,3 +491,16 @@ test("loadConfig: dispatch timeout defaults and a strictly smaller wait load", a
     });
   }
 });
+
+for (const value of [undefined, true, false]) {
+  test(`operator context config: ${String(value)}`, async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: present,
+      parseToml: table({ codex: value === undefined ? {} : { operator_context: value } }) });
+    assert.equal(cfg.codexOperatorContext, value ?? true);
+  });
+}
+test("operator context config: rejects non-boolean", async () => {
+  await assert.rejects(loadConfig({ env: env(HOME), readTextFile: present,
+    parseToml: table({ codex: { operator_context: "true" } }) }),
+    { message: "config: codex.operator_context must be a boolean" });
+});

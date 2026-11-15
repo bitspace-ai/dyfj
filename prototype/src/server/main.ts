@@ -236,6 +236,7 @@ export interface WorkbenchUnixServerOptions {
       WorkbenchConfig,
       | "codexReasoningEffort"
       | "codexWorkbenchTools"
+      | "codexOperatorContext"
       | "codexToolTimeoutSeconds"
       | "codexInteractiveIdleSeconds"
     >

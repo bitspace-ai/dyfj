@@ -60,6 +60,11 @@ level = "strict"
 # [dispatch] is configured and the session is at depth 0, even without MCP.
 # Set false to give Codex no Workbench tools, including dispatch.
 # workbench_tools = true
+# Copy operator global instructions and link shared skills into the private home.
+# The copy refreshes at turn profile construction; running sessions keep what
+# they loaded. The link uses the operator's skill files. False removes both
+# projections. Operator Codex config, hooks, rules, memories and sign-in stay out.
+# operator_context = true
 # Codex's per-call timeout for a bridged tool, in seconds: an integer from 1
 # through 3600. A call that waits on the Workbench approval prompt counts
 # toward it. If [dispatch] is configured and workbench_tools is enabled,

@@ -11,6 +11,26 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Codex operator context (`BIT-946`).** The private runner home receives a
+  refreshed private copy of acceptable operator global instructions and a link
+  to acceptable shared skills by default. `[codex] operator_context = false`
+  removes the projections at profile construction. Receipts name projected
+  kinds; changes to those kinds replace retained sessions. Running sessions
+  keep instructions already loaded. Operator Codex configuration, hooks, saved
+  rules, memories and sign-in remain separate.
+  The `AGENTS.md` file in the dedicated Codex home and the symbolic link
+  named `skills` in the dedicated home's `.agents` directory belong to
+  Workbench. Workbench overwrites or removes them: a file at the
+  instructions destination or a link at the skills destination placed
+  there by hand is replaced on the first Codex turn, or removed when the
+  setting is off or the source is missing or unacceptable.
+  The maintainer verified in an acceptance test with a real agent
+  session on the `codex-chatgpt` route with adapter 2.5.0 that the
+  session receives the global instructions and shared skills, and that
+  the instructions copy follows an edit. Disabling the setting and the
+  `Operator context:` receipt line are covered by tests with temporary
+  homes only.
+
 - **External-agent plans and file changes (`BIT-925`).** Display-only progress
   carries deduplicated plans (20 steps, 160 UTF-8 bytes per content) and
   identified non-MCP edit summaries (five paths at 240 bytes, 40 signed lines

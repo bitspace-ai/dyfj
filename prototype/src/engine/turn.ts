@@ -191,6 +191,7 @@ export interface ExecuteTurnDeps {
   defaultCodexReasoningEffort?: CodexReasoningEffort;
   /** Configured idle limit in seconds for an interactive Codex ChatGPT session. */
   codexInteractiveIdleSeconds?: number;
+  codexOperatorContext?: boolean;
   /**
    * Close the turn's idle external-agent handle before the session lock is
    * released. The server passes the ACP session map's `dropSession`. Absent
@@ -217,7 +218,7 @@ export function engineConfigToTurnDeps(
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexInteractiveIdleSeconds"
+      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext"
     >
   >,
 ): Pick<
@@ -235,6 +236,7 @@ export function engineConfigToTurnDeps(
   | "maxToolStepsCeiling"
   | "defaultCodexReasoningEffort"
   | "codexInteractiveIdleSeconds"
+  | "codexOperatorContext"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -251,6 +253,9 @@ export function engineConfigToTurnDeps(
     ...(config.codexReasoningEffort
       ? { defaultCodexReasoningEffort: config.codexReasoningEffort }
       : {}),
+    ...(config.codexOperatorContext === undefined
+      ? {}
+      : { codexOperatorContext: config.codexOperatorContext }),
     ...(config.codexInteractiveIdleSeconds === undefined
       ? {}
       : { codexInteractiveIdleSeconds: config.codexInteractiveIdleSeconds }),
@@ -384,6 +389,9 @@ function runExecuteTurn(
     ...(deps.defaultCodexReasoningEffort === undefined
       ? {}
       : { defaultCodexReasoningEffort: deps.defaultCodexReasoningEffort }),
+    ...(deps.codexOperatorContext === undefined
+      ? {}
+      : { codexOperatorContext: deps.codexOperatorContext }),
     ...(deps.codexInteractiveIdleSeconds === undefined
       ? {}
       : { codexInteractiveIdleSeconds: deps.codexInteractiveIdleSeconds }),

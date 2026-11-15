@@ -102,6 +102,8 @@ export interface WorkbenchConfig {
    * ([codex] workbench_tools).
    */
   codexWorkbenchTools: boolean;
+  /** Project operator instructions and shared skills into the private home. */
+  codexOperatorContext: boolean;
   /**
    * Codex's per-call timeout, in seconds, for a bridged Workbench tool
    * ([codex] tool_timeout_seconds), from 1 through 3600.
@@ -139,6 +141,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   maxToolStepsCeiling: schemaNumberDefault("maxToolStepsCeiling"),
   codexReasoningEffort: null,
   codexWorkbenchTools: true,
+  codexOperatorContext: true,
   codexToolTimeoutSeconds: 300,
   codexInteractiveIdleSeconds: DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
 };
@@ -208,6 +211,10 @@ function applyCodexFileConfig(
       fileEffort,
       `${fileLabel} [codex].reasoning_effort`,
     );
+  }
+  const fileOperatorContext = readBoolean(table, "codex", "operator_context");
+  if (fileOperatorContext !== undefined) {
+    config.codexOperatorContext = fileOperatorContext;
   }
   const fileWorkbenchTools = readBoolean(table, "codex", "workbench_tools");
   if (fileWorkbenchTools !== undefined) {

@@ -180,6 +180,9 @@ export function canonicalExecutionProfileDigest(
     sessionUpdatePolicy: profile.sessionUpdatePolicy ?? null,
     protocolMessagePolicy: profile.protocolMessagePolicy ?? null,
     toolchainDirectoryCount: profile.toolchainDirectoryCount ?? null,
+    ...(profile.operatorContext === undefined ? {} : {
+      operatorContext: [...profile.operatorContext].sort(),
+    }),
   };
   return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }

@@ -106,6 +106,7 @@ export interface AcpExecutionProfile {
   sessionUpdatePolicy?: "standard" | "long_running";
   protocolMessagePolicy?: "standard" | "long_running";
   toolchainDirectoryCount?: 0 | 1 | 2;
+  operatorContext?: Array<"instructions" | "skills">;
 }
 
 export type AcpPermissionDecision = "approve" | "deny";
