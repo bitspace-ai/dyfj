@@ -31,6 +31,11 @@ function command(id: string): CommandDefinition {
 }
 
 describe("bridged tools", () => {
+  it("admits git but refuses bash and file tools", () => {
+    assert.equal(isBridgedCommand(command("git")), true);
+    assert.equal(isBridgedCommand(command("bash")), false);
+    assert.equal(isBridgedCommand(command("read_file")), false);
+  });
   it("offers the configured MCP commands and leaves the builtins off", () => {
     assert.equal(isBridgedCommand(command("mcp.linear.get_issue")), true);
     for (const id of ["bash", "read_file", "write_file", "read_memory"]) {

@@ -1680,7 +1680,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
       assert.strictEqual(record.active.size, 0, "the turn was not released");
       const [{ sessionId: activated, turn }] = record.turns;
       assert.strictEqual(activated, sessionId);
-      assert.deepStrictEqual(turn.commands, [linearGetIssue]);
+      assert.deepStrictEqual(turn.commands.map(command => command.id), ["git", linearGetIssue.id]);
       assert.strictEqual(turn.confirmApproval, confirmToolApproval);
       assert.strictEqual(turn.policy.permissionLevel, "operator");
       assert.strictEqual(turn.policy.loopback, true);
@@ -1722,7 +1722,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         ["a turn with no configured MCP command", "codex-chatgpt", []],
       ] as const
     ) {
-      it(`offers no bridge to ${name}`, async () => {
+      it(`offers the workspace bridge only on the Codex route: ${name}`, async () => {
         const h = createHarness();
         const { record, dependency } = recordingBridge();
         let tools: CodexWorkbenchToolsOptions | undefined = {
@@ -1746,9 +1746,15 @@ describe("runExternalAgentWorkbenchRuntime", () => {
           runAgent: () => Promise.resolve(stopResult),
           toolBridge: dependency,
         });
-        assert.strictEqual(tools, undefined);
-        assert.strictEqual(record.started, 0);
-        assert.strictEqual(record.turns.length, 0);
+        if (runner === "codex-chatgpt") {
+          assert.ok(tools);
+          assert.strictEqual(record.started, 1);
+          assert.deepStrictEqual(record.turns[0].turn.commands.map(command => command.id), ["git"]);
+        } else {
+          assert.strictEqual(tools, undefined);
+          assert.strictEqual(record.started, 0);
+          assert.strictEqual(record.turns.length, 0);
+        }
       });
     }
   });

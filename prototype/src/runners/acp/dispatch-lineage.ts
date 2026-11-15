@@ -18,7 +18,7 @@ import {
   sessionStartEvent,
   type Store,
 } from "../../store/mod.ts";
-import { DISPATCH_CHILD_CONTEXT_LINE, type DispatchSessionFactory } from "../../tools/mod.ts";
+import { DISPATCH_CHILD_CONTEXT_LINE, type DispatchSessionFactory, type ToolCatalogPorts } from "../../tools/mod.ts";
 import {
   bindCodexTurn,
   type CodexTurnTools,
@@ -28,7 +28,8 @@ import {
 /** Bind coordinator tools using runtime-owned session identity and persisted depth. */
 export async function bindExternalAgentTools(
   input: CodexTurnTools & { sessionId?: string; dispatchRecord?: DispatchRecord },
-  dependencies: { store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge },
+  dependencies: { store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge } &
+    Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox">,
   context: Omit<Parameters<DispatchSessionFactory["forSession"]>[0], "depth">,
 ) {
   let dispatch;
@@ -43,7 +44,7 @@ export async function bindExternalAgentTools(
     });
     if (depth === 0) dispatch = dependencies.dispatch.forSession({ ...context, depth });
   }
-  return await bindCodexTurn(dependencies.toolBridge, context.parentSessionId, { ...input, dispatch });
+  return await bindCodexTurn(dependencies.toolBridge, context.parentSessionId, { ...input, dispatch }, dependencies);
 }
 
 

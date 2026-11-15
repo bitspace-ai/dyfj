@@ -149,7 +149,7 @@ for (const withMcp of [true, false]) {
   test(`Codex depth 0 lists four dispatch tools ${withMcp ? "with MCP" : "without MCP"}`, { skip }, async () => {
     await withTurn({ mcp: withMcp }, async (client) => {
       const { tools } = await client.listTools();
-      assert.deepEqual(tools.map((tool) => tool.name).sort(), [...names, ...(withMcp ? ["mcp_example_read"] : [])]);
+      assert.deepEqual(tools.map((tool) => tool.name).sort(), [...names, "git", ...(withMcp ? ["mcp_example_read"] : [])]);
       for (const tool of tools) {
         assert.equal("sessionId" in (tool.inputSchema.properties ?? {}), false);
       }
@@ -159,23 +159,23 @@ for (const withMcp of [true, false]) {
 
 test("Codex dispatch listing requires configuration, depth 0 and an enabled bridge", { skip }, async () => {
   // Positive control makes the absence checks meaningful on the same route.
-  await withTurn({}, async (client) => assert.equal((await client.listTools()).tools.length, 4));
+  await withTurn({}, async (client) => assert.equal((await client.listTools()).tools.length, 5));
   for (const options of [{ configured: false }, { child: true }, { enabled: false }]) {
     await withTurn({ ...options, mcp: true }, async (client) => {
-      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), options.enabled === false ? [] : ["mcp_example_read"]);
+      assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), options.enabled === false ? [] : ["git", "mcp_example_read"]);
     });
   }
 });
 
 test("Codex dispatched child lists no dispatch tools on its first and resumed turns", { skip }, async () => {
   await withTurn({ child: true, resume: true, mcp: true }, async (client) => {
-    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["mcp_example_read"]);
+    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name), ["git", "mcp_example_read"]);
   });
 });
 
 test("Codex coordinator lists four dispatch tools on its first and resumed turns", { skip }, async () => {
   await withTurn({ resume: true }, async (client) => {
-    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), names);
+    assert.deepEqual((await client.listTools()).tools.map((tool) => tool.name).sort(), [...names, "git"]);
   });
 });
 
@@ -212,8 +212,9 @@ test("bridged dispatch/read escapes child text inside the existing envelope", { 
 test("bridged dispatch descriptions carry the standing child-report line", { skip }, async () => {
   await withTurn({}, async (client) => {
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 4);
-    for (const tool of tools) assert.ok(tool.description?.includes(DISPATCH_COORDINATOR_CONTEXT_LINE));
+    const dispatch = tools.filter(tool => tool.name.startsWith("dispatch_"));
+    assert.equal(dispatch.length, 4);
+    for (const tool of dispatch) assert.ok(tool.description?.includes(DISPATCH_COORDINATOR_CONTEXT_LINE));
   });
 });
 

@@ -763,6 +763,8 @@ async function emitRuntimeEvent(
 
 /** What `runExternalAgentWorkbenchRuntime` runs against. */
 export interface ExternalAgentRuntimeDependencies {
+  dialExecutor?: import("./tools/mod.ts").ExecutorDialer;
+  sandbox?: import("./tools/mod.ts").CommandSandbox;
   /** The same per-session dispatch factory used by native turns. */
   dispatch?: import("./tools/mod.ts").DispatchSessionFactory;
   /** The store every event, session row and workspace read goes through. */
@@ -861,7 +863,7 @@ export async function runExternalAgentWorkbenchRuntime(
     }
     assertAcpPromptWithinLimit(input.prompt);
     workspace = await resolveRunnerWorkspace(input, authContext, store.sessions);
-    bridged = await bindExternalAgentTools(input, dependencies, {
+    bridged = await bindExternalAgentTools({ ...input, workspaceRoot: workspace }, dependencies, {
       parentSessionId: sessionId, traceId, turnRootSpanId: rootSpanId,
       principalId, authContext, abortSignal: input.abortSignal,
     });

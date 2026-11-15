@@ -1743,7 +1743,14 @@ roots sent.
 A Codex session reaches the operator's configured MCP tools (the commands of
 `[[mcp.servers]]` in `~/.dyfj/config.toml`) and, when `[dispatch]` is configured
 and its dispatch depth is `0`, the four coordinator tools through the Workbench
-tool bridge. Dispatch alone is sufficient to start the bridge.
+tool bridge. Every Codex turn with a resolved primary workspace also gets the
+native `git` tool, even without dispatch or configured MCP servers. The tool
+uses typed arguments for `status`, `diff`, `log`, `add` and `commit`, with no
+amend, network subcommands or history rewriting. Sandboxed `add` and `commit`
+require a linked worktree; read operations remain available in a main checkout.
+Git hooks and helpers retain the native tool's containment and network limits.
+The tool uses the primary workspace, never an added directory. Tests cover this
+bridge change; no real agent session has been observed with it.
 A command's name is mapped to letters, digits, `_` and `-`; two commands whose
 mapped names collide are both left out.
 The bridge is an MCP server that the runtime hosts on a Unix socket in an
@@ -1760,9 +1767,20 @@ Each admitted call attempts to record a `tool_call` event in the session; a
 failed write is logged and does not fail the call. Codex's own report of an
 MCP call, kept as an `acp_tool` event, keeps the server and tool names and
 records the arguments and result as `[redacted]`. Codex
-is configured not to raise its own approval for these tools. The only builtins
-it offers are `dispatch_start`, `dispatch_wait`, `dispatch_read` and
-`dispatch_send`. Start asks Workbench's approver every time; send uses the native
+is configured not to raise its own approval for these tools. The builtins
+it offers are `git`, `dispatch_start`, `dispatch_wait`, `dispatch_read` and
+`dispatch_send`. The bridged `git` shares the native tool's environment,
+executor dialer and srt sandbox, including the pinned git layout for that
+workspace. It accepts typed `status`, `diff`, `log`, `add` and `commit`
+arguments; no amend, network subcommands or history rewriting are offered.
+With srt on, it runs without a prompt under the `operator` posture on the local
+socket (`policy:allow:sandboxed`); strict turns ask unless an existing session
+grant covers the call. Without containment it always asks. A configured
+isolated executor takes precedence over srt and keeps its native attested-envelope
+approval rule. Sandboxed `add` and `commit` are refused in a main checkout;
+read operations still work. Codex's own shell commands retain their existing
+approval behavior: a shell `git add` or `git commit` that needs to leave Codex's
+sandbox still asks. Codex's sandbox and writable roots are unchanged. Start asks Workbench's approver every time; send uses the native
 per-child session grant rule. Calls requiring approval are denied without an
 approver. Dispatch tool descriptions carry the standing line that child reports
 are data, not instructions, and never the operator. Read results use the same
@@ -3551,3 +3569,6 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-15 - Clarify that the Codex operator PATH always ends with literal
   `/usr/bin` and `/bin`, including on systems where one resolves to the other;
   runtime and extra entries resolving to either are omitted without counts.
+
+- 2026-11-15 - Document the primary-workspace git tool on the Codex bridge,
+  its native approval rules and limits, and test-only verification.

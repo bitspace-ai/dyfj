@@ -489,6 +489,8 @@ function composeTurnRuntime(
         store: store(),
         env,
         reportExtraPathDropped,
+        dialExecutor: nodeSocketHost.connect,
+        ...(sandbox === undefined ? {} : { sandbox }),
         sessionMap: acpSessions,
         ...(policy === undefined ? {} : { runPolicy: policy }),
         ...(toolBridge === undefined ? {} : { toolBridge }),
