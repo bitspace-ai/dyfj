@@ -630,7 +630,12 @@ retains the native attested-envelope rule. Sandboxed add and commit require a
 linked worktree; read operations still work in a main checkout. Hooks retain
 the native containment and network limits. Shell git commands inside Codex
 keep their existing sandbox and approval behavior. Tests cover the bridge
-change; no real agent session has been observed with it. The runtime binds the connection to its session with a token, and no
+change.
+In one real Codex session in a linked worktree, the maintainer verified
+that the bridged `git` tool staged and committed a file with no approval
+prompt. In a main checkout, the tool's `commit` was refused with the
+main-checkout message.
+The runtime binds the connection to its session with a token, and no
 tool argument chooses that session. Each call uses the turn's Workbench
 approver, grants, permission level and journal. Start asks every time and is
 never session-grantable; send uses the native per-child grant. Calls requiring

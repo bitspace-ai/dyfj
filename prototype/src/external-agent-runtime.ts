@@ -134,6 +134,7 @@ import {
   type ExternalAgentToolBridge,
 } from "./workbench-tool-bridge.ts";
 import { resolveRunnerWorkspace, withAddedRoots } from "./acp-runner-roots.ts";
+import type { CommandSandbox, ExecutorDialer } from "./tools/mod.ts";
 
 /**
  * What this runner reads from a runtime turn: the plain-data request from
@@ -763,8 +764,8 @@ async function emitRuntimeEvent(
 
 /** What `runExternalAgentWorkbenchRuntime` runs against. */
 export interface ExternalAgentRuntimeDependencies {
-  dialExecutor?: import("./tools/mod.ts").ExecutorDialer;
-  sandbox?: import("./tools/mod.ts").CommandSandbox;
+  dialExecutor?: ExecutorDialer;
+  sandbox?: CommandSandbox;
   /** The same per-session dispatch factory used by native turns. */
   dispatch?: import("./tools/mod.ts").DispatchSessionFactory;
   /** The store every event, session row and workspace read goes through. */

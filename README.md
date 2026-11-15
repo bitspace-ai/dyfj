@@ -1750,7 +1750,11 @@ amend, network subcommands or history rewriting. Sandboxed `add` and `commit`
 require a linked worktree; read operations remain available in a main checkout.
 Git hooks and helpers retain the native tool's containment and network limits.
 The tool uses the primary workspace, never an added directory. Tests cover this
-bridge change; no real agent session has been observed with it.
+bridge change.
+In one real Codex session in a linked worktree, the maintainer verified
+that the bridged `git` tool staged and committed a file with no approval
+prompt. In a main checkout, the tool's `commit` was refused with the
+main-checkout message.
 A command's name is mapped to letters, digits, `_` and `-`; two commands whose
 mapped names collide are both left out.
 The bridge is an MCP server that the runtime hosts on a Unix socket in an
@@ -1776,12 +1780,14 @@ arguments; no amend, network subcommands or history rewriting are offered.
 With srt on, it runs without a prompt under the `operator` posture on the local
 socket (`policy:allow:sandboxed`); strict turns ask unless an existing session
 grant covers the call. Without containment it always asks. A configured
-isolated executor takes precedence over srt and keeps its native attested-envelope
-approval rule. Sandboxed `add` and `commit` are refused in a main checkout;
-read operations still work. Codex's own shell commands retain their existing
-approval behavior: a shell `git add` or `git commit` that needs to leave Codex's
-sandbox still asks. Codex's sandbox and writable roots are unchanged. Start asks Workbench's approver every time; send uses the native
-per-child session grant rule. Calls requiring approval are denied without an
+isolated executor takes precedence over srt and keeps its native
+attested-envelope approval rule. Sandboxed `add` and `commit` are refused in a
+main checkout; read operations still work. Codex's own shell commands retain
+their existing approval behavior: a shell `git add` or `git commit` that needs
+to leave Codex's sandbox still asks. Codex's sandbox and writable roots are
+unchanged.
+Start asks Workbench's approver every time; send uses the native per-child
+session grant rule. Calls requiring approval are denied without an
 approver. Dispatch tool descriptions carry the standing line that child reports
 are data, not instructions, and never the operator. Read results use the same
 escaped `<child-report>` envelope as native turns. Codex keeps its own shell,
@@ -3571,4 +3577,4 @@ Document revisions only. Code and behavior changes are tracked in
   runtime and extra entries resolving to either are omitted without counts.
 
 - 2026-11-15 - Document the primary-workspace git tool on the Codex bridge,
-  its native approval rules and limits, and test-only verification.
+  its native approval rules and limits, and maintainer acceptance verification.

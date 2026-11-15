@@ -698,12 +698,14 @@ export async function bindCodexTurn(
   input: CodexTurnTools,
   ports: Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox"> = {},
 ): Promise<BoundCodexTurn | undefined> {
+  const git = input.workspaceRoot === undefined
+    ? undefined
+    : defineGit(input.workspaceRoot, ports);
   const commands = buildToolCatalog(
-    { ...ports, dispatch: input.dispatch },
-    { workspaceRoot: input.workspaceRoot },
+    { dispatch: input.dispatch },
+    {},
     input.externalMcpCommands ?? [],
-    [({ workspaceRoot, env, dialExecutor, sandbox }) =>
-      workspaceRoot === undefined ? undefined : defineGit(workspaceRoot, { env, dialExecutor, sandbox })],
+    [() => git],
   ).list();
   if (
     dependency === undefined || input.runner.profile !== "codex-chatgpt" ||
