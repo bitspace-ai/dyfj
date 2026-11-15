@@ -772,6 +772,18 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Local `diff.whitespace` range checks cover untracked files (`BIT-952`).**
+  `git diff --check` inspects only tracked paths, so a new file with trailing
+  whitespace or a trailing blank line passed a local gate run before `git
+  commit` and failed `diff.whitespace` afterwards. In non-authoritative local
+  runs, `diff.whitespace` now also checks untracked, non-ignored files under
+  the existing untracked inventory and per-file byte bounds (`readUntrackedFile`,
+  reading symlink target text without following links), piping non-empty reads
+  to `git diff --no-index --check` against `/dev/null`. Findings report the
+  existing `diff.whitespace/*` rules with path and line number only, never line
+  content, and inventory or per-file bounds that cut coverage short fail
+  closed. Authoritative CI range checks remain unchanged.
+
 - **Terminal command evidence on the Codex route (`BIT-936`).** ACP capture
   accepts streamed terminal output and exit metadata in the shape emitted by
   codex-acp 2.5.0. Otherwise complete calls can be recorded with `exitCode` and

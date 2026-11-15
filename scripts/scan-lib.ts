@@ -12,7 +12,7 @@
  */
 
 import { Buffer } from "node:buffer";
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { lstat, open, readFile, readlink } from "node:fs/promises";
 import { constants } from "node:os";
 import process from "node:process";
@@ -73,28 +73,36 @@ function commandEnvironment(): Record<string, string> {
   return env;
 }
 
-// Runs a command to completion with stdin closed and both output streams
-// collected, never shown. It rejects only when the command cannot be started;
-// callers turn that into a code-authored message and never relay it.
+// Runs a command to completion with both output streams collected, never
+// shown, and stdin either closed or fed a bounded buffer. It rejects only when
+// the command cannot be started; callers turn that into a code-authored
+// message and never relay it.
 export function commandOutput(
   command: string,
   args: readonly string[],
+  stdin?: Uint8Array,
 ): Promise<CommandOutput> {
   return new Promise((resolve, reject) => {
     const stdout: Uint8Array[] = [];
     const stderr: Uint8Array[] = [];
-    let child;
+    let child: ChildProcess;
     try {
       child = spawn(command, args, {
         env: commandEnvironment(),
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
       });
     } catch (error) {
       reject(error);
       return;
     }
-    child.stdout.on("data", (chunk: Uint8Array) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Uint8Array) => stderr.push(chunk));
+    if (stdin !== undefined && child.stdin !== null) {
+      // A child that exits before draining stdin raises EPIPE on the pipe;
+      // the exit status on `close` is the signal callers inspect.
+      child.stdin.on("error", () => {});
+      child.stdin.end(stdin);
+    }
+    child.stdout?.on("data", (chunk: Uint8Array) => stdout.push(chunk));
+    child.stderr?.on("data", (chunk: Uint8Array) => stderr.push(chunk));
     child.once("error", reject);
     child.once("close", (code, signal) => {
       const exit = code ??
@@ -121,9 +129,10 @@ export async function gitOutput(
   args: readonly string[],
   scanLabel: string,
   gitCommand = "git",
+  stdin?: Uint8Array,
 ): Promise<CommandOutput> {
   try {
-    return await commandOutput(gitCommand, ["-C", root, ...args]);
+    return await commandOutput(gitCommand, ["-C", root, ...args], stdin);
   } catch {
     throw new Error(
       `${scanLabel}: cannot run git (is it installed and executable?)`,

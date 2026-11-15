@@ -26,8 +26,14 @@
  *   left content unread, and the check reports that as a failure rather than
  *   a warning printed beside a clean pass.
  * - `diff.whitespace` is `git diff --check` for the exact range, attributed
- *   per changed file. Only git's fixed finding vocabulary and line numbers
- *   are reported — never the offending line.
+ *   per changed file. In a local (non-authoritative) run it additionally
+ *   checks untracked non-ignored files by feeding each bounded read to
+ *   `git diff --no-index --check` on stdin; ignored files stay excluded,
+ *   symlinks are read as their link-target text rather than followed, and
+ *   inventory or per-file byte bounds that cut coverage short fail closed. CI
+ *   keeps the exact bound range. Only git's fixed finding vocabulary (with the
+ *   `whitespace-error` fallback) and line numbers are reported — never the
+ *   offending line.
  * - `markdown.links` validates changed Markdown: repository-relative link
  *   targets must exist and code fences must be balanced. External-link
  *   reachability is deliberately not checked.
@@ -63,6 +69,7 @@ import {
   repoRootFromMeta,
   sanitizeForLog,
   untrackedFiles,
+  type UntrackedRead,
 } from "./scan-lib.ts";
 import {
   type AddedLine,
@@ -193,6 +200,39 @@ const WHITESPACE_CLASSES = [
   "leftover conflict marker",
 ] as const;
 
+// Only line numbers and git's fixed classes leave the captured output;
+// offending content lines (prefixed `+`) are never inspected or echoed.
+function parseWhitespaceCheckOutput(
+  path: string,
+  stdout: Uint8Array,
+  limit: number,
+): PublicSafetyHit[] {
+  if (limit <= 0) return [];
+  const parsed: PublicSafetyHit[] = [];
+  for (const raw of new TextDecoder().decode(stdout).split("\n")) {
+    if (raw.startsWith("+")) continue;
+    const match = /:(\d+): ([a-z A-Z]+)\.?$/.exec(raw);
+    if (!match) continue;
+    const cls = match[2] ?? "";
+    if (!(WHITESPACE_CLASSES as readonly string[]).includes(cls)) continue;
+    parsed.push({
+      path: posixPath(path),
+      line: Number(match[1]),
+      rule: `diff.whitespace/${cls.replaceAll(" ", "-")}`,
+    });
+    if (parsed.length >= limit) break;
+  }
+  if (parsed.length === 0) {
+    // Fail closed: git reported problems even if none were parseable.
+    parsed.push({
+      path: posixPath(path),
+      line: 0,
+      rule: "diff.whitespace/whitespace-error",
+    });
+  }
+  return parsed;
+}
+
 export async function whitespaceHits(
   root: string,
   range: ReleaseRange,
@@ -200,7 +240,8 @@ export async function whitespaceHits(
 ): Promise<PublicSafetyHit[]> {
   const hits: PublicSafetyHit[] = [];
   for (const path of await changedFiles(root, range, gitCommand)) {
-    if (hits.length >= MAX_COLLECTED_HITS) break;
+    const remaining = MAX_COLLECTED_HITS - hits.length;
+    if (remaining <= 0) break;
     const result = await gitOutput(
       root,
       ["diff", "--check", ...range.diffArgs, "--", path],
@@ -213,32 +254,109 @@ export async function whitespaceHits(
         `${LABEL}: git diff --check failed (exit ${result.code})`,
       );
     }
-    // Only line numbers and git's fixed classes leave the captured output;
-    // offending content lines (prefixed `+`) are never inspected or echoed.
-    const before = hits.length;
-    for (const raw of new TextDecoder().decode(result.stdout).split("\n")) {
-      if (raw.startsWith("+")) continue;
-      const match = /:(\d+): ([a-z A-Z]+)\.?$/.exec(raw);
-      if (!match) continue;
-      const cls = match[2] ?? "";
-      if (!(WHITESPACE_CLASSES as readonly string[]).includes(cls)) continue;
-      hits.push({
-        path: posixPath(path),
-        line: Number(match[1]),
-        rule: `diff.whitespace/${cls.replaceAll(" ", "-")}`,
-      });
-      if (hits.length >= MAX_COLLECTED_HITS) break;
-    }
-    if (hits.length === before) {
-      // Fail closed: git reported problems even if none were parseable.
-      hits.push({
-        path: posixPath(path),
-        line: 0,
-        rule: "diff.whitespace/whitespace-error",
-      });
-    }
+    hits.push(...parseWhitespaceCheckOutput(path, result.stdout, remaining));
   }
   return hits;
+}
+
+export interface UntrackedWhitespaceResult {
+  hits: PublicSafetyHit[];
+  coverage: CoverageGaps;
+}
+
+const UNTRACKED_WHITESPACE_CONCURRENCY = 16;
+
+function bytesForUntrackedWhitespaceCheck(read: UntrackedRead): Uint8Array {
+  if (!read.truncated) return read.bytes;
+  // A truncated read stopped mid-file (`coverage.truncatedPaths` already fails
+  // the check). Check only complete lines in the prefix, followed by a clean
+  // sentinel line so the cut boundary is never mistaken for EOL or EOF.
+  const lastNewline = read.bytes.lastIndexOf(0x0a);
+  if (lastNewline < 0) return new Uint8Array();
+  const checked = new Uint8Array(lastNewline + 3);
+  checked.set(read.bytes.subarray(0, lastNewline + 1), 0);
+  checked[lastNewline + 1] = 0x78; // 'x'
+  checked[lastNewline + 2] = 0x0a; // '\n'
+  return checked;
+}
+
+async function untrackedWhitespaceStdout(
+  root: string,
+  bytes: Uint8Array,
+  gitCommand: string,
+): Promise<Uint8Array | undefined> {
+  const result = await gitOutput(
+    root,
+    [
+      "diff",
+      "--no-index",
+      "--no-color",
+      "--no-ext-diff",
+      "--check",
+      "--",
+      "/dev/null",
+      "-",
+    ],
+    LABEL,
+    gitCommand,
+    bytes,
+  );
+  // `--no-index` implies `--exit-code` (bit 1: inputs differ) alongside
+  // `--check` (bit 2: findings present), so clean input exits 0 or 1 with no
+  // stdout and findings exit 2 or 3.
+  if ((result.code === 0 || result.code === 1) && result.stdout.length === 0) {
+    return undefined;
+  }
+  if (result.code !== 2 && result.code !== 3) {
+    throw new Error(
+      `${LABEL}: git diff --check failed (exit ${result.code})`,
+    );
+  }
+  return result.stdout;
+}
+
+// Local counterpart to `whitespaceHits` for paths git does not yet track.
+// Each file is read through `readUntrackedFile` (bounded, never following
+// symlinks) and piped to `git diff --no-index --check` against `/dev/null`, so
+// git's own `--check` rules judge the bytes without reading the filesystem
+// path directly.
+export async function untrackedWhitespaceHits(
+  root: string,
+  gitCommand = "git",
+): Promise<UntrackedWhitespaceResult> {
+  const coverage = emptyCoverage();
+  const { paths, truncated } = await untrackedFiles(root, LABEL, gitCommand);
+  coverage.inventoryBound = truncated;
+  const hits: PublicSafetyHit[] = [];
+  for (
+    let index = 0;
+    index < paths.length;
+    index += UNTRACKED_WHITESPACE_CONCURRENCY
+  ) {
+    if (hits.length >= MAX_COLLECTED_HITS) break;
+    const slice = paths.slice(index, index + UNTRACKED_WHITESPACE_CONCURRENCY);
+    const batch = await Promise.all(
+      slice.map(async (path) => {
+        const read = await readUntrackedFile(root, path, LABEL);
+        const checked = bytesForUntrackedWhitespaceCheck(read);
+        const stdout = checked.length === 0
+          ? undefined
+          : await untrackedWhitespaceStdout(root, checked, gitCommand);
+        return { path, truncated: read.truncated, stdout };
+      }),
+    );
+    for (const item of batch) {
+      const remaining = MAX_COLLECTED_HITS - hits.length;
+      if (remaining <= 0) break;
+      if (item.truncated) recordTruncatedRead(coverage, item.path);
+      if (item.stdout !== undefined) {
+        hits.push(
+          ...parseWhitespaceCheckOutput(item.path, item.stdout, remaining),
+        );
+      }
+    }
+  }
+  return { hits, coverage };
 }
 
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -456,9 +574,18 @@ export async function runRangeCheck(
       }
       break;
     }
-    case "diff.whitespace":
+    case "diff.whitespace": {
       hits = await whitespaceHits(root, range);
+      if (!range.authoritative) {
+        const untracked = await untrackedWhitespaceHits(root);
+        coverage = untracked.coverage;
+        for (const hit of untracked.hits) {
+          if (hits.length >= MAX_COLLECTED_HITS) break;
+          hits.push(hit);
+        }
+      }
       break;
+    }
     case "markdown.links":
       hits = await markdownLinkHits(root, range);
       break;
