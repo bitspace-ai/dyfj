@@ -32,6 +32,7 @@ if (mode === undefined || !MODES.includes(mode) || dir === undefined) {
   console.error(`usage: lane-runner.fixture.ts <${MODES.join("|")}> <dir>`);
   process.exit(64);
 }
+writeFileSync(`${dir}/group-${process.pid}`, String(process.pid));
 const supervision = laneSupervision();
 startTokenCarrier(supervision);
 // The child's program is fixed text: the directory and how to finish reach

@@ -828,6 +828,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- Lane-supervision tests fail before starting fixtures when `ps` is refused.
+  Fixture groups are registered independently of recovery records and killed
+  on assertion failure or SIGINT/SIGTERM, even when process listing fails.
+
 - **Local `diff.whitespace` range checks cover untracked files (`BIT-952`).**
   `git diff --check` inspects only tracked paths, so a new file with trailing
   whitespace or a trailing blank line passed a local gate run before `git
