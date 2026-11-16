@@ -12,8 +12,12 @@ import { defineGateTools } from "./gate.ts";
 import { GateRuns } from "./gate-runs.ts";
 import type { CommandCall } from "../definition.ts";
 
+const dependencies = SandboxManager.isSupportedPlatform()
+  ? SandboxManager.checkDependencies()
+  : { errors: ["unsupported platform"] };
+
 it("gate files: real srt streams the full log and cancels the process group", {
-  skip: nestedSandboxSkipReason() ?? (SandboxManager.isSupportedPlatform() ? false : "srt unsupported platform"),
+  skip: dependencies.errors.length ? dependencies.errors.join("; ") : nestedSandboxSkipReason() ?? false,
 }, async () => {
   const root = await mkdtemp(join(tmpdir(), "gate-srt-"));
   const home = await mkdtemp(join(tmpdir(), "gate-srt-home-"));
