@@ -695,11 +695,17 @@ capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
 `gate-status` line when available, a 16 KiB output tail, and the full log path:
 `~/.dyfj/log/gate/<session-id>/<run-id>.log` under the runtime log directory.
 This uses the runtime launcher's absolute `HOME` resolution, not `DYFJ_ROOT`.
-Directories are mode 700 and log files are mode 600. `gate/cancel` requests a
-whole-process-group stop; wait for the final state with `gate/wait`. Both
-commands run without a prompt and disclose only the calling session's runs.
-Timeouts stop the process group. Runs live only in memory; a restart makes ids
-unknown. Each session retains at most 64 recent runs. Calls record one
+Log files persist after the run and after a restart; nothing removes or rotates
+them automatically. The operator removes them.
+The first gate run sets `~/.dyfj`, `~/.dyfj/log` and the gate directories to
+owner-only (700) if they are not already; each later run reapplies that mode.
+A gate run fails if any of those paths is a symlink. Log files are mode 600.
+All srt-sandboxed commands are denied writes under `~/.dyfj`, so they cannot
+write to the gate logs.
+`gate/cancel` requests a whole-process-group stop; wait for the final state with
+`gate/wait`. Both commands run without a prompt and disclose only the calling
+session's runs. Timeouts stop the process group. Run records live only in memory;
+a restart makes ids unknown. Each session retains at most 64 recent runs. Calls record one
 `tool_call` with run metadata; worktree-controlled output stays out of that
 event. `tools/list` and `tools/inspect` do not list or inspect the gate tools:
 they are bound per session, while those RPCs use a session-independent catalog.

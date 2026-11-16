@@ -16,7 +16,13 @@ README are tracked separately in its Revision history section.
   srt; full runs execute worktree code on the host and ask every time by default.
   See the **Explicit host-gate session grants** entry below for the opt-in.
   Output streams to `~/.dyfj/log/gate/<session-id>/<run-id>.log`, with bounded
-  waits and output tails.
+  waits and output tails. Workspace log directories do not affect this path.
+  Log files persist after the run and after a restart; nothing removes or
+  rotates them automatically. The operator removes them. Starting a gate run
+  sets `~/.dyfj`, `~/.dyfj/log` and the gate directories to owner-only (700),
+  including existing directories, and refuses symlinks at those paths. Log
+  files are owner-only (600). All srt-sandboxed commands are denied writes
+  under `~/.dyfj`, so they cannot write to the gate logs.
 
 - **Native git on the Codex bridge (`BIT-954`).** Codex turns with a primary
   workspace receive typed status, diff, log, add and commit operations through
@@ -699,10 +705,6 @@ README are tracked separately in its Revision history section.
   come from.
 
 ### Changed
-
-- **Gate log location (`BIT-954`).** Gate output is stored under the runtime
-  log directory at `gate/<session-id>/<run-id>.log`, using owner-only
-  directories and files. Workspace log directories do not affect this path.
 
 - **Explicit host-gate session grants (`BIT-954`).** Operators can list
   `gate/start:full` in `[approvals] session_grantable` to offer a session grant
