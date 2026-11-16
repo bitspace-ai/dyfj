@@ -172,3 +172,6 @@ export {
   buildMemorySearch,
   memorySearchConfigFromEnv,
 } from "./mcp/memory-search.ts";
+
+export { defineGateTools, type GateRuntimePorts, type GateToolDeps } from "./builtin/gate.ts";
+export { GateRuns } from "./builtin/gate-runs.ts";

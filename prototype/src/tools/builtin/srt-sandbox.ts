@@ -70,6 +70,8 @@ export interface SandboxRun {
   timeoutMs: number;
   env: Record<string, string>;
   stdin?: string;
+  signal?: AbortSignal;
+  onOutput?: (chunk: Uint8Array) => void;
 }
 
 /** The sandbox port the tools receive from the composition root. */
@@ -250,6 +252,8 @@ function createSandbox(
         cwd: run.cwd,
         env: run.env,
         timeoutMs: run.timeoutMs,
+        signal: run.signal,
+        onOutput: run.onOutput,
         ...(run.stdin === undefined ? {} : { stdin: run.stdin }),
       });
     } finally {

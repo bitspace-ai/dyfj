@@ -223,3 +223,5 @@ export {
 } from "./secrets.ts";
 
 export { codexPathSyntax, codexEnvironmentNameAllowed } from "./codex-environment.ts";
+
+export { loadGateConfig, parseGateConfig, type GateConfig, type GateMode } from "./gate-config.ts";

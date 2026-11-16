@@ -83,6 +83,7 @@ export interface BoundedResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  cancelled?: boolean;
   /** Present when the deadline stopped the command. */
   termination?: TimeoutTermination;
 }
@@ -95,6 +96,9 @@ export interface BoundedRequest {
   timeoutMs: number;
   /** Text written to the command's standard input, which is then closed. Absent, stdin is closed from the start. */
   stdin?: string;
+  signal?: AbortSignal;
+  /** Stream output to an owner instead of retaining it in memory. */
+  onOutput?: (chunk: Uint8Array) => void;
 }
 
 export interface BoundedOptions {
@@ -306,7 +310,7 @@ interface Collector {
   text(): string;
 }
 
-function collect(stream: Readable): Collector {
+function collect(stream: Readable, onOutput?: (chunk: Uint8Array) => void): Collector {
   const chunks: Uint8Array[] = [];
   let frozen = false;
   const done = new Promise<void>((resolve) => {
@@ -316,7 +320,10 @@ function collect(stream: Readable): Collector {
     stream.once("error", () => resolve());
   });
   stream.on("data", (chunk: Uint8Array) => {
-    if (!frozen) chunks.push(chunk);
+    if (!frozen || onOutput !== undefined) {
+      if (onOutput === undefined) chunks.push(chunk);
+      else onOutput(chunk);
+    }
   });
   return {
     done,
@@ -382,6 +389,7 @@ export async function runBounded(
   request: BoundedRequest,
   options: BoundedOptions = {},
 ): Promise<BoundedResult> {
+  request.signal?.throwIfAborted();
   const graceMs = options.graceMs ?? DEFAULT_GRACE_MS;
   const drainMs = options.drainMs ?? DEFAULT_DRAIN_MS;
   // The default stopper's /bin/kill runs under the same policy as the
@@ -420,18 +428,27 @@ export async function runBounded(
     ? child.pid
     : undefined;
   const exited = exitStatus(child);
-  const stdout = collect(child.stdout!);
-  const stderr = collect(child.stderr!);
+  const stdout = collect(child.stdout!, request.onOutput);
+  const stderr = collect(child.stderr!, request.onOutput);
   const outputClosed = Promise.all([stdout.done, stderr.done]);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cancelled = false;
+  let abortRun: () => void = () => {};
+  const aborted = new Promise<false>((resolve) => {
+    abortRun = () => { cancelled = true; resolve(false); };
+    request.signal?.addEventListener("abort", abortRun, { once: true });
+    if (request.signal?.aborted) abortRun();
+  });
   const finishedFirst = await Promise.race([
+    aborted,
     Promise.all([exited, outputClosed]).then(() => true),
     new Promise<false>((resolve) => {
       timer = setTimeout(() => resolve(false), request.timeoutMs);
     }),
   ]);
   clearTimeout(timer);
+  request.signal?.removeEventListener("abort", abortRun);
 
   if (finishedFirst) {
     const status = await exited;
@@ -473,7 +490,8 @@ export async function runBounded(
     signal: status?.signal ?? null,
     stdout: stdout.text(),
     stderr: stderr.text(),
-    timedOut: true,
+    timedOut: !cancelled,
+    ...(cancelled ? { cancelled: true } : {}),
     termination: {
       group: groupStop,
       exited: status !== undefined,

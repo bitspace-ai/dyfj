@@ -1,3 +1,4 @@
+import type { GateRuntimePorts } from "../tools/mod.ts";
 /**
  * The native runtime's input, services, and result types. The input is the
  * contract request plus the ports the engine calls back through (the
@@ -356,6 +357,7 @@ export interface WorkbenchRuntimeServices {
    * `[publish]` section - leaves the publish tools unregistered.
    */
   publish?: PublishEnginePorts;
+  gate?: GateRuntimePorts;
   /**
    * The coordinator dispatch tools' shared dependencies (BIT-907). Absent - no
    * `[dispatch]` section - leaves the dispatch tools unregistered.

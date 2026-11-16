@@ -11,12 +11,18 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Configured gate tools (`BIT-954`).** Native and Codex-route sessions can
+  start, wait for and cancel a session-owned test run. Selected files run under
+  srt; full runs execute worktree code on the host and ask every time. Output
+  streams to `logs/gate/<run-id>.log`, with bounded waits and output tails.
+  No real agent session has been observed with these tools.
+
 - **Native git on the Codex bridge (`BIT-954`).** Codex turns with a primary
   workspace receive typed status, diff, log, add and commit operations through
   the Workbench tool bridge, using native git's containment and approval rules.
   Sandboxed operator calls on the local socket run without a prompt; sandboxed
   writes require a linked worktree. Added directories and Codex's own shell
-  sandbox are unchanged. Tests cover this change.
+  sandbox are unchanged.
   In one real Codex session in a linked worktree, the maintainer verified
   that the bridged `git` tool staged and committed a file with no approval
   prompt. In a main checkout, the tool's `commit` was refused with the

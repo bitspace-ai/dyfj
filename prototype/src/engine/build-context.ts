@@ -364,6 +364,7 @@ async function buildCompanionContext(
       ? {}
       : { dialExecutor: ports.dialExecutor }),
     ...(ports.sandbox === undefined ? {} : { sandbox: ports.sandbox }),
+    ...(ports.gate === undefined ? {} : { gate: { ...ports.gate, sessionId: session.sessionId } }),
     ...(ports.publish === undefined
       ? {}
       : { publish: { ...ports.publish, sessionId: session.sessionId } }),

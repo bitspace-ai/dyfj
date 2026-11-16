@@ -629,12 +629,55 @@ covers the call. Without containment git always asks; an isolated executor
 retains the native attested-envelope rule. Sandboxed add and commit require a
 linked worktree; read operations still work in a main checkout. Hooks retain
 the native containment and network limits. Shell git commands inside Codex
-keep their existing sandbox and approval behavior. Tests cover the bridge
-change.
-In one real Codex session in a linked worktree, the maintainer verified
-that the bridged `git` tool staged and committed a file with no approval
-prompt. In a main checkout, the tool's `commit` was refused with the
-main-checkout message.
+keep their existing sandbox and approval behavior.
+### Gate tools
+
+With `[gate]` configured, native and Codex-route sessions receive `gate/start`,
+`gate/wait` and `gate/cancel` (bridged as `gate_start`, `gate_wait`, `gate_cancel`).
+The configuration is read once at boot from `~/.dyfj/config.toml`:
+
+```toml
+[gate]
+command = ["npm", "test"]
+files_command = ["node", "--test"]
+timeout_seconds = 1800
+```
+
+`command` is required for the tools to exist. `files_command` is optional;
+without it, only `full` mode is offered. Commands are argv arrays, never shell
+strings. The timeout defaults to 1800 seconds. Malformed keys fail boot.
+
+`gate/start` takes `mode` (`full` or `files`). `files` requires a non-empty
+`paths` array of existing workspace-relative files; absolute paths, traversal
+and symlinks escaping the primary workspace are refused. Every command runs
+from the primary workspace root. A start returns a run id immediately; a
+second start while that session has an active run is refused with its id.
+
+`files` runs under srt and is allowed without a prompt under `operator` on
+the local socket (`policy:allow:sandboxed`); otherwise it asks. It is absent
+when srt is off or missing. It is also absent on the isolated executor route:
+the executor returns output only after exit and has no cancel operation, so
+it cannot support the full log or `gate/cancel`. There is no uncontained
+fallback for this mode.
+
+`full` runs worktree code on the runtime's host, outside any sandbox, including
+when an isolated executor is configured. It requires a `reason` and asks for
+approval every time under both `strict` and `operator`; no session grant is
+offered. Calls without an operator on loopback are refused.
+
+`gate/wait` takes `run` and optional `wait_seconds` (default zero). Waiting is
+capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
+10 seconds, with zero as the minimum. It returns state (`running`, `passed`,
+`failed`, `timed-out`, `cancelled`, `unknown`), mode, paths, exit code, the gate's
+`gate-status` line when available, a 16 KiB output tail, and the full log path:
+`logs/gate/<run-id>.log` in the primary workspace. `gate/cancel` requests a
+whole-process-group stop; wait for the final state with `gate/wait`. Both
+commands run without a prompt and disclose only the calling session's runs.
+Timeouts stop the process group. Runs live only in memory; a restart makes ids
+unknown. Each session retains at most 64 recent runs. Calls record one
+`tool_call` with run metadata; worktree-controlled output stays out of that
+event. No real agent session has been observed with these gate tools.
+
 The runtime binds the connection to its session with a token, and no
 tool argument chooses that session. Each call uses the turn's Workbench
 approver, grants, permission level and journal. Start asks every time and is

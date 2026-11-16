@@ -1,3 +1,5 @@
+import { loadGateConfig } from "../config/mod.ts";
+import { GateRuns, type GateRuntimePorts } from "../tools/mod.ts";
 import { codexExtraPathReporter } from "../codex-runner-bin.ts";
 /**
  * server/ (L5): the engine server's composition root
@@ -270,6 +272,7 @@ export interface WorkbenchUnixServerOptions {
    * is built here, so a ticket outlives the turn that opened it.
    */
   publish?: PublishServerPorts;
+  gate?: GateRuntimePorts;
   /**
    * The operator's `[dispatch]` section, loaded once at boot (BIT-907). Absent,
    * the four `dispatch/*` tools are not registered at all.
@@ -481,6 +484,7 @@ function composeTurnRuntime(
   toolBridge?: ExternalAgentToolBridge,
   dispatch?: DispatchService,
   http?: HttpTransport,
+  gate?: GateRuntimePorts,
 ): TurnRuntime {
   const reportExtraPathDropped = codexExtraPathReporter(line => console.error(line));
   const externalAgentRunner: ExternalAgentRunner = {
@@ -495,6 +499,7 @@ function composeTurnRuntime(
         ...(policy === undefined ? {} : { runPolicy: policy }),
         ...(toolBridge === undefined ? {} : { toolBridge }),
         ...(dispatch === undefined ? {} : { dispatch }),
+        ...(gate === undefined ? {} : { gate }),
       }),
   };
   // One set of workspace-root anchors per engine: a root anchored by the
@@ -529,6 +534,7 @@ function composeTurnRuntime(
           },
         }),
       ...(dispatch === undefined ? {} : { dispatch }),
+      ...(gate === undefined ? {} : { gate }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
@@ -644,6 +650,7 @@ export async function serveWorkbenchUnix(
       return headlessTurnsRef;
     },
   );
+  const gateRuns = options.gate?.runs;
   const runRuntime = options.runRuntime ??
     composeTurnRuntime(
       () => options.store,
@@ -657,6 +664,7 @@ export async function serveWorkbenchUnix(
       toolBridge,
       dispatchService,
       options.http,
+      options.gate,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -736,6 +744,7 @@ export async function serveWorkbenchUnix(
       // arrived after the stop. The asking client's
       // connection stays open for its answer when `disconnectPeers` is false.
       const transportClosed = transport.close(options);
+      await gateRuns?.close();
       let shutdownError: unknown;
       try {
         await acpSessions.shutdown();
@@ -795,6 +804,9 @@ async function main(): Promise<void> {
   console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
   const publish = await bootPublish();
   const dispatch = await bootDispatch();
+  const gateConfig = await loadGateConfig();
+  const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy };
+  if (gate !== undefined) console.error("dyfj runtime: gate tools enabled from [gate]");
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,
@@ -900,6 +912,7 @@ async function main(): Promise<void> {
       storeProbe: createStoreProbe(pool),
       ...(publish === undefined ? {} : { publish }),
       ...(dispatch === undefined ? {} : { dispatch }),
+      ...(gate === undefined ? {} : { gate }),
       onShutdown: () => shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.

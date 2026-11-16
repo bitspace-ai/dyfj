@@ -766,6 +766,7 @@ async function emitRuntimeEvent(
 export interface ExternalAgentRuntimeDependencies {
   dialExecutor?: ExecutorDialer;
   sandbox?: CommandSandbox;
+  gate?: import("./tools/mod.ts").GateRuntimePorts;
   /** The same per-session dispatch factory used by native turns. */
   dispatch?: import("./tools/mod.ts").DispatchSessionFactory;
   /** The store every event, session row and workspace read goes through. */
