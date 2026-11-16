@@ -619,7 +619,8 @@ operator's configured MCP tools and the four dispatch tools when `[dispatch]`
 is configured and the loopback session's dispatch depth is 0. A resolved primary
 workspace also supplies the native `git` tool and starts the bridge without
 MCP or dispatch. Codex sees `git`, `dispatch_start`, `dispatch_wait`,
-`dispatch_read` and `dispatch_send`; bash and file tools are not bridged.
+`dispatch_read` and `dispatch_send`, plus `gate_start`, `gate_wait` and
+`gate_cancel` only when `[gate]` is configured. Bash and file tools are not bridged.
 Git takes typed `status`, `diff`, `log`, `add` and `commit` arguments, with no
 amend, network subcommands or history rewriting. It uses the primary workspace,
 never an added directory, and shares native git's environment, executor dialer,
@@ -692,13 +693,18 @@ capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
 10 seconds, with zero as the minimum. It returns state (`running`, `passed`,
 `failed`, `timed-out`, `cancelled`, `unknown`), mode, paths, exit code, the gate's
 `gate-status` line when available, a 16 KiB output tail, and the full log path:
-`logs/gate/<run-id>.log` in the primary workspace. `gate/cancel` requests a
+`~/.dyfj/log/gate/<session-id>/<run-id>.log` under the runtime log directory.
+This uses the runtime launcher's absolute `HOME` resolution, not `DYFJ_ROOT`.
+Directories are mode 700 and log files are mode 600. `gate/cancel` requests a
 whole-process-group stop; wait for the final state with `gate/wait`. Both
 commands run without a prompt and disclose only the calling session's runs.
 Timeouts stop the process group. Runs live only in memory; a restart makes ids
 unknown. Each session retains at most 64 recent runs. Calls record one
 `tool_call` with run metadata; worktree-controlled output stays out of that
-event. No real agent session has been observed with these gate tools.
+event. `tools/list` and `tools/inspect` do not list or inspect the gate tools:
+they are bound per session, while those RPCs use a session-independent catalog.
+
+### Codex tool bridge session binding
 
 The runtime binds the connection to its session with a token, and no
 tool argument chooses that session. Each call uses the turn's Workbench

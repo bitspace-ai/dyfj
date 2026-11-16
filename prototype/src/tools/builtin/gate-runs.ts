@@ -1,8 +1,8 @@
-import { closeSync, constants, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, mkdirSync, openSync, realpathSync, writeSync } from "node:fs";
 import { join, relative, isAbsolute } from "node:path";
 import { clipToUtf8Bytes } from "../../kernel/mod.ts";
 import { randomUUID } from "node:crypto";
-import { baseRuntimePolicy, type GateMode, type RuntimePolicy } from "../../config/mod.ts";
+import { baseRuntimePolicy, type Env, processEnv, type GateMode, type RuntimePolicy } from "../../config/mod.ts";
 import { runBounded, type BoundedResult } from "./bounded-process.ts";
 import type { CommandSandbox } from "./srt-sandbox.ts";
 
@@ -36,6 +36,10 @@ const TAIL_BYTES = 16384;
 /** Ephemeral, single-writer run state. The runtime owns one registry across turns. */
 export class GateRuns {
   readonly #sessions = new Map<string, Map<string, RecordRun>>();
+  readonly #env: Env;
+
+  constructor(env: Env = processEnv) { this.#env = env; }
+
 
   active(session: string): string | undefined {
     for (const [id, record] of this.#sessions.get(session) ?? []) {
@@ -48,20 +52,29 @@ export class GateRuns {
     const active = this.active(session);
     if (active !== undefined) throw new Error(`gate: run ${active} is still active`);
     const root = realpathSync(input.root);
-    const directory = join(root, "logs", "gate");
-    // Validate each parent before descending, so an existing link cannot redirect mkdir.
-    for (const path of [join(root, "logs"), directory]) {
-      try { mkdirSync(path); } catch (error) {
+    // Match the launcher's runtime_log_path: HOME/.dyfj/log, not DYFJ_ROOT.
+    const home = this.#env.get("HOME");
+    if (home === undefined || !isAbsolute(home)) throw new Error("gate: runtime logs require an absolute HOME");
+    if (!/^[a-zA-Z0-9_-]+$/.test(session)) throw new Error("gate: invalid session id");
+    const runtimeRoot = join(realpathSync(home), ".dyfj");
+    const rel = relative(root, join(runtimeRoot, "log", "gate", session));
+    if (rel === "" || (!isAbsolute(rel) && rel !== ".." && !rel.startsWith("../"))) {
+      throw new Error("gate: runtime log directory must be outside the workspace");
+    }
+    const logRoot = join(runtimeRoot, "log");
+    const gateRoot = join(logRoot, "gate");
+    const directory = join(gateRoot, session);
+    for (const path of [runtimeRoot, logRoot, gateRoot, directory]) {
+      try { mkdirSync(path, { mode: 0o700 }); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       }
-      const rel = relative(root, realpathSync(path));
-      if (isAbsolute(rel) || rel === ".." || rel.startsWith("../")) {
-        throw new Error("gate: log directory leaves the workspace");
-      }
+      const dir = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      try { fchmodSync(dir, 0o700); } finally { closeSync(dir); }
     }
     const run = randomUUID();
     const logPath = join(directory, `${run}.log`);
     const fd = openSync(logPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);
+    try { fchmodSync(fd, 0o600); } catch (error) { closeSync(fd); throw error; }
     const record: RecordRun = {
       view: { run, state: "running", mode: input.mode, paths: [...input.paths], exitCode: null, statusLine: null, tail: "", logPath },
       abort: new AbortController(), done: Promise.resolve(),

@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
@@ -97,6 +97,7 @@ describe("the workspace policy", () => {
     // a definition of a diff, filter or textconv driver lives there, so it is
     // not something a sandboxed command may write.
     assert.deepEqual(policy.filesystem.denyWrite, [
+      "/fake-home/.dyfj",
       join(common, "objects", "pack"),
       join(common, "objects", "info"),
       join(wt, ".git"),
@@ -140,13 +141,13 @@ describe("the workspace policy", () => {
     });
     assert.equal(policy.mainCheckout, true);
     assert.deepEqual(policy.filesystem.allowWrite, [base]);
-    assert.deepEqual(policy.filesystem.denyWrite, [gitDir]);
+    assert.deepEqual(policy.filesystem.denyWrite, [join(homedir(), ".dyfj"), gitDir]);
   });
 
   it("a directory outside any repository may write only itself", async () => {
     const policy = await compileWorkspacePolicy(base, { readLayout: layout(null) });
     assert.deepEqual(policy.filesystem.allowWrite, [base]);
-    assert.deepEqual(policy.filesystem.denyWrite, []);
+    assert.deepEqual(policy.filesystem.denyWrite, [join(homedir(), ".dyfj")]);
   });
 
   it("every built-in credential path is read-denied", async () => {

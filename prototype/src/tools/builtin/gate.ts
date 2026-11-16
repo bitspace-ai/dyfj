@@ -97,7 +97,7 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
     filesystem: "none", network: "none", cost: "none",
   };
   const wait: CommandDefinition<GateView> = {
-    id: "gate/wait", title: "Wait for gate", description: `Wait up to ${maxWait} seconds for a session-owned gate. Returns state, mode, exit code, status line, bounded output tail and log path. Unknown ids disclose no other session's run.`,
+    id: "gate/wait", title: "Wait for gate", description: `Wait up to ${maxWait} seconds for a session-owned gate. Returns state, mode, exit code, status line, bounded output tail and runtime log path (~/.dyfj/log/gate/<session-id>/<run-id>.log). Unknown ids disclose no other session's run.`,
     inputSchema: { type: "object", required: ["run"], properties: {
       run: { type: "string" }, wait_seconds: { type: "number", minimum: 0, description: `Capped at ${maxWait} seconds; defaults to zero.` },
     }, additionalProperties: false }, permission: readPermission,

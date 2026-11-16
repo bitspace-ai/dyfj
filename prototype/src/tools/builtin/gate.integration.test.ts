@@ -1,5 +1,6 @@
+import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, symlink, stat, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -13,14 +14,18 @@ const call = (id: string, args: Record<string, unknown>): CommandCall => ({
 async function fixture(script: string, timeoutSeconds = 10) {
   const { GateRuns } = await import("./gate-runs.ts");
   const { defineGateTools } = await import("./gate.ts");
-  const root = await mkdtemp(join(tmpdir(), "gate-run-"));
-  const runs = new GateRuns();
+  const base = await mkdtemp(join(tmpdir(), "gate-run-"));
+  const root = join(base, "workspace");
+  const home = join(base, "home");
+  await mkdir(root); await mkdir(home);
+  const logRoot = join(home, ".dyfj", "log");
+  const runs = new GateRuns(new MapEnv({ HOME: home, DYFJ_ROOT: join(base, "config-root") }));
   const config = { commands: { full: [process.execPath, "-e", script] }, timeoutSeconds };
   const tools = defineGateTools({ config, runs, sessionId: "one", workspaceRoot: root });
   const registry = createCommandRegistry(); tools.forEach(t => registry.register(t));
   const execute = async (id: string, args: Record<string, unknown>) => tools.find(tool => tool.id === id)!.executor(call(id, args), { authzBasis: "test" });
-  return { root, runs, registry, execute,
-    close: async () => { await runs.close(); await rm(root, { recursive: true, force: true }); },
+  return { root, logRoot, runs, registry, execute,
+    close: async () => { await runs.close(); await rm(base, { recursive: true, force: true }); },
   };
 }
 
@@ -47,7 +52,7 @@ for (const [code, state] of [[0, "passed"], [7, "failed"]] as const) {
       const done = await h.execute("gate/wait", { run: started.run, wait_seconds: 30 });
       assert.equal(done.state, state); assert.equal(done.exitCode, code);
       assert.equal(done.statusLine, line); assert.ok(Buffer.byteLength(done.tail) <= 16384);
-      assert.equal(done.logPath, join(h.root, "logs", "gate", `${started.run}.log`));
+      assert.equal(done.logPath, join(h.logRoot, "gate", "one", `${started.run}.log`));
       assert.ok((await readFile(done.logPath!, "utf8")).length > 40000);
     } finally { await h.close(); }
   });
@@ -94,3 +99,26 @@ it("gate start: records exactly one tool_call with mode and paths", async () => 
     assert.match(JSON.stringify(events[0]), /paths/);
   } finally { await h.close(); }
 });
+
+for (const workspaceLink of ["logs", "logs/gate"]) {
+  it(`gate logs: runtime log directory is independent of workspace ${workspaceLink} symlink`, async t => {
+    const h = await fixture("console.log('runtime-owned log')");
+    try {
+      const target = join(h.root, "elsewhere");
+      await mkdir(target);
+      if (workspaceLink === "logs/gate") await mkdir(join(h.root, "logs"));
+      await symlink(target, join(h.root, workspaceLink));
+      const started = await h.execute("gate/start", { mode: "full" });
+      const done = await h.execute("gate/wait", { run: started.run, wait_seconds: 10 });
+      assert.equal(done.state, "passed");
+      assert.equal(done.logPath, join(h.logRoot, "gate", "one", `${started.run}.log`));
+      assert.equal(done.logPath!.startsWith(h.root + "/"), false);
+      assert.deepEqual(await readdir(target), []);
+      for (const dir of [h.logRoot, join(h.logRoot, "gate"), join(h.logRoot, "gate", "one")]) {
+        assert.equal((await stat(dir)).mode & 0o777, 0o700);
+      }
+      assert.equal((await stat(done.logPath!)).mode & 0o777, 0o600);
+      t.diagnostic(`gate log path: ${done.logPath}`);
+    } finally { await h.close(); }
+  });
+}

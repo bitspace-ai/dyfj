@@ -13,9 +13,10 @@ README are tracked separately in its Revision history section.
 
 - **Configured gate tools (`BIT-954`).** Native and Codex-route sessions can
   start, wait for and cancel a session-owned test run. Selected files run under
-  srt; full runs execute worktree code on the host and ask every time. Output
-  streams to `logs/gate/<run-id>.log`, with bounded waits and output tails.
-  No real agent session has been observed with these tools.
+  srt; full runs execute worktree code on the host and ask every time by default.
+  See the **Explicit host-gate session grants** entry below for the opt-in.
+  Output streams to `~/.dyfj/log/gate/<session-id>/<run-id>.log`, with bounded
+  waits and output tails.
 
 - **Native git on the Codex bridge (`BIT-954`).** Codex turns with a primary
   workspace receive typed status, diff, log, add and commit operations through
@@ -699,12 +700,16 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Gate log location (`BIT-954`).** Gate output is stored under the runtime
+  log directory at `gate/<session-id>/<run-id>.log`, using owner-only
+  directories and files. Workspace log directories do not affect this path.
+
 - **Explicit host-gate session grants (`BIT-954`).** Operators can list
   `gate/start:full` in `[approvals] session_grantable` to offer a session grant
   on its approval prompt. The first run still asks. After a grant, subsequent
   full runs execute worktree code on the host without another prompt until the
   session ends, with a distinct authorization basis. No other command or mode
-  is eligible. No real agent session has been observed with this opt-in.
+  is eligible.
 
 - **Two-pass text-first transcript reconstruction and unlabelled complete
   transcripts on external-agent sessions (`BIT-939`).**

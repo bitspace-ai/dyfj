@@ -1802,13 +1802,18 @@ capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
 10 seconds, with zero as the minimum. It returns state (`running`, `passed`,
 `failed`, `timed-out`, `cancelled`, `unknown`), mode, paths, exit code, the gate's
 `gate-status` line when available, a 16 KiB output tail, and the full log path:
-`logs/gate/<run-id>.log` in the primary workspace. `gate/cancel` requests a
+`~/.dyfj/log/gate/<session-id>/<run-id>.log` under the runtime log directory.
+This uses the runtime launcher's absolute `HOME` resolution, not `DYFJ_ROOT`.
+Directories are mode 700 and log files are mode 600. `gate/cancel` requests a
 whole-process-group stop; wait for the final state with `gate/wait`. Both
 commands run without a prompt and disclose only the calling session's runs.
 Timeouts stop the process group. Runs live only in memory; a restart makes ids
 unknown. Each session retains at most 64 recent runs. Calls record one
 `tool_call` with run metadata; worktree-controlled output stays out of that
-event. No real agent session has been observed with these gate tools.
+event. `tools/list` and `tools/inspect` do not list or inspect the gate tools:
+they are bound per session, while those RPCs use a session-independent catalog.
+
+### Codex tool bridge
 
 A Codex session reaches the operator's configured MCP tools (the commands of
 `[[mcp.servers]]` in `~/.dyfj/config.toml`) and, when `[dispatch]` is configured
@@ -2885,9 +2890,6 @@ Reserved space for new questions as they accumulate.
 
 ## 12. Revision history
 
-- 2026-11-15 - Document configured gate tools, mode policy, bounded waits, logs
-  and the explicit operator opt-in for full-mode session grants.
-
 Document revisions only. Code and behavior changes are tracked in
 [CHANGELOG.md](CHANGELOG.md).
 
@@ -3646,3 +3648,6 @@ Document revisions only. Code and behavior changes are tracked in
 
 - 2026-11-15 - Document the primary-workspace git tool on the Codex bridge,
   its native approval rules and limits, and maintainer acceptance verification.
+
+- 2026-11-15 - Document configured gate tools, mode policy, bounded waits, logs
+  and the explicit operator opt-in for full-mode session grants.
