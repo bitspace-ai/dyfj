@@ -6,7 +6,10 @@ import { buildSafeBashEnv, executorSocket } from "./exec.ts";
 import { type CommandSandbox, offSandbox, sandboxContainment } from "./srt-sandbox.ts";
 import { GateRuns, type GateView } from "./gate-runs.ts";
 
+export const GATE_START_APPROVALS = { id: "gate/start", sessionGrantModes: ["full"] } as const;
+
 export interface GateRuntimePorts {
+  sessionGrantable?: readonly string[];
   config: GateConfig;
   runs: GateRuns;
   policy?: RuntimePolicy;
@@ -66,8 +69,8 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
     catch (error) { return (error as Error).message; }
   };
   const start: CommandDefinition<GateView> = {
-    id: "gate/start", title: "Run gate (full runs worktree code on the host, outside any sandbox)",
-    description: "Start the configured gate and return a run id immediately. Full runs worktree code on the host, outside any sandbox, and requires a reason and approval every time. Files runs selected test files under srt. Only one run per session may be active.",
+    ...GATE_START_APPROVALS, sessionGrantable: deps.sessionGrantable, title: "Run gate (full runs worktree code on the host, outside any sandbox)",
+    description: "Start the configured gate and return a run id immediately. Full runs worktree code on the host, outside any sandbox, and requires a reason and approval unless the operator opted in and granted full mode for this session. Files runs selected test files under srt. Only one run per session may be active.",
     inputSchema: { type: "object", required: ["mode"], properties: {
       mode: { type: "string", enum: modes },
       paths: { type: "array", items: { type: "string" }, maxItems: 100, description: "Non-empty workspace-relative files, for files mode only." },

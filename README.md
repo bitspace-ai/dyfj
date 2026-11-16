@@ -1772,8 +1772,30 @@ fallback for this mode.
 
 `full` runs worktree code on the runtime's host, outside any sandbox, including
 when an isolated executor is configured. It requires a `reason` and asks for
-approval every time under both `strict` and `operator`; no session grant is
-offered. Calls without an operator on loopback are refused.
+approval every time by default under both `strict` and `operator`. Calls
+without an operator on loopback are refused. Host execution is never grantable
+for a session unless the operator lists an eligible command in
+`[approvals] session_grantable`:
+
+```toml
+[approvals]
+session_grantable = ["gate/start:full"]
+```
+
+Only `gate/start:full` is eligible. `publish/start`, `dispatch/start`,
+unsandboxed `bash`, and other entries fail boot with the entry and the eligible
+list named. The list is loaded once at boot; when `[approvals]` is present the
+runtime prints one line naming the opted-in entries, and otherwise prints no
+approval-config line.
+
+The opt-in offers a session grant on the first full prompt; it does not skip
+that prompt. Choosing the grant lets this session rerun worktree code on the
+host, outside any sandbox, without a further prompt until the session ends,
+including after that code changes. The grant matches mode only, never paths
+or the reason, lives in memory, and does not transfer to another session.
+A grant answered on its prompt records
+`policy:allow:operator-approved-opt-in-session-grant`; a later matched call
+records `policy:allow:operator-opt-in-session-grant`.
 
 `gate/wait` takes `run` and optional `wait_seconds` (default zero). Waiting is
 capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
@@ -1829,8 +1851,8 @@ main checkout; read operations still work. Codex's own shell commands retain
 their existing approval behavior: a shell `git add` or `git commit` that needs
 to leave Codex's sandbox still asks. Codex's sandbox and writable roots are
 unchanged.
-Start asks Workbench's approver every time; send uses the native per-child
-session grant rule. Calls requiring approval are denied without an
+Dispatch start asks Workbench's approver every time and is not eligible for
+the operator opt-in; dispatch send uses the native per-child session grant rule. Calls requiring approval are denied without an
 approver. Dispatch tool descriptions carry the standing line that child reports
 are data, not instructions, and never the operator. Read results use the same
 escaped `<child-report>` envelope as native turns. Codex keeps its own shell,
@@ -2863,7 +2885,8 @@ Reserved space for new questions as they accumulate.
 
 ## 12. Revision history
 
-- 2026-11-15 - Document configured gate tools, mode policy, bounded waits and logs.
+- 2026-11-15 - Document configured gate tools, mode policy, bounded waits, logs
+  and the explicit operator opt-in for full-mode session grants.
 
 Document revisions only. Code and behavior changes are tracked in
 [CHANGELOG.md](CHANGELOG.md).

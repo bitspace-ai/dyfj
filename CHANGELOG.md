@@ -699,6 +699,13 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Explicit host-gate session grants (`BIT-954`).** Operators can list
+  `gate/start:full` in `[approvals] session_grantable` to offer a session grant
+  on its approval prompt. The first run still asks. After a grant, subsequent
+  full runs execute worktree code on the host without another prompt until the
+  session ends, with a distinct authorization basis. No other command or mode
+  is eligible. No real agent session has been observed with this opt-in.
+
 - **Two-pass text-first transcript reconstruction and unlabelled complete
   transcripts on external-agent sessions (`BIT-939`).**
   `reconstructAcpContinuityPrompt` (`prototype/src/external-agent-runtime.ts`,

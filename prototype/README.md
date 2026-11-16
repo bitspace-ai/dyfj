@@ -662,8 +662,30 @@ fallback for this mode.
 
 `full` runs worktree code on the runtime's host, outside any sandbox, including
 when an isolated executor is configured. It requires a `reason` and asks for
-approval every time under both `strict` and `operator`; no session grant is
-offered. Calls without an operator on loopback are refused.
+approval every time by default under both `strict` and `operator`. Calls
+without an operator on loopback are refused. Host execution is never grantable
+for a session unless the operator lists an eligible command in
+`[approvals] session_grantable`:
+
+```toml
+[approvals]
+session_grantable = ["gate/start:full"]
+```
+
+Only `gate/start:full` is eligible. `publish/start`, `dispatch/start`,
+unsandboxed `bash`, and other entries fail boot with the entry and the eligible
+list named. The list is loaded once at boot; when `[approvals]` is present the
+runtime prints one line naming the opted-in entries, and otherwise prints no
+approval-config line.
+
+The opt-in offers a session grant on the first full prompt; it does not skip
+that prompt. Choosing the grant lets this session rerun worktree code on the
+host, outside any sandbox, without a further prompt until the session ends,
+including after that code changes. The grant matches mode only, never paths
+or the reason, lives in memory, and does not transfer to another session.
+A grant answered on its prompt records
+`policy:allow:operator-approved-opt-in-session-grant`; a later matched call
+records `policy:allow:operator-opt-in-session-grant`.
 
 `gate/wait` takes `run` and optional `wait_seconds` (default zero). Waiting is
 capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
@@ -680,8 +702,10 @@ event. No real agent session has been observed with these gate tools.
 
 The runtime binds the connection to its session with a token, and no
 tool argument chooses that session. Each call uses the turn's Workbench
-approver, grants, permission level and journal. Start asks every time and is
-never session-grantable; send uses the native per-child grant. Calls requiring
+approver, grants, permission level and journal. Dispatch start asks every time:
+host execution is never grantable unless the operator lists an eligible command
+in `[approvals] session_grantable`, and `dispatch/start` is not eligible.
+Dispatch send uses the native per-child grant. Calls requiring
 approval are denied without an approver. Child sessions get none of the dispatch
 tools, and the bridge exposes no parked-approval answer operation or prompt
 content. Dispatch tool descriptions carry the shared standing child-report

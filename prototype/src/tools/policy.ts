@@ -66,7 +66,7 @@ export interface CommandPolicyContext {
   containment?: ContainmentVerdict;
 }
 
-/** The basis of an unsandboxed call's prompt; such a call is never granted for the session. */
+/** The basis of an unsandboxed prompt; only explicit eligible-mode opt-ins permit a session grant. */
 export const UNSANDBOXED_ASK_BASIS = "policy:ask:unsandboxed";
 
 export function evaluateCommandPolicy(

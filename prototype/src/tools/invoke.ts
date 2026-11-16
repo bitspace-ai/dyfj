@@ -270,19 +270,23 @@ async function runApproved<TResult>(
   containment: ContainmentVerdict | undefined,
 ): Promise<CommandInvocationResult<TResult>> {
   let authzBasis = policyBasis;
-  // An unsandboxed call (BIT-662) asks every time: it is never offered or
-  // matched as a session grant.
-  const grants = command.grantable === true &&
-      policyBasis !== UNSANDBOXED_ASK_BASIS
+  // Host execution needs both a declared eligible mode and the operator's
+  // explicit opt-in. The opt-in permits an offer; it never creates a grant.
+  const mode = call.arguments.mode;
+  const optedIn = policyContext.loopback === true && typeof mode === "string" &&
+    command.sessionGrantModes?.includes(mode) === true &&
+    command.sessionGrantable?.includes(`${command.id}:${mode}`) === true;
+  const grants = optedIn || (command.grantable === true &&
+      policyBasis !== UNSANDBOXED_ASK_BASIS)
     ? policyContext.sessionGrants
     : undefined;
-  const scope = grantScope(containment);
+  const scope = optedIn ? "operator-opt-in" : grantScope(containment);
   const grantKey = grants === undefined || scope === null
     ? undefined
-    : sessionGrantKey(call, scope, command.grantArguments);
+    : sessionGrantKey(call, scope, optedIn ? ["mode"] : command.grantArguments);
   if (ask && grantKey !== undefined && grants?.has(grantKey) === true) {
     // The operator allowed this exact call for the rest of the session.
-    authzBasis = "policy:allow:session-grant";
+    authzBasis = optedIn ? "policy:allow:operator-opt-in-session-grant" : "policy:allow:session-grant";
   } else if (ask) {
     // A mutation does not run until the operator approves it. The
     // verdict comes from the injected transport approver; the default denies, so
@@ -313,7 +317,7 @@ async function runApproved<TResult>(
     }
     if (verdict.scope === "session" && grantKey !== undefined) {
       grants?.add(grantKey);
-      authzBasis = "policy:allow:operator-approved-session-grant";
+      authzBasis = optedIn ? "policy:allow:operator-approved-opt-in-session-grant" : "policy:allow:operator-approved-session-grant";
     } else {
       authzBasis = "policy:allow:operator-approved";
     }

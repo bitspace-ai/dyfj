@@ -1,5 +1,5 @@
-import { loadGateConfig } from "../config/mod.ts";
-import { GateRuns, type GateRuntimePorts } from "../tools/mod.ts";
+import { loadGateConfig, loadApprovalsConfig } from "../config/mod.ts";
+import { GateRuns, GATE_START_APPROVALS, type GateRuntimePorts } from "../tools/mod.ts";
 import { codexExtraPathReporter } from "../codex-runner-bin.ts";
 /**
  * server/ (L5): the engine server's composition root
@@ -805,7 +805,9 @@ async function main(): Promise<void> {
   const publish = await bootPublish();
   const dispatch = await bootDispatch();
   const gateConfig = await loadGateConfig();
-  const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy };
+  const approvals = await loadApprovalsConfig([GATE_START_APPROVALS]);
+  if (approvals !== null) console.error(`dyfj runtime: [approvals] session_grantable: ${approvals.sessionGrantable.join(", ") || "(none)"}`);
+  const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy, sessionGrantable: approvals?.sessionGrantable };
   if (gate !== undefined) console.error("dyfj runtime: gate tools enabled from [gate]");
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
