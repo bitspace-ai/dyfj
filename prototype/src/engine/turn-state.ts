@@ -1,3 +1,4 @@
+import type { GateRuntimePorts } from "../tools/mod.ts";
 /**
  * The engine-owned state of one native turn (specs/01-architecture.md §5.1).
  *
@@ -80,6 +81,7 @@ export interface NativeTurnPorts {
   sandbox?: CommandSandbox;
   /** The publish tools' config and ticket registry (BIT-786); see `ToolCatalogPorts`. */
   publish?: PublishEnginePorts;
+  gate?: GateRuntimePorts;
   /** The coordinator dispatch tools' service (BIT-907); see `ToolCatalogPorts`. */
   dispatch?: DispatchEnginePorts;
   /** The runtime policy memory recall is checked against; the base when absent. */

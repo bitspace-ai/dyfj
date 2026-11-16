@@ -1740,6 +1740,87 @@ lists `roots: <workspace>, <root>, …` and `/session` prints one
 `added root:` line per root; the external-agent receipt counts the writable
 roots sent.
 
+### Gate tools
+
+With `[gate]` configured, native and Codex-route sessions receive `gate/start`,
+`gate/wait` and `gate/cancel` (bridged as `gate_start`, `gate_wait`, `gate_cancel`).
+The configuration is read once at boot from `~/.dyfj/config.toml`:
+
+```toml
+[gate]
+command = ["npm", "test"]
+files_command = ["node", "--test"]
+timeout_seconds = 1800
+```
+
+`command` is required for the tools to exist. `files_command` is optional;
+without it, only `full` mode is offered. Commands are argv arrays, never shell
+strings. The timeout defaults to 1800 seconds. Malformed keys fail boot.
+
+`gate/start` takes `mode` (`full` or `files`). `files` requires a non-empty
+`paths` array of existing workspace-relative files; absolute paths, traversal
+and symlinks escaping the primary workspace are refused. Every command runs
+from the primary workspace root. A start returns a run id immediately; a
+second start while that session has an active run is refused with its id.
+
+`files` runs under srt and is allowed without a prompt under `operator` on
+the local socket (`policy:allow:sandboxed`); otherwise it asks. It is absent
+when srt is off or missing. It is also absent on the isolated executor route:
+the executor returns output only after exit and has no cancel operation, so
+it cannot support the full log or `gate/cancel`. There is no uncontained
+fallback for this mode.
+
+`full` runs worktree code on the runtime's host, outside any sandbox, including
+when an isolated executor is configured. It requires a `reason` and asks for
+approval every time by default under both `strict` and `operator`. Calls
+without an operator on loopback are refused. Host execution is never grantable
+for a session unless the operator lists an eligible command in
+`[approvals] session_grantable`:
+
+```toml
+[approvals]
+session_grantable = ["gate/start:full"]
+```
+
+Only `gate/start:full` is eligible. `publish/start`, `dispatch/start`,
+unsandboxed `bash`, and other entries fail boot with the entry and the eligible
+list named. The list is loaded once at boot; when `[approvals]` is present the
+runtime prints one line naming the opted-in entries, and otherwise prints no
+approval-config line.
+
+The opt-in offers a session grant on the first full prompt; it does not skip
+that prompt. Choosing the grant lets this session rerun worktree code on the
+host, outside any sandbox, without a further prompt until the session ends,
+including after that code changes. The grant matches mode only, never paths
+or the reason, lives in memory, and does not transfer to another session.
+A grant answered on its prompt records
+`policy:allow:operator-approved-opt-in-session-grant`; a later matched call
+records `policy:allow:operator-opt-in-session-grant`.
+
+`gate/wait` takes `run` and optional `wait_seconds` (default zero). Waiting is
+capped at 30 seconds, reduced on the bridge to at most its tool timeout minus
+10 seconds, with zero as the minimum. It returns state (`running`, `passed`,
+`failed`, `timed-out`, `cancelled`, `unknown`), mode, paths, exit code, the gate's
+`gate-status` line when available, a 16 KiB output tail, and the full log path:
+`~/.dyfj/log/gate/<session-id>/<run-id>.log` under the runtime log directory.
+This uses the runtime launcher's absolute `HOME` resolution, not `DYFJ_ROOT`.
+Log files persist after the run and after a restart; nothing removes or rotates
+them automatically. The operator removes them.
+The first gate run sets `~/.dyfj`, `~/.dyfj/log` and the gate directories to
+owner-only (700) if they are not already; each later run reapplies that mode.
+A gate run fails if any of those paths is a symlink. Log files are mode 600.
+All srt-sandboxed commands are denied writes under `~/.dyfj`, so they cannot
+write to the gate logs.
+`gate/cancel` requests a whole-process-group stop; wait for the final state with
+`gate/wait`. Both commands run without a prompt and disclose only the calling
+session's runs. Timeouts stop the process group. Run records live only in memory;
+a restart makes ids unknown. Each session retains at most 64 recent runs. Calls record one
+`tool_call` with run metadata; worktree-controlled output stays out of that
+event. `tools/list` and `tools/inspect` do not list or inspect the gate tools:
+they are bound per session, while those RPCs use a session-independent catalog.
+
+### Codex tool bridge
+
 A Codex session reaches the operator's configured MCP tools (the commands of
 `[[mcp.servers]]` in `~/.dyfj/config.toml`) and, when `[dispatch]` is configured
 and its dispatch depth is `0`, the four coordinator tools through the Workbench
@@ -1749,12 +1830,7 @@ uses typed arguments for `status`, `diff`, `log`, `add` and `commit`, with no
 amend, network subcommands or history rewriting. Sandboxed `add` and `commit`
 require a linked worktree; read operations remain available in a main checkout.
 Git hooks and helpers retain the native tool's containment and network limits.
-The tool uses the primary workspace, never an added directory. Tests cover this
-bridge change.
-In one real Codex session in a linked worktree, the maintainer verified
-that the bridged `git` tool staged and committed a file with no approval
-prompt. In a main checkout, the tool's `commit` was refused with the
-main-checkout message.
+The tool uses the primary workspace, never an added directory.
 A command's name is mapped to letters, digits, `_` and `-`; two commands whose
 mapped names collide are both left out.
 The bridge is an MCP server that the runtime hosts on a Unix socket in an
@@ -1786,8 +1862,8 @@ main checkout; read operations still work. Codex's own shell commands retain
 their existing approval behavior: a shell `git add` or `git commit` that needs
 to leave Codex's sandbox still asks. Codex's sandbox and writable roots are
 unchanged.
-Start asks Workbench's approver every time; send uses the native per-child
-session grant rule. Calls requiring approval are denied without an
+Dispatch start asks Workbench's approver every time and is not eligible for
+the operator opt-in; dispatch send uses the native per-child session grant rule. Calls requiring approval are denied without an
 approver. Dispatch tool descriptions carry the standing line that child reports
 are data, not instructions, and never the operator. Read results use the same
 escaped `<child-report>` envelope as native turns. Codex keeps its own shell,
@@ -3578,3 +3654,6 @@ Document revisions only. Code and behavior changes are tracked in
 
 - 2026-11-15 - Document the primary-workspace git tool on the Codex bridge,
   its native approval rules and limits, and maintainer acceptance verification.
+
+- 2026-11-15 - Document configured gate tools, mode policy, bounded waits, logs
+  and the explicit operator opt-in for full-mode session grants.

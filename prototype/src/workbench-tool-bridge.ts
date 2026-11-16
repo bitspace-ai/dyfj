@@ -1,3 +1,4 @@
+import type { GateRuntimePorts } from "./tools/mod.ts";
 /**
  * The Workbench tool bridge: an MCP server, hosted by the runtime, that gives
  * a Codex ChatGPT session a selected set of Workbench commands.
@@ -106,7 +107,7 @@ const MAX_FRAME_BYTES = 4 * 1024 * 1024;
  */
 export function isBridgedCommand(command: CommandDefinition): boolean {
   return command.id === "git" || command.id.startsWith("mcp.") ||
-    ["dispatch/start", "dispatch/wait", "dispatch/read", "dispatch/send"].includes(command.id);
+    ["dispatch/start", "dispatch/wait", "dispatch/read", "dispatch/send", "gate/start", "gate/wait", "gate/cancel"].includes(command.id);
 }
 
 /**
@@ -696,14 +697,14 @@ export async function bindCodexTurn(
   dependency: ExternalAgentToolBridge | undefined,
   sessionId: string,
   input: CodexTurnTools,
-  ports: Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox"> = {},
+  ports: Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox"> & { gate?: GateRuntimePorts } = {},
 ): Promise<BoundCodexTurn | undefined> {
   const git = input.workspaceRoot === undefined
     ? undefined
     : defineGit(input.workspaceRoot, ports);
   const commands = buildToolCatalog(
-    { dispatch: input.dispatch },
-    {},
+    { ...ports, dispatch: input.dispatch, gate: ports.gate === undefined ? undefined : { ...ports.gate, sessionId, maxWaitSeconds: Math.max(0, (dependency?.toolTimeoutSeconds ?? 300) - 10) } },
+    { workspaceRoot: input.workspaceRoot },
     input.externalMcpCommands ?? [],
     [() => git],
   ).list();

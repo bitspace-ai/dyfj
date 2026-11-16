@@ -10,8 +10,9 @@
  *
  * `publish/start` runs the worktree's gate on the HOST, outside the sandbox. A
  * sandboxed command can plant code in the worktree, so starting a gate is host
- * execution of worktree code: it asks the operator every time, is never
- * grantable for a session, and its approval title carries that warning. The
+ * execution of worktree code. Host execution is never grantable for a session
+ * unless the operator lists an eligible command in `[approvals] session_grantable`.
+ * `publish/start` is not eligible, so it asks every time; its title warns of host execution. The
  * title is STATIC - it names no commit; the pins a run resolved are shown by
  * `publish/status`.
  *

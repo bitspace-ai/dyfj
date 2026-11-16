@@ -145,7 +145,8 @@ export interface Containment {
    * True when this call asks to run outside the sandbox (bash's
    * `unsandboxed`, BIT-662). A declared read of a model-supplied argument
    * (README Section 1) that can only turn an allow into a prompt or a
-   * refusal: such a call always asks, is never granted for the session, and
+   * refusal: such a call asks unless an eligible mode has an operator-opted-in
+   * session grant, and
    * is refused off loopback (`tools/policy.ts`).
    */
   escapesSandbox?(call: CommandCall): boolean;
@@ -188,6 +189,10 @@ export interface CommandDefinition<TResult = unknown> {
    * that session only, and is never persisted.
    */
   grantable?: boolean;
+  /** Modes eligible for an explicit operator opt-in to session grants. */
+  sessionGrantModes?: readonly string[];
+  /** Boot-validated command:mode entries opted in by the operator. */
+  sessionGrantable?: readonly string[];
   /**
    * Argument names that scope a session grant on a `grantable` command
    * (for example `["child"]` on `dispatch/send`, BIT-907). When absent, a

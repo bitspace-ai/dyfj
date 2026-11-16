@@ -1,3 +1,4 @@
+import { defineGateTools, type GateRuntimePorts } from "./builtin/gate.ts";
 /**
  * The tool catalog: the one place a command registry is assembled
  * (`specs/01-architecture.md` section 5.4). The runtime's per-turn toolset,
@@ -39,6 +40,7 @@ import {
 
 /** Runtime capabilities a tool is backed by. Absent ones leave their tools out. */
 export interface ToolCatalogPorts {
+  gate?: GateRuntimePorts & { sessionId: string };
   /**
    * Backs `memory.read`. A catalog built only to list the tools may omit it;
    * executing `memory.read` without it fails.
@@ -259,6 +261,8 @@ export type ToolCatalogGroup = (
 export const BUILTIN_GROUPS: readonly ToolCatalogGroup[] = [
   publishTools,
   dispatchTools,
+  ({ gate, workspaceRoot, env, sandbox }) => gate === undefined || workspaceRoot === undefined
+    ? [] : defineGateTools({ ...gate, workspaceRoot, env, sandbox }),
 ];
 
 /**

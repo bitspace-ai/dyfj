@@ -28,7 +28,7 @@ import {
 /** Bind coordinator tools using runtime-owned session identity and persisted depth. */
 export async function bindExternalAgentTools(
   input: CodexTurnTools & { sessionId?: string; dispatchRecord?: DispatchRecord },
-  dependencies: { store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge } &
+  dependencies: { gate?: import("../../tools/mod.ts").GateRuntimePorts; store: Store; dispatch?: DispatchSessionFactory; toolBridge?: ExternalAgentToolBridge } &
     Pick<ToolCatalogPorts, "env" | "dialExecutor" | "sandbox">,
   context: Omit<Parameters<DispatchSessionFactory["forSession"]>[0], "depth">,
 ) {

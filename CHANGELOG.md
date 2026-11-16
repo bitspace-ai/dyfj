@@ -11,12 +11,25 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Configured gate tools (`BIT-954`).** Native and Codex-route sessions can
+  start, wait for and cancel a session-owned test run. Selected files run under
+  srt; full runs execute worktree code on the host and ask every time by default.
+  See the **Explicit host-gate session grants** entry below for the opt-in.
+  Output streams to `~/.dyfj/log/gate/<session-id>/<run-id>.log`, with bounded
+  waits and output tails. Workspace log directories do not affect this path.
+  Log files persist after the run and after a restart; nothing removes or
+  rotates them automatically. The operator removes them. Starting a gate run
+  sets `~/.dyfj`, `~/.dyfj/log` and the gate directories to owner-only (700),
+  including existing directories, and refuses symlinks at those paths. Log
+  files are owner-only (600). All srt-sandboxed commands are denied writes
+  under `~/.dyfj`, so they cannot write to the gate logs.
+
 - **Native git on the Codex bridge (`BIT-954`).** Codex turns with a primary
   workspace receive typed status, diff, log, add and commit operations through
   the Workbench tool bridge, using native git's containment and approval rules.
   Sandboxed operator calls on the local socket run without a prompt; sandboxed
   writes require a linked worktree. Added directories and Codex's own shell
-  sandbox are unchanged. Tests cover this change.
+  sandbox are unchanged.
   In one real Codex session in a linked worktree, the maintainer verified
   that the bridged `git` tool staged and committed a file with no approval
   prompt. In a main checkout, the tool's `commit` was refused with the
@@ -692,6 +705,13 @@ README are tracked separately in its Revision history section.
   come from.
 
 ### Changed
+
+- **Explicit host-gate session grants (`BIT-954`).** Operators can list
+  `gate/start:full` in `[approvals] session_grantable` to offer a session grant
+  on its approval prompt. The first run still asks. After a grant, subsequent
+  full runs execute worktree code on the host without another prompt until the
+  session ends, with a distinct authorization basis. No other command or mode
+  is eligible.
 
 - **Two-pass text-first transcript reconstruction and unlabelled complete
   transcripts on external-agent sessions (`BIT-939`).**

@@ -217,7 +217,7 @@ export async function compileWorkspacePolicy(
   const home = options.home ?? homedir();
   const workspace = realpathSync(root);
   const allowWrite = [workspace];
-  const denyWrite: string[] = [];
+  const denyWrite: string[] = [join(home, ".dyfj")];
   let mainCheckout = false;
 
   const layout = options.pinnedLayout !== undefined
