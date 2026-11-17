@@ -106,7 +106,12 @@ in the same change that lands this spec's first work order.
     refused. Its cleanup KILLs independently registered fixture groups before
     scanning command lines; a failed scan is reported after directory removal.
     SIGINT and SIGTERM perform the same cleanup before re-raising the signal.
-    Recovery records are never a source of cleanup group IDs. The one case left
+    Recovery records are never a source of cleanup group IDs.
+    `scripts/node-lane-supervision.test.ts` likewise requires working `ps`
+    before starting its lane and fails if listing is refused. Its cleanup KILLs
+    the runner's independently recorded group before scanning command lines,
+    and reports scan failures after attempting directory removal.
+    The one case left
     is a carrier killed outright too: the group then carries no token, so
     the next gate start cannot recognise it either. Recovery of an orphaned
     group at the next gate start stays as the fallback for a group whose

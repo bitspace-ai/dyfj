@@ -828,6 +828,12 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Node lane supervision checks and cleanup (`BIT-964`).** The hung Node
+  test checks process-listing access before starting a lane and reports failed
+  liveness probes. Cleanup kills the fixture's recorded process group before
+  scanning command lines and attempts directory removal even if the scan fails,
+  preserving both test and cleanup errors.
+
 - **Lane-supervision test cleanup survives a refused `ps` (`BIT-948`).**
   Lane-supervision tests fail before starting fixtures when `ps` is refused.
   Fixture groups are registered independently of recovery records and killed
