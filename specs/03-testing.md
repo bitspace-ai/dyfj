@@ -101,7 +101,12 @@ in the same change that lands this spec's first work order.
     members behind. So a gate, or a gate and its runner, killed outright
     leave no helper or lane process running, which
     `scripts/lane-supervision.test.ts` pins by pid, including a parent that
-    exits before its helper starts and a `ps` that fails. The one case left
+    exits before its helper starts and a `ps` that fails. The test suite itself
+    requires a working `ps` before starting fixtures and fails if listing is
+    refused. Its cleanup KILLs independently registered fixture groups before
+    scanning command lines; a failed scan is reported after directory removal.
+    SIGINT and SIGTERM perform the same cleanup before re-raising the signal.
+    Recovery records are never a source of cleanup group IDs. The one case left
     is a carrier killed outright too: the group then carries no token, so
     the next gate start cannot recognise it either. Recovery of an orphaned
     group at the next gate start stays as the fallback for a group whose

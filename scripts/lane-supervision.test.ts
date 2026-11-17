@@ -23,7 +23,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-import { test } from "node:test";
+import { before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   LANE_BACKSTOP_ENV,
@@ -65,7 +65,7 @@ function sh(script: string): string {
   return execFileSync("/bin/bash", ["-c", script], {
     encoding: "utf8",
     env: { PATH: process.env.PATH ?? "" },
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 64 * 1024 * 1024,
   }).trim();
 }
@@ -78,7 +78,13 @@ interface ProcessRow {
 }
 
 function processes(): ProcessRow[] {
-  return sh("ps -A -ww -o pid=,pgid=,stat=,command= || true").split("\n")
+  let listing: string;
+  try {
+    listing = sh("ps -A -ww -o pid=,pgid=,stat=,command=");
+  } catch (cause) {
+    throw new Error(`ps failed: ${String(cause)}`, { cause });
+  }
+  return listing.split("\n")
     .flatMap((line) => {
       const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
       return match
@@ -90,6 +96,32 @@ function processes(): ProcessRow[] {
         }]
         : [];
     });
+}
+
+before(() => {
+  if (skip) return;
+  try {
+    processes();
+  } catch (cause) {
+    throw new Error(
+      `ps is refused; these tests must run where processes can be listed: ${String(cause)}`,
+      { cause },
+    );
+  }
+});
+
+// Only fixture code writes group-* files: spawn sites and group leaders that
+// register themselves. Recovery records are never a source of group ids.
+function registerGroup(dir: string, group: number | undefined): void {
+  if (group !== undefined) writeFileSync(`${dir}/group-${group}`, String(group));
+}
+
+function kill(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
 }
 
 // A zombie counts as gone: in a container whose init does not reap orphans, a
@@ -208,16 +240,31 @@ async function withDir(
     mkdtempSync(join(tmpdir(), "dyfj-lane-supervision-")),
   );
   const tokens = new Set<string>();
-  try {
-    await run(dir, tokens);
-  } finally {
-    // Cleanup that holds when an assertion failed mid-test: the grandchild
-    // and second step, every process whose command line names this test's
-    // directory (the gate driver, the stand-in runner and its child), and the
-    // carrier of every token the test used or a record names.
-    for (const file of ["grandchild.pid", "second-step.pid"]) {
-      const pid = readText(`${dir}/${file}`);
-      if (pid !== undefined) sh(`kill -9 ${Number(pid)} 2>/dev/null || true`);
+  const cleanup = () => {
+    const errors: unknown[] = [];
+    const attempt = (action: () => void) => {
+      try {
+        action();
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    const groupErrors = new Map<number, unknown>();
+    // Kill groups before asking ps anything, including on assertion failure.
+    const groupFiles = readdirSync(dir).filter((name) => name.startsWith("group-"));
+    for (const file of groupFiles) {
+      attempt(() => {
+        const group = Number(readFileSync(`${dir}/${file}`, "utf8"));
+        assert.ok(
+          Number.isSafeInteger(group) && group > 1,
+          `invalid group in ${file}`,
+        );
+        try {
+          kill(-group);
+        } catch (error) {
+          groupErrors.set(group, error);
+        }
+      });
     }
     try {
       for (const entry of readdirSync(`${dir}/records`)) {
@@ -227,15 +274,68 @@ async function withDir(
       // No records.
     }
     const markers = [dir, ...[...tokens].map(laneTokenArgument)];
-    for (const row of processes()) {
-      if (
-        markers.some((marker) => row.command.includes(marker)) &&
-        row.pid !== process.pid
-      ) {
-        sh(`kill -9 ${row.pid} 2>/dev/null || true`);
+    attempt(() => {
+      const rows = processes();
+      // macOS can return EPERM for a group containing only an unreaped zombie.
+      // This second pass diagnoses kill errors; the group kills never need ps.
+      for (const [group, error] of groupErrors) {
+        if (
+          (error as NodeJS.ErrnoException).code === "EPERM" &&
+          !rows.some((row) => row.group === group && !row.stat.startsWith("Z"))
+        ) groupErrors.delete(group);
       }
+      for (const row of rows) {
+        if (
+          markers.some((marker) => row.command.includes(marker)) &&
+          row.pid !== process.pid
+        ) {
+          attempt(() => kill(row.pid));
+        }
+      }
+    });
+    errors.push(...groupErrors.values());
+    attempt(() => rmSync(dir, { recursive: true, force: true }));
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "fixture cleanup failed");
     }
-    rmSync(dir, { recursive: true, force: true });
+  };
+  const interrupt = (signal: NodeJS.Signals) => {
+    try {
+      cleanup();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      removeHandlers();
+      process.kill(process.pid, signal);
+    }
+  };
+  const onInt = () => interrupt("SIGINT");
+  const onTerm = () => interrupt("SIGTERM");
+  const removeHandlers = () => {
+    process.off("SIGINT", onInt);
+    process.off("SIGTERM", onTerm);
+  };
+  process.on("SIGINT", onInt);
+  process.on("SIGTERM", onTerm);
+  let runFailed = false;
+  let runError: unknown;
+  try {
+    await run(dir, tokens);
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+    throw error;
+  } finally {
+    removeHandlers();
+    try {
+      cleanup();
+    } catch (error) {
+      if (!runFailed) throw error;
+      throw new AggregateError(
+        [runError, ...(error instanceof AggregateError ? error.errors : [error])],
+        "fixture run and cleanup failed",
+      );
+    }
   }
 }
 
@@ -265,12 +365,14 @@ function startRunner(
   supervision: { deadlineMs: number; backstopMs: number; token: string },
   { path = process.env.PATH ?? "" } = {},
 ): ChildProcess {
-  return spawn("node", runnerArgs(mode, dir), {
+  const runner = spawn("node", runnerArgs(mode, dir), {
     env: { ...childEnv(), PATH: path, ...supervisionEnv(supervision) },
     // Its own group, as the gate starts a lane.
     detached: true,
     stdio: ["ignore", "ignore", "pipe"],
   });
+  registerGroup(dir, runner.pid);
+  return runner;
 }
 
 test("a lane past its deadline fails and leaves no same-group survivor", {
@@ -414,6 +516,7 @@ setInterval(() => {}, 1000);
     ["--input-type=module", "-e", program, dir, laneTokenArgument(token)],
     { detached: true, stdio: "ignore", env: childEnv() },
   );
+  registerGroup(dir, leader.pid);
   leader.unref();
   const sleeper = Number(
     await waitFor(
@@ -539,6 +642,7 @@ test(
         env: childEnv(),
         stdio: "ignore",
       });
+      registerGroup(dir, bystander.pid);
       try {
         // A gate pid that is no longer running.
         const gone = spawn("node", ["-e", ""], {
@@ -622,6 +726,7 @@ const child = spawn("node", [runner, "hang", dir], {
       JSON.stringify(LANE_PARENT_ENV)
     }: String(process.pid) },
 });
+writeFileSync(dir + "/group-" + child.pid, String(child.pid));
 writeFileSync(dir + "/runner.pid", String(child.pid));
 process.exit(0);
 `;
@@ -676,6 +781,7 @@ process.exit(0);
         ["--input-type=module", "-e", runnerProgram, dir, token],
         { detached: true, env: childEnv(), stdio: "ignore" },
       );
+      registerGroup(dir, runner.pid);
       await exited(runner);
       await groupEmpties(runner.pid!, 10_000);
       assert.deepEqual(tokenCarriers(token), [], "the carrier survived");
@@ -770,6 +876,7 @@ test(
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 const [dir] = process.argv.slice(1);
+writeFileSync(dir + "/group-" + process.pid, String(process.pid));
 const child = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
   stdio: "ignore",
 });
@@ -807,6 +914,7 @@ import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { stopOwnGroup } from ${JSON.stringify(SUPERVISION_URL)};
 const [dir, token, parent] = process.argv.slice(1);
+writeFileSync(dir + "/group-" + process.pid, String(process.pid));
 const sleeper = spawn("/bin/bash", ["-c", "trap '' TERM; exec sleep 60"], {
   stdio: "ignore",
 });
@@ -832,6 +940,7 @@ function startGroupStopRunner(
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
+  registerGroup(dir, runner.pid);
   let stderr = "";
   runner.stderr!.setEncoding("utf8");
   runner.stderr!.on("data", (chunk: string) => (stderr += chunk));
@@ -903,6 +1012,7 @@ const runner = spawn(
     stdio: ["ignore", "ignore", openSync(dir + "/runner.stderr", "w")],
   },
 );
+writeFileSync(dir + "/group-" + runner.pid, String(runner.pid));
 writeFileSync(dir + "/runner.pid", String(runner.pid));
 setTimeout(() => {}, 60000);
 `;
@@ -1043,6 +1153,7 @@ process.exit(0);
           stdio: "ignore",
         },
       );
+      registerGroup(dir, runner.pid);
       try {
         await exitedWith(runner);
         assert.ok(
@@ -1102,3 +1213,38 @@ test(
     });
   },
 );
+
+test("fixture cleanup kills an orphaned group even when ps fails", { skip }, async () => {
+  const prior = process.env.PATH;
+  const runError = new assert.AssertionError({
+    message: "fixture assertion failure",
+  });
+  let directory = "";
+  let pids: number[] = [];
+  try {
+    await assert.rejects(withDir(async (dir) => {
+      directory = dir;
+      ({ pids } = await orphanedGroup(dir));
+      process.env.PATH = failingPsPath(dir);
+      throw runError;
+    }), (error: unknown) => {
+      assert.ok(error instanceof AggregateError);
+      assert.equal(error.errors[0], runError);
+      assert.ok(
+        error.errors.slice(1).some((cause) => String(cause).includes("ps failed")),
+      );
+      return true;
+    });
+  } finally {
+    if (prior === undefined) delete process.env.PATH;
+    else process.env.PATH = prior;
+    // Keep the regression safe even when exercised against broken cleanup.
+    try {
+      await allGone(pids, 5_000);
+    } catch (error) {
+      if (pids.length > 0) kill(-pids[0]!);
+      throw error;
+    }
+  }
+  assert.throws(() => statSync(directory), { code: "ENOENT" });
+});
