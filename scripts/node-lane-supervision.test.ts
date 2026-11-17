@@ -46,17 +46,22 @@ function sh(script: string): string {
   }).trim();
 }
 
-function processes(): { pid: number; stat: string; command: string }[] {
+function processes(): { pid: number; group: number; stat: string; command: string }[] {
   let listing: string;
   try {
-    listing = sh("ps -A -ww -o pid=,stat=,command=");
+    listing = sh("ps -A -ww -o pid=,pgid=,stat=,command=");
   } catch (cause) {
     throw new Error(`ps failed: ${String(cause)}`, { cause });
   }
   return listing.split("\n").flatMap((line) => {
-    const match = line.match(/^\s*(\d+)\s+(\S+)\s*(.*)$/);
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
     return match
-      ? [{ pid: Number(match[1]), stat: match[2], command: match[3] }]
+      ? [{
+        pid: Number(match[1]),
+        group: Number(match[2]),
+        stat: match[3],
+        command: match[4],
+      }]
       : [];
   });
 }
@@ -135,20 +140,34 @@ test("a hung node --test file is stopped at its lane's deadline", {
         errors.push(error);
       }
     };
+    const groupErrors = new Map<number, unknown>();
     // The runner registers its group before starting children; records may be gone.
     attempt(() => {
       if (!existsSync(groupFile)) return;
       const group = Number(readFileSync(groupFile, "utf8"));
       assert.ok(Number.isSafeInteger(group) && group > 1, "invalid fixture group");
-      kill(-group);
+      try {
+        kill(-group);
+      } catch (error) {
+        groupErrors.set(group, error);
+      }
     });
     attempt(() => {
-      for (const row of processes()) {
+      const rows = processes();
+      // macOS can return EPERM for a group containing only an unreaped zombie.
+      for (const [group, error] of groupErrors) {
+        if (
+          (error as NodeJS.ErrnoException).code === "EPERM" &&
+          !rows.some((row) => row.group === group && !row.stat.startsWith("Z"))
+        ) groupErrors.delete(group);
+      }
+      for (const row of rows) {
         if (row.command.includes(dir) && row.pid !== process.pid) {
           attempt(() => kill(row.pid));
         }
       }
     });
+    errors.push(...groupErrors.values());
     attempt(() => rmSync(dir, { recursive: true, force: true }));
     if (errors.length > 0) {
       throw new AggregateError(
