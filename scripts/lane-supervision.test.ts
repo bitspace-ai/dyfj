@@ -110,7 +110,8 @@ before(() => {
   }
 });
 
-// Only spawn sites write these files; recovery records are deliberately untrusted.
+// Only fixture code writes group-* files: spawn sites and group leaders that
+// register themselves. Recovery records are never a source of group ids.
 function registerGroup(dir: string, group: number | undefined): void {
   if (group !== undefined) writeFileSync(`${dir}/group-${group}`, String(group));
 }
@@ -316,11 +317,25 @@ async function withDir(
   };
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
+  let runFailed = false;
+  let runError: unknown;
   try {
     await run(dir, tokens);
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+    throw error;
   } finally {
     removeHandlers();
-    cleanup();
+    try {
+      cleanup();
+    } catch (error) {
+      if (!runFailed) throw error;
+      throw new AggregateError(
+        [runError, ...(error instanceof AggregateError ? error.errors : [error])],
+        "fixture run and cleanup failed",
+      );
+    }
   }
 }
 
@@ -1201,6 +1216,9 @@ test(
 
 test("fixture cleanup kills an orphaned group even when ps fails", { skip }, async () => {
   const prior = process.env.PATH;
+  const runError = new assert.AssertionError({
+    message: "fixture assertion failure",
+  });
   let directory = "";
   let pids: number[] = [];
   try {
@@ -1208,10 +1226,13 @@ test("fixture cleanup kills an orphaned group even when ps fails", { skip }, asy
       directory = dir;
       ({ pids } = await orphanedGroup(dir));
       process.env.PATH = failingPsPath(dir);
-      assert.fail("fixture assertion failure");
+      throw runError;
     }), (error: unknown) => {
       assert.ok(error instanceof AggregateError);
-      assert.ok(error.errors.some((cause) => String(cause).includes("ps failed")));
+      assert.equal(error.errors[0], runError);
+      assert.ok(
+        error.errors.slice(1).some((cause) => String(cause).includes("ps failed")),
+      );
       return true;
     });
   } finally {

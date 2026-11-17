@@ -828,7 +828,8 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
-- Lane-supervision tests fail before starting fixtures when `ps` is refused.
+- **Lane-supervision test cleanup survives a refused `ps` (`BIT-948`).**
+  Lane-supervision tests fail before starting fixtures when `ps` is refused.
   Fixture groups are registered independently of recovery records and killed
   on assertion failure or SIGINT/SIGTERM, even when process listing fails.
 
