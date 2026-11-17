@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { readTextFile } from "../../config/mod.ts";
 import { defaultParseToml, readConfigFile } from "../../config/toml.ts";
@@ -82,7 +84,7 @@ describe("runtime lifecycle commands", () => {
 
   it("runStart relays a config error's own path-free line, not its size", async () => {
     // A config.toml the runtime cannot read: here, a directory in its place.
-    const dir = await mkdtemp("/tmp/dyfj_st_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_st_"));
     try {
       const { io, stderr } = fakeIo();
       const starter: StartRuntimeFn = async () => {

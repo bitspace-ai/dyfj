@@ -828,6 +828,13 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Sandbox-safe test fixtures (`BIT-958`).** Tests create temporary directories
+  under the gate's socket-safe `TMPDIR`. The real-driver refused-connection
+  test probes loopback binding and reports a skip on sandbox `EPERM`, while
+  CI keeps the coverage. Transport tests that require a Unix socket likewise
+  report refused binds through the existing probe. A static gate check rejects
+  hard-coded `/tmp` temp creation and TCP binds without a probe-backed skip.
+
 - **Node lane supervision checks and cleanup (`BIT-964`).** The hung Node
   test checks process-listing access before starting a lane and reports failed
   liveness probes. Cleanup kills the fixture's recorded process group before

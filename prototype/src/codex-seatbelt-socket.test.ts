@@ -29,6 +29,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import process from "node:process";
 import { after, before, describe, it } from "node:test";
 import { MapEnv } from "../testing/fakes/map-env.ts";
@@ -70,7 +71,7 @@ describe("the Codex route's sandbox refuses the runtime socket", { skip }, () =>
   let codex = "";
 
   before(async () => {
-    operatorHome = realpathSync(mkdtempSync("/tmp/dyfj-cx-"));
+    operatorHome = realpathSync(mkdtempSync(join(tmpdir(), "dyfj-cx-")));
     runnerHome = join(operatorHome, ".dyfj", "runner-homes", "codex-chatgpt", "home");
     codexHome = join(runnerHome, ".codex");
     workspace = join(operatorHome, "ws");

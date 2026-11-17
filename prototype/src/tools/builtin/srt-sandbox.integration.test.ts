@@ -35,6 +35,7 @@ import { after, before, describe, it } from "node:test";
 import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import { nestedSandboxSkipReason } from "../../../testing/nested-sandbox.ts";
+import { loopbackBindSkip } from "../../../testing/loopback-bind.ts";
 import type { CommandCall } from "../definition.ts";
 import { RootAnchors } from "./root-anchors.ts";
 import { defineBash } from "./exec.ts";
@@ -150,8 +151,8 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
     rmSync(base, { recursive: true, force: true });
   });
 
-  describe("check 1: the network", () => {
-    it("a sandboxed connect to a host outside the allowlist is refused by the OS", async () => {
+  describe("check 1: the network", async () => {
+    it("a sandboxed connect to a host outside the allowlist is refused by the OS", { skip: await loopbackBindSkip() }, async () => {
       let accepted = false;
       const listener: Server = createServer((socket) => {
         accepted = true;
@@ -380,7 +381,7 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
     // temp directory would pass the Unix-socket path limit.
     let operatorHome = "";
     before(() => {
-      operatorHome = realpathSync(mkdtempSync("/tmp/dyfj-rt-"));
+      operatorHome = realpathSync(mkdtempSync(join(tmpdir(), "dyfj-rt-")));
     });
     after(() => rmSync(operatorHome, { recursive: true, force: true }));
 

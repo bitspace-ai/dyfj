@@ -13,6 +13,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { unixSocketBindSkip } from "../../testing/unix-socket-bind.ts";
 import { DomainError, summarizeError } from "../contract/mod.ts";
 import { nodeSocketHost } from "./node-socket.ts";
 import {
@@ -34,7 +35,7 @@ test("the platform's limit is the sun_path size less its terminating NUL", () =>
 });
 
 test("listen on a too-long path names its length, the limit and the fix", async () => {
-  const dir = mkdtempSync(join("/tmp", "dyfj_sf_"));
+  const dir = mkdtempSync(join(tmpdir(), "dyfj_sf_"));
   try {
     const path = pathOfBytes(dir, maxSocketPathBytes() + 1);
     await assert.rejects(
@@ -59,8 +60,8 @@ test("listen on a too-long path names its length, the limit and the fix", async 
   }
 });
 
-test("a path at the limit still binds", async () => {
-  const dir = mkdtempSync(join("/tmp", "dyfj_sf_"));
+test("a path at the limit still binds", { skip: await unixSocketBindSkip() }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dyfj_sf_"));
   try {
     const listener = await nodeSocketHost.listen(
       pathOfBytes(dir, maxSocketPathBytes()),
