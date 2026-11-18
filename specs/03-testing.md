@@ -111,6 +111,10 @@ in the same change that lands this spec's first work order.
     the next gate start cannot recognise it either. Recovery of an orphaned
     group at the next gate start stays as the fallback for a group whose
     carrier still holds its token.
+    `scripts/node-lane-supervision.test.ts` likewise requires working `ps`
+    before starting its lane and fails if listing is refused. Its cleanup KILLs
+    the runner's independently recorded group before scanning command lines,
+    and reports scan failures after attempting directory removal.
   - Descendant (grandchild) processes are not covered by the per-file handle
     check. Whatever guards against them must remain.
 

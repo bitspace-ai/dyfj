@@ -5,6 +5,8 @@
 // `<dir>/hang.test.mjs`, a file whose test never ends.
 //
 // Usage: node node-lane-runner.fixture.ts <dir>
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import process from "node:process";
 import {
   laneSupervision,
@@ -19,6 +21,8 @@ if (dir === undefined) {
   console.error("usage: node-lane-runner.fixture.ts <dir>");
   process.exit(64);
 }
+// The gate starts this runner as its lane's process-group leader.
+writeFileSync(join(dir, "group"), String(process.pid));
 const supervision = laneSupervision();
 startTokenCarrier(supervision);
 const run = startNodeTests({

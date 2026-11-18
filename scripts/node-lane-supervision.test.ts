@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
-import { test } from "node:test";
+import { before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { LANE_DEADLINE_EXIT_CODE, runGate } from "./aggregate-test-gate.ts";
 
@@ -41,14 +41,54 @@ function sh(script: string): string {
   return execFileSync("/bin/bash", ["-c", script], {
     encoding: "utf8",
     env: { PATH: process.env.PATH ?? "" },
-    stdio: ["ignore", "pipe", "ignore"],
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024,
   }).trim();
 }
 
+function processes(): { pid: number; group: number; stat: string; command: string }[] {
+  let listing: string;
+  try {
+    listing = sh("ps -A -ww -o pid=,pgid=,stat=,command=");
+  } catch (cause) {
+    throw new Error(`ps failed: ${String(cause)}`, { cause });
+  }
+  return listing.split("\n").flatMap((line) => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
+    return match
+      ? [{
+        pid: Number(match[1]),
+        group: Number(match[2]),
+        stat: match[3],
+        command: match[4],
+      }]
+      : [];
+  });
+}
+
+before(() => {
+  if (process.platform === "win32") return;
+  try {
+    processes();
+  } catch (cause) {
+    throw new Error(
+      `ps is refused; this test must run where processes can be listed: ${String(cause)}`,
+      { cause },
+    );
+  }
+});
+
 // A zombie counts as gone, as in `lane-supervision.test.ts`.
 function alive(pid: number): boolean {
-  const state = sh(`ps -o stat= -p ${pid} || true`);
-  return state !== "" && !state.startsWith("Z");
+  return processes().some((row) => row.pid === pid && !row.stat.startsWith("Z"));
+}
+
+function kill(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
 }
 
 async function gone(pid: number, timeoutMs: number): Promise<boolean> {
@@ -65,6 +105,9 @@ test("a hung node --test file is stopped at its lane's deadline", {
 }, async () => {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "dyfj-node-lane-")));
   const pidFile = join(dir, "file.pid");
+  const groupFile = join(dir, "group");
+  let runFailed = false;
+  let runError: unknown;
   try {
     writeFileSync(join(dir, "hang.test.mjs"), HANG);
     const code = await runGate({
@@ -84,18 +127,53 @@ test("a hung node --test file is stopped at its lane's deadline", {
       await gone(pid, 5_000),
       "the hung test file's process survived the deadline",
     );
+  } catch (error) {
+    runFailed = true;
+    runError = error;
+    throw error;
   } finally {
-    if (existsSync(pidFile)) {
-      sh(
-        `kill -9 ${Number(readFileSync(pidFile, "utf8"))} 2>/dev/null || true`,
+    const errors: unknown[] = [];
+    const attempt = (action: () => void) => {
+      try {
+        action();
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    const groupErrors = new Map<number, unknown>();
+    // The runner registers its group before starting children; records may be gone.
+    attempt(() => {
+      if (!existsSync(groupFile)) return;
+      const group = Number(readFileSync(groupFile, "utf8"));
+      assert.ok(Number.isSafeInteger(group) && group > 1, "invalid fixture group");
+      try {
+        kill(-group);
+      } catch (error) {
+        groupErrors.set(group, error);
+      }
+    });
+    attempt(() => {
+      const rows = processes();
+      // macOS can return EPERM for a group containing only an unreaped zombie.
+      for (const [group, error] of groupErrors) {
+        if (
+          (error as NodeJS.ErrnoException).code === "EPERM" &&
+          !rows.some((row) => row.group === group && !row.stat.startsWith("Z"))
+        ) groupErrors.delete(group);
+      }
+      for (const row of rows) {
+        if (row.command.includes(dir) && row.pid !== process.pid) {
+          attempt(() => kill(row.pid));
+        }
+      }
+    });
+    errors.push(...groupErrors.values());
+    attempt(() => rmSync(dir, { recursive: true, force: true }));
+    if (errors.length > 0) {
+      throw new AggregateError(
+        runFailed ? [runError, ...errors] : errors,
+        runFailed ? "fixture run and cleanup failed" : "fixture cleanup failed",
       );
     }
-    for (const line of sh("ps -A -ww -o pid=,command=").split("\n")) {
-      const match = line.match(/^\s*(\d+)\s+(.*)$/);
-      if (match && match[2].includes(dir)) {
-        sh(`kill -9 ${Number(match[1])} 2>/dev/null || true`);
-      }
-    }
-    rmSync(dir, { recursive: true, force: true });
   }
 });
