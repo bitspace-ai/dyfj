@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { type AddressInfo, createServer } from "node:net";
 import { test } from "node:test";
+import { loopbackBindSkip } from "../../testing/loopback-bind.ts";
 import type { DoltConnectionConfig } from "../config/mod.ts";
 import { composeRuntimePolicy } from "../config/mod.ts";
 import { DomainError, summarizeError } from "../contract/mod.ts";
@@ -193,16 +194,15 @@ test("a transaction's begin, commit and rollback report a store failure", async 
   }
 });
 
-/** A loopback port that was just free: bound, then released. */
-async function freedLoopbackPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
-}
-
-test("the real driver's refused connection becomes DoltUnreachableError", async () => {
+test("the real driver's refused connection becomes DoltUnreachableError", { skip: await loopbackBindSkip() }, async () => {
+  /** A loopback port that was just free: bound, then released. */
+  async function freedLoopbackPort(): Promise<number> {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    return port;
+  }
   // A port this test bound and released has no listener, so the driver
   // itself raises the ECONNREFUSED this maps; no stand-in error is involved.
   const port = await freedLoopbackPort();

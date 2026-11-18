@@ -30,6 +30,7 @@ import type { Readable } from "node:stream";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { reapPidsAndCommandsContaining } from "../testing/processes.ts";
+import { loopbackBindSkip } from "../testing/loopback-bind.ts";
 
 const LAUNCHER = fileURLToPath(new URL("./dyfj-launcher.sh", import.meta.url));
 const BASH = process.platform === "darwin" ? "/bin/bash" : "bash";
@@ -1778,7 +1779,7 @@ describe("HOME=/ produces a single-slash runtime log path", () => {
   });
 });
 
-describe("an autostart that cannot succeed says why", () => {
+describe("an autostart that cannot succeed says why", { skip: await loopbackBindSkip() }, () => {
   /** A loopback port that was just free: bound, then released. */
   async function freedLoopbackPort(): Promise<number> {
     const server = createServer();
@@ -1815,7 +1816,7 @@ describe("an autostart that cannot succeed says why", () => {
   }
 
   it("relays the runtime's failed-to-start line as soon as it exits", async () => {
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       await mkdir(`${dir}/home`);
       // A regular file where the socket goes: the runtime refuses to bind.
@@ -1834,7 +1835,7 @@ describe("an autostart that cannot succeed says why", () => {
   });
 
   it("relays a config file the runtime cannot read, with what to do", async () => {
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       // A directory where config.toml goes: the read fails EISDIR. DYFJ_ROOT
       // names its directory, as the gate's own environment may set it.
@@ -1853,7 +1854,7 @@ describe("an autostart that cannot succeed says why", () => {
   });
 
   it("relays a config.toml parse error by its line and column, not the file's contents", async () => {
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       await mkdir(`${dir}/home`);
       await mkdir(`${dir}/root`);
@@ -1883,7 +1884,7 @@ describe("an autostart that cannot succeed says why", () => {
     // A stand-in tree: the client stub answers the launcher's parse check
     // and probes as "not running", and its `start` dies the way an uncaught
     // error does, with a stack trace and no failed-to-start line.
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       await mkdir(`${dir}/p/scripts`, { recursive: true });
       await mkdir(`${dir}/p/src/cli`, { recursive: true });
@@ -1927,7 +1928,7 @@ describe("an autostart that cannot succeed says why", () => {
   });
 
   it("names a missing dependency and says to run npm ci, instead of a module stack trace", async () => {
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       await mkdir(`${dir}/p/scripts`, { recursive: true });
       await writeFile(`${dir}/p/scripts/dyfj-launcher.sh`, await readFile(LAUNCHER));
@@ -1957,7 +1958,7 @@ describe("an autostart that cannot succeed says why", () => {
   });
 
   it("refuses a socket path too long for the platform before spawning", async () => {
-    const dir = await mkdtemp("/tmp/dyfj_la_");
+    const dir = await mkdtemp(join(tmpdir(), "dyfj_la_"));
     try {
       await mkdir(`${dir}/home`);
       const socket = `${dir}/${"s".repeat(120)}.sock`;

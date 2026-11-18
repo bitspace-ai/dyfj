@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { dependencyProblem } from "./dependency-check.ts";
 
@@ -9,7 +10,7 @@ async function tree(
   pins: Record<string, string>,
   installed: Record<string, string>,
 ): Promise<string> {
-  const root = await mkdtemp("/tmp/dyfj_dc_");
+  const root = await mkdtemp(join(tmpdir(), "dyfj_dc_"));
   await mkdir(join(root, "prototype"));
   await writeFile(
     join(root, "prototype", "package.json"),

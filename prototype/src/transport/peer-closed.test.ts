@@ -9,13 +9,15 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { test } from "node:test";
+import { unixSocketBindSkip } from "../../testing/unix-socket-bind.ts";
 import { DomainError } from "../contract/mod.ts";
 import { JsonRpcPeer, PeerClosedError } from "./jsonrpc-peer.ts";
 import { nodeSocketHost } from "./node-socket.ts";
 
-test("a pending request fails with PeerClosedError when the other end closes", async () => {
-  const dir = mkdtempSync(join("/tmp", "dyfj_pc_"));
+test("a pending request fails with PeerClosedError when the other end closes", { skip: await unixSocketBindSkip() }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "dyfj_pc_"));
   try {
     const listener = await nodeSocketHost.listen(`${dir}/p.sock`);
     try {

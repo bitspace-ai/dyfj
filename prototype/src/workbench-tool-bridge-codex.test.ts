@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import process from "node:process";
 import { createInterface } from "node:readline";
 import { after, before, describe, it } from "node:test";
@@ -152,7 +153,7 @@ describe("the pinned Codex reaches Workbench tools through the bridge", { skip }
   const asked: ToolApprovalRequest[] = [];
 
   before(async () => {
-    root = realpathSync(mkdtempSync("/tmp/dyfj-cb-"));
+    root = realpathSync(mkdtempSync(join(tmpdir(), "dyfj-cb-")));
     const home = join(root, "home");
     const workspace = join(root, "ws");
     mkdirSync(join(home, ".codex"), { recursive: true, mode: 0o700 });

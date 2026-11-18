@@ -11,6 +11,9 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { loopbackBindSkip } from "../testing/loopback-bind.ts";
 import process from "node:process";
 import { test } from "node:test";
 import { prototypeRoot } from "./disposable-runtime.ts";
@@ -89,8 +92,9 @@ async function snapshot(root: string): Promise<unknown[]> {
 
 test("scratch up, dyfj exec, receipt and down leave only recorded evidence", {
   timeout: 120_000,
+  skip: await loopbackBindSkip(),
 }, async () => {
-  const operator = await mkdtemp("/tmp/dyfj_op_");
+  const operator = await mkdtemp(join(tmpdir(), "dyfj_op_"));
   await mkdir(`${operator}/.dyfj/run`, { recursive: true });
   await mkdir(`${operator}/.dolt`);
   await writeFile(
@@ -199,6 +203,7 @@ test("scratch up, dyfj exec, receipt and down leave only recorded evidence", {
 test("down refuses a state file whose supervisor start time does not match", {
   timeout: 120_000,
 }, async () => {
+  // sandbox-test-allow-tmp: scratch state validation requires /tmp/dyfj_s_* before checking supervisor identity.
   const staleRoot = await mkdtemp("/tmp/dyfj_s_");
   const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: staleRoot };
   const up = run(["up"], env);

@@ -2217,7 +2217,8 @@ capability and claims no remote review, acceptance testing, or publication —
 private gates (disclosure review, independent model review, operator acceptance)
 remain outside this repository.
 
-After the policy checks, the gate runs the retired-surface scan, the
+After the policy checks, the gate runs the retired-surface scan, the sandbox
+test policy check, the
 `arch.imports` module-boundary check, the `runtime.neutral` ratchet, the
 `ratchet.base` comparison of the ratchet lists with the merge base, the
 `typecheck.tsc` lane, the prototype unit lane (`test.unit`: every
@@ -2506,6 +2507,24 @@ its unpack — so a drift in the workflow fails the gate itself.
 feedback; it is a convenience, not the green bar — `npm test`, locally or
 in CI, remains the single full gate. Remote CI is authoritative only for the
 public deterministic checks it runs.
+
+The sandbox test policy (`scripts/sandbox-test-policy.ts`, reported under
+`test.aggregate`) runs locally and in CI, in both the full and fast gates.
+It parses test files and rejects `mkdtemp`/`mkdtempSync` calls rooted at a
+literal `/tmp`, including joined paths and local constant references.
+Fixture strings and comments are not calls. If a test must create its directory
+under `/tmp`, put `// sandbox-test-allow-tmp: <reason>` immediately above the
+call. An empty reason does not allow it.
+
+Tests use `node:os` `tmpdir()`: the gate supplies a `TMPDIR` with enough room
+for the longest Unix socket suffix. Tests need no `/tmp` fallback.
+The check also rejects TCP `listen` calls with a loopback host, a numeric port,
+or a `port` option unless an enclosing `test`, `it`, or `describe` has
+`{ skip: await loopbackBindSkip() }`, imported from
+`prototype/testing/loopback-bind.ts`. This child-process probe follows
+`unixSocketBindSkip()`: only a bind refused with `EPERM` skips, the skip states
+why, and CI never skips for that refusal. Other bind errors remain failures.
+Source-code strings used as subprocess fixtures are outside the static check.
 
 ### Dependency updates
 
@@ -3657,3 +3676,6 @@ Document revisions only. Code and behavior changes are tracked in
 
 - 2026-11-15 - Document configured gate tools, mode policy, bounded waits, logs
   and the explicit operator opt-in for full-mode session grants.
+
+- 2026-11-16 - Document the sandbox test policy check, gate-selected temporary
+  directories, and loopback bind skips that retain coverage in CI.

@@ -569,6 +569,7 @@ test("fast lanes keep the scans and exclude the heavyweight suites", () => {
   for (
     const scan of [
       "Retired-surface scan",
+      "Sandbox test policy",
       "Public-safety tree scan (secret.tree)",
       "Public-safety tree scan (public.boundary)",
     ]
