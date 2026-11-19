@@ -460,6 +460,16 @@ fn continuity_reconstructing_renders_each_reason_left_out_singular_and_unknown_c
             json!({
                 "type": "continuityReconstructing",
                 "sessionId": "01J00000000000000000000000",
+                "reason": "durable_resume_failed",
+                "priorMessagesProjected": 4,
+                "priorMessagesLeftOut": 0
+            }),
+            "· agent session replaced: its saved native context could not be verified. Sending 4 earlier messages.",
+        ),
+        (
+            json!({
+                "type": "continuityReconstructing",
+                "sessionId": "01J00000000000000000000000",
                 "reason": "idle_limit",
                 "priorMessagesProjected": 4,
                 "priorMessagesLeftOut": 0

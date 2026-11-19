@@ -4,6 +4,8 @@ import {
 } from "./kernel/mod.ts";
 import {
   client,
+  type ClientContext,
+  type InitializeResponse,
   methods,
   ndJsonStream,
   PROTOCOL_VERSION,
@@ -29,6 +31,7 @@ import {
   SpawnRefusedError,
 } from "./config/mod.ts";
 import process from "node:process";
+import { AcpReplay, ACP_REPLAY_TIMEOUT_MS, type LiveSdkSession, loadVerifiedAcpSession } from "./runners/acp/durable-replay.ts";
 import { Readable, Writable } from "node:stream";
 import { collectBoundedStderr, settlesWithin } from "./acp-child-io.ts";
 import { acpSessionBuilder, assertAbsoluteSessionRoots } from "./acp-session-roots.ts";
@@ -196,6 +199,7 @@ export interface AcpPromptInput {
 }
 
 export interface AcpSessionStartInput {
+  resumeCandidate?: { externalSessionId: string; content: string };
   profile: AcpExecutionProfile;
   abortSignal?: AbortSignal;
   onRouteVerified?: AcpRunInput["onRouteVerified"];
@@ -204,6 +208,8 @@ export interface AcpSessionStartInput {
 }
 
 export interface AcpSessionHandle {
+  readonly verifiedResumedExternalSessionId?: string;
+  readonly replayStats?: { updates: number; bytes: number; elapsedMs: number };
   readonly isAlive: boolean;
   readonly routeEvidence?: AcpRouteEvidence;
   /**
@@ -216,25 +222,6 @@ export interface AcpSessionHandle {
   prompt(input: AcpPromptInput): Promise<AcpRunResult>;
   close(): Promise<void>;
 }
-
-type LiveSdkSession = {
-  sessionId: string;
-  prompt: (text: string) => Promise<unknown>;
-  nextUpdate: () => Promise<
-    | {
-      kind: "session_update";
-      notification: { sessionId: string };
-      update: unknown;
-    }
-    | {
-      kind: "stop";
-      stopReason: AcpStopReason;
-      response?: { usage?: unknown };
-    }
-  >;
-  dispose: () => void;
-};
-
 
 const DEFAULT_INITIALIZE_TIMEOUT_MS = 5_000;
 export const DEFAULT_SESSION_TIMEOUT_MS = 5_000;
@@ -737,6 +724,7 @@ export function guardedProtocolInput(
   onProtocolError: (error: AcpRunnerError) => void,
   sessionUpdateLimit = STANDARD_SESSION_UPDATE_LIMIT,
   protocolMessageLimit = STANDARD_PROTOCOL_MESSAGE_LIMIT,
+  replayUpdate?: (update: Record<string, unknown>, bytes: number) => boolean,
 ): {
   stream: ReadableStream<Uint8Array>;
   resetExchange: () => void;
@@ -758,7 +746,7 @@ export function guardedProtocolInput(
     onProtocolError(error);
     throw error;
   };
-  const validateLine = (line: Uint8Array): void => {
+  const validateLine = (line: Uint8Array): boolean => {
     const content = line.at(-1) === 13 ? line.slice(0, -1) : line;
     let message: unknown;
     try {
@@ -772,13 +760,7 @@ export function guardedProtocolInput(
       reject("ACP agent sent malformed protocol data");
     }
     const record = message as Record<string, unknown>;
-    if (record.method !== methods.client.session.update) return;
-    sessionUpdateCount += 1;
-    if (sessionUpdateCount > sessionUpdateLimit) {
-      const error = new AcpSessionUpdateLimitError();
-      onProtocolError(error);
-      throw error;
-    }
+    if (record.method !== methods.client.session.update) return true;
     const params = record.params;
     if (
       typeof params !== "object" || params === null || Array.isArray(params)
@@ -803,6 +785,18 @@ export function guardedProtocolInput(
       reject("ACP agent sent malformed session data");
     }
     const updateRecord = update as Record<string, unknown>;
+    try {
+      if (replayUpdate?.(updateRecord, line.byteLength + 1)) return false;
+    } catch (error) {
+      if (error instanceof AcpRunnerError) onProtocolError(error);
+      throw error;
+    }
+    sessionUpdateCount += 1;
+    if (sessionUpdateCount > sessionUpdateLimit) {
+      const error = new AcpSessionUpdateLimitError();
+      onProtocolError(error);
+      throw error;
+    }
     const responseContent = updateRecord.content;
     if (
       updateRecord.sessionUpdate === "agent_message_chunk" &&
@@ -826,6 +820,7 @@ export function guardedProtocolInput(
         }
       }
     }
+    return true;
   };
 
   const resetExchange = (): void => {
@@ -863,11 +858,11 @@ export function guardedProtocolInput(
           if (chunk[index] !== 10) continue;
           append(chunk.subarray(start, index));
           const line = pending.subarray(0, pendingLength);
-          validateLine(line);
+          const forward = validateLine(line);
           const framed = new Uint8Array(pendingLength + 1);
           framed.set(line);
           framed[pendingLength] = 10;
-          controller.enqueue(framed);
+          if (forward) controller.enqueue(framed);
           pendingLength = 0;
           start = index + 1;
         }
@@ -876,8 +871,7 @@ export function guardedProtocolInput(
       flush(controller) {
         if (pendingLength === 0) return;
         const line = pending.slice(0, pendingLength);
-        validateLine(line);
-        controller.enqueue(line);
+        if (validateLine(line)) controller.enqueue(line);
       },
     }),
   );
@@ -1155,6 +1149,10 @@ export async function runAcpAgent(input: AcpRunInput): Promise<AcpRunResult> {
 }
 
 class LiveAcpSession implements AcpSessionHandle {
+  readonly #resumeCandidate: AcpSessionStartInput["resumeCandidate"];
+  #replay?: AcpReplay;
+  #verifiedResumedExternalSessionId: string | undefined;
+  #loadedUpdate?: (params: { sessionId: string; update: unknown }) => void;
   readonly #profile: AcpExecutionProfile;
   readonly #runPolicy: RuntimePolicy;
   readonly #startAbort?: AbortSignal;
@@ -1208,6 +1206,7 @@ class LiveAcpSession implements AcpSessionHandle {
   #lifecycleAbort = Promise.withResolvers<void>();
 
   constructor(input: AcpSessionStartInput) {
+    this.#resumeCandidate = input.resumeCandidate;
     this.#profile = input.profile;
     this.#runPolicy = input.runPolicy ?? baseRuntimePolicy();
     this.#startAbort = input.abortSignal;
@@ -1244,6 +1243,12 @@ class LiveAcpSession implements AcpSessionHandle {
   get durableSessionLoad(): boolean {
     return this.#durableSessionLoad;
   }
+
+  get verifiedResumedExternalSessionId(): string | undefined {
+    return this.#verifiedResumedExternalSessionId;
+  }
+
+  get replayStats() { return this.#replay?.stats; }
 
   async prompt(input: AcpPromptInput): Promise<AcpRunResult> {
     assertAcpPromptWithinLimit(input.prompt);
@@ -1477,6 +1482,30 @@ class LiveAcpSession implements AcpSessionHandle {
     return this.#closePromise;
   }
 
+  async #openSession(context: ClientContext, initialized: InitializeResponse,
+    abortableLifecycle: <T>(promise: Promise<T>) => Promise<T>): Promise<LiveSdkSession> {
+    const profile = this.#profile;
+    const candidate = this.#resumeCandidate;
+    if (candidate === undefined || !this.#durableSessionLoad ||
+        ((profile.additionalDirectories?.length ?? 0) > 0 &&
+          !initialized.agentCapabilities?.sessionCapabilities?.additionalDirectories)) {
+      return await withTimeout(
+        abortableLifecycle(acpSessionBuilder(context, profile, initialized).start()),
+        profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS, "session",
+      ) as LiveSdkSession;
+    }
+    this.#activeSessionId = candidate.externalSessionId;
+    this.#replay = new AcpReplay();
+    this.#resetExchange();
+    const loaded = await withTimeout(abortableLifecycle(Promise.race([
+      loadVerifiedAcpSession(context, profile, candidate, this.#replay),
+      this.#protocolErrorRaised.promise.then((): never => { throw this.#protocolError; }),
+    ])), ACP_REPLAY_TIMEOUT_MS, "session");
+    this.#loadedUpdate = loaded.onUpdate;
+    this.#verifiedResumedExternalSessionId = candidate.externalSessionId;
+    return loaded.session;
+  }
+
   async #start(): Promise<void> {
     if (this.#startAbort?.aborted) throw new AcpAbortRequested();
     const profile = this.#profile;
@@ -1505,6 +1534,7 @@ class LiveAcpSession implements AcpSessionHandle {
       ]);
     const app = client({ name: "dyfj-workbench" })
       .onNotification(methods.client.session.update, ({ params }) => {
+        this.#loadedUpdate?.(params);
         if (
           this.#activeSessionId !== undefined &&
           params.sessionId !== this.#activeSessionId
@@ -1527,6 +1557,7 @@ class LiveAcpSession implements AcpSessionHandle {
       (error) => this.#noteProtocolError(error),
       this.#sessionUpdateLimit,
       this.#protocolMessageLimit,
+      (update, bytes) => this.#replay?.consume(update, bytes) ?? false,
     );
     this.#resetExchange = protocolInput.resetExchange;
     this.#connection = app.connectWith(
@@ -1646,11 +1677,7 @@ class LiveAcpSession implements AcpSessionHandle {
             routeVerificationController.abort();
             this.#startAbort?.removeEventListener("abort", forwardRouteAbort);
           }
-          const session = await withTimeout(
-            abortableLifecycle(acpSessionBuilder(context, profile, initialized).start()),
-            profile.sessionTimeoutMs ?? DEFAULT_SESSION_TIMEOUT_MS,
-            "session",
-          );
+          const session = await this.#openSession(context, initialized, abortableLifecycle);
           this.#sdkSession = session as LiveSdkSession;
           this.#context = {
             request: context.request.bind(context),

@@ -125,6 +125,7 @@ fn continuity_reconstructing(event: &Value) -> Option<String> {
     let projected = event.get("priorMessagesProjected").and_then(Value::as_u64)?;
     let left_out = event.get("priorMessagesLeftOut").and_then(Value::as_u64)?;
     let phrase = match event.get("reason").and_then(Value::as_str) {
+        Some("durable_resume_failed") => "its saved native context could not be verified",
         Some("idle_limit") => "it was closed after the idle limit",
         Some("capacity") => "it was closed to make room for another session",
         Some("agent_settings_changed") => {

@@ -67,6 +67,7 @@ CREATE TABLE events (
     runner_protocol_version   VARCHAR(32),
     runner_stop_reason        ENUM('end_turn', 'max_tokens', 'max_turn_requests', 'refusal', 'cancelled'),
     runner_external_session_id VARCHAR(256),
+    runner_resume_digest VARCHAR(64),
     runner_agent_name         VARCHAR(128),
     runner_agent_version      VARCHAR(64),
     runner_transport          ENUM('local_stdio'),

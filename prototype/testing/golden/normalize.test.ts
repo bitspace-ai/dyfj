@@ -2,6 +2,14 @@ import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { createNormalizer } from "./normalize.ts";
 
+test("normalizes workspace-bound resume digests, preserving nulls and malformed values", () => {
+  const normalizer = createNormalizer();
+  deepStrictEqual(normalizer.normalize({ runner_resume_digest: "a".repeat(64), runnerResumeDigest: "b".repeat(64) }),
+    { runner_resume_digest: "<RESUME-DIGEST>", runnerResumeDigest: "<RESUME-DIGEST>" });
+  deepStrictEqual(normalizer.normalize({ runner_resume_digest: null, runnerResumeDigest: "invalid" }),
+    { runner_resume_digest: null, runnerResumeDigest: "invalid" });
+});
+
 test("generated IDs get stable, first-seen placeholders", () => {
   const n = createNormalizer();
   const out = n.normalize({

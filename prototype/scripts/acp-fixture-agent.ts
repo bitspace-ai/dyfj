@@ -25,6 +25,13 @@ const grandchildPidFile = args.find((arg) =>
 )?.slice("--grandchild-pid-file=".length);
 const methodLogFile = args.find((arg) => arg.startsWith("--method-log="))
   ?.slice("--method-log=".length);
+const historyFile = process.env.ACP_FIXTURE_HISTORY_FILE;
+
+async function recordHistory(sessionId: string, role: "user_message_chunk" | "agent_message_chunk", text: string) {
+  if (historyFile === undefined) return;
+  await appendFile(historyFile, JSON.stringify({ sessionId,
+    update: { sessionUpdate: role, content: { type: "text", text } } }) + "\n");
+}
 
 async function logMethod(method: string): Promise<void> {
   if (methodLogFile === undefined) return;
@@ -83,6 +90,7 @@ async function chunk(
   sessionId: string,
   text: string,
 ): Promise<void> {
+  await recordHistory(sessionId, "agent_message_chunk", text);
   await context.notify(methods.client.session.update, {
     sessionId,
     update: {
@@ -115,6 +123,8 @@ const app = agent({ name: "dyfj-acp-fixture" })
     return {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
+        ...(historyFile !== undefined && process.env.ACP_FIXTURE_LOAD_SESSION !== "no"
+          ? { loadSession: true } : {}),
         promptCapabilities: {},
         // Additional directories only when a test asks for them, so the
         // capability list other tests record stays the same.
@@ -169,7 +179,7 @@ const app = agent({ name: "dyfj-acp-fixture" })
         },
       });
     }
-    const sessionId = `fixture-${nextSession++}`;
+    const sessionId = historyFile === undefined ? `fixture-${nextSession++}` : `fixture-${process.pid}-${nextSession++}`;
     sessions.set(sessionId, {
       cwd: params.cwd,
       additionalDirectories: params.additionalDirectories ?? [],
@@ -177,6 +187,41 @@ const app = agent({ name: "dyfj-acp-fixture" })
       cancelled: false,
     });
     return { sessionId };
+  })
+  .onRequest(methods.agent.session.load, async ({ params, client: context }) => {
+    await logMethod("session/load");
+    const mode = process.env.ACP_FIXTURE_MODE;
+    if (mode === "load_error") throw RequestError.invalidRequest("fixture load error");
+    if (mode === "load_timeout") await new Promise(() => {});
+    sessions.set(params.sessionId, { cwd: params.cwd,
+      additionalDirectories: params.additionalDirectories ?? [],
+      cancel: Promise.withResolvers<void>(), cancelled: false });
+    if (mode === "load_oversize") {
+      await writeStdout(new TextEncoder().encode(JSON.stringify({ jsonrpc: "2.0", method: "session/update",
+        params: { sessionId: params.sessionId, update: { sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "x".repeat(1_100_000) } } } }) + "\n"));
+    }
+    if (mode === "load_bound" || mode === "load_bytes") {
+      for (let i = 0; i < (mode === "load_bound" ? 8_193 : 43); i++) {
+        await context.notify(methods.client.session.update, { sessionId: params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: mode === "load_bytes" ? "x".repeat(200_000) : "x" } } });
+      }
+    }
+    if (historyFile === undefined) throw RequestError.invalidRequest("no saved history");
+    for (const line of (await readFile(historyFile, "utf8")).trim().split("\n")) {
+      const entry = JSON.parse(line);
+      if (entry.sessionId === params.sessionId) {
+        await context.notify(methods.client.session.update, entry);
+      }
+    }
+    // A replayed tool must not enter the next prompt's evidence accumulator.
+    await context.notify(methods.client.session.update, { sessionId: params.sessionId,
+      update: { sessionUpdate: "tool_call", toolCallId: "replay-only", title: "Replay", kind: "read", status: "completed" } });
+    if (mode === "load_mismatch") {
+      await context.notify(methods.client.session.update, { sessionId: params.sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "mismatch" } } });
+    }
+    return {};
   })
   .onRequest(methods.agent.session.close, async ({ params }) => {
     await logMethod("session/close");
@@ -205,6 +250,19 @@ const app = agent({ name: "dyfj-acp-fixture" })
         .filter((part) => part.type === "text")
         .map((part) => part.text)
         .join("");
+      if (prompt === "FIXTURE_PREVIOUS_REPLY" && historyFile !== undefined) {
+        let previous = "";
+        for (const line of (await readFile(historyFile, "utf8")).trim().split("\n")) {
+          const entry = JSON.parse(line);
+          if (entry.sessionId !== params.sessionId) continue;
+          if (entry.update.sessionUpdate === "user_message_chunk") previous = "";
+          else previous += entry.update.content.text;
+        }
+        await recordHistory(params.sessionId, "user_message_chunk", prompt);
+        await chunk(context, params.sessionId, previous);
+        return { stopReason: "end_turn" };
+      }
+      await recordHistory(params.sessionId, "user_message_chunk", prompt);
       if (prompt.includes("FIXTURE_PLAN_PROGRESS")) {
         const entries = [
           { content: "Inspect file", status: "completed" as const, priority: "medium" as const },

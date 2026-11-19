@@ -1413,7 +1413,23 @@ that session's own earlier turns into the replacement prompt and labels the turn
 `reconstructed`; a live handle is `warm-reused` and receives no replay; a
 session without prior turns is `new`; and `durably-resumed` is claimed only when
 the runner advertises ACP `session/load` and Workbench can verify the resumed
-external session identity, which no currently pinned adapter provides. The
+external session identity. The pinned codex-acp 2.5.0 adapter supports this:
+Workbench considers only the latest `agent_response` event, requiring an external
+session id and a matching `runner_resume_digest`. This SHA-256 digest binds the
+workspace and canonical execution profile after removing only
+`CODEX_CONFIG.mcp_servers.workbench.env.DYFJ_WORKBENCH_BRIDGE_TOKEN`; the token
+is neither persisted nor hashed into this digest. Changed settings or missing
+metadata keep the existing reconstruction reasons; older events are never searched.
+A load requires the advertised capability and support for any additional roots.
+Successful `session/load` must replay agent text after its last user message
+whose SHA-256 matches the candidate event's content. Replay is discarded before
+the prompt queue, rendering, tool evidence or journal, with independent bounds:
+`ACP_REPLAY_TIMEOUT_MS` (10,000 ms), `ACP_REPLAY_UPDATE_LIMIT` (8,192 updates),
+and `ACP_REPLAY_BYTE_LIMIT` (8 MiB of update lines), plus the profile's line limit.
+The next prompt starts with fresh counters. A failed load, mismatch, timeout or
+bound closes the handle and creates a new session, reconstructing with
+`durable_resume_failed`. Its transcript header says the prior session could not
+be verified. The one-shot path without a session map still reconstructs. The
 runner receipt records that state, the durable-resume status, the count of
 projected messages and tool exchanges actually sent, any count and cause codes
 of prior messages left out when the transcript was shortened
@@ -1426,7 +1442,7 @@ identifiers. On a `reconstructed` turn, after `reconstructPrompt` prepares the
 rebuilt prompt and before the prompt is sent to the agent, the runtime awaits
 one `continuityReconstructing` runtime event (`sessionId`, `reason`,
 `priorMessagesProjected`, `priorMessagesLeftOut`) so the client receives it
-before any `agentProgress` event or text delta of that turn (`new` and
+before any `agentProgress` event or text delta of that turn (`new`, `durably-resumed` and
 `warm-reused` turns, and turns whose reconstruction fails, emit no such event;
 headless turns drop it). `AcpSessionHandleMap` records the removal cause and
 handle key in memory against the Workbench session id when it removes that
@@ -1435,8 +1451,9 @@ session's most recent live agent session (`idle_limit`, `capacity`,
 `MAX_ACP_REMOVED_SESSION_RECORDS` (256 Workbench sessions, replacing any older
 record for the same session and dropping the oldest when exceeded; removing an
 older agent session, `shutdown`, and failed closes that leave the handle alive
-record nothing). For the turn being run, the map chooses `reason` from six
-fixed codes: `agent_settings_changed` when the Workbench session's most recent
+record nothing). For the turn being run, the map chooses `reason` from seven
+fixed codes: `durable_resume_failed` after a failed load, otherwise
+`agent_settings_changed` when the Workbench session's most recent
 agent session, live or recorded, had a different key from this turn's key
 (taking precedence over any recorded cause), else the recorded cause, or
 `not_held` when the map holds no record for the session (for example after a
@@ -2922,7 +2939,6 @@ Reserved space for new questions as they accumulate.
 Document revisions only. Code and behavior changes are tracked in
 [CHANGELOG.md](CHANGELOG.md).
 
-- 2026-11-18 - Document the optional sandboxed fast gate command and mode.
 - 2026-04-26 - Draft 1 from initial brain dump.
 - 2026-04-27 - Draft 2: Non-goals added; Layer 0 stances stabilized at five;
   "schema in data layer" promoted into Layer 0; cost visibility promoted from
@@ -3684,3 +3700,6 @@ Document revisions only. Code and behavior changes are tracked in
 
 - 2026-11-16 - Document the sandbox test policy check, gate-selected temporary
   directories, and loopback bind skips that retain coverage in CI.
+- 2026-11-18 - Document the optional sandboxed fast gate command and mode.
+- 2026-11-18 - Document verified durable ACP resume, its restart-stable digest,
+  replay isolation and bounds, and the seventh reconstruction reason.
