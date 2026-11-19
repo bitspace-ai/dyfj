@@ -4,6 +4,7 @@ import type { Env, GateConfig, GateMode, RuntimePolicy } from "../../config/mod.
 import { CommandExecutionError, type CommandCall, type CommandDefinition } from "../definition.ts";
 import { buildSafeBashEnv, executorSocket } from "./exec.ts";
 import { type CommandSandbox, offSandbox, sandboxContainment } from "./srt-sandbox.ts";
+import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
 import { GateRuns, type GateView } from "./gate-runs.ts";
 
 export const GATE_START_APPROVALS = { id: "gate/start", sessionGrantModes: ["full"] } as const;
@@ -58,7 +59,7 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
     ? deps.sandbox : undefined;
   const modes = (Object.keys(config.commands) as GateMode[]).filter(mode => mode === "full" || sandbox !== undefined);
   const containment = {
-    ...sandboxContainment(sandbox ?? offSandbox("gate files mode is unavailable")),
+    ...sandboxContainment(sandbox ?? offSandbox("gate files and fast modes are unavailable")),
     escapesSandbox: (call: CommandCall) => call.arguments.mode === "full",
   };
   const validate = async (call: CommandCall): Promise<string | null> => {
@@ -70,10 +71,10 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
   };
   const start: CommandDefinition<GateView> = {
     ...GATE_START_APPROVALS, sessionGrantable: deps.sessionGrantable, title: "Run gate (full runs worktree code on the host, outside any sandbox)",
-    description: "Start the configured gate and return a run id immediately. Full runs worktree code on the host, outside any sandbox, and requires a reason and approval unless the operator opted in and granted full mode for this session. Files runs selected test files under srt. Only one run per session may be active.",
+    description: "Start the configured gate and return a run id immediately. Full runs worktree code on the host, outside any sandbox, and requires a reason and approval unless the operator opted in and granted full mode for this session. Files runs selected test files under srt; fast runs the configured fast command under srt without paths. Only one run per session may be active.",
     inputSchema: { type: "object", required: ["mode"], properties: {
       mode: { type: "string", enum: modes },
-      paths: { type: "array", items: { type: "string" }, maxItems: 100, description: "Non-empty workspace-relative files, for files mode only." },
+      paths: { type: "array", items: { type: "string" }, maxItems: 100, description: "Non-empty workspace-relative files, for files mode only; refused for full and fast." },
       reason: { type: "string", description: "Required for full: why host execution is needed." },
     }, additionalProperties: false },
     permission: { effects: ["run.process", "read.filesystem", "write.filesystem", "emit.event"], defaultDecision: "allow", resources: ["process:run"], filesystem: "write", network: "external", cost: "none" },
@@ -83,9 +84,11 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
       if (failure !== null) throw new CommandExecutionError(failure);
       const paths = await checkedPaths(workspaceRoot, call);
       const mode = call.arguments.mode as GateMode;
+      const env = buildSafeBashEnv(deps.env);
       return runs.start(sessionId, {
         root: workspaceRoot, mode, paths: (call.arguments.paths as string[] | undefined) ?? [],
-        argv: [...config.commands[mode]!, ...paths], env: buildSafeBashEnv(deps.env),
+        argv: [...config.commands[mode]!, ...paths],
+        env: mode === "full" ? env : { ...env, npm_config_cache: SANDBOX_NPM_CACHE },
         timeoutMs: config.timeoutSeconds * 1000, policy: deps.policy,
         ...(mode === "full" ? {} : { sandbox }),
       });

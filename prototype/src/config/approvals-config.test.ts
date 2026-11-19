@@ -5,7 +5,7 @@ import { MapEnv } from "../../testing/fakes/map-env.ts";
 const eligible = [{ id: "gate/start", sessionGrantModes: ["full"] }];
 it("approvals config: only declared command modes may opt in", async () => {
   const { loadApprovalsConfig } = await import("./approvals-config.ts");
-  for (const entry of ["gate/start:files", "publish/start:full", "dispatch/start:full", "bash:full", "gate/start"]) {
+  for (const entry of ["gate/start:files", "gate/start:fast", "publish/start:full", "dispatch/start:full", "bash:full", "gate/start"]) {
     await assert.rejects(loadApprovalsConfig(eligible, {
       env: new MapEnv({ HOME: "/fixture" }), readTextFile: async () => "fixture",
       parseToml: () => ({ approvals: { session_grantable: [entry] } }),

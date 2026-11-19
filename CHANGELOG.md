@@ -11,6 +11,11 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Sandboxed fast gate mode (`BIT-966`).** Optional `gate.fast_command`
+  enables broad checks under srt without paths, using the same offer and
+  approval rules as selected files. Both sandboxed modes use the sandbox npm
+  cache; only full mode is eligible for a session grant.
+
 - **Configured gate tools (`BIT-954`).** Native and Codex-route sessions can
   start, wait for and cancel a session-owned test run. Selected files run under
   srt; full runs execute worktree code on the host and ask every time by default.

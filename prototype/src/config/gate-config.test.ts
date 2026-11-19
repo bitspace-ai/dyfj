@@ -16,12 +16,12 @@ it("gate config: command alone declares only full with the default deadline", as
   });
 });
 
-it("gate config: files argv and an explicit deadline are preserved", async () => {
+it("gate config: files and fast argv and an explicit deadline are preserved", async () => {
   const { parseGateConfig } = await import("./gate-config.ts");
   assert.deepEqual(parseGateConfig({ gate: {
-    command: ["npm", "test"], files_command: ["node", "--test"], timeout_seconds: 12,
+    command: ["npm", "test"], files_command: ["node", "--test"], fast_command: ["npm", "run", "test:fast"], timeout_seconds: 12,
   } }, "config.toml"), {
-    commands: { full: ["npm", "test"], files: ["node", "--test"] }, timeoutSeconds: 12,
+    commands: { full: ["npm", "test"], files: ["node", "--test"], fast: ["npm", "run", "test:fast"] }, timeoutSeconds: 12,
   });
 });
 
@@ -31,6 +31,8 @@ it("gate config: malformed keys fail loading and name the key", async () => {
     ["command", "npm test"], ["command", []], ["command", [""]],
     ["command", ["npm", 1]], ["command", ["npm", "test\0"]],
     ["files_command", "node --test"], ["files_command", []],
+    ["fast_command", "npm run test:fast"], ["fast_command", []],
+    ["fast_command", [""]], ["fast_command", ["npm", 1]], ["fast_command", ["npm", "test\0"]],
     ["timeout_seconds", 0], ["timeout_seconds", 1.5],
     ["timeout_seconds", "1800"], ["timeout_seconds", 2147484],
     ["unexpected", true],
