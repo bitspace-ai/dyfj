@@ -8,6 +8,7 @@ import { SandboxManager } from "@anthropic-ai/sandbox-runtime";
 import { nestedSandboxSkipReason } from "../../../testing/nested-sandbox.ts";
 import { listenLoopbackProbe } from "../../transport/mod.ts";
 import { bootSandbox } from "./srt-sandbox.ts";
+import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
 import { defineGateTools } from "./gate.ts";
 import { GateRuns } from "./gate-runs.ts";
 import type { CommandCall } from "../definition.ts";
@@ -15,6 +16,37 @@ import type { CommandCall } from "../definition.ts";
 const dependencies = SandboxManager.isSupportedPlatform()
   ? SandboxManager.checkDependencies()
   : { errors: ["unsupported platform"] };
+
+it("gate fast: real srt contains the run and sets the sandbox npm cache", {
+  skip: dependencies.errors.length ? dependencies.errors.join("; ") : nestedSandboxSkipReason() ?? false,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "gate-fast-"));
+  const home = await mkdtemp(join(tmpdir(), "gate-fast-home-"));
+  const runs = new GateRuns(new MapEnv({ HOME: home }));
+  try {
+    const sandbox = await bootSandbox({ listenProbe: listenLoopbackProbe, home });
+    assert.equal(sandbox.status.state, "on", JSON.stringify(sandbox.status));
+    const argv = [process.execPath, "-e", `
+      const assert = require('node:assert/strict');
+      const fs = require('node:fs');
+      assert.equal(process.env.npm_config_cache, ${JSON.stringify(SANDBOX_NPM_CACHE)});
+      assert.throws(() => fs.writeFileSync(${JSON.stringify(join(home, "outside-workspace"))}, 'no'),
+        error => error.code === 'EPERM' || error.code === 'EACCES');
+      console.log('sandboxed fast cache=' + process.env.npm_config_cache);
+    `];
+    const [start] = defineGateTools({
+      config: { commands: { full: [process.execPath], fast: argv }, timeoutSeconds: 10 },
+      runs, sessionId: "s", workspaceRoot: root, sandbox,
+    });
+    const view = await start!.executor({
+      commandId: "gate/start", callId: "c", caller: { principalId: "m", principalType: "agent" },
+      arguments: { mode: "fast" },
+    }, { authzBasis: "policy:allow:sandboxed" });
+    const done = await runs.wait("s", view.run, 10);
+    assert.equal(done.exitCode, 0, done.tail);
+    assert.ok(done.tail.includes(`sandboxed fast cache=${SANDBOX_NPM_CACHE}`), done.tail);
+  } finally { await runs.close(); await SandboxManager.reset(); await rm(root, { recursive: true, force: true }); await rm(home, { recursive: true, force: true }); }
+});
 
 it("gate files: real srt streams the full log and cancels the process group", {
   skip: dependencies.errors.length ? dependencies.errors.join("; ") : nestedSandboxSkipReason() ?? false,

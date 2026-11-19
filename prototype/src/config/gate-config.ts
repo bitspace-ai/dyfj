@@ -8,7 +8,7 @@ import {
   readConfigFile,
 } from "./toml.ts";
 
-const MODE_KEYS = { full: "command", files: "files_command" } as const;
+const MODE_KEYS = { full: "command", files: "files_command", fast: "fast_command" } as const;
 export type GateMode = keyof typeof MODE_KEYS;
 
 export interface GateConfig {

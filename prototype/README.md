@@ -641,25 +641,29 @@ The configuration is read once at boot from `~/.dyfj/config.toml`:
 [gate]
 command = ["npm", "test"]
 files_command = ["node", "--test"]
+fast_command = ["npm", "run", "test:fast"]
 timeout_seconds = 1800
 ```
 
-`command` is required for the tools to exist. `files_command` is optional;
-without it, only `full` mode is offered. Commands are argv arrays, never shell
+`command` is required for the tools to exist. `files_command` and
+`fast_command` are optional, with no default argv; each enables its mode.
+Commands are argv arrays, never shell
 strings. The timeout defaults to 1800 seconds. Malformed keys fail boot.
 
-`gate/start` takes `mode` (`full` or `files`). `files` requires a non-empty
+`gate/start` takes `mode` (`full`, `files` or `fast`). `fast` runs its
+configured command without paths. `files` requires a non-empty
 `paths` array of existing workspace-relative files; absolute paths, traversal
 and symlinks escaping the primary workspace are refused. Every command runs
 from the primary workspace root. A start returns a run id immediately; a
 second start while that session has an active run is refused with its id.
 
-`files` runs under srt and is allowed without a prompt under `operator` on
-the local socket (`policy:allow:sandboxed`); otherwise it asks. It is absent
-when srt is off or missing. It is also absent on the isolated executor route:
+`files` and `fast` run under srt with the sandbox npm cache and are allowed
+without a prompt under `operator` on the local socket
+(`policy:allow:sandboxed`); otherwise they ask. Both are absent
+when srt is off or missing, and on the isolated executor route:
 the executor returns output only after exit and has no cancel operation, so
 it cannot support the full log or `gate/cancel`. There is no uncontained
-fallback for this mode.
+fallback for these modes.
 
 `full` runs worktree code on the runtime's host, outside any sandbox, including
 when an isolated executor is configured. It requires a `reason` and asks for

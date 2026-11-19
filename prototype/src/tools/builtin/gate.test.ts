@@ -16,7 +16,7 @@ const call = (mode: string, paths?: string[]): CommandCall => ({
   commandId: "gate/start", callId: "c", caller: { principalId: "m", principalType: "agent" },
   arguments: { mode, reason: "Run the configured gate", ...(paths ? { paths } : {}) },
 });
-const config = { commands: { full: ["npm", "test"], files: ["node", "--test"] }, timeoutSeconds: 1800 };
+const config = { commands: { full: ["npm", "test"], files: ["node", "--test"], fast: ["npm", "run", "test:fast"] }, timeoutSeconds: 1800 };
 const sandbox = { ...offSandbox("test"), status: { state: "on", backend: "test" } as const };
 async function definitions(options = {}) {
   const { defineGateTools } = await import("./gate.ts");
@@ -30,7 +30,7 @@ it("gate catalog: absent config leaves native and bridge without gate tools", ()
   assert.equal(commands.filter(isBridgedCommand).some(c => c.id.startsWith("gate/")), false);
 });
 
-it("gate modes: command only, sandbox off, missing sandbox, and executor socket omit files", async () => {
+it("gate modes: command only, sandbox off, missing sandbox, and executor socket omit files and fast", async () => {
   for (const options of [
     { config: { ...config, commands: { full: config.commands.full } } },
     { sandbox: offSandbox("off") }, { sandbox: undefined },
@@ -41,6 +41,13 @@ it("gate modes: command only, sandbox off, missing sandbox, and executor socket 
   }
 });
 
+it("gate fast: offered with a sandbox and refuses paths", async () => {
+  const [start] = await definitions();
+  assert.deepEqual(start.inputSchema.properties?.mode.enum, ["full", "files", "fast"]);
+  assert.equal(await start.precheck!(call("fast")), null);
+  assert.equal(await start.precheck!(call("fast", ["a.test.ts"])), "gate: paths applies only to files mode");
+});
+
 it("gate bridge: admits all three ids and still refuses bash and read_file", () => {
   for (const id of ["gate/start", "gate/wait", "gate/cancel"]) {
     assert.equal(isBridgedCommand({ id } as CommandDefinition), true, id);
@@ -48,14 +55,14 @@ it("gate bridge: admits all three ids and still refuses bash and read_file", () 
   for (const id of ["bash", "read_file"]) assert.equal(isBridgedCommand({ id } as CommandDefinition), false);
 });
 
-it("gate policy: files is sandbox allowed only under operator on loopback", async () => {
+for (const mode of ["files", "fast"]) it(`gate policy: ${mode} is sandbox allowed only under operator on loopback`, async () => {
   const [start] = await definitions();
   const containment = await start.containment!.attest();
-  assert.deepEqual(evaluateCommandPolicy(start, call("files", ["a.test.ts"]), {
+  assert.deepEqual(evaluateCommandPolicy(start, call(mode, mode === "files" ? ["a.test.ts"] : undefined), {
     permissionLevel: "operator", loopback: true, containment,
   }), { decision: "allow", authzBasis: "policy:allow:sandboxed" });
   for (const context of [{ permissionLevel: "strict" as const, loopback: true }, { permissionLevel: "operator" as const, loopback: false }]) {
-    assert.equal(evaluateCommandPolicy(start, call("files", ["a.test.ts"]), { ...context, containment }).decision, "ask");
+    assert.equal(evaluateCommandPolicy(start, call(mode, mode === "files" ? ["a.test.ts"] : undefined), { ...context, containment }).decision, "ask");
   }
 });
 
