@@ -481,9 +481,10 @@ complete evidence bounds and checks.
 
 Cold turns with a session map can now be `durably-resumed` with the pinned
 codex-acp 2.5.0 adapter. Only the latest `agent_response` is eligible: it must
-have an external session id and a matching `runner_resume_digest`. The digest
-binds the workspace and canonical profile with only the Workbench bridge token
-removed from `CODEX_CONFIG` before hashing; model, effort, roots and other
+have an external session id, nonempty recorded content and a matching `runner_resume_digest`. The digest
+binds the workspace and canonical profile with the Workbench bridge token and
+runtime-generated socket path (`mcp_servers.workbench.args[1]`) removed from
+`CODEX_CONFIG` before hashing; the shim path, approval mode, timeout, model, effort, roots and other
 configuration still participate. Legacy events without the digest reconstruct.
 `session/load` requires the advertised capability and support for any added
 directories. Verification requires success and equal SHA-256 digests of the

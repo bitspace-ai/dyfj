@@ -199,10 +199,13 @@ export function canonicalResumeDigest(profile: AcpExecutionProfile): string {
   const environment = { ...profile.environment };
   if (environment.CODEX_CONFIG !== undefined) {
     const config = JSON.parse(environment.CODEX_CONFIG);
-    // Only the runtime-minted bridge credential is ephemeral. All other
-    // configuration, including the bridge address, remains part of identity.
+    // The bridge credential and socket are minted per runtime. Keep the shim
+    // and all tool settings in identity while excluding those ephemeral values.
     if (config.mcp_servers?.workbench?.env !== undefined) {
       delete config.mcp_servers.workbench.env.DYFJ_WORKBENCH_BRIDGE_TOKEN;
+    }
+    if (Array.isArray(config.mcp_servers?.workbench?.args) && config.mcp_servers.workbench.args.length > 1) {
+      config.mcp_servers.workbench.args[1] = null;
     }
     environment.CODEX_CONFIG = JSON.stringify(config);
   }
@@ -437,7 +440,7 @@ export class AcpSessionHandleMap {
     let resumeFailed = false;
     const latest = input.latestAgentResponse;
     const resumeCandidate = input.reconstructPrompt !== undefined &&
-        latest?.externalSessionId != null && latest.content !== null &&
+        latest?.externalSessionId != null && latest.content !== null && latest.content !== "" &&
         latest.resumeDigest === canonicalResumeDigest(input.profile)
       ? { externalSessionId: latest.externalSessionId, content: latest.content }
       : undefined;

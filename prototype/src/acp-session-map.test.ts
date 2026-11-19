@@ -26,16 +26,24 @@ import {
   selectAcpContinuity,
 } from "./acp-session-map.ts";
 
-it("resume digest excludes the bridge token but binds model, effort and workspace", () => {
-  const profile = (token: string, model = "model-a", effort = "medium") => fixtureProfile({
+it("resume digest excludes bridge socket and token but binds model, effort, workspace and tool settings", () => {
+  const profile = (token: string, socket = "/codex-bridge-one/bridge.sock", model = "model-a", effort = "medium",
+    tools = {}) => fixtureProfile({
     environment: { CODEX_CONFIG: JSON.stringify({ model, model_reasoning_effort: effort,
-      mcp_servers: { workbench: { env: { DYFJ_WORKBENCH_BRIDGE_TOKEN: token } } } }) },
+      mcp_servers: { workbench: { command: "/node", args: ["/bridge-shim.ts", socket],
+        env: { DYFJ_WORKBENCH_BRIDGE_TOKEN: token }, tool_timeout_sec: 60,
+        default_tools_approval_mode: "approve", ...tools } } }) },
   });
   const digest = canonicalResumeDigest(profile("token-one"));
-  assert.equal(digest, canonicalResumeDigest(profile("token-two")));
-  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", "model-b")));
-  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", "model-a", "high")));
+  assert.equal(digest, canonicalResumeDigest(profile("token-two", "/codex-bridge-two/bridge.sock")));
+  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, "model-b")));
+  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, "model-a", "high")));
   assert.notEqual(digest, canonicalResumeDigest({ ...profile("token-one"), workspace: "/another" }));
+  for (const tools of [{ tool_timeout_sec: 120 }, { default_tools_approval_mode: "ask" },
+    { command: "/other-node" }, { args: ["/other-shim.ts", "/codex-bridge-one/bridge.sock"] },
+    { enabled: false }]) {
+    assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, undefined, undefined, tools)));
+  }
   assert.ok(!digest.includes("token-one"));
 });
 import {

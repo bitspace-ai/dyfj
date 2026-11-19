@@ -13,8 +13,9 @@ README are tracked separately in its Revision history section.
 
 - **Verified durable ACP resume (`BIT-924`).** Cold sessions can load their
   latest recorded native thread with the pinned Codex adapter. A restart-stable
-  profile digest excludes the bridge token; replay must match the last recorded
-  agent reply before the next prompt runs. Replay stays private to verification,
+  profile digest excludes the bridge token and runtime-generated socket path,
+  retaining the shim path and tool settings; replay must match the last recorded
+  nonempty agent reply before the next prompt runs. Replay stays private to verification,
   within independent time, update and byte bounds. Failed loads reconstruct
   from Workbench history and report `durable_resume_failed`.
 

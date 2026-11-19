@@ -91,7 +91,7 @@ for (const mode of ["load_mismatch", "load_bound", "load_bytes", "load_error", "
   });
 }
 
-for (const change of ["model", "effort", "missing-id", "missing-digest", "no-load-capability"]) {
+for (const change of ["model", "effort", "missing-id", "missing-digest", "empty-content", "no-load-capability"]) {
   it(`${change}: reconstructs with the existing reason and sends no session/load`, async () => {
     const { profile, methodLog } = await setup();
     if (change === "no-load-capability") profile.environment.ACP_FIXTURE_LOAD_SESSION = "no";
@@ -107,7 +107,8 @@ for (const change of ["model", "effort", "missing-id", "missing-digest", "no-loa
       const result = await map.runTurn({ sessionId: "test", workspace: profile.workspace, profile,
         prompt: "follow-up", reconstructPrompt: () => "reconstructed follow-up",
         latestAgentResponse: { externalSessionId: change === "missing-id" ? null : "previous",
-          resumeDigest: change === "missing-digest" ? null : digest, content: "previous reply" },
+          resumeDigest: change === "missing-digest" ? null : digest,
+          content: change === "empty-content" ? "" : "previous reply" },
         onContinuity: (evidence, value) => { state = evidence.state; reason = value; },
       });
       assert.equal(result.stopReason, "stop");

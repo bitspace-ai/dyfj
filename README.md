@@ -1415,10 +1415,12 @@ session without prior turns is `new`; and `durably-resumed` is claimed only when
 the runner advertises ACP `session/load` and Workbench can verify the resumed
 external session identity. The pinned codex-acp 2.5.0 adapter supports this:
 Workbench considers only the latest `agent_response` event, requiring an external
-session id and a matching `runner_resume_digest`. This SHA-256 digest binds the
+session id, nonempty recorded content and a matching `runner_resume_digest`. This SHA-256 digest binds the
 workspace and canonical execution profile after removing only
-`CODEX_CONFIG.mcp_servers.workbench.env.DYFJ_WORKBENCH_BRIDGE_TOKEN`; the token
-is neither persisted nor hashed into this digest. Changed settings or missing
+`CODEX_CONFIG.mcp_servers.workbench.env.DYFJ_WORKBENCH_BRIDGE_TOKEN` and the
+runtime-generated socket path at `mcp_servers.workbench.args[1]`; neither value
+is hashed into this digest. The shim path, approval mode, timeout and all other
+settings remain part of identity. Changed settings, empty content or missing
 metadata keep the existing reconstruction reasons; older events are never searched.
 A load requires the advertised capability and support for any additional roots.
 Successful `session/load` must replay agent text after its last user message
