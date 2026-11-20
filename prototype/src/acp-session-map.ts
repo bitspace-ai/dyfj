@@ -195,6 +195,26 @@ export function encodeAcpSessionHandleKey(input: AcpSessionHandleKey): string {
   ]);
 }
 
+export function canonicalResumeDigest(profile: AcpExecutionProfile): string {
+  const environment = { ...profile.environment };
+  if (environment.CODEX_CONFIG !== undefined) {
+    const config = JSON.parse(environment.CODEX_CONFIG);
+    // The bridge credential and socket are minted per runtime. Keep the shim
+    // and all tool settings in identity while excluding those ephemeral values.
+    if (config.mcp_servers?.workbench?.env !== undefined) {
+      delete config.mcp_servers.workbench.env.DYFJ_WORKBENCH_BRIDGE_TOKEN;
+    }
+    if (Array.isArray(config.mcp_servers?.workbench?.args) && config.mcp_servers.workbench.args.length > 1) {
+      config.mcp_servers.workbench.args[1] = null;
+    }
+    environment.CODEX_CONFIG = JSON.stringify(config);
+  }
+  return createHash("sha256").update(JSON.stringify([
+    profile.workspace,
+    canonicalExecutionProfileDigest({ ...profile, environment }),
+  ])).digest("hex");
+}
+
 export class AcpSessionHandleMap {
   readonly #runPolicy: RuntimePolicy | undefined;
   readonly #capacity: number;
@@ -237,6 +257,8 @@ export class AcpSessionHandleMap {
       create?: () => Promise<AcpSessionHandle>;
       abortSignal?: AbortSignal;
       onRouteVerified?: AcpRunInput["onRouteVerified"];
+      resumeCandidate?: { externalSessionId: string; content: string };
+      onResumeFailed?: () => void;
     },
   ): Promise<AcpSessionHandle> {
     const key = encodeAcpSessionHandleKey(input);
@@ -269,9 +291,9 @@ export class AcpSessionHandleMap {
     }
     const entry: MapEntry = { key, state: "creating", idleGeneration: 0 };
     this.#entries.set(key, entry);
-    const create = input.create ??
-      (() => startAcpSession({
+    const start = (resumeCandidate?: { externalSessionId: string; content: string }) => startAcpSession({
         profile: input.profile,
+        resumeCandidate,
         abortSignal: input.abortSignal,
         onRouteVerified: input.onRouteVerified,
         runPolicy: this.#runPolicy,
@@ -280,7 +302,16 @@ export class AcpSessionHandleMap {
           if (entry.state === "creating" || entry.state === "closing") return;
           void this.#removeAndClose(entry, "agent_session_failed").catch(() => {});
         },
-      }));
+      });
+    const create = input.create ?? (async () => {
+      try {
+        return await start(input.resumeCandidate);
+      } catch (error) {
+        if (input.resumeCandidate === undefined || isTurnAborted(error)) throw error;
+        input.onResumeFailed?.();
+        return await start();
+      }
+    });
     const createPromise = create();
     entry.createPromise = createPromise;
     try {
@@ -372,6 +403,11 @@ export class AcpSessionHandleMap {
       onRouteVerified?: AcpRunInput["onRouteVerified"];
       /** Idle limit in milliseconds applied when this turn releases the handle. */
       idleTtlMs?: number;
+      latestAgentResponse?: {
+        externalSessionId: string | null;
+        resumeDigest: string | null;
+        content: string | null;
+      };
       /**
        * Bounded projection of the Workbench session's prior turns, supplied
        * only when the session has history to carry. Called just once, and only
@@ -379,7 +415,7 @@ export class AcpSessionHandleMap {
        * its own inner history and nothing is replayed into it. Throwing here
        * fails the turn before any prompt reaches the agent.
        */
-      reconstructPrompt?: () => string;
+      reconstructPrompt?: (reason?: ContinuityReconstructionReason) => string;
       /** Observed continuity for this turn, reported before the prompt. */
       onContinuity?: (
         evidence: AcpContinuityEvidence,
@@ -401,8 +437,16 @@ export class AcpSessionHandleMap {
     const prior = this.#entries.get(key);
     const idleHandle = prior?.state === "idle" ? prior.handle : undefined;
     let handle: AcpSessionHandle;
+    let resumeFailed = false;
+    const latest = input.latestAgentResponse;
+    const resumeCandidate = input.reconstructPrompt !== undefined &&
+        latest?.externalSessionId != null && latest.content !== null && latest.content !== "" &&
+        latest.resumeDigest === canonicalResumeDigest(input.profile)
+      ? { externalSessionId: latest.externalSessionId, content: latest.content }
+      : undefined;
     try {
-      handle = await this.acquire(input);
+      handle = await this.acquire({ ...input, resumeCandidate,
+        onResumeFailed: () => { resumeFailed = true; } });
     } catch (error) {
       if (isTurnAborted(error)) return abortedResult();
       throw error;
@@ -445,17 +489,18 @@ export class AcpSessionHandleMap {
         warmHandleReused: reused,
         priorTurns: input.reconstructPrompt !== undefined,
         agentAdvertisesSessionLoad: handle.durableSessionLoad,
+        verifiedResumedExternalSessionId: handle.verifiedResumedExternalSessionId,
       });
-      const prompt = continuity.state === "reconstructed"
-        ? input.reconstructPrompt!()
-        : input.prompt;
       const reconstructionReason = continuity.state === "reconstructed"
-        ? this.#selectReconstructionReason(
+        ? resumeFailed ? "durable_resume_failed" : this.#selectReconstructionReason(
           input.sessionId,
           key,
           priorLatestKey,
         )
         : undefined;
+      const prompt = continuity.state === "reconstructed"
+        ? input.reconstructPrompt!(reconstructionReason)
+        : input.prompt;
       await input.onContinuity?.(continuity, reconstructionReason);
       return await handle.prompt({ ...input, prompt });
     } catch (error) {

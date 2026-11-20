@@ -4,7 +4,6 @@
 // acp-session-map.integration.test.ts.
 import { captureRejection } from "../testing/assertions/captured.ts";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { join } from "node:path";
 import process from "node:process";
@@ -21,10 +20,32 @@ import {
   AcpSessionHandleMap,
   AcpSessionShutdownError,
   canonicalExecutionProfileDigest,
+  canonicalResumeDigest,
   encodeAcpSessionHandleKey,
   MAX_ACP_REMOVED_SESSION_RECORDS,
   selectAcpContinuity,
 } from "./acp-session-map.ts";
+
+it("resume digest excludes bridge socket and token but binds model, effort, workspace and tool settings", () => {
+  const profile = (token: string, socket = "/codex-bridge-one/bridge.sock", model = "model-a", effort = "medium",
+    tools = {}) => fixtureProfile({
+    environment: { CODEX_CONFIG: JSON.stringify({ model, model_reasoning_effort: effort,
+      mcp_servers: { workbench: { command: "/node", args: ["/bridge-shim.ts", socket],
+        env: { DYFJ_WORKBENCH_BRIDGE_TOKEN: token }, tool_timeout_sec: 60,
+        default_tools_approval_mode: "approve", ...tools } } }) },
+  });
+  const digest = canonicalResumeDigest(profile("token-one"));
+  assert.equal(digest, canonicalResumeDigest(profile("token-two", "/codex-bridge-two/bridge.sock")));
+  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, "model-b")));
+  assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, "model-a", "high")));
+  assert.notEqual(digest, canonicalResumeDigest({ ...profile("token-one"), workspace: "/another" }));
+  for (const tools of [{ tool_timeout_sec: 120 }, { default_tools_approval_mode: "ask" },
+    { command: "/other-node" }, { args: ["/other-shim.ts", "/codex-bridge-one/bridge.sock"] },
+    { enabled: false }]) {
+    assert.notEqual(digest, canonicalResumeDigest(profile("token-one", undefined, undefined, undefined, tools)));
+  }
+  assert.ok(!digest.includes("token-one"));
+});
 import {
   DomainError,
   historyOmissionForDelivery,
@@ -65,6 +86,7 @@ function fakeHandle(options: {
   keepAliveDuringClose?: boolean;
   routeEvidence?: AcpSessionHandle["routeEvidence"];
   durableSessionLoad?: boolean;
+  verifiedResumedExternalSessionId?: string;
 } = {}): AcpSessionHandle {
   let closed = false;
   let closePromise: Promise<void> | undefined;
@@ -74,6 +96,7 @@ function fakeHandle(options: {
     }
   };
   return {
+    verifiedResumedExternalSessionId: options.verifiedResumedExternalSessionId,
     get isAlive() {
       return !closed;
     },
@@ -394,10 +417,9 @@ describe("AcpSessionHandleMap continuity", () => {
     }
   });
 
-  it("a load-capable runner still reconstructs in production", async () => {
-    // `durably-resumed` stays unreachable through the production path: even a
-    // runner advertising `session/load` cannot produce it, because nothing
-    // here loads a session or verifies a resumed external session identity.
+  it("a load-capable runner with verified replay is durably resumed", async () => {
+    // The client reports verification only after the load and last-turn
+    // comparison succeed; the map then sends only the new prompt.
     const profile = fixtureProfile();
     const map = new AcpSessionHandleMap({ capacity: 2, idleTtlMs: 60_000 });
     const evidence: unknown[] = [];
@@ -405,35 +427,18 @@ describe("AcpSessionHandleMap continuity", () => {
       await map.runTurn({
         ...acquireKey(profile),
         prompt: "referential follow-up",
-        create: () => Promise.resolve(fakeHandle({ durableSessionLoad: true })),
+        create: () => Promise.resolve(fakeHandle({ durableSessionLoad: true,
+          verifiedResumedExternalSessionId: "saved-session" })),
         reconstructPrompt: () => "transcript + referential follow-up",
         onContinuity: (value) => evidence.push(value),
       });
       assert.deepStrictEqual(evidence, [{
-        state: "reconstructed",
-        durableResume: "unavailable-client-verification",
+        state: "durably-resumed",
+        durableResume: "verified",
       }]);
     } finally {
       await map.shutdown();
     }
-  });
-
-  it("the ACP client implements no session/load path", async () => {
-    const sources = await Promise.all(
-      ["acp-client.ts", "acp-session-map.ts", "external-agent-runtime.ts"].map(
-        (file) => readFile(join(import.meta.dirname!, file), "utf8"),
-      ),
-    );
-    for (const source of sources) {
-      assert.ok(!source.includes("methods.agent.session.load"));
-      assert.ok(!source.includes("loadSession("));
-      assert.ok(!source.includes("resumeSession("));
-    }
-    // The capability is still read as runner-reported evidence.
-    assert.ok(
-      sources[0].includes("agentCapabilities?.loadSession === true"),
-      `expected sources[0] to include "agentCapabilities?.loadSession === true"`,
-    );
   });
 
   it("an unprojectable transcript fails before the agent is prompted", async () => {

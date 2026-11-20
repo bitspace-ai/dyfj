@@ -207,6 +207,11 @@ describe("formatRuntimeEvent", () => {
   it("renders continuityReconstructing with the same text for every reason, left-out count, singular count, and unknown code", () => {
     const cases: Array<[Record<string, unknown>, string]> = [
       [
+        { type: "continuityReconstructing", sessionId: "01J00000000000000000000000",
+          reason: "durable_resume_failed", priorMessagesProjected: 4, priorMessagesLeftOut: 0 },
+        "· agent session replaced: its saved native context could not be verified. Sending 4 earlier messages.",
+      ],
+      [
         {
           type: "continuityReconstructing",
           sessionId: "01J00000000000000000000000",

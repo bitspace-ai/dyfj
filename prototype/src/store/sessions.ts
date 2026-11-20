@@ -402,6 +402,7 @@ export async function fetchWorkbenchSessionEvents(input: {
       runnerProtocolVersion: nullableString(row.runner_protocol_version),
       runnerStopReason: nullableString(row.runner_stop_reason),
       runnerExternalSessionId: nullableString(row.runner_external_session_id),
+      runnerResumeDigest: nullableString(row.runner_resume_digest),
       runnerAgentName: nullableString(row.runner_agent_name),
       runnerAgentVersion: nullableString(row.runner_agent_version),
       runnerTransport: nullableString(row.runner_transport),

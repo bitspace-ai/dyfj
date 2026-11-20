@@ -117,6 +117,11 @@ export interface WorkbenchRuntimeRequest {
    * never grants access to it.
    */
   priorExternalSessionId?: string;
+  latestAgentResponse?: {
+    externalSessionId: string | null;
+    resumeDigest: string | null;
+    content: string | null;
+  };
   /**
    * Principal identity recorded on this turn's events. Lifted to the boundary
    * : entrypoints resolve it from DYFJ_PRINCIPAL_ID / USER via
@@ -239,6 +244,7 @@ export type ContextCompressionTrigger =
   | "request_fit";
 
 export type ContinuityReconstructionReason =
+  | "durable_resume_failed"
   | "agent_settings_changed"
   | "idle_limit"
   | "capacity"

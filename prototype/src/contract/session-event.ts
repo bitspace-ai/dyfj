@@ -45,6 +45,7 @@ export interface WorkbenchSessionEvent {
   runnerProtocolVersion: string | null;
   runnerStopReason: string | null;
   runnerExternalSessionId: string | null;
+  runnerResumeDigest?: string | null;
   runnerAgentName: string | null;
   runnerAgentVersion: string | null;
   runnerTransport: string | null;

@@ -103,6 +103,7 @@ export const SESSION_EVENT_COLUMNS = [
   "runner_protocol_version",
   "runner_stop_reason",
   "runner_external_session_id",
+  "runner_resume_digest",
   "runner_agent_name",
   "runner_agent_version",
   "runner_transport",

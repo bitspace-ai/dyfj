@@ -222,6 +222,7 @@ export const EVENT_COLUMNS = [
   "runner_protocol_version",
   "runner_stop_reason",
   "runner_external_session_id",
+  "runner_resume_digest",
   "runner_agent_name",
   "runner_agent_version",
   "runner_transport",
@@ -305,6 +306,7 @@ export const EVENT_COLUMN_SPECS: Readonly<
   runner_protocol_version: { kind: "text", nullable: true },
   runner_stop_reason: { kind: "enum", nullable: true },
   runner_external_session_id: { kind: "text", nullable: true },
+  runner_resume_digest: { kind: "text", nullable: true },
   runner_agent_name: { kind: "text", nullable: true },
   runner_agent_version: { kind: "text", nullable: true },
   runner_transport: { kind: "enum", nullable: true },
@@ -380,6 +382,7 @@ export interface EventRow {
   runner_protocol_version: string | null;
   runner_stop_reason: EventRunnerStopReason | null;
   runner_external_session_id: string | null;
+  runner_resume_digest: string | null;
   runner_agent_name: string | null;
   runner_agent_version: string | null;
   runner_transport: EventRunnerTransport | null;
@@ -458,6 +461,7 @@ export interface EventInsert {
   runner_protocol_version?: string | null;
   runner_stop_reason?: EventRunnerStopReason | null;
   runner_external_session_id?: string | null;
+  runner_resume_digest?: string | null;
   runner_agent_name?: string | null;
   runner_agent_version?: string | null;
   runner_transport?: EventRunnerTransport | null;

@@ -306,6 +306,8 @@ export function formatRuntimeEvent(
 
 function continuityReconstructionPhrase(reason: unknown): string {
   switch (reason) {
+    case "durable_resume_failed":
+      return "its saved native context could not be verified";
     case "idle_limit":
       return "it was closed after the idle limit";
     case "capacity":

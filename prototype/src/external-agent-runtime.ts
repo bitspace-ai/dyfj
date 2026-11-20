@@ -72,6 +72,7 @@ import type {
   AcpContinuityEvidence,
   AcpSessionHandleMap,
 } from "./acp-session-map.ts";
+import { canonicalResumeDigest } from "./acp-session-map.ts";
 import type {
   WorkbenchMessage,
   WorkbenchRoutingOptions,
@@ -1019,7 +1020,14 @@ export async function runExternalAgentWorkbenchRuntime(
         profile,
         idleTtlMs: selectExternalAgentIdleTtlMs(input, isDispatchedChild),
         prompt: turnContinuity.warmPrompt,
-        reconstructPrompt: turnContinuity.reconstructPrompt,
+        reconstructPrompt: turnContinuity.reconstructPrompt === undefined ? undefined : (reason) => {
+          const prompt = turnContinuity.reconstructPrompt!();
+          return reason === "durable_resume_failed" ? prompt.replace(
+            "The prior native session for this Workbench session expired.",
+            "The prior native session for this Workbench session could not be verified.",
+          ) : prompt;
+        },
+        latestAgentResponse: input.latestAgentResponse,
         onContinuity: async (evidence, reason) => {
           turnContinuity.onWarmMapContinuity(evidence);
           const event = turnContinuity.reconstructingEvent(sessionId, reason);
@@ -1160,6 +1168,7 @@ export async function runExternalAgentWorkbenchRuntime(
         : String(result.protocolVersion),
       runner_stop_reason: result.acpStopReason ?? null,
       runner_external_session_id: result.externalSessionId ?? null,
+      runner_resume_digest: result.externalSessionId === undefined ? null : canonicalResumeDigest(profile),
       runner_agent_name: result.agentName ?? null,
       runner_agent_version: result.agentVersion ?? null,
       runner_transport: profile.transport,

@@ -21,6 +21,25 @@ import { type ResolvedTurn, resolveTurnFromBody } from "./turn-request.ts";
 const SESSION_ID = "01ABCDEF0123456789ABCDEF01";
 const TURN_ID = "123e4567-e89b-42d3-a456-426614174000";
 
+for (const missing of ["runner_external_session_id", "runner_resume_digest"]) {
+  test(`resume candidate uses only latest agent_response when ${missing} is absent`, async () => {
+    const row = { event_type: "agent_response", trace_id: "trace", principal_id: "workbench",
+      content: "saved answer", runner_external_session_id: "older-native", runner_resume_digest: "a".repeat(64),
+      created_at: "2026-11-18 12:00:00" };
+    const latest: Record<string, string> = { ...row, event_id: "02", runner_external_session_id: "latest-native" };
+    delete latest[missing];
+    const events = await fetchWorkbenchSessionEvents({ sessionId: SESSION_ID,
+      events: eventsReturning([latest, { ...row, event_id: "01" }]) });
+    let candidate: WorkbenchRuntimeInput["latestAgentResponse"];
+    await executeTurn(resolved({ prompt: "next", sessionId: SESSION_ID }), deps({
+      fetchSessionEvents: () => Promise.resolve(events),
+      runRuntime: (input) => { candidate = input.latestAgentResponse; return Promise.resolve(RESULT); },
+    }));
+    assert.deepEqual(candidate, { externalSessionId: missing === "runner_external_session_id" ? null : "latest-native",
+      resumeDigest: missing === "runner_resume_digest" ? null : "a".repeat(64), content: "saved answer" });
+  });
+}
+
 /** An event reader that serves these rows for any session. */
 function eventsReturning(rows: Record<string, string>[]): EventReader {
   return {

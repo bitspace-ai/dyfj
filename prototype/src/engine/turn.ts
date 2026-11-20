@@ -83,6 +83,7 @@ async function buildResume(
       | "sessionId"
       | "conversationMessages"
       | "priorExternalSessionId"
+      | "latestAgentResponse"
       | "historyOmission"
       | "turnCapDroppedMessages"
     >
@@ -95,7 +96,15 @@ async function buildResume(
   // reported as succeeding a named predecessor rather than appearing from
   // nowhere.
   let priorExternalSessionId: string | undefined;
+  let latestAgentResponse: WorkbenchRuntimeInput["latestAgentResponse"];
   for (const event of priorEvents) {
+    if (event.eventType === "agent_response") {
+      latestAgentResponse = {
+        externalSessionId: event.runnerExternalSessionId,
+        resumeDigest: event.runnerResumeDigest ?? null,
+        content: event.content,
+      };
+    }
     if (event.runnerExternalSessionId !== null) {
       priorExternalSessionId = event.runnerExternalSessionId;
     }
@@ -127,6 +136,7 @@ async function buildResume(
   return {
     sessionId,
     conversationMessages,
+    latestAgentResponse,
     ...(historyOmission === undefined ? {} : { historyOmission }),
     ...(turnCapDroppedMessages === 0 ? {} : { turnCapDroppedMessages }),
     ...(priorExternalSessionId === undefined ? {} : { priorExternalSessionId }),
