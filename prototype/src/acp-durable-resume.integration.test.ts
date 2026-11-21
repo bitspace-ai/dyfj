@@ -75,8 +75,9 @@ for (const mode of ["load_mismatch", "load_bound", "load_bytes", "load_error", "
       await writeFile(methodLog, "");
       let reason: unknown;
       let state: unknown;
+      let reconstructionReason: unknown;
       const result = await map.runTurn({ sessionId: "test", workspace: profile.workspace, profile,
-        prompt: "follow-up", reconstructPrompt: () => "reconstructed follow-up",
+        prompt: "follow-up", reconstructPrompt: (value) => { reconstructionReason = value; return "reconstructed follow-up"; },
         latestAgentResponse: { externalSessionId: first.externalSessionId!, content: first.text,
           resumeDigest: canonicalResumeDigest(profile) },
         onContinuity: (evidence, value) => { state = evidence.state; reason = value; },
@@ -84,6 +85,7 @@ for (const mode of ["load_mismatch", "load_bound", "load_bytes", "load_error", "
       assert.equal(result.stopReason, "stop");
       assert.equal(state, "reconstructed");
       assert.equal(reason, "durable_resume_failed");
+      assert.equal(reconstructionReason, "durable_resume_failed");
       const methods = await readFile(methodLog, "utf8");
       assert.ok(methods.includes("session/load\n"));
       assert.ok(methods.includes("session/new\n"));
