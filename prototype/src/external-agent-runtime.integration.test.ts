@@ -3760,11 +3760,12 @@ describe("runExternalAgentWorkbenchRuntime", () => {
   function sessionMapStub(
     state: "warm-reused" | "reconstructed",
     prompts: string[],
+    reason?: "durable_resume_failed" | "idle_limit",
   ): AcpSessionHandleMap {
     return {
       runTurn: async (input: {
         prompt: string;
-        reconstructPrompt?: () => string;
+        reconstructPrompt?: (reason?: "durable_resume_failed" | "idle_limit") => string;
         onContinuity?: (evidence: {
           state: "warm-reused" | "reconstructed";
           durableResume: "not-required" | "unavailable-client-verification";
@@ -3777,7 +3778,7 @@ describe("runExternalAgentWorkbenchRuntime", () => {
             : "unavailable-client-verification",
         });
         prompts.push(
-          state === "reconstructed" ? input.reconstructPrompt!() : input.prompt,
+          state === "reconstructed" ? input.reconstructPrompt!(reason) : input.prompt,
         );
         return {
           text: "done",
@@ -3787,6 +3788,30 @@ describe("runExternalAgentWorkbenchRuntime", () => {
         };
       },
     } as unknown as AcpSessionHandleMap;
+  }
+
+  for (const reason of ["durable_resume_failed", "idle_limit"] as const) {
+    it(`${reason}: reconstruction header describes why the prior native session was replaced`, async () => {
+      const h = createHarness();
+      const prompts: string[] = [];
+      await runExternalAgentWorkbenchRuntime(h, {
+        mode: "turn",
+        prompt: "current operator prompt",
+        routingOptions: {},
+        runner: { kind: "acp", profile: "fixture" },
+        sessionId: "01ACPSESSION000000000000140",
+        workspaceRoot: process.cwd(),
+        conversationMessages: [{ role: "user", content: "persisted antecedent" }],
+      }, { sessionMap: sessionMapStub("reconstructed", prompts, reason) });
+      assert.strictEqual(prompts.length, 1);
+      assertContains(prompts[0], "  | persisted antecedent");
+      if (reason === "durable_resume_failed") {
+        assertContains(prompts[0], "The prior native session for this Workbench session could not be verified.");
+        assertNotContains(prompts[0], "expired.");
+      } else {
+        assertContains(prompts[0], "The prior native session for this Workbench session expired.");
+      }
+    });
   }
 
   it("[case 13] a warm ACP handle receives one notice without replay and reports nonzero window counts", async () => {
