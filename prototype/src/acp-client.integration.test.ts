@@ -403,6 +403,34 @@ describe("runAcpAgent", () => {
     });
   });
 
+  for (const [mode, expectedDeltas, recorded] of [
+    ["TWO", ["Hello", "\n\n", "Answer"], "HelloAnswer"],
+    ["CHUNKS", ["Hello", " there", "!"], "Hello there!"],
+    ["NEWLINE", ["Hello", "\n", "\n", "Answer"], "Hello\nAnswer"],
+    ["BLANK_LINE", ["Hello", "\n", "\n", "Answer"], "Hello\n\nAnswer"],
+    ["MISSING_LAST", ["Hello", "\n\n", "Answer"], "HelloAnswer"],
+    ["MISSING_FIRST", ["Hello", "\n\n", "Answer"], "HelloAnswer"],
+  ] as const) {
+    it(`streams display-only message breaks: ${mode}`, async (t) => {
+      const session = await startAcpSession({ profile: fixtureProfile() });
+      try {
+        // A warm second turn must also start without a separator.
+        for (let turn = 1; turn <= 2; turn++) {
+          const deltas: string[] = [];
+          const result = await session.prompt({
+            prompt: `FIXTURE_MESSAGE_${mode}`,
+            onTextDelta: (delta) => deltas.push(delta),
+          });
+          t.diagnostic(JSON.stringify({ mode, turn, deltas, recorded: result.text }));
+          assert.deepEqual(deltas, expectedDeltas);
+          assert.equal(result.text, recorded);
+        }
+      } finally {
+        await session.close();
+      }
+    });
+  }
+
   it("retains optional ACP prompt usage and the latest context/cost snapshot", async () => {
     const result = await runAcpAgent({
       profile: fixtureProfile(),

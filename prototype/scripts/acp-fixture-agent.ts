@@ -89,12 +89,14 @@ async function chunk(
   context: AgentContext,
   sessionId: string,
   text: string,
+  messageId?: string,
 ): Promise<void> {
   await recordHistory(sessionId, "agent_message_chunk", text);
   await context.notify(methods.client.session.update, {
     sessionId,
     update: {
       sessionUpdate: "agent_message_chunk",
+      ...(messageId === undefined ? {} : { messageId }),
       content: { type: "text", text },
     },
   });
@@ -263,6 +265,22 @@ const app = agent({ name: "dyfj-acp-fixture" })
         return { stopReason: "end_turn" };
       }
       await recordHistory(params.sessionId, "user_message_chunk", prompt);
+      if (prompt.startsWith("FIXTURE_MESSAGE_")) {
+        const ending = prompt === "FIXTURE_MESSAGE_NEWLINE" ? "\n"
+          : prompt === "FIXTURE_MESSAGE_BLANK_LINE" ? "\n\n" : "";
+        const firstId = prompt === "FIXTURE_MESSAGE_MISSING_FIRST" ? undefined : "first";
+        await chunk(context, params.sessionId, "Hello", firstId);
+        // Split newlines too, so the client must retain the delivered suffix.
+        for (const newline of ending) await chunk(context, params.sessionId, newline, firstId);
+        if (prompt === "FIXTURE_MESSAGE_CHUNKS") {
+          await chunk(context, params.sessionId, " there", firstId);
+          await chunk(context, params.sessionId, "!", firstId);
+        } else {
+          await chunk(context, params.sessionId, "Answer",
+            prompt === "FIXTURE_MESSAGE_MISSING_LAST" ? undefined : "second");
+        }
+        return { stopReason: "end_turn" };
+      }
       if (prompt.includes("FIXTURE_PLAN_PROGRESS")) {
         const entries = [
           { content: "Inspect file", status: "completed" as const, priority: "medium" as const },
