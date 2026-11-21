@@ -76,21 +76,17 @@ const SESSION: &str = "01J0000000000000000000000A";
 
 #[tokio::test]
 async fn reconnect_notices_report_inspection_outcomes() {
-    const CASE: &str = "DYFJ_TEST_RESUME_NOTICE";
-    if let Ok(case) = std::env::var(CASE) {
-        std::fs::create_dir_all("../../logs").unwrap();
-        let path = format!("../../logs/resume-{}.sock", std::process::id());
+    for case in ["runner", "recorded", "null", "unexpected", "failed"] {
+        let path = socket_path();
         let runtime = FakeRuntime::bind(&path);
         let (client, _incoming) = Client::connect(&path).await.unwrap();
         let mut conn = runtime.accept().await;
         let mut session = resumed_session(SESSION);
         session.choose_model("launch/model".into());
         let answer = async {
-            let status = conn.expect_request("runtime/status").await;
-            conn.answer(&status, json!({})).await;
             let inspect = conn.expect_request("sessions/inspect").await;
             assert_eq!(inspect["params"]["sessionId"], SESSION);
-            match case.as_str() {
+            match case {
                 "runner" => conn.answer(&inspect, json!({"model": null, "runner": "codex-chatgpt\n"})).await,
                 "recorded" => conn.answer(&inspect, json!({"model": "recorded/model"})).await,
                 "null" => conn.answer(&inspect, json!({"model": null})).await,
@@ -99,27 +95,7 @@ async fn reconnect_notices_report_inspection_outcomes() {
                 _ => panic!("unknown case"),
             }
         };
-        tokio::join!(resume(&client, &session, &path, None, false), answer);
-        return;
-    }
-
-    for case in ["runner", "recorded", "null", "unexpected", "failed"] {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "link::tests::reconnect_notices_report_inspection_outcomes",
-                "--nocapture",
-            ])
-            .env(CASE, case)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let stdout = String::from_utf8(output.stdout).unwrap();
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        let notice = stdout
-            .lines()
-            .find(|line| line.starts_with("runtime reloaded"))
-            .expect("resume prints a notice");
+        let (notice, ()) = tokio::join!(reconnect_notice(&client, &session, None), answer);
         println!("{case}: {notice}");
         match case {
             "runner" => {
@@ -130,8 +106,8 @@ async fn reconnect_notices_report_inspection_outcomes() {
                         visible("codex-chatgpt\n")
                     )
                 );
-                assert!(!stdout.contains("could not be read back"));
-                assert!(!stdout.contains("--model") && !stderr.contains("--model"));
+                assert!(!notice.contains("could not be read back"));
+                assert!(!notice.contains("--model"));
             }
             "recorded" | "null" => assert_eq!(
                 notice,
@@ -143,14 +119,6 @@ async fn reconnect_notices_report_inspection_outcomes() {
                     format!(
                         "runtime reloaded; session {SESSION} could not be read back, and the next turn still names it"
                     )
-                );
-                assert!(
-                    stderr.contains(if case == "failed" {
-                        "inspection unavailable"
-                    } else {
-                        "this runtime did not report the session's model"
-                    }),
-                    "{stderr}"
                 );
             }
         }

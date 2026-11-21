@@ -220,14 +220,14 @@ pub fn note_orphan(outcome: &ReadOutcome) {
 /// it in its store, and the next turn names its id. Nothing about the session
 /// changes here, and nothing that was in flight is resent. `reason` is why the
 /// runtime restarted, when `dyfj dev` said.
-pub async fn resume(
-    client: &Client,
-    session: &Session,
-    socket: &str,
-    reason: Option<String>,
-    dev: bool,
-) {
+pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Option<String>, dev: bool) {
     let status = client.request("runtime/status", json!({})).await;
+    println!("\n{}", reconnect_notice(client, session, reason.as_deref()).await);
+    posture::show(&status, session, socket, dev);
+}
+
+/// Inspect the open session and build its reconnect notice, reporting inspection failures.
+pub async fn reconnect_notice(client: &Client, session: &Session, reason: Option<&str>) -> String {
     let resumed = match &session.id {
         Some(id) => {
             let inspected = match client
@@ -244,8 +244,7 @@ pub async fn resume(
         }
         None => String::new(),
     };
-    println!("\n{}", reloaded_notice(reason.as_deref(), &resumed));
-    posture::show(&status, session, socket, dev);
+    reloaded_notice(reason, &resumed)
 }
 
 fn resumed_notice(id: &str, inspected: &Result<commands::InspectedModel, ()>) -> String {

@@ -30,6 +30,7 @@ pub struct Prompter<'a> {
 /// extension: the posted last-command context is clipped to this length.
 const FRICTION_COMMAND_MAX_CHARACTERS: usize = 120;
 
+/// A session's recorded model (including explicit null), or the runner that records none.
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Help,
@@ -518,6 +519,7 @@ pub enum InspectedModel {
     Runner(String),
 }
 
+/// Classify an inspection reply, returning a refusal when its model or runner shape is unknown.
 pub fn inspected_model(inspected: &Value) -> Result<InspectedModel, String> {
     let unknown = || {
         "this runtime did not report the session's model; \
@@ -526,9 +528,7 @@ pub fn inspected_model(inspected: &Value) -> Result<InspectedModel, String> {
     };
     match inspected.get("runner") {
         None | Some(Value::Null) => {}
-        Some(Value::String(runner)) => {
-            return Ok(InspectedModel::Runner(runner.clone()));
-        }
+        Some(Value::String(runner)) => return Ok(InspectedModel::Runner(runner.clone())),
         Some(_) => return Err(unknown()),
     }
     match inspected.get("model") {
