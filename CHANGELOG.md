@@ -719,6 +719,10 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Display-only ACP message breaks (`BIT-925`).** A change of message ID
+  separates streamed agent messages with a blank line, topping up existing
+  newlines; recorded response text and durable resume remain unchanged.
+
 - **Explicit host-gate session grants (`BIT-954`).** Operators can list
   `gate/start:full` in `[approvals] session_grantable` to offer a session grant
   on its approval prompt. The first run still asks. After a grant, subsequent

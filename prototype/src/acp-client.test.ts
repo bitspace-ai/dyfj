@@ -21,6 +21,39 @@ import {
   tokenUsageFromPromptResponse,
   usageSnapshotFromUpdate,
 } from "./acp-client.ts";
+import { acpMessageSeparator, acpTextDisplay } from "./runners/acp/message-display.ts";
+
+describe("acpMessageSeparator", () => {
+  it("separates changed IDs only after the first text", () => {
+    assert.equal(acpMessageSeparator(undefined, "first", undefined), "");
+    assert.equal(acpMessageSeparator(undefined, undefined, undefined), "");
+    assert.equal(acpMessageSeparator("first", "first", "lo"), "");
+    assert.equal(acpMessageSeparator(undefined, undefined, "lo"), "");
+    assert.equal(acpMessageSeparator("first", "second", "lo"), "\n\n");
+    assert.equal(acpMessageSeparator("first", undefined, "lo"), "\n\n");
+    assert.equal(acpMessageSeparator(undefined, "second", "lo"), "\n\n");
+  });
+
+  it("adds only the newlines missing from a blank line", () => {
+    assert.equal(acpMessageSeparator("first", "second", "o\n"), "\n");
+    assert.equal(acpMessageSeparator("first", "second", "\n\n"), "");
+  });
+
+  it("tracks endings across chunks while returning only original text", () => {
+    const deltas: string[] = [];
+    const display = acpTextDisplay((delta) => deltas.push(delta));
+    const chunks = ["Hello", "\n", "\n", "Answer"];
+    const recorded = chunks.map((text, index) => display({
+      sessionUpdate: "agent_message_chunk",
+      messageId: index < 3 ? "first" : "second",
+      content: { type: "text", text },
+    })).join("");
+    assert.deepEqual(deltas, chunks);
+    assert.equal(recorded, chunks.join(""));
+    assert.equal(display({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thought" } }), null);
+    assert.deepEqual(deltas, chunks);
+  });
+});
 
 /**
  * A well-formed profile that is never spawned: every case here either reads

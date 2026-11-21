@@ -35,6 +35,7 @@ import { AcpReplay, ACP_REPLAY_TIMEOUT_MS, type LiveSdkSession, loadVerifiedAcpS
 import { Readable, Writable } from "node:stream";
 import { collectBoundedStderr, settlesWithin } from "./acp-child-io.ts";
 import { acpSessionBuilder, assertAbsoluteSessionRoots } from "./acp-session-roots.ts";
+import { acpTextDisplay } from "./runners/acp/message-display.ts";
 import {
   type AcpToolEvidence,
   applyAcpToolPatch,
@@ -939,16 +940,6 @@ function isEmptyRecord(value: unknown): boolean {
   return true;
 }
 
-function textFromUpdate(update: Record<string, unknown>): string | null {
-  if (update.sessionUpdate !== "agent_message_chunk") return null;
-  const content = update.content;
-  if (typeof content !== "object" || content === null) return null;
-  const block = content as Record<string, unknown>;
-  return block.type === "text" && typeof block.text === "string"
-    ? block.text
-    : null;
-}
-
 function deliverProgress(
   onProgress: AcpRunInput["onProgress"],
   progress: AcpProgressUpdate,
@@ -1316,6 +1307,7 @@ class LiveAcpSession implements AcpSessionHandle {
       });
       if (input.abortSignal?.aborted) requestCancelAndWake();
       let text = "";
+      const displayText = acpTextDisplay(input.onTextDelta);
       let usageSnapshot: AcpUsageSnapshot | undefined;
       const toolEvidence = newAcpToolEvidenceAccumulator();
       const progressState: AcpProgressState = { tools: new Map() };
@@ -1395,10 +1387,9 @@ class LiveAcpSession implements AcpSessionHandle {
           >;
           usageSnapshot = usageSnapshotFromUpdate(updateRecord) ??
             usageSnapshot;
-          const delta = textFromUpdate(updateRecord);
+          const delta = displayText(updateRecord);
           if (delta !== null) {
             text += delta;
-            input.onTextDelta?.(delta);
           }
           if (isThoughtUpdate(updateRecord)) {
             deliverProgress(input.onProgress, { kind: "thought" });
