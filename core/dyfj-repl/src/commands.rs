@@ -30,7 +30,6 @@ pub struct Prompter<'a> {
 /// extension: the posted last-command context is clipped to this length.
 const FRICTION_COMMAND_MAX_CHARACTERS: usize = 120;
 
-/// A session's recorded model (including explicit null), or the runner that records none.
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Help,
@@ -513,6 +512,7 @@ pub fn recorded_from(inspected: &Value) -> Result<Option<String>, String> {
     }
 }
 
+/// A session's recorded model (including explicit null), or the runner that records none.
 #[derive(Debug, PartialEq)]
 pub enum InspectedModel {
     Model(Option<String>),
