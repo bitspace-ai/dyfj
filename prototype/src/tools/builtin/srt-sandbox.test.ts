@@ -14,6 +14,7 @@ import {
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
+import packageJson from "../../../package.json" with { type: "json" };
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
 import type { CommandCall } from "../definition.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
@@ -34,6 +35,7 @@ import {
   ensureScratchDir,
   offSandbox,
   sandboxNetwork,
+  SRT_BACKEND,
   type SrtLibrary,
 } from "./srt-sandbox.ts";
 
@@ -44,6 +46,10 @@ beforeEach(() => {
 afterEach(() => rmSync(base, { recursive: true, force: true }));
 
 const layout = (value: GitLayout | null) => () => Promise.resolve(value);
+
+it("names the pinned sandbox-runtime version", () => {
+  assert.equal(SRT_BACKEND, `srt ${packageJson.dependencies["@anthropic-ai/sandbox-runtime"]}`);
+});
 
 /** A probe listener that never sees a connection. */
 const fakeListener = () =>
@@ -234,7 +240,7 @@ describe("the boot", () => {
     assert.equal(initialized, false);
     assert.deepEqual(sandbox.status, {
       state: "off",
-      backend: "srt 0.0.81",
+      backend: SRT_BACKEND,
       reason: "DYFJ_SANDBOX=off",
     });
     assert.equal(

@@ -841,6 +841,10 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Installed sandbox version in status (`BIT-973`).** The boot and posture
+  lines now name the installed srt version, so dependency bumps no longer
+  leave the sandbox label behind.
+
 - **Sandbox-safe test fixtures (`BIT-958`).** Tests create temporary directories
   under the gate's socket-safe `TMPDIR`. The real-driver refused-connection
   test probes loopback binding and reports a skip on sandbox `EPERM`, while

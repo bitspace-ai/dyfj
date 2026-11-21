@@ -38,6 +38,7 @@ import {
   SandboxManager,
   type SandboxRuntimeConfig,
 } from "@anthropic-ai/sandbox-runtime";
+import srtPackage from "@anthropic-ai/sandbox-runtime/package.json" with { type: "json" };
 import { type Env, processEnv } from "../../config/mod.ts";
 import { configFilePath } from "../../config/toml.ts";
 import type { Containment } from "../definition.ts";
@@ -52,8 +53,8 @@ import {
   type WorkspacePolicy,
 } from "./srt-policy.ts";
 
-/** The pinned srt version, as the posture line names it. */
-export const SRT_BACKEND = "srt 0.0.81";
+/** The installed srt version, as the posture line names it. */
+export const SRT_BACKEND = `srt ${srtPackage.version}`;
 
 /** srt's fixed scratch directory: it sets `TMPDIR` to it and keeps it writable. */
 export const SRT_SCRATCH_DIR = "/tmp/claude";

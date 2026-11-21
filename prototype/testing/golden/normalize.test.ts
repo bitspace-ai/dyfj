@@ -2,6 +2,14 @@ import { deepStrictEqual, strictEqual } from "node:assert/strict";
 import { test } from "node:test";
 import { createNormalizer } from "./normalize.ts";
 
+test("masks srt backend versions without changing other values", () => {
+  const n = createNormalizer();
+  deepStrictEqual(
+    n.normalize({ sandbox: { backend: "srt 0.0.83" }, note: "srt 0.0.83", other: { backend: "native" } }),
+    { sandbox: { backend: "srt <SRT-VERSION>" }, note: "srt 0.0.83", other: { backend: "native" } },
+  );
+});
+
 test("normalizes workspace-bound resume digests, preserving nulls and malformed values", () => {
   const normalizer = createNormalizer();
   deepStrictEqual(normalizer.normalize({ runner_resume_digest: "a".repeat(64), runnerResumeDigest: "b".repeat(64) }),
