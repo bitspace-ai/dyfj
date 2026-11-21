@@ -3,7 +3,7 @@
  *
  * Replaces only the volatile values the golden suite spec lists — ULIDs and
  * other generated IDs (trace, span, UUID), timestamps, durations, temp paths,
- * PIDs, workspace-bound resume digests and the runtime's code fingerprint — with stable placeholders. Harness-chosen ephemeral endpoints
+ * PIDs, srt backend versions, workspace-bound resume digests and the runtime's code fingerprint — with stable placeholders. Harness-chosen ephemeral endpoints
  * (the loopback ports of the Dolt and model servers) are handled like temp
  * paths: the harness registers them as literal substitutions. Nothing else is
  * rewritten, so any other change in behavior shows up as a snapshot diff.
@@ -113,6 +113,9 @@ export function createNormalizer(options: NormalizerOptions = {}): Normalizer {
   };
 
   const walk = (value: unknown, key?: string): unknown => {
+    if (key === "backend" && typeof value === "string" && /^srt \d+\.\d+\.\d+$/.test(value)) {
+      return "srt <SRT-VERSION>";
+    }
     if ((key === "runner_resume_digest" || key === "runnerResumeDigest") &&
         typeof value === "string" && /^[0-9a-f]{64}$/.test(value)) return "<RESUME-DIGEST>";
     if (typeof value === "string") return text(value);

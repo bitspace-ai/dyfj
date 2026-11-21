@@ -14,7 +14,7 @@
  *
  * Four `denyWrite` entries cover the gitdir pointer files (`<wt>/.git`, and
  * `commondir`, `gitdir` and `config.worktree` under the worktree's metadata).
- * srt 0.0.81 leaves them writable on macOS; writable, they would let a
+ * Observed with srt 0.0.81: it leaves them writable on macOS; writable, they would let a
  * sandboxed command repoint the worktree at a git directory whose config a
  * later host-side git would run.
  *
