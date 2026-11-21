@@ -220,20 +220,47 @@ pub fn note_orphan(outcome: &ReadOutcome) {
 /// it in its store, and the next turn names its id. Nothing about the session
 /// changes here, and nothing that was in flight is resent. `reason` is why the
 /// runtime restarted, when `dyfj dev` said.
-pub async fn resume(client: &Client, session: &Session, socket: &str, reason: Option<String>, dev: bool) {
+pub async fn resume(
+    client: &Client,
+    session: &Session,
+    socket: &str,
+    reason: Option<String>,
+    dev: bool,
+) {
     let status = client.request("runtime/status", json!({})).await;
     let resumed = match &session.id {
-        Some(id) => match commands::recorded_model(client, id).await {
-            Ok(_) => format!("; resumed session {}", visible(id)),
-            Err(()) => format!(
-                "; session {} could not be read back, and the next turn still names it",
-                visible(id)
-            ),
-        },
+        Some(id) => {
+            let inspected = match client
+                .request("sessions/inspect", json!({"sessionId": id}))
+                .await
+            {
+                Ok(reply) => commands::inspected_model(&reply).map_err(|why| eprintln!("{why}")),
+                Err(err) => {
+                    commands::error_line("could not read this session's recorded model", &err);
+                    Err(())
+                }
+            };
+            resumed_notice(id, &inspected)
+        }
         None => String::new(),
     };
     println!("\n{}", reloaded_notice(reason.as_deref(), &resumed));
     posture::show(&status, session, socket, dev);
+}
+
+fn resumed_notice(id: &str, inspected: &Result<commands::InspectedModel, ()>) -> String {
+    match inspected {
+        Ok(commands::InspectedModel::Model(_)) => format!("; resumed session {}", visible(id)),
+        Ok(commands::InspectedModel::Runner(runner)) => format!(
+            "; resumed session {}; runner \"{}\" records no model; the next turn uses this REPL's model",
+            visible(id),
+            visible(runner)
+        ),
+        Err(()) => format!(
+            "; session {} could not be read back, and the next turn still names it",
+            visible(id)
+        ),
+    }
 }
 
 /// `runtime reloaded`, with the restart's reason when there is one.

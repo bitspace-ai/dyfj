@@ -845,6 +845,12 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **Accurate REPL reconnect notice for runner sessions (`BIT-957`).** After a
+  runtime restart, an open REPL reports that a runner session resumed, names
+  the runner that records no model, and says the next turn uses this REPL's
+  model. Inspection failures still report that the session could not be read
+  back; startup without an explicit model still refuses runner sessions.
+
 - **Installed sandbox version in status (`BIT-973`).** The boot and posture
   lines now name the installed srt version, so dependency bumps no longer
   leave the sandbox label behind.
