@@ -69,9 +69,18 @@ export {
   DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
   loadConfig,
   MAX_CODEX_INTERACTIVE_IDLE_SECONDS,
+  MAX_COMPRESSION_TRIGGER_TOKENS,
   MIN_CODEX_INTERACTIVE_IDLE_SECONDS,
+  MIN_COMPRESSION_TRIGGER_TOKENS,
   type WorkbenchConfig,
 } from "./workbench.ts";
+export {
+  MAX_OPENROUTER_UPSTREAM_ORDER,
+  type OpenRouterConfig,
+  type OpenRouterRoutingPolicy,
+  parseOpenRouterConfig,
+  resolveOpenRouterPolicyForModel,
+} from "./openrouter-config.ts";
 export {
   DEFAULT_SECRET_TIMEOUT_MS,
   loadSecretsConfig,

@@ -746,3 +746,80 @@ test("a compression call counts toward the turn's cost basis", async () => {
   const response = rows.find((row) => row.event_type === "model_response");
   assert.deepStrictEqual(response?.cost_basis, "catalog_estimate");
 });
+
+// ─── the configured token ceiling (BIT-976) ──────────────────────────────────
+
+/**
+ * ~200K tokens of history by the `len / 4` estimate: far below half of a
+ * 1,048,576-token window, so only the configured ceiling can trigger here.
+ * Each turn is small enough to fit the local compressor's own window.
+ */
+const CEILING_HISTORY: WorkbenchMessage[] = Array.from(
+  { length: 40 },
+  (_, i) => ({
+    role: i % 2 === 0 ? "user" : "assistant",
+    content: `${i % 2 === 0 ? "question " : "answer "}`.repeat(2_500),
+  }),
+) as WorkbenchMessage[];
+
+const LONG_WINDOW: ModelSeed = {
+  ...LOCAL_MODEL,
+  context_window: 1_048_576,
+};
+
+async function ceilingRun(
+  input: Partial<WorkbenchRuntimeInput>,
+  exchanges: ScriptedExchange[] = [
+    summaryReply(),
+    chatReply({ content: "runtime response" }),
+  ],
+): Promise<CompressionRun> {
+  const root = await mkdtemp(join(tmpdir(), "engine-compression-ceiling-"));
+  const run = engineServices(exchanges, { models: [LONG_WINDOW] });
+  const frames: WorkbenchRuntimeEvent[] = [];
+  try {
+    await runTurn(run, {
+      prompt: "new question",
+      rootOverride: root,
+      conversationMessages: CEILING_HISTORY,
+      frames: { onRuntimeEvent: (event) => void frames.push(event) },
+      ...input,
+    });
+  } finally {
+    await rm(root, { recursive: true });
+  }
+  return { run, frames };
+}
+
+test("a 1M-token window compresses at the configured 200K ceiling", async () => {
+  const { run, frames } = await ceilingRun({ compressionTriggerTokens: 200_000 });
+  const frame = compressed(frames);
+  assert.ok(frame?.type === "contextCompressed");
+  assert.deepStrictEqual(frame.trigger, "proactive");
+  assert.deepStrictEqual(
+    JSON.stringify(conversation(sessionRequest(run))).includes(
+      CONVERSATION_SUMMARY_MARKER,
+    ),
+    true,
+  );
+});
+
+test("without the ceiling the same 1M-token turn runs uncompressed", async () => {
+  const { run, frames } = await ceilingRun({}, [
+    chatReply({ content: "runtime response" }),
+  ]);
+  assert.deepStrictEqual(compressed(frames), undefined);
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+  assert.deepStrictEqual(
+    conversation(sessionRequest(run)).length,
+    CEILING_HISTORY.length + 1,
+  );
+});
+
+test("a ceiling above the window's proportional trigger changes nothing", async () => {
+  const { run, frames } = await ceilingRun({
+    compressionTriggerTokens: 2_000_000,
+  }, [chatReply({ content: "runtime response" })]);
+  assert.deepStrictEqual(compressed(frames), undefined);
+  assert.deepStrictEqual(run.transport.requests.length, 1);
+});

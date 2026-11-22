@@ -504,3 +504,81 @@ test("operator context config: rejects non-boolean", async () => {
     parseToml: table({ codex: { operator_context: "true" } }) }),
     { message: "config: codex.operator_context must be a boolean" });
 });
+
+{ // "[openrouter]" + "[context] compression_trigger_tokens"
+  test("loadConfig: no [openrouter] and no [context] leaves both unset", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(cfg.openRouterConfig, null);
+    assert.strictEqual(cfg.compressionTriggerTokens, null);
+  });
+
+  test("loadConfig: reads [openrouter] defaults and per-model overrides", async () => {
+    const cfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({
+        openrouter: {
+          upstream_order: ["Fireworks"],
+          zdr: true,
+          models: { "deepseek/deepseek-v4.1-flash-1017": { upstream_order: ["fireworks/fp8"] } },
+        },
+      }),
+    });
+    assert.deepStrictEqual(cfg.openRouterConfig, {
+      defaults: { upstreamOrder: ["Fireworks"], zdr: true },
+      byModel: { "deepseek/deepseek-v4.1-flash-1017": { upstreamOrder: ["fireworks/fp8"] } },
+    });
+  });
+
+  test("loadConfig: an invalid [openrouter] table fails the load", async () => {
+    await assert.rejects(
+      loadConfig({
+        env: env(HOME),
+        readTextFile: present,
+        parseToml: table({ openrouter: { allow_fallbacks: false } }),
+      }),
+      /allow_fallbacks = false needs openrouter\.upstream_order/,
+    );
+  });
+
+  test("loadConfig: reads [context] compression_trigger_tokens", async () => {
+    const cfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({ context: { compression_trigger_tokens: 200_000 } }),
+    });
+    assert.strictEqual(cfg.compressionTriggerTokens, 200_000);
+  });
+
+  for (const value of [0, -1, 4_095, 2_000_001, 1.5]) {
+    test(`loadConfig: refuses compression_trigger_tokens ${value}`, async () => {
+      await assert.rejects(
+        loadConfig({
+          env: env(HOME),
+          readTextFile: present,
+          parseToml: table({ context: { compression_trigger_tokens: value } }),
+        }),
+        /invalid compression trigger/,
+      );
+    });
+  }
+
+  test("loadConfig: the env override wins over the file for compression_trigger_tokens", async () => {
+    const cfg = await loadConfig({
+      env: env({ ...HOME, DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS: "150000" }),
+      readTextFile: present,
+      parseToml: table({ context: { compression_trigger_tokens: 200_000 } }),
+    });
+    assert.strictEqual(cfg.compressionTriggerTokens, 150_000);
+  });
+
+  test("loadConfig: an invalid env compression trigger fails the load", async () => {
+    await assert.rejects(
+      loadConfig({
+        env: env({ ...HOME, DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS: "lots" }),
+        readTextFile: notFound,
+      }),
+      /invalid number "lots" from DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS/,
+    );
+  });
+}

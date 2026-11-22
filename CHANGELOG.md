@@ -11,6 +11,20 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **OpenRouter upstream pinning and proactive compression ceiling
+  (`BIT-976`).** An optional `[openrouter]` table pins upstreams
+  (`upstream_order`, a provider name or a full endpoint slug such as
+  `fireworks/fp8`), controls fallback (`allow_fallbacks`) and requests
+  zero-data-retention upstreams (`zdr`), with per-model overrides under
+  `[openrouter.models.<slug>]`. Unset, a request carries only `max_price`, and
+  non-OpenRouter providers never receive a `provider` field. An optional
+  `[context] compression_trigger_tokens` (4096 through 2,000,000,
+  `DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS` overriding the file) lowers the
+  proactive compression trigger below half the model's context window, so a
+  1M-token model can compress at 200K. The ceiling compares against the
+  existing `len / 4` transcript estimate; anchoring on provider-reported input
+  tokens is deferred. Compression still runs on-machine and tier-0 only.
+
 - **Verified durable ACP resume (`BIT-924`).** Cold sessions can load their
   latest recorded native thread with the pinned Codex adapter. A restart-stable
   profile digest excludes the bridge token and runtime-generated socket path,

@@ -57,6 +57,7 @@ export type ProviderTurnRequest =
     | "historyTools"
     | "sessionId"
     | "maxOutputTokens"
+    | "openRouterConfig"
   >
   & {
     model: WorkbenchModel;

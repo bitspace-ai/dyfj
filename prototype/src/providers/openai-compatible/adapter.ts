@@ -5,6 +5,10 @@
  * tool calls a model leaked as text markup.
  */
 import { DomainError } from "../../contract/mod.ts";
+import {
+  type OpenRouterConfig,
+  resolveOpenRouterPolicyForModel,
+} from "../../config/mod.ts";
 import type {
   BaseUrlCheck,
   ProviderAdapter,
@@ -153,15 +157,28 @@ async function httpFailure(
  * at or below the price the row records, or not at all: a refusal is a
  * `ProviderPriceCapRefusedError`. Cache reads have no cap field and stay
  * uncapped.
+ *
+ * The operator's `[openrouter]` policy adds upstream pinning and
+ * zero-retention routing. Only fields the operator set are emitted, so an
+ * unconfigured request is unchanged. No other provider is ever sent a
+ * `provider` field.
  */
 function openRouterRouting(
   model: WorkbenchModel,
+  openRouterConfig: OpenRouterConfig | undefined,
 ): OpenRouterProviderRouting | undefined {
-  return model.provider === "openrouter"
-    ? {
-      max_price: { prompt: model.costInput, completion: model.costOutput },
-    }
-    : undefined;
+  if (model.provider !== "openrouter") return undefined;
+  const policy = resolveOpenRouterPolicyForModel(openRouterConfig, model.slug);
+  return {
+    max_price: { prompt: model.costInput, completion: model.costOutput },
+    ...(policy?.upstreamOrder === undefined
+      ? {}
+      : { order: policy.upstreamOrder }),
+    ...(policy?.allowFallbacks === undefined
+      ? {}
+      : { allow_fallbacks: policy.allowFallbacks }),
+    ...(policy?.zdr === undefined ? {} : { zdr: policy.zdr }),
+  };
 }
 
 /**
@@ -182,7 +199,7 @@ async function executeOpenAICompatibleTurn(
   const onFrame = io.onFrame;
   const stream = onFrame !== undefined;
   const requestStarted = now();
-  const providerRouting = openRouterRouting(model);
+  const providerRouting = openRouterRouting(model, request.openRouterConfig);
   const response = await fetchWithHeaderTimeout(
     io.fetch,
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,

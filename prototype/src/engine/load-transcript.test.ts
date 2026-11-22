@@ -15,7 +15,10 @@ import type { ModelSeed } from "../store/mod.ts";
 import { createCommandRegistry } from "../tools/mod.ts";
 import { budgetGate } from "./budget-gate.ts";
 import { buildContext } from "./build-context.ts";
-import { loadTranscript } from "./load-transcript.ts";
+import {
+  effectiveCompressionTriggerTokens,
+  loadTranscript,
+} from "./load-transcript.ts";
 import { openSession } from "./open-session.ts";
 import type { RoutedTurn } from "./routed-turn.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
@@ -97,3 +100,36 @@ test("a model without a known window never triggers proactive compression", asyn
     { role: "user", content: "now" },
   ]);
 });
+
+{ // effectiveCompressionTriggerTokens
+  // The proactive trigger a model window implies: half the window, lowered to
+  // the operator's ceiling ([context] compression_trigger_tokens, BIT-976).
+  test("unset ceiling preserves the proportional trigger", () => {
+    assert.strictEqual(
+      effectiveCompressionTriggerTokens(1_048_576, undefined),
+      524_288,
+    );
+    assert.strictEqual(
+      effectiveCompressionTriggerTokens(128_000, undefined),
+      64_000,
+    );
+  });
+
+  test("a ceiling below the proportional trigger wins", () => {
+    assert.strictEqual(
+      effectiveCompressionTriggerTokens(1_048_576, 200_000),
+      200_000,
+    );
+  });
+
+  test("a ceiling above the proportional trigger changes nothing", () => {
+    assert.strictEqual(
+      effectiveCompressionTriggerTokens(128_000, 200_000),
+      64_000,
+    );
+    assert.strictEqual(
+      effectiveCompressionTriggerTokens(1_048_576, 2_000_000),
+      524_288,
+    );
+  });
+}

@@ -54,6 +54,7 @@ import type {
   BudgetTallyMode,
   CodexReasoningEffort,
   Env,
+  OpenRouterConfig,
   PermissionLevel,
   RuntimePolicy,
 } from "../config/mod.ts";
@@ -203,6 +204,19 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * ([codex] interactive_idle_seconds), resolved at the boundary.
    */
   codexInteractiveIdleSeconds?: number;
+  /**
+   * The operator's `[openrouter]` routing policy ([openrouter] in config),
+   * resolved once at the boundary. The core reads only this field; absent
+   * leaves every OpenRouter request carrying only its `max_price`.
+   */
+  openRouterConfig?: OpenRouterConfig;
+  /**
+   * Hard ceiling, in estimated tokens, for proactive transcript compression
+   * ([context] compression_trigger_tokens), resolved at the boundary. The
+   * effective trigger is the smaller of this and the active model window's
+   * proportional trigger; absent keeps the proportional trigger alone.
+   */
+  compressionTriggerTokens?: number;
   codexOperatorContext?: boolean;
   codexPath?: "operator" | "minimal";
   codexExtraPath?: string[];

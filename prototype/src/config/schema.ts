@@ -214,6 +214,17 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     enumValues: CODEX_REASONING_EFFORTS,
     default: null,
   },
+  // The hard ceiling for proactive transcript compression, in estimated
+  // tokens; the effective trigger is the smaller of this and the model
+  // window's proportional trigger. Unset keeps the proportional trigger.
+  {
+    key: "compressionTriggerTokens",
+    envVar: "DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS",
+    domain: "engine",
+    type: "number",
+    kind: "value",
+    default: null,
+  },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   {
     key: "root",

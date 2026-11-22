@@ -221,6 +221,9 @@ function callParams(
     defaultModelId: input.defaultCompanionModel,
     models: route.models,
     abortSignal: input.abortSignal,
+    ...(input.openRouterConfig === undefined
+      ? {}
+      : { openRouterConfig: input.openRouterConfig }),
     ...turn.ports.providerIo,
   };
 }
