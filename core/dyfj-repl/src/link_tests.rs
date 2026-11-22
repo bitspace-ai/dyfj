@@ -74,6 +74,57 @@ fn resumed_session(id: &str) -> Session {
 
 const SESSION: &str = "01J0000000000000000000000A";
 
+#[tokio::test]
+async fn reconnect_notices_report_inspection_outcomes() {
+    for case in ["runner", "recorded", "null", "unexpected", "failed"] {
+        let path = socket_path();
+        let runtime = FakeRuntime::bind(&path);
+        let (client, _incoming) = Client::connect(&path).await.unwrap();
+        let mut conn = runtime.accept().await;
+        let mut session = resumed_session(SESSION);
+        session.choose_model("launch/model".into());
+        let answer = async {
+            let inspect = conn.expect_request("sessions/inspect").await;
+            assert_eq!(inspect["params"]["sessionId"], SESSION);
+            match case {
+                "runner" => conn.answer(&inspect, json!({"model": null, "runner": "codex-chatgpt\n"})).await,
+                "recorded" => conn.answer(&inspect, json!({"model": "recorded/model"})).await,
+                "null" => conn.answer(&inspect, json!({"model": null})).await,
+                "unexpected" => conn.answer(&inspect, json!({})).await,
+                "failed" => conn.send(json!({"jsonrpc": "2.0", "id": inspect["id"], "error": {"code": -32000, "message": "inspection unavailable"}})).await,
+                _ => panic!("unknown case"),
+            }
+        };
+        let (notice, ()) = tokio::join!(reconnect_notice(&client, &session, None), answer);
+        println!("{case}: {notice}");
+        match case {
+            "runner" => {
+                assert_eq!(
+                    notice,
+                    format!(
+                        "runtime reloaded; resumed session {SESSION}; runner \"{}\" records no model; the next turn uses this REPL's model",
+                        visible("codex-chatgpt\n")
+                    )
+                );
+                assert!(!notice.contains("could not be read back"));
+                assert!(!notice.contains("--model"));
+            }
+            "recorded" | "null" => assert_eq!(
+                notice,
+                format!("runtime reloaded; resumed session {SESSION}")
+            ),
+            _ => {
+                assert_eq!(
+                    notice,
+                    format!(
+                        "runtime reloaded; session {SESSION} could not be read back, and the next turn still names it"
+                    )
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn backoff_doubles_to_a_two_second_cap_and_never_ends() {
     let delays: Vec<Duration> = backoff().take(100).collect();

@@ -502,6 +502,25 @@ pub fn recorded_model_refusal(rows: &[Value], slug: &str) -> Option<String> {
 /// when the reply does not have that shape: a runtime too old to report the
 /// model, or a malformed reply, says nothing about what the session ran on.
 pub fn recorded_from(inspected: &Value) -> Result<Option<String>, String> {
+    match inspected_model(inspected)? {
+        InspectedModel::Model(model) => Ok(model),
+        InspectedModel::Runner(runner) => Err(format!(
+            "this session last ran on the external agent runner \"{}\", whose \
+             model is not recorded; name one with --model <slug>",
+            visible(&runner)
+        )),
+    }
+}
+
+/// A session's recorded model (including explicit null), or the runner that records none.
+#[derive(Debug, PartialEq)]
+pub enum InspectedModel {
+    Model(Option<String>),
+    Runner(String),
+}
+
+/// Classify an inspection reply, returning a refusal when its model or runner shape is unknown.
+pub fn inspected_model(inspected: &Value) -> Result<InspectedModel, String> {
     let unknown = || {
         "this runtime did not report the session's model; \
          name one with --model <slug>"
@@ -509,18 +528,12 @@ pub fn recorded_from(inspected: &Value) -> Result<Option<String>, String> {
     };
     match inspected.get("runner") {
         None | Some(Value::Null) => {}
-        Some(Value::String(runner)) => {
-            return Err(format!(
-                "this session last ran on the external agent runner \"{}\", whose \
-                 model is not recorded; name one with --model <slug>",
-                visible(runner)
-            ));
-        }
+        Some(Value::String(runner)) => return Ok(InspectedModel::Runner(runner.clone())),
         Some(_) => return Err(unknown()),
     }
     match inspected.get("model") {
-        Some(Value::Null) => Ok(None),
-        Some(Value::String(model)) => Ok(Some(model.clone())),
+        Some(Value::Null) => Ok(InspectedModel::Model(None)),
+        Some(Value::String(model)) => Ok(InspectedModel::Model(Some(model.clone()))),
         _ => Err(unknown()),
     }
 }
@@ -1627,10 +1640,9 @@ pub(crate) mod run_tests {
         session.choose_model("local/qwen".into());
         drive(recorded_runner, &mut session, vec![Command::SessionSwitch("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into())]).await;
         assert_eq!(session.id.as_deref(), Some("old"), "not switched");
-        assert!(
-            super::recorded_from(&json!({"model": null, "runner": "fixture"}))
-                .unwrap_err()
-                .contains("--model <slug>")
+        assert_eq!(
+            super::recorded_from(&json!({"model": null, "runner": "fixture"})).unwrap_err(),
+            "this session last ran on the external agent runner \"fixture\", whose model is not recorded; name one with --model <slug>"
         );
     }
 
