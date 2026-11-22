@@ -62,13 +62,22 @@ function toOpenAIWireMessages(
 }
 
 /**
- * The `provider` object OpenRouter reads to choose an upstream. Only
- * `max_price` is sent: USD per million tokens, the catalog's own unit. When no
- * upstream is at or below it, OpenRouter refuses the request instead of
- * running it.
+ * The `provider` object OpenRouter reads to choose an upstream. `max_price` is
+ * USD per million tokens, the catalog's own unit: when no upstream is at or
+ * below it, OpenRouter refuses the request instead of running it.
+ *
+ * `order`, `allow_fallbacks` and `zdr` come from `[openrouter]` config and are
+ * sent only when the operator sets them, so an unconfigured request keeps the
+ * exact body it had before.
  */
 export interface OpenRouterProviderRouting {
   max_price: { prompt: number; completion: number };
+  /** Upstream preference order: provider names or full endpoint slugs. */
+  order?: readonly string[];
+  /** Whether OpenRouter may fall back to an upstream outside `order`. */
+  allow_fallbacks?: boolean;
+  /** Restrict routing to zero-data-retention upstreams. */
+  zdr?: boolean;
 }
 
 export function buildOpenAIChatRequest(

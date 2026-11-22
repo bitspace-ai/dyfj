@@ -522,6 +522,58 @@ price, or not at all: when no upstream qualifies, the turn fails with
 that only one upstream serves at its row's price fails while that upstream is
 unavailable. `max_price` has no cache-read field, so cache reads are not capped.
 
+An optional `[openrouter]` table pins the upstream and asks for zero-data
+retention. Without it, OpenRouter may route successive turns of one conversation
+to different upstreams, which destroys prompt-cache locality:
+
+```toml
+[openrouter]
+# Upstreams to try, in order: a provider name ("Fireworks") or a full
+# OpenRouter endpoint slug ("fireworks/fp8") to pin one endpoint.
+upstream_order = ["fireworks/fp8"]
+# Whether OpenRouter may fall back to an upstream outside upstream_order.
+allow_fallbacks = false
+# Ask for a zero-data-retention upstream.
+zdr = true
+
+# Per-model overrides, keyed by catalog slug. Each field merges over the
+# defaults above, field by field.
+[openrouter.models."deepseek/deepseek-v4.1-flash-1017"]
+upstream_order = ["fireworks/fp8"]
+```
+
+Each key is optional, and nothing changes when the table is absent (a request
+carries only `max_price`). `upstream_order` holds 1 to 16 entries of at most 64
+characters each, from `[A-Za-z0-9 ._/-]`, with no leading or trailing
+whitespace, no leading or trailing `/`, no `//`, and no slash-separated segment
+that is empty or whitespace alone; an explicitly empty list fails the load.
+Setting `allow_fallbacks = false` with no effective `upstream_order` fails the
+load, because it would forbid every upstream. Malformed keys fail boot.
+
+A pinned endpoint is the reliable way to keep a cache warm: the provider name
+alone still lets OpenRouter choose among that provider's variants.
+
+`[context] compression_trigger_tokens` caps when proactive transcript
+compression fires:
+
+```toml
+[context]
+compression_trigger_tokens = 200000
+```
+
+The proactive trigger is half the active model's context window; the ceiling
+lowers it (the effective trigger is the smaller of the two), so a 1,048,576-token
+model can compress at 200K instead of 524K. Unset leaves the half-window trigger
+alone. Accepted values are integers from 4096 through 2,000,000
+(`DYFJ_CONTEXT_COMPRESSION_TRIGGER_TOKENS`, which wins over the file). The
+comparison is against the transcript's `len / 4` token estimate, whose drift
+depends on what the transcript holds: dense code or JSON and omitted tool
+schemas push real tokens above the estimate, while replay blocks push the
+estimate above the real count. Anchoring the trigger on provider-reported
+`tokens_input` is deferred. Compression itself is unchanged: it runs on an
+on-machine tier-0 model only, persists `context_compressed` before adopting the
+summary, and declines when no local model is routable.
+
 Each hosted provider reads its key from the process environment and fails closed
 when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`),
 OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`), and xAI
@@ -3705,3 +3757,8 @@ Document revisions only. Code and behavior changes are tracked in
 - 2026-11-18 - Document the optional sandboxed fast gate command and mode.
 - 2026-11-18 - Document verified durable ACP resume, its restart-stable digest,
   replay isolation and bounds, and the seventh reconstruction reason.
+- 2026-11-22 - Document the optional `[openrouter]` table (ordered upstreams
+  and endpoint slugs, fallback control, zero-data retention, per-model
+  overrides; absent by default) and `[context] compression_trigger_tokens`,
+  including that the ceiling compares against the transcript's `len / 4`
+  estimate and that anchoring on provider-reported input tokens is deferred.

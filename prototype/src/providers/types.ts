@@ -3,7 +3,7 @@
  * selection, the turn parameters and result, the agent-loop message shape and
  * tool definitions. Plain data; no behavior.
  */
-import type { CodexReasoningEffort } from "../config/mod.ts";
+import type { CodexReasoningEffort, OpenRouterConfig } from "../config/mod.ts";
 import type { CostBasis } from "../contract/mod.ts";
 import type { HttpTransport } from "./http.ts";
 
@@ -264,4 +264,10 @@ export interface WorkbenchTurnParams {
   getEnv?: (name: string) => string | undefined;
   sessionId?: string;
   maxOutputTokens?: number;
+  /**
+   * The operator's `[openrouter]` routing policy, resolved once at the turn
+   * boundary. Read only by the OpenRouter path; absent leaves every request
+   * carrying only its `max_price`.
+   */
+  openRouterConfig?: OpenRouterConfig;
 }

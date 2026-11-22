@@ -15,7 +15,11 @@
 
 import { readCodexEnvironmentConfig } from "./codex-environment.ts";
 import { parseDispatchConfig } from "./dispatch-config.ts";
-import { processEnv } from "./env.ts";
+import {
+  type OpenRouterConfig,
+  parseOpenRouterConfig,
+} from "./openrouter-config.ts";
+import { type Env, processEnv } from "./env.ts";
 import { readTextFile as defaultReadTextFile } from "./read-text-file.ts";
 import {
   type CodexReasoningEffort,
@@ -38,6 +42,7 @@ import {
 } from "./toml.ts";
 import {
   parseBooleanEnv,
+  readIntegerEnv,
   readMaxToolSteps,
   readPositiveUsd,
   RETIRED_ANOMALY_REPLACEMENT,
@@ -119,7 +124,25 @@ export interface WorkbenchConfig {
    * through 86400.
    */
   codexInteractiveIdleSeconds: number;
+  /**
+   * The `[openrouter]` routing policy: which upstream serves an OpenRouter
+   * request, whether it may fail over, and whether zero-retention upstreams
+   * only. Null when the section is absent, which leaves every OpenRouter
+   * request carrying only its `max_price`.
+   */
+  openRouterConfig: OpenRouterConfig | null;
+  /**
+   * The hard token ceiling for proactive transcript compression
+   * ([context] compression_trigger_tokens), in estimated tokens. The effective
+   * trigger is the smaller of this and the model window's proportional
+   * trigger. Null keeps the proportional trigger alone.
+   */
+  compressionTriggerTokens: number | null;
 }
+
+/** Bounds for `[context] compression_trigger_tokens`. */
+export const MIN_COMPRESSION_TRIGGER_TOKENS = 4_096;
+export const MAX_COMPRESSION_TRIGGER_TOKENS = 2_000_000;
 
 /** The highest `[codex] tool_timeout_seconds` the loader accepts. */
 export const MAX_CODEX_TOOL_TIMEOUT_SECONDS = 3600;
@@ -151,6 +174,8 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   codexEnvAllow: [],
   codexToolTimeoutSeconds: 300,
   codexInteractiveIdleSeconds: DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
+  openRouterConfig: null,
+  compressionTriggerTokens: null,
 };
 
 function validateCodexToolTimeout(value: number, source: string): number {
@@ -179,6 +204,23 @@ function validateCodexInteractiveIdleSeconds(
       `config: invalid Codex interactive idle limit from ${source} (expected ` +
         `an integer from ${MIN_CODEX_INTERACTIVE_IDLE_SECONDS} through ` +
         `${MAX_CODEX_INTERACTIVE_IDLE_SECONDS} seconds)`,
+    );
+  }
+  return value;
+}
+
+function validateCompressionTriggerTokens(
+  value: number,
+  source: string,
+): number {
+  if (
+    !Number.isInteger(value) || value < MIN_COMPRESSION_TRIGGER_TOKENS ||
+    value > MAX_COMPRESSION_TRIGGER_TOKENS
+  ) {
+    throw new Error(
+      `config: invalid compression trigger from ${source} (expected an ` +
+        `integer from ${MIN_COMPRESSION_TRIGGER_TOKENS} through ` +
+        `${MAX_COMPRESSION_TRIGGER_TOKENS} tokens)`,
     );
   }
   return value;
@@ -246,6 +288,93 @@ function applyCodexFileConfig(
       `${fileLabel} [codex].interactive_idle_seconds`,
     );
   }
+}
+
+/** The env layer: every override that wins over the config file. */
+function applyEnvLayer(config: WorkbenchConfig, env: Env): void {
+  const envEffort = env.get(schemaEnvVar("codexReasoningEffort"));
+  if (envEffort !== undefined && envEffort !== "") {
+    config.codexReasoningEffort = validateCodexReasoningEffort(
+      envEffort,
+      schemaEnvVar("codexReasoningEffort"),
+    );
+  }
+  const envModel = env.get("DYFJ_WORKBENCH_MODEL");
+  if (envModel !== undefined && envModel !== "") {
+    config.defaultCompanionModel = envModel;
+  }
+  const envLevel = env.get("DYFJ_PERMISSION_LEVEL");
+  if (envLevel !== undefined && envLevel !== "") {
+    config.permissionLevel = validateLevel(envLevel, "DYFJ_PERMISSION_LEVEL");
+  }
+  const envApprovePaid = env.get(schemaEnvVar("approvePaidDefault"));
+  if (envApprovePaid !== undefined && envApprovePaid !== "") {
+    config.approvePaidDefault = parseBooleanEnv(
+      envApprovePaid,
+      schemaEnvVar("approvePaidDefault"),
+    );
+  }
+  const envTrustInstructions = env.get(
+    schemaEnvVar("trustWorkspaceInstructions"),
+  );
+  if (envTrustInstructions !== undefined && envTrustInstructions !== "") {
+    config.trustWorkspaceInstructions = parseBooleanEnv(
+      envTrustInstructions,
+      schemaEnvVar("trustWorkspaceInstructions"),
+    );
+  }
+  config.defaultSessionBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultSessionBudgetUsd"),
+    config.defaultSessionBudgetUsd,
+  );
+  config.defaultPerCallBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultPerCallBudgetUsd"),
+    config.defaultPerCallBudgetUsd,
+  );
+  config.defaultDailyBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultDailyBudgetUsd"),
+    config.defaultDailyBudgetUsd,
+  );
+  config.defaultTurnBudgetUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultTurnBudgetUsd"),
+    config.defaultTurnBudgetUsd,
+  );
+  config.defaultRunawayStallUsd = readPositiveUsd(
+    env,
+    schemaEnvVar("defaultRunawayStallUsd"),
+    config.defaultRunawayStallUsd,
+  );
+  config.maxToolSteps = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolSteps"),
+    config.maxToolSteps,
+  );
+  config.maxToolStepsCeiling = readMaxToolSteps(
+    env,
+    schemaEnvVar("maxToolStepsCeiling"),
+    config.maxToolStepsCeiling,
+  );
+  validateToolStepsWithinCeiling(
+    config.maxToolSteps,
+    config.maxToolStepsCeiling,
+  );
+  const envCompressionTrigger = env.get(
+    schemaEnvVar("compressionTriggerTokens"),
+  );
+  if (envCompressionTrigger !== undefined && envCompressionTrigger !== "") {
+    config.compressionTriggerTokens = validateCompressionTriggerTokens(
+      readIntegerEnv(
+        envCompressionTrigger,
+        schemaEnvVar("compressionTriggerTokens"),
+      ),
+      schemaEnvVar("compressionTriggerTokens"),
+    );
+  }
+
 }
 
 /**
@@ -348,6 +477,18 @@ export async function loadConfig(
       );
     }
     applyCodexFileConfig(config, table, configLabel(path));
+    config.openRouterConfig = parseOpenRouterConfig(table, path);
+    const fileCompressionTrigger = readNumber(
+      table,
+      "context",
+      "compression_trigger_tokens",
+    );
+    if (fileCompressionTrigger !== undefined) {
+      config.compressionTriggerTokens = validateCompressionTriggerTokens(
+        fileCompressionTrigger,
+        `${configLabel(path)} [context].compression_trigger_tokens`,
+      );
+    }
     const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");
     if (fileCeiling !== undefined) {
       config.maxToolStepsCeiling = validateMaxToolSteps(
@@ -357,77 +498,7 @@ export async function loadConfig(
     }
   }
 
-  // ── env layer (overrides the file) ──
-  const envEffort = env.get(schemaEnvVar("codexReasoningEffort"));
-  if (envEffort !== undefined && envEffort !== "") {
-    config.codexReasoningEffort = validateCodexReasoningEffort(
-      envEffort,
-      schemaEnvVar("codexReasoningEffort"),
-    );
-  }
-  const envModel = env.get("DYFJ_WORKBENCH_MODEL");
-  if (envModel !== undefined && envModel !== "") {
-    config.defaultCompanionModel = envModel;
-  }
-  const envLevel = env.get("DYFJ_PERMISSION_LEVEL");
-  if (envLevel !== undefined && envLevel !== "") {
-    config.permissionLevel = validateLevel(envLevel, "DYFJ_PERMISSION_LEVEL");
-  }
-  const envApprovePaid = env.get(schemaEnvVar("approvePaidDefault"));
-  if (envApprovePaid !== undefined && envApprovePaid !== "") {
-    config.approvePaidDefault = parseBooleanEnv(
-      envApprovePaid,
-      schemaEnvVar("approvePaidDefault"),
-    );
-  }
-  const envTrustInstructions = env.get(
-    schemaEnvVar("trustWorkspaceInstructions"),
-  );
-  if (envTrustInstructions !== undefined && envTrustInstructions !== "") {
-    config.trustWorkspaceInstructions = parseBooleanEnv(
-      envTrustInstructions,
-      schemaEnvVar("trustWorkspaceInstructions"),
-    );
-  }
-  config.defaultSessionBudgetUsd = readPositiveUsd(
-    env,
-    schemaEnvVar("defaultSessionBudgetUsd"),
-    config.defaultSessionBudgetUsd,
-  );
-  config.defaultPerCallBudgetUsd = readPositiveUsd(
-    env,
-    schemaEnvVar("defaultPerCallBudgetUsd"),
-    config.defaultPerCallBudgetUsd,
-  );
-  config.defaultDailyBudgetUsd = readPositiveUsd(
-    env,
-    schemaEnvVar("defaultDailyBudgetUsd"),
-    config.defaultDailyBudgetUsd,
-  );
-  config.defaultTurnBudgetUsd = readPositiveUsd(
-    env,
-    schemaEnvVar("defaultTurnBudgetUsd"),
-    config.defaultTurnBudgetUsd,
-  );
-  config.defaultRunawayStallUsd = readPositiveUsd(
-    env,
-    schemaEnvVar("defaultRunawayStallUsd"),
-    config.defaultRunawayStallUsd,
-  );
-  config.maxToolSteps = readMaxToolSteps(
-    env,
-    schemaEnvVar("maxToolSteps"),
-    config.maxToolSteps,
-  );
-  config.maxToolStepsCeiling = readMaxToolSteps(
-    env,
-    schemaEnvVar("maxToolStepsCeiling"),
-    config.maxToolStepsCeiling,
-  );
-  validateToolStepsWithinCeiling(
-    config.maxToolSteps,
-    config.maxToolStepsCeiling,
-  );
+  applyEnvLayer(config, env);
 
   validateDispatchTimeout(
     table, path, env, config.codexToolTimeoutSeconds, config.codexWorkbenchTools,

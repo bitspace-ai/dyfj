@@ -88,6 +88,20 @@ export function readMaxToolSteps(
   return validateMaxToolSteps(Number(trimmed), envVar);
 }
 
+/**
+ * Read an optional integer from the environment. A value that is not a plain
+ * base-10 integer throws; the caller validates its bounds.
+ */
+export function readIntegerEnv(raw: string, envVar: string): number {
+  const trimmed = raw.trim();
+  if (!/^[0-9]+$/.test(trimmed)) {
+    throw new Error(
+      `config: invalid number "${raw}" from ${envVar} (expected a positive integer)`,
+    );
+  }
+  return Number(trimmed);
+}
+
 export function readPositiveUsd(
   env: Env,
   envVar: string,

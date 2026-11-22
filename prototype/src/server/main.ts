@@ -245,6 +245,8 @@ export interface WorkbenchUnixServerOptions {
       | "codexEnvAllow"
       | "codexToolTimeoutSeconds"
       | "codexInteractiveIdleSeconds"
+      | "openRouterConfig"
+      | "compressionTriggerTokens"
     >
   >;
   /** Process-owned ACP warm-session map. Created by the server when omitted. */

@@ -22,6 +22,7 @@ import {
 import {
   type CodexReasoningEffort,
   type Env,
+  type OpenRouterConfig,
   type PermissionLevel,
   processEnv,
   resolveRuntimeEnvDefaults,
@@ -201,6 +202,10 @@ export interface ExecuteTurnDeps {
   defaultCodexReasoningEffort?: CodexReasoningEffort;
   /** Configured idle limit in seconds for an interactive Codex ChatGPT session. */
   codexInteractiveIdleSeconds?: number;
+  /** The operator's `[openrouter]` routing policy (config), resolved at the boundary. */
+  openRouterConfig?: OpenRouterConfig;
+  /** Proactive-compression token ceiling (config), resolved at the boundary. */
+  compressionTriggerTokens?: number;
   codexOperatorContext?: boolean;
   codexPath?: "operator" | "minimal";
   codexExtraPath?: string[];
@@ -231,7 +236,7 @@ export function engineConfigToTurnDeps(
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
+      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow" | "openRouterConfig" | "compressionTriggerTokens"
     >
   >,
 ): Pick<
@@ -250,6 +255,8 @@ export function engineConfigToTurnDeps(
   | "defaultCodexReasoningEffort"
   | "codexInteractiveIdleSeconds"
   | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
+  | "openRouterConfig"
+  | "compressionTriggerTokens"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -275,6 +282,14 @@ export function engineConfigToTurnDeps(
     ...(config.codexInteractiveIdleSeconds === undefined
       ? {}
       : { codexInteractiveIdleSeconds: config.codexInteractiveIdleSeconds }),
+    ...(config.openRouterConfig === undefined ||
+        config.openRouterConfig === null
+      ? {}
+      : { openRouterConfig: config.openRouterConfig }),
+    ...(config.compressionTriggerTokens === null ||
+        config.compressionTriggerTokens === undefined
+      ? {}
+      : { compressionTriggerTokens: config.compressionTriggerTokens }),
   };
 }
 
@@ -414,6 +429,12 @@ function runExecuteTurn(
     ...(deps.codexInteractiveIdleSeconds === undefined
       ? {}
       : { codexInteractiveIdleSeconds: deps.codexInteractiveIdleSeconds }),
+    ...(deps.openRouterConfig === undefined
+      ? {}
+      : { openRouterConfig: deps.openRouterConfig }),
+    ...(deps.compressionTriggerTokens === undefined
+      ? {}
+      : { compressionTriggerTokens: deps.compressionTriggerTokens }),
     // config-file budget defaults override the env-only boundary resolver
     ...(deps.defaultSessionBudgetUsd !== undefined
       ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }

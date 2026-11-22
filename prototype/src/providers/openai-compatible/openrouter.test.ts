@@ -232,3 +232,117 @@ describe("OpenRouter price-cap refusal", () => {
     assert.strictEqual(transport.requests.length, 1);
   });
 });
+
+describe("OpenRouter upstream pinning from [openrouter] config", () => {
+  it("sends order, allow_fallbacks and zdr from an endpoint-slug policy", async () => {
+    const transport = json({
+      ...done,
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    });
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: kimi.slug },
+      models: [kimi],
+      getEnv,
+      fetchFn: transport.fetch,
+      openRouterConfig: {
+        defaults: {
+          upstreamOrder: ["fireworks/fp8"],
+          allowFallbacks: false,
+          zdr: true,
+        },
+      },
+    });
+    const body = JSON.parse(transport.requests[0].body);
+    assert.deepStrictEqual(body.provider, {
+      max_price: { prompt: 2.0, completion: 10.0 },
+      order: ["fireworks/fp8"],
+      allow_fallbacks: false,
+      zdr: true,
+    });
+  });
+
+  it("sends only max_price when no policy is configured", async () => {
+    const transport = json({
+      ...done,
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    });
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: kimi.slug },
+      models: [kimi],
+      getEnv,
+      fetchFn: transport.fetch,
+      openRouterConfig: { byModel: { "some/other": { zdr: true } } },
+    });
+    const body = JSON.parse(transport.requests[0].body);
+    assert.deepStrictEqual(body.provider, {
+      max_price: { prompt: 2.0, completion: 10.0 },
+    });
+  });
+
+  it("applies a per-model override to that model only", async () => {
+    const transport = json({
+      ...done,
+      usage: { prompt_tokens: 10, completion_tokens: 2 },
+    });
+    await runWorkbenchTurn({
+      systemPrompt: "system",
+      prompt: "hello",
+      routing: { modelId: kimi.slug },
+      models: [kimi],
+      getEnv,
+      fetchFn: transport.fetch,
+      openRouterConfig: {
+        defaults: { zdr: true },
+        byModel: { [kimi.slug]: { upstreamOrder: ["Fireworks"], allowFallbacks: false } },
+      },
+    });
+    const body = JSON.parse(transport.requests[0].body);
+    assert.deepStrictEqual(body.provider, {
+      max_price: { prompt: 2.0, completion: 10.0 },
+      order: ["Fireworks"],
+      allow_fallbacks: false,
+      zdr: true,
+    });
+  });
+
+  it("never sends provider routing to a non-OpenRouter host", async () => {
+    const local: WorkbenchModel = {
+      ...kimi,
+      slug: "llama-cpp/qwen3.6-35b-a3b",
+      displayName: "Qwen local",
+      provider: "llama-cpp",
+      baseUrl: "http://localhost:8080/v1",
+      // A zero row is not routable (paid spend must be estimable); the point
+      // here is the provider, not the price.
+      costInput: 0.05,
+      costOutput: 0.1,
+    };
+    for (const model of [gpt, local]) {
+      const transport = json({
+        ...done,
+        usage: { prompt_tokens: 10, completion_tokens: 2 },
+      });
+      await runWorkbenchTurn({
+        systemPrompt: "system",
+        prompt: "hello",
+        routing: { modelId: model.slug },
+        models: [model],
+        getEnv,
+        fetchFn: transport.fetch,
+        openRouterConfig: {
+          defaults: { upstreamOrder: ["Fireworks"], zdr: true },
+        },
+      });
+      const body = JSON.parse(transport.requests[0].body);
+      assert.strictEqual(
+        Object.hasOwn(body, "provider"),
+        false,
+        model.provider,
+      );
+    }
+  });
+});

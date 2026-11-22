@@ -22,6 +22,26 @@ import {
   transcriptEstimateText,
 } from "./transcript.ts";
 
+/**
+ * The token count that triggers proactive compression: the model window's
+ * proportional trigger, lowered to `ceilingTokens` when the operator set one
+ * ([context] compression_trigger_tokens).
+ *
+ * The ceiling exists because a huge window is not the same thing as a durable
+ * working context: large MoE models served through an aggregator degrade in
+ * multi-turn tool recall well before a 1M-token window fills, so the operator
+ * can cap the trigger without changing the model.
+ */
+export function effectiveCompressionTriggerTokens(
+  contextWindow: number,
+  ceilingTokens: number | undefined,
+): number {
+  const proportional = contextWindow * CONTEXT_COMPRESSION_TRIGGER_FRACTION;
+  return ceilingTokens === undefined
+    ? proportional
+    : Math.min(proportional, ceilingTokens);
+}
+
 /** Run the stage: seed, compress when needed, append the prompt. */
 export async function loadTranscript(
   turn: RoutedTurn,
@@ -32,9 +52,10 @@ export async function loadTranscript(
     ? input.conversationMessages ?? []
     : [];
   const contextWindow = route.selected.contextWindow;
-  // Proactive compression: when the seeded transcript would cross ~50% of the
-  // active model's context window, compress the elder turns before the first
-  // provider call, keeping the most recent turns verbatim. A declined
+  // Proactive compression: when the seeded transcript would cross the active
+  // model's compression trigger (~50% of its context window, lowered to the
+  // configured token ceiling when one is set), compress the elder turns before
+  // the first provider call, keeping the most recent turns verbatim. A declined
   // compression leaves the transcript untouched and the turn runs
   // uncompressed. An adapter that sends only the prompt (Gemini) carries no
   // history on the wire, so there is nothing to make room for: compressing
@@ -48,7 +69,11 @@ export async function loadTranscript(
       transcriptEstimateText(state.systemPrompt, [...seededHistory, prompt]),
     );
     if (
-      estimatedTokens >= contextWindow * CONTEXT_COMPRESSION_TRIGGER_FRACTION
+      estimatedTokens >=
+        effectiveCompressionTriggerTokens(
+          contextWindow,
+          input.compressionTriggerTokens,
+        )
     ) {
       const { elder, tail } = partitionForCompression(
         seededHistory,
