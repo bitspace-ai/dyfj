@@ -3762,3 +3762,11 @@ Document revisions only. Code and behavior changes are tracked in
   overrides; absent by default) and `[context] compression_trigger_tokens`,
   including that the ceiling compares against the transcript's `len / 4`
   estimate and that anchoring on provider-reported input tokens is deferred.
+- 2026-11-22 - `docs/agents/rooms.md` requires every implementer to work in a
+  fresh linked worktree outside the main checkout, launched with
+  `--workspace <worktree>`, and to leave the main checkout on `main` for the
+  maintainer: a session's tools are scoped to its workspace root, and a
+  sandboxed main checkout denies git's own writes under `.git`. `[dispatch]
+  roots` must include the operator's configured worktree directory for
+  dispatched children. `.github/CODEOWNERS` and `AGENTS.md` now cover
+  `docs/agents/` alongside the instruction files they already named.
