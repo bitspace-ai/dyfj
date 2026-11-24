@@ -13,20 +13,10 @@ runs in. `AGENTS.md`, README Section 1 and `specs/` win over anything here.
   which names only the issue the change delivers. The main checkout stays on
   `main` for the maintainer: an agent never works in it. The linked worktree
   is created **before** the implementer session starts, and the session is
-  launched with its workspace root set to that worktree
-  (`--workspace <worktree>`), because a session's file and shell tools are
-  scoped to its launch workspace root. The sandbox follows that root: at a
-  linked worktree it grants writes to the worktree's metadata, loose objects
-  in the shared object store, and the checked-out branch's ref, so sandboxed
-  `git add` and `git commit` work while `.git/config`, hooks, packfiles and
-  other branches stay write-denied; at the main checkout the whole `.git` is
-  write-denied
-  (`mainCheckout`), so a sandboxed commit fails there - working-tree file
-  edits still succeed, which is exactly why the rule forbids making them.
-  Dispatched child sessions reach a linked worktree only when
-  `[dispatch] roots` in `~/.dyfj/config.toml` includes the operator's
-  configured worktree directory. Carries the worktree to an open pull
-  request and stops. Removing a worktree is the maintainer's act, below.
+  launched with its workspace root set to that worktree. Working in a linked
+  worktree keeps the main checkout clean and lets sandboxed runners isolate
+  git writes to the single checked-out branch. Carries the worktree to an open
+  pull request and stops. Removing a worktree is the maintainer's act, below.
 - **Reviewer:** reads the branch's full range against `main` before merge
   is proposed, in a session that shares no context with the implementer.
   On the standard lane the reviewer is a different model family from the

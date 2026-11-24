@@ -57,7 +57,6 @@ import {
 } from "./executor-transport.ts";
 import {
   type CommandSandbox,
-  MAIN_CHECKOUT_NOTE,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
@@ -366,8 +365,8 @@ function bashReach(route: BashRoute): string {
     : route === "sandboxed"
     ? ". The command runs in an OS sandbox: it can write only in the " +
       "workspace, srt's scratch directory ($TMPDIR), npm's log directory " +
-      "(~/.npm/_logs) and what a commit on the " +
-      "session branch needs; it can reach only the npm registry and the " +
+      "(~/.npm/_logs) and what a commit needs (scoped to the session branch " +
+      "in a linked worktree); it can reach only the npm registry and the " +
       "domains the operator allowed (never GitHub); and it cannot read the " +
       "credential paths on the sandbox's deny list. Writes and connects " +
       "outside that are refused (on macOS, \"Operation not permitted\"). " +
@@ -378,33 +377,19 @@ function bashReach(route: BashRoute): string {
 
 /**
  * A runner that runs each command in `sandbox`, with npm's cache moved under
- * srt's scratch directory. A failed command in a main checkout gets a note
- * saying that sandboxed commits need a linked worktree.
+ * srt's scratch directory.
  */
 function sandboxedBashRunner(
   sandbox: CommandSandbox,
   root: string,
 ): BashRunner {
-  return async (command, cwd, timeoutMs, env) => {
-    const result = await sandbox.runShell(command, {
+  return (command, cwd, timeoutMs, env) =>
+    sandbox.runShell(command, {
       root,
       cwd,
       timeoutMs,
       env: { ...env, npm_config_cache: SANDBOX_NPM_CACHE },
     });
-    if (result.code !== 0 && /\.git\b/.test(result.stderr)) {
-      const policy = await sandbox.policy(root).catch(() => undefined);
-      if (policy?.mainCheckout === true) {
-        return {
-          ...result,
-          stderr: `${result.stderr}${
-            result.stderr.endsWith("\n") ? "" : "\n"
-          }${MAIN_CHECKOUT_NOTE}`,
-        };
-      }
-    }
-    return result;
-  };
 }
 
 /** bash's description, per route. */

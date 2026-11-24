@@ -438,15 +438,6 @@ export function sandboxContainment(sandbox: CommandSandbox): Containment {
   };
 }
 
-/**
- * Appended to a failed sandboxed command's output in a main checkout, where
- * the sandbox denies every write under `.git`.
- */
-export const MAIN_CHECKOUT_NOTE =
-  "note: this workspace is a main checkout, not a linked git worktree. The " +
-  "sandbox denies every write under its .git, so git add and git commit " +
-  "fail here. Sandboxed commits need a linked worktree: use a worktree.";
-
 /** The posture line's sandbox segment. */
 export function describeSandbox(status: SandboxStatus): string {
   return status.state === "on"

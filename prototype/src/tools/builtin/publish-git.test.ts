@@ -234,9 +234,16 @@ function trustFor(
       Promise.resolve({
         filesystem: {
           allowWrite: [workspace, join(layoutValue.commonDir, "objects"), layoutValue.gitDir, ...writable],
-          denyWrite: [join(layoutValue.commonDir, "config"), join(workspace, ".git")],
+          denyWrite: [
+            join(layoutValue.commonDir, "config"),
+            join(layoutValue.commonDir, "config.worktree"),
+            join(layoutValue.commonDir, "hooks"),
+            join(layoutValue.commonDir, "info"),
+            join(workspace, ".git"),
+          ],
+          denyRead: [],
+          allowRead: [],
         },
-        mainCheckout: false,
       })) as unknown as typeof compileWorkspacePolicy,
     readTextFile: () => join(layoutValue.topLevel, ".git"),
   };
@@ -486,17 +493,25 @@ describe("publish git hardening: where config lives", () => {
           `${allowed} would make ${sharedConfig} writable`,
         );
       }
-      // A main checkout: the whole `.git` is write-denied, config included.
+      // A main checkout: `.git` allows commits while config, config.worktree,
+      // hooks and info stay write-denied.
+      const mainGitDir = join(topLevel, ".git");
       const main = await compileWorkspacePolicy(topLevel, {
         pinnedLayout: {
-          gitDir: join(topLevel, ".git"),
-          commonDir: join(topLevel, ".git"),
+          gitDir: mainGitDir,
+          commonDir: mainGitDir,
           topLevel,
           branchRef: "refs/heads/main",
         },
         env: { PATH: "/usr/bin:/bin", HOME: root },
       });
-      assert.ok(main.filesystem.denyWrite.includes(join(topLevel, ".git")));
+      assert.equal(main.filesystem.denyWrite.includes(mainGitDir), false);
+      for (const name of ["config", "config.worktree", "hooks", "info"]) {
+        assert.ok(
+          main.filesystem.denyWrite.includes(join(mainGitDir, name)),
+          `expected ${name} to be write-denied`,
+        );
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -695,4 +710,101 @@ describe("publish git hardening: the layout is checked against the policy", () =
       }
     },
   );
+
+  it("accepts a main checkout when config, config.worktree, hooks and info are write-denied without denying whole .git", async () => {
+    const mainLayout: GitLayout = {
+      gitDir: "/repo/.git",
+      commonDir: "/repo/.git",
+      topLevel: "/repo",
+      branchRef: "refs/heads/main",
+      head: "0123456789abcdef0123456789abcdef01234567",
+    };
+    const { run } = stubRunner(mainLayout);
+    const layout = await readPublishGitLayout("/repo", {
+      run,
+      compilePolicy: ((workspace: string) =>
+        Promise.resolve({
+          filesystem: {
+            allowWrite: [workspace],
+            denyWrite: [
+              join(mainLayout.commonDir, "config"),
+              join(mainLayout.commonDir, "config.worktree"),
+              join(mainLayout.commonDir, "hooks"),
+              join(mainLayout.commonDir, "info"),
+            ],
+            denyRead: [],
+            allowRead: [],
+          },
+        })) as unknown as typeof compileWorkspacePolicy,
+    });
+    assert.deepStrictEqual(layout, mainLayout);
+  });
+
+  it("refuses a main checkout when any of config, config.worktree, hooks or info is writable or not write-denied", async () => {
+    const mainLayout: GitLayout = {
+      gitDir: "/repo/.git",
+      commonDir: "/repo/.git",
+      topLevel: "/repo",
+      branchRef: "refs/heads/main",
+      head: "0123456789abcdef0123456789abcdef01234567",
+    };
+    const required = ["config", "config.worktree", "hooks", "info"];
+    for (const omitted of required) {
+      const { run } = stubRunner(mainLayout);
+      await assert.rejects(
+        readPublishGitLayout("/repo", {
+          run,
+          compilePolicy: ((workspace: string) =>
+            Promise.resolve({
+              filesystem: {
+                allowWrite: [workspace],
+                denyWrite: required
+                  .filter((name) => name !== omitted)
+                  .map((name) => join(mainLayout.commonDir, name)),
+                denyRead: [],
+                allowRead: [],
+              },
+            })) as unknown as typeof compileWorkspacePolicy,
+        }),
+        GitLayoutError,
+        `expected refusal when ${omitted} is not write-denied`,
+      );
+    }
+  });
+
+  it("refuses a linked worktree when any of config, config.worktree, hooks or info is not write-denied", async () => {
+    const linkedLayout: GitLayout = {
+      gitDir: "/repo/.git/worktrees/bit-786",
+      commonDir: "/repo/.git",
+      topLevel: "/wt",
+      branchRef: "refs/heads/chris/bit-786-host-publish-tool",
+      head: "0123456789abcdef0123456789abcdef01234567",
+    };
+    const required = ["config", "config.worktree", "hooks", "info"];
+    for (const omitted of required) {
+      const { run } = stubRunner(linkedLayout);
+      await assert.rejects(
+        readPublishGitLayout("/wt", {
+          run,
+          compilePolicy: ((workspace: string) =>
+            Promise.resolve({
+              filesystem: {
+                allowWrite: [workspace, join(linkedLayout.commonDir, "objects"), linkedLayout.gitDir],
+                denyWrite: [
+                  join(workspace, ".git"),
+                  ...required
+                    .filter((name) => name !== omitted)
+                    .map((name) => join(linkedLayout.commonDir, name)),
+                ],
+                denyRead: [],
+                allowRead: [],
+              },
+            })) as unknown as typeof compileWorkspacePolicy,
+          readTextFile: () => join(linkedLayout.topLevel, ".git"),
+        }),
+        GitLayoutError,
+        `expected refusal when ${omitted} is not write-denied`,
+      );
+    }
+  });
 });

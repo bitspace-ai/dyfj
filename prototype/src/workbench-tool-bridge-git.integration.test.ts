@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -12,7 +12,7 @@ import { nestedSandboxSkipReason } from "../testing/nested-sandbox.ts";
 import { unixSocketBindSkip } from "../testing/unix-socket-bind.ts";
 import type { EventInsert } from "./store/mod.ts";
 import { listenLoopbackProbe } from "./transport/mod.ts";
-import { bootSandbox, MAIN_CHECKOUT_NOTE } from "./tools/builtin/srt-sandbox.ts";
+import { bootSandbox } from "./tools/builtin/srt-sandbox.ts";
 import { bindCodexTurn, WORKBENCH_BRIDGE_SHIM_PATH, WORKBENCH_BRIDGE_TOKEN_ENV, WorkbenchToolBridge } from "./workbench-tool-bridge.ts";
 
 const socketSkip = await unixSocketBindSkip() ?? false;
@@ -62,8 +62,8 @@ test("a bridged git call records exactly one git tool_call event", { skip: socke
 });
 
 for (const mainCheckout of [false, true]) {
-  test(mainCheckout ? "bridged sandboxed commit refuses a main checkout" : "bridged sandboxed add and commit update the linked worktree branch", { skip: srtSkip }, async () => {
-    const base = await mkdtemp(join(tmpdir(), "git-bridge-srt-"));
+  test(mainCheckout ? "bridged sandboxed add and commit update a main checkout without prompting" : "bridged sandboxed add and commit update the linked worktree branch", { skip: srtSkip }, async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "git-bridge-srt-")));
     const main = join(base, "main");
     const home = join(base, "home");
     await mkdir(main); await mkdir(home);
@@ -91,17 +91,15 @@ for (const mainCheckout of [false, true]) {
       const release = bound.activate("0".repeat(32), "1".repeat(16), async () => {});
       try {
         client = await connect(bridge, bound.workbenchTools.token);
-        if (!mainCheckout) {
-          await writeFile(join(root, "file.txt"), "changed\n");
-          const added = resultText(await client.callTool({ name: "git", arguments: { subcommand: "add", paths: ["file.txt"] } }));
-          assert.match(added, /^exit 0/);
-        }
+        await writeFile(join(root, "file.txt"), "changed\n");
+        const added = resultText(await client.callTool({ name: "git", arguments: { subcommand: "add", paths: ["file.txt"] } }));
+        assert.match(added, /^exit 0/, added);
         const committed = resultText(await client.callTool({ name: "git", arguments: { subcommand: "commit", message: "bridged commit" } }));
+        assert.match(committed, /^exit 0/, committed);
         if (mainCheckout) {
-          assert.ok(committed.includes(MAIN_CHECKOUT_NOTE.replace(/^note: /, "")), committed);
-          assert.equal(git(main, "log", "-1", "--format=%s"), "base");
+          assert.equal(git(main, "log", "-1", "--format=%s", "main"), "bridged commit");
+          assert.equal(git(main, "show", "main:file.txt"), "changed");
         } else {
-          assert.match(committed, /^exit 0/);
           assert.equal(git(main, "log", "-1", "--format=%s", "session"), "bridged commit");
           assert.equal(git(main, "show", "session:file.txt"), "changed");
           assert.equal(git(main, "log", "-1", "--format=%s", "main"), "base");

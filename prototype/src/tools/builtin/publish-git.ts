@@ -37,13 +37,15 @@
  *   trusted reference:
  *
  *   - the shape must be a main checkout (`gitDir === commonDir ===
- *     <workspace>/.git`, write-denied) or a linked worktree (`gitDir` exactly
+ *     <workspace>/.git`) or a linked worktree (`gitDir` exactly
  *     `<commonDir>/worktrees/<name>`, its `gitdir` file pointing back at
  *     `<workspace>/.git`), with every path realpath'd;
- *   - the shared `config` and the shared git dir must fall outside every write
- *     grant the policy compiles (an allow entry is cancelled by a deny entry
- *     that covers it), so a sandboxed command cannot write the file that
- *     defines a driver;
+ *   - the shared `config`, `config.worktree`, `hooks` and `info` paths must be
+ *     write-denied and fall outside every write grant the policy compiles (an
+ *     allow entry is cancelled by a deny entry that covers it), and for a
+ *     linked worktree the shared git dir itself must also be outside every
+ *     write grant, so a sandboxed command cannot write the files that define a
+ *     driver or hook;
  *   - the shared config must name no `include` or `includeIf` key: an include
  *     reaches a file nothing here inspects.
  *
@@ -378,14 +380,17 @@ function canonical(path: string): string {
  * answering at all proves nothing. Two shapes are accepted, and only two:
  *
  * - a main checkout, where the git dir and the common dir are both exactly
- *   `<workspace>/.git`, and the policy write-denies it;
+ *   `<workspace>/.git`;
  * - a linked worktree, where the git dir is exactly
  *   `<commonDir>/worktrees/<name>` and its `gitdir` file points back at
  *   `<workspace>/.git`.
  *
- * Then the shared config must be outside every write grant and must name no
- * include: `include.path` reaches a file nothing here can inspect, which would
- * put the config that defines a driver back in the sandbox's hands.
+ * Then the shared `config`, `config.worktree`, `hooks` and `info` paths must
+ * be write-denied and outside every write grant (and for a linked worktree,
+ * `commonDir` itself must be outside every write grant), and the shared config
+ * must name no include: `include.path` reaches a file nothing here can
+ * inspect, which would put the config that defines a driver back in the
+ * sandbox's hands.
  */
 async function assertTrustedLayout(
   root: string,
@@ -461,26 +466,32 @@ async function assertTrustedLayout(
       path === entry || path.startsWith(`${entry}/`)
     );
   const config = join(commonDir, "config");
-  for (const target of [config, commonDir]) {
+  const protectedGitPaths: readonly (readonly [string, string])[] = [
+    ["config", config],
+    ["config.worktree", join(commonDir, "config.worktree")],
+    ["hooks", join(commonDir, "hooks")],
+    ["info", join(commonDir, "info")],
+  ];
+  if (!mainCheckout && writable(commonDir)) {
+    throw new GitLayoutError(
+      "the sandbox's write grant reaches the shared git dir, so a " +
+        "sandboxed command could write shared repository state; refusing to publish",
+    );
+  }
+  for (const [name, target] of protectedGitPaths) {
     if (writable(target)) {
       throw new GitLayoutError(
-        "the sandbox's write grant reaches the shared git config, so a " +
-          "sandboxed command could define a driver there; refusing to publish",
+        `the sandbox's write grant reaches the shared git ${name}, so a ` +
+          "sandboxed command could define a driver or hook there; refusing to publish",
       );
     }
-  }
-  if (!denied(config)) {
-    throw new GitLayoutError(
-      "the shared git config is not write-denied by the sandbox, so where a " +
-        "driver is defined is not somewhere a sandboxed command cannot write; " +
-        "refusing to publish",
-    );
-  }
-  if (mainCheckout && !denied(dotGit)) {
-    throw new GitLayoutError(
-      "the sandbox does not write-deny the workspace's .git; refusing to " +
-        "publish",
-    );
+    if (!denied(target)) {
+      throw new GitLayoutError(
+        `the shared git ${name} is not write-denied by the sandbox, so where a ` +
+          "driver or hook is defined is not somewhere a sandboxed command cannot write; " +
+          "refusing to publish",
+      );
+    }
   }
 
   const includes = await gitRead(run, root, [

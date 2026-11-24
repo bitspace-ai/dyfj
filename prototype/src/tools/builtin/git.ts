@@ -72,7 +72,6 @@ import type { CommandDefinition } from "../definition.ts";
 import { createContainment } from "./containment.ts";
 import {
   type CommandSandbox,
-  MAIN_CHECKOUT_NOTE,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import {
@@ -441,9 +440,6 @@ function sandboxedRunner(
     });
 }
 
-/** The subcommands that write under `.git`. */
-const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
-
 /**
  * Run one allowed git operation and return a single string carrying the exit
  * status and combined stdout/stderr. On the normal path the collected body is
@@ -579,12 +575,10 @@ export function defineGit(
         : sandbox !== undefined
         ? "Git runs in an OS sandbox: it and its hooks and helpers can write " +
           "only the workspace, srt's scratch directory, npm's log directory " +
-          "and what a commit on the session branch needs, " +
-          "reach only the npm registry and the domains the operator allowed " +
-          "(never GitHub), and not " +
-          "read the credential paths on the sandbox's deny list. `add` and `commit` need a " +
-          "linked git worktree: in a main checkout the sandbox denies writes " +
-          "under .git. "
+          "and what a commit needs (scoped to the session branch in a linked " +
+          "worktree), reach only the npm registry and the domains the " +
+          "operator allowed (never GitHub), and not read the credential " +
+          "paths on the sandbox's deny list. "
         : "Git runs in the isolated executor: hooks and helpers execute " +
           "there, with no network and no access to the runtime's credentials. ") +
       "A " +
@@ -666,19 +660,6 @@ export function defineGit(
     // the raw result stays out of the durable event log (CWE-532).
     redactResult: true,
     executor: async (call, context) => {
-      // In a main checkout the sandbox denies every write under .git, so a
-      // sandboxed add or commit would fail with a bare git error. Say why
-      // instead, before running it.
-      if (
-        sandbox !== undefined &&
-        GIT_WRITE_SUBCOMMANDS.has(String(call.arguments.subcommand)) &&
-        (await sandbox.policy(root).catch(() => undefined))?.mainCheckout ===
-          true
-      ) {
-        return `error: refusing to run git ${
-          String(call.arguments.subcommand)
-        } in the sandbox: ${MAIN_CHECKOUT_NOTE.replace(/^note: /, "")}`;
-      }
       return executeGit(root, {
         subcommand: call.arguments.subcommand,
         paths: call.arguments.paths,

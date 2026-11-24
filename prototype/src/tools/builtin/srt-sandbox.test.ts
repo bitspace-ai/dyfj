@@ -90,7 +90,6 @@ describe("the workspace policy", () => {
         branchRef: "refs/heads/agent/session",
       }),
     });
-    assert.equal(policy.mainCheckout, false);
     assert.deepEqual(policy.filesystem.allowWrite, [
       wt,
       join(common, "objects"),
@@ -134,10 +133,11 @@ describe("the workspace policy", () => {
     );
   });
 
-  it("a main checkout's whole .git is write-denied", async () => {
+  it("a main checkout denies host-execution and shared-integrity paths under .git", async () => {
     const gitDir = join(base, ".git");
     mkdirSync(gitDir);
     const policy = await compileWorkspacePolicy(base, {
+      home: "/fake-home",
       readLayout: layout({
         gitDir,
         commonDir: gitDir,
@@ -145,9 +145,20 @@ describe("the workspace policy", () => {
         branchRef: "refs/heads/main",
       }),
     });
-    assert.equal(policy.mainCheckout, true);
     assert.deepEqual(policy.filesystem.allowWrite, [base]);
-    assert.deepEqual(policy.filesystem.denyWrite, [join(homedir(), ".dyfj"), gitDir]);
+    assert.deepEqual(policy.filesystem.denyWrite, [
+      "/fake-home/.dyfj",
+      join(gitDir, "config"),
+      join(gitDir, "config.worktree"),
+      join(gitDir, "hooks"),
+      join(gitDir, "info"),
+      join(gitDir, "objects", "pack"),
+      join(gitDir, "objects", "info"),
+      join(gitDir, "packed-refs"),
+      join(gitDir, "worktrees"),
+      join(gitDir, "refs", "remotes"),
+      join(gitDir, "refs", "tags"),
+    ]);
   });
 
   it("a directory outside any repository may write only itself", async () => {
@@ -358,7 +369,6 @@ function recordingSandbox(): CommandSandbox & { ran: string[] } {
     policy: () =>
       Promise.resolve({
         filesystem: { allowWrite: [], denyWrite: [], denyRead: [], allowRead: [] },
-        mainCheckout: false,
       }),
     runShell: (command) => {
       ran.push(command);
