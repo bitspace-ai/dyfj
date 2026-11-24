@@ -225,6 +225,16 @@ export const CONFIG_SCHEMA: readonly ConfigKeySpec[] = [
     kind: "value",
     default: null,
   },
+  // Path to the operator's global instructions markdown file ([context]
+  // operator_instructions), loaded into native loopback companion turns.
+  {
+    key: "operatorInstructions",
+    envVar: "DYFJ_OPERATOR_INSTRUCTIONS",
+    domain: "engine",
+    type: "string",
+    kind: "value",
+    default: null,
+  },
   // ── engine: other runtime knobs (declared so the allowlist derives here) ──
   {
     key: "root",

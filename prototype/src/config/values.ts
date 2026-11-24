@@ -3,8 +3,12 @@
  * value fails loud at startup rather than silently mis-configuring the runtime.
  */
 
+import { isAbsolute, resolve } from "node:path";
 import type { Env } from "./env.ts";
 import { PERMISSION_LEVELS, type PermissionLevel } from "./schema.ts";
+
+/** Max UTF-8 byte length for `[context] operator_instructions`. */
+export const MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES = 4_096;
 
 export function validatePositiveUsd(value: number, source: string): number {
   if (!Number.isFinite(value) || value < 0) {
@@ -127,3 +131,85 @@ export function readPositiveUsd(
 export const RETIRED_ANOMALY_REPLACEMENT =
   "use [budget] turn_limit_usd and runaway_stall_usd " +
   "(DYFJ_BUDGET_TURN_USD, DYFJ_BUDGET_RUNAWAY_STALL_USD) instead";
+
+/**
+ * Validate and expand an operator instructions file path from `[context]
+ * operator_instructions` or `DYFJ_OPERATOR_INSTRUCTIONS`. Error messages stay
+ * path-free so boot diagnostics never leak private filesystem layout.
+ */
+export function validateOperatorInstructionsPath(
+  raw: string,
+  source: string,
+  env: Env,
+): string {
+  if (raw === "") {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        "(must not be empty)",
+    );
+  }
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/u.test(raw)) {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        "(must not contain control characters)",
+    );
+  }
+  if (Buffer.byteLength(raw, "utf8") > MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES) {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        `(exceeds ${MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES} bytes)`,
+    );
+  }
+  if (raw.split(/[\\/]/u).some((segment) => segment === "." || segment === "..")) {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        '(must not contain "." or ".." segments)',
+    );
+  }
+  if (raw.endsWith("/") || raw.endsWith("\\")) {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        "(must name a file, not a directory)",
+    );
+  }
+  if (raw.startsWith("~/")) {
+    const home = env.get("HOME");
+    if (
+      home === undefined ||
+      home === "" ||
+      !isAbsolute(home) ||
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f]/u.test(home) ||
+      home.split(/[\\/]/u).some((segment) => segment === "." || segment === "..")
+    ) {
+      throw new Error(
+        `config: ${source} uses "~/" but HOME is not set to a valid absolute path`,
+      );
+    }
+    const rest = raw.slice(2);
+    if (rest === "" || rest.startsWith("/") || rest.startsWith("\\")) {
+      throw new Error(
+        `config: invalid operator instructions path from ${source} ` +
+          '(must be an absolute path or start with "~/")',
+      );
+    }
+    const expanded = resolve(home, rest);
+    if (
+      Buffer.byteLength(expanded, "utf8") > MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES
+    ) {
+      throw new Error(
+        `config: invalid operator instructions path from ${source} ` +
+          `(exceeds ${MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES} bytes)`,
+      );
+    }
+    return expanded;
+  }
+  if (!isAbsolute(raw)) {
+    throw new Error(
+      `config: invalid operator instructions path from ${source} ` +
+        '(must be an absolute path or start with "~/")',
+    );
+  }
+  return resolve(raw);
+}

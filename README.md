@@ -574,6 +574,38 @@ estimate above the real count. Anchoring the trigger on provider-reported
 on-machine tier-0 model only, persists `context_compressed` before adopting the
 summary, and declines when no local model is routable.
 
+`[context] operator_instructions` points native loopback companion turns at one
+operator-owned global instructions markdown file:
+
+```toml
+[context]
+operator_instructions = "~/path/to/operator-instructions.md"
+```
+
+When unset, native companion turns behave unchanged. `DYFJ_OPERATOR_INSTRUCTIONS`
+overrides the file layer. Values must be an absolute path or start with `~/`
+(expanded against `HOME`), at most 4,096 UTF-8 bytes, naming a file (no trailing
+slash), with no control characters and no `.` or `..` segments; malformed values
+(including empty strings) fail boot loudly with path-free diagnostics.
+
+On each native loopback companion turn (never on non-loopback turns, and not on
+`ask` or `next-work` turns), the loader resolves ancestor symlinks via
+`realpath` on the parent directory, verifies the canonical parent is an
+account-owned directory without group or other write permissions (`mode & 0o022
+=== 0`), checks the target leaf with `lstat` (refusing symlinks and non-regular
+files) and opens it with `O_NOFOLLOW` where supported, verifies the opened
+handle's `(dev, ino)`, regular-file type, ownership and permissions, and
+re-verifies the canonical parent after the read. Files are bounded at 65,536
+bytes and 16,000 estimated tokens (`len / 4`) and must be non-empty valid UTF-8;
+oversized, shared-writable, non-regular, unreadable, or missing files are
+refused fail-closed and degrade safely without failing the turn, logging a
+path-free warning. Loaded instructions are injected into the trusted system
+prompt under `## Operator Instructions` ahead of untrusted Dolt memories and
+workspace `AGENTS.md`, and recorded in receipts and context sources as
+`operator instructions <config:context.operator_instructions>` without exposing
+the host path. Native shared-skills loading is separate and not part of this
+setting.
+
 Each hosted provider reads its key from the process environment and fails closed
 when absent — Anthropic (`ANTHROPIC_API_KEY`), OpenAI (`OPENAI_API_KEY`),
 OpenRouter (`OPENROUTER_API_KEY`), Google Gemini (`GEMINI_API_KEY`), and xAI
@@ -3770,3 +3802,9 @@ Document revisions only. Code and behavior changes are tracked in
   roots` must include the operator's configured worktree directory for
   dispatched children. `.github/CODEOWNERS` and `AGENTS.md` now cover
   `docs/agents/` alongside the instruction files they already named.
+- 2026-11-23 - Document `[context] operator_instructions`
+  (`DYFJ_OPERATOR_INSTRUCTIONS`) for loading an operator-owned global
+  instructions file into native loopback companion turns, including path
+  validation, ownership/permission/TOCTOU/size bounds, absent-file degradation,
+  prompt placement ahead of Dolt memories and `AGENTS.md`, and path-free receipt
+  reporting.

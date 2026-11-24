@@ -7,7 +7,9 @@
  * session record, frames, and the returned receipt.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { mock, test } from "node:test";
 import {
   chatReply,
@@ -32,7 +34,10 @@ import {
   fetchWorkbenchSessionEvents,
 } from "../store/mod.ts";
 import type { ConfirmToolApproval } from "../tools/mod.ts";
-import { AGENTS_INSTRUCTIONS_TRUST_PREAMBLE } from "./build-context.ts";
+import {
+  AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
+  OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE,
+} from "./build-context.ts";
 import { WorkspaceContextUnavailableError } from "./errors.ts";
 import { runWorkbenchRuntime } from "./native-runner.ts";
 import type { NativeWorkbenchRuntimeResult } from "./runtime-types.ts";
@@ -201,6 +206,53 @@ test("an elevated AGENTS.md reaches the provider request and the session record"
     (row?.content ?? "").includes("AGENTS.md"),
     `expected row?.content ?? "" to include "AGENTS.md"`,
   );
+});
+
+test("configured operator instructions reach the provider request and receipt ahead of memories without leaking host path", async () => {
+  await using root = await tempWorkspace({
+    "AGENTS.md": "# Repo Rules\n\nWorkspace rule.",
+  });
+  const opDir = await mkdtemp(path.join(tmpdir(), "op-inst-comp-"));
+  await chmod(opDir, 0o700);
+  const opFile = path.join(opDir, "global-context.md");
+  await writeFile(opFile, "# Operator Rules\n\nLead with the verdict.\n", {
+    mode: 0o600,
+  });
+  await chmod(opFile, 0o600);
+  try {
+    const run = engineServices([chatReply({ content: "runtime response" })]);
+    const result = await runTurn(run, {
+      rootOverride: root.root,
+      trustWorkspaceInstructions: true,
+      operatorInstructions: opFile,
+    });
+    const system = systemMessage(run.transport.requests[0]);
+    const expectedSection =
+      `## Operator Instructions\n${OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE}\n\n# Operator Rules\n\nLead with the verdict.`;
+    assert.ok(system.includes(expectedSection));
+    assert.ok(
+      system.indexOf("## Operator Instructions") < system.indexOf("Memory Safety:"),
+    );
+    assert.ok(
+      system.indexOf("Memory Safety:") < system.indexOf("## AGENTS.md"),
+    );
+    assert.ok(!system.includes(opDir));
+    assert.ok(!system.includes(opFile));
+    assert.strictEqual(
+      result.context.sources[0],
+      "operator instructions <config:context.operator_instructions>",
+    );
+    assert.ok(
+      result.receipt.includes(
+        "operator instructions <config:context.operator_instructions>",
+      ),
+    );
+    assert.ok(!result.receipt.includes(opDir));
+    const row = await run.store.sessions.detail({ sessionId: result.sessionId });
+    assert.ok((row?.content ?? "").includes("operator instructions"));
+  } finally {
+    await rm(opDir, { recursive: true, force: true });
+  }
 });
 
 // ─── persisted-history omission notice ───────────────────────────────────────

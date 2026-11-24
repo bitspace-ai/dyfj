@@ -582,3 +582,129 @@ test("operator context config: rejects non-boolean", async () => {
     );
   });
 }
+
+{ // "[context] operator_instructions" + DYFJ_OPERATOR_INSTRUCTIONS
+  test("loadConfig: absent [context] operator_instructions leaves operatorInstructions null", async () => {
+    const cfg = await loadConfig({ env: env(HOME), readTextFile: notFound });
+    assert.strictEqual(cfg.operatorInstructions, null);
+  });
+
+  test("loadConfig: reads an absolute path from [context] operator_instructions", async () => {
+    const cfg = await loadConfig({
+      env: env(HOME),
+      readTextFile: present,
+      parseToml: table({
+        context: { operator_instructions: "/opt/context/instructions.md" },
+      }),
+    });
+    assert.strictEqual(cfg.operatorInstructions, "/opt/context/instructions.md");
+  });
+
+  test("loadConfig: expands ~/ in [context] operator_instructions against HOME", async () => {
+    const cfg = await loadConfig({
+      env: env({ HOME: FAKE_PRIVATE_HOME }),
+      readTextFile: present,
+      parseToml: table({
+        context: { operator_instructions: "~/.dyfj/operator.md" },
+      }),
+    });
+    assert.strictEqual(
+      cfg.operatorInstructions,
+      `${FAKE_PRIVATE_HOME}/.dyfj/operator.md`,
+    );
+  });
+
+  test("loadConfig: DYFJ_OPERATOR_INSTRUCTIONS overrides [context] operator_instructions and expands ~/", async () => {
+    const cfg = await loadConfig({
+      env: env({
+        HOME: FAKE_PRIVATE_HOME,
+        DYFJ_OPERATOR_INSTRUCTIONS: "~/projections/context.md",
+      }),
+      readTextFile: present,
+      parseToml: table({
+        context: { operator_instructions: "/opt/context/from-file.md" },
+      }),
+    });
+    assert.strictEqual(
+      cfg.operatorInstructions,
+      `${FAKE_PRIVATE_HOME}/projections/context.md`,
+    );
+  });
+
+  for (
+    const [label, value] of [
+      ["empty string", ""],
+      ["relative path", "relative/instructions.md"],
+      ["dot-relative path", "./instructions.md"],
+      ["bare tilde", "~"],
+      ["tilde slash only", "~/"],
+      ["tilde user", "~other/instructions.md"],
+      ["root path", "/"],
+      ["trailing slash", "/opt/context/"],
+      ["parent traversal absolute", "/opt/context/../secret.md"],
+      ["parent traversal tilde", "~/../secret.md"],
+      ["dot segment", "/opt/./instructions.md"],
+      ["newline control char", "/opt/context/a\nb.md"],
+      ["nul control char", "/opt/context/a\u0000b.md"],
+      ["oversized path", `/${"a".repeat(4_097)}`],
+    ] as const
+  ) {
+    test(`loadConfig: refuses malformed [context] operator_instructions (${label}) without leaking path`, async () => {
+      const err = await captureRejection(() =>
+        loadConfig({
+          env: env({ HOME: FAKE_PRIVATE_HOME }),
+          readTextFile: present,
+          parseToml: table({ context: { operator_instructions: value } }),
+        })
+      ) as Error;
+      assert.match(err.message, /^config: .*operator_instructions/);
+      assert.ok(!err.message.includes("private-account"));
+      if (value.length > 4) {
+        assert.ok(!err.message.includes(value));
+      }
+    });
+
+    test(`loadConfig: refuses malformed DYFJ_OPERATOR_INSTRUCTIONS (${label}) without leaking path`, async () => {
+      const err = await captureRejection(() =>
+        loadConfig({
+          env: env({
+            HOME: FAKE_PRIVATE_HOME,
+            DYFJ_OPERATOR_INSTRUCTIONS: value,
+          }),
+          readTextFile: notFound,
+        })
+      ) as Error;
+      assert.match(err.message, /^config: .*DYFJ_OPERATOR_INSTRUCTIONS/);
+      assert.ok(!err.message.includes("private-account"));
+      if (value.length > 4) {
+        assert.ok(!err.message.includes(value));
+      }
+    });
+  }
+
+  test("loadConfig: refuses non-string [context] operator_instructions", async () => {
+    await assert.rejects(
+      loadConfig({
+        env: env(HOME),
+        readTextFile: present,
+        parseToml: table({ context: { operator_instructions: 42 } }),
+      }),
+      /config: context\.operator_instructions must be a string/,
+    );
+  });
+
+  test("loadConfig: refuses ~/ operator_instructions when HOME is unset or relative", async () => {
+    for (const badEnv of [env({}), env({ HOME: "relative/home" })]) {
+      await assert.rejects(
+        loadConfig({
+          env: badEnv,
+          readTextFile: present,
+          parseToml: table({
+            context: { operator_instructions: "~/instructions.md" },
+          }),
+        }),
+        /HOME/,
+      );
+    }
+  });
+}

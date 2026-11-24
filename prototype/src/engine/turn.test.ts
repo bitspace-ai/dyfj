@@ -12,6 +12,7 @@ import { buildCommandToolCallEventPayload } from "../tools/mod.ts";
 import { defineBash } from "../tools/builtin/exec.ts";
 import { withheldToolResult } from "./tool-history.ts";
 import {
+  engineConfigToTurnDeps,
   executeTurn,
   type ExecuteTurnDeps,
   formatTurnSummaryLine,
@@ -490,6 +491,75 @@ test("executeTurn binds boundary config and the transport's paid verdict", async
     },
   );
   assert.deepStrictEqual(lines, [formatTurnSummaryLine(RESULT)]);
+});
+
+test("executeTurn threads operatorInstructions only on loopback turns and engineConfigToTurnDeps maps it", async () => {
+  const mapped = engineConfigToTurnDeps({
+    defaultCompanionModel: null,
+    permissionLevel: "strict",
+    approvePaidDefault: false,
+    trustWorkspaceInstructions: false,
+    defaultSessionBudgetUsd: 10,
+    defaultPerCallBudgetUsd: 0.5,
+    defaultDailyBudgetUsd: 25,
+    defaultTurnBudgetUsd: 4,
+    defaultRunawayStallUsd: 0.5,
+    maxToolSteps: 32,
+    maxToolStepsCeiling: 64,
+    operatorInstructions: "/opt/context/operator.md",
+  });
+  assert.strictEqual(mapped.operatorInstructions, "/opt/context/operator.md");
+
+  const unset = engineConfigToTurnDeps({
+    defaultCompanionModel: null,
+    permissionLevel: "strict",
+    approvePaidDefault: false,
+    trustWorkspaceInstructions: false,
+    defaultSessionBudgetUsd: 10,
+    defaultPerCallBudgetUsd: 0.5,
+    defaultDailyBudgetUsd: 25,
+    defaultTurnBudgetUsd: 4,
+    defaultRunawayStallUsd: 0.5,
+    maxToolSteps: 32,
+    maxToolStepsCeiling: 64,
+    operatorInstructions: null,
+  });
+  assert.strictEqual(unset.operatorInstructions, undefined);
+
+  let capturedLoopback: WorkbenchRuntimeInput | undefined;
+  await captureStderr(() =>
+    executeTurn(
+      resolved({ prompt: "hi" }),
+      deps({
+        loopback: true,
+        operatorInstructions: "/opt/context/operator.md",
+        runRuntime: (input) => {
+          capturedLoopback = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    )
+  );
+  assert.strictEqual(
+    capturedLoopback?.operatorInstructions,
+    "/opt/context/operator.md",
+  );
+
+  let capturedRemote: WorkbenchRuntimeInput | undefined;
+  await captureStderr(() =>
+    executeTurn(
+      resolveTurnFromBody({ prompt: "hi" }, false) as ResolvedTurn,
+      deps({
+        loopback: false,
+        operatorInstructions: "/opt/context/operator.md",
+        runRuntime: (input) => {
+          capturedRemote = input;
+          return Promise.resolve(RESULT);
+        },
+      }),
+    )
+  );
+  assert.strictEqual(capturedRemote?.operatorInstructions, undefined);
 });
 
 test("formatTurnSummaryLine reports external runner evidence without inventing model or USD facts", () => {

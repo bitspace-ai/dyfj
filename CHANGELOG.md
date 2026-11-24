@@ -11,6 +11,30 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Operator global instructions on native loopback companion turns (`BIT-981`).**
+  An optional `[context] operator_instructions` setting in `~/.dyfj/config.toml`
+  (overridable via `DYFJ_OPERATOR_INSTRUCTIONS`, accepting `~/` expansion or an
+  absolute file path; absent = no-op) loads an operator-owned global
+  instructions markdown file into native loopback companion turns. Malformed
+  values (empty strings, relative paths, `.` or `..` segments, control
+  characters, trailing slashes, paths over 4,096 UTF-8 bytes, or `~/` without a
+  valid absolute `HOME`) fail boot loudly with path-free errors. At turn time,
+  non-loopback turns never receive operator instructions (enforced at both turn
+  dispatch and context assembly), and `ask` / `next-work` turns are unchanged.
+  Parent symlinks are resolved via `realpath` on the parent directory while the
+  canonical parent must be account-owned with no group or other write bits; the
+  target leaf must be an account-owned regular file with no shared write bits,
+  refusing symlinks and non-regular files via `lstat`, `O_NOFOLLOW`, opened
+  handle `(dev, ino)` verification, and post-read parent re-verification. Files
+  must be non-empty valid UTF-8 within 65,536 bytes and 16,000 estimated tokens
+  (`len / 4`); missing, unreadable, oversized, or unsafe files degrade safely
+  without failing the turn and log a path-free warning. Loaded instructions are
+  injected into the trusted system prompt under `## Operator Instructions` ahead
+  of untrusted Dolt memories and workspace `AGENTS.md`, and recorded in receipts
+  and context sources as `operator instructions <config:context.operator_instructions>`
+  without exposing raw host paths. Covered by unit and component tests with
+  temporary directories; native shared-skills loading remains separate.
+
 - **OpenRouter upstream pinning and proactive compression ceiling
   (`BIT-976`).** An optional `[openrouter]` table pins upstreams
   (`upstream_order`, a provider name or a full endpoint slug such as

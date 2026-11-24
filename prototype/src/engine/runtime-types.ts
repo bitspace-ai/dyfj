@@ -217,6 +217,13 @@ export interface WorkbenchRuntimeInput extends WorkbenchRuntimeRequest {
    * proportional trigger; absent keeps the proportional trigger alone.
    */
   compressionTriggerTokens?: number;
+  /**
+   * Expanded absolute path to the operator's global instructions file
+   * ([context] operator_instructions / DYFJ_OPERATOR_INSTRUCTIONS), resolved
+   * at the boundary. Honored on native loopback companion turns only; remote
+   * callers never receive it.
+   */
+  operatorInstructions?: string;
   codexOperatorContext?: boolean;
   codexPath?: "operator" | "minimal";
   codexExtraPath?: string[];

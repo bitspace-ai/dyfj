@@ -41,6 +41,7 @@ import {
   readString,
 } from "./toml.ts";
 import {
+  MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES,
   parseBooleanEnv,
   readIntegerEnv,
   readMaxToolSteps,
@@ -48,9 +49,12 @@ import {
   RETIRED_ANOMALY_REPLACEMENT,
   validateLevel,
   validateMaxToolSteps,
+  validateOperatorInstructionsPath,
   validatePositiveUsd,
   validateToolStepsWithinCeiling,
 } from "./values.ts";
+
+export { MAX_OPERATOR_INSTRUCTIONS_PATH_BYTES };
 
 export interface WorkbenchConfig {
   /**
@@ -138,6 +142,12 @@ export interface WorkbenchConfig {
    * trigger. Null keeps the proportional trigger alone.
    */
   compressionTriggerTokens: number | null;
+  /**
+   * Expanded absolute path to the operator's global instructions file
+   * ([context] operator_instructions / DYFJ_OPERATOR_INSTRUCTIONS), injected
+   * into native loopback companion turns. Null leaves it unset (no-op).
+   */
+  operatorInstructions: string | null;
 }
 
 /** Bounds for `[context] compression_trigger_tokens`. */
@@ -176,6 +186,7 @@ export const CONFIG_DEFAULTS: WorkbenchConfig = {
   codexInteractiveIdleSeconds: DEFAULT_CODEX_INTERACTIVE_IDLE_SECONDS,
   openRouterConfig: null,
   compressionTriggerTokens: null,
+  operatorInstructions: null,
 };
 
 function validateCodexToolTimeout(value: number, source: string): number {
@@ -374,6 +385,14 @@ function applyEnvLayer(config: WorkbenchConfig, env: Env): void {
       schemaEnvVar("compressionTriggerTokens"),
     );
   }
+  const envOperatorInstructions = env.get(schemaEnvVar("operatorInstructions"));
+  if (envOperatorInstructions !== undefined) {
+    config.operatorInstructions = validateOperatorInstructionsPath(
+      envOperatorInstructions,
+      schemaEnvVar("operatorInstructions"),
+      env,
+    );
+  }
 
 }
 
@@ -487,6 +506,18 @@ export async function loadConfig(
       config.compressionTriggerTokens = validateCompressionTriggerTokens(
         fileCompressionTrigger,
         `${configLabel(path)} [context].compression_trigger_tokens`,
+      );
+    }
+    const fileOperatorInstructions = readString(
+      table,
+      "context",
+      "operator_instructions",
+    );
+    if (fileOperatorInstructions !== undefined) {
+      config.operatorInstructions = validateOperatorInstructionsPath(
+        fileOperatorInstructions,
+        `${configLabel(path)} [context].operator_instructions`,
+        env,
       );
     }
     const fileCeiling = readNumber(table, "agent", "max_tool_steps_ceiling");
