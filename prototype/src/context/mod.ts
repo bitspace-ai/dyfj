@@ -3,7 +3,8 @@
  * and the session's history.
  *
  * Responsibility: workspace/repo context packing and AGENTS.md loading
- * (`repo-context.ts`), companion prompt composition (`prompts.ts`), transcript
+ * (`repo-context.ts`), operator global instructions loading
+ * (`operator-instructions.ts`), companion prompt composition (`prompts.ts`), transcript
  * compression (`compression.ts`), length-stop and context-overflow recovery
  * (`length-recovery.ts`), request fitting against the model's context
  * window (`request-fit.ts`), and the conversation projection that rebuilds
@@ -17,6 +18,7 @@ export * from "./compression.ts";
 export * from "./conversation.ts";
 export * from "./dev-boot-failure.ts";
 export * from "./length-recovery.ts";
+export * from "./operator-instructions.ts";
 export * from "./prompts.ts";
 export * from "./repo-context.ts";
 export * from "./request-fit.ts";

@@ -5,7 +5,9 @@
  * system prompt, the context sources, and the `contextBuilt` frame.
  */
 import assert from "node:assert/strict";
-import { realpath } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { mock, test } from "node:test";
 import {
   type EngineFakes,
@@ -24,6 +26,7 @@ import {
   AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
   buildContext,
   buildWorkspaceGrounding,
+  OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE,
 } from "./build-context.ts";
 import { WorkspaceContextUnavailableError } from "./errors.ts";
 import { openSession, recordNewSession } from "./open-session.ts";
@@ -705,4 +708,186 @@ test("a remote companion turn is not offered workbench.models", async () => {
     authContext: REMOTE,
   });
   assert.strictEqual(state.commandRegistry.lookup("workbench.models"), undefined);
+});
+
+// ─── operator global instructions (BIT-981) ──────────────────────────────────
+
+const OPERATOR_BODY =
+  "# Global Operating Context\n\nAnswer conclusions first and avoid corporate filler.";
+
+async function tempOperatorFile(
+  content: string,
+  options: { dirMode?: number; fileMode?: number } = {},
+): Promise<{ dir: string; filePath: string; cleanup: () => Promise<void> }> {
+  const dir = await mkdtemp(path.join(tmpdir(), "op-instructions-ctx-"));
+  await chmod(dir, options.dirMode ?? 0o700);
+  const filePath = path.join(dir, "operator-instructions.md");
+  await writeFile(filePath, content, { mode: options.fileMode ?? 0o600 });
+  await chmod(filePath, options.fileMode ?? 0o600);
+  return {
+    dir,
+    filePath,
+    cleanup: () => rm(dir, { recursive: true, force: true }),
+  };
+}
+
+test("loopback companion turn injects operator instructions ahead of memories and AGENTS.md", async () => {
+  await using root = await tempWorkspace({ "AGENTS.md": AGENTS_BODY });
+  const op = await tempOperatorFile(OPERATOR_BODY);
+  try {
+    const fakes = enginePorts();
+    const { state, frames } = await runContext({
+      rootOverride: root.root,
+      trustWorkspaceInstructions: true,
+      operatorInstructions: op.filePath,
+    }, fakes);
+
+    assert.ok(
+      state.systemPrompt.includes(
+        `## Operator Instructions\n${OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE}\n\n${OPERATOR_BODY}`,
+      ),
+      "expected framed ## Operator Instructions section in system prompt",
+    );
+    // Ordering: operator instructions sit ahead of untrusted Dolt memories and workspace AGENTS.md.
+    const operatorAt = state.systemPrompt.indexOf("## Operator Instructions");
+    const memoryAt = state.systemPrompt.indexOf("Memory Safety:");
+    const agentsAt = state.systemPrompt.indexOf("## AGENTS.md");
+    assert.ok(operatorAt >= 0 && memoryAt > operatorAt, "operator instructions must precede Dolt memories");
+    assert.ok(agentsAt > memoryAt, "AGENTS.md must follow Dolt memories");
+
+    // Path hygiene: raw host path never reaches model-visible text or context source lines.
+    assert.ok(!state.systemPrompt.includes(op.dir));
+    assert.ok(!state.systemPrompt.includes(op.filePath));
+    assert.strictEqual(
+      state.contextSourceLines[0],
+      "operator instructions <config:context.operator_instructions>",
+    );
+    assert.ok(
+      !state.contextSourceLines.some((line) => line.includes(op.dir)),
+      "contextSourceLines must not leak raw host path",
+    );
+    // 1 operator instructions + 2 default memories + 1 AGENTS.md = 4
+    assert.deepStrictEqual(contextBuilt(frames).sourceCount, 4);
+
+    // Session detail receipt reflects the loaded operator instructions source.
+    await recordNewSession(state, fakes.ports);
+    const row = await fakes.store.sessions.detail({
+      sessionId: state.session.sessionId,
+    });
+    assert.ok((row?.content ?? "").includes("operator instructions"));
+  } finally {
+    await op.cleanup();
+  }
+});
+
+test("non-loopback companion turn never receives operator instructions or source line", async () => {
+  await using root = await tempWorkspace();
+  const op = await tempOperatorFile(OPERATOR_BODY);
+  try {
+    const { state, frames } = await runContext({
+      rootOverride: root.root,
+      authContext: REMOTE,
+      operatorInstructions: op.filePath,
+    });
+
+    assert.ok(!state.systemPrompt.includes("## Operator Instructions"));
+    assert.ok(!state.systemPrompt.includes("Global Operating Context"));
+    assert.ok(
+      !state.contextSourceLines.some((line) =>
+        line.includes("operator instructions")
+      ),
+    );
+    assert.deepStrictEqual(contextBuilt(frames).sourceCount, 2);
+  } finally {
+    await op.cleanup();
+  }
+});
+
+for (const mode of ["ask", "next-work"] as const) {
+  test(`${mode} turns do not inject operator instructions`, async () => {
+    await using root = await tempWorkspace({ "README.md": "ROOT" });
+    const op = await tempOperatorFile(OPERATOR_BODY);
+    try {
+      const { state } = await runContext({
+        mode,
+        rootOverride: root.root,
+        operatorInstructions: op.filePath,
+      });
+
+      assert.ok(!state.systemPrompt.includes("## Operator Instructions"));
+      assert.ok(!state.systemPrompt.includes("Global Operating Context"));
+      assert.ok(
+        !state.contextSourceLines.some((line) =>
+          line.includes("operator instructions")
+        ),
+      );
+    } finally {
+      await op.cleanup();
+    }
+  });
+}
+
+test("unreadable or unsafe operator instructions file degrades safely with warning and no injection", async () => {
+  await using root = await tempWorkspace();
+  const op = await tempOperatorFile(OPERATOR_BODY, { fileMode: 0o620 });
+  const warn = mock.method(console, "warn", () => {});
+  try {
+    const { state, frames, error } = await runContext({
+      rootOverride: root.root,
+      operatorInstructions: op.filePath,
+    });
+
+    assert.strictEqual(error, null);
+    assert.ok(!state.systemPrompt.includes("## Operator Instructions"));
+    assert.ok(!state.systemPrompt.includes("Global Operating Context"));
+    assert.deepStrictEqual(contextBuilt(frames).sourceCount, 2);
+    assert.ok(warn.mock.callCount() >= 1);
+    assert.ok(
+      warn.mock.calls.every((call) => !String(call.arguments[0]).includes(op.dir)),
+      "warning must not leak raw host path",
+    );
+  } finally {
+    warn.mock.restore();
+    await op.cleanup();
+  }
+});
+
+test("loopback companion turn with empty Dolt memories composes operator instructions cleanly", async () => {
+  await using root = await tempWorkspace();
+  const op = await tempOperatorFile(OPERATOR_BODY);
+  try {
+    const fakes = enginePorts();
+    const emptyMemoriesStore: Store = {
+      ...fakes.store,
+      journal: fakes.store.journal,
+      events: fakes.store.events,
+      sessions: fakes.store.sessions,
+      models: fakes.store.models,
+      prompts: fakes.store.prompts,
+      spend: fakes.store.spend,
+      close: () => fakes.store.close(),
+      memories: {
+        ...fakes.store.memories,
+        injected: () => Promise.resolve([]),
+        indexed: () => Promise.resolve([]),
+      },
+    };
+    const { state, frames } = await runContext(
+      { rootOverride: root.root, operatorInstructions: op.filePath },
+      { ...fakes, ports: { ...fakes.ports, store: emptyMemoriesStore } },
+    );
+
+    assert.ok(
+      state.systemPrompt.startsWith(
+        `## Operator Instructions\n${OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE}\n\n${OPERATOR_BODY}`,
+      ),
+    );
+    assert.ok(!state.systemPrompt.includes("\n\n---\n\n"));
+    assert.deepStrictEqual(state.contextSourceLines, [
+      "operator instructions <config:context.operator_instructions>",
+    ]);
+    assert.deepStrictEqual(contextBuilt(frames).sourceCount, 1);
+  } finally {
+    await op.cleanup();
+  }
 });

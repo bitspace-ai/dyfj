@@ -206,6 +206,12 @@ export interface ExecuteTurnDeps {
   openRouterConfig?: OpenRouterConfig;
   /** Proactive-compression token ceiling (config), resolved at the boundary. */
   compressionTriggerTokens?: number;
+  /**
+   * Expanded path to operator global instructions ([context]
+   * operator_instructions / DYFJ_OPERATOR_INSTRUCTIONS), resolved at the
+   * boundary. Loopback turns only — remote transports never inherit.
+   */
+  operatorInstructions?: string;
   codexOperatorContext?: boolean;
   codexPath?: "operator" | "minimal";
   codexExtraPath?: string[];
@@ -236,7 +242,7 @@ export function engineConfigToTurnDeps(
   > & Partial<
     Pick<
       WorkbenchConfig,
-      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow" | "openRouterConfig" | "compressionTriggerTokens"
+      "codexReasoningEffort" | "codexInteractiveIdleSeconds" | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow" | "openRouterConfig" | "compressionTriggerTokens" | "operatorInstructions"
     >
   >,
 ): Pick<
@@ -257,6 +263,7 @@ export function engineConfigToTurnDeps(
   | "codexOperatorContext" | "codexPath" | "codexExtraPath" | "codexEnvAllow"
   | "openRouterConfig"
   | "compressionTriggerTokens"
+  | "operatorInstructions"
 > {
   return {
     defaultCompanionModel: config.defaultCompanionModel,
@@ -290,6 +297,10 @@ export function engineConfigToTurnDeps(
         config.compressionTriggerTokens === undefined
       ? {}
       : { compressionTriggerTokens: config.compressionTriggerTokens }),
+    ...(config.operatorInstructions === null ||
+        config.operatorInstructions === undefined
+      ? {}
+      : { operatorInstructions: config.operatorInstructions }),
   };
 }
 
@@ -435,6 +446,11 @@ function runExecuteTurn(
     ...(deps.compressionTriggerTokens === undefined
       ? {}
       : { compressionTriggerTokens: deps.compressionTriggerTokens }),
+    // Operator global instructions: loopback turns only; remote callers never
+    // inherit operator-local context files.
+    ...(deps.loopback && deps.operatorInstructions !== undefined
+      ? { operatorInstructions: deps.operatorInstructions }
+      : {}),
     // config-file budget defaults override the env-only boundary resolver
     ...(deps.defaultSessionBudgetUsd !== undefined
       ? { defaultSessionBudgetUsd: deps.defaultSessionBudgetUsd }
