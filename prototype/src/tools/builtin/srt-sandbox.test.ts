@@ -33,6 +33,7 @@ import {
   type CommandSandbox,
   describeSandbox,
   ensureScratchDir,
+  GIT_DIR_DENIED_NOTE,
   offSandbox,
   sandboxNetwork,
   SRT_BACKEND,
@@ -90,7 +91,7 @@ describe("the workspace policy", () => {
         branchRef: "refs/heads/agent/session",
       }),
     });
-    assert.equal(policy.mainCheckout, false);
+    assert.equal(policy.gitDirDenied, false);
     assert.deepEqual(policy.filesystem.allowWrite, [
       wt,
       join(common, "objects"),
@@ -134,10 +135,12 @@ describe("the workspace policy", () => {
     );
   });
 
-  it("a main checkout's whole .git is write-denied", async () => {
+  it("a main checkout on macOS denies host-execution, pointer and shared-integrity paths under .git", async () => {
     const gitDir = join(base, ".git");
     mkdirSync(gitDir);
     const policy = await compileWorkspacePolicy(base, {
+      home: "/fake-home",
+      platform: "darwin",
       readLayout: layout({
         gitDir,
         commonDir: gitDir,
@@ -145,9 +148,43 @@ describe("the workspace policy", () => {
         branchRef: "refs/heads/main",
       }),
     });
-    assert.equal(policy.mainCheckout, true);
+    assert.equal(policy.gitDirDenied, false);
     assert.deepEqual(policy.filesystem.allowWrite, [base]);
-    assert.deepEqual(policy.filesystem.denyWrite, [join(homedir(), ".dyfj"), gitDir]);
+    assert.deepEqual(policy.filesystem.denyWrite, [
+      "/fake-home/.dyfj",
+      join(gitDir, "config"),
+      join(gitDir, "config.worktree"),
+      join(gitDir, "commondir"),
+      join(gitDir, "gitdir"),
+      join(gitDir, "hooks"),
+      join(gitDir, "info"),
+      join(gitDir, "objects", "pack"),
+      join(gitDir, "objects", "info"),
+      join(gitDir, "packed-refs"),
+      join(gitDir, "shallow"),
+      join(gitDir, "worktrees"),
+      join(gitDir, "refs", "remotes"),
+      join(gitDir, "refs", "tags"),
+      join(gitDir, "refs", "replace"),
+    ]);
+  });
+
+  it("a main checkout on Linux write-denies the whole .git directory", async () => {
+    const gitDir = join(base, ".git");
+    mkdirSync(gitDir);
+    const policy = await compileWorkspacePolicy(base, {
+      home: "/fake-home",
+      platform: "linux",
+      readLayout: layout({
+        gitDir,
+        commonDir: gitDir,
+        topLevel: base,
+        branchRef: "refs/heads/main",
+      }),
+    });
+    assert.equal(policy.gitDirDenied, true);
+    assert.deepEqual(policy.filesystem.allowWrite, [base]);
+    assert.deepEqual(policy.filesystem.denyWrite, ["/fake-home/.dyfj", gitDir]);
   });
 
   it("a directory outside any repository may write only itself", async () => {
@@ -343,7 +380,9 @@ describe("the boot", () => {
 });
 
 /** A sandbox that is on and records what it ran. */
-function recordingSandbox(): CommandSandbox & { ran: string[] } {
+function recordingSandbox(
+  opts: { gitDirDenied?: boolean; result?: Partial<BoundedResult> } = {},
+): CommandSandbox & { ran: string[] } {
   const ran: string[] = [];
   const result: BoundedResult = {
     code: 0,
@@ -351,6 +390,7 @@ function recordingSandbox(): CommandSandbox & { ran: string[] } {
     stdout: "ok",
     stderr: "",
     timedOut: false,
+    ...opts.result,
   };
   return {
     ran,
@@ -358,7 +398,7 @@ function recordingSandbox(): CommandSandbox & { ran: string[] } {
     policy: () =>
       Promise.resolve({
         filesystem: { allowWrite: [], denyWrite: [], denyRead: [], allowRead: [] },
-        mainCheckout: false,
+        gitDirDenied: opts.gitDirDenied ?? false,
       }),
     runShell: (command) => {
       ran.push(command);
@@ -436,6 +476,40 @@ describe("approval on the sandboxed route", () => {
     assert.deepEqual(sandbox.ran, ["echo hi"]);
     assert.equal(native, false);
     assert.match(String(out), /^exit 0\nok/);
+  });
+
+  it("when gitDirDenied is true (Linux main checkout), git refuses add/commit with a clear note while status still runs", async () => {
+    const sandbox = recordingSandbox({ gitDirDenied: true });
+    const git = defineGit(base, { env: new MapEnv({}), sandbox });
+    for (const args of [{ subcommand: "add", paths: ["a.txt"] }, { subcommand: "commit", message: "msg" }]) {
+      const out = String(
+        await git.executor(
+          { ...bashCall(""), commandId: "git", arguments: args },
+          { authzBasis: "policy:allow:sandboxed" },
+        ),
+      );
+      assert.match(out, /^error: refusing to run git (add|commit) in the sandbox:/);
+      assert.ok(out.includes(GIT_DIR_DENIED_NOTE.replace(/^note: /, "")), out);
+    }
+    assert.deepEqual(sandbox.ran, []);
+    const status = String(
+      await git.executor(
+        { ...bashCall(""), commandId: "git", arguments: { subcommand: "status" } },
+        { authzBasis: "policy:allow:sandboxed" },
+      ),
+    );
+    assert.match(status, /^exit 0\nok/);
+    assert.equal(sandbox.ran.length, 1);
+  });
+
+  it("when gitDirDenied is true (Linux main checkout), bash appends the note on a failed .git write", async () => {
+    const sandbox = recordingSandbox({
+      gitDirDenied: true,
+      result: { code: 128, stdout: "", stderr: "fatal: Unable to create '/repo/.git/index.lock': Read-only file system" },
+    });
+    const bash = defineBash(base, { env: new MapEnv({}), sandbox });
+    const out = String(await bash.executor(bashCall("git add a.txt"), { authzBasis: "policy:allow:sandboxed" }));
+    assert.ok(out.includes(GIT_DIR_DENIED_NOTE), out);
   });
 });
 

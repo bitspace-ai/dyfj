@@ -812,6 +812,48 @@ entries). The planned follow-up for all of these is an OS-level sandbox that
 scopes the runtime's own process (its network, processes and files) without
 reaching into the Node processes it starts.
 
+**Tool sandbox (`srt`).** On macOS (Seatbelt) and Linux (`bubblewrap` with
+seccomp), Workbench wraps `bash`, `git`, and file-write calls through
+Anthropic's `@anthropic-ai/sandbox-runtime` (`srt`), scoped to the session's
+launch workspace root (`--workspace <path>`). Dispatched child sessions can
+target a linked worktree only when `[dispatch] roots` in `~/.dyfj/config.toml`
+includes the directory containing those worktrees. Writes stay inside the
+workspace, `srt`'s scratch directory, and `~/.npm/_logs`, with credential paths
+and `~/.dyfj` read-denied and GitHub domains always network-denied:
+
+- **Main checkout (`gitDir === commonDir`):**
+  - On **macOS (Seatbelt)**, sandboxed `git add` and `git commit` work out of
+    the box (through native `git`, the Codex-bridged `git` tool, and sandboxed
+    `bash`) while keeping host-execution, pointer, and shared-integrity paths
+    under `.git` write-denied (with Seatbelt move-blocking): `.git/config`,
+    `.git/config.worktree`, `.git/commondir`, `.git/gitdir`, `.git/hooks`,
+    `.git/info`, `.git/objects/pack`, `.git/objects/info`, `.git/packed-refs`,
+    `.git/shallow`, `.git/worktrees`, `.git/refs/remotes`, `.git/refs/tags`,
+    and `.git/refs/replace`. _Stated residuals:_ because `srt`'s `denyWrite`
+    overrides `allowWrite`, a main checkout cannot deny `.git/refs/heads` while
+    allowing only the checked-out branch, so a sandboxed command in a macOS
+    main checkout can modify other local branch refs under `.git/refs/heads/*`
+    and `HEAD`; it can also write `.git/refs/notes/*`, and in repositories
+    using `extensions.refStorage=reftable` (where refs live under
+    `.git/reftable/`), the `refs/remotes`, `refs/tags`, and `refs/replace` path
+    denies do not apply.
+  - On **Linux (`bubblewrap`)**, the entire `.git` directory stays write-denied
+    in a main checkout (read-only `git status`, `diff`, and `log` work, while
+    sandboxed `git add` and `git commit` fail closed with a clear message):
+    `bwrap` blocks absent `denyWrite` targets via placeholder bind mounts that
+    break `git`'s own reads of `.git/commondir` and absent `.git/packed-refs`.
+- **Linked worktree (`gitDir !== commonDir`):** automatically receives tighter
+  isolation - writes are granted only to the worktree's own metadata, loose
+  objects in the shared object store, and the single checked-out branch's ref,
+  lock file, and reflog, while other branches, other worktrees, and the shared
+  config/hooks/info and pointer files stay write-denied.
+- **Publish layout check:** `publish` verifies that the layout is a trusted
+  linked worktree or main checkout whose shared `config`, `config.worktree`,
+  `hooks`, and `info`, as well as `commondir` and `gitdir` under the
+  checkout's git directory, are write-denied (satisfied by both the macOS
+  targeted deny list and Linux whole-`.git` denial) and whose shared config
+  carries no `include` or `includeIf`.
+
 **The contained Linux target (opt-in, attended).** An OrbStack isolated
 machine (`prototype/sandbox/linux/`) enforces the effective policy below the
 seams. There is no Mac file sharing, SSH agent forwarding or Mac-command
@@ -1934,8 +1976,12 @@ and its dispatch depth is `0`, the four coordinator tools through the Workbench
 tool bridge. Every Codex turn with a resolved primary workspace also gets the
 native `git` tool, even without dispatch or configured MCP servers. The tool
 uses typed arguments for `status`, `diff`, `log`, `add` and `commit`, with no
-amend, network subcommands or history rewriting. Sandboxed `add` and `commit`
-require a linked worktree; read operations remain available in a main checkout.
+amend, network subcommands or history rewriting. On macOS, sandboxed `add` and
+`commit` work in both linked worktrees and main checkouts, keeping
+host-execution, pointer, and shared-integrity paths under `.git` write-denied
+(linked worktrees further isolate writes to the single checked-out branch ref);
+on Linux (`bwrap`), main checkouts keep `.git` write-denied while read-only
+operations (`status`, `diff`, `log`) continue to work.
 Git hooks and helpers retain the native tool's containment and network limits.
 The tool uses the primary workspace, never an added directory.
 A command's name is mapped to letters, digits, `_` and `-`; two commands whose
@@ -1964,8 +2010,8 @@ With srt on, it runs without a prompt under the `operator` posture on the local
 socket (`policy:allow:sandboxed`); strict turns ask unless an existing session
 grant covers the call. Without containment it always asks. A configured
 isolated executor takes precedence over srt and keeps its native
-attested-envelope approval rule. Sandboxed `add` and `commit` are refused in a
-main checkout; read operations still work. Codex's own shell commands retain
+attested-envelope approval rule. Sandboxed `add` and `commit` follow the srt
+workspace policy in both linked worktrees and main checkouts. Codex's own shell commands retain
 their existing approval behavior: a shell `git add` or `git commit` that needs
 to leave Codex's sandbox still asks. Codex's sandbox and writable roots are
 unchanged.
@@ -3808,3 +3854,14 @@ Document revisions only. Code and behavior changes are tracked in
   validation, ownership/permission/TOCTOU/size bounds, absent-file degradation,
   prompt placement ahead of Dolt memories and `AGENTS.md`, and path-free receipt
   reporting.
+- 2026-11-23 - Document the `srt` tool sandbox policy for main checkouts:
+  on macOS (Seatbelt), sandboxed `git add` and `git commit` succeed while
+  host-execution, pointer, and shared-integrity paths under `.git` stay
+  write-denied (with stated residuals for `.git/refs/heads/*`, `HEAD`,
+  `.git/refs/notes/*`, and `extensions.refStorage=reftable` repositories); on
+  Linux (`bwrap`), main checkouts keep `.git` write-denied so read-only git
+  continues to work and writes fail closed with a clear refusal. Document the
+  automatic single-branch isolation of linked worktrees and the updated
+  `publish` layout trust check, and keep `docs/agents/rooms.md` harness-neutral
+  by carrying Workbench-specific `--workspace` and `[dispatch] roots` notes
+  here instead.

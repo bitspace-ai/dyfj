@@ -57,7 +57,7 @@ import {
 } from "./executor-transport.ts";
 import {
   type CommandSandbox,
-  MAIN_CHECKOUT_NOTE,
+  GIT_DIR_DENIED_NOTE,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
@@ -366,8 +366,8 @@ function bashReach(route: BashRoute): string {
     : route === "sandboxed"
     ? ". The command runs in an OS sandbox: it can write only in the " +
       "workspace, srt's scratch directory ($TMPDIR), npm's log directory " +
-      "(~/.npm/_logs) and what a commit on the " +
-      "session branch needs; it can reach only the npm registry and the " +
+      "(~/.npm/_logs) and what a commit needs (scoped to the session branch " +
+      "in a linked worktree); it can reach only the npm registry and the " +
       "domains the operator allowed (never GitHub); and it cannot read the " +
       "credential paths on the sandbox's deny list. Writes and connects " +
       "outside that are refused (on macOS, \"Operation not permitted\"). " +
@@ -378,8 +378,9 @@ function bashReach(route: BashRoute): string {
 
 /**
  * A runner that runs each command in `sandbox`, with npm's cache moved under
- * srt's scratch directory. A failed command in a main checkout gets a note
- * saying that sandboxed commits need a linked worktree.
+ * srt's scratch directory. When the platform's sandbox write-denies a main
+ * checkout's entire `.git` directory (Linux `bwrap`), a failed command whose
+ * stderr mentions `.git` carries `GIT_DIR_DENIED_NOTE`.
  */
 function sandboxedBashRunner(
   sandbox: CommandSandbox,
@@ -394,12 +395,12 @@ function sandboxedBashRunner(
     });
     if (result.code !== 0 && /\.git\b/.test(result.stderr)) {
       const policy = await sandbox.policy(root).catch(() => undefined);
-      if (policy?.mainCheckout === true) {
+      if (policy?.gitDirDenied === true) {
         return {
           ...result,
           stderr: `${result.stderr}${
             result.stderr.endsWith("\n") ? "" : "\n"
-          }${MAIN_CHECKOUT_NOTE}`,
+          }${GIT_DIR_DENIED_NOTE}`,
         };
       }
     }

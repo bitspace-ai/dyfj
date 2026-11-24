@@ -19,8 +19,26 @@
  * later host-side git would run.
  *
  * A workspace whose git directory is a main checkout's `.git` (not a linked
- * worktree) gets the whole `.git` write-denied, so a sandboxed commit there
- * fails; `mainCheckout` lets the tools say so ("use a worktree").
+ * worktree):
+ * - On macOS (Seatbelt), allows sandboxed `git add` and `git commit` while
+ *   write-denying the host-execution, pointer, and shared-integrity paths
+ *   under `.git`: `config`, `config.worktree`, `commondir`, `gitdir`, `hooks`,
+ *   `info`, `objects/pack`, `objects/info`, `packed-refs`, `shallow`,
+ *   `worktrees`, `refs/remotes`, `refs/tags`, and `refs/replace` (with
+ *   Seatbelt move-blocking on `.git` and those entries). Because srt's
+ *   `denyWrite` overrides `allowWrite`, a main checkout cannot deny
+ *   `.git/refs/heads` while allowing only the checked-out branch; other local
+ *   branch refs under `.git/refs/heads/*` and `HEAD` therefore remain writable
+ *   in a main checkout, along with `.git/refs/notes/*` and repositories using
+ *   `extensions.refStorage=reftable` (where refs live under `.git/reftable/`
+ *   rather than `refs/`), whereas a linked worktree isolates writes to the
+ *   single checked-out branch ref.
+ * - On Linux (`bwrap`), keeps the entire `.git` directory write-denied
+ *   (`gitDirDenied: true`): `bwrap` blocks absent `denyWrite` targets via
+ *   placeholder bind mounts that break `git`'s own reads of `.git/commondir`
+ *   and absent `.git/packed-refs`. Read-only `git` commands (`status`, `diff`,
+ *   `log`) continue to work, while sandboxed `git add` and `git commit` fail
+ *   closed with a clear note.
  *
  * In the shared object store, a commit needs only to add loose objects, so
  * the packfiles and the store's `info` directory (alternates, the pack
@@ -29,8 +47,11 @@
  *
  * Residuals, stated rather than closed: a sandboxed command can add, delete
  * or overwrite loose (not yet packed) objects in the shared object store,
- * which every worktree reads; it can retarget this worktree's own HEAD, and
- * delete or recreate the session branch's own ref.
+ * which every worktree reads; it can retarget its checkout's `HEAD`, and
+ * delete or recreate the session branch's own ref (and, in a macOS main
+ * checkout, other local branch refs under `.git/refs/heads/*`,
+ * `.git/refs/notes/*`, and refs in `extensions.refStorage=reftable`
+ * repositories).
  * srt also keeps its own scratch writable (`/tmp/claude`, shared by every
  * sandboxed command of this user) and `~/.npm/_logs`.
  *
@@ -43,14 +64,16 @@
  * off. The sandbox (`srt-sandbox.ts`) pins the layout it finds the first
  * time per workspace, before any sandboxed command has run there, and
  * passes it back as `pinnedLayout`. A linked worktree's four pointer files
- * are write-denied, and a main checkout's whole `.git` is; a workspace that
- * had no repository at first stays without git grants, whatever a
- * sandboxed command later creates in it.
+ * are write-denied, a macOS main checkout's protected subpaths under `.git`
+ * are write-denied, and a Linux main checkout's whole `.git` is write-denied;
+ * a workspace that had no repository at first stays without git grants,
+ * whatever a sandboxed command later creates in it.
  */
 
 import { mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import process from "node:process";
 import { runBounded } from "./bounded-process.ts";
 
 /**
@@ -121,8 +144,12 @@ export interface WorkspaceFilesystemPolicy {
 
 export interface WorkspacePolicy {
   filesystem: WorkspaceFilesystemPolicy;
-  /** The workspace's git directory is a main checkout's `.git`, all write-denied. */
-  mainCheckout: boolean;
+  /**
+   * True when the platform's sandbox write-denies the entire `.git` directory
+   * of a main checkout (Linux `bwrap`), so sandboxed `git add`/`commit` cannot
+   * succeed while read-only git commands still work.
+   */
+  gitDirDenied: boolean;
 }
 
 /** What host-side git says about the workspace; null outside a repository. */
@@ -203,6 +230,8 @@ export interface CompileOptions {
    */
   extraDenyRead?: readonly string[];
   readLayout?: GitLayoutReader;
+  /** Target OS platform for main-checkout `.git` policy selection; defaults to `process.platform`. */
+  platform?: NodeJS.Platform;
 }
 
 /**
@@ -215,10 +244,11 @@ export async function compileWorkspacePolicy(
   options: CompileOptions = {},
 ): Promise<WorkspacePolicy> {
   const home = options.home ?? homedir();
+  const platform = options.platform ?? process.platform;
   const workspace = realpathSync(root);
   const allowWrite = [workspace];
   const denyWrite: string[] = [join(home, ".dyfj")];
-  let mainCheckout = false;
+  let gitDirDenied = false;
 
   const layout = options.pinnedLayout !== undefined
     ? options.pinnedLayout
@@ -229,10 +259,38 @@ export async function compileWorkspacePolicy(
   if (layout !== null) {
     const { gitDir, commonDir, topLevel, branchRef } = layout;
     if (gitDir === commonDir) {
-      // A main checkout: its `.git` holds every branch's refs and the
-      // config, so none of it is writable.
-      mainCheckout = true;
-      denyWrite.push(gitDir);
+      if (platform === "darwin") {
+        // A main checkout on macOS (Seatbelt): allow commits under `.git` while
+        // keeping host-execution, pointer, packed-object, remote/tag/replace,
+        // shallow and worktree-metadata paths write-denied. Because `denyWrite`
+        // overrides `allowWrite` in srt, `.git/refs/heads` cannot be denied
+        // while allowing only the checked-out branch (stated residual vs a
+        // linked worktree, alongside `.git/refs/notes/*` and
+        // `extensions.refStorage=reftable` repositories).
+        denyWrite.push(
+          join(gitDir, "config"),
+          join(gitDir, "config.worktree"),
+          join(gitDir, "commondir"),
+          join(gitDir, "gitdir"),
+          join(gitDir, "hooks"),
+          join(gitDir, "info"),
+          join(gitDir, "objects", "pack"),
+          join(gitDir, "objects", "info"),
+          join(gitDir, "packed-refs"),
+          join(gitDir, "shallow"),
+          join(gitDir, "worktrees"),
+          join(gitDir, "refs", "remotes"),
+          join(gitDir, "refs", "tags"),
+          join(gitDir, "refs", "replace"),
+        );
+      } else {
+        // On Linux (`bwrap`), blocking absent `denyWrite` entries under a
+        // writable `.git` creates placeholder bind mounts that break git's
+        // reads of `.git/commondir` and absent `.git/packed-refs`. Keep the
+        // whole `.git` write-denied so read-only git works and writes fail closed.
+        gitDirDenied = true;
+        denyWrite.push(gitDir);
+      }
     } else {
       allowWrite.push(join(commonDir, "objects"), gitDir);
       const ref = branchRef === null ? null : refPath(branchRef);
@@ -279,6 +337,6 @@ export async function compileWorkspacePolicy(
       ],
       allowRead: [],
     },
-    mainCheckout,
+    gitDirDenied,
   };
 }

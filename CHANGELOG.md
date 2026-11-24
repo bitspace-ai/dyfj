@@ -757,6 +757,29 @@ README are tracked separately in its Revision history section.
 
 ### Changed
 
+- **Sandboxed git writes in a main checkout (`BIT-980`).** On macOS (Seatbelt),
+  Workbench now allows sandboxed `git add` and `git commit` in a normal main
+  checkout through the native `git` tool, the Codex-bridged `git` tool, and
+  sandboxed `bash` without requiring a linked worktree. Rather than
+  write-denying the entire `.git` directory on macOS, the main-checkout sandbox
+  policy write-denies `.git/config`, `.git/config.worktree`, `.git/commondir`,
+  `.git/gitdir`, `.git/hooks`, `.git/info`, `.git/objects/pack`,
+  `.git/objects/info`, `.git/packed-refs`, `.git/shallow`, `.git/worktrees`,
+  `.git/refs/remotes`, `.git/refs/tags`, and `.git/refs/replace`. On Linux
+  (`bubblewrap`), main checkouts keep the entire `.git` directory write-denied
+  so read-only `git status`, `diff`, and `log` continue to work while sandboxed
+  `add` and `commit` fail closed with a clear message. `publish` layout
+  verification accepts trusted main checkouts on both platforms where `config`,
+  `config.worktree`, `hooks`, `info`, `commondir`, and `gitdir` are
+  write-denied. _Stated residuals in a macOS main checkout:_ a sandboxed
+  command can still modify other local branch refs under `.git/refs/heads/*`,
+  `HEAD`, and `.git/refs/notes/*`, and in repositories using
+  `extensions.refStorage=reftable` the `refs/remotes`, `refs/tags`, and
+  `refs/replace` path denies do not apply; linked worktrees continue to isolate
+  writes to the single checked-out branch ref. `docs/agents/rooms.md` now keeps
+  this repository's linked-worktree workflow rule harness-neutral, with
+  Workbench-specific sandbox and workspace documentation in `README.md`.
+
 - **Display-only ACP message breaks (`BIT-925`).** A change of message ID
   separates streamed agent messages with a blank line, topping up existing
   newlines; recorded response text and durable resume remain unchanged.
