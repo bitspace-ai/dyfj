@@ -72,6 +72,7 @@ import type { CommandDefinition } from "../definition.ts";
 import { createContainment } from "./containment.ts";
 import {
   type CommandSandbox,
+  GIT_DIR_DENIED_NOTE,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import {
@@ -440,6 +441,9 @@ function sandboxedRunner(
     });
 }
 
+/** The subcommands that write under `.git`. */
+const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
+
 /**
  * Run one allowed git operation and return a single string carrying the exit
  * status and combined stdout/stderr. On the normal path the collected body is
@@ -660,6 +664,19 @@ export function defineGit(
     // the raw result stays out of the durable event log (CWE-532).
     redactResult: true,
     executor: async (call, context) => {
+      // On platforms where the sandbox write-denies the entire `.git`
+      // directory of a main checkout (Linux `bwrap`), fail with a clear
+      // operator-facing message on `add`/`commit` instead of a bare git error.
+      if (
+        sandbox !== undefined &&
+        GIT_WRITE_SUBCOMMANDS.has(String(call.arguments.subcommand)) &&
+        (await sandbox.policy(root).catch(() => undefined))?.gitDirDenied ===
+          true
+      ) {
+        return `error: refusing to run git ${
+          String(call.arguments.subcommand)
+        } in the sandbox: ${GIT_DIR_DENIED_NOTE.replace(/^note: /, "")}`;
+      }
       return executeGit(root, {
         subcommand: call.arguments.subcommand,
         paths: call.arguments.paths,

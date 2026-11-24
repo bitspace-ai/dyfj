@@ -57,6 +57,7 @@ import {
 } from "./executor-transport.ts";
 import {
   type CommandSandbox,
+  GIT_DIR_DENIED_NOTE,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
@@ -377,19 +378,34 @@ function bashReach(route: BashRoute): string {
 
 /**
  * A runner that runs each command in `sandbox`, with npm's cache moved under
- * srt's scratch directory.
+ * srt's scratch directory. When the platform's sandbox write-denies a main
+ * checkout's entire `.git` directory (Linux `bwrap`), a failed command whose
+ * stderr mentions `.git` carries `GIT_DIR_DENIED_NOTE`.
  */
 function sandboxedBashRunner(
   sandbox: CommandSandbox,
   root: string,
 ): BashRunner {
-  return (command, cwd, timeoutMs, env) =>
-    sandbox.runShell(command, {
+  return async (command, cwd, timeoutMs, env) => {
+    const result = await sandbox.runShell(command, {
       root,
       cwd,
       timeoutMs,
       env: { ...env, npm_config_cache: SANDBOX_NPM_CACHE },
     });
+    if (result.code !== 0 && /\.git\b/.test(result.stderr)) {
+      const policy = await sandbox.policy(root).catch(() => undefined);
+      if (policy?.gitDirDenied === true) {
+        return {
+          ...result,
+          stderr: `${result.stderr}${
+            result.stderr.endsWith("\n") ? "" : "\n"
+          }${GIT_DIR_DENIED_NOTE}`,
+        };
+      }
+    }
+    return result;
+  };
 }
 
 /** bash's description, per route. */

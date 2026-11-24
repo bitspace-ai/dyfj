@@ -438,6 +438,18 @@ export function sandboxContainment(sandbox: CommandSandbox): Containment {
   };
 }
 
+/**
+ * Returned by the git tool on `add`/`commit`, and appended to a failed
+ * sandboxed bash command that mentions `.git`, when the platform's sandbox
+ * write-denies the checkout's entire `.git` directory (main checkouts on
+ * Linux `bwrap`).
+ */
+export const GIT_DIR_DENIED_NOTE =
+  "note: this workspace is a main checkout on a platform where the sandbox " +
+  "(Linux bubblewrap) denies every write under .git, so sandboxed git add " +
+  "and git commit fail here while read-only git operations (status, diff, " +
+  "log) still work.";
+
 /** The posture line's sandbox segment. */
 export function describeSandbox(status: SandboxStatus): string {
   return status.state === "on"

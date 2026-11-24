@@ -657,14 +657,18 @@ never an added directory, and shares native git's environment, executor dialer,
 srt sandbox and pinned workspace layout. With srt on, operator turns on the
 local socket run without a prompt; strict turns ask unless an existing grant
 covers the call. Without containment git always asks; an isolated executor
-retains the native attested-envelope rule. Sandboxed `add` and `commit` work in
-both linked worktrees and main checkouts: in a main checkout `srt` keeps
-`.git/config`, `.git/config.worktree`, `.git/hooks`, `.git/info`,
-`.git/objects/pack`, `.git/objects/info`, `.git/packed-refs`, `.git/worktrees`,
-`.git/refs/remotes`, and `.git/refs/tags` write-denied (other local branch refs
-under `.git/refs/heads/*` and `HEAD` stay writable as the stated residual,
-whereas a linked worktree isolates writes to the single checked-out branch ref).
-Hooks retain
+retains the native attested-envelope rule. On macOS, sandboxed `add` and
+`commit` work in both linked worktrees and main checkouts: in a main checkout
+`srt` keeps `.git/config`, `.git/config.worktree`, `.git/commondir`,
+`.git/gitdir`, `.git/hooks`, `.git/info`, `.git/objects/pack`,
+`.git/objects/info`, `.git/packed-refs`, `.git/shallow`, `.git/worktrees`,
+`.git/refs/remotes`, `.git/refs/tags`, and `.git/refs/replace` write-denied
+(other local branch refs under `.git/refs/heads/*`, `HEAD`, `.git/refs/notes/*`,
+and refs in `extensions.refStorage=reftable` repositories stay writable as
+stated residuals, whereas a linked worktree isolates writes to the single
+checked-out branch ref). On Linux (`bwrap`), main checkouts keep `.git`
+write-denied so read-only `status`, `diff`, and `log` work while sandboxed
+`add` and `commit` fail closed with a clear note. Hooks retain
 the native containment and network limits. Shell git commands inside Codex
 keep their existing sandbox and approval behavior.
 ### Gate tools

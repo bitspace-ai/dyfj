@@ -40,7 +40,8 @@
  *     <workspace>/.git`) or a linked worktree (`gitDir` exactly
  *     `<commonDir>/worktrees/<name>`, its `gitdir` file pointing back at
  *     `<workspace>/.git`), with every path realpath'd;
- *   - the shared `config`, `config.worktree`, `hooks` and `info` paths must be
+ *   - the shared `config`, `config.worktree`, `hooks` and `info` paths, and
+ *     the checkout's `commondir` and `gitdir` pointer paths, must be
  *     write-denied and fall outside every write grant the policy compiles (an
  *     allow entry is cancelled by a deny entry that covers it), and for a
  *     linked worktree the shared git dir itself must also be outside every
@@ -385,12 +386,12 @@ function canonical(path: string): string {
  *   `<commonDir>/worktrees/<name>` and its `gitdir` file points back at
  *   `<workspace>/.git`.
  *
- * Then the shared `config`, `config.worktree`, `hooks` and `info` paths must
- * be write-denied and outside every write grant (and for a linked worktree,
- * `commonDir` itself must be outside every write grant), and the shared config
- * must name no include: `include.path` reaches a file nothing here can
- * inspect, which would put the config that defines a driver back in the
- * sandbox's hands.
+ * Then the shared `config`, `config.worktree`, `hooks` and `info` paths, along
+ * with `commondir` and `gitdir` under `gitDir`, must be write-denied and
+ * outside every write grant (and for a linked worktree, `commonDir` itself
+ * must be outside every write grant), and the shared config must name no
+ * include: `include.path` reaches a file nothing here can inspect, which would
+ * put the config that defines a driver back in the sandbox's hands.
  */
 async function assertTrustedLayout(
   root: string,
@@ -471,6 +472,8 @@ async function assertTrustedLayout(
     ["config.worktree", join(commonDir, "config.worktree")],
     ["hooks", join(commonDir, "hooks")],
     ["info", join(commonDir, "info")],
+    ["commondir", join(gitDir, "commondir")],
+    ["gitdir", join(gitDir, "gitdir")],
   ];
   if (!mainCheckout && writable(commonDir)) {
     throw new GitLayoutError(

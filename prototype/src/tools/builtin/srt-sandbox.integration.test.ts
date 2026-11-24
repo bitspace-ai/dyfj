@@ -41,7 +41,7 @@ import { RootAnchors } from "./root-anchors.ts";
 import { defineBash } from "./exec.ts";
 import { defineEditFile, defineWriteFile } from "./file.ts";
 import { defineGit } from "./git.ts";
-import { bootSandbox, type CommandSandbox, shellQuote } from "./srt-sandbox.ts";
+import { bootSandbox, type CommandSandbox, GIT_DIR_DENIED_NOTE, shellQuote } from "./srt-sandbox.ts";
 import {
   ensureSocketDir,
   listenLoopbackProbe,
@@ -132,6 +132,7 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
     hostGit(main, "gc", "-q");
     mkdirSync(join(G, "refs", "remotes", "origin"), { recursive: true });
     writeFileSync(join(G, "refs", "remotes", "origin", "main"), `${hostGit(main, "rev-parse", "HEAD")}\n`);
+    mkdirSync(join(G, "refs", "replace"), { recursive: true });
     hostGit(main, "worktree", "add", "-q", W, "session");
     hostGit(main, "worktree", "add", "-q", join(base, "wt-other"), "other");
     env = new MapEnv({ PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home });
@@ -328,57 +329,103 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
       assert.equal(readFileSync(join(W, "written.txt"), "utf8"), "edited in the sandbox\n");
     });
 
-    it("in a main checkout, git add and git commit succeed through the git tool", async () => {
+    it("in a main checkout, read-only git status, diff and log succeed through the git tool and sandboxed bash", async () => {
       const git = defineGit(main, { env, sandbox });
-      writeFileSync(join(main, "main-git-tool.txt"), "from git tool\n");
-      const added = String(await git.executor(
-        call("git", { subcommand: "add", paths: ["main-git-tool.txt"] }),
-        { authzBasis: "policy:allow:sandboxed" },
-      ));
-      assert.match(added, /^exit 0/, added);
-      const committed = String(await git.executor(
-        call("git", { subcommand: "commit", message: "main checkout via git tool" }),
-        { authzBasis: "policy:allow:sandboxed" },
-      ));
-      assert.match(committed, /^exit 0/, committed);
-      assert.equal(hostGit(main, "log", "-1", "--format=%s", "main"), "main checkout via git tool");
-      assert.equal(hostGit(main, "show", "main:main-git-tool.txt"), "from git tool");
-      execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
-    });
-
-    it("in a main checkout, git add and git commit succeed through sandboxed bash", async () => {
-      writeFileSync(join(main, "g.txt"), "x\n");
-      const out = await bash("git add g.txt && git commit -qm from-bash", main);
-      assert.match(out, /^exit 0/, out);
-      assert.equal(hostGit(main, "log", "-1", "--format=%s", "main"), "from-bash");
-      execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
-    });
-
-    it("in a fresh main checkout with absent denied paths, git add and git commit leave no stale artifacts", async () => {
-      const fresh = join(base, "fresh-main");
-      mkdirSync(fresh);
-      hostGit(fresh, "init", "-q", "-b", "main");
-      hostGit(fresh, "config", "user.name", "probe");
-      hostGit(fresh, "config", "user.email", "probe@example.invalid");
-      hostGit(fresh, "config", "commit.gpgsign", "false");
-      hostGit(fresh, "config", "gc.auto", "0");
-      writeFileSync(join(fresh, "a.txt"), "hello\n");
-      const freshGit = join(fresh, ".git");
-      const absentPaths = [
-        join(freshGit, "config.worktree"),
-        join(freshGit, "packed-refs"),
-        join(freshGit, "worktrees"),
-        join(freshGit, "refs", "remotes"),
-      ];
-      for (const path of absentPaths) assert.equal(existsSync(path), false, path);
-      const out = await bash("git add a.txt && git commit -qm initial", fresh);
-      assert.match(out, /^exit 0/, out);
-      assert.equal(hostGit(fresh, "log", "-1", "--format=%s", "main"), "initial");
-      for (const path of absentPaths) {
-        assert.equal(existsSync(path), false, `stale artifact left at ${path}`);
+      for (const subcommand of ["status", "diff", "log"] as const) {
+        const out = String(await git.executor(
+          call("git", { subcommand }),
+          { authzBasis: "policy:allow:sandboxed" },
+        ));
+        assert.match(out, /^exit 0/, `${subcommand}:\n${out}`);
       }
-      execFileSync("git", ["-C", fresh, "fsck", "--no-dangling"]);
+      const bashOut = await bash("git status -s && git diff && git log -1 --format=%s", main);
+      assert.match(bashOut, /^exit 0/, bashOut);
     });
+
+    if (process.platform === "darwin") {
+      it("in a main checkout on macOS, git add and git commit succeed through the git tool", async () => {
+        const git = defineGit(main, { env, sandbox });
+        writeFileSync(join(main, "main-git-tool.txt"), "from git tool\n");
+        const added = String(await git.executor(
+          call("git", { subcommand: "add", paths: ["main-git-tool.txt"] }),
+          { authzBasis: "policy:allow:sandboxed" },
+        ));
+        assert.match(added, /^exit 0/, added);
+        const committed = String(await git.executor(
+          call("git", { subcommand: "commit", message: "main checkout via git tool" }),
+          { authzBasis: "policy:allow:sandboxed" },
+        ));
+        assert.match(committed, /^exit 0/, committed);
+        assert.equal(hostGit(main, "log", "-1", "--format=%s", "main"), "main checkout via git tool");
+        assert.equal(hostGit(main, "show", "main:main-git-tool.txt"), "from git tool");
+        execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
+      });
+
+      it("in a main checkout on macOS, git add and git commit succeed through sandboxed bash", async () => {
+        writeFileSync(join(main, "g.txt"), "x\n");
+        const out = await bash("git add g.txt && git commit -qm from-bash", main);
+        assert.match(out, /^exit 0/, out);
+        assert.equal(hostGit(main, "log", "-1", "--format=%s", "main"), "from-bash");
+        execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
+      });
+
+      it("in a fresh main checkout on macOS with absent denied paths, git add and git commit leave no stale artifacts", async () => {
+        const fresh = join(base, "fresh-main");
+        mkdirSync(fresh);
+        hostGit(fresh, "init", "-q", "-b", "main");
+        hostGit(fresh, "config", "user.name", "probe");
+        hostGit(fresh, "config", "user.email", "probe@example.invalid");
+        hostGit(fresh, "config", "commit.gpgsign", "false");
+        hostGit(fresh, "config", "gc.auto", "0");
+        writeFileSync(join(fresh, "a.txt"), "hello\n");
+        const freshGit = join(fresh, ".git");
+        const absentPaths = [
+          join(freshGit, "config.worktree"),
+          join(freshGit, "commondir"),
+          join(freshGit, "gitdir"),
+          join(freshGit, "packed-refs"),
+          join(freshGit, "shallow"),
+          join(freshGit, "worktrees"),
+          join(freshGit, "refs", "remotes"),
+          join(freshGit, "refs", "replace"),
+        ];
+        for (const path of absentPaths) assert.equal(existsSync(path), false, path);
+        const out = await bash("git add a.txt && git commit -qm initial", fresh);
+        assert.match(out, /^exit 0/, out);
+        assert.equal(hostGit(fresh, "log", "-1", "--format=%s", "main"), "initial");
+        for (const path of absentPaths) {
+          assert.equal(existsSync(path), false, `stale artifact left at ${path}`);
+        }
+        execFileSync("git", ["-C", fresh, "fsck", "--no-dangling"]);
+      });
+    } else {
+      it("in a main checkout on Linux, git add and git commit are refused with a clear note", async () => {
+        const git = defineGit(main, { env, sandbox });
+        writeFileSync(join(main, "main-git-tool.txt"), "from git tool\n");
+        const added = String(await git.executor(
+          call("git", { subcommand: "add", paths: ["main-git-tool.txt"] }),
+          { authzBasis: "policy:allow:sandboxed" },
+        ));
+        assert.match(added, /^error: refusing to run git add in the sandbox:/, added);
+        assert.ok(added.includes(GIT_DIR_DENIED_NOTE.replace(/^note: /, "")), added);
+        const committed = String(await git.executor(
+          call("git", { subcommand: "commit", message: "from linux main" }),
+          { authzBasis: "policy:allow:sandboxed" },
+        ));
+        assert.match(committed, /^error: refusing to run git commit in the sandbox:/, committed);
+        assert.ok(committed.includes(GIT_DIR_DENIED_NOTE.replace(/^note: /, "")), committed);
+        assert.equal(hostGit(main, "log", "-1", "--format=%s", "main"), "base");
+        rmSync(join(main, "main-git-tool.txt"), { force: true });
+      });
+
+      it("in a main checkout on Linux, a commit through sandboxed bash fails with the clear note", async () => {
+        writeFileSync(join(main, "g.txt"), "x\n");
+        const out = await bash("git add g.txt && git commit -qm from-bash", main);
+        assert.ok(!out.startsWith("exit 0"), out);
+        assert.ok(out.includes(GIT_DIR_DENIED_NOTE), out);
+        rmSync(join(main, "g.txt"), { force: true });
+      });
+    }
   });
 
   describe("check 4b: main checkout protected git paths", () => {
@@ -386,15 +433,19 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
       [".git/config", () => `echo x >> ${shellQuote(join(G, "config"))}`],
       [".git/config via git config --local", () => "git config --local probe.planted 1"],
       [".git/config.worktree", () => `printf '[core]\\n\\tfsmonitor = /tmp/evil\\n' > ${shellQuote(join(G, "config.worktree"))}`],
+      [".git/commondir", () => `echo /tmp/evil > ${shellQuote(join(G, "commondir"))}`],
+      [".git/gitdir", () => `echo /tmp/evil/.git > ${shellQuote(join(G, "gitdir"))}`],
       [".git/hooks", () => `echo x > ${shellQuote(join(G, "hooks", "pre-commit"))}`],
       [".git/info", () => `echo '*.txt diff=evil' >> ${shellQuote(join(G, "info", "attributes"))}`],
       [".git/objects/pack (delete)", () => `rm -f ${shellQuote(join(G, "objects", "pack"))}/*`],
       [".git/objects/pack (create)", () => `echo x > ${shellQuote(join(G, "objects", "pack", "planted.pack"))}`],
       [".git/objects/info", () => `echo /tmp/evil > ${shellQuote(join(G, "objects", "info", "alternates"))}`],
       [".git/packed-refs", () => `echo x >> ${shellQuote(join(G, "packed-refs"))}`],
+      [".git/shallow", () => `echo ${"0".repeat(40)} > ${shellQuote(join(G, "shallow"))}`],
       [".git/worktrees", () => `echo x > ${shellQuote(join(G, "worktrees", "wt-other", "HEAD"))}`],
       [".git/refs/remotes", () => `echo 0 > ${shellQuote(join(G, "refs", "remotes", "origin", "main"))}`],
       [".git/refs/tags", () => `echo 0 > ${shellQuote(join(G, "refs", "tags", "v0"))}`],
+      [".git/refs/replace", () => `echo ${"0".repeat(40)} > ${shellQuote(join(G, "refs", "replace", "0".repeat(40)))}`],
       [".git directory rename (move-blocking)", () => `mv ${shellQuote(G)} ${shellQuote(join(main, ".git-moved"))}`],
       [".git/config rename (move-blocking)", () => `mv ${shellQuote(join(G, "config"))} ${shellQuote(join(G, "config-moved"))}`],
       [".git/hooks rename (move-blocking)", () => `mv ${shellQuote(join(G, "hooks"))} ${shellQuote(join(G, "hooks-moved"))}`],
@@ -414,9 +465,13 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
     it("the main checkout's protected git paths are unchanged afterwards", () => {
       assert.doesNotMatch(readFileSync(join(G, "config"), "utf8"), /planted/);
       assert.equal(existsSync(join(G, "config.worktree")), false);
+      assert.equal(existsSync(join(G, "commondir")), false);
+      assert.equal(existsSync(join(G, "gitdir")), false);
       assert.equal(existsSync(join(G, "hooks", "pre-commit")), false);
       assert.equal(existsSync(join(G, "objects", "info", "alternates")), false);
+      assert.equal(existsSync(join(G, "shallow")), false);
       assert.equal(existsSync(join(G, "refs", "tags", "v0")), false);
+      assert.equal(existsSync(join(G, "refs", "replace", "0".repeat(40))), false);
       assert.equal(existsSync(join(main, ".git-moved")), false);
       execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
     });

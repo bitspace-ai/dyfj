@@ -12,7 +12,7 @@ import { nestedSandboxSkipReason } from "../testing/nested-sandbox.ts";
 import { unixSocketBindSkip } from "../testing/unix-socket-bind.ts";
 import type { EventInsert } from "./store/mod.ts";
 import { listenLoopbackProbe } from "./transport/mod.ts";
-import { bootSandbox } from "./tools/builtin/srt-sandbox.ts";
+import { bootSandbox, GIT_DIR_DENIED_NOTE } from "./tools/builtin/srt-sandbox.ts";
 import { bindCodexTurn, WORKBENCH_BRIDGE_SHIM_PATH, WORKBENCH_BRIDGE_TOKEN_ENV, WorkbenchToolBridge } from "./workbench-tool-bridge.ts";
 
 const socketSkip = await unixSocketBindSkip() ?? false;
@@ -92,17 +92,29 @@ for (const mainCheckout of [false, true]) {
       try {
         client = await connect(bridge, bound.workbenchTools.token);
         await writeFile(join(root, "file.txt"), "changed\n");
-        const added = resultText(await client.callTool({ name: "git", arguments: { subcommand: "add", paths: ["file.txt"] } }));
-        assert.match(added, /^exit 0/, added);
-        const committed = resultText(await client.callTool({ name: "git", arguments: { subcommand: "commit", message: "bridged commit" } }));
-        assert.match(committed, /^exit 0/, committed);
-        if (mainCheckout) {
-          assert.equal(git(main, "log", "-1", "--format=%s", "main"), "bridged commit");
-          assert.equal(git(main, "show", "main:file.txt"), "changed");
-        } else {
-          assert.equal(git(main, "log", "-1", "--format=%s", "session"), "bridged commit");
-          assert.equal(git(main, "show", "session:file.txt"), "changed");
+        if (mainCheckout && process.platform !== "darwin") {
+          for (const subcommand of ["status", "diff", "log"] as const) {
+            const readOut = resultText(await client.callTool({ name: "git", arguments: { subcommand } }));
+            assert.match(readOut, /^exit 0/, `${subcommand}:\n${readOut}`);
+          }
+          const added = resultText(await client.callTool({ name: "git", arguments: { subcommand: "add", paths: ["file.txt"] } }));
+          assert.ok(added.includes(GIT_DIR_DENIED_NOTE.replace(/^note: /, "")), added);
+          const committed = resultText(await client.callTool({ name: "git", arguments: { subcommand: "commit", message: "bridged commit" } }));
+          assert.ok(committed.includes(GIT_DIR_DENIED_NOTE.replace(/^note: /, "")), committed);
           assert.equal(git(main, "log", "-1", "--format=%s", "main"), "base");
+        } else {
+          const added = resultText(await client.callTool({ name: "git", arguments: { subcommand: "add", paths: ["file.txt"] } }));
+          assert.match(added, /^exit 0/, added);
+          const committed = resultText(await client.callTool({ name: "git", arguments: { subcommand: "commit", message: "bridged commit" } }));
+          assert.match(committed, /^exit 0/, committed);
+          if (mainCheckout) {
+            assert.equal(git(main, "log", "-1", "--format=%s", "main"), "bridged commit");
+            assert.equal(git(main, "show", "main:file.txt"), "changed");
+          } else {
+            assert.equal(git(main, "log", "-1", "--format=%s", "session"), "bridged commit");
+            assert.equal(git(main, "show", "session:file.txt"), "changed");
+            assert.equal(git(main, "log", "-1", "--format=%s", "main"), "base");
+          }
         }
         assert.equal(prompts, 0);
       } finally { release(); }
