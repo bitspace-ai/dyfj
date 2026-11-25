@@ -378,6 +378,105 @@ describe("executeGit", () => {
     );
   });
 
+  // After a ref update git tries to lock the SHARED `packed-refs`, which the
+  // sandbox write-denies in a linked worktree on purpose. The commit exits 0,
+  // so the tool must not report the denial as an error on a success.
+  const REF_LOCK_LINE =
+    "error: Unable to create '/repo/.git/packed-refs.lock': Operation not permitted";
+
+  it("a successful commit drops the packed-refs lock denial the sandbox causes", async () => {
+    // The best-effort subdirectory probe answers with the workspace itself, so
+    // the only thing under test is the stderr line.
+    const runner: GitRunner = (args) =>
+      Promise.resolve(
+        args.includes("rev-parse")
+          ? {
+            code: 0,
+            signal: null,
+            stdout: `${ROOT}\n`,
+            stderr: "",
+            timedOut: false,
+          }
+          : {
+            code: 0,
+            signal: null,
+            stdout: "[session abc1234] a subject\n 1 file changed, 1 insertion(+)\n",
+            stderr: `${REF_LOCK_LINE}\n`,
+            timedOut: false,
+          },
+      );
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "a subject" },
+      { runner },
+    );
+    assert.strictEqual(
+      out,
+      "exit 0\n[session abc1234] a subject\n 1 file changed, 1 insertion(+)",
+      `expected the denial to be dropped, got ${JSON.stringify(out)}`,
+    );
+  });
+
+  it("the filter covers each sandbox denial wording", async () => {
+    for (
+      const reason of [
+        "Operation not permitted",
+        "Read-only file system",
+        "Permission denied",
+      ]
+    ) {
+      const { runner } = recordingRunner({
+        code: 0,
+        stderr:
+          `error: Unable to create '/repo/.git/packed-refs.lock': ${reason}\n`,
+      });
+      const out = await executeGit(
+        ROOT,
+        { subcommand: "commit", message: "msg" },
+        { runner },
+      );
+      assert.strictEqual(
+        out,
+        "exit 0",
+        `expected the ${reason} denial to be dropped, got ${
+          JSON.stringify(out)
+        }`,
+      );
+    }
+  });
+
+  it("a failed run keeps the ref-lock line and every other error", async () => {
+    const { runner } = recordingRunner({
+      code: 1,
+      stderr: `${REF_LOCK_LINE}\nfatal: not a git repository\n`,
+    });
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "msg" },
+      { runner },
+    );
+    assert.ok(out.includes("Unable to create"), out);
+    assert.ok(out.includes("not a git repository"), out);
+    assert.match(out, /^exit 1/, out);
+  });
+
+  it("a stale ref lock is not the sandbox's denial and keeps its line", async () => {
+    const { runner } = recordingRunner({
+      code: 0,
+      stdout: "[session abc1234] a subject\n",
+      stderr:
+        "error: Unable to create '/repo/.git/packed-refs.lock': File exists.\n\n" +
+        "Another git process seems to be running in this repository, or the lock file may be stale\n",
+    });
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "a subject" },
+      { runner },
+    );
+    assert.ok(out.includes("Unable to create"), out);
+    assert.ok(out.includes("Another git process"), out);
+  });
+
   it("a non-zero exit returns status and stderr rather than throwing", async () => {
     const { runner } = recordingRunner({
       code: 1,

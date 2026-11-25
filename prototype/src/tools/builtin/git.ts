@@ -36,6 +36,18 @@
  * helpers) run inside that sandbox (`sandboxedRunner`), and the policy may
  * allow the call without a prompt under the operator posture.
  *
+ * One git message is filtered from a successful run: after a ref update git
+ * tries to take the shared `packed-refs` lock, and in a linked worktree under
+ * srt the shared git directory is write-denied on purpose, so that optional
+ * lock fails and git prints `error: Unable to create '…/packed-refs.lock':
+ * …`. The ref update itself has already succeeded and git exits 0. Reporting
+ * that as an error on a successful commit is what makes a reader retry or
+ * stop, so the line is dropped when, and only when, the run exited 0 without a
+ * signal and the message is that exact OS denial. No `git -c` flag suppresses
+ * it (`gc.packRefs`, `maintenance.pack-refs.enabled`, `core.logAllRefUpdates`
+ * and the `refs.*` knobs were all tried), which is why the filter is here
+ * rather than in the argv.
+ *
  * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
  * git's whole process group, hooks and their children included, is stopped and
  * output written after the deadline is dropped. A process that leaves the group
@@ -445,6 +457,49 @@ function sandboxedRunner(
 const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
 
 /**
+ * The ref-lock denial srt causes after a successful ref update in a linked
+ * worktree, and nothing else.
+ *
+ * `git commit` updates the branch ref, then opportunistically takes the shared
+ * `packed-refs` lock to tidy loose refs. In a linked worktree the sandbox
+ * grants writes to that branch's own ref, its lock and its reflog, and
+ * write-denies the rest of the shared git directory — so the optional lock
+ * fails, git prints this line, and the commit still exits 0. Dropping the line
+ * is a reporting fix, not a permission change: the write stays denied.
+ *
+ * The match is deliberately narrow, so a real failure is never hidden:
+ *
+ * - the line must be the whole `error:` line for a `packed-refs.lock` path;
+ * - the reason must be one of the sandbox's own denial wordings, which is what
+ *   distinguishes a policy denial from a stale lock (`File exists`) or any
+ *   other git error, and those keep their line;
+ * - the caller applies it only to a run that exited 0.
+ */
+const REF_LOCK_DENIAL =
+  /^error: Unable to create '.*\/packed-refs\.lock': (?:Operation not permitted|Read-only file system|Permission denied)$/;
+
+/**
+ * Drop the harmless ref-lock denial lines from a successful run's combined
+ * output. A run that failed, timed out or died on a signal keeps every line:
+ * the filter only applies where git itself reported success.
+ */
+function filterRefLockDenial(
+  body: string,
+  res: {
+    code: number | null;
+    signal: string | null;
+    timedOut: boolean;
+  },
+): string {
+  if (res.code !== 0 || res.signal !== null || res.timedOut) return body;
+  if (!body.includes("packed-refs.lock")) return body;
+  return body
+    .split("\n")
+    .filter((line) => !REF_LOCK_DENIAL.test(line.trim()))
+    .join("\n");
+}
+
+/**
  * Run one allowed git operation and return a single string carrying the exit
  * status and combined stdout/stderr. On the normal path the collected body is
  * clipped to a byte cap, with the status line and any notice added outside it.
@@ -512,6 +567,9 @@ export async function executeGit(
   if (res.stderr) {
     body += (body && !body.endsWith("\n") ? "\n" : "") + res.stderr;
   }
+  // A successful run keeps no line for the optional shared ref lock the
+  // sandbox denies on purpose (see REF_LOCK_DENIAL).
+  body = filterRefLockDenial(body, res);
   // Byte-bounded, not `.length`-bounded: a UTF-16 slice would let a multibyte
   // diff return several times the named ceiling.
   const clipped = clipToUtf8Bytes(body, maxBytes);

@@ -906,6 +906,19 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A successful linked-worktree commit no longer reports a ref-lock error
+  (`BIT-959`).** After committing, git opportunistically takes the shared
+  `packed-refs` lock to tidy loose refs. The sandbox grants a linked worktree
+  writes to its own branch ref, that ref's lock and its reflog, and denies the
+  rest of the shared git directory, so that optional lock fails and git prints
+  `Unable to create '<git dir>/packed-refs.lock'` while still exiting 0. The
+  `git` tool now drops that one line from a run that exited 0, and only when
+  the reason is a sandbox denial (`Operation not permitted`, `Read-only file
+  system`, `Permission denied`). A stale lock, any other git error, and every
+  failed, timed-out or signal-killed run keep their lines. The denial itself is
+  unchanged: the shared `packed-refs` file stays write-denied, and the srt
+  policy is untouched.
+
 - **Accurate REPL reconnect notice for runner sessions (`BIT-957`).** After a
   runtime restart, an open REPL reports that a runner session resumed, names
   the runner that records no model, and says the next turn uses this REPL's
