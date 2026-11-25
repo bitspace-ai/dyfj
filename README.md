@@ -1860,10 +1860,10 @@ row's answer, reported on `models/list` as `reasoningEfforts`. A row enables
 it with `reasoning_effort_control`; Gemini 3.x rows take a thinking level
 regardless, because their request carries one either way. The levels differ
 by provider API and, on OpenRouter, by the model behind the slug: Gemini 3.x
-tops out at `high`; DeepSeek, Kimi, GLM and Meta Muse rows take `low` and
-`high`; Anthropic, OpenAI, xAI and Grok 4.7 take all four. An effort on a
-model without effort control, or a level its provider API does not accept, is
-refused before the turn runs, with the accepted levels named.
+tops out at `high`; DeepSeek, Kimi and GLM rows take `low` and `high`;
+Anthropic, OpenAI, xAI, Grok 4.7 and the Meta Muse rows take all four. An
+effort on a model without effort control, or a level its provider API does
+not accept, is refused before the turn runs, with the accepted levels named.
 A `/model` switch drops a level the new model does not accept, and keeps one
 it does.
 

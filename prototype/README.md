@@ -936,10 +936,10 @@ default total output limit and `reasoning=<level> (<levels>)` when the
 adapter sends a reasoning effort: the level a request sends when the turn
 names none, and the levels that row accepts. A Codex row's level there is the
 runtime's configured `[codex] reasoning_effort` (else `medium`), not the
-native `low`, so the list never reports a Codex session as running at `low`. OpenAI rows with
-`reasoning_effort_control` enabled also show `(tools=none)`: tool-bearing
-calls keep their existing `none` setting, while text-only calls request the
-row's level.
+native `low`, so the list never reports a Codex session as running at `low`.
+OpenAI rows with `reasoning_effort_control` enabled also show `(tools=none)`:
+tool-bearing calls keep their existing `none` setting, while text-only calls
+request the row's level.
 Local and external-agent rows have no hosted request cap to display.
 
 Hosted rows with the `reasoning` capability default to 32,768 total output
@@ -969,9 +969,9 @@ rejection rather than a downgrade. `OPENROUTER_MODEL_LEVELS` in
 `src/providers/shared/reasoning-effort.ts` holds the shipped rows' levels,
 checked against OpenRouter's per-model `supported_parameters` and each
 vendor's documentation: `deepseek/deepseek-v4.1-flash-1017`,
-`deepseek/deepseek-v4-pro-0813`, `z-ai/glm-5.3`, `moonshotai/kimi-k3.1-pro`,
-`meta/muse-glimmer-30b` and `meta/muse-spark-1.3` take `low` and `high`;
-`x-ai/grok-4.7` takes all four. A slug the table does not name, or a row that
+`deepseek/deepseek-v4-pro-0813`, `z-ai/glm-5.3` and
+`moonshotai/kimi-k3.1-pro` take `low` and `high`; the two Meta Muse rows and
+`x-ai/grok-4.7` take all four. A slug the table does not name, or a row that
 names no model levels, gets `low` and `high` — the pair OpenRouter documents
 as the fallback for a model that supports only those — so a level above them
 is refused rather than sent to an upstream that would reject it. Adding a row

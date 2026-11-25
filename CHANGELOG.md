@@ -33,10 +33,10 @@ README are tracked separately in its Revision history section.
   default, so a Codex row shows the runtime's configured effort rather than
   `low`. OpenRouter's levels are per model rather than per provider
   (`deepseek/deepseek-v4.1-flash-1017`, `deepseek/deepseek-v4-pro-0813`,
-  `z-ai/glm-5.3`, `moonshotai/kimi-k3.1-pro`, `meta/muse-glimmer-30b` and
-  `meta/muse-spark-1.3` take `low` and `high`; `x-ai/grok-4.7` takes all
-  four), and an unnamed row gets `low` and `high`, so an unsupported level is
-  refused here instead of rejected upstream. A `/model` switch drops a level
+  `z-ai/glm-5.3` and `moonshotai/kimi-k3.1-pro` take `low` and `high`; the
+  two Meta Muse rows and `x-ai/grok-4.7` take all four), and an unnamed row
+  gets `low` and `high`, so an unsupported level is refused here instead of
+  rejected upstream. A `/model` switch drops a level
   the new model would refuse and keeps one it accepts, and the posture line
   names the effort for any model that takes one. A bare `/effort` names the
   levels the model accepts in both REPLs. Every native provider call records

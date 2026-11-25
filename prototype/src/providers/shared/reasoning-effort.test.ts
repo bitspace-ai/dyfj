@@ -93,6 +93,19 @@ test("an OpenRouter row takes the levels its own model accepts, not the provider
     reasoningEffortSupport(model({ slug: "vendor/unlisted-model" }))?.levels,
     ["low", "high"],
   );
+  // The Meta Muse rows report the whole range in OpenRouter's metadata, so
+  // they take it.
+  for (
+    const slug of ["meta/muse-glimmer-30b", "meta/muse-spark-1.3"]
+  ) {
+    assert.deepEqual(
+      reasoningEffortSupport(model({ slug }))?.levels,
+      ["low", "medium", "high", "xhigh"],
+      slug,
+    );
+    assert.equal(unsupportedReasoningEffort(model({ slug }), "xhigh"), undefined);
+    assert.equal(modelReasoningEffort(model({ slug }), "xhigh"), "xhigh");
+  }
 });
 
 test("the default is low when the operator names none", () => {

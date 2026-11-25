@@ -1456,7 +1456,7 @@ pub(crate) mod run_tests {
         log.lock().unwrap().clone()
     }
 
-    fn methods(seen: &[Value]) -> Vec<&str> {
+    pub(crate) fn methods(seen: &[Value]) -> Vec<&str> {
         seen.iter().filter_map(|m| m["method"].as_str()).collect()
     }
 

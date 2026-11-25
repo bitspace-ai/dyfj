@@ -119,20 +119,60 @@ pub fn show_line(session_effort: Option<&str>, default_effort: &str, levels: &[S
     }
 }
 
+/// The exact line a bare `/effort` prints, for the model the next turn runs
+/// on. `None` when that model's row takes no effort, which `/effort` reports
+/// separately. One implementation, so the printed text is what a test reads.
+pub fn show_message(
+    rows: &[Value],
+    active: Option<&str>,
+    session_effort: Option<&str>,
+    runtime_effort: Option<&str>,
+) -> Option<String> {
+    let levels = active
+        .and_then(|slug| find_model_row(rows, slug))
+        .and_then(row_effort_levels)?;
+    let default = default_effort(rows, active, runtime_effort);
+    Some(show_line(session_effort, &default, &levels))
+}
+
 /// The effort a turn runs at when the session names none: the value
 /// `models/list` reports on the active model's row. A native row's is `low`;
 /// a Codex row's is the runtime's configured `[codex] reasoning_effort`, else
-/// `medium`. A runtime from before that reports neither, so the two fall back
-/// by route rather than by a shared guess.
-pub fn default_effort(rows: &[Value], active: Option<&str>) -> String {
-    let row_default = active
+/// `medium`. A runtime from before that reports no row value is read through
+/// `runtime/status`'s `codexReasoningEffort` instead, and only for Codex, so
+/// neither route falls back to a shared guess.
+pub fn default_effort(
+    rows: &[Value],
+    active: Option<&str>,
+    runtime_effort: Option<&str>,
+) -> String {
+    row_default_effort(rows, active).unwrap_or_else(|| {
+        if active.is_some_and(is_codex_model) {
+            runtime_effort.unwrap_or("medium").to_string()
+        } else {
+            "low".into()
+        }
+    })
+}
+
+/// The default `models/list` reports on the active model's row, when it
+/// reports one.
+fn row_default_effort(rows: &[Value], active: Option<&str>) -> Option<String> {
+    active
         .and_then(|slug| find_model_row(rows, slug))
         .and_then(|row| row.get("reasoningEffort"))
         .and_then(Value::as_str)
-        .map(str::to_string);
-    row_default.unwrap_or_else(|| {
-        if active.is_some_and(is_codex_model) { "medium".into() } else { "low".into() }
-    })
+        .map(str::to_string)
+}
+
+/// The runtime's configured `[codex] reasoning_effort` from
+/// `runtime/status`, for a runtime from before `models/list` reported it.
+async fn runtime_effort(client: &Client) -> Option<String> {
+    let status = client.request("runtime/status", json!({})).await.ok()?;
+    status
+        .pointer("/runtime/codexReasoningEffort")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// The model the next turn runs on: the session's own choice, else the
@@ -183,14 +223,31 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
     };
     // A Codex row's default is the runtime's configured `[codex]
     // reasoning_effort` (else `medium`), which `models/list` reports on the
-    // row; a native row's is `low`. A runtime from before that reports
-    // neither, so a Codex session falls back to the runtime's value and a
-    // native one to `low`.
-    let default_effort = default_effort(&rows, active.as_deref());
+    // row; a native row's is `low`. A runtime from before that reports no row
+    // value is read through `runtime/status`, for a Codex session only, so a
+    // native row costs one read rather than two.
+    let configured = if row_default_effort(&rows, active.as_deref()).is_none()
+        && active.as_deref().is_some_and(is_codex_model)
+    {
+        runtime_effort(&client).await
+    } else {
+        None
+    };
+    let default_effort =
+        default_effort(&rows, active.as_deref(), configured.as_deref());
     let before = previous.unwrap_or_else(|| default_effort.clone());
     match target {
         EffortTarget::Show => {
-            return eprintln!("{}", show_line(session.effort.as_deref(), &default_effort, &levels));
+            let line = show_message(
+                &rows,
+                active.as_deref(),
+                session.effort.as_deref(),
+                configured.as_deref(),
+            );
+            if let Some(line) = line {
+                eprintln!("{line}");
+            }
+            return;
         }
         EffortTarget::Set(level) => {
             if !levels.iter().any(|accepted| accepted == &level) {
@@ -218,7 +275,7 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
 #[cfg(test)]
 mod tests {
     use super::{EffortTarget, check_startup, clear_off_unsupported, level_flag};
-    use crate::commands::run_tests::{catalog, drive, model};
+    use crate::commands::run_tests::{catalog, drive, methods, model};
     use crate::commands::{Command, parse};
     use crate::session::Session;
     use serde_json::{Value, json};
@@ -338,20 +395,45 @@ mod tests {
     #[tokio::test]
     async fn a_codex_session_defaults_to_the_runtime_effort_not_low() {
         let mut session = Session { model: Some("codex-chatgpt/gpt-6.1-sol".into()), ..Session::default() };
-        drive(effort_catalog, &mut session, vec![Command::Effort(EffortTarget::Show)]).await;
-        // The row's own reasoningEffort is `medium` in this catalog.
-        let mut rows = rows();
-        for row in rows.iter_mut() {
+        let seen = drive(
+            effort_catalog,
+            &mut session,
+            vec![Command::Effort(EffortTarget::Show)],
+        )
+        .await;
+        // A bare /effort reads the catalog, then the runtime's configured
+        // effort, because this row reports no default of its own.
+        assert_eq!(methods(&seen), ["models/list", "runtime/status"]);
+        // What it prints: `medium`, the Codex fallback, never the native `low`
+        // — and the levels that row accepts. This is the text `/effort` emits.
+        assert_eq!(
+            super::show_message(&rows(), Some("codex-chatgpt/gpt-6.1-sol"), None, None),
+            Some(
+                "reasoning effort: medium (model default) (accepts low, medium, high, xhigh)"
+                    .to_string()
+            ),
+        );
+        let mut rows_high = rows();
+        for row in rows_high.iter_mut() {
             if row.get("slug").and_then(Value::as_str) == Some("codex-chatgpt/gpt-6.1-sol") {
                 row["reasoningEffort"] = json!("high");
             }
         }
-        let rendered = super::default_effort(&rows, Some("codex-chatgpt/gpt-6.1-sol"));
-        assert_eq!(rendered, "high");
-        // A native model keeps `low`.
-        assert_eq!(super::default_effort(&rows, Some("deepseek/deepseek-v4.1-flash-1017")), "low");
-        // A Codex model whose row reports nothing falls back to `medium`.
-        assert_eq!(super::default_effort(&[], Some("codex-chatgpt/gpt-6.1-sol")), "medium");
+        // A row value wins; a runtime configuration is read only when the row
+        // reports none.
+        assert_eq!(super::default_effort(&rows_high, Some("codex-chatgpt/gpt-6.1-sol"), Some("xhigh")), "high");
+        assert_eq!(super::default_effort(&rows_high, Some("codex-chatgpt/gpt-6.1-sol"), None), "high");
+        // A native model keeps `low`, whatever the runtime configures.
+        assert_eq!(super::default_effort(&rows_high, Some("deepseek/deepseek-v4.1-flash-1017"), Some("xhigh")), "low");
+        // A Codex row that reports no default reads the runtime's configured
+        // effort, then `medium`.
+        assert_eq!(super::default_effort(&[], Some("codex-chatgpt/gpt-6.1-sol"), Some("xhigh")), "xhigh");
+        assert_eq!(super::default_effort(&[], Some("codex-chatgpt/gpt-6.1-sol"), None), "medium");
+        // A row with no levels takes no effort at all, so there is no line.
+        assert_eq!(
+            super::show_message(&[], Some("codex-chatgpt/gpt-6.1-sol"), None, Some("xhigh")),
+            None,
+        );
     }
 
     /// A bare `/effort` names the levels its model accepts, as the README

@@ -60,7 +60,8 @@ export interface ReasoningEffortSupport {
  *
  * A row with two levels lists `low` and `high`: the pair OpenRouter's
  * reasoning guide names as the fallback mapping for a model that supports
- * only those.
+ * only those. A row whose own metadata reports the whole range lists all
+ * four.
  */
 const OPENROUTER_MODEL_LEVELS: Readonly<
   Record<string, readonly ReasoningEffort[]>
@@ -72,9 +73,10 @@ const OPENROUTER_MODEL_LEVELS: Readonly<
   "z-ai/glm-5.3": ["low", "high"],
   // Moonshot's Kimi reasoning models publish low and high.
   "moonshotai/kimi-k3.1-pro": ["low", "high"],
-  // Meta's Muse reasoning rows publish low and high.
-  "meta/muse-glimmer-30b": ["low", "high"],
-  "meta/muse-spark-1.3": ["low", "high"],
+  // Meta's Muse reasoning rows accept the whole range in OpenRouter's own
+  // metadata.
+  "meta/muse-glimmer-30b": REASONING_EFFORTS,
+  "meta/muse-spark-1.3": REASONING_EFFORTS,
   // xAI's Grok 4.6 and later accept the whole range through OpenRouter.
   "x-ai/grok-4.7": REASONING_EFFORTS,
 };

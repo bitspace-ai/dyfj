@@ -597,22 +597,51 @@ test("a failed call records neither an upstream nor a generation id", async () =
 
 // ── P2-3: the recorded effort is the effort the wire carried
 
+/** The effort a recorded request body actually carries, per provider shape. */
+function wireEffort(body: Record<string, unknown>): unknown {
+  const outputConfig = body.output_config as { effort?: unknown } | undefined;
+  const generationConfig = body.generationConfig as
+    | { thinkingConfig?: { thinkingLevel?: unknown } }
+    | undefined;
+  return body.reasoning_effort ??
+    (body.reasoning as { effort?: unknown } | undefined)?.effort ??
+    outputConfig?.effort ??
+    generationConfig?.thinkingConfig?.thinkingLevel;
+}
+
+/** An Anthropic messages reply, for the one case that speaks that API. */
+function anthropicReply(text: string): ScriptedExchange {
+  return {
+    respond: {
+      body: JSON.stringify({
+        content: [{ type: "text", text }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 12, output_tokens: 4 },
+      }),
+    },
+  };
+}
+
 /**
- * A native turn records what the request actually sent, not what it was
+ * A native turn records what the request actually carried, not what it was
  * asked for: an OpenAI tool-bearing call sends `none` whatever the operator
- * named, and the event says `none`.
+ * named, and the event says `none`. Each case is compared against the body
+ * the adapter put on the wire, so a change to either side fails here.
  */
 for (
-  const [label, model, withTools, requested, expected] of [
-    ["OpenAI with tools", OPENAI_REASONING, true, "high", "none"],
-    ["OpenAI without tools", OPENAI_REASONING, false, "high", "high"],
-    ["OpenRouter default", ROUTED_REASONING, false, undefined, "low"],
-    ["Anthropic explicit", HOSTED_REASONING, false, "high", "high"],
+  const [label, model, withTools, requested] of [
+    ["OpenAI with tools", OPENAI_REASONING, true, "high"],
+    ["OpenAI without tools", OPENAI_REASONING, false, "high"],
+    ["OpenRouter default", ROUTED_REASONING, false, undefined],
+    ["Anthropic explicit", HOSTED_REASONING, false, "high"],
   ] as const
 ) {
   test(`a native turn records the wire's effective effort (${label})`, async () => {
     const h = harness();
-    const { request, transport } = callRequest(h, model, [openAIReply("ok")], {
+    const reply = model.provider === "anthropic"
+      ? anthropicReply("ok")
+      : openAIReply("ok");
+    const { request, transport } = callRequest(h, model, [reply], {
       params: {
         systemPrompt: "system",
         prompt: "hello",
@@ -647,12 +676,22 @@ for (
     const result = await observedProviderCall(h.context, withTransport);
 
     transport.assertDone();
-    assert.equal(result.turn.reasoningEffort, expected);
+    const wire = wireEffort(
+      JSON.parse(transport.requests[0].body) as Record<string, unknown>,
+    );
+    assert.notEqual(wire, undefined, "the request must carry an effort");
+    // The event, the result and the wire all say the same thing.
+    assert.equal(result.turn.reasoningEffort, wire);
     assert.equal(h.written.length, 1);
     assert.equal(
       (h.written[0] as unknown as { reasoning_effort: string | null })
         .reasoning_effort,
-      expected,
+      wire,
     );
+    // The literals that make the point, named so a regression reads clearly.
+    if (withTools) assert.equal(wire, "none", "OpenAI narrows a tool request");
+    if (model.provider === "openrouter" && requested === undefined) {
+      assert.equal(wire, "low", "unset means the model default");
+    }
   });
 }
