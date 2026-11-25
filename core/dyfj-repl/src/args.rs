@@ -34,8 +34,9 @@ usage: dyfj-repl [--model <slug>] [--approve-paid] [--fast] [--effort <level>] [
   --model <slug>    route every turn to this model (default: the runtime's; env DYFJ_WORKBENCH_MODEL)
   --approve-paid    opt this session into paid inference
   --fast            use the fast speed tier on models that support it
-  --effort <level>  reasoning effort for codex-chatgpt/* models: low, medium, high or xhigh
-                    (default: the runtime's [codex] reasoning_effort, else medium)
+  --effort <level>  this session's reasoning effort: low, medium, high or xhigh, on a model
+                    whose catalog row supports effort control (default: the model's own, or
+                    the runtime's [codex] reasoning_effort on the Codex route, else medium)
   --tool-steps <N>  this session's tool-step limit, 1 through 64 and not above the runtime's ceiling
   --budget-turn, --budget-session, --budget-day, --budget-per-call, --budget-runaway <usd>
                     this session's spend limits (default: the runtime's [budget] config);

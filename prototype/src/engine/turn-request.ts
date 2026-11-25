@@ -112,6 +112,9 @@ function parseRoutingOptions(
     output.fast = input.fast;
   }
   if ("reasoningEffort" in input) {
+    // Whether the selected model accepts this level is a capability question
+    // answered in route resolution, where the catalog row is known. Shaping
+    // only: the level must be one Workbench names at all.
     if (!isCodexReasoningEffort(input.reasoningEffort)) {
       return {
         error: codexReasoningEffortRefusal("routingOptions.reasoningEffort"),
@@ -151,8 +154,10 @@ function buildRuntimeInputFromJson(
   ) {
     return { error: "runner must be fixture or codex-chatgpt" };
   }
-  // The effort is not model routing: it configures the runner the request
-  // names, and route resolution refuses it on a runner other than Codex.
+  // The effort is not model routing: it configures the turn's inference
+  // rather than selecting a model from it, so naming a runner alongside an
+  // effort is allowed and route resolution refuses an effort the route cannot
+  // honour (a runner other than Codex, or a model without effort control).
   const { reasoningEffort: _effort, ...modelRouting } = routingOptions;
   if (body.runner !== undefined && Object.keys(modelRouting).length > 0) {
     return { error: "runner cannot be combined with model routing options" };

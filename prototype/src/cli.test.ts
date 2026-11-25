@@ -3303,4 +3303,45 @@ describe("REPL freshness warning", () => {
     assert.equal(formatPostureLine(after), formatPostureLine(before));
     assert.deepEqual(after.runtimeFingerprint, fingerprint);
   });
+
+  // ── P2-4: an unavailable catalog narrows the line, it does not discard it
+  it("keeps the runtime posture when the catalog RPC is refused", async () => {
+    const runtime = {
+      defaultTurnModel: { slug: "local-x", tier: 0, local: true },
+      approvePaidDefault: false,
+      permissionLevel: "operator",
+      trustWorkspaceInstructions: false,
+    };
+    const config: CliConfig = { socket: "/tmp/x.sock", mode: "turn", color: false };
+    const catalogDown: ConnectFn = () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list"
+            ? Promise.reject(new Error("catalog unavailable"))
+            : Promise.resolve({ runtime }),
+        close: () => {},
+      } as unknown as Awaited<ReturnType<ConnectFn>>);
+
+    const posture = await fetchSessionPosture(config, catalogDown);
+
+    assert.ok(!("error" in posture), JSON.stringify(posture));
+    assert.equal(posture.slug, "local-x");
+    assert.equal(posture.permissionLevel, "operator");
+    // The line still names the model and the permission level.
+    const rendered = formatPostureLine(posture);
+    assert.match(rendered, /^posture: local-x /);
+    assert.match(rendered, /permission operator/);
+  });
+
+  it("keeps the runtime posture when the catalog answer carries no rows", async () => {
+    const config: CliConfig = { socket: "/tmp/x.sock", mode: "turn", color: false };
+    const empty: ConnectFn = () =>
+      Promise.resolve({
+        request: () => Promise.resolve({ runtime: { permissionLevel: "strict" } }),
+        close: () => {},
+      } as unknown as Awaited<ReturnType<ConnectFn>>);
+    const posture = await fetchSessionPosture(config, empty);
+    assert.ok(!("error" in posture));
+    assert.match(formatPostureLine(posture), /permission strict/);
+  });
 });

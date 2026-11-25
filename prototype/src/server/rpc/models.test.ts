@@ -129,3 +129,69 @@ test("models/list carries no catalog notice when the catalog loaded", async () =
   ) as Record<string, unknown>;
   assert.ok(!("catalogUnavailable" in result));
 });
+
+test("models/list advertises the effort levels each row accepts", async () => {
+  const models = await listModels([
+    { slug: "deepseek/deepseek-v4.1-flash-1017", provider: "openrouter",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "gemini-3.8-flash", provider: "google",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "gpt-5.6-sol", provider: "openai",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "local-small", provider: "llama-cpp", capabilities: ["reasoning"] },
+  ]);
+  const bySlug = Object.fromEntries(models.map((m) => [m.slug, m]));
+  assert.deepEqual(bySlug["deepseek/deepseek-v4.1-flash-1017"]
+    .reasoningEfforts, ["low", "high"]);
+  assert.deepEqual(bySlug["gemini-3.8-flash"].reasoningEfforts,
+    ["low", "medium", "high"]);
+  assert.deepEqual(bySlug["gpt-5.6-sol"].reasoningEfforts,
+    ["low", "medium", "high", "xhigh"]);
+  assert.equal(bySlug["local-small"].reasoningEfforts, undefined);
+});
+
+// ── P2-2: a Codex row's default is the runtime's configured effort
+
+/**
+ * A native row's unset default is `low`; a Codex row's is the runtime's
+ * configured `[codex] reasoning_effort` (else `medium`). Reporting one as the
+ * other would tell an operator a Codex session runs at `low`.
+ */
+test("models/list reports a Codex row's default as the runtime's configured effort", async () => {
+  const rows = [
+    { slug: "codex-chatgpt/gpt-6.1-sol", provider: "codex-chatgpt", api: "acp",
+      capabilities: ["text", "reasoning"], reasoningEffortControl: true },
+    { slug: "deepseek/deepseek-v4.1-flash-1017", provider: "openrouter",
+      capabilities: ["text", "reasoning"], reasoningEffortControl: true },
+  ];
+  const list = async (codexReasoningEffort?: string) => {
+    const { models } = await callRpc(
+      buildModelsHandlers({
+        loadModels: () =>
+          Promise.resolve(rows.map((row) => ({
+            ...row, capabilities: row.capabilities,
+          })) as unknown as WorkbenchModel[]),
+        ...(codexReasoningEffort === undefined ? {} : { codexReasoningEffort }),
+      }),
+      "models/list",
+    ) as { models: Array<Record<string, unknown>> };
+    return Object.fromEntries(models.map((m) => [m.slug, m]));
+  };
+
+  // Configured non-medium: the row reports it, not `medium` or `low`.
+  const high = await list("high");
+  assert.equal(high["codex-chatgpt/gpt-6.1-sol"].reasoningEffort, "high");
+  assert.equal(high["codex-chatgpt/gpt-6.1-sol"].toolReasoningEffort, "high");
+  // A native row keeps its own default.
+  assert.equal(high["deepseek/deepseek-v4.1-flash-1017"].reasoningEffort, "low");
+
+  // Explicit medium, and unset (which means medium for Codex).
+  for (const configured of ["medium", undefined]) {
+    const listed = await list(configured);
+    assert.equal(
+      listed["codex-chatgpt/gpt-6.1-sol"].reasoningEffort,
+      "medium",
+      String(configured),
+    );
+  }
+});

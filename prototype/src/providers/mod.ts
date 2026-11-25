@@ -98,7 +98,18 @@ export {
   runWorkbenchTurn,
 } from "./registry/registry.ts";
 export { estimateTextTokens, messageEstimateText } from "./shared/tokens.ts";
-export { modelReasoningEffort } from "./shared/reasoning-output.ts";
+export {
+  DEFAULT_REASONING_EFFORT,
+  isReasoningEffort,
+  modelReasoningEffort,
+  type ReasoningEffort,
+  REASONING_EFFORTS,
+  reasoningEffortRefusal,
+  reasoningEffortSupport,
+  type SentReasoningEffort,
+  supportsReasoningEffort,
+  unsupportedReasoningEffort,
+} from "./shared/reasoning-effort.ts";
 export {
   classifyContextExceeded,
   type ContextExceededReport,

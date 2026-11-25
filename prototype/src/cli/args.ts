@@ -63,9 +63,12 @@ export interface CliConfig {
    */
   fast?: boolean;
   /**
-   * The session's reasoning effort on the Codex ChatGPT route (--effort,
-   * /effort), sent on every turn. Undefined leaves the runtime's configured
-   * default, `medium` unless [codex] reasoning_effort sets one.
+   * The session's reasoning effort (--effort, /effort), sent on every turn.
+   * Whether the active model accepts it is the runtime's question: an effort
+   * its model's catalog row does not enable, or a level its provider API does
+   * not accept, is refused before the turn runs. Undefined leaves each
+   * route's default: `medium` unless [codex] reasoning_effort sets one on the
+   * Codex route, and `low` for a native model that takes an effort.
    */
   effort?: CodexReasoningEffort;
   /**
@@ -418,15 +421,11 @@ export function parseArgs(argv: string[]): ParsedArgs {
       "--runner cannot be combined with --model, --tier, --hint, or --fast/--no-fast",
     );
   }
-  // The runtime refuses an effort on any other route too; this catches the
-  // routes the command line already names.
-  if (
-    overrides.effort !== undefined &&
-    (overrides.runner === "fixture" ||
-      (overrides.model !== undefined &&
-        !overrides.model.startsWith(CODEX_MODEL_PREFIX)))
-  ) {
-    return error("--effort applies only to codex-chatgpt/* models");
+  // The fixture runner takes no effort. Whether a named model accepts one is
+  // the runtime's question — its catalog row says so — and this client holds
+  // no catalog, so it does not guess from the slug.
+  if (overrides.effort !== undefined && overrides.runner === "fixture") {
+    return error("--effort does not apply to the fixture runner");
   }
   if (
     overrides.runner !== undefined &&
@@ -585,8 +584,9 @@ REPL commands:
                             (hosted) inference when escalating; add --fast or
                             --no-fast to toggle fast speed tier
   /fast [on|off]            toggle or set fast speed tier (for supported models)
-  /effort [<level>|default] show or set the reasoning effort of a codex-chatgpt
-                            model (low, medium, high, xhigh) from the next turn
+  /effort [<level>|default] show or set the session's reasoning effort (low,
+                            medium, high, xhigh) from the next turn, on a model
+                            whose catalog row supports effort control
   /steps [N]                show or set this session's tool-step limit; a value
                             above the runtime's ceiling is refused
   /budget [<limit> <usd>]   show the spend limits, or set one for this session:
@@ -606,8 +606,10 @@ Options:
   --model <slug>   model id      --tier <0|1|2>   --hint <code|chat|reasoning>
   --fast           enable fast speed tier for supported models (faster generation)
   --no-fast        disable fast speed tier (standard speed)
-  --effort <level> reasoning effort for codex-chatgpt/* models: low, medium,
-                   high or xhigh (default: [codex] reasoning_effort, else medium)
+  --effort <level> this session's reasoning effort: low, medium, high or xhigh,
+                   on a model whose catalog row supports effort control
+                   (default: low for a native model that takes one, else
+                   [codex] reasoning_effort, else medium on the Codex route)
   --tool-steps <N> this session's tool-step limit, 1 through 64 and not above
                    the runtime's ceiling (DYFJ_MAX_TOOL_STEPS_CEILING)
   --budget-turn <usd>, --budget-session <usd>, --budget-day <usd>,

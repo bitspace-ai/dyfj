@@ -17,7 +17,7 @@ import { outputCap } from "../shared/output-cap.ts";
 import {
   hostedDefaultOutputTokens,
   modelReasoningEffort,
-} from "../shared/reasoning-output.ts";
+} from "../shared/reasoning-effort.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import {
   estimateParamsInputText,
@@ -98,6 +98,7 @@ export const anthropicAdapter: ProviderAdapter = {
     const progressUpdates = model.capabilities.includes(
       ANTHROPIC_PROGRESS_UPDATES_CAPABILITY,
     );
+    const effectiveEffort = modelReasoningEffort(model, request.reasoningEffort);
     const body = buildAnthropicMessagesRequest(
       model.slug,
       request.systemPrompt,
@@ -114,7 +115,7 @@ export const anthropicAdapter: ProviderAdapter = {
           anthropicAdapter.defaultOutputTokens(model),
         ),
         progressUpdates,
-        effort: modelReasoningEffort(model) === "low" ? "low" : undefined,
+        effort: effectiveEffort,
       },
     );
     const requestStarted = now();
@@ -239,6 +240,9 @@ export const anthropicAdapter: ProviderAdapter = {
         normaliseAnthropicStopReason(result.stopReason),
       ),
       toolCalls: result.aborted ? undefined : toolCalls,
+      ...(effectiveEffort === undefined
+        ? {}
+        : { reasoningEffort: effectiveEffort }),
       timings,
     };
   },

@@ -7,14 +7,18 @@
  * currently serves text/JSON turns.
  */
 
-import { DEFAULT_REASONING_EFFORT } from "../shared/reasoning-output.ts";
+import { DEFAULT_REASONING_EFFORT } from "../shared/reasoning-effort.ts";
 
 export const GEMINI_DEFAULT_MAX_TOKENS = 8192;
 
 export function buildGeminiRequest(
   systemPrompt: string,
   prompt: string,
-  options: { jsonObject?: boolean; maxOutputTokens?: number } = {},
+  options: {
+    jsonObject?: boolean;
+    maxOutputTokens?: number;
+    thinkingLevel?: string;
+  } = {},
 ) {
   const body: {
     systemInstruction: { parts: Array<{ text: string }> };
@@ -29,7 +33,9 @@ export function buildGeminiRequest(
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: {
       maxOutputTokens: options.maxOutputTokens ?? GEMINI_DEFAULT_MAX_TOKENS,
-      thinkingConfig: { thinkingLevel: DEFAULT_REASONING_EFFORT },
+      thinkingConfig: {
+        thinkingLevel: options.thinkingLevel ?? DEFAULT_REASONING_EFFORT,
+      },
     },
   };
   if (options.jsonObject) {

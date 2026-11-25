@@ -84,8 +84,10 @@ CREATE TABLE events (
     -- take the earliest session_start of a session. A dispatched leaf records
     -- its coordinator's session id, its depth below it and the coordinator's
     -- label for it. reasoning_effort is the value the runtime passed, not the
-    -- value requested; model_family comes from the model catalog. NULL in
-    -- every row written before a producer exists.
+    -- value requested; model_family comes from the model catalog. A
+    -- provider_call event also records it, as the effort that call's request
+    -- actually carried on the wire (a default, or OpenAI's tool-bearing
+    -- `none`). NULL in every row written before a producer exists.
     parent_session_id         VARCHAR(64),
     lineage_depth             TINYINT UNSIGNED,
     lineage_label             VARCHAR(128),

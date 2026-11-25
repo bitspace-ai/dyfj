@@ -16,8 +16,10 @@ export interface ModelRow {
   local?: boolean;
   capabilities?: string[];
   defaultOutputTokens?: number;
-  reasoningEffort?: "low" | "none";
-  toolReasoningEffort?: "low" | "none";
+  reasoningEffort?: string;
+  toolReasoningEffort?: string;
+  /** The levels this row accepts; absent when it takes no reasoning effort. */
+  reasoningEfforts?: readonly string[];
 }
 
 export async function fetchModelSlugs(
@@ -93,7 +95,12 @@ export async function runModels(
     const cap = m.defaultOutputTokens === undefined
       ? "" : `  output-cap=${m.defaultOutputTokens}`;
     const effort = m.reasoningEffort === undefined
-      ? "" : `  reasoning=${m.reasoningEffort}`;
+      ? ""
+      : m.reasoningEfforts === undefined || m.reasoningEfforts.length === 0
+      ? `  reasoning=${m.reasoningEffort}`
+      : `  reasoning=${m.reasoningEffort} (${
+        m.reasoningEfforts.join("|")
+      })`;
     const tools = m.toolReasoningEffort !== undefined &&
         m.toolReasoningEffort !== m.reasoningEffort
       ? ` (tools=${m.toolReasoningEffort})` : "";

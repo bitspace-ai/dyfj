@@ -62,6 +62,13 @@ export type ProviderTurnRequest =
   & {
     model: WorkbenchModel;
     selection: WorkbenchSelection;
+    /**
+     * The reasoning effort the turn asked for, from
+     * `routing.reasoningEffort`. Route resolution and the adapters' own
+     * capability table decide what the request actually sends; absent leaves
+     * each model's default.
+     */
+    reasoningEffort?: string;
   };
 
 export type BaseUrlCheck = { ok: true } | { ok: false; error: DomainError };

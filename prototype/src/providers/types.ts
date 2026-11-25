@@ -136,6 +136,13 @@ export interface WorkbenchTurnResult {
    */
   upstream?: ProviderUpstreamEvidence;
   /**
+   * The reasoning effort this request actually carried, when the model takes
+   * one: the operator's level, the model's default, or OpenAI's `none` on a
+   * tool-bearing request. Recorded on the turn's events so the log says what
+   * ran rather than what was asked for.
+   */
+  reasoningEffort?: string;
+  /**
    * Safe metadata for textual tool-call markup left in the text that ran no
    * tool: function elements in complete blocks recovery did not run, plus
    * repeated unmatched wrapper openings.

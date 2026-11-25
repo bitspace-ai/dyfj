@@ -85,6 +85,9 @@ export function createProviderRegistry(
         sessionId: params.sessionId,
         maxOutputTokens: params.maxOutputTokens,
         openRouterConfig: params.openRouterConfig,
+        ...(params.routing.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: params.routing.reasoningEffort }),
       };
       if (params.abortSignal?.aborted) {
         return abortedWorkbenchTurnResult(request, 0, false);

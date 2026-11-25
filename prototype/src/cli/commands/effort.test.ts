@@ -4,7 +4,7 @@ import { fakeIo } from "../../../testing/fakes/fake-io.ts";
 import type { CliConfig } from "../args.ts";
 import type { ConnectFn } from "../io.ts";
 import { formatPostureLine } from "../posture.ts";
-import { handleReplEffortCommand } from "./effort.ts";
+import { clearEffortOffUnsupported, handleReplEffortCommand } from "./effort.ts";
 
 const CODEX = "codex-chatgpt/gpt-6.1-sol";
 
@@ -76,7 +76,7 @@ describe("/effort", () => {
     const local = cfg({ model: "local-small" });
     await handleReplEffortCommand("/effort high", local, io, connect());
     assert.strictEqual(local.effort, undefined);
-    assert.match(stderr.join("\n"), /applies only to codex-chatgpt models/);
+    assert.match(stderr.join("\n"), /takes no reasoning effort/);
 
     const codex = cfg({ model: CODEX });
     await handleReplEffortCommand("/effort max", codex, io, connect());
@@ -134,5 +134,148 @@ describe("/effort", () => {
       }),
       /^posture: codex-chatgpt\/gpt-6\.1-sol · tier 2 · hosted · effort xhigh · /,
     );
+  });
+});
+
+describe("/effort on native models", () => {
+  const NATIVE = "deepseek/deepseek-v4.1-flash-1017";
+
+  function nativeConnect(
+    row: Record<string, unknown> = {},
+    runtime: Record<string, unknown> = {},
+  ): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list"
+            ? Promise.resolve({
+              models: [{
+                slug: NATIVE,
+                tier: 1,
+                local: false,
+                reasoningEfforts: ["low", "medium", "high", "xhigh"],
+                ...row,
+              }, {
+                slug: "local-small",
+                tier: 0,
+                local: true,
+              }],
+            })
+            : method === "runtime/status"
+            ? Promise.resolve({ runtime })
+            : Promise.resolve({}),
+        close: () => {},
+      });
+  }
+
+  it("sets a native model's effort from the next turn", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: NATIVE });
+    assert.strictEqual(
+      await handleReplEffortCommand("/effort high", config, io, nativeConnect()),
+      true,
+    );
+    assert.strictEqual(config.effort, "high");
+    assert.match(stderr.join("\n"), /reasoning effort high from the next turn/);
+  });
+
+  it("refuses a level the model's provider does not accept", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: NATIVE });
+    await handleReplEffortCommand(
+      "/effort xhigh",
+      config,
+      io,
+      nativeConnect({ reasoningEfforts: ["low", "medium", "high"] }),
+    );
+    assert.strictEqual(config.effort, undefined);
+    assert.match(
+      stderr.join("\n"),
+      /does not accept reasoning effort "xhigh"; it accepts low, medium, high/,
+    );
+  });
+
+  it("refuses an effort on a model with no effort control", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: "local-small" });
+    await handleReplEffortCommand("/effort high", config, io, nativeConnect());
+    assert.strictEqual(config.effort, undefined);
+    assert.match(stderr.join("\n"), /takes no reasoning effort/);
+  });
+
+  it("keeps an effort across a switch to another effort-capable model", async () => {
+    const { io } = fakeIo();
+    const config = cfg({ model: NATIVE, effort: "high" });
+    clearEffortOffUnsupported(config, NATIVE, io, {
+      slug: NATIVE,
+      reasoningEfforts: ["low", "medium", "high", "xhigh"],
+    });
+    assert.strictEqual(config.effort, "high");
+    clearEffortOffUnsupported(config, "local-small", io, { slug: "local-small" });
+    assert.strictEqual(config.effort, undefined);
+  });
+
+  it("drops a level the new model does not accept and says which it does", async () => {
+    const { io, stderr } = fakeIo();
+    const config = cfg({ model: NATIVE, effort: "xhigh" });
+    clearEffortOffUnsupported(config, "gemini-3.8-flash", io, {
+      slug: "gemini-3.8-flash",
+      reasoningEfforts: ["low", "medium", "high"],
+    });
+    assert.strictEqual(config.effort, undefined);
+    assert.match(
+      stderr.join("\n"),
+      /cleared for "gemini-3\.8-flash" \(it does not accept "xhigh"; it accepts low, medium, high\)/,
+    );
+  });
+});
+
+// ── P3: bare /effort names the levels the model accepts
+
+describe("/effort accepted levels", () => {
+  const NATIVE = "deepseek/deepseek-v4.1-flash-1017";
+
+  function nativeConnect(): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list"
+            ? Promise.resolve({
+              models: [{
+                slug: NATIVE,
+                tier: 1,
+                local: false,
+                reasoningEffort: "low",
+                reasoningEfforts: ["low", "high"],
+              }],
+            })
+            : Promise.resolve({ runtime: {} }),
+        close: () => {},
+      });
+  }
+
+  it("names the levels on a bare /effort, as the README says", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplEffortCommand(
+      "/effort",
+      cfg({ model: NATIVE }),
+      io,
+      nativeConnect(),
+    );
+    assert.match(
+      stderr.join("\n"),
+      /reasoning effort: low \(runtime default\) \(accepts low, high\)/,
+    );
+  });
+
+  it("names the levels beside the session's own effort", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplEffortCommand(
+      "/effort",
+      cfg({ model: NATIVE, effort: "high" }),
+      io,
+      nativeConnect(),
+    );
+    assert.match(stderr.join("\n"), /reasoning effort: high \(accepts low, high\)/);
   });
 });

@@ -73,7 +73,35 @@ const ROUTED: WorkbenchModel = {
   capabilities: ["text", "code"],
 };
 
+const OPENAI_REASONING: WorkbenchModel = {
+  slug: "gpt-5.6-sol",
+  displayName: "GPT-5.6 Sol",
+  provider: "openai",
+  api: "openai-completions",
+  baseUrl: "https://api.openai.com/v1",
+  tier: 2,
+  costInput: 1.25,
+  costOutput: 10,
+  capabilities: ["text", "code", "reasoning", "tools"],
+  reasoningEffortControl: true,
+};
+
+const ROUTED_REASONING: WorkbenchModel = { ...ROUTED, reasoningEffortControl: true };
+
+const HOSTED_REASONING: WorkbenchModel = {
+  ...HOSTED,
+  capabilities: ["text", "code", "reasoning"],
+  reasoningEffortControl: true,
+};
+
 const MODELS = [LOCAL, HOSTED, ROUTED];
+
+/**
+ * Every model these tests route to. The effort-capable variants share their
+ * slugs with the plain rows, so a list holding both would route to whichever
+ * came first: these replace them rather than adding to them.
+ */
+const ROUTED_MODELS = [LOCAL, OPENAI_REASONING, ROUTED_REASONING, HOSTED_REASONING];
 
 function openAIReply(content: string): ScriptedExchange {
   return {
@@ -566,3 +594,104 @@ test("a failed call records neither an upstream nor a generation id", async () =
   assert.strictEqual(Object.hasOwn(event, "upstream_provider"), false);
   assert.strictEqual(Object.hasOwn(event, "provider_generation_id"), false);
 });
+
+// ── P2-3: the recorded effort is the effort the wire carried
+
+/** The effort a recorded request body actually carries, per provider shape. */
+function wireEffort(body: Record<string, unknown>): unknown {
+  const outputConfig = body.output_config as { effort?: unknown } | undefined;
+  const generationConfig = body.generationConfig as
+    | { thinkingConfig?: { thinkingLevel?: unknown } }
+    | undefined;
+  return body.reasoning_effort ??
+    (body.reasoning as { effort?: unknown } | undefined)?.effort ??
+    outputConfig?.effort ??
+    generationConfig?.thinkingConfig?.thinkingLevel;
+}
+
+/** An Anthropic messages reply, for the one case that speaks that API. */
+function anthropicReply(text: string): ScriptedExchange {
+  return {
+    respond: {
+      body: JSON.stringify({
+        content: [{ type: "text", text }],
+        stop_reason: "end_turn",
+        usage: { input_tokens: 12, output_tokens: 4 },
+      }),
+    },
+  };
+}
+
+/**
+ * A native turn records what the request actually carried, not what it was
+ * asked for: an OpenAI tool-bearing call sends `none` whatever the operator
+ * named, and the event says `none`. Each case is compared against the body
+ * the adapter put on the wire, so a change to either side fails here.
+ */
+for (
+  const [label, model, withTools, requested] of [
+    ["OpenAI with tools", OPENAI_REASONING, true, "high"],
+    ["OpenAI without tools", OPENAI_REASONING, false, "high"],
+    ["OpenRouter default", ROUTED_REASONING, false, undefined],
+    ["Anthropic explicit", HOSTED_REASONING, false, "high"],
+  ] as const
+) {
+  test(`a native turn records the wire's effective effort (${label})`, async () => {
+    const h = harness();
+    const reply = model.provider === "anthropic"
+      ? anthropicReply("ok")
+      : openAIReply("ok");
+    const { request, transport } = callRequest(h, model, [reply], {
+      params: {
+        systemPrompt: "system",
+        prompt: "hello",
+        routing: {
+          modelId: model.slug,
+          ...(requested === undefined ? {} : { reasoningEffort: requested }),
+        },
+        models: ROUTED_MODELS,
+        ...(withTools
+          ? {
+            tools: [{
+              name: "lookup",
+              description: "Look up a fact",
+              parameters: { type: "object" },
+            }],
+          }
+          : {}),
+      },
+    });
+    const env = new MapEnv({
+      ANTHROPIC_API_KEY: "test-key-not-real",
+      OPENROUTER_API_KEY: "test-key-not-real",
+      OPENAI_API_KEY: "test-key-not-real",
+    });
+    (request.params as { getEnv?: (name: string) => string | undefined })
+      .getEnv = (name) => env.get(name);
+    const withTransport = {
+      ...request,
+      params: { ...request.params, fetchFn: transport.fetch },
+    };
+
+    const result = await observedProviderCall(h.context, withTransport);
+
+    transport.assertDone();
+    const wire = wireEffort(
+      JSON.parse(transport.requests[0].body) as Record<string, unknown>,
+    );
+    assert.notEqual(wire, undefined, "the request must carry an effort");
+    // The event, the result and the wire all say the same thing.
+    assert.equal(result.turn.reasoningEffort, wire);
+    assert.equal(h.written.length, 1);
+    assert.equal(
+      (h.written[0] as unknown as { reasoning_effort: string | null })
+        .reasoning_effort,
+      wire,
+    );
+    // The literals that make the point, named so a regression reads clearly.
+    if (withTools) assert.equal(wire, "none", "OpenAI narrows a tool request");
+    if (model.provider === "openrouter" && requested === undefined) {
+      assert.equal(wire, "low", "unset means the model default");
+    }
+  });
+}

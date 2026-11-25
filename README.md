@@ -1315,7 +1315,8 @@ supported. OpenAI's `(tools=none)` annotation shows its tool-call exception.
 Effort does not guarantee answer tokens. See the prototype's
 [reasoning and output caps](prototype/README.md#reasoning-and-output-caps)
 for provider parameters and the catalog migration. `models/list` exposes
-these as `defaultOutputTokens`, `reasoningEffort`, and `toolReasoningEffort`.
+these as `defaultOutputTokens`, `reasoningEffort`, `toolReasoningEffort`, and
+`reasoningEfforts` (the levels the row accepts; absent when it takes none).
 
 `dyfj sessions show <session> --events` (accepting either the bare 26-character
 session id or the `workbench-<id>` slug from `dyfj sessions`) reads the
@@ -1842,25 +1843,39 @@ and marked continuation lines, and describes each offered option's effect.
 It shows received fields in full; input it cannot read as an object is shown
 raw with a notice about the runtime's input limit.
 
-Codex turns run at the reasoning effort the operator chooses. `--effort
-<low|medium|high|xhigh>` (on `dyfj`, `dyfj exec` and the Rust REPL) and the
-REPL command `/effort <level>` set it for a `codex-chatgpt/*` model, or for
-`--runner codex-chatgpt`, and Workbench passes it to Codex as
-`model_reasoning_effort`. `/effort` shows the current effort.
-`/effort default` returns to the configured one, and works on any model, so
-it also drops an effort the current route refuses. Without either, a turn runs
-at `[codex] reasoning_effort` in `~/.dyfj/config.toml` (env
-`DYFJ_CODEX_REASONING_EFFORT`), and at `medium` when that is unset. Any other
-level is refused before a turn runs. An effort on any other model is refused
-too: by the command line when it names that model, and otherwise by the
-runtime before the turn starts. A `/model` switch to such a model clears the
-session's effort. The posture line names the effort for a Codex model. The
+Turns run at the reasoning effort the operator chooses, on any model whose
+catalog row supports effort control. `--effort <low|medium|high|xhigh>` (on
+`dyfj`, `dyfj exec` and the Rust REPL) and the REPL command `/effort <level>`
+set it for the session. On a native model the level reaches the provider as
+that provider's own parameter: OpenAI and xAI `reasoning_effort`, OpenRouter's
+`reasoning.effort`, Anthropic's `output_config.effort`, Gemini's
+`generationConfig.thinkingConfig.thinkingLevel`. On the Codex route Workbench
+passes it to Codex as `model_reasoning_effort`. `/effort` shows the current
+effort and the levels the model accepts. `/effort default` returns to the
+model's default, and works on any model, so it also drops an effort the
+current route refuses.
+
+Whether a model takes an effort, and which levels it accepts, is the catalog
+row's answer, reported on `models/list` as `reasoningEfforts`. A row enables
+it with `reasoning_effort_control`; Gemini 3.x rows take a thinking level
+regardless, because their request carries one either way. The levels differ
+by provider API and, on OpenRouter, by the model behind the slug: Gemini 3.x
+tops out at `high`; DeepSeek, Kimi and GLM rows take `low` and `high`;
+Anthropic, OpenAI, xAI, Grok 4.7 and the Meta Muse rows take all four. An
+effort on a model without effort control, or a level its provider API does
+not accept, is refused before the turn runs, with the accepted levels named.
+A `/model` switch drops a level the new model does not accept, and keeps one
+it does.
+
+Without an effort, a turn runs at `[codex] reasoning_effort` in
+`~/.dyfj/config.toml` (env `DYFJ_CODEX_REASONING_EFFORT`) on the Codex route,
+and at `medium` when that is unset. A native model that takes an effort runs
+at `low`. The posture line names the effort for any model that takes one; the
 Rust REPL's line after a command reads no runtime status, so there a session
-that names a Codex model and set no effort shows `runtime-default effort`. A
-changed effort takes effect from the next turn. The Codex profile carries the
-effort, and the runtime reuses a warm Codex session only for the same
-profile, so a turn at another effort than the last does not continue in the
-last turn's warm session.
+that set no effort shows `model-default effort`. A changed effort takes effect
+from the next turn. The Codex profile carries the effort, and the runtime
+reuses a warm Codex session only for the same profile, so a turn at another
+effort than the last does not continue in the last turn's warm session.
 
 A session can use more than one directory. `--add-dir <path>` (on `dyfj`,
 `dyfj exec` and the Rust REPL) adds a read-write root beside the workspace, and
@@ -3878,3 +3893,11 @@ Document revisions only. Code and behavior changes are tracked in
   unaffected. Also state that the companion grounding now describes `bash`'s
   containment and approval rule per route, and that repo context no longer
   assumes this repository's own files or a private corpus.
+- 2026-11-24 - The reasoning-effort section covers native models: `--effort`,
+  `/effort` and `dispatch/start`'s `effort` reach any model whose catalog row
+  supports effort control, `models/list` and `dyfj models` report the accepted
+  levels as `reasoningEfforts`, and a level a provider API does not accept is
+  refused before the turn runs. OpenRouter's levels are per model, a Codex
+  row's reported default is the runtime's configured effort, a bare `/effort`
+  names the accepted levels, and the CLI posture line narrows instead of
+  failing when the catalog RPC is unavailable.

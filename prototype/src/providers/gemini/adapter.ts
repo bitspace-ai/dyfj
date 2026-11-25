@@ -15,7 +15,10 @@ import {
 } from "../shared/failure.ts";
 import { isAllowedHostedProviderBaseUrl } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
-import { hostedDefaultOutputTokens } from "../shared/reasoning-output.ts";
+import {
+  hostedDefaultOutputTokens,
+  modelReasoningEffort,
+} from "../shared/reasoning-effort.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import { withTimePerOutputToken } from "../shared/tokens.ts";
 import { abortedWorkbenchTurnResult } from "../shared/turn-result.ts";
@@ -84,6 +87,7 @@ export const geminiAdapter: ProviderAdapter = {
     const endpoint = stream
       ? `${modelPath}:streamGenerateContent?alt=sse`
       : `${modelPath}:generateContent`;
+    const effectiveEffort = modelReasoningEffort(model, request.reasoningEffort);
     const requestStarted = now();
     const response = await fetchWithHeaderTimeout(
       io.fetch,
@@ -106,6 +110,7 @@ export const geminiAdapter: ProviderAdapter = {
               request.maxOutputTokens,
               geminiAdapter.defaultOutputTokens(model),
             ),
+            thinkingLevel: effectiveEffort,
           }),
         ),
       },
@@ -168,6 +173,9 @@ export const geminiAdapter: ProviderAdapter = {
         normaliseGeminiStopReason(result.stopReason),
       ),
       toolCalls: undefined,
+      ...(effectiveEffort === undefined
+        ? {}
+        : { reasoningEffort: effectiveEffort }),
       timings,
     };
   },
