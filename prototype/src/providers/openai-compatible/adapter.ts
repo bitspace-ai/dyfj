@@ -35,7 +35,7 @@ import { outputCap } from "../shared/output-cap.ts";
 import {
   hostedDefaultOutputTokens,
   modelReasoningEffort,
-} from "../shared/reasoning-output.ts";
+} from "../shared/reasoning-effort.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import {
   canonicalToolCallSignature,
@@ -182,6 +182,18 @@ function openRouterRouting(
 }
 
 /**
+ * The effort this request sends: the operator's when the model accepts it,
+ * else the model default, and OpenAI's `none` on a tool-bearing request.
+ */
+function requestEffort(request: ProviderTurnRequest) {
+  return modelReasoningEffort(
+    request.model,
+    request.reasoningEffort,
+    Boolean(request.tools?.length),
+  );
+}
+
+/**
  * Execute one OpenAI-compatible chat/completions turn. Shared by the local
  * provider path (no auth) and the hosted OpenAI path (bearer key). The caller
  * has already validated the base URL and provider.
@@ -200,6 +212,7 @@ async function executeOpenAICompatibleTurn(
   const stream = onFrame !== undefined;
   const requestStarted = now();
   const providerRouting = openRouterRouting(model, request.openRouterConfig);
+  const effectiveEffort = requestEffort(request);
   const response = await fetchWithHeaderTimeout(
     io.fetch,
     `${model.baseUrl.replace(/\/$/, "")}/chat/completions`,
@@ -235,10 +248,10 @@ async function executeOpenAICompatibleTurn(
             providerRouting,
             reasoningEffort: model.provider === "openrouter"
               ? undefined
-              : modelReasoningEffort(model, Boolean(request.tools?.length)),
+              : effectiveEffort,
             openRouterReasoning: model.provider === "openrouter" &&
-                modelReasoningEffort(model) === "low"
-              ? { effort: "low" }
+                effectiveEffort !== undefined
+              ? { effort: effectiveEffort }
               : undefined,
           },
         ),

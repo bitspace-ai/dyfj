@@ -20,6 +20,7 @@ import {
   createProviderRegistry,
   modelReasoningEffort,
   PROVIDER_ADAPTERS,
+  unsupportedReasoningEffort,
   selectWorkbenchModel,
   type WorkbenchModel,
   WorkbenchModelNotFoundError,
@@ -87,9 +88,9 @@ export function buildChildTurnBody(input: {
       }),
     routingOptions: {
       modelId: input.model,
-      ...(input.route === "acp" && input.effort !== null
-        ? { reasoningEffort: input.effort }
-        : {}),
+      // Both routes carry it: the child's own turn resolves what the model
+      // actually accepts, and a value it cannot honour is refused there.
+      ...(input.effort !== null ? { reasoningEffort: input.effort } : {}),
     },
     approvePaidInference: input.approvePaid,
   };
@@ -144,8 +145,8 @@ function validateDispatchModel(input: {
       if (input.requestedEffort !== undefined) {
         return {
           refusal:
-            `reasoning effort applies only to codex-chatgpt models, and ` +
-            `"${model.slug}" is not one`,
+            `reasoning effort does not apply to the "${model.slug}" runner; ` +
+            "drop it, or dispatch a model whose catalog row enables it",
         };
       }
       effort = null;
@@ -158,13 +159,14 @@ function validateDispatchModel(input: {
     }
   } else {
     route = "native";
-    if (input.requestedEffort !== undefined) {
-      return {
-        refusal:
-          `reasoning effort applies only to codex-chatgpt models, and ` +
-          `"${model.slug}" is not one`,
-      };
-    }
+    // A native child takes an effort when its own catalog row enables effort
+    // control and its provider API accepts the level; otherwise the dispatch
+    // is refused here rather than at the child's first turn.
+    const effortRefusal = unsupportedReasoningEffort(
+      model,
+      input.requestedEffort,
+    );
+    if (effortRefusal !== undefined) return { refusal: effortRefusal };
     const adapter = providerRegistry.adapterFor(model);
     if (adapter === undefined) {
       return {
@@ -179,7 +181,14 @@ function validateDispatchModel(input: {
         }`,
       };
     }
-    effort = modelReasoningEffort(model, true) ?? null;
+    // The effort the child's turn sends: its own level when it named one,
+    // otherwise the model default. A cheap tool-heavy child is what a
+    // dispatched session usually is, so the tool constraint counts here.
+    effort = modelReasoningEffort(
+      model,
+      input.requestedEffort,
+      true,
+    ) ?? null;
   }
 
   if (model.tier > 0 && input.approvePaid !== true) {

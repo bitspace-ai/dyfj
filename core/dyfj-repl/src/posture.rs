@@ -235,13 +235,17 @@ pub fn switch_line(session: &Session, rows: &[Value]) -> String {
     if session.model_origin == ModelOrigin::Unrecorded {
         parts.push("no recorded model for this session".into());
     }
-    // No status is read here, so a Codex model without the session's own
-    // effort is named as running at the runtime's default.
+    // No status is read here, so a model without the session's own effort is
+    // named as running at the model's default. The catalog row says which
+    // models take an effort at all.
+    let takes_effort = session
+        .model
+        .as_deref()
+        .and_then(|slug| crate::session::find_model_row(rows, slug))
+        .is_some_and(|row| crate::session::row_effort_levels(row).is_some());
     match &session.effort {
         Some(effort) => parts.push(format!("effort {}", visible(effort))),
-        None if session.model.as_deref().is_some_and(crate::session::is_codex_model) => {
-            parts.push("runtime-default effort".into())
-        }
+        None if takes_effort => parts.push("model-default effort".into()),
         None => {}
     }
     if session.fast == Some(true) {
@@ -298,14 +302,27 @@ fn posture_line_with_models(status: &Value, session: &Session, socket: &str, row
     // Both states are shown, as the TypeScript posture line shows them: the
     // default of paid off is the one an operator most needs to see, because
     // it is why a hosted turn is refused. An absent field narrows the line.
-    // The effort the next turn runs at, on a Codex model only: the
-    // session's own, else the runtime's configured default.
-    if active.is_some_and(crate::session::is_codex_model) {
+    // The effort the next turn runs at, on a model whose catalog row takes
+    // one: the session's own, else the model's default (the runtime's
+    // configured `[codex] reasoning_effort` on the Codex route).
+    let active_row = active.and_then(|slug| crate::session::find_model_row(rows, slug));
+    let takes_effort = active_row
+        .is_some_and(|row| crate::session::row_effort_levels(row).is_some());
+    if takes_effort || session.effort.is_some() {
+        let codex = active.is_some_and(crate::session::is_codex_model);
+        let model_default = active_row
+            .and_then(|row| row.get("reasoningEffort"))
+            .and_then(Value::as_str)
+            .unwrap_or("low");
         let effort = session
             .effort
             .as_deref()
-            .or_else(|| runtime.get("codexReasoningEffort").and_then(Value::as_str))
-            .unwrap_or("medium");
+            .or_else(|| {
+                codex
+                    .then(|| runtime.get("codexReasoningEffort").and_then(Value::as_str))
+                    .flatten()
+            })
+            .unwrap_or(model_default);
         parts.push(format!("effort {}", visible(effort)));
     }
     if session.fast == Some(true) {
@@ -498,25 +515,40 @@ mod tests {
     /// session's own, else the runtime's configured default. Other models
     /// have no effort to name.
     #[test]
-    fn names_the_codex_effort_and_only_for_codex_models() {
+    fn names_the_effort_and_only_for_models_that_take_one() {
         let status = json!({"runtime": {
             "defaultTurnModel": {"slug": "codex-chatgpt/gpt-6.1-sol", "tier": 2, "local": false},
             "codexReasoningEffort": "medium"
         }});
-        let rendered = line(&status, &Session::default(), "/tmp/s.sock");
+        let rows = vec![
+            json!({"slug": "codex-chatgpt/gpt-6.1-sol", "reasoningEfforts": ["low", "medium", "high", "xhigh"]}),
+            json!({"slug": "deepseek/deepseek-v4.1-flash-1017", "reasoningEffort": "low",
+                   "reasoningEfforts": ["low", "medium", "high", "xhigh"]}),
+            json!({"slug": "local/qwen"}),
+        ];
+        let rendered = super::posture_line_with_models(&status, &Session::default(), "/tmp/s.sock", &rows);
         assert!(rendered.contains("effort medium"), "{rendered}");
         let own = Session { effort: Some("xhigh".into()), ..Session::default() };
-        let rendered = line(&status, &own, "/tmp/s.sock");
+        let rendered = super::posture_line_with_models(&status, &own, "/tmp/s.sock", &rows);
         assert!(rendered.contains("effort xhigh"), "{rendered}");
+        // A native model that takes an effort names it too.
+        let native = Session { model: Some("deepseek/deepseek-v4.1-flash-1017".into()), ..Session::default() };
+        let rendered = super::posture_line_with_models(&status, &native, "/tmp/s.sock", &rows);
+        assert!(rendered.contains("effort low"), "{rendered}");
+        let raised = Session { model: Some("deepseek/deepseek-v4.1-flash-1017".into()), effort: Some("high".into()), ..Session::default() };
+        let rendered = super::posture_line_with_models(&status, &raised, "/tmp/s.sock", &rows);
+        assert!(rendered.contains("effort high"), "{rendered}");
+        // A model without effort control has none to name.
         let local = Session { model: Some("local/qwen".into()), ..Session::default() };
-        let rendered = line(&status, &local, "/tmp/s.sock");
+        let rendered = super::posture_line_with_models(&status, &local, "/tmp/s.sock", &rows);
         assert!(!rendered.contains("effort"), "{rendered}");
         // The line printed after a command has no status to read the
-        // configured effort from, so it says the default applies.
+        // configured effort from, so it says the model default applies.
         let codex = Session { model: Some("codex-chatgpt/gpt-6.1-sol".into()), ..Session::default() };
-        assert!(super::switch_line(&codex, &[]).contains("runtime-default effort"));
+        assert!(super::switch_line(&codex, &rows).contains("model-default effort"));
         let own = Session { effort: Some("high".into()), ..codex };
-        assert!(super::switch_line(&own, &[]).contains("effort high"));
+        assert!(super::switch_line(&own, &rows).contains("effort high"));
+        assert!(!super::switch_line(&local, &rows).contains("effort"));
     }
 
     /// The command line's choices override the runtime's defaults on the

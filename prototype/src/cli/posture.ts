@@ -40,10 +40,13 @@ export interface SessionPosture {
   trustWorkspaceInstructions?: boolean;
   fast?: boolean;
   /**
-   * The reasoning effort the next turn runs at, on a codex-chatgpt model
-   * only: the session's own, else the runtime's configured default.
+   * The reasoning effort the next turn runs at, on a model that takes one:
+   * the session's own, else the model's default (the runtime's configured
+   * `[codex] reasoning_effort` on the Codex route).
    */
   effort?: string;
+  /** The levels the active model accepts; absent when it takes no effort. */
+  effortLevels?: readonly string[];
   /** The code the runtime loaded; absent from an older runtime. */
   runtimeFingerprint?: unknown;
   /** Whether `dyfj` autostarted the runtime; absent from an older runtime. */
@@ -160,6 +163,36 @@ export function formatPostureLine(posture: SessionPosture): string {
     (roots === null ? "" : ` · ${roots}`);
 }
 
+/**
+ * The effort the next turn runs at, or `undefined` when the model takes none.
+ * A Codex model reads the session's own effort, else the runtime's configured
+ * `[codex] reasoning_effort` (default `medium`). A native model that accepts
+ * effort reads the session's own, else the model's default as `models/list`
+ * reports it.
+ */
+function effortFor(
+  config: CliConfig,
+  row: ModelRow | undefined,
+  runtime: RuntimeStatusPayload["runtime"],
+): string | undefined {
+  const codex = config.runner === "codex-chatgpt" ||
+    row?.slug?.startsWith(CODEX_MODEL_PREFIX) === true ||
+    (row === undefined && config.model === undefined &&
+      runtime?.defaultTurnModel?.slug?.startsWith(CODEX_MODEL_PREFIX) === true);
+  if (codex) {
+    return config.effort ??
+      (typeof runtime?.codexReasoningEffort === "string"
+        ? runtime.codexReasoningEffort
+        : "medium");
+  }
+  const levels = row?.reasoningEfforts;
+  if (levels === undefined || levels.length === 0) return undefined;
+  if (config.effort !== undefined && levels.includes(config.effort)) {
+    return config.effort;
+  }
+  return row?.reasoningEffort ?? "low";
+}
+
 /** The posture's sandbox field, absent when the runtime reports no sandbox. */
 function sandboxField(
   sandbox: NonNullable<RuntimeStatusPayload["runtime"]>["sandbox"],
@@ -196,15 +229,23 @@ export async function fetchSessionPosture(
       let slug = config.model;
       let tier: number | undefined;
       let local: boolean | undefined;
+      // The catalog row for whichever model the session runs on: it carries
+      // the tier, locality and, for a model that takes one, the reasoning
+      // effort levels. Read once, whether the session named the model or the
+      // runtime's default answers.
+      const { models } = await client.request(
+        "models/list",
+        undefined,
+        signal,
+      ) as {
+        models: ModelRow[];
+      };
+      const rowFor = (candidate: string | undefined) =>
+        candidate === undefined
+          ? undefined
+          : models.find((m) => m.slug === candidate);
       if (slug !== undefined) {
-        const { models } = await client.request(
-          "models/list",
-          undefined,
-          signal,
-        ) as {
-          models: ModelRow[];
-        };
-        const row = models.find((m) => m.slug === slug);
+        const row = rowFor(slug);
         tier = row?.tier;
         local = row?.local;
       } else if (config.tier !== undefined || config.hint !== undefined) {
@@ -223,6 +264,13 @@ export async function fetchSessionPosture(
           local = resolved.local;
         }
       }
+      // The effort the next turn runs at: the session's own when the model
+      // accepts it, else the model's default. A Codex model reads the
+      // runtime's configured effort; a native model that takes no effort has
+      // none to name.
+      const activeRow = rowFor(slug);
+      const effort = effortFor(config, activeRow, runtime);
+      const effortLevels = activeRow?.reasoningEfforts;
       return {
         slug: slug ?? "(registry default)",
         tier,
@@ -232,15 +280,10 @@ export async function fetchSessionPosture(
         permissionLevel: runtime?.permissionLevel,
         trustWorkspaceInstructions: runtime?.trustWorkspaceInstructions,
         ...(config.fast !== undefined ? { fast: config.fast } : {}),
-        ...(config.runner === "codex-chatgpt" ||
-            slug?.startsWith(CODEX_MODEL_PREFIX) === true
-          ? {
-            effort: config.effort ??
-              (typeof runtime?.codexReasoningEffort === "string"
-                ? runtime.codexReasoningEffort
-                : "medium"),
-          }
-          : {}),
+        ...(effort === undefined ? {} : { effort }),
+        ...(effortLevels === undefined || effortLevels.length === 0
+          ? {}
+          : { effortLevels }),
         ...((config.toolSteps ?? runtime?.maxToolSteps) !== undefined
           ? { maxToolSteps: config.toolSteps ?? runtime?.maxToolSteps }
           : {}),

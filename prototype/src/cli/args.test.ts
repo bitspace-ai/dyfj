@@ -73,15 +73,16 @@ describe("parseArgs", () => {
       parseArgs(["--effort"]).error,
       "missing value for --effort",
     );
-    assert.strictEqual(
-      parseArgs(["--model", "local-small", "--effort", "high", "exec", "hi"])
-        .error,
-      "--effort applies only to codex-chatgpt/* models",
+    // The client holds no catalog, so it does not guess from the slug: the
+    // runtime refuses an effort a model does not accept.
+    assert.partialDeepStrictEqual(
+      parseArgs(["--model", "local-small", "--effort", "high", "exec", "hi"]),
+      { command: "exec", overrides: { model: "local-small", effort: "high" } },
     );
     assert.strictEqual(
       parseArgs(["--runner", "fixture", "--effort", "high", "exec", "hi"])
         .error,
-      "--effort applies only to codex-chatgpt/* models",
+      "--effort does not apply to the fixture runner",
     );
   });
 

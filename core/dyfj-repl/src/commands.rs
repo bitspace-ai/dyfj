@@ -290,7 +290,7 @@ const HELP: &str = "\
 commands (type them alone on a line; inside a paste they are prompt text):
   /model [slug] [--approve-paid] [--fast|--no-fast]   show or switch the model
   /fast [on|off]                                       toggle the fast speed tier
-  /effort [low|medium|high|xhigh|default]              show or set a codex-chatgpt model's reasoning effort
+  /effort [low|medium|high|xhigh|default]              show or set the session's reasoning effort
   /steps [N]                                           show or set the tool-step limit
   /budget [turn|session|day|per-call|runaway <usd>]    show or set the spend limits
   /receipt steps                                       the last turn's usage, per provider call
@@ -830,7 +830,7 @@ async fn model(
                 visible(&slug)
             );
         }
-        crate::effort::clear_off_codex(session, &slug);
+        crate::effort::clear_off_unsupported(session, &slug, Some(rows.as_slice()));
         session.choose_model(slug);
     }
     if let Some(f) = fast {

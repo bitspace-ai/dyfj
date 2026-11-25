@@ -8,8 +8,9 @@ import {
   getModelAccessModality,
   isLocalWorkbenchModel,
   modelHasCatalogPricing,
-  modelTransmittedOutputCap,
   modelReasoningEffort,
+  modelTransmittedOutputCap,
+  reasoningEffortSupport,
   type WorkbenchModel,
 } from "../../providers/mod.ts";
 import type { RpcHandlers } from "../../transport/mod.ts";
@@ -47,7 +48,16 @@ export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
           modality: getModelAccessModality(model),
           defaultOutputTokens: modelTransmittedOutputCap(model),
           reasoningEffort: modelReasoningEffort(model),
-          toolReasoningEffort: modelReasoningEffort(model, true),
+          toolReasoningEffort: modelReasoningEffort(
+            model,
+            undefined,
+            true,
+          ),
+          // The levels this model accepts, so a client never hardcodes a slug
+          // prefix to decide whether `/effort` and `--effort` apply.
+          ...(reasoningEffortSupport(model) === undefined
+            ? {}
+            : { reasoningEfforts: reasoningEffortSupport(model)!.levels }),
         })),
         ...(catalog.unavailable === undefined
           ? {}

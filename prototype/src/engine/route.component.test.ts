@@ -532,7 +532,7 @@ test("resolveRoute refuses a reasoning effort on a native model before consent",
       ),
     (error: unknown) =>
       error instanceof DomainError &&
-      error.message.includes("codex-chatgpt") &&
+      error.message.includes("takes no reasoning effort") &&
       error.message.includes("local-small"),
   );
   assert.equal(confirm.mock.callCount(), 0);
@@ -549,7 +549,8 @@ test("resolveRoute refuses a reasoning effort on the ACP fixture runner", async 
         failingCatalog,
       ),
     (error: unknown) =>
-      error instanceof DomainError && error.message.includes("codex-chatgpt"),
+      error instanceof DomainError && /does not apply to the "fixture" runner/
+        .test(error.message),
   );
 });
 
@@ -585,4 +586,96 @@ test("resolveRoute applies the configured Codex reasoning effort only when the t
     catalog(LOCAL),
   );
   assert.deepStrictEqual(native, { runner: "native" });
+});
+
+// ── resolveRoute: native reasoning effort ────────────────────────────────────
+
+const OPENROUTER_REASONING: ModelSeed = {
+  slug: "deepseek/deepseek-v4.1-flash-1017",
+  display_name: "DeepSeek V4.1 Flash",
+  provider: "openrouter",
+  api: "openai-completions",
+  base_url: "https://openrouter.ai/api/v1",
+  tier: 1,
+  cost_input: 0.3,
+  cost_output: 1.2,
+  context_window: 131_072,
+  max_output_tokens: 32_768,
+  capabilities: ["text", "code", "reasoning"],
+  reasoning_effort_control: true,
+};
+
+const GEMINI: ModelSeed = {
+  slug: "gemini-3.8-flash",
+  display_name: "Gemini 3.8 Flash",
+  provider: "google",
+  api: "google-generative-ai",
+  base_url: "https://generativelanguage.googleapis.com",
+  tier: 1,
+  cost_input: 0.75,
+  cost_output: 3.75,
+  context_window: 1_048_576,
+  max_output_tokens: 65_536,
+  capabilities: ["text", "reasoning", "thinking"],
+  reasoning_effort_control: true,
+};
+
+test("resolveRoute lets a native model that supports effort control through with its level", async () => {
+  const route = await resolveRoute(
+    request({
+      routingOptions: {
+        modelId: OPENROUTER_REASONING.slug,
+        reasoningEffort: "high",
+      },
+    }),
+    catalog(OPENROUTER_REASONING),
+  );
+  assert.deepStrictEqual(route, { runner: "native" });
+});
+
+test("resolveRoute refuses a level the model's provider API does not accept", async () => {
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({
+          routingOptions: { modelId: GEMINI.slug, reasoningEffort: "xhigh" },
+        }),
+        catalog(GEMINI),
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      /does not accept reasoning effort "xhigh"; it accepts low, medium, high/
+        .test(error.message),
+  );
+});
+
+test("resolveRoute refuses an effort on a native model whose row does not enable it", async () => {
+  const confirm = consent({ decision: "approve" });
+  await assert.rejects(
+    () =>
+      resolveRoute(
+        request({
+          routingOptions: { modelId: LOCAL.slug, reasoningEffort: "high" },
+          approver: { confirmPaidEscalation: confirm },
+        }),
+        catalog(LOCAL, CODEX_TERRA),
+      ),
+    (error: unknown) =>
+      error instanceof DomainError &&
+      /takes no reasoning effort/.test(error.message),
+  );
+  assert.equal(confirm.mock.callCount(), 0);
+});
+
+test("the native turn names the catalog failure behind an effort check it cannot make", async () => {
+  await assert.rejects(
+    () =>
+      selectModelRoute(failingCatalog, {
+        mode: "ask",
+        routingOptions: { reasoningEffort: "high" },
+      }),
+    (error: unknown) =>
+      error instanceof WorkbenchModelNotFoundError &&
+      /model catalog could not be loaded/.test(error.message),
+  );
 });

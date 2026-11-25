@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ScriptedHttpTransport } from "../../../testing/fakes/scripted-http-transport.ts";
 import {
+  type ReasoningEffort,
+  type WorkbenchModel,
   modelTransmittedOutputCap,
   runWorkbenchTurn,
-  type WorkbenchModel,
 } from "../mod.ts";
 
 const providers = [
@@ -35,6 +36,7 @@ async function capture(
   subject: WorkbenchModel,
   maxOutputTokens?: number,
   withTools = false,
+  reasoningEffort?: ReasoningEffort,
 ) {
   const response = subject.provider === "anthropic"
     ? {
@@ -61,7 +63,10 @@ async function capture(
     systemPrompt: "system",
     prompt: "answer",
     models: [subject],
-    routing: { modelId: subject.slug },
+    routing: {
+      modelId: subject.slug,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    },
     getEnv: () => "canary-provider-key",
     fetchFn: transport.fetch,
     maxOutputTokens,
@@ -176,4 +181,39 @@ test("local reasoning requests keep the server's cap and receive no hosted effor
   assert.equal(modelTransmittedOutputCap(subject), undefined);
   assert.equal(body.reasoning_effort, undefined);
   assert.equal(body.reasoning, undefined);
+});
+
+for (const [provider, baseUrl] of providers) {
+  test(`${provider} sends the operator's effort instead of the default`, async () => {
+    const subject = model(provider, baseUrl);
+    const body = await capture(subject, undefined, false, "high");
+    if (provider === "openrouter") {
+      assert.deepEqual(body.reasoning, { effort: "high" });
+    } else if (provider === "anthropic") {
+      assert.deepEqual(body.output_config, { effort: "high" });
+    } else if (provider === "google") {
+      assert.deepEqual(body.generationConfig.thinkingConfig, {
+        thinkingLevel: "high",
+      });
+    } else {
+      assert.equal(body.reasoning_effort, "high");
+    }
+  });
+}
+
+test("a level the provider API does not accept falls back to the default, and route resolution refuses it first", async () => {
+  const gemini = model("google", "https://generativelanguage.googleapis.com");
+  const body = await capture(gemini, undefined, false, "xhigh");
+  assert.deepEqual(body.generationConfig.thinkingConfig, {
+    thinkingLevel: "low",
+  });
+});
+
+test("OpenAI keeps none effort on tool calls even when the turn names high", async () => {
+  const subject = model("openai", "https://api.openai.com/v1");
+  assert.equal(
+    (await capture(subject, undefined, true, "high")).reasoning_effort,
+    "none",
+  );
+  assert.equal((await capture(subject, undefined, false, "high")).reasoning_effort, "high");
 });

@@ -17,7 +17,7 @@ import { outputCap } from "../shared/output-cap.ts";
 import {
   hostedDefaultOutputTokens,
   modelReasoningEffort,
-} from "../shared/reasoning-output.ts";
+} from "../shared/reasoning-effort.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import {
   estimateParamsInputText,
@@ -114,7 +114,7 @@ export const anthropicAdapter: ProviderAdapter = {
           anthropicAdapter.defaultOutputTokens(model),
         ),
         progressUpdates,
-        effort: modelReasoningEffort(model) === "low" ? "low" : undefined,
+        effort: modelReasoningEffort(model, request.reasoningEffort),
       },
     );
     const requestStarted = now();

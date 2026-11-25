@@ -93,7 +93,7 @@ export function buildOpenAIChatRequest(
     messages?: WorkbenchMessage[];
     maxCompletionTokens?: number;
     reasoningEffort?: string;
-    openRouterReasoning?: { effort: "low" };
+    openRouterReasoning?: { effort: string };
     /**
      * Ask a streaming response to end with a usage frame. OpenAI reports no
      * usage on a stream without it; local servers are not sent it.
@@ -114,7 +114,7 @@ export function buildOpenAIChatRequest(
     response_format?: { type: "json_object" };
     max_completion_tokens?: number;
     reasoning_effort?: string;
-    reasoning?: { effort: "low" };
+    reasoning?: { effort: string };
     tools?: Array<{
       type: "function";
       function: WorkbenchToolDefinition;

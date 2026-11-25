@@ -32,6 +32,7 @@ import {
   WorkbenchModelNotRoutableError,
   type WorkbenchRoutingOptions,
   type WorkbenchSelection,
+  unsupportedReasoningEffort,
 } from "../providers/mod.ts";
 import type { CodexReasoningEffort } from "../config/mod.ts";
 import { PaidEscalationDeclinedError } from "./errors.ts";
@@ -146,10 +147,25 @@ export interface RouteRequest {
   approver?: { confirmPaidEscalation?: ConfirmPaidEscalation };
 }
 
-function reasoningEffortRefusal(slug: string | undefined): string {
-  const model = slug === undefined ? "the selected model" : `"${slug}"`;
-  return `Reasoning effort applies only to codex-chatgpt models, and ${model} ` +
-    "is not one. Drop --effort, or run /effort default in the REPL.";
+/**
+ * Refuse a reasoning effort the route cannot honour, before any consent
+ * prompt: an ACP runner other than Codex takes none, and a native model takes
+ * one only when its catalog row enables effort control and its provider API
+ * accepts the named level.
+ */
+function refuseUnsupportedEffort(
+  model: WorkbenchModel | undefined,
+  requested: string | undefined,
+  what: string,
+): void {
+  if (requested === undefined) return;
+  if (model === undefined) {
+    throw new DomainError(
+      `Reasoning effort does not apply to ${what}; drop the effort`,
+    );
+  }
+  const refusal = unsupportedReasoningEffort(model, requested);
+  if (refusal !== undefined) throw new DomainError(refusal);
 }
 
 /**
@@ -212,7 +228,22 @@ async function selectedAcpRoute(
       request.defaultCompanionModel,
       catalogFailure,
     );
-    if (selection.selected.api !== "acp") return null;
+    // Refused here, before the paid preflight, for both routes: an ACP row
+    // that names no effort channel, and a native row whose catalog row does
+    // not enable effort control or whose provider rejects the level.
+    if (selection.selected.api !== "acp") {
+      // Over the fallback catalog the selected row cannot answer for the
+      // model the operator named; the native turn's own check reports the
+      // load failure instead of refusing the effort.
+      if (catalogFailure === undefined) {
+        refuseUnsupportedEffort(
+          selection.selected,
+          request.routingOptions?.reasoningEffort,
+          "this turn",
+        );
+      }
+      return null;
+    }
     let profile: AcpRunnerSelection["profile"];
     if (selection.selected.provider === "codex-chatgpt") {
       profile = "codex-chatgpt";
@@ -275,17 +306,20 @@ export async function resolveRoute(
     route = await selectedAcpRoute(request, models);
   }
   const requestedEffort = request.routingOptions?.reasoningEffort;
-  if (route === null || route.selection.profile !== "codex-chatgpt") {
-    if (requestedEffort !== undefined) {
-      throw new DomainError(
-        reasoningEffortRefusal(
-          route === null
-            ? request.routingOptions.modelId
-            : route.model?.slug ?? route.selection.profile,
-        ),
-      );
-    }
-    if (route === null) return { runner: "native" };
+  if (route === null) {
+    // Native: the model's capability is checked where its row is known
+    // (`selectModelRoute`, before the paid preflight), so a native effort is
+    // not judged here.
+    return { runner: "native" };
+  }
+  if (route.selection.profile !== "codex-chatgpt") {
+    // Only Codex reports an effort it honours through an ACP route; every
+    // other runner has no such channel.
+    refuseUnsupportedEffort(
+      undefined,
+      requestedEffort,
+      `the "${route.selection.profile}" runner`,
+    );
   }
 
   if (
@@ -392,6 +426,26 @@ export async function selectModelRoute(
     request.defaultCompanionModel,
     catalogFailure,
   );
+  // Every native turn passes its effort check over the row it selected,
+  // whether or not `resolveRoute` already made it: this is the stage that
+  // runs before the entry spend check and the paid preflight, so an operator
+  // is never asked to approve a call that would have been refused. A
+  // selection made over the fallback catalog cannot answer the capability
+  // question for the model the operator named, so it reports the load
+  // failure instead of refusing the effort.
+  if (request.routingOptions?.reasoningEffort !== undefined) {
+    if (catalogFailure !== undefined) {
+      throw new WorkbenchModelNotFoundError(
+        request.routingOptions.modelId ?? selection.selected.slug,
+        { catalogFailure: summarizeError(catalogFailure) },
+      );
+    }
+    refuseUnsupportedEffort(
+      selection.selected,
+      request.routingOptions.reasoningEffort,
+      "this turn",
+    );
+  }
   return {
     models: catalog,
     selection,

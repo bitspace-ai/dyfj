@@ -129,3 +129,23 @@ test("models/list carries no catalog notice when the catalog loaded", async () =
   ) as Record<string, unknown>;
   assert.ok(!("catalogUnavailable" in result));
 });
+
+test("models/list advertises the effort levels each row accepts", async () => {
+  const models = await listModels([
+    { slug: "deepseek/deepseek-v4.1-flash-1017", provider: "openrouter",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "gemini-3.8-flash", provider: "google",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "gpt-5.6-sol", provider: "openai",
+      capabilities: ["reasoning"], reasoningEffortControl: true },
+    { slug: "local-small", provider: "llama-cpp", capabilities: ["reasoning"] },
+  ]);
+  const bySlug = Object.fromEntries(models.map((m) => [m.slug, m]));
+  assert.deepEqual(bySlug["deepseek/deepseek-v4.1-flash-1017"]
+    .reasoningEfforts, ["low", "medium", "high", "xhigh"]);
+  assert.deepEqual(bySlug["gemini-3.8-flash"].reasoningEfforts,
+    ["low", "medium", "high"]);
+  assert.deepEqual(bySlug["gpt-5.6-sol"].reasoningEfforts,
+    ["low", "medium", "high", "xhigh"]);
+  assert.equal(bySlug["local-small"].reasoningEfforts, undefined);
+});

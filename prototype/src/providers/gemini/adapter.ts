@@ -15,7 +15,10 @@ import {
 } from "../shared/failure.ts";
 import { isAllowedHostedProviderBaseUrl } from "../shared/base-url.ts";
 import { outputCap } from "../shared/output-cap.ts";
-import { hostedDefaultOutputTokens } from "../shared/reasoning-output.ts";
+import {
+  hostedDefaultOutputTokens,
+  modelReasoningEffort,
+} from "../shared/reasoning-effort.ts";
 import { stopReasonWithAbort } from "../shared/stop-reason.ts";
 import { withTimePerOutputToken } from "../shared/tokens.ts";
 import { abortedWorkbenchTurnResult } from "../shared/turn-result.ts";
@@ -105,6 +108,10 @@ export const geminiAdapter: ProviderAdapter = {
               model,
               request.maxOutputTokens,
               geminiAdapter.defaultOutputTokens(model),
+            ),
+            thinkingLevel: modelReasoningEffort(
+              model,
+              request.reasoningEffort,
             ),
           }),
         ),

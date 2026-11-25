@@ -46,7 +46,7 @@ import {
 } from "./cli/turn-client.ts";
 import { fetchModelSlugs, isModelRowFastCapable } from "./cli/commands/models.ts";
 import { commandCandidate, printFrictionRetry, routeSlashLine } from "./cli/commands/repl-slash.ts";
-import { clearEffortOffCodex, handleReplEffortCommand } from "./cli/commands/effort.ts";
+import { clearEffortOffUnsupported, handleReplEffortCommand } from "./cli/commands/effort.ts";
 import { handleReplStepsCommand } from "./cli/commands/steps.ts";
 import { handleReplBudgetCommand } from "./cli/commands/budget.ts";
 import { handleReplReceiptCommand } from "./cli/commands/receipt.ts";
@@ -1626,7 +1626,7 @@ export async function handleReplModelCommand(
     io.err(`dyfj: fast speed tier disabled for "${slug}" (unsupported)`);
   }
 
-  clearEffortOffCodex(config, slug, io);
+  clearEffortOffUnsupported(config, slug, io, targetModel);
   config.model = slug;
   config.runner = undefined;
   if (approvePaid) config.approvePaid = true;

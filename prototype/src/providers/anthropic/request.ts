@@ -296,7 +296,7 @@ export function buildAnthropicMessagesRequest(
     historyTools?: WorkbenchToolDefinition[];
     messages?: WorkbenchMessage[];
     maxTokens?: number;
-    effort?: "low";
+    effort?: string;
     /** Ask for progress updates (`ANTHROPIC_PROGRESS_UPDATES_CAPABILITY`). */
     progressUpdates?: boolean;
   } = {},
@@ -335,7 +335,7 @@ export function buildAnthropicMessagesRequest(
     messages: AnthropicWireMessage[];
     tools?: AnthropicWireTool[];
     thinking?: { type: "adaptive"; display: "updates" };
-    output_config?: { effort: "low" };
+    output_config?: { effort: string };
   } = {
     model,
     max_tokens: options.maxTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,

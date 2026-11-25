@@ -21,6 +21,26 @@ pub fn is_codex_model(slug: &str) -> bool {
     slug.starts_with(CODEX_MODEL_PREFIX)
 }
 
+/// The reasoning-effort levels a catalog row accepts, from `models/list`, or
+/// `None` when the model takes no reasoning effort. The runtime answers this
+/// (`reasoningEfforts`), so neither REPL decides it from a slug prefix.
+pub fn row_effort_levels(row: &Value) -> Option<Vec<String>> {
+    let levels: Vec<String> = row
+        .get("reasoningEfforts")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    (!levels.is_empty()).then_some(levels)
+}
+
+/// The row for `slug` in a `models/list` answer.
+pub fn find_model_row<'a>(rows: &'a [Value], slug: &str) -> Option<&'a Value> {
+    rows.iter()
+        .find(|row| row.get("slug").and_then(Value::as_str) == Some(slug))
+}
+
 /// The most extra roots one turn may send (`MAX_ADDITIONAL_ROOTS` in
 /// `prototype/src/contract/runtime.ts`).
 pub const MAX_ADDITIONAL_ROOTS: usize = 16;

@@ -11,6 +11,29 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Reasoning effort control on native models (`BIT-990`).** `--effort`,
+  `/effort` and `dispatch/start`'s `effort` no longer stop at
+  `codex-chatgpt/*`: a turn runs at the operator's level on any native model
+  whose catalog row supports effort control. The level reaches each provider
+  through its own parameter (OpenAI and xAI `reasoning_effort`, OpenRouter
+  `reasoning.effort`, Anthropic `output_config.effort`, Gemini
+  `generationConfig.thinkingConfig.thinkingLevel`), and a model with no
+  effort control gets no invented parameter. `models/list` reports the
+  capability per row as `reasoningEfforts` (absent when the row takes none),
+  so the TypeScript CLI and the Rust REPL read it instead of matching a slug
+  prefix. The fixtures behind that capability live in
+  `prototype/src/providers/shared/reasoning-effort.ts` (replacing
+  `reasoning-output.ts`): the levels each provider API accepts, and the
+  `none` OpenAI requires on a tool-bearing request. Route resolution, the
+  dispatch planner and both REPLs refuse an effort a model does not take, or a
+  level its provider API does not accept, before the turn runs, naming the
+  levels it does accept. Unset effort keeps every previous default: `low` for
+  a native model that takes an effort, `[codex] reasoning_effort` (else
+  `medium`) on the Codex route. A `/model` switch drops a level the new model
+  would refuse and keeps one it accepts, and the posture line names the effort
+  for any model that takes one. The OpenAI tool-call constraint is unchanged:
+  a tool-bearing request still sends `none`.
+
 - **A `pre-commit` hook that keeps work off `main` (`BIT-983`).** With
   `core.hooksPath` set to `.githooks`, a commit made directly on `main` is
   refused with a message pointing at a branch and at the maintainer's escape:

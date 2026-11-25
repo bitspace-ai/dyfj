@@ -1,14 +1,17 @@
-//! `/effort`: the reasoning effort of a Codex ChatGPT turn.
+//! `/effort`: the reasoning effort of a turn.
 //!
 //! The session carries the operator's level and sends it on every turn as
-//! `routingOptions.reasoningEffort`; with none set, the runtime's configured
-//! default applies. Only a codex-chatgpt model takes one, so a switch to any
-//! other model drops it rather than have every turn refused.
+//! `routingOptions.reasoningEffort`; with none set, the runtime's default
+//! applies. The runtime decides what the active model accepts and reports it
+//! on `models/list` as `reasoningEfforts`, so this client never decides from a
+//! slug prefix: a level the model's row does not list is refused here, and a
+//! switch to a model with no effort control drops the session's level rather
+//! than have every turn refused.
 
 use crate::approval::visible;
 use crate::client::Client;
-use crate::commands::{Command, error_line, list_models};
-use crate::session::{REASONING_EFFORTS, Session, is_codex_model};
+use crate::commands::{Command, list_models};
+use crate::session::{REASONING_EFFORTS, Session, find_model_row, row_effort_levels};
 use serde_json::{Value, json};
 
 const USAGE: &str = "usage: /effort [low|medium|high|xhigh|default]";
@@ -17,14 +20,18 @@ const USAGE: &str = "usage: /effort [low|medium|high|xhigh|default]";
 /// TypeScript REPL prints the same words.
 const RESTART_NOTE: &str = "a warm Codex session opened at another effort is not reused for it";
 
+/// The runner a session names that has no reasoning-effort channel at all.
+/// Every other model's capability is its catalog row's answer.
+const NO_EFFORT_RUNNER: &str = "fixture";
+
 /// What `/effort` was asked to do.
 #[derive(Debug, PartialEq)]
 pub enum EffortTarget {
-    /// `/effort`: show the effort the next Codex turn runs at.
+    /// `/effort`: show the effort the next turn runs at.
     Show,
     /// `/effort <level>`: one of `REASONING_EFFORTS`.
     Set(String),
-    /// `/effort default`: back to the runtime's configured effort.
+    /// `/effort default`: back to the model's default effort.
     Default,
 }
 
@@ -49,104 +56,146 @@ pub fn level_flag(level: String) -> Result<String, String> {
     }
 }
 
-/// Refuse a startup effort for a model off the Codex route, before the
-/// session starts. With no model named, the runtime's default may be a Codex
-/// one, and the runtime refuses the turn if it is not. A resumed session
-/// without `--model` runs on its recorded model, not yet known here.
+/// Refuse a startup effort for the one runner that has no effort channel,
+/// before the session starts. A named model is not judged here: whether it
+/// accepts an effort is its catalog row's answer, which the runtime reports
+/// on `models/list`. With no model named, the runtime's default decides, and
+/// the runtime refuses the turn if it takes no effort.
 pub fn check_startup(session: &Session) -> Result<(), String> {
-    if session.id.is_some() && !session.model_pinned {
-        return Ok(());
-    }
     match &session.model {
-        Some(model) if session.effort.is_some() && !is_codex_model(model) => {
-            Err("--effort applies only to codex-chatgpt/* models".into())
+        Some(model) if session.effort.is_some() && model == NO_EFFORT_RUNNER => {
+            Err("--effort does not apply to the fixture runner".into())
         }
         _ => Ok(()),
     }
 }
 
-/// Drop the session's effort when `slug` is not a Codex model.
-pub fn clear_off_codex(session: &mut Session, slug: &str) {
-    if session.effort.is_some() && !is_codex_model(slug) {
-        session.effort = None;
-        eprintln!("reasoning effort cleared: {} is not a codex-chatgpt model", visible(slug));
+/// Drop the session's effort when `slug`'s catalog row accepts none, or does
+/// not accept the level the session carries: carried over, it would refuse
+/// every turn. `rows` is the `models/list` answer; without it (a runtime that
+/// could not answer) the level is kept and the runtime refuses it at the turn.
+pub fn clear_off_unsupported(session: &mut Session, slug: &str, rows: Option<&[Value]>) {
+    let Some(effort) = session.effort.clone() else {
+        return;
+    };
+    let Some(row) = rows.and_then(|rows| find_model_row(rows, slug)) else {
+        return;
+    };
+    match row_effort_levels(row) {
+        None => {
+            session.effort = None;
+            eprintln!(
+                "reasoning effort cleared: {} takes no reasoning effort",
+                visible(slug)
+            );
+        }
+        Some(levels) if !levels.iter().any(|level| level == &effort) => {
+            session.effort = None;
+            eprintln!(
+                "reasoning effort cleared for \"{}\" (it does not accept \"{}\"; it accepts {})",
+                visible(slug),
+                visible(&effort),
+                visible(&levels.join(", "))
+            );
+        }
+        Some(_) => {}
     }
 }
 
-/// `/effort` shows the effort the next Codex turn runs at; `/effort <level>`
-/// sets it for the rest of the session, and `/effort default` returns to the
-/// runtime's configured one. The Codex profile carries the effort, so a turn
-/// at another effort than the last does not reuse that turn's warm session.
+/// The model the next turn runs on: the session's own choice, else the
+/// runtime's default turn model.
+async fn active_slug(client: &Client, session: &Session) -> Option<String> {
+    if let Some(model) = &session.model {
+        return Some(model.clone());
+    }
+    let status = client.request("runtime/status", json!({})).await.ok()?;
+    status
+        .pointer("/runtime/defaultTurnModel/slug")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// `/effort` shows the effort the next turn runs at; `/effort <level>` sets
+/// it for the rest of the session, and `/effort default` returns to the
+/// model's default. A level the active model's row does not list is refused
+/// here, with the levels it does accept.
 pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
-    // Clearing comes before any runtime read and needs no Codex model: it is
-    // how an effort the current route refuses is dropped.
+    // Clearing comes before any runtime read and needs no effort-capable
+    // model: it is how an effort the current route refuses is dropped.
     let previous = session.effort.clone();
     let clearing = target == EffortTarget::Default;
     if clearing {
         session.effort = None;
     }
     let cleared = "reasoning effort cleared; turns name none";
-    let status = match client.request("runtime/status", json!({})).await {
-        Ok(status) => status,
-        Err(err) => {
-            if clearing {
-                eprintln!("{cleared}");
-            }
-            return error_line("could not read the runtime's posture", &err);
+    let Some(rows) = list_models(client).await else {
+        if clearing {
+            eprintln!("{cleared}");
         }
+        return;
     };
-    let active = session.model.clone().or_else(|| {
-        status
-            .pointer("/runtime/defaultTurnModel/slug")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-    });
-    if !active.as_deref().is_some_and(is_codex_model) {
+    let active = active_slug(client, session).await;
+    let levels = active
+        .as_deref()
+        .and_then(|slug| find_model_row(&rows, slug))
+        .and_then(row_effort_levels);
+    let Some(levels) = levels else {
         if clearing {
             return eprintln!("{cleared}");
         }
         return eprintln!(
-            "reasoning effort applies only to codex-chatgpt models; \"{}\" is not one",
+            "reasoning effort does not apply to \"{}\": its catalog row does not support effort control",
             visible(active.as_deref().unwrap_or("the runtime default"))
         );
-    }
-    let configured = status
-        .pointer("/runtime/codexReasoningEffort")
+    };
+    let default_effort = active
+        .as_deref()
+        .and_then(|slug| find_model_row(&rows, slug))
+        .and_then(|row| row.get("reasoningEffort"))
         .and_then(Value::as_str)
-        .unwrap_or("medium")
+        .unwrap_or("low")
         .to_string();
-    let before = previous.unwrap_or_else(|| configured.clone());
+    let before = previous.unwrap_or_else(|| default_effort.clone());
     match target {
         EffortTarget::Show => {
             return match &session.effort {
                 Some(effort) => eprintln!("reasoning effort: {effort}"),
-                None => eprintln!("reasoning effort: {} (runtime default)", visible(&configured)),
+                None => eprintln!("reasoning effort: {} (model default)", visible(&default_effort)),
             };
         }
-        EffortTarget::Set(level) => session.effort = Some(level),
+        EffortTarget::Set(level) => {
+            if !levels.iter().any(|accepted| accepted == &level) {
+                eprintln!(
+                    "dyfj: \"{}\" does not accept reasoning effort \"{}\"; it accepts {}",
+                    visible(active.as_deref().unwrap_or("the model")),
+                    visible(&level),
+                    visible(&levels.join(", "))
+                );
+                return;
+            }
+            session.effort = Some(level);
+        }
         EffortTarget::Default => {}
     }
-    let now = session.effort.clone().unwrap_or(configured);
+    let now = session.effort.clone().unwrap_or(default_effort);
     if now == before {
         eprintln!("reasoning effort stays {}", visible(&now));
     } else {
         eprintln!("reasoning effort {} from the next turn; {RESTART_NOTE}", visible(&now));
     }
-    if let Some(rows) = list_models(client).await {
-        eprintln!("{}", crate::posture::switch_line(session, &rows));
-    }
+    eprintln!("{}", crate::posture::switch_line(session, &rows));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{EffortTarget, check_startup, level_flag};
+    use super::{EffortTarget, check_startup, clear_off_unsupported, level_flag};
     use crate::commands::run_tests::{catalog, drive, model};
     use crate::commands::{Command, parse};
     use crate::session::Session;
     use serde_json::{Value, json};
 
     #[test]
-    fn parses_effort_levels_the_codex_route_accepts() {
+    fn parses_effort_levels_every_route_accepts() {
         assert_eq!(parse("/effort"), Some(Command::Effort(EffortTarget::Show)));
         for level in ["low", "medium", "high", "xhigh"] {
             assert_eq!(
@@ -160,9 +209,9 @@ mod tests {
         }
     }
 
-    /// `--effort` takes the levels the Codex route accepts. Startup refuses
-    /// it on a named model off the Codex route, unless a resumed session's
-    /// recorded model will replace that model.
+    /// `--effort` takes the levels the runtime names. A named model is
+    /// checked by the runtime, which holds the catalog; this client refuses
+    /// only the runner with no effort channel at all.
     #[test]
     fn a_startup_effort_is_validated_before_the_session_starts() {
         assert_eq!(level_flag("xhigh".into()), Ok("xhigh".into()));
@@ -171,59 +220,86 @@ mod tests {
         let codex = Session { model: Some("codex-chatgpt/gpt-6.1-sol".into()), effort: effort.clone(), ..Session::default() };
         assert_eq!(check_startup(&codex), Ok(()));
         let unnamed = Session { effort: effort.clone(), ..Session::default() };
-        assert_eq!(check_startup(&unnamed), Ok(()), "the runtime default may be a Codex model");
+        assert_eq!(check_startup(&unnamed), Ok(()));
+        // Whether a named native model accepts an effort is its catalog row's
+        // answer, which only the runtime holds.
         let local = Session { model: Some("local/qwen".into()), effort: effort.clone(), ..Session::default() };
-        assert_eq!(check_startup(&local), Err("--effort applies only to codex-chatgpt/* models".into()));
-        // A resumed session's recorded model replaces the configured one,
-        // so the configured one is not checked.
-        let resumed = Session { id: Some("01J9ZQ4W8X6V5T3R2P1N0M9K8H".into()), ..local };
-        assert_eq!(check_startup(&resumed), Ok(()));
+        assert_eq!(check_startup(&local), Ok(()));
+        let fixture = Session { model: Some("fixture".into()), effort: effort.clone(), ..Session::default() };
+        assert_eq!(check_startup(&fixture), Err("--effort does not apply to the fixture runner".into()));
     }
 
-    /// The commands' catalog with a Codex model in it.
-    fn codex_catalog(method: &str, params: &Value) -> Value {
+    /// The commands' catalog with the rows the effort cases need.
+    fn effort_catalog(method: &str, params: &Value) -> Value {
         let mut value = catalog(method, params);
         if method == "models/list" {
-            value["models"].as_array_mut().unwrap().push(json!({
+            let models = value["models"].as_array_mut().unwrap();
+            models.push(json!({
                 "slug": "codex-chatgpt/gpt-6.1-sol", "tier": 2, "local": false,
-                "modality": "subscription-hosted"
+                "modality": "subscription-hosted",
+                "reasoningEfforts": ["low", "medium", "high", "xhigh"]
+            }));
+            models.push(json!({
+                "slug": "deepseek/deepseek-v4.1-flash-1017", "tier": 1, "local": false,
+                "modality": "aggregator-hosted", "reasoningEffort": "low",
+                "reasoningEfforts": ["low", "medium", "high", "xhigh"]
+            }));
+            models.push(json!({
+                "slug": "gemini-3.8-flash", "tier": 1, "local": false,
+                "modality": "frontier-hosted", "reasoningEffort": "low",
+                "reasoningEfforts": ["low", "medium", "high"]
             }));
         }
         value
     }
 
-    /// `/effort` sets the next turn's effort on a Codex model only, and a
-    /// switch to a model off that route drops it.
-    #[tokio::test]
-    async fn effort_applies_to_codex_models_only() {
-        let mut session = Session::default();
-        drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Set("high".into()))]).await;
-        assert_eq!(session.effort, None, "the runtime default z-ai/glm-5.2 is not a Codex model");
+    fn rows() -> Vec<Value> {
+        effort_catalog("models/list", &json!({}))["models"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
 
-        drive(
-            codex_catalog,
-            &mut session,
-            vec![model("codex-chatgpt/gpt-6.1-sol"), Command::Effort(EffortTarget::Set("high".into()))],
-        )
-        .await;
+    /// `/effort` sets the next turn's effort on any model whose row accepts
+    /// one, refuses a level the provider does not, and a switch to a model
+    /// without effort control drops it.
+    #[tokio::test]
+    async fn effort_applies_to_every_model_that_accepts_one() {
+        let mut session = Session::default();
+        // The runtime default z-ai/glm-5.2 takes no reasoning effort.
+        drive(effort_catalog, &mut session, vec![Command::Effort(EffortTarget::Set("high".into()))]).await;
+        assert_eq!(session.effort, None);
+
+        drive(effort_catalog, &mut session, vec![model("codex-chatgpt/gpt-6.1-sol"), Command::Effort(EffortTarget::Set("high".into()))]).await;
         assert_eq!(session.effort.as_deref(), Some("high"));
         assert_eq!(session.turn_body("hi", "t-1")["routingOptions"]["reasoningEffort"], "high");
 
-        drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
+        // A native model that takes an effort takes the same level.
+        drive(effort_catalog, &mut session, vec![model("deepseek/deepseek-v4.1-flash-1017"), Command::Effort(EffortTarget::Set("xhigh".into()))]).await;
+        assert_eq!(session.effort.as_deref(), Some("xhigh"));
+        assert_eq!(session.turn_body("hi", "t-1")["routingOptions"]["reasoningEffort"], "xhigh");
+
+        drive(effort_catalog, &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
         assert_eq!(session.effort, None);
+    }
 
-        session.effort = Some("xhigh".into());
-        drive(codex_catalog, &mut session, vec![model("local/qwen")]).await;
-        assert_eq!(session.effort, None, "a non-Codex model drops the effort");
-
-        // `/effort default` clears an effort the current route refuses...
+    /// A switch drops a level the new model does not accept, and keeps one it
+    /// does, so no turn is refused for a carried-over setting.
+    #[test]
+    fn a_switch_clears_only_a_level_the_new_model_refuses() {
+        let rows = rows();
+        let mut session = Session { effort: Some("xhigh".into()), ..Session::default() };
+        clear_off_unsupported(&mut session, "deepseek/deepseek-v4.1-flash-1017", Some(rows.as_slice()));
+        assert_eq!(session.effort.as_deref(), Some("xhigh"), "DeepSeek accepts xhigh");
+        clear_off_unsupported(&mut session, "gemini-3.8-flash", Some(rows.as_slice()));
+        assert_eq!(session.effort, None, "Gemini tops out at high");
         session.effort = Some("high".into());
-        drive(codex_catalog, &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
-        assert_eq!(session.effort, None);
-
-        // ... and before any runtime read, which may fail.
+        clear_off_unsupported(&mut session, "local/qwen", Some(rows.as_slice()));
+        assert_eq!(session.effort, None, "no effort control at all");
+        // A runtime that could not answer keeps the level: the runtime itself
+        // refuses a level the model cannot take.
         session.effort = Some("high".into());
-        drive(|_, _| json!({"rpcError": {"code": -32000, "message": "down"}}), &mut session, vec![Command::Effort(EffortTarget::Default)]).await;
-        assert_eq!(session.effort, None);
+        clear_off_unsupported(&mut session, "local/qwen", None);
+        assert_eq!(session.effort.as_deref(), Some("high"));
     }
 }

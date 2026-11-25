@@ -281,7 +281,8 @@ Inside the REPL, `/session` prints the current session id, `/model` shows or
 switches the active model (with optional `--fast` or `--no-fast`), `/fast [on|off]`
 toggles the fast speed tier for supported models,
 `/effort [low|medium|high|xhigh|default]` shows or sets the reasoning effort of
-a `codex-chatgpt/*` model from the next turn (see the root README),
+the session from the next turn, on a model whose catalog row supports effort
+control (see the root README),
 `/friction <sev> [--escaped] <text...>` posts a numbered daily-driver friction
 entry through the configured Linear MCP tools, and `/quit` or `/exit` quits
 cleanly. `/idea mark|list|show` marks and reviews candidate ideas for the
@@ -931,10 +932,12 @@ on.
 ### Reasoning and output caps
 
 `dyfj models` shows `output-cap=<tokens>` for a native hosted request's
-default total output limit and `reasoning=low` when the adapter sends a low
-effort setting. OpenAI rows with `reasoning_effort_control` enabled also
-show `(tools=none)`: tool-bearing calls keep their existing `none` setting,
-while text-only calls request low effort.
+default total output limit and `reasoning=<level> (<levels>)` when the
+adapter sends a reasoning effort: the level a request sends when the turn
+names none, and the levels that row accepts. OpenAI rows with
+`reasoning_effort_control` enabled also show `(tools=none)`: tool-bearing
+calls keep their existing `none` setting, while text-only calls request the
+row's level.
 Local and external-agent rows have no hosted request cap to display.
 
 Hosted rows with the `reasoning` capability default to 32,768 total output
@@ -944,31 +947,49 @@ precedence and are bounded by the catalog. Other hosted rows retain their
 8,192-token default, or 16,000 for Anthropic. Local requests keep the
 server's default unless the caller supplies a cap.
 
-The existing `reasoning_effort_control` catalog flag enables these mappings:
+The `reasoning_effort_control` catalog flag enables effort control, and the
+turn's own `--effort` / `/effort` level (or a dispatched child's `effort`)
+reaches the provider through the mapping `modelReasoningEffort` in
+`src/providers/shared/reasoning-effort.ts` applies:
 
-| Provider | Request parameter |
-| --- | --- |
-| OpenAI and xAI | `reasoning_effort: "low"` |
-| OpenRouter | `reasoning: { effort: "low" }` |
-| Anthropic | `output_config: { effort: "low" }` |
+| Provider | Request parameter | Levels |
+| --- | --- | --- |
+| OpenAI | `reasoning_effort`, `none` on a tool-bearing request | low–xhigh |
+| xAI | `reasoning_effort` | low–xhigh |
+| OpenRouter | `reasoning: { effort }`, and `max_price` routing | low–xhigh |
+| Anthropic | `output_config: { effort }` | low–xhigh |
+| Google | `generationConfig.thinkingConfig.thinkingLevel` | low–high |
 
-Gemini retains `generationConfig.thinkingConfig.thinkingLevel: "low"` for
-the supported Gemini 3.x rows, independently of `reasoning_effort_control`.
-For the providers in the table, reasoning models with that flag disabled
-receive the reasoning-model cap without an explicit effort parameter.
+Gemini 3.x rows take a thinking level independently of
+`reasoning_effort_control`: their request carries `thinkingConfig` either
+way. For the providers in the table, reasoning models with that flag disabled
+receive the reasoning-model cap without an explicit effort parameter (Gemini
+still gets its default level).
 Effort is advisory, so a long reasoning run can still exhaust the cap. This
 is not a fixed reservation for answer tokens. Higher output caps also
 permit more billed output and reserve more context space; existing spend
 checks still apply.
 
-Parameter references checked on 2026-11-05:
+`models/list` reports this capability per row, so neither client hardcodes a
+slug prefix: `reasoningEfforts` lists the levels the row accepts and is
+absent when it takes none; `reasoningEffort` and `toolReasoningEffort` are
+the values a request sends. Route resolution
+(`refuseUnsupportedEffort` in `src/engine/route.ts`), the dispatch planner
+(`validateDispatchModel`) and the two REPLs all refuse a bad effort through
+the same message (`unsupportedReasoningEffort`), naming the levels the model
+accepts. A level the operator names that a provider API does not accept is
+therefore refused before the turn runs, never silently downgraded.
+
+Parameter references checked on 2026-11-24:
 [OpenAI Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create/),
 [OpenRouter reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens),
 [Anthropic effort](https://platform.claude.com/docs/en/build-with-claude/effort),
 [Gemini thinking](https://ai.google.dev/gemini-api/docs/generate-content/thinking),
 and [xAI reasoning](https://docs.x.ai/developers/model-capabilities/text/reasoning).
 OpenRouter's [model metadata](https://openrouter.ai/api/v1/models) supplies
-per-model supported effort levels. Apply
+per-model supported effort levels, and [OpenRouter reasoning
+tokens](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens)
+documents the effort values it maps onto each upstream. Apply
 `schema/migrations/024_models_reasoning_effort.sql` to an existing database
 to update effort-support flags on up to eight existing model rows and the
 16,384-token provider limits for Muse Glimmer and Qwen3 Next Instruct.
