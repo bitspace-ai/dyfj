@@ -11,7 +11,9 @@
 use crate::approval::visible;
 use crate::client::Client;
 use crate::commands::{Command, list_models};
-use crate::session::{REASONING_EFFORTS, Session, find_model_row, row_effort_levels};
+use crate::session::{
+    REASONING_EFFORTS, Session, find_model_row, is_codex_model, row_effort_levels,
+};
 use serde_json::{Value, json};
 
 const USAGE: &str = "usage: /effort [low|medium|high|xhigh|default]";
@@ -102,6 +104,37 @@ pub fn clear_off_unsupported(session: &mut Session, slug: &str, rows: Option<&[V
     }
 }
 
+/// What a bare `/effort` prints: the effort the next turn runs at, whether it
+/// is the session's own or the model's default, and the levels that model
+/// accepts. The TypeScript REPL prints the same fact (`/effort` in
+/// `prototype/src/cli/commands/effort.ts`).
+pub fn show_line(session_effort: Option<&str>, default_effort: &str, levels: &[String]) -> String {
+    let accepted = format!(" (accepts {})", visible(&levels.join(", ")));
+    match session_effort {
+        Some(effort) => format!("reasoning effort: {}{accepted}", visible(effort)),
+        None => format!(
+            "reasoning effort: {} (model default){accepted}",
+            visible(default_effort)
+        ),
+    }
+}
+
+/// The effort a turn runs at when the session names none: the value
+/// `models/list` reports on the active model's row. A native row's is `low`;
+/// a Codex row's is the runtime's configured `[codex] reasoning_effort`, else
+/// `medium`. A runtime from before that reports neither, so the two fall back
+/// by route rather than by a shared guess.
+pub fn default_effort(rows: &[Value], active: Option<&str>) -> String {
+    let row_default = active
+        .and_then(|slug| find_model_row(rows, slug))
+        .and_then(|row| row.get("reasoningEffort"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    row_default.unwrap_or_else(|| {
+        if active.is_some_and(is_codex_model) { "medium".into() } else { "low".into() }
+    })
+}
+
 /// The model the next turn runs on: the session's own choice, else the
 /// runtime's default turn model.
 async fn active_slug(client: &Client, session: &Session) -> Option<String> {
@@ -148,20 +181,16 @@ pub async fn run(client: &Client, session: &mut Session, target: EffortTarget) {
             visible(active.as_deref().unwrap_or("the runtime default"))
         );
     };
-    let default_effort = active
-        .as_deref()
-        .and_then(|slug| find_model_row(&rows, slug))
-        .and_then(|row| row.get("reasoningEffort"))
-        .and_then(Value::as_str)
-        .unwrap_or("low")
-        .to_string();
+    // A Codex row's default is the runtime's configured `[codex]
+    // reasoning_effort` (else `medium`), which `models/list` reports on the
+    // row; a native row's is `low`. A runtime from before that reports
+    // neither, so a Codex session falls back to the runtime's value and a
+    // native one to `low`.
+    let default_effort = default_effort(&rows, active.as_deref());
     let before = previous.unwrap_or_else(|| default_effort.clone());
     match target {
         EffortTarget::Show => {
-            return match &session.effort {
-                Some(effort) => eprintln!("reasoning effort: {effort}"),
-                None => eprintln!("reasoning effort: {} (model default)", visible(&default_effort)),
-            };
+            return eprintln!("{}", show_line(session.effort.as_deref(), &default_effort, &levels));
         }
         EffortTarget::Set(level) => {
             if !levels.iter().any(|accepted| accepted == &level) {
@@ -301,5 +330,47 @@ mod tests {
         session.effort = Some("high".into());
         clear_off_unsupported(&mut session, "local/qwen", None);
         assert_eq!(session.effort.as_deref(), Some("high"));
+    }
+
+    /// A Codex row takes the runtime's configured `[codex] reasoning_effort`
+    /// as its default, not the native `low`. `models/list` reports it on the
+    /// row; a runtime from before that reports it on runtime/status.
+    #[tokio::test]
+    async fn a_codex_session_defaults_to_the_runtime_effort_not_low() {
+        let mut session = Session { model: Some("codex-chatgpt/gpt-6.1-sol".into()), ..Session::default() };
+        drive(effort_catalog, &mut session, vec![Command::Effort(EffortTarget::Show)]).await;
+        // The row's own reasoningEffort is `medium` in this catalog.
+        let mut rows = rows();
+        for row in rows.iter_mut() {
+            if row.get("slug").and_then(Value::as_str) == Some("codex-chatgpt/gpt-6.1-sol") {
+                row["reasoningEffort"] = json!("high");
+            }
+        }
+        let rendered = super::default_effort(&rows, Some("codex-chatgpt/gpt-6.1-sol"));
+        assert_eq!(rendered, "high");
+        // A native model keeps `low`.
+        assert_eq!(super::default_effort(&rows, Some("deepseek/deepseek-v4.1-flash-1017")), "low");
+        // A Codex model whose row reports nothing falls back to `medium`.
+        assert_eq!(super::default_effort(&[], Some("codex-chatgpt/gpt-6.1-sol")), "medium");
+    }
+
+    /// A bare `/effort` names the levels its model accepts, as the README
+    /// says, whether the session set one or the model default applies.
+    #[test]
+    fn a_bare_effort_names_the_levels_the_model_accepts() {
+        let levels = vec!["low".to_string(), "high".to_string()];
+        assert_eq!(
+            super::show_line(None, "low", &levels),
+            "reasoning effort: low (model default) (accepts low, high)"
+        );
+        assert_eq!(
+            super::show_line(Some("high"), "low", &levels),
+            "reasoning effort: high (accepts low, high)"
+        );
+        let all = vec!["low".to_string(), "medium".to_string(), "high".to_string(), "xhigh".to_string()];
+        assert_eq!(
+            super::show_line(Some("xhigh"), "medium", &all),
+            "reasoning effort: xhigh (accepts low, medium, high, xhigh)"
+        );
     }
 }

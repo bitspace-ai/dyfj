@@ -51,6 +51,43 @@ export interface ReasoningEffortSupport {
 }
 
 /**
+ * The levels each OpenRouter slug accepts, checked against OpenRouter's
+ * per-model `supported_parameters` metadata and the upstream vendor's own
+ * documentation on 2026-11-24. A provider-wide answer would be wrong here:
+ * every OpenRouter request accepts a `reasoning_effort` field, but the model
+ * behind the slug decides which values it honours, and an unsupported one is
+ * an upstream 400 rather than a downgrade.
+ *
+ * A row with two levels lists `low` and `high`: the pair OpenRouter's
+ * reasoning guide names as the fallback mapping for a model that supports
+ * only those.
+ */
+const OPENROUTER_MODEL_LEVELS: Readonly<
+  Record<string, readonly ReasoningEffort[]>
+> = {
+  // DeepSeek publishes low and high for its reasoning models.
+  "deepseek/deepseek-v4.1-flash-1017": ["low", "high"],
+  "deepseek/deepseek-v4-pro-0813": ["low", "high"],
+  // Z.AI's GLM reasoning models publish low and high.
+  "z-ai/glm-5.3": ["low", "high"],
+  // Moonshot's Kimi reasoning models publish low and high.
+  "moonshotai/kimi-k3.1-pro": ["low", "high"],
+  // Meta's Muse reasoning rows publish low and high.
+  "meta/muse-glimmer-30b": ["low", "high"],
+  "meta/muse-spark-1.3": ["low", "high"],
+  // xAI's Grok 4.6 and later accept the whole range through OpenRouter.
+  "x-ai/grok-4.7": REASONING_EFFORTS,
+};
+
+/**
+ * An OpenRouter slug the table does not name. Its `reasoning_effort_control`
+ * row says the model takes an effort, but not which levels: the two every
+ * OpenRouter reasoning model accepts are the safe answer, and a level beyond
+ * them is refused rather than sent to an upstream that would reject it.
+ */
+const OPENROUTER_FALLBACK_LEVELS: readonly ReasoningEffort[] = ["low", "high"];
+
+/**
  * The levels each provider API accepts, checked against the provider's own
  * documentation on 2026-11-24. A provider absent from this table takes no
  * effort at all.
@@ -68,8 +105,10 @@ const PROVIDER_LEVELS: Readonly<
   // `reasoning_effort` (`reasoning.effort` on the Responses API).
   xai: REASONING_EFFORTS,
   // `reasoning.effort`: OpenRouter maps a level onto the nearest one its
-  // upstream serves.
-  openrouter: REASONING_EFFORTS,
+  // upstream serves, so the levels depend on the model behind the slug and
+  // not on the provider alone. `reasoningEffortSupport` narrows this through
+  // `OPENROUTER_MODEL_LEVELS`.
+  openrouter: OPENROUTER_FALLBACK_LEVELS,
   // `generationConfig.thinkingConfig.thinkingLevel`: Gemini 3.x tops out at
   // `high`; `xhigh` arrives with the Gemini 4 generation.
   google: ["low", "medium", "high"],
@@ -96,7 +135,9 @@ export function reasoningEffortSupport(
   ) {
     return undefined;
   }
-  const levels = PROVIDER_LEVELS[model.provider];
+  const levels = model.provider === "openrouter"
+    ? OPENROUTER_MODEL_LEVELS[model.slug] ?? OPENROUTER_FALLBACK_LEVELS
+    : PROVIDER_LEVELS[model.provider];
   if (levels === undefined || levels.length === 0) return undefined;
   return model.provider === "openai"
     ? { levels, toolEffort: "none" }

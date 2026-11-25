@@ -181,14 +181,12 @@ function validateDispatchModel(input: {
         }`,
       };
     }
-    // The effort the child's turn sends: its own level when it named one,
-    // otherwise the model default. A cheap tool-heavy child is what a
-    // dispatched session usually is, so the tool constraint counts here.
-    effort = modelReasoningEffort(
-      model,
-      input.requestedEffort,
-      true,
-    ) ?? null;
+    // The effort the child's *turn* names — the operator's level, or the
+    // model's own default. It must be a level the turn request accepts: a
+    // wire-only value such as OpenAI's tool-bearing `none` never rides
+    // `routingOptions.reasoningEffort`, which `resolveTurnFromBody` would
+    // reject. The adapter applies the tool-bearing constraint itself.
+    effort = modelReasoningEffort(model, input.requestedEffort) ?? null;
   }
 
   if (model.tier > 0 && input.approvePaid !== true) {

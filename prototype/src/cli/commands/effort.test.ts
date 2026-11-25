@@ -229,3 +229,53 @@ describe("/effort on native models", () => {
     );
   });
 });
+
+// ── P3: bare /effort names the levels the model accepts
+
+describe("/effort accepted levels", () => {
+  const NATIVE = "deepseek/deepseek-v4.1-flash-1017";
+
+  function nativeConnect(): ConnectFn {
+    return () =>
+      Promise.resolve({
+        request: (method: string) =>
+          method === "models/list"
+            ? Promise.resolve({
+              models: [{
+                slug: NATIVE,
+                tier: 1,
+                local: false,
+                reasoningEffort: "low",
+                reasoningEfforts: ["low", "high"],
+              }],
+            })
+            : Promise.resolve({ runtime: {} }),
+        close: () => {},
+      });
+  }
+
+  it("names the levels on a bare /effort, as the README says", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplEffortCommand(
+      "/effort",
+      cfg({ model: NATIVE }),
+      io,
+      nativeConnect(),
+    );
+    assert.match(
+      stderr.join("\n"),
+      /reasoning effort: low \(runtime default\) \(accepts low, high\)/,
+    );
+  });
+
+  it("names the levels beside the session's own effort", async () => {
+    const { io, stderr } = fakeIo();
+    await handleReplEffortCommand(
+      "/effort",
+      cfg({ model: NATIVE, effort: "high" }),
+      io,
+      nativeConnect(),
+    );
+    assert.match(stderr.join("\n"), /reasoning effort: high \(accepts low, high\)/);
+  });
+});

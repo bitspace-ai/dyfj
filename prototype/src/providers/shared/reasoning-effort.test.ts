@@ -50,12 +50,9 @@ test("a provider API with no effort parameter takes none even when the row enabl
 });
 
 test("each provider advertises the levels its API accepts", () => {
-  assert.deepEqual(reasoningEffortSupport(model())?.levels, [
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-  ]);
+  // OpenRouter's own levels are per model, so its base row is the pair every
+  // OpenRouter reasoning model honours.
+  assert.deepEqual(reasoningEffortSupport(model())?.levels, ["low", "high"]);
   for (const provider of ["openai", "xai", "anthropic"]) {
     assert.deepEqual(
       reasoningEffortSupport(model({ provider }))?.levels,
@@ -70,6 +67,34 @@ test("each provider advertises the levels its API accepts", () => {
   );
 });
 
+test("an OpenRouter row takes the levels its own model accepts, not the provider's", () => {
+  // DeepSeek, Kimi and GLM publish only low and high.
+  for (
+    const slug of [
+      "deepseek/deepseek-v4.1-flash-1017",
+      "moonshotai/kimi-k3.1-pro",
+      "z-ai/glm-5.3",
+    ]
+  ) {
+    assert.deepEqual(
+      reasoningEffortSupport(model({ slug }))?.levels,
+      ["low", "high"],
+      slug,
+    );
+    assert.match(
+      unsupportedReasoningEffort(model({ slug }), "medium") ?? "",
+      /does not accept reasoning effort "medium"; it accepts low, high/,
+      slug,
+    );
+  }
+  // A slug the table does not name gets the pair every OpenRouter reasoning
+  // model accepts, and nothing above it.
+  assert.deepEqual(
+    reasoningEffortSupport(model({ slug: "vendor/unlisted-model" }))?.levels,
+    ["low", "high"],
+  );
+});
+
 test("the default is low when the operator names none", () => {
   assert.equal(DEFAULT_REASONING_EFFORT, "low");
   assert.equal(modelReasoningEffort(model()), "low");
@@ -78,7 +103,12 @@ test("the default is low when the operator names none", () => {
 
 test("an accepted level is what the request sends", () => {
   assert.equal(modelReasoningEffort(model(), "high"), "high");
-  assert.equal(modelReasoningEffort(model(), "xhigh"), "xhigh");
+  // A level the model does not accept is never sent: the model default is.
+  assert.equal(modelReasoningEffort(model(), "xhigh"), "low");
+  assert.equal(
+    modelReasoningEffort(model({ provider: "openai", slug: "gpt-5.6-sol" }), "xhigh"),
+    "xhigh",
+  );
 });
 
 test("a level a provider does not accept is refused, never silently downgraded", () => {

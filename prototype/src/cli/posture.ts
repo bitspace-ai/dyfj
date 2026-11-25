@@ -233,16 +233,17 @@ export async function fetchSessionPosture(
       // the tier, locality and, for a model that takes one, the reasoning
       // effort levels. Read once, whether the session named the model or the
       // runtime's default answers.
-      // An answer without a catalog (an older or degraded runtime) narrows
-      // the line rather than failing the session's posture.
-      const { models } = await client.request(
-        "models/list",
-        undefined,
-        signal,
-      ) as {
-        models?: ModelRow[];
-      };
-      const rows: ModelRow[] = Array.isArray(models) ? models : [];
+      // The catalog is evidence, not a precondition: an older runtime that
+      // does not answer `models/list`, or one whose catalog is unavailable,
+      // narrows the line rather than discarding the runtime status beside it
+      // (matching the Rust REPL's posture).
+      const rows: ModelRow[] = await client
+        .request("models/list", undefined, signal)
+        .then((answer) => {
+          const models = (answer as { models?: ModelRow[] }).models;
+          return Array.isArray(models) ? models : [];
+        })
+        .catch(() => []);
       const rowFor = (candidate: string | undefined) =>
         candidate === undefined
           ? undefined

@@ -98,6 +98,7 @@ export const anthropicAdapter: ProviderAdapter = {
     const progressUpdates = model.capabilities.includes(
       ANTHROPIC_PROGRESS_UPDATES_CAPABILITY,
     );
+    const effectiveEffort = modelReasoningEffort(model, request.reasoningEffort);
     const body = buildAnthropicMessagesRequest(
       model.slug,
       request.systemPrompt,
@@ -114,7 +115,7 @@ export const anthropicAdapter: ProviderAdapter = {
           anthropicAdapter.defaultOutputTokens(model),
         ),
         progressUpdates,
-        effort: modelReasoningEffort(model, request.reasoningEffort),
+        effort: effectiveEffort,
       },
     );
     const requestStarted = now();
@@ -239,6 +240,9 @@ export const anthropicAdapter: ProviderAdapter = {
         normaliseAnthropicStopReason(result.stopReason),
       ),
       toolCalls: result.aborted ? undefined : toolCalls,
+      ...(effectiveEffort === undefined
+        ? {}
+        : { reasoningEffort: effectiveEffort }),
       timings,
     };
   },

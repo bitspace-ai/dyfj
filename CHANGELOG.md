@@ -29,10 +29,23 @@ README are tracked separately in its Revision history section.
   level its provider API does not accept, before the turn runs, naming the
   levels it does accept. Unset effort keeps every previous default: `low` for
   a native model that takes an effort, `[codex] reasoning_effort` (else
-  `medium`) on the Codex route. A `/model` switch drops a level the new model
-  would refuse and keeps one it accepts, and the posture line names the effort
-  for any model that takes one. The OpenAI tool-call constraint is unchanged:
-  a tool-bearing request still sends `none`.
+  `medium`) on the Codex route — and `models/list` reports each row's own
+  default, so a Codex row shows the runtime's configured effort rather than
+  `low`. OpenRouter's levels are per model rather than per provider
+  (`deepseek/deepseek-v4.1-flash-1017`, `deepseek/deepseek-v4-pro-0813`,
+  `z-ai/glm-5.3`, `moonshotai/kimi-k3.1-pro`, `meta/muse-glimmer-30b` and
+  `meta/muse-spark-1.3` take `low` and `high`; `x-ai/grok-4.7` takes all
+  four), and an unnamed row gets `low` and `high`, so an unsupported level is
+  refused here instead of rejected upstream. A `/model` switch drops a level
+  the new model would refuse and keeps one it accepts, and the posture line
+  names the effort for any model that takes one. A bare `/effort` names the
+  levels the model accepts in both REPLs. Every native provider call records
+  the effort it actually carried as the `provider_call` event's
+  `reasoning_effort`, so the log says what ran. The OpenAI tool-call
+  constraint is unchanged: a tool-bearing request still sends `none`, and a
+  dispatched OpenAI child's plan carries the turn's own level rather than that
+  wire value. The CLI posture line narrows rather than failing when the
+  catalog RPC is unavailable.
 
 - **A `pre-commit` hook that keeps work off `main` (`BIT-983`).** With
   `core.hooksPath` set to `.githooks`, a commit made directly on `main` is

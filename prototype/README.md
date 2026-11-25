@@ -934,7 +934,9 @@ on.
 `dyfj models` shows `output-cap=<tokens>` for a native hosted request's
 default total output limit and `reasoning=<level> (<levels>)` when the
 adapter sends a reasoning effort: the level a request sends when the turn
-names none, and the levels that row accepts. OpenAI rows with
+names none, and the levels that row accepts. A Codex row's level there is the
+runtime's configured `[codex] reasoning_effort` (else `medium`), not the
+native `low`, so the list never reports a Codex session as running at `low`. OpenAI rows with
 `reasoning_effort_control` enabled also show `(tools=none)`: tool-bearing
 calls keep their existing `none` setting, while text-only calls request the
 row's level.
@@ -956,9 +958,24 @@ reaches the provider through the mapping `modelReasoningEffort` in
 | --- | --- | --- |
 | OpenAI | `reasoning_effort`, `none` on a tool-bearing request | low–xhigh |
 | xAI | `reasoning_effort` | low–xhigh |
-| OpenRouter | `reasoning: { effort }`, and `max_price` routing | low–xhigh |
+| OpenRouter | `reasoning: { effort }`, and `max_price` routing | per model (below) |
 | Anthropic | `output_config: { effort }` | low–xhigh |
 | Google | `generationConfig.thinkingConfig.thinkingLevel` | low–high |
+
+OpenRouter's levels depend on the model behind the slug, not on the provider:
+every OpenRouter request accepts a `reasoning_effort` field, but the model
+decides which values it honours, and an unsupported one is an upstream
+rejection rather than a downgrade. `OPENROUTER_MODEL_LEVELS` in
+`src/providers/shared/reasoning-effort.ts` holds the shipped rows' levels,
+checked against OpenRouter's per-model `supported_parameters` and each
+vendor's documentation: `deepseek/deepseek-v4.1-flash-1017`,
+`deepseek/deepseek-v4-pro-0813`, `z-ai/glm-5.3`, `moonshotai/kimi-k3.1-pro`,
+`meta/muse-glimmer-30b` and `meta/muse-spark-1.3` take `low` and `high`;
+`x-ai/grok-4.7` takes all four. A slug the table does not name, or a row that
+names no model levels, gets `low` and `high` — the pair OpenRouter documents
+as the fallback for a model that supports only those — so a level above them
+is refused rather than sent to an upstream that would reject it. Adding a row
+means adding its levels there; nothing else changes.
 
 Gemini 3.x rows take a thinking level independently of
 `reasoning_effort_control`: their request carries `thinkingConfig` either
@@ -973,7 +990,8 @@ checks still apply.
 `models/list` reports this capability per row, so neither client hardcodes a
 slug prefix: `reasoningEfforts` lists the levels the row accepts and is
 absent when it takes none; `reasoningEffort` and `toolReasoningEffort` are
-the values a request sends. Route resolution
+the values a request sends; `reasoningEffort` on a Codex row is the runtime's
+configured `codexReasoningEffort`. Route resolution
 (`refuseUnsupportedEffort` in `src/engine/route.ts`), the dispatch planner
 (`validateDispatchModel`) and the two REPLs all refuse a bad effort through
 the same message (`unsupportedReasoningEffort`), naming the levels the model

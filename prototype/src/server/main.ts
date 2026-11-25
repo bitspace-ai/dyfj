@@ -449,7 +449,14 @@ function buildHandlers(
       }),
     }),
     ...buildSurfaceHandlers({ ...options, loadModels, listSessions }),
-    ...buildModelsHandlers({ loadModels, loadCatalog }),
+    ...buildModelsHandlers({
+      loadModels,
+      loadCatalog,
+      ...(options.engineConfig?.codexReasoningEffort === undefined ||
+          options.engineConfig.codexReasoningEffort === null
+        ? {}
+        : { codexReasoningEffort: options.engineConfig.codexReasoningEffort }),
+    }),
     ...buildToolsHandlers(options),
     ...buildSessionsHandlers({
       listSessions,

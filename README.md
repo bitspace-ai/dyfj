@@ -1847,8 +1847,8 @@ Turns run at the reasoning effort the operator chooses, on any model whose
 catalog row supports effort control. `--effort <low|medium|high|xhigh>` (on
 `dyfj`, `dyfj exec` and the Rust REPL) and the REPL command `/effort <level>`
 set it for the session. On a native model the level reaches the provider as
-that provider's own parameter: OpenRouter and xAI `reasoning_effort`,
-OpenRouter's `reasoning.effort`, Anthropic's `output_config.effort`, Gemini's
+that provider's own parameter: OpenAI and xAI `reasoning_effort`, OpenRouter's
+`reasoning.effort`, Anthropic's `output_config.effort`, Gemini's
 `generationConfig.thinkingConfig.thinkingLevel`. On the Codex route Workbench
 passes it to Codex as `model_reasoning_effort`. `/effort` shows the current
 effort and the levels the model accepts. `/effort default` returns to the
@@ -1859,9 +1859,11 @@ Whether a model takes an effort, and which levels it accepts, is the catalog
 row's answer, reported on `models/list` as `reasoningEfforts`. A row enables
 it with `reasoning_effort_control`; Gemini 3.x rows take a thinking level
 regardless, because their request carries one either way. The levels differ
-by provider API: Gemini 3.x tops out at `high`, and the rest take all four.
-An effort on a model without effort control, or a level its provider API does
-not accept, is refused before the turn runs, with the accepted levels named.
+by provider API and, on OpenRouter, by the model behind the slug: Gemini 3.x
+tops out at `high`; DeepSeek, Kimi, GLM and Meta Muse rows take `low` and
+`high`; Anthropic, OpenAI, xAI and Grok 4.7 take all four. An effort on a
+model without effort control, or a level its provider API does not accept, is
+refused before the turn runs, with the accepted levels named.
 A `/model` switch drops a level the new model does not accept, and keeps one
 it does.
 
@@ -3895,4 +3897,7 @@ Document revisions only. Code and behavior changes are tracked in
   `/effort` and `dispatch/start`'s `effort` reach any model whose catalog row
   supports effort control, `models/list` and `dyfj models` report the accepted
   levels as `reasoningEfforts`, and a level a provider API does not accept is
-  refused before the turn runs.
+  refused before the turn runs. OpenRouter's levels are per model, a Codex
+  row's reported default is the runtime's configured effort, a bare `/effort`
+  names the accepted levels, and the CLI posture line narrows instead of
+  failing when the catalog RPC is unavailable.

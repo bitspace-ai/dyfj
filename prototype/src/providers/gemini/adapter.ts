@@ -87,6 +87,7 @@ export const geminiAdapter: ProviderAdapter = {
     const endpoint = stream
       ? `${modelPath}:streamGenerateContent?alt=sse`
       : `${modelPath}:generateContent`;
+    const effectiveEffort = modelReasoningEffort(model, request.reasoningEffort);
     const requestStarted = now();
     const response = await fetchWithHeaderTimeout(
       io.fetch,
@@ -109,10 +110,7 @@ export const geminiAdapter: ProviderAdapter = {
               request.maxOutputTokens,
               geminiAdapter.defaultOutputTokens(model),
             ),
-            thinkingLevel: modelReasoningEffort(
-              model,
-              request.reasoningEffort,
-            ),
+            thinkingLevel: effectiveEffort,
           }),
         ),
       },
@@ -175,6 +173,9 @@ export const geminiAdapter: ProviderAdapter = {
         normaliseGeminiStopReason(result.stopReason),
       ),
       toolCalls: undefined,
+      ...(effectiveEffort === undefined
+        ? {}
+        : { reasoningEffort: effectiveEffort }),
       timings,
     };
   },

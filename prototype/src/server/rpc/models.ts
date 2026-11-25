@@ -29,11 +29,26 @@ export interface ModelsHandlerDeps {
   loadModels: () => Promise<WorkbenchModel[]>;
   /** Preferred over `loadModels` when given: it also says why it fell back. */
   loadCatalog?: () => Promise<PickerCatalog>;
+  /**
+   * The configured `[codex] reasoning_effort`, which is the effort a Codex
+   * turn runs at when the request names none. A native model's unset default
+   * is `low`, which is what `modelReasoningEffort` reports; a Codex row's is
+   * this value, so the two are never confused.
+   */
+  codexReasoningEffort?: string;
 }
+
+/** The provider whose rows take the runtime's configured effort as default. */
+const CODEX_PROVIDER = "codex-chatgpt";
 
 export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
   const loadCatalog = deps.loadCatalog ??
     (async (): Promise<PickerCatalog> => ({ models: await deps.loadModels() }));
+  const defaultEffort = (model: WorkbenchModel) =>
+    model.provider === CODEX_PROVIDER &&
+        reasoningEffortSupport(model) !== undefined
+      ? deps.codexReasoningEffort ?? "medium"
+      : modelReasoningEffort(model);
   return {
     // `catalogUnavailable` is present only over a fallback catalog, so a
     // client can say that the list is incomplete, and why the catalog failed
@@ -47,12 +62,12 @@ export function buildModelsHandlers(deps: ModelsHandlerDeps): RpcHandlers {
           local: isLocalWorkbenchModel(model),
           modality: getModelAccessModality(model),
           defaultOutputTokens: modelTransmittedOutputCap(model),
-          reasoningEffort: modelReasoningEffort(model),
-          toolReasoningEffort: modelReasoningEffort(
-            model,
-            undefined,
-            true,
-          ),
+          reasoningEffort: defaultEffort(model),
+          // A Codex request has no tool-call effort constraint, so its
+          // tool-bearing value is its default; only OpenAI narrows it.
+          toolReasoningEffort: model.provider === CODEX_PROVIDER
+            ? defaultEffort(model)
+            : modelReasoningEffort(model, undefined, true),
           // The levels this model accepts, so a client never hardcodes a slug
           // prefix to decide whether `/effort` and `--effort` apply.
           ...(reasoningEffortSupport(model) === undefined

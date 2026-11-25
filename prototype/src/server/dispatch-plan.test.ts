@@ -13,7 +13,8 @@ import { MemoryStore, type ModelSeed } from "../store/mod.ts";
 import { loadWorkbenchModels } from "../providers/mod.ts";
 import type { DispatchConfig } from "../config/mod.ts";
 import type { DispatchStartInput } from "../tools/mod.ts";
-import { planDispatchStart } from "./dispatch-plan.ts";
+import { buildChildTurnBody, planDispatchStart } from "./dispatch-plan.ts";
+import { resolveTurnFromBody } from "../engine/mod.ts";
 
 const NATIVE_REASONING: ModelSeed = {
   slug: "deepseek/deepseek-v4.1-flash-1017",
@@ -42,6 +43,21 @@ const GEMINI: ModelSeed = {
   context_window: 1_048_576,
   max_output_tokens: 65_536,
   capabilities: ["text", "reasoning"],
+  reasoning_effort_control: true,
+};
+
+const OPENAI_REASONING: ModelSeed = {
+  slug: "gpt-5.6-sol",
+  display_name: "GPT-5.6 Sol",
+  provider: "openai",
+  api: "openai-completions",
+  base_url: "https://api.openai.com/v1",
+  tier: 2,
+  cost_input: 1.25,
+  cost_output: 10,
+  context_window: 1_050_000,
+  max_output_tokens: 128_000,
+  capabilities: ["text", "code", "reasoning", "tools"],
   reasoning_effort_control: true,
 };
 
@@ -125,3 +141,45 @@ test("a dispatched child refuses an effort on a model with no effort control", a
   assert.ok("refusal" in result, JSON.stringify(result));
   assert.match(result.refusal, /takes no reasoning effort/);
 });
+
+// ── P1: an OpenAI child's planned effort must survive turn-request validation
+
+/**
+ * A dispatched OpenAI child offering tools sends `none` at the wire, but the
+ * plan's `routingOptions.reasoningEffort` is validated by
+ * `resolveTurnFromBody`, which accepts only the four operator levels. So the
+ * plan must carry the turn's own effort (the operator's, else the model's
+ * default), never the wire value — for an omitted effort and an explicit one.
+ */
+for (const requested of [undefined, "high"] as const) {
+  test(`a dispatched OpenAI child plan validates as a turn request (${
+    requested === undefined ? "effort omitted" : `effort ${requested}`
+  })`, async () => {
+    const result = await plan([OPENAI_REASONING], {
+      model: OPENAI_REASONING.slug,
+      ...(requested === undefined ? {} : { effort: requested }),
+    });
+    assert.ok("plan" in result, JSON.stringify(result));
+    // The plan records the level the turn names, not OpenAI's tool `none`.
+    assert.equal(result.plan.effort, requested ?? "low");
+
+    const body = buildChildTurnBody({
+      prompt: "do the thing",
+      workspace: "/tmp/child",
+      roots: [],
+      model: result.plan.model,
+      route: result.plan.route,
+      effort: result.plan.effort,
+      approvePaid: true,
+    });
+    const resolved = resolveTurnFromBody(body, true);
+    assert.ok(
+      !("error" in resolved),
+      `turn request refused: ${JSON.stringify(resolved)}`,
+    );
+    assert.equal(
+      resolved.runtimeInput.routingOptions?.reasoningEffort,
+      requested ?? "low",
+    );
+  });
+}

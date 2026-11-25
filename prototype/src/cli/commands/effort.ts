@@ -94,9 +94,13 @@ export async function handleReplEffortCommand(
     return true;
   }
   if (target === undefined) {
+    const accepted = posture.effortLevels === undefined
+      ? ""
+      : ` (accepts ${posture.effortLevels.join(", ")})`;
     io.err(
       `reasoning effort: ${posture.effort}` +
-        (config.effort === undefined ? " (runtime default)" : ""),
+        (config.effort === undefined ? " (runtime default)" : "") +
+        accepted,
     );
     return true;
   }

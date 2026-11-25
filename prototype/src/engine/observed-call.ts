@@ -158,9 +158,19 @@ export async function observedProviderCall(
               turn.unparsedToolCallMarkup.countIsLowerBound,
           }
           : {}),
+        // What the request carried, when the model takes an effort: the
+        // operator's level, the model default, or OpenAI's tool-bearing
+        // `none`. Recorded here so the log says what ran.
+        ...(turn.reasoningEffort === undefined
+          ? {}
+          : { reasoning_effort: turn.reasoningEffort }),
         // Who answered, as the call's own result reported it. A call that
         // throws before returning a result records neither field; a result
         // that names its upstream records it, whatever its finish reason.
+        // What the request carried, when the model takes an effort: the
+        // operator's level, the model default, or OpenAI's tool-bearing
+        // `none`. Recorded here so the log says what ran.
+
         ...(turn.upstream === undefined ? {} : {
           upstream_provider: turn.upstream.upstreamProvider ?? null,
           provider_generation_id: turn.upstream.providerGenerationId ?? null,

@@ -309,20 +309,23 @@ fn posture_line_with_models(status: &Value, session: &Session, socket: &str, row
     let takes_effort = active_row
         .is_some_and(|row| crate::session::row_effort_levels(row).is_some());
     if takes_effort || session.effort.is_some() {
+        // The model's default is the row's `reasoningEffort`: `low` for a
+        // native model, and the runtime's configured `[codex]
+        // reasoning_effort` (else `medium`) for a Codex row, which is not
+        // the same value. A runtime too old to report the row value is read
+        // through `codexReasoningEffort` instead, and only for Codex.
         let codex = active.is_some_and(crate::session::is_codex_model);
-        let model_default = active_row
+        let row_default = active_row
             .and_then(|row| row.get("reasoningEffort"))
-            .and_then(Value::as_str)
-            .unwrap_or("low");
-        let effort = session
-            .effort
-            .as_deref()
+            .and_then(Value::as_str);
+        let model_default = row_default
             .or_else(|| {
                 codex
                     .then(|| runtime.get("codexReasoningEffort").and_then(Value::as_str))
                     .flatten()
             })
-            .unwrap_or(model_default);
+            .unwrap_or(if codex { "medium" } else { "low" });
+        let effort = session.effort.as_deref().unwrap_or(model_default);
         parts.push(format!("effort {}", visible(effort)));
     }
     if session.fast == Some(true) {
@@ -549,6 +552,37 @@ mod tests {
         let own = Session { effort: Some("high".into()), ..codex };
         assert!(super::switch_line(&own, &rows).contains("effort high"));
         assert!(!super::switch_line(&local, &rows).contains("effort"));
+    }
+
+    /// A Codex session whose catalog row reports no default reads the
+    /// runtime's configured `[codex] reasoning_effort`, never the native
+    /// `low`. A native model without one keeps `low`.
+    #[test]
+    fn a_codex_default_comes_from_the_runtime_not_from_the_native_low() {
+        let status = json!({"runtime": {
+            "defaultTurnModel": {"slug": "codex-chatgpt/gpt-6.1-sol"},
+            "codexReasoningEffort": "high"
+        }});
+        let rows = vec![json!({
+            "slug": "codex-chatgpt/gpt-6.1-sol",
+            "reasoningEfforts": ["low", "medium", "high", "xhigh"]
+        })];
+        let rendered = super::posture_line_with_models(&status, &Session::default(), "/tmp/s.sock", &rows);
+        assert!(rendered.contains("effort high"), "{rendered}");
+        // An unset runtime effort means `medium` for Codex.
+        let unset = json!({"runtime": {"defaultTurnModel": {"slug": "codex-chatgpt/gpt-6.1-sol"}}});
+        let rendered = super::posture_line_with_models(&unset, &Session::default(), "/tmp/s.sock", &rows);
+        assert!(rendered.contains("effort medium"), "{rendered}");
+        // A native row with no reported default keeps `low`, even when the
+        // runtime configures a Codex effort.
+        let native_rows = vec![json!({
+            "slug": "deepseek/deepseek-v4.1-flash-1017",
+            "reasoningEfforts": ["low", "high"]
+        })];
+        let native = Session { model: Some("deepseek/deepseek-v4.1-flash-1017".into()), ..Session::default() };
+        let rendered = super::posture_line_with_models(&status, &native, "/tmp/s.sock", &native_rows);
+        assert!(rendered.contains("effort low"), "{rendered}");
+        assert!(!rendered.contains("effort high"), "{rendered}");
     }
 
     /// The command line's choices override the runtime's defaults on the

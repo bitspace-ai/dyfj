@@ -73,7 +73,35 @@ const ROUTED: WorkbenchModel = {
   capabilities: ["text", "code"],
 };
 
+const OPENAI_REASONING: WorkbenchModel = {
+  slug: "gpt-5.6-sol",
+  displayName: "GPT-5.6 Sol",
+  provider: "openai",
+  api: "openai-completions",
+  baseUrl: "https://api.openai.com/v1",
+  tier: 2,
+  costInput: 1.25,
+  costOutput: 10,
+  capabilities: ["text", "code", "reasoning", "tools"],
+  reasoningEffortControl: true,
+};
+
+const ROUTED_REASONING: WorkbenchModel = { ...ROUTED, reasoningEffortControl: true };
+
+const HOSTED_REASONING: WorkbenchModel = {
+  ...HOSTED,
+  capabilities: ["text", "code", "reasoning"],
+  reasoningEffortControl: true,
+};
+
 const MODELS = [LOCAL, HOSTED, ROUTED];
+
+/**
+ * Every model these tests route to. The effort-capable variants share their
+ * slugs with the plain rows, so a list holding both would route to whichever
+ * came first: these replace them rather than adding to them.
+ */
+const ROUTED_MODELS = [LOCAL, OPENAI_REASONING, ROUTED_REASONING, HOSTED_REASONING];
 
 function openAIReply(content: string): ScriptedExchange {
   return {
@@ -566,3 +594,65 @@ test("a failed call records neither an upstream nor a generation id", async () =
   assert.strictEqual(Object.hasOwn(event, "upstream_provider"), false);
   assert.strictEqual(Object.hasOwn(event, "provider_generation_id"), false);
 });
+
+// ── P2-3: the recorded effort is the effort the wire carried
+
+/**
+ * A native turn records what the request actually sent, not what it was
+ * asked for: an OpenAI tool-bearing call sends `none` whatever the operator
+ * named, and the event says `none`.
+ */
+for (
+  const [label, model, withTools, requested, expected] of [
+    ["OpenAI with tools", OPENAI_REASONING, true, "high", "none"],
+    ["OpenAI without tools", OPENAI_REASONING, false, "high", "high"],
+    ["OpenRouter default", ROUTED_REASONING, false, undefined, "low"],
+    ["Anthropic explicit", HOSTED_REASONING, false, "high", "high"],
+  ] as const
+) {
+  test(`a native turn records the wire's effective effort (${label})`, async () => {
+    const h = harness();
+    const { request, transport } = callRequest(h, model, [openAIReply("ok")], {
+      params: {
+        systemPrompt: "system",
+        prompt: "hello",
+        routing: {
+          modelId: model.slug,
+          ...(requested === undefined ? {} : { reasoningEffort: requested }),
+        },
+        models: ROUTED_MODELS,
+        ...(withTools
+          ? {
+            tools: [{
+              name: "lookup",
+              description: "Look up a fact",
+              parameters: { type: "object" },
+            }],
+          }
+          : {}),
+      },
+    });
+    const env = new MapEnv({
+      ANTHROPIC_API_KEY: "test-key-not-real",
+      OPENROUTER_API_KEY: "test-key-not-real",
+      OPENAI_API_KEY: "test-key-not-real",
+    });
+    (request.params as { getEnv?: (name: string) => string | undefined })
+      .getEnv = (name) => env.get(name);
+    const withTransport = {
+      ...request,
+      params: { ...request.params, fetchFn: transport.fetch },
+    };
+
+    const result = await observedProviderCall(h.context, withTransport);
+
+    transport.assertDone();
+    assert.equal(result.turn.reasoningEffort, expected);
+    assert.equal(h.written.length, 1);
+    assert.equal(
+      (h.written[0] as unknown as { reasoning_effort: string | null })
+        .reasoning_effort,
+      expected,
+    );
+  });
+}

@@ -390,6 +390,9 @@ async function executeOpenAICompatibleTurn(
       : toolCalls,
     ...(unparsedToolCallMarkup ? { unparsedToolCallMarkup } : {}),
     ...(result.upstream === undefined ? {} : { upstream: result.upstream }),
+    ...(effectiveEffort === undefined
+      ? {}
+      : { reasoningEffort: effectiveEffort }),
     timings,
   };
 }
