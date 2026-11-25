@@ -5,7 +5,7 @@
  *   [dispatch]
  *   max_children = 3
  *   max_wait_seconds = 50
- *   roots = ["~/projects/dyfj-worktrees"]
+ *   roots = ["~/worktrees"]
  *
  * Depth is fixed at 1 with no config key. Absent `[dispatch]`, none of the four
  * `dispatch/*` tools is registered: this repository ships no default root path.

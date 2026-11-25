@@ -30,6 +30,9 @@ import {
 } from "../context/mod.ts";
 import {
   admitAdditionalRoots,
+  type BashRoute,
+  bashApproval,
+  bashReach,
   buildMemoryContextSourceLines,
   buildMemorySearch,
   buildSystemPrompt,
@@ -42,6 +45,7 @@ import {
   loadInjectedMemories,
   memorySearchConfigFromEnv,
   protectedPaths,
+  resolveBashRoute,
   runtimePrototypeRoot,
   type ToolCatalogPorts,
 } from "../tools/mod.ts";
@@ -109,8 +113,17 @@ export const OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE =
  * the loaded personal corpus. Deliberately does NOT name the absolute workspace
  * root — that would leak host/user path metadata into model-visible text (and to
  * a hosted provider on escalation); the model only needs root-relative paths.
+ *
+ * `bash`'s reach and approval clause are the ones the bash tool itself states
+ * (`bashReach`, `bashApproval`), so the prompt matches the containment and the
+ * prompt-or-not rule the command actually has: a sandboxed or executor-contained
+ * command is confined and may run without asking, and telling the model
+ * otherwise is both wrong and an invitation to try what the boundary refuses.
+ * The caller resolves the route from the same ports the tool catalog gets
+ * (`resolveBashRoute`); `route` is required so this function never reads the
+ * process environment behind a test's back.
  */
-export function buildWorkspaceGrounding(): string {
+export function buildWorkspaceGrounding(route: BashRoute): string {
   return [
     "",
     "",
@@ -121,12 +134,13 @@ export function buildWorkspaceGrounding(): string {
     `list_files on \`.\` to see what is actually here. write_file creates or ` +
     `overwrites a file; edit_file replaces an exact fragment in one. You also ` +
     `have bash, which runs a real shell command with its working directory set ` +
-    `to the workspace root — but bash is NOT sandboxed: it can read and write ` +
-    `anywhere on the machine and reach the network, exactly as if the operator ` +
-    `ran the command themselves. When a request calls for changing a file or ` +
+    `to the workspace root` +
+    bashReach(route) +
+    `When a request calls for changing a file or ` +
     `running a command, do it with these tools rather than only describing the ` +
-    `steps — the operator approves every mutation before it runs (bash always ` +
-    `prompts), so propose the concrete action.`,
+    `steps. ` +
+    bashApproval(route) +
+    `Propose the concrete action.`,
   ].join("\n");
 }
 
@@ -425,7 +439,11 @@ async function buildCompanionContext(
   }
   const agentsInstructions = await applyAgentsInstructions(state, input);
   if (state.commandTools.length > 0) {
-    state.systemPrompt += buildWorkspaceGrounding();
+    // The same route the bash tool itself resolves from these ports, so the
+    // grounding states the containment the commands actually have.
+    state.systemPrompt += buildWorkspaceGrounding(
+      resolveBashRoute({ env: ports.env, sandbox: ports.sandbox }),
+    );
   }
   // Companion mode is the only path that compresses history, so its system
   // prompt (the trusted channel) always carries the untrusted-summary policy

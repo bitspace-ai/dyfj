@@ -57,25 +57,25 @@ describe("loadAskRepoContext", () => {
     }
   });
 
-  it("does not follow a symlinked notes directory outside the selected workspace", async () => {
+  it("does not follow a symlinked workspace file to content outside the selected workspace", async () => {
     const selectedRoot = await mkdtemp(
-      path.join(tmpdir(), "ask-context-notes-root-"),
+      path.join(tmpdir(), "ask-context-readme-root-"),
     );
     const outsideRoot = await mkdtemp(
-      path.join(tmpdir(), "ask-context-notes-outside-"),
+      path.join(tmpdir(), "ask-context-readme-outside-"),
     );
     const warn = mock.method(console, "warn", () => {});
     try {
       await writeFile(
-        path.join(outsideRoot, "workbench-mvp-loop.md"),
-        "outside instructions must not load\n",
+        path.join(outsideRoot, "README.md"),
+        "# Outside content must not load\n",
       );
       // An explicit environment, so the spawn reads none from the process.
       const linked = spawnSync("ln", [
         "-s",
         "--",
-        outsideRoot,
-        path.join(selectedRoot, "notes"),
+        path.join(outsideRoot, "README.md"),
+        path.join(selectedRoot, "README.md"),
       ], { env: {} });
       assert.ifError(linked.error);
       assert.strictEqual(linked.status, 0);
@@ -88,7 +88,7 @@ describe("loadAskRepoContext", () => {
       assert.deepStrictEqual(context.sources, []);
       assert.deepStrictEqual(context.sections, []);
       const skipped =
-        "notes/workbench-mvp-loop.md context skipped: path escapes the workspace root";
+        "README.md context skipped: not a regular file";
       assert.ok(
         warn.mock.calls.some((call) =>
           call.arguments.length === 1 && call.arguments[0] === skipped

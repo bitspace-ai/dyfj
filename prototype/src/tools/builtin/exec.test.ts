@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
 import { MapEnv } from "../../../testing/fakes/map-env.ts";
-import type { CommandCall } from "../definition.ts";
+import type { ApprovalEnvelope } from "../../config/approval-envelope.ts";
+import type { CommandCall, ContainmentVerdict } from "../definition.ts";
 import { buildToolCatalog } from "../catalog.ts";
 import { RootAnchors } from "./root-anchors.ts";
 import { evaluateCommandPolicy } from "../policy.ts";
 import { redactToolCall } from "../redaction.ts";
+import type { CommandSandbox } from "./srt-sandbox.ts";
 import {
   type BashResult,
   type BashRunner,
+  bashApproval,
   buildSafeBashEnv,
   defineBash,
   executeBash,
@@ -484,5 +490,137 @@ describe("contained bash deadline", () => {
     assert.ok(!contained.description.includes("a command needs longer"));
     assert.match(contained.description, /omit timeoutSec unless you want a command stopped sooner/);
     assert.match(native.description, /a command needs longer \(a full test run, for example\)/);
+  });
+});
+
+
+// The approval clause the tool's description states (`bashApproval`) must
+// match what `tools/policy.ts` actually decides, per route. Every exemption is
+// loopback-only, so off the local socket each route asks: no clause may state
+// its exemption unconditionally, and the read-only clause may not claim the
+// exemption under a posture that does not grant it.
+describe("bashApproval states the policy's qualifications per route", () => {
+  let base = "";
+  before(() => {
+    base = realpathSync(mkdtempSync(join(tmpdir(), "exec-approval-")));
+  });
+  after(() => rmSync(base, { recursive: true }));
+
+  const sandbox = (): CommandSandbox => ({
+    status: { state: "on", backend: "srt 0.0.83" },
+    policy: () => Promise.reject(new Error("not used")),
+    runShell: () => Promise.reject(new Error("not used")),
+    runArgv: () => Promise.reject(new Error("not used")),
+  });
+  const ENVELOPE: ApprovalEnvelope = {
+    route: "linux-isolated",
+    policyDigest: `sha256:${"a".repeat(64)}`,
+    run: "run-01",
+    instance: "cd".repeat(16),
+    writable: ["workspace", "scratch"],
+    commandTimeoutMs: 120_000,
+    expiresAt: "2026-12-31T23:59:59.000Z",
+  };
+  const GRANTED: ContainmentVerdict = {
+    status: "attested",
+    envelope: ENVELOPE,
+    granted: true,
+  };
+  const routeFor = (route: "native" | "sandboxed" | "contained") =>
+    route === "native"
+      ? defineBash(base, { env: new MapEnv({}) })
+      : route === "sandboxed"
+      ? defineBash(base, { env: new MapEnv({}), sandbox: sandbox() })
+      : defineBash(base, {
+        env: new MapEnv({ DYFJ_EXECUTOR_SOCKET: "/run/dyfj-exec/exec.sock" }),
+        dialExecutor: () => Promise.reject(new Error("not used")),
+      });
+
+  it("the native clause qualifies the read-only exemption as operator posture on the local socket", () => {
+    assert.match(
+      bashApproval("native"),
+      /read-only commands \(.*\) under the operator posture on the local socket/,
+    );
+    // Native: the allowlist allows under the operator posture on loopback only;
+    // strict posture, or a headless turn, asks even for `ls`.
+    for (
+      const [posture, expected] of [
+        [{ permissionLevel: "operator", loopback: true }, "allow"],
+        [{ permissionLevel: "strict", loopback: true }, "ask"],
+        [{ permissionLevel: "operator", loopback: false }, "ask"],
+      ] as const
+    ) {
+      const decision = evaluateCommandPolicy(
+        routeFor("native"),
+        call({ command: "ls" }),
+        posture,
+      );
+      assert.strictEqual(
+        decision.decision,
+        expected,
+        `native ls must be ${expected} for ${JSON.stringify(posture)}`,
+      );
+    }
+  });
+
+  it("the sandboxed clause qualifies the exemption as operator posture on the local socket", () => {
+    assert.match(
+      bashApproval("sandboxed"),
+      /without a prompt under the operator posture on the local socket/,
+    );
+    for (
+      const [posture, expected] of [
+        [{ permissionLevel: "operator", loopback: true }, "allow"],
+        [{ permissionLevel: "strict", loopback: true }, "ask"],
+        [{ permissionLevel: "operator", loopback: false }, "ask"],
+      ] as const
+    ) {
+      const decision = evaluateCommandPolicy(
+        routeFor("sandboxed"),
+        call({ command: "npm test" }),
+        { ...posture, containment: { status: "sandboxed", backend: "srt 0.0.83" } },
+      );
+      assert.strictEqual(
+        decision.decision,
+        expected,
+        `sandboxed must be ${expected} for ${JSON.stringify(posture)}`,
+      );
+    }
+  });
+
+  it("the contained clause qualifies the attested-envelope exemption as on the local socket", () => {
+    assert.match(
+      bashApproval("contained"),
+      /unless on the local socket the operator granted the isolated executor's attested envelope/,
+    );
+    // Contained: a granted, attested envelope allows on the local socket
+    // whatever the posture, and off the local socket it asks anyway.
+    for (
+      const [posture, expected] of [
+        [{ permissionLevel: "operator", loopback: true }, "allow"],
+        [{ permissionLevel: "strict", loopback: true }, "allow"],
+        [{ permissionLevel: "operator", loopback: false }, "ask"],
+      ] as const
+    ) {
+      const decision = evaluateCommandPolicy(
+        routeFor("contained"),
+        call({ command: "true" }),
+        { ...posture, containment: GRANTED },
+      );
+      assert.strictEqual(
+        decision.decision,
+        expected,
+        `contained must be ${expected} for ${JSON.stringify(posture)}`,
+      );
+    }
+  });
+
+  it("no clause claims a prompt the route does not require", () => {
+    for (const route of ["native", "sandboxed", "contained"] as const) {
+      assert.ok(
+        !/always (?:asks|prompts)/i.test(bashApproval(route)),
+        `expected bashApproval("${route}") not to claim a prompt is always asked`,
+      );
+    }
   });
 });

@@ -23,6 +23,7 @@ import {
   DEFAULT_CONTEXT_BUDGET,
   estimateContextTokens,
   extractReadmeSection1,
+  findRepoRoot,
   loadAgentsInstructions,
   loadAskRepoContext,
   type LoadedRepoContext,
@@ -78,15 +79,15 @@ test("buildContextSourceLines: names repo files and context sources without priv
     },
     {
       kind: "file",
-      label: "notes/workbench-mvp-loop.md",
-      path: "notes/workbench-mvp-loop.md",
+      label: "docs/DESIGN.md",
+      path: "docs/DESIGN.md",
     },
   ]);
 
   assert.deepStrictEqual(lines, [
     "AGENTS.md <AGENTS.md>",
     "README.md Section 1 <README.md#section-1>",
-    "notes/workbench-mvp-loop.md <notes/workbench-mvp-loop.md>",
+    "docs/DESIGN.md <docs/DESIGN.md>",
   ]);
 });
 
@@ -96,8 +97,8 @@ test("buildAskSystemPrompt: frames the repo-local next-work question with public
       { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
       {
         kind: "file",
-        label: "notes/workbench-mvp-loop.md",
-        path: "notes/workbench-mvp-loop.md",
+        label: "docs/DESIGN.md",
+        path: "docs/DESIGN.md",
       },
     ],
     profile: "compact",
@@ -114,8 +115,8 @@ test("buildAskSystemPrompt: frames the repo-local next-work question with public
     sections: [
       { title: "AGENTS.md", body: "Read README Section 1." },
       {
-        title: "notes/workbench-mvp-loop.md excerpt",
-        body: "Workbench MVP loop: ship the smallest useful slice.",
+        title: "docs/DESIGN.md excerpt",
+        body: "Design note: ship the smallest useful slice.",
       },
     ],
   };
@@ -134,10 +135,10 @@ test("buildAskSystemPrompt: frames the repo-local next-work question with public
     } to include "You are the test companion. Help with anything."`,
   );
   assert.ok(
-    prompt.includes("Workbench MVP loop: ship the smallest useful slice."),
+    prompt.includes("Design note: ship the smallest useful slice."),
     `expected ${
       JSON.stringify(prompt)
-    } to include "Workbench MVP loop: ship the smallest useful slice."`,
+    } to include "Design note: ship the smallest useful slice."`,
   );
   assert.ok(
     prompt.includes("Context sources used"),
@@ -269,8 +270,8 @@ test("loadAskRepoContext: compact generic AGENTS context leaves room for the REA
   }
 });
 
-test("loadAskRepoContext: loads the richer Workbench context when those files exist in the selected workspace", async () => {
-  const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-dyfj-"));
+test("loadAskRepoContext: loads the richer workspace context when those files exist in the selected workspace", async () => {
+  const selectedRoot = await mkdtemp(path.join(tmpdir(), "ask-context-workspace-"));
   try {
     await writeFile(
       path.join(selectedRoot, "AGENTS.md"),
@@ -278,13 +279,23 @@ test("loadAskRepoContext: loads the richer Workbench context when those files ex
     );
     await writeFile(
       path.join(selectedRoot, "README.md"),
-      "# Project\n\n## 1. Decisions\n\nLayer 0 rules.\n\n## 2. Goal\n\nShip.\n",
+      "# Project\n\n## 1. Decisions\n\nThe decisions hold.\n\n## 2. Goal\n\nShip.\n",
     );
+    // The historical note paths are ordinary files in a workspace, not
+    // discovery targets: the loader assumes no note path at all.
     await mkdir(path.join(selectedRoot, "notes"));
-    await writeFile(
-      path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
-      "Workbench loop: ship the smallest useful slice.\n",
-    );
+    for (
+      const note of [
+        "workbench-mvp-loop.md",
+        "cost-visibility-surface.md",
+        "events-as-substrate.md",
+      ]
+    ) {
+      await writeFile(
+        path.join(selectedRoot, "notes", note),
+        "A note the loader has no reason to know about.\n",
+      );
+    }
 
     const context = await loadAskRepoContext({
       repoRoot: selectedRoot,
@@ -292,10 +303,10 @@ test("loadAskRepoContext: loads the richer Workbench context when those files ex
       budget: defaultBudgetFor("full"),
     });
 
+    // Only the generic discovery paths load: AGENTS.md and the README section.
     assert.deepStrictEqual(context.sources.map((source) => source.path), [
       "AGENTS.md",
       "README.md#section-1",
-      "notes/workbench-mvp-loop.md",
     ]);
     const bodies = context.sections.map((section) => section.body).join(
       "\n",
@@ -307,20 +318,23 @@ test("loadAskRepoContext: loads the richer Workbench context when those files ex
       `expected buildAskSystemPrompt("test companion", context) to include "untrusted workspace context"`,
     );
     assert.ok(!bodies.includes("## 2. Goal"));
+    assert.ok(
+      !bodies.includes("A note the loader has no reason to know about."),
+    );
   } finally {
     await rm(selectedRoot, { recursive: true });
   }
 });
 
-test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a manifest", async () => {
+test("loadAskRepoContext: a compact context carries discovered files and no assumed note paths", async () => {
   const selectedRoot = await mkdtemp(
-    path.join(tmpdir(), "ask-context-priority-"),
+    path.join(tmpdir(), "ask-context-manifest-"),
   );
   try {
     await mkdir(path.join(selectedRoot, "notes"));
     await writeFile(
       path.join(selectedRoot, "notes", "workbench-mvp-loop.md"),
-      "Workbench loop: ship the smallest useful slice. ".repeat(4),
+      "A note the loader has no reason to know about. ".repeat(4),
     );
     await writeFile(
       path.join(selectedRoot, "package.json"),
@@ -334,16 +348,61 @@ test("loadAskRepoContext: compact Workbench context prioritizes notes ahead of a
     });
     const paths = context.sources.map((source) => source.path);
 
-    assert.ok(paths.includes("notes/workbench-mvp-loop.md"));
-    if (paths.includes("package.json")) {
-      assert.ok(
-        paths.indexOf("notes/workbench-mvp-loop.md") <
-          paths.indexOf("package.json"),
-        `expected paths.indexOf("notes/workbench-mvp-loop.md") < paths.indexOf("package.json")`,
-      );
-    }
+    assert.deepStrictEqual(paths, ["package.json"]);
   } finally {
     await rm(selectedRoot, { recursive: true });
+  }
+});
+
+test("loadAskRepoContext: the compact README excerpt falls back to a generic excerpt, not keyword heuristics", async () => {
+  const selectedRoot = await mkdtemp(
+    path.join(tmpdir(), "ask-context-generic-excerpt-"),
+  );
+  try {
+    // A README with no numbered Decisions section still renders compactly: the
+    // first lines are the excerpt, whatever words they use.
+    await writeFile(
+      path.join(selectedRoot, "README.md"),
+      `# Plain Project\n\n${"Ordinary repository prose. ".repeat(200)}`,
+    );
+
+    const context = await loadAskRepoContext({
+      repoRoot: selectedRoot,
+      profile: "compact",
+      budget: defaultBudgetFor("compact"),
+    });
+
+    assert.deepStrictEqual(context.sources.map((source) => source.path), [
+      "README.md",
+    ]);
+    const body = context.sections[0].body;
+    assert.ok(
+      body.startsWith("# Plain Project"),
+      `expected ${JSON.stringify(body)} to start with "# Plain Project"`,
+    );
+    assert.ok(body.length <= 1_500);
+  } finally {
+    await rm(selectedRoot, { recursive: true });
+  }
+});
+
+test("findRepoRoot: the not-found error names no product", async () => {
+  // A directory with neither marker, and a root above it that also has none:
+  // walk to `/` and fail with a generic message.
+  const empty = await mkdtemp(path.join(tmpdir(), "find-repo-root-empty-"));
+  try {
+    const error = await findRepoRoot(empty).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    assert.ok(error instanceof Error);
+    assert.ok(
+      error.message.startsWith("Could not find a workspace root from "),
+      `expected ${JSON.stringify(error.message)} to start with "Could not find a workspace root from "`,
+    );
+    assert.ok(!error.message.includes("DYFJ"));
+  } finally {
+    await rm(empty, { recursive: true });
   }
 });
 
@@ -365,14 +424,14 @@ test("packContextSections: compact budget can keep AGENTS and README Section 1 s
     {
       title: "AGENTS.md excerpt",
       body:
-        "Read README Section 1. Section 1 is authoritative. Use the private tracker.",
+        "Read README Section 1. Section 1 is authoritative. Follow the rules.",
       bucket: "system",
       source: { kind: "file", label: "AGENTS.md", path: "AGENTS.md" },
     },
     {
       title: "README.md Section 1 excerpt",
       body:
-        "Layer 0: local-first. Goal 1 done-line. Policy and authority rules win.",
+        "The decisions are local-first. The done-line is stated. Policy and authority rules win.",
       bucket: "system",
       source: {
         kind: "file",
@@ -381,13 +440,13 @@ test("packContextSections: compact budget can keep AGENTS and README Section 1 s
       },
     },
     {
-      title: "notes/workbench-mvp-loop.md excerpt",
-      body: "Workbench MVP loop: ship the smallest useful slice.",
+      title: "docs/NOTES.md excerpt",
+      body: "A note that ships beside the design.",
       bucket: "active_repo",
       source: {
         kind: "file",
-        label: "notes/workbench-mvp-loop.md",
-        path: "notes/workbench-mvp-loop.md",
+        label: "docs/NOTES.md",
+        path: "docs/NOTES.md",
       },
     },
   ], COMPACT_CONTEXT_BUDGET);
@@ -395,7 +454,7 @@ test("packContextSections: compact budget can keep AGENTS and README Section 1 s
   assert.deepStrictEqual(packed.sources.map((source) => source.label), [
     "AGENTS.md",
     "README.md Section 1",
-    "notes/workbench-mvp-loop.md",
+    "docs/NOTES.md",
   ]);
 });
 
@@ -404,7 +463,7 @@ test("packContextSections: enforces tiered budget ceilings and reserves headroom
     { title: "AGENTS.md", body: "s".repeat(400), bucket: "system" },
     { title: "README.md Section 1", body: "r".repeat(400), bucket: "system" },
     {
-      title: "notes/workbench-mvp-loop.md",
+      title: "docs/NOTES.md",
       body: "a".repeat(1200),
       bucket: "active_repo",
     },

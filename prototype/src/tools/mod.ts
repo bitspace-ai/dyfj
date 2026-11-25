@@ -152,6 +152,12 @@ export type {
   ExecutorDialer,
 } from "./builtin/executor-transport.ts";
 export {
+  type BashRoute,
+  bashApproval,
+  bashReach,
+  resolveBashRoute,
+} from "./builtin/exec.ts";
+export {
   bootSandbox,
   type CommandSandbox,
   describeSandbox,

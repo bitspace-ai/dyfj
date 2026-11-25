@@ -84,9 +84,14 @@ const SMALL_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 12_000 };
 /**
  * A window BIG_HISTORY crosses the proactive trigger on, but that the
  * UNCOMPRESSED request still fits: a declined compression leaves a sendable
- * turn rather than one the fit step fails.
+ * turn rather than one the fit step fails. The margin is thin by nature: the
+ * fixed prefix (system prompt plus tool definitions) is most of this request,
+ * so a change to model-visible prompt text moves it. At 14,000 the grounding's
+ * per-route bash description pushed the ~9,400-token estimate four tokens past
+ * the budget; 14,500 leaves ~500 tokens of room there, and its 7,250-token
+ * trigger stays under that estimate, so the proactive trigger still fires.
  */
-const UNCOMPRESSED_FITS_WINDOW = 14_000;
+const UNCOMPRESSED_FITS_WINDOW = 14_500;
 /** A window the proactive trigger never reaches. */
 const HUGE_WINDOW: ModelSeed = { ...LOCAL_MODEL, context_window: 1_000_000 };
 /** Large enough that the moderate history stays under the trigger. */

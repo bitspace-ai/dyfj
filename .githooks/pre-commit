@@ -1,0 +1,28 @@
+#!/bin/sh
+# pre-commit: refuse a commit made directly on `main`.
+#
+# Work lands on a branch and reaches `main` by merge (`docs/agents/rooms.md`).
+# Every harness on this repository shares this checkout, so the rule is
+# enforced here, where they all pass, rather than in any one of them. The
+# maintainer's escape is explicit: with DYFJ_ALLOW_MAIN_COMMIT=1 in the
+# environment, a commit on `main` proceeds.
+#
+# Only the checked-out branch is examined, and only the name `main` matches.
+# A feature branch, a linked worktree's session branch, and a detached HEAD
+# (no branch at all) are unaffected.
+#
+# Enable once per clone: git config core.hooksPath .githooks
+
+set -eu
+
+case $(git symbolic-ref -q --short HEAD 2>/dev/null || true) in
+  main)
+    if [ "${DYFJ_ALLOW_MAIN_COMMIT:-}" = "1" ]; then
+      exit 0
+    fi
+    echo "pre-commit: refusing a commit on main." >&2
+    echo "Create a branch first (git switch -c <prefix>/<issue>-<slug>), or" >&2
+    echo "set DYFJ_ALLOW_MAIN_COMMIT=1 for a deliberate main commit." >&2
+    exit 1
+    ;;
+esac

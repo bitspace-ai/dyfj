@@ -37,6 +37,7 @@ async function git(
   dir: string,
   args: string[],
   who: Ident = human,
+  extraEnv: Record<string, string> = {},
 ): Promise<{ success: boolean; stdout: string; stderr: string }> {
   return await new Promise((resolve) => {
     execFile("git", ["-C", dir, ...args], {
@@ -48,6 +49,7 @@ async function git(
         GIT_AUTHOR_EMAIL: who.email,
         GIT_COMMITTER_NAME: who.name,
         GIT_COMMITTER_EMAIL: who.email,
+        ...extraEnv,
       },
     }, (error, stdout, stderr) => {
       resolve({ success: !error, stdout, stderr });
@@ -59,8 +61,9 @@ async function gitOk(
   dir: string,
   args: string[],
   who: Ident = human,
+  extraEnv: Record<string, string> = {},
 ): Promise<string> {
-  const result = await git(dir, args, who);
+  const result = await git(dir, args, who, extraEnv);
   if (!result.success) {
     throw new Error(`git ${args[0]} failed: ${result.stderr}`);
   }
@@ -96,6 +99,7 @@ async function commitWithMessage(
   message: string,
   who: Ident = human,
   extra: string[] = [],
+  extraEnv: Record<string, string> = {},
 ) {
   const file = `${dir}/../message.txt`;
   await writeFile(file, message);
@@ -103,6 +107,7 @@ async function commitWithMessage(
     dir,
     ["commit", "-q", "--allow-empty", "-F", file, ...extra],
     who,
+    extraEnv,
   );
 }
 
@@ -248,4 +253,62 @@ test("pre-push publishes clean commits, new branch and update alike", () =>
       (await git(dir, ["push", "-q", "origin", "topic"])).success,
       true,
     );
+  }));
+
+// ─── pre-commit: no direct commits on main ──────────────────────────────────
+//
+// The repository rule is that work lands on a branch, so a commit made
+// straight onto `main` is refused unless the operator sets the escape
+// variable. Feature and linked-worktree branches are unaffected: their
+// branch name is not `main`.
+
+test("pre-commit refuses a commit made directly on main", () =>
+  withFixture(async (dir) => {
+    await gitOk(dir, ["checkout", "-q", "main"]);
+    const refused = await commitWithMessage(dir, "straight to main\n");
+    assertEquals(refused.success, false);
+    assertStringIncludes(refused.stderr, "pre-commit: refusing a commit on main");
+    // Nothing landed: the branch is exactly where it was.
+    assertEquals(
+      await gitOk(dir, ["rev-list", "--count", "main"]),
+      "1\n",
+    );
+  }));
+
+test("pre-commit accepts a main commit when DYFJ_ALLOW_MAIN_COMMIT=1 is set", () =>
+  withFixture(async (dir) => {
+    await gitOk(dir, ["checkout", "-q", "main"]);
+    const allowed = await commitWithMessage(
+      dir,
+      "maintenance on main\n",
+      human,
+      [],
+      { DYFJ_ALLOW_MAIN_COMMIT: "1" },
+    );
+    assertEquals(allowed.success, true);
+    assertEquals(await gitOk(dir, ["rev-list", "--count", "main"]), "2\n");
+  }));
+
+test("pre-commit leaves a feature branch unaffected, and a worktree branch too", () =>
+  withFixture(async (dir) => {
+    // `topic` is a feature branch in the same checkout.
+    const onTopic = await commitWithMessage(dir, "topic work\n");
+    assertEquals(onTopic.success, true);
+
+    // A linked worktree holds another branch; committing there is unaffected
+    // by the checkout that has `main` out.
+    const worktree = `${dir}/../worktree`;
+    await gitOk(dir, ["worktree", "add", "-q", "-b", "agent/work", worktree]);
+    const inWorktree = await commitWithMessage(worktree, "worktree work\n");
+    assertEquals(inWorktree.success, true);
+  }));
+
+test("pre-commit keys on the branch name, so a detached HEAD is unaffected", () =>
+  withFixture(async (dir) => {
+    // A detached HEAD has no branch name, so the rule cannot apply: the
+    // maintainer's escape is a branch, not a commit position. Pinned so the
+    // hook's condition stays a branch-name check rather than a guess.
+    await gitOk(dir, ["checkout", "-q", "--detach"]);
+    const detached = await commitWithMessage(dir, "detached work\n");
+    assertEquals(detached.success, true);
   }));

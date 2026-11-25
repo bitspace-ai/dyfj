@@ -354,10 +354,25 @@ function bashApprovalTitle(call: CommandCall, maxSec: number): string {
 // ── Command definition ───────────────────────────────────────────────────────
 
 /** Which runner a bash call goes through. */
-type BashRoute = "native" | "contained" | "sandboxed";
+export type BashRoute = "native" | "contained" | "sandboxed";
+
+/**
+ * The route a `bash` call takes from the runtime's environment and sandbox,
+ * shared by `defineBash` and the workspace grounding so the model is told the
+ * containment its commands actually have. With an executor socket the
+ * commands run in the isolated machine and never here, whatever else is set;
+ * without it, a sandbox whose boot probe passed runs them; otherwise the
+ * native route prompts.
+ */
+export function resolveBashRoute(
+  opts: { env?: Env; sandbox?: CommandSandbox } = {},
+): BashRoute {
+  if (executorSocket(opts.env) !== undefined) return "contained";
+  return opts.sandbox?.status.state === "on" ? "sandboxed" : "native";
+}
 
 /** What the command can reach, as the model is told it. */
-function bashReach(route: BashRoute): string {
+export function bashReach(route: BashRoute): string {
   return route === "contained"
     ? ". The command runs in the isolated executor: its writes persist only " +
       "in the workspace (it also has private scratch space that is discarded " +
@@ -408,6 +423,36 @@ function sandboxedBashRunner(
   };
 }
 
+/**
+ * When a `bash` call runs without asking the operator, per route: the one
+ * statement both the tool's description and the workspace grounding use, so
+ * the model is told the same approval rule wherever it reads about bash. Each
+ * clause states the exemption as `tools/policy.ts` decides it — a sandboxed
+ * call runs unprompted under the operator posture on the loopback socket, a
+ * contained call runs unprompted only on an attested, granted envelope within
+ * its deadline and on the loopback socket, and a native call prompts except
+ * for the read-only allowlist under the operator posture on the loopback
+ * socket. Every exemption is loopback-only: off the local socket each route
+ * asks, so no clause may state its exemption unconditionally.
+ */
+export function bashApproval(route: BashRoute): string {
+  return route === "sandboxed"
+    ? "The command runs without a prompt under the operator posture on the " +
+      "local socket; otherwise it requires operator approval, except for " +
+      "commands the operator allowed for the rest of the session. "
+    : route === "contained"
+    ? "The command requires operator approval before it runs, unless on the " +
+      "local socket the operator granted the isolated executor's attested " +
+      "envelope and the call's deadline is within the envelope's (then it " +
+      "runs without a prompt), and except for commands the operator allowed " +
+      "for the rest of the session. "
+    : "The command requires operator approval before it runs, except for a " +
+      "small set of read-only commands (git status/diff/log/show, ls, cat, " +
+      "head, tail, wc, grep, rg, sed -n) under the operator posture on the " +
+      "local socket, and commands the operator allowed for the rest of the " +
+      "session. ";
+}
+
 /** bash's description, per route. */
 function bashDescription(route: BashRoute): string {
   return (
@@ -415,11 +460,9 @@ function bashDescription(route: BashRoute): string {
     "root, or the workspace directory cwd names" +
     bashReach(route) +
     "Returns the exit status and combined stdout/stderr. " +
+    bashApproval(route) +
     (route === "sandboxed"
-      ? "Runs without a prompt under the operator posture on the local " +
-        "socket; otherwise it " +
-        "requires operator approval, except for commands the operator " +
-        "allowed for the rest of the session. If a command fails only " +
+      ? "If a command fails only " +
         "because the sandbox refuses it (\"Operation not permitted\", a " +
         "refused connection, a 403 from the proxy) and it must run, call " +
         "again with unsandboxed: true and a reason: it then runs NOT " +
@@ -429,20 +472,11 @@ function bashDescription(route: BashRoute): string {
         "a command needs longer (a full test run, for example). A larger value is " +
         "refused, not clamped. "
       : route === "contained"
-      ? "Requires operator approval before it runs, unless the operator " +
-        "granted the isolated executor's attested envelope and the call's " +
-        "deadline is within the envelope's (then it runs without a " +
-        "prompt), and except for commands the operator allowed for the " +
-        "rest of the session. " +
-        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
+      ? `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
         "which is also the longest deadline a call may ask for here, so " +
         "omit timeoutSec unless you want a command stopped sooner. A " +
         "larger value is refused, not clamped. "
-      : "Requires operator approval before it runs, except for a small set " +
-        "of read-only commands (git status/diff/log/show, ls, cat, head, " +
-        "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
-        "the rest of the session. " +
-        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+      : `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
         `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
         "a command needs longer (a full test run, for example). A larger value is " +
         "refused, not clamped. ") +
@@ -521,15 +555,8 @@ export function defineBash(
   // passed runs every command (BIT-662); a sandbox that is off leaves the
   // native route, where every call that is not read-only asks.
   const socket = executorSocket(opts.env);
-  const contained = socket !== undefined;
-  const sandbox = !contained && opts.sandbox?.status.state === "on"
-    ? opts.sandbox
-    : undefined;
-  const route: BashRoute = contained
-    ? "contained"
-    : sandbox !== undefined
-    ? "sandboxed"
-    : "native";
+  const route = resolveBashRoute(opts);
+  const sandbox = route === "sandboxed" ? opts.sandbox : undefined;
   const runner = route === "native"
     ? opts.runner
     : route === "sandboxed"
@@ -541,12 +568,12 @@ export function defineBash(
   // a longer deadline than the default (`deriveApprovalEnvelope`), so a longer
   // one is refused as an argument the model can correct, not asked for
   // (BIT-796).
-  const maxSec = contained ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
+  const maxSec = route === "contained" ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
   // Contained, approval comes from the attested envelope (BIT-736), and the
   // read-only classifier is not used: it stays for the native route only.
   const containment = route === "sandboxed"
     ? { ...sandboxContainment(sandbox!), escapesSandbox: asksUnsandboxed }
-    : !contained
+    : route !== "contained"
     ? undefined
     : createContainment(socket!, opts.dialExecutor, {
       defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
@@ -624,7 +651,7 @@ export function defineBash(
         timeoutMs: timeout.timeoutMs,
         runner: unsandboxed
           ? opts.runner
-          : contained && runner !== undefined
+          : route === "contained" && runner !== undefined
           ? (command, at, timeoutMs, env) =>
             runner(command, at, timeoutMs, env, context.binding)
           : runner,
