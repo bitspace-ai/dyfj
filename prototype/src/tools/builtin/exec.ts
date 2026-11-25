@@ -430,7 +430,10 @@ function sandboxedBashRunner(
  * clause states the exemption as `tools/policy.ts` decides it — a sandboxed
  * call runs unprompted under the operator posture on the loopback socket, a
  * contained call runs unprompted only on an attested, granted envelope within
- * its deadline, and a native call prompts except for the read-only allowlist.
+ * its deadline and on the loopback socket, and a native call prompts except
+ * for the read-only allowlist under the operator posture on the loopback
+ * socket. Every exemption is loopback-only: off the local socket each route
+ * asks, so no clause may state its exemption unconditionally.
  */
 export function bashApproval(route: BashRoute): string {
   return route === "sandboxed"
@@ -438,15 +441,16 @@ export function bashApproval(route: BashRoute): string {
       "local socket; otherwise it requires operator approval, except for " +
       "commands the operator allowed for the rest of the session. "
     : route === "contained"
-    ? "The command requires operator approval before it runs, unless the " +
-      "operator granted the isolated executor's attested envelope and the " +
-      "call's deadline is within the envelope's (then it runs without a " +
-      "prompt), and except for commands the operator allowed for the rest " +
-      "of the session. "
+    ? "The command requires operator approval before it runs, unless on the " +
+      "local socket the operator granted the isolated executor's attested " +
+      "envelope and the call's deadline is within the envelope's (then it " +
+      "runs without a prompt), and except for commands the operator allowed " +
+      "for the rest of the session. "
     : "The command requires operator approval before it runs, except for a " +
       "small set of read-only commands (git status/diff/log/show, ls, cat, " +
-      "head, tail, wc, grep, rg, sed -n) and commands the operator allowed " +
-      "for the rest of the session. ";
+      "head, tail, wc, grep, rg, sed -n) under the operator posture on the " +
+      "local socket, and commands the operator allowed for the rest of the " +
+      "session. ";
 }
 
 /** bash's description, per route. */

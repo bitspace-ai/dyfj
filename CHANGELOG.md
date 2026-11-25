@@ -794,11 +794,13 @@ README are tracked separately in its Revision history section.
   the executor's workspace-and-scratch confinement with no network, the OS
   sandbox's write and domain limits, or the unsandboxed native route — and
   when it asks the operator: a sandboxed call runs unprompted under the
-  operator posture on the local socket, a contained call only on an attested,
-  granted envelope within its deadline, and a native call except for the
-  read-only allowlist. `route` is a required argument, so the text builder
-  never reads the process environment. Covered by unit tests per route for
-  both clauses and by a whole-turn case.
+  operator posture on the local socket, a contained call only on the local
+  socket with an attested, granted envelope and a deadline within it, and a
+  native call except for the read-only allowlist under the operator posture on
+  the local socket. Every exemption is loopback-only, so off the local socket
+  each route asks. `route` is a required argument, so the text builder never
+  reads the process environment. Covered by unit tests per route for both
+  clauses and by a whole-turn case.
 
 - **Sandboxed git writes in a main checkout (`BIT-980`).** On macOS (Seatbelt),
   Workbench now allows sandboxed `git add` and `git commit` in a normal main

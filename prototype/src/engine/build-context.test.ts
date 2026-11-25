@@ -619,17 +619,27 @@ test("buildWorkspaceGrounding carries the bash tool's own approval clause, per r
 
 test("buildWorkspaceGrounding never claims a prompt that the route does not require", () => {
   // A contained call runs without a prompt on an attested, granted envelope
-  // within its deadline (tools/policy.ts); the grounding must say so.
+  // within its deadline, and on the local socket only (tools/policy.ts); the
+  // grounding must say so.
   const contained = buildWorkspaceGrounding("contained");
   assert.match(contained, /attested envelope/i);
+  assert.match(
+    contained,
+    /unless on the local socket the operator granted the isolated executor's attested envelope/,
+  );
   assert.ok(
     !/always prompts/i.test(contained),
     `expected ${JSON.stringify(contained)} not to claim a prompt is always asked`,
   );
 
-  // A native call prompts except for the read-only allowlist.
+  // A native call prompts except for the read-only allowlist under the
+  // operator posture on the local socket.
   const native = buildWorkspaceGrounding("native");
   assert.match(native, /read-only commands/);
+  assert.match(
+    native,
+    /read-only commands \(.*\) under the operator posture on the local socket/,
+  );
   assert.ok(
     !/always prompts/i.test(native),
     `expected ${JSON.stringify(native)} not to claim a prompt is always asked`,
