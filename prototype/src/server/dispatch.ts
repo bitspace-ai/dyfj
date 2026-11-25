@@ -105,10 +105,11 @@ interface CoordinatorContext {
   /**
    * The dispatch section that applies to this coordinator's workspace: its
    * `[[workspaces]]` profile's, when it declares one, else the global
-   * `[dispatch]`. Absent keeps the boot-time config, so a runtime without
-   * profiles behaves exactly as before.
+   * `[dispatch]`. Null means this workspace has no dispatch section, so no
+   * child tools are bound; absent keeps the runtime's boot-time config, which
+   * is what a runtime with no profiles passes.
    */
-  config?: DispatchConfig;
+  config?: DispatchConfig | null;
 }
 
 interface StartingReservation {
@@ -220,6 +221,10 @@ export class DispatchService implements DispatchEnginePorts {
     context: CoordinatorContext,
   ): DispatchSessionPorts | undefined {
     if (this.#closed || context.depth !== 0) return undefined;
+    // Null: this workspace's profile declares no dispatch section, so a
+    // coordinator here starts no children even though the runtime owns the
+    // service and another workspace's profile configured it.
+    if (context.config === null) return undefined;
     return {
       config: context.config ?? this.#config,
       depth: context.depth,

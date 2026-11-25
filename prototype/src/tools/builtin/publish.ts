@@ -246,6 +246,10 @@ async function startPublishRun(
   const created = deps.tickets.create({
     sessionId: deps.sessionId,
     layout,
+    // The lifetime of the section this run's workspace resolved to: one
+    // registry serves every workspace, so it is pinned here rather than
+    // replacing the registry's own (PublishTickets).
+    ttlMs: deps.config.ticketTtlMs,
     // The default path names the ticket, so it is filled from the id this
     // module just minted.
     reportPathFor: (ticket) =>

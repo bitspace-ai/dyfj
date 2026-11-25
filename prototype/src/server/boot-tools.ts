@@ -14,12 +14,16 @@
  */
 
 import {
+  DEFAULT_DISPATCH_MAX_CHILDREN,
+  DEFAULT_DISPATCH_MAX_WAIT_SECONDS,
+  DEFAULT_TICKET_TTL_MS,
   type DispatchConfig,
   type Env,
   type GateConfig,
   loadApprovalsConfig,
   loadDispatchConfig,
   loadGateConfig,
+  type LoadConfigDeps,
   loadPublishConfig,
   loadSandboxConfig,
   type PublishConfig,
@@ -39,7 +43,13 @@ import {
 
 /** What the server holds for the publish tools across turns. */
 export interface PublishServerPorts {
-  config: PublishConfig;
+  /**
+   * The global `[publish]` section, or null when only workspace profiles
+   * declare one. A turn's own section replaces it
+   * (`config/workspace-policy.ts`); the registry below is the runtime's
+   * either way.
+   */
+  config: PublishConfig | null;
   tickets: PublishTickets;
 }
 
@@ -62,6 +72,12 @@ export interface ToolSectionBoot {
   /** Opens the sandbox's boot probe listener. */
   listenProbe: BootProbeListener;
   env?: Env;
+  /**
+   * Where the sections are read from. Absent, each loader reads the operator's
+   * own config file; a test supplies its own reader and table so it needs no
+   * file on disk.
+   */
+  deps?: LoadConfigDeps;
   /** Where the one-line boot diagnostics go; stderr when absent. */
   say?: (line: string) => void;
 }
@@ -76,30 +92,57 @@ export interface ToolSections {
 }
 
 /**
- * The operator's `[publish]` section, parsed and validated once. Absent, the
- * publish tools are not registered: this repository ships no default that
- * would name a private path. A malformed section fails the boot loudly, like
- * every other config section.
+ * Whether any configured workspace profile declares a tool's section, so the
+ * runtime must own that tool's registries even with no global section: the
+ * turn's own section decides whether the tool is exposed.
+ */
+function profileDeclares(
+  workspaces: WorkspacesConfig,
+  section: "gate" | "publish" | "dispatch",
+): boolean {
+  return workspaces.profiles.some((profile) => profile[section] !== null);
+}
+
+/**
+ * The publish ports. They exist when the global `[publish]` section or any
+ * workspace profile configures publish: one ticket registry per runtime, so a
+ * ticket and the gate it started outlive the turn that opened them. Absent
+ * both, the tools are not registered at all - this repository ships no default
+ * that would name a private path. A malformed section fails the boot loudly,
+ * like every other config section.
  */
 function bootPublish(
   config: PublishConfig | null,
+  workspaces: WorkspacesConfig,
 ): PublishServerPorts | undefined {
-  if (config === null) return undefined;
-  // One registry per runtime, so a ticket and the gate it started outlive the
-  // turn that opened them.
-  return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
+  if (config === null && !profileDeclares(workspaces, "publish")) {
+    return undefined;
+  }
+  // The registry's own TTL is the global one, and each ticket pins the TTL of
+  // the section that issued it, so one workspace's shorter lifetime retires
+  // its tickets without touching another's.
+  return {
+    config,
+    tickets: new PublishTickets({
+      ttlMs: config?.ticketTtlMs ?? DEFAULT_TICKET_TTL_MS,
+    }),
+  };
 }
 
 /**
  * The gate's ports, with the one approval command eligible for a session
- * grant. An absent `[gate]` leaves the gate tools unregistered entirely.
+ * grant. They exist when the global `[gate]` section or any workspace profile
+ * configures a gate; a turn whose workspace resolves to no section gets no
+ * gate tools. Absent both, the tools are never registered.
  */
 async function bootGate(
   config: GateConfig | null,
   policy: RuntimePolicy,
+  workspaces: WorkspacesConfig,
+  deps: LoadConfigDeps,
 ): Promise<GateRuntimePorts | undefined> {
-  if (config === null) return undefined;
-  const approvals = await loadApprovalsConfig([GATE_START_APPROVALS]);
+  if (config === null && !profileDeclares(workspaces, "gate")) return undefined;
+  const approvals = await loadApprovalsConfig([GATE_START_APPROVALS], deps);
   return {
     config,
     runs: new GateRuns(),
@@ -111,6 +154,19 @@ async function bootGate(
 }
 
 /**
+ * The fallback `[dispatch]` a runtime boots with when only workspace profiles
+ * declare dispatch: no roots, so it can plan nothing, and default bounds. A
+ * turn whose workspace resolves to a dispatch section always passes its own,
+ * and a workspace that resolves to none gets no dispatch ports at all, so this
+ * config is never the one a child launch is planned under.
+ */
+const BOOT_DISPATCH_FALLBACK: DispatchConfig = Object.freeze({
+  maxChildren: DEFAULT_DISPATCH_MAX_CHILDREN,
+  maxWaitSeconds: DEFAULT_DISPATCH_MAX_WAIT_SECONDS,
+  roots: Object.freeze([]),
+});
+
+/**
  * Load the sections, build the workspace-profile resolver from them, and boot
  * the tool sandbox under the profiles. The order matters: the sandbox's
  * per-run policy asks the resolver which workspace it is compiling for, so the
@@ -120,10 +176,11 @@ export async function bootToolSections(
   input: ToolSectionBoot,
 ): Promise<ToolSections> {
   const say = input.say ?? ((line: string) => console.error(line));
-  const sandboxConfig = await loadSandboxConfig();
-  const gateConfig = await loadGateConfig();
-  const publishConfig = await loadPublishConfig();
-  const dispatchConfig = await loadDispatchConfig();
+  const deps = input.deps ?? {};
+  const sandboxConfig = await loadSandboxConfig(deps);
+  const gateConfig = await loadGateConfig(deps);
+  const publishConfig = await loadPublishConfig(deps);
+  const dispatchConfig = await loadDispatchConfig(deps);
   // Which config applies to a workspace: the operator's `[[workspaces]]`
   // profile that covers the turn's resolved root, else these globals. Built
   // once, from the same sections.
@@ -149,16 +206,44 @@ export async function bootToolSections(
       `dyfj runtime: ${workspaceConfig.profiles.length} workspace profile(s) from [[workspaces]]`,
     );
   }
-  const publish = bootPublish(publishConfig);
-  if (publish !== undefined) say("dyfj runtime: publish tools enabled from [publish]");
-  if (dispatchConfig !== null) say("dyfj runtime: dispatch tools enabled from [dispatch]");
-  const gate = await bootGate(gateConfig, input.policy);
-  if (gate !== undefined) say("dyfj runtime: gate tools enabled from [gate]");
+  const publish = bootPublish(publishConfig, input.workspaces);
+  if (publish !== undefined) {
+    say(
+      publish.config === null
+        ? "dyfj runtime: publish tools enabled from [[workspaces]]"
+        : "dyfj runtime: publish tools enabled from [publish]",
+    );
+  }
+  if (dispatchConfig !== null) {
+    say("dyfj runtime: dispatch tools enabled from [dispatch]");
+  } else if (profileDeclares(input.workspaces, "dispatch")) {
+    say("dyfj runtime: dispatch tools enabled from [[workspaces]]");
+  }
+  const gate = await bootGate(
+    gateConfig,
+    input.policy,
+    input.workspaces,
+    deps,
+  );
+  if (gate !== undefined) {
+    say(
+      gate.config === null
+        ? "dyfj runtime: gate tools enabled from [[workspaces]]"
+        : "dyfj runtime: gate tools enabled from [gate]",
+    );
+  }
   return {
     workspaceConfig,
     sandbox,
     publish,
-    dispatch: dispatchConfig ?? undefined,
+    // Dispatch needs a service config to boot with, so a runtime with only
+    // profile-declared dispatch boots on a fallback that plans nothing: every
+    // turn that may dispatch passes its own workspace's section, and one that
+    // may not gets no ports at all.
+    dispatch: dispatchConfig ??
+      (profileDeclares(input.workspaces, "dispatch")
+        ? BOOT_DISPATCH_FALLBACK
+        : undefined),
     gate,
   };
 }

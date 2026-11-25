@@ -1125,3 +1125,51 @@ test("one runtime serves two workspaces: the profiled one gets its gate tools, t
     "an unmatched workspace gets none, so one project's gate never reaches another",
   );
 });
+
+test("profile-only gate config still yields tools: the runtime's ports carry no global section", async () => {
+  // The ordinary configuration: no global [gate], one profile declaring one.
+  // The runtime owns the gate-run registry with a null boot config, and the
+  // turn's own section is what the catalog decides on.
+  await using profiled = await tempWorkspace({});
+  await using plain = await tempWorkspace({});
+  const gateConfig = {
+    commands: { full: ["npm", "test"] },
+    timeoutSeconds: 1_800,
+  };
+  const empty = {
+    trustInstructions: false,
+    gate: null,
+    publish: null,
+    sandbox: { allowDomains: [], denyRead: [] },
+    requireWorktree: false,
+    dispatch: null,
+    profile: null,
+  };
+  const resolver = {
+    resolve: (workspace: string) =>
+      workspace === profiled.root ? { ...empty, gate: gateConfig } : empty,
+  };
+  const fakes = enginePorts();
+  const { GateRuns } = await import("../tools/builtin/gate-runs.ts");
+  const ports = {
+    ...fakes.ports,
+    workspaceConfig: resolver,
+    gate: { config: null, runs: new GateRuns() },
+  };
+  const inProfiled = await runContext({ rootOverride: profiled.root }, {
+    ...fakes,
+    ports,
+  });
+  const inPlain = await runContext({ rootOverride: plain.root }, {
+    ...fakes,
+    ports,
+  });
+  const gateIds = (state: TurnState) =>
+    state.commandRegistry.list().map((command) => command.id)
+      .filter((id) => id.startsWith("gate/"));
+  assert.deepStrictEqual(
+    gateIds(inProfiled.state),
+    ["gate/start", "gate/wait", "gate/cancel"],
+  );
+  assert.deepStrictEqual(gateIds(inPlain.state), []);
+});

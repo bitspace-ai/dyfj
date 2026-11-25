@@ -99,7 +99,13 @@ export interface ToolCatalogPorts {
 
 /** What the publish tools need, resolved by the caller that passes them. */
 export interface PublishCatalogPorts {
-  config: import("../config/publish-config.ts").PublishConfig;
+  /**
+   * The `[publish]` section that applies to this turn's workspace, or null
+   * when none does: the registry and policy are the runtime's, so the ports
+   * exist whenever any profile or the global section configures publish, and
+   * a null section registers no publish tools for this turn.
+   */
+  config: import("../config/publish-config.ts").PublishConfig | null;
   tickets: import("./builtin/publish-tickets.ts").PublishTickets;
   policy: import("../config/runtime-policy.ts").RuntimePolicy;
   sessionId: string;
@@ -211,14 +217,16 @@ export const BUILTIN_TOOLS: readonly ToolCatalogEntry[] = [
 /**
  * The publish tools (BIT-786), a group because one entry yields three or four
  * commands sharing one ticket registry: `publish/push` is registered only when
- * push and open_pr are both configured. Present only when the operator
- * configured `[publish]` and the turn resolved a root with anchors to check it
- * against: no config, no tools.
+ * push and open_pr are both configured. Present only when the section that
+ * applies to this turn's workspace is non-null - the global `[publish]` or the
+ * workspace's profile - and the turn resolved a root with anchors to check it
+ * against: no section, no tools.
  */
 function publishTools(
   { workspaceRoot, rootAnchors, env, publish }: ToolCatalogDependencies,
 ): readonly CommandDefinition[] {
-  if (publish === undefined || workspaceRoot === undefined) return [];
+  if (publish === undefined || publish.config === null) return [];
+  if (workspaceRoot === undefined) return [];
   if (rootAnchors === undefined) {
     throw new Error("tool catalog: the publish tools need root anchors");
   }

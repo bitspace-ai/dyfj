@@ -268,12 +268,18 @@ function createSandbox(
     return pin;
   };
   const policy = async (root: string) => {
+    // A workspace's restrictive settings fail closed. `require_worktree` and
+    // `deny_read` can only take capability away, so a lookup that fails must
+    // not resolve to the permissive answer: the command is refused rather
+    // than run with the operator's restriction silently dropped. (The extra
+    // ALLOW domains below are the opposite direction and stay conservative:
+    // a failed lookup adds nothing, so the run keeps the narrower allowlist.)
     const requireWorktree = options.requireWorktreeFor === undefined
       ? false
-      : await options.requireWorktreeFor(root).catch(() => false);
+      : await options.requireWorktreeFor(root);
     const workspaceDeny = options.denyReadFor === undefined
       ? []
-      : await options.denyReadFor(root).catch(() => []);
+      : await options.denyReadFor(root);
     const denyRead = [...(options.denyRead ?? []), ...workspaceDeny];
     return await compileWorkspacePolicy(root, {
       pinnedLayout: await pinnedLayout(root),

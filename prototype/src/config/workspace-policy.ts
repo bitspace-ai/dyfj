@@ -140,3 +140,40 @@ export class WorkspaceProfiles implements WorkspaceConfigResolver {
     return this.#config.match(root)?.dispatch ?? this.#globals.dispatch;
   }
 }
+
+/**
+ * The gate section a turn's workspace is entitled to, or null when it has no
+ * gate tools (BIT-982).
+ *
+ * The runtime owns one gate-run registry for its lifetime, and it exists
+ * whenever the global `[gate]` or ANY configured workspace profile configures
+ * a gate. What one turn may use is narrower: the section that applies to its
+ * resolved workspace, and nothing at all when neither declares one. `resolved`
+ * is absent on a runtime whose caller supplied no profiles, where the
+ * boot-time global applies to every workspace, exactly as before profiles.
+ */
+export function gateSectionFor(
+  resolved: ResolvedWorkspaceConfig | undefined,
+  bootGlobal: GateConfig | null,
+): GateConfig | null {
+  return resolved === undefined ? bootGlobal : resolved.gate;
+}
+
+/** The publish section a turn's workspace is entitled to; see `gateSectionFor`. */
+export function publishSectionFor(
+  resolved: ResolvedWorkspaceConfig | undefined,
+  bootGlobal: PublishConfig | null,
+): PublishConfig | null {
+  return resolved === undefined ? bootGlobal : resolved.publish;
+}
+
+/**
+ * The dispatch section a turn's workspace is entitled to: null when it may not
+ * dispatch at all, undefined when no resolver was supplied and the dispatch
+ * service's own boot-time config applies unchanged.
+ */
+export function dispatchSectionFor(
+  resolved: ResolvedWorkspaceConfig | undefined,
+): DispatchConfig | null | undefined {
+  return resolved === undefined ? undefined : resolved.dispatch;
+}

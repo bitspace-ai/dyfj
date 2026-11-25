@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { MapEnv } from "../../testing/fakes/map-env.ts";
 import {
@@ -217,5 +219,39 @@ describe("workspace profiles: resolution against the globals", () => {
     const resolved = config.resolve("/anywhere");
     assert.deepStrictEqual(resolved.gate, globals.gate);
     assert.equal(resolved.profile, null);
+  });
+});
+
+describe("workspace profiles: a path that does not exist yet", () => {
+  it("matches once created beneath a symlinked parent", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "dyfj-profiles-")));
+    try {
+      // `/alias` is a symlink to `/real`, and the profile names a directory
+      // under the alias that does not exist at boot.
+      const real = join(base, "real");
+      mkdirSync(real);
+      symlinkSync(real, join(base, "alias"));
+      const configured = join(base, "alias", "new-repo");
+      const config = parseWorkspacesConfig(
+        { workspaces: [{ path: configured, trust_instructions: true }] },
+        WHERE,
+        env,
+      );
+      // The directory appears after boot, reached through the real path.
+      const created = join(real, "new-repo");
+      mkdirSync(created);
+      const matched = config.match(created);
+      assert.notEqual(
+        matched,
+        null,
+        "a profile under a symlinked parent must match once its directory exists",
+      );
+      assert.equal(matched?.path, created);
+      // And a workspace beneath it matches too.
+      mkdirSync(join(created, "worktree"));
+      assert.equal(config.match(join(created, "worktree"))?.path, created);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });

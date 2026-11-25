@@ -11,7 +11,14 @@ export const GATE_START_APPROVALS = { id: "gate/start", sessionGrantModes: ["ful
 
 export interface GateRuntimePorts {
   sessionGrantable?: readonly string[];
-  config: GateConfig;
+  /**
+   * The gate section that applies to a turn's workspace, or null when none
+   * does. The runtime owns one set of runs and one policy for its lifetime, so
+   * the ports exist once a profile or the global section configures a gate;
+   * a null section here means this workspace has no gate commands, and
+   * `defineGateTools` registers nothing for it.
+   */
+  config: GateConfig | null;
   runs: GateRuns;
   policy?: RuntimePolicy;
   maxWaitSeconds?: number;
@@ -54,7 +61,10 @@ async function checkedPaths(root: string, call: CommandCall): Promise<string[]> 
 
 export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>[] {
   const { config, runs, sessionId, workspaceRoot } = deps;
-  if (config.commands.full === undefined) return [];
+  // A workspace no section covers, or a profile that declares no gate: no
+  // tools at all. The runtime's ports exist so a profile can supply a section
+  // later, not so an unconfigured workspace gets a headerless gate.
+  if (config === null || config.commands.full === undefined) return [];
   const sandbox = executorSocket(deps.env) === undefined && deps.sandbox?.status.state === "on"
     ? deps.sandbox : undefined;
   const modes = (Object.keys(config.commands) as GateMode[]).filter(mode => mode === "full" || sandbox !== undefined);

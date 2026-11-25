@@ -24,11 +24,13 @@ README are tracked separately in its Revision history section.
   its top-level counterpart, so a profile cannot accept a value the global
   section refuses; a section a profile declares replaces the global one whole,
   and a section it omits leaves the global section in force, so an existing
-  flat config file keeps working unchanged. The trust boundary stays
-  `~/.dyfj/config.toml` alone: no gate command, publish command, sandbox
-  addition or instruction-trust setting is ever read from inside the workspace
-  a profile names, and a non-loopback transport still inherits no
-  instruction elevation from any profile. Sandbox settings are additive only -
+  flat config file keeps working unchanged. The trust boundary stays the
+  operator's config file alone - `~/.dyfj/config.toml`, or
+  `$DYFJ_ROOT/config.toml` when `DYFJ_ROOT` is set: no gate command, publish
+  command, sandbox addition or instruction-trust setting is ever read from
+  inside the workspace a profile names, and a non-loopback transport still
+  inherits no instruction elevation from any profile. Sandbox settings are
+  additive only -
   a profile's `allow_domains` and `deny_read` add to the global `[sandbox]`
   lists, which add to the built-in credential deny list, and nothing in a
   profile removes a deny. Per-workspace extra domains are registered with
@@ -41,8 +43,16 @@ README are tracked separately in its Revision history section.
   Because the runtime's spawn and egress policy is composed once at boot,
   before any turn names a workspace, every program a profile declares is
   admitted to the run list at boot and tagged `workspace-config`; which one a
-  turn may start is still decided by that turn's gate or publish policy.
-  Grants for unmatched workspaces are unchanged.
+  turn may start is still decided by that turn's gate or publish policy. The
+  gate-run registry, publish ticket registry and dispatch service are
+  runtime-owned for the runtime's lifetime and are created whenever the global
+  section or any profile declares that tool, so a config with no global
+  `[gate]`, `[publish]` or `[dispatch]` at all still exposes those tools in the
+  workspaces whose profiles declare them, and nowhere else. A workspace no
+  profile matches keeps any global `[gate]`, `[publish]` and `[dispatch]` it
+  had before, and a publish ticket carries the `ticket_ttl_ms` of the section
+  that issued it, so one workspace's shorter lifetime never expires another's
+  ticket early.
 
 - **`[publish] base_ref`, and `{implementer}` only when a command uses it
   (`BIT-982`).** `[publish]` accepts an optional `base_ref` (default
@@ -1031,6 +1041,21 @@ README are tracked separately in its Revision history section.
   its release.
 
 ### Fixed
+
+- **A restrictive workspace policy fails closed in the sandbox (`BIT-982`).**
+  When a workspace's profile cannot be resolved for a sandboxed command - its
+  `sandbox.require_worktree` or `sandbox.deny_read` lookup rejects - the
+  command is now refused instead of running with that restriction dropped. Both
+  settings can only take capability away, so a failed lookup no longer
+  resolves to the permissive answer. An allow-domain lookup keeps the
+  conservative direction and adds nothing on failure, so the run keeps the
+  narrower allowlist.
+
+- **A workspace profile beneath a symlinked directory matches once created
+  (`BIT-982`).** A profile whose `path` does not exist at boot is canonicalized
+  from its nearest existing ancestor with the missing suffix rejoined, so a
+  profile under a symlinked parent still matches the directory after it is
+  created, instead of silently falling back to the global sections.
 
 - **A successful linked-worktree commit no longer reports a ref-lock error
   (`BIT-959`).** Git's commit path (2.56.1) deletes `AUTO_MERGE` after the

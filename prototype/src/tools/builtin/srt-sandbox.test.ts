@@ -687,15 +687,20 @@ function probeListeners() {
     });
 }
 
-describe("per-workspace sandbox settings", () => {
-  /** A wrap that satisfies the boot probe: the direct connect is refused. */
-  const probeSatisfyingWrap = (command: string): Promise<string> =>
-    Promise.resolve(
-      command.includes("/dev/tcp/") || command.includes("outside")
-        ? "exit 1"
-        : `true; ${command}`,
-    );
+/**
+ * A wrap that satisfies the boot probe and otherwise succeeds: the probe's
+ * write outside its directory and its direct connect are refused, its write
+ * inside runs.
+ */
+function probeSatisfyingWrap(command: string): Promise<string> {
+  return Promise.resolve(
+    command.includes("/dev/tcp/") || command.includes("outside")
+      ? "exit 1"
+      : `true; ${command}`,
+  );
+}
 
+describe("per-workspace sandbox settings", () => {
   it("a workspace's allow_domains rides registerCommandNetworkLists, not the boot allowlist", async () => {
     const registered: { id: string; domains: string[] }[] = [];
     const unregistered: string[] = [];
@@ -821,5 +826,76 @@ describe("per-workspace sandbox settings", () => {
       requireWorktree: true,
     });
     assert.equal(policy.gitDirDenied, false);
+  });
+});
+
+describe("a restrictive workspace-policy lookup that fails", () => {
+  /** A boot that gets past the probe, recording what the sandbox wrapped. */
+  async function bootWithFailures(options: {
+    requireWorktreeFor?: (root: string) => Promise<boolean>;
+    denyReadFor?: (root: string) => Promise<readonly string[]>;
+  }) {
+    const wrapped: string[] = [];
+    const sandbox = await bootSandbox({
+      listenProbe: probeListeners(),
+      env: new MapEnv({ PATH: pathWithProbeBash() }),
+      srt: fakeSrt({
+        wrapWithSandbox: (command) => {
+          wrapped.push(command);
+          return probeSatisfyingWrap(command);
+        },
+      }),
+      scratchDir: join(base, "scratch"),
+      readLayout: layout(null),
+      ...options,
+    });
+    assert.equal(sandbox.status.state, "on", JSON.stringify(sandbox.status));
+    return { sandbox, wrapped };
+  }
+
+  it("refuses the command when require_worktree cannot be resolved", async () => {
+    const { sandbox, wrapped } = await bootWithFailures({
+      // The probe compiles a policy in its own temporary root, so the failure
+      // is this workspace's only: the boot succeeds and the run is refused.
+      requireWorktreeFor: (root) =>
+        root === base
+          ? Promise.reject(new Error("the workspace profile could not be read"))
+          : Promise.resolve(false),
+    });
+    const before = wrapped.length;
+    await assert.rejects(
+      () =>
+        sandbox.runShell("true", {
+          root: base,
+          cwd: base,
+          timeoutMs: 5_000,
+          env: {},
+        }),
+      /the workspace profile could not be read/,
+    );
+    // No command was wrapped: the restriction was not silently dropped.
+    assert.equal(wrapped.length, before);
+  });
+
+  it("refuses the command when a workspace's deny_read cannot be resolved", async () => {
+    const { sandbox, wrapped } = await bootWithFailures({
+      denyReadFor: (root) =>
+        root === base
+          ? Promise.reject(new Error("the workspace profile could not be read"))
+          : Promise.resolve([]),
+    });
+    const before = wrapped.length;
+    await assert.rejects(
+      () =>
+        sandbox.runShell("true", {
+          root: base,
+          cwd: base,
+          timeoutMs: 5_000,
+          env: {},
+        }),
+      /the workspace profile could not be read/,
+    );
+    // A deny that cannot be resolved never becomes a run without it.
+    assert.equal(wrapped.length, before);
   });
 });

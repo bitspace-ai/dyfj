@@ -81,6 +81,7 @@ import {
   unavailableSecretPointers,
   type WorkbenchConfig,
   WorkspaceProfiles,
+  workspaceProfilePrograms,
 } from "../config/mod.ts";
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
 import {
@@ -105,7 +106,7 @@ import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { composeBoot } from "./boot.ts";
 import { bootToolSections, type PublishServerPorts } from "./boot-tools.ts";
 import { runRuntimeEntry } from "./entry.ts";
-import { installRuntimeSigintHandler } from "./sigint.ts";
+import { composeRuntimeShutdown } from "./shutdown.ts";
 import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
 import { createFrictionExtension } from "../extensions/friction/mod.ts";
 import { createIdeaPacketExtensions } from "../extensions/ideas/mod.ts";
@@ -780,6 +781,11 @@ async function main(): Promise<void> {
     secrets: secretsConfig,
     networkAllow: await loadNetworkAllow(),
     nameserverGrants: await readNameserverNetGrants(),
+    // Every program a `[[workspaces]]` profile's gate or publish commands
+    // name, admitted to the run list here and tagged `workspace-config`: the
+    // policy is composed once, before any turn names a workspace, so a
+    // profile's command would otherwise be refused before it could start.
+    workspacePrograms: workspaceProfilePrograms(config.workspaces),
   });
   // The operator's tool sections, loaded once: `[gate]`, `[publish]`,
   // `[dispatch]`, `[sandbox]`, the tool sandbox they configure, and the
@@ -827,16 +833,16 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  let resolveCloseServer!: (close: () => Promise<void>) => void;
-  const closeServerReady = new Promise<() => Promise<void>>((resolve) => {
-    resolveCloseServer = resolve;
-  });
-  // What a pending shutdown waits on, for a repeated Ctrl-C to report. Only
-  // the shutdown below advances it.
-  let shutdownStage = "the runtime to finish starting";
-  installRuntimeSigintHandler({
+  // The store (and its pool) belongs to this composition root. It closes once,
+  // after the server, whichever shutdown path runs first.
+  let storeClosed: Promise<void> | undefined;
+  const closeStore = () => (storeClosed ??= store.close());
+
+  // One close order for every path that can stop this runtime: a client's
+  // `runtime/stop`, the autostarted idle stop, and SIGINT.
+  const shutdown = composeRuntimeShutdown({
     autostarted,
-    close: async () => await (await closeServerReady)(),
+    closeStore,
     signals: {
       add: (handler) => {
         process.on("SIGINT", handler);
@@ -844,45 +850,8 @@ async function main(): Promise<void> {
     },
     exit: (code) => process.exit(code),
     say: (line) => console.error(line),
-    waitingOn: () => shutdownStage,
   });
-
-  let serverInstance:
-    | { close(options?: { disconnectPeers?: boolean }): Promise<void> }
-    | undefined;
-
-  const closeRuntime = async (
-    options?: { disconnectPeers?: boolean },
-  ) => {
-    if (serverInstance) await serverInstance.close(options);
-  };
-
-  // The store (and its pool) belongs to this composition root. It closes once,
-  // after the server, whichever shutdown path runs first.
-  let storeClosed: Promise<void> | undefined;
-  const closeStore = () => (storeClosed ??= store.close());
-
-  const shutdown = async (
-    options?: { disconnectPeers?: boolean },
-  ) => {
-    try {
-      shutdownStage =
-        "the server to close its client connections and warm ACP sessions";
-      await closeRuntime(options);
-    } catch (error) {
-      // A closed-resource error from the runtime's own handles is tolerated.
-      // The node:net listener swallows its own close errors, so only a runtime
-      // resource elsewhere in the close path (the runners) can raise it. The
-      // runner leaf of the Node runtime track removes this branch.
-      if (!(error instanceof Error && error.name === "BadResource")) {
-        // The server's close failure is the one to report.
-        await closeStore().catch(() => {});
-        throw error;
-      }
-    }
-    shutdownStage = "the Dolt store's connection pool to close";
-    await closeStore();
-  };
+  shutdown.installSigint();
 
   try {
     const server = await serveWorkbenchUnix(socketPath, {
@@ -905,7 +874,7 @@ async function main(): Promise<void> {
       ...(publish === undefined ? {} : { publish }),
       ...(dispatch === undefined ? {} : { dispatch }),
       ...(gate === undefined ? {} : { gate }),
-      onShutdown: () => shutdown({ disconnectPeers: false }),
+      onShutdown: () => shutdown.shutdown({ disconnectPeers: false }),
       // The same shutdown SIGINT runs: close the server (which reaps the
       // warm ACP sessions and their children), then the store.
       onIdle: async () => {
@@ -916,7 +885,7 @@ async function main(): Promise<void> {
         );
         let code = 0;
         try {
-          await shutdown();
+          await shutdown.shutdown();
         } catch (error) {
           console.error(
             `dyfj runtime: shutdown failed: ${summarizeError(error)}`,
@@ -929,8 +898,7 @@ async function main(): Promise<void> {
         process.exit(code);
       },
     });
-    serverInstance = server;
-    resolveCloseServer(() => shutdown());
+    shutdown.attach(server);
     console.error(
       `dyfj runtime: JSON-RPC over UDS at ${socketPath}  ${
         autostarted
@@ -946,7 +914,7 @@ async function main(): Promise<void> {
       }`,
     );
   } catch (error) {
-    resolveCloseServer(() => Promise.reject(error));
+    shutdown.fail(error);
     await closeStore().catch(() => {});
     throw error;
   }

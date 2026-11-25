@@ -63,6 +63,11 @@ import { buildNextWorkBrief } from "./next-work.ts";
 import { emitRuntimeEvent } from "./runtime-events.ts";
 import type { WorkbenchRuntimeInput } from "./runtime-types.ts";
 import {
+  dispatchSectionFor,
+  gateSectionFor,
+  publishSectionFor,
+} from "../config/mod.ts";
+import {
   commitEvent,
   type NativeTurnPorts,
   type TurnState,
@@ -395,14 +400,12 @@ async function buildCompanionContext(
   });
   // A workspace profile may give its own dispatch roots, so a coordinator in
   // one repository starts children only inside that repository's roots. With
-  // no profile matching, the boot-time `[dispatch]` applies unchanged.
-  const dispatchConfig = state.workspaceConfig?.dispatch ?? undefined;
-  // A profile may also leave this workspace without dispatch tools at all, in
-  // which case a coordinator here starts no children whatever the global
-  // `[dispatch]` says.
+  // no profile matching, the boot-time `[dispatch]` applies unchanged. A
+  // profile that declares no dispatch section leaves this workspace without
+  // dispatch tools at all, whatever the global `[dispatch]` says.
+  const dispatchConfig = dispatchSectionFor(state.workspaceConfig);
   const dispatchAvailable = ports.dispatch !== undefined &&
-    (ports.workspaceConfig === undefined ||
-      (dispatchConfig !== null && dispatchConfig !== undefined));
+    dispatchConfig !== null;
   const dispatchSession = dispatchDepth === 0 && transport === "loopback" &&
       dispatchAvailable
     ? ports.dispatch?.forSession({
@@ -413,28 +416,22 @@ async function buildCompanionContext(
       authContext: session.authContext,
       depth: dispatchDepth,
       abortSignal: input.abortSignal,
-      ...(ports.workspaceConfig === undefined || dispatchConfig === null ||
-          dispatchConfig === undefined
-        ? {}
-        : { config: dispatchConfig }),
+      ...(dispatchConfig === undefined ? {} : { config: dispatchConfig }),
     })
     : undefined;
   // The gate and publish tools this workspace gets: its own profile's config
-  // when it declares one, else the boot-time global. The runtime's ticket
-  // registry and spawn policy are shared either way.
-  const workspaceGate = state.workspaceConfig?.gate ?? null;
-  const workspacePublish = state.workspaceConfig?.publish ?? null;
-  const gatePorts = ports.workspaceConfig === undefined || ports.gate === undefined
-    ? ports.gate
-    : workspaceGate === null
-    ? undefined
-    : { ...ports.gate, config: workspaceGate };
-  const publishPorts =
-    ports.workspaceConfig === undefined || ports.publish === undefined
-      ? ports.publish
-      : workspacePublish === null
-      ? undefined
-      : { ...ports.publish, config: workspacePublish };
+  // when it declares one, else the boot-time global, and nothing when neither
+  // does. The runtime's run registry, ticket registry and spawn policy are
+  // shared either way - they exist whenever the global section or any profile
+  // configures the tool, and the section above decides which turn may use it.
+  const gatePorts = ports.gate === undefined ? undefined : {
+    ...ports.gate,
+    config: gateSectionFor(state.workspaceConfig, ports.gate.config),
+  };
+  const publishPorts = ports.publish === undefined ? undefined : {
+    ...ports.publish,
+    config: publishSectionFor(state.workspaceConfig, ports.publish.config),
+  };
   const toolPorts: ToolCatalogPorts = {
     readMemory: (slug) => executeReadMemory(memories, slug, clearance),
     searchMemory: memoryRecall(state, input, ports),

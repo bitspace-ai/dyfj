@@ -703,8 +703,9 @@ require_worktree = true
 roots = ["~/projects/dyfj-worktrees"]
 ```
 
-**The trust boundary is `~/.dyfj/config.toml`, and only that file.** A profile
-is read from the operator's own config; the runtime never reads a
+**The trust boundary is the operator's config file — `~/.dyfj/config.toml`, or
+`$DYFJ_ROOT/config.toml` when `DYFJ_ROOT` is set — and only that file.** A
+profile is read from the operator's own config; the runtime never reads a
 `config.toml`, a `[[workspaces]]` entry, a gate command or an instruction-trust
 setting from inside the repository a profile names. A workspace's `AGENTS.md`
 stays untrusted unless the operator elevated it — globally, or for that
@@ -724,10 +725,14 @@ so a profile cannot accept a value the global section refuses:
 - `trust_instructions` — overrides `[workspace] trust_instructions` for this
   workspace. Loopback turns only, exactly as the global setting; a non-loopback
   transport inherits no elevation from any profile.
-- `[workspaces.gate]` — that workspace's `gate/start` commands. An unmatched
-  workspace gets no gate tools, and a matched one whose profile declares no
-  gate section keeps the global `[gate]`. A profile that declares `command` and
-  no `fast_command` has no fast mode: a section is replaced whole.
+- `[workspaces.gate]` — that workspace's `gate/start` commands. A profile that
+  declares `command` and no `fast_command` has no fast mode: a section is
+  replaced whole. A workspace whose profile declares no gate section, and a
+  workspace no profile matches, both keep the global `[gate]` when one is
+  configured; with no global section such a workspace gets no gate tools at
+  all. The runtime owns the gate-run registry whenever the global section or
+  any profile declares one, and the turn's own resolved section decides
+  whether the tools appear.
 - `[workspaces.publish]` — that workspace's publish commands and `base_ref`.
   `base_ref` (default `origin/main`) derives `{range}` as
   `<base_ref>...HEAD`, so a repository whose integration branch is `master`,
@@ -757,8 +762,13 @@ plainly. The runtime's spawn and egress policy is composed once at boot, before
 any turn names a workspace, so every program a profile declares (its gate and
 publish commands) is admitted to the run list at boot, tagged
 `workspace-config`; which of them a turn may actually start is still decided by
-that turn's own gate or publish policy. A flat `~/.dyfj/config.toml` with no
-`[[workspaces]]` behaves exactly as it did before profiles existed.
+that turn's own gate or publish policy. The gate-run registry, the publish
+ticket registry and the dispatch service are likewise owned by the runtime for
+its lifetime, and they exist whenever the global section or any profile
+declares that tool — so a configuration with no global `[gate]`, `[publish]` or
+`[dispatch]` at all still gets those tools in the workspaces whose profiles
+declare them, and nowhere else. A flat config file with no `[[workspaces]]`
+behaves exactly as it did before profiles existed.
 
 ### Gate tools
 

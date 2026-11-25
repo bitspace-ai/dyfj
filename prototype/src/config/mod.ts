@@ -131,11 +131,15 @@ export {
   type WorkspaceProfile,
   type WorkspaceSandboxConfig,
   type WorkspacesConfig,
+  workspaceProfilePrograms,
 } from "./workspaces-config.ts";
 export {
   type ResolvedWorkspaceConfig,
   type WorkspaceConfigResolver,
   type WorkspaceGlobals,
+  dispatchSectionFor,
+  gateSectionFor,
+  publishSectionFor,
   WorkspaceProfiles,
 } from "./workspace-policy.ts";
 export {

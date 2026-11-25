@@ -44,7 +44,7 @@
  */
 
 import { realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { type Env, processEnv } from "./env.ts";
 import { type DispatchConfig, parseDispatchConfig } from "./dispatch-config.ts";
 import { type GateConfig, parseGateConfig } from "./gate-config.ts";
@@ -137,6 +137,33 @@ function canonical(path: string): string {
   }
 }
 
+/**
+ * The canonical form of a path that may not exist yet.
+ *
+ * A whole-path `realpath` fails once any component is missing, which left a
+ * profile under a symlinked parent stored as its lexical path while the
+ * candidate root was resolved through the symlink: the two never matched. So
+ * the nearest EXISTING ancestor is realpathed and the missing suffix is joined
+ * back on, which gives the path the directory will have once it exists.
+ */
+function canonicalAllowingMissing(path: string): string {
+  const suffix: string[] = [];
+  let head = resolve(path);
+  for (;;) {
+    try {
+      const real = realpathSync(head);
+      return suffix.length === 0 ? real : join(real, ...suffix.reverse());
+    } catch {
+      const parent = dirname(head);
+      // The filesystem root exists, so this cannot loop forever; if it is
+      // reached with a failing realpath, fall back to the lexical path.
+      if (parent === head) return resolve(path);
+      suffix.push(basename(head));
+      head = parent;
+    }
+  }
+}
+
 function readProfilePath(
   value: unknown,
   at: string,
@@ -165,7 +192,7 @@ function readProfilePath(
       `config: ${at}.path must be an absolute path or start with "~/" in ${configLabel(where)}`,
     );
   }
-  return canonical(expanded);
+  return canonicalAllowingMissing(expanded);
 }
 
 /**
@@ -308,6 +335,46 @@ export function parseWorkspacesConfig(
       return null;
     },
   });
+}
+
+/**
+ * Every program a profile's gate or publish commands name, deduplicated in
+ * declaration order.
+ *
+ * The runtime's spawn policy is composed once at boot, before any turn names a
+ * workspace, so it cannot vary by workspace. These names are admitted to the
+ * run list there and tagged `workspace-config`; which of them a turn may
+ * actually start is still decided by that turn's own gate or publish policy,
+ * from the section that applies to its workspace. A program no profile names
+ * gains nothing.
+ */
+export function workspaceProfilePrograms(
+  workspaces: WorkspacesConfig,
+): readonly string[] {
+  const programs: string[] = [];
+  const add = (argv: readonly string[] | undefined): void => {
+    const program = argv?.[0];
+    if (program === undefined || program === "" || programs.includes(program)) {
+      return;
+    }
+    programs.push(program);
+  };
+  for (const profile of workspaces.profiles) {
+    const gate = profile.gate;
+    if (gate !== null) {
+      for (const mode of Object.keys(gate.commands) as (keyof typeof gate.commands)[]) {
+        add(gate.commands[mode]);
+      }
+    }
+    const publish = profile.publish;
+    if (publish !== null) {
+      add(publish.preGate);
+      add(publish.gate);
+      add(publish.push);
+      add(publish.openPr);
+    }
+  }
+  return Object.freeze(programs);
 }
 
 /** Load `[[workspaces]]` from the config file the environment names. */

@@ -190,9 +190,10 @@ export interface DispatchSessionFactory {
     /**
      * The dispatch section that applies to this coordinator's workspace: its
      * `[[workspaces]]` profile's when it declares one. Absent keeps the
-     * runtime's boot-time `[dispatch]`.
+     * runtime's boot-time `[dispatch]`; null says this workspace has none, so
+     * no dispatch ports are bound.
      */
-    config?: DispatchConfig;
+    config?: DispatchConfig | null;
   }): DispatchSessionPorts | undefined;
 }
 
