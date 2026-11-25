@@ -3871,3 +3871,10 @@ Document revisions only. Code and behavior changes are tracked in
   `publish` layout trust check, and keep `docs/agents/rooms.md` harness-neutral
   by carrying Workbench-specific `--workspace` and `[dispatch] roots` notes
   here instead.
+- 2026-11-24 - Document the repository's `pre-commit` hook beside `commit-msg`
+  and `pre-push`: with `core.hooksPath` set to `.githooks`, a commit made
+  directly on `main` is refused unless `DYFJ_ALLOW_MAIN_COMMIT=1` is set for
+  that commit, while feature, linked-worktree and detached-`HEAD` commits are
+  unaffected. Also state that the companion grounding now describes `bash`'s
+  containment and approval rule per route, and that repo context no longer
+  assumes this repository's own files or a private corpus.

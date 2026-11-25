@@ -21,7 +21,7 @@ import type {
   WorkbenchRuntimeEvent,
 } from "../contract/mod.ts";
 import { createWorkbenchSession, type Store } from "../store/mod.ts";
-import { createCommandRegistry } from "../tools/mod.ts";
+import { bashApproval, createCommandRegistry } from "../tools/mod.ts";
 import {
   AGENTS_INSTRUCTIONS_TRUST_PREAMBLE,
   buildContext,
@@ -459,8 +459,8 @@ test("companion context carries tools, grounding and the summary trust policy", 
   const { state } = await runContext({ rootOverride: root.root });
   assert.ok(state.commandTools.length > 0);
   assert.ok(
-    state.systemPrompt.includes(buildWorkspaceGrounding()),
-    `expected state.systemPrompt to include buildWorkspaceGrounding()`,
+    state.systemPrompt.includes(buildWorkspaceGrounding("native")),
+    `expected state.systemPrompt to include buildWorkspaceGrounding("native")`,
   );
   assert.ok(
     state.systemPrompt.includes("The operator prefers short answers."),
@@ -545,7 +545,7 @@ test("[follow-up N1] a companion failure before notice composition omits the omi
 // ─── grounding text ──────────────────────────────────────────────────────────
 
 test("buildWorkspaceGrounding steers the model to the tools without leaking the absolute host path", () => {
-  const grounding = buildWorkspaceGrounding();
+  const grounding = buildWorkspaceGrounding("native");
   assert.ok(
     grounding.includes("list_files"),
     `expected ${JSON.stringify(grounding)} to include "list_files"`,
@@ -561,7 +561,7 @@ test("buildWorkspaceGrounding steers the model to the tools without leaking the 
 });
 
 test("buildWorkspaceGrounding surfaces the mutating tools so the model acts, not just describes", () => {
-  const grounding = buildWorkspaceGrounding();
+  const grounding = buildWorkspaceGrounding("native");
   assert.ok(
     grounding.includes("write_file"),
     `expected ${JSON.stringify(grounding)} to include "write_file"`,
@@ -604,6 +604,45 @@ test("buildWorkspaceGrounding describes bash as contained when the isolated exec
   assert.match(grounding, /isolated executor/i);
   assert.ok(!/NOT sandboxed/i.test(grounding));
   assert.ok(!/anywhere on the machine/i.test(grounding));
+});
+
+// The approval clause is shared text (`bashApproval`), so it cannot drift from
+// what the bash tool tells the model, and it cannot contradict tools/policy.ts.
+test("buildWorkspaceGrounding carries the bash tool's own approval clause, per route", () => {
+  for (const route of ["native", "sandboxed", "contained"] as const) {
+    assert.ok(
+      buildWorkspaceGrounding(route).includes(bashApproval(route)),
+      `expected the ${route} grounding to carry bashApproval("${route}")`,
+    );
+  }
+});
+
+test("buildWorkspaceGrounding never claims a prompt that the route does not require", () => {
+  // A contained call runs without a prompt on an attested, granted envelope
+  // within its deadline (tools/policy.ts); the grounding must say so.
+  const contained = buildWorkspaceGrounding("contained");
+  assert.match(contained, /attested envelope/i);
+  assert.ok(
+    !/always prompts/i.test(contained),
+    `expected ${JSON.stringify(contained)} not to claim a prompt is always asked`,
+  );
+
+  // A native call prompts except for the read-only allowlist.
+  const native = buildWorkspaceGrounding("native");
+  assert.match(native, /read-only commands/);
+  assert.ok(
+    !/always prompts/i.test(native),
+    `expected ${JSON.stringify(native)} not to claim a prompt is always asked`,
+  );
+
+  // A sandboxed call runs unprompted under the operator posture on the local
+  // socket, and says so.
+  const sandboxed = buildWorkspaceGrounding("sandboxed");
+  assert.match(sandboxed, /without a prompt under the operator posture/);
+  assert.ok(
+    !/always prompts/i.test(sandboxed),
+    `expected ${JSON.stringify(sandboxed)} not to claim a prompt is always asked`,
+  );
 });
 
 test("a companion turn grounds bash in the containment the ports actually have", async () => {

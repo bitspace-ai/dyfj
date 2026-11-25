@@ -423,6 +423,32 @@ function sandboxedBashRunner(
   };
 }
 
+/**
+ * When a `bash` call runs without asking the operator, per route: the one
+ * statement both the tool's description and the workspace grounding use, so
+ * the model is told the same approval rule wherever it reads about bash. Each
+ * clause states the exemption as `tools/policy.ts` decides it — a sandboxed
+ * call runs unprompted under the operator posture on the loopback socket, a
+ * contained call runs unprompted only on an attested, granted envelope within
+ * its deadline, and a native call prompts except for the read-only allowlist.
+ */
+export function bashApproval(route: BashRoute): string {
+  return route === "sandboxed"
+    ? "The command runs without a prompt under the operator posture on the " +
+      "local socket; otherwise it requires operator approval, except for " +
+      "commands the operator allowed for the rest of the session. "
+    : route === "contained"
+    ? "The command requires operator approval before it runs, unless the " +
+      "operator granted the isolated executor's attested envelope and the " +
+      "call's deadline is within the envelope's (then it runs without a " +
+      "prompt), and except for commands the operator allowed for the rest " +
+      "of the session. "
+    : "The command requires operator approval before it runs, except for a " +
+      "small set of read-only commands (git status/diff/log/show, ls, cat, " +
+      "head, tail, wc, grep, rg, sed -n) and commands the operator allowed " +
+      "for the rest of the session. ";
+}
+
 /** bash's description, per route. */
 function bashDescription(route: BashRoute): string {
   return (
@@ -430,11 +456,9 @@ function bashDescription(route: BashRoute): string {
     "root, or the workspace directory cwd names" +
     bashReach(route) +
     "Returns the exit status and combined stdout/stderr. " +
+    bashApproval(route) +
     (route === "sandboxed"
-      ? "Runs without a prompt under the operator posture on the local " +
-        "socket; otherwise it " +
-        "requires operator approval, except for commands the operator " +
-        "allowed for the rest of the session. If a command fails only " +
+      ? "If a command fails only " +
         "because the sandbox refuses it (\"Operation not permitted\", a " +
         "refused connection, a 403 from the proxy) and it must run, call " +
         "again with unsandboxed: true and a reason: it then runs NOT " +
@@ -444,20 +468,11 @@ function bashDescription(route: BashRoute): string {
         "a command needs longer (a full test run, for example). A larger value is " +
         "refused, not clamped. "
       : route === "contained"
-      ? "Requires operator approval before it runs, unless the operator " +
-        "granted the isolated executor's attested envelope and the call's " +
-        "deadline is within the envelope's (then it runs without a " +
-        "prompt), and except for commands the operator allowed for the " +
-        "rest of the session. " +
-        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
+      ? `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s, ` +
         "which is also the longest deadline a call may ask for here, so " +
         "omit timeoutSec unless you want a command stopped sooner. A " +
         "larger value is refused, not clamped. "
-      : "Requires operator approval before it runs, except for a small set " +
-        "of read-only commands (git status/diff/log/show, ls, cat, head, " +
-        "tail, wc, grep, rg, sed -n) and commands the operator allowed for " +
-        "the rest of the session. " +
-        `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
+      : `The command and its whole process tree are stopped after ${DEFAULT_TIMEOUT_SEC} s ` +
         `by default; pass timeoutSec, up to the ${MAX_TIMEOUT_SEC} s ceiling, only when ` +
         "a command needs longer (a full test run, for example). A larger value is " +
         "refused, not clamped. ") +

@@ -31,6 +31,7 @@ import {
 import {
   admitAdditionalRoots,
   type BashRoute,
+  bashApproval,
   bashReach,
   buildMemoryContextSourceLines,
   buildMemorySearch,
@@ -113,14 +114,16 @@ export const OPERATOR_INSTRUCTIONS_TRUST_PREAMBLE =
  * root — that would leak host/user path metadata into model-visible text (and to
  * a hosted provider on escalation); the model only needs root-relative paths.
  *
- * `bash`'s reach is stated per route (`resolveBashRoute`), because the claim
- * has to match the containment the command actually has: a sandboxed or
- * executor-contained command is confined, and telling the model otherwise is
- * both wrong and an invitation to try what the boundary refuses.
+ * `bash`'s reach and approval clause are the ones the bash tool itself states
+ * (`bashReach`, `bashApproval`), so the prompt matches the containment and the
+ * prompt-or-not rule the command actually has: a sandboxed or executor-contained
+ * command is confined and may run without asking, and telling the model
+ * otherwise is both wrong and an invitation to try what the boundary refuses.
+ * The caller resolves the route from the same ports the tool catalog gets
+ * (`resolveBashRoute`); `route` is required so this function never reads the
+ * process environment behind a test's back.
  */
-export function buildWorkspaceGrounding(
-  route: BashRoute = resolveBashRoute(),
-): string {
+export function buildWorkspaceGrounding(route: BashRoute): string {
   return [
     "",
     "",
@@ -136,12 +139,7 @@ export function buildWorkspaceGrounding(
     `When a request calls for changing a file or ` +
     `running a command, do it with these tools rather than only describing the ` +
     `steps. ` +
-    (route === "sandboxed"
-      ? `The operator approves every mutation before it runs, except that a ` +
-        `sandboxed command runs without a prompt under the operator posture on ` +
-        `the local socket. `
-      : `The operator approves every mutation before it runs (bash always ` +
-        `prompts). `) +
+    bashApproval(route) +
     `Propose the concrete action.`,
   ].join("\n");
 }

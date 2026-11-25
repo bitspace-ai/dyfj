@@ -16,11 +16,16 @@ README are tracked separately in its Revision history section.
   refused with a message pointing at a branch and at the maintainer's escape:
   `DYFJ_ALLOW_MAIN_COMMIT=1` in the environment of that commit allows it. Only
   the branch name `main` matches, so a feature branch, a linked worktree's
-  session branch and a detached `HEAD` are unaffected. Because every harness in
-  a checkout passes the same hooks, the repository's branch rule now holds for
-  all of them rather than only for the ones whose own tooling enforced it.
-  Documented in the root README beside `commit-msg` and `pre-push`, and covered
-  by `scripts/git-hooks.test.ts`.
+  session branch and a detached `HEAD` are unaffected. It is a guardrail
+  against accidental commits on `main`, not enforcement: it runs only where
+  `core.hooksPath` is configured, and any command that can commit can also
+  pass `--no-verify` or set the escape. `git merge` on `main` runs
+  `pre-merge-commit` rather than `pre-commit`, so a merge is not blocked
+  (a merge finished with `git commit` after a conflict is). With those limits
+  stated, the rule that work lands on a branch is checked for every harness in
+  a checkout that has the hooks configured, not only for the ones whose own
+  tooling enforced it. Documented in the root README beside `commit-msg` and
+  `pre-push`, and covered by `scripts/git-hooks.test.ts`.
 
 - **Operator global instructions on native loopback companion turns (`BIT-981`).**
   An optional `[context] operator_instructions` setting in `~/.dyfj/config.toml`
@@ -780,13 +785,20 @@ README are tracked separately in its Revision history section.
   naming a private store, and the `[dispatch]` config example uses a generic
   `~/worktrees` root.
 
-- **Workspace grounding states bash's real containment (`BIT-983`).** The
-  companion grounding said `bash` is not sandboxed even when the `srt` sandbox
-  or the isolated executor runs its commands. It now takes the same route the
-  `bash` tool resolves from the engine's ports and describes the reach that
-  route actually has: the executor's workspace-and-scratch confinement with no
-  network, the OS sandbox's write and domain limits, or the unsandboxed native
-  route. Covered by unit tests per route and by a whole-turn case.
+- **Workspace grounding states bash's real containment and approval rule
+  (`BIT-983`).** The companion grounding said `bash` is not sandboxed even when
+  the `srt` sandbox or the isolated executor runs its commands, and it claimed
+  a prompt is always asked. It now takes the route the `bash` tool resolves
+  from the engine's ports and states, from the same text the tool's own
+  description uses (`bashReach`, `bashApproval`), the reach that route has —
+  the executor's workspace-and-scratch confinement with no network, the OS
+  sandbox's write and domain limits, or the unsandboxed native route — and
+  when it asks the operator: a sandboxed call runs unprompted under the
+  operator posture on the local socket, a contained call only on an attested,
+  granted envelope within its deadline, and a native call except for the
+  read-only allowlist. `route` is a required argument, so the text builder
+  never reads the process environment. Covered by unit tests per route for
+  both clauses and by a whole-turn case.
 
 - **Sandboxed git writes in a main checkout (`BIT-980`).** On macOS (Seatbelt),
   Workbench now allows sandboxed `git add` and `git commit` in a normal main

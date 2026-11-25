@@ -153,6 +153,7 @@ export type {
 } from "./builtin/executor-transport.ts";
 export {
   type BashRoute,
+  bashApproval,
   bashReach,
   resolveBashRoute,
 } from "./builtin/exec.ts";
