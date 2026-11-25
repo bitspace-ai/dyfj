@@ -52,6 +52,16 @@ export interface ResolvedWorkspaceConfig {
   readonly profile: WorkspaceProfile | null;
 }
 
+/**
+ * The profile-aware view of the operator's configuration, one per boot: given
+ * a turn's resolved workspace root, which configured section applies. The
+ * engine and the server both read it through this one interface, so neither
+ * has to know how a profile is matched.
+ */
+export interface WorkspaceConfigResolver {
+  resolve(root: string): ResolvedWorkspaceConfig;
+}
+
 /** The global sections a profile may override, as boot resolved them. */
 export interface WorkspaceGlobals {
   readonly trustInstructions: boolean;
@@ -61,7 +71,7 @@ export interface WorkspaceGlobals {
   readonly dispatch: DispatchConfig | null;
 }
 
-export class WorkspaceProfiles {
+export class WorkspaceProfiles implements WorkspaceConfigResolver {
   readonly #config: WorkspacesConfig;
   readonly #globals: WorkspaceGlobals;
 

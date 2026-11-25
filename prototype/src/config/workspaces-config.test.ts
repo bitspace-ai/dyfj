@@ -157,7 +157,7 @@ describe("workspaces config: path matching", () => {
 });
 
 describe("workspace profiles: resolution against the globals", () => {
-  const env = { get: (key: string) => (key === "HOME" ? "/home/op" : undefined) } as never;
+  const env = new MapEnv({ HOME: HOME });
   const globals = {
     trustInstructions: false,
     gate: { commands: { full: ["npm", "test"] }, timeoutSeconds: 60 },

@@ -134,6 +134,7 @@ export {
 } from "./workspaces-config.ts";
 export {
   type ResolvedWorkspaceConfig,
+  type WorkspaceConfigResolver,
   type WorkspaceGlobals,
   WorkspaceProfiles,
 } from "./workspace-policy.ts";

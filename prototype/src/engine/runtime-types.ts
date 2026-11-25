@@ -1,5 +1,5 @@
 import type { GateRuntimePorts } from "../tools/mod.ts";
-import type { WorkspaceConfigResolver } from "./turn-state.ts";
+import type { WorkspaceConfigResolver } from "../config/mod.ts";
 /**
  * The native runtime's input, services, and result types. The input is the
  * contract request plus the ports the engine calls back through (the

@@ -103,6 +103,7 @@ import {
 } from "../tools/mod.ts";
 import { AcpSessionHandleMap } from "../acp-session-map.ts";
 import { composeBoot } from "./boot.ts";
+import { bootToolSections, type PublishServerPorts } from "./boot-tools.ts";
 import { runRuntimeEntry } from "./entry.ts";
 import { installRuntimeSigintHandler } from "./sigint.ts";
 import { AUTOSTARTED_IDLE_GRACE_MS, RuntimeLifetime } from "./lifetime.ts";
@@ -301,41 +302,6 @@ export interface WorkbenchUnixServerOptions {
   storeProbe?: () => Promise<StoreStatus>;
 }
 
-/**
- * The operator's `[publish]` section, parsed and validated once. Absent, the
- * publish tools are not registered: this repository ships no default that
- * would name a private path. A malformed section fails the boot loudly, like
- * every other config section.
- */
-function bootPublish(
-  config: PublishConfig | null,
-): PublishServerPorts | undefined {
-  if (config === null) return undefined;
-  // One registry per runtime, so a ticket and the gate it started outlive the
-  // turn that opened them. A profile may declare its own ticket lifetime; the
-  // one registry takes the longest, so no profile's tickets expire early.
-  console.error("dyfj runtime: publish tools enabled from [publish]");
-  return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
-}
-
-/**
- * The operator's `[dispatch]` section, parsed and validated once (BIT-907).
- * Absent, the dispatch tools are not registered. A malformed section fails the
- * boot loudly, like every other config section.
- */
-function bootDispatch(
-  config: DispatchConfig | undefined,
-): DispatchConfig | undefined {
-  if (config === undefined) return undefined;
-  console.error("dyfj runtime: dispatch tools enabled from [dispatch]");
-  return config;
-}
-
-/** What the server holds for the publish tools across turns. */
-export interface PublishServerPorts {
-  config: PublishConfig;
-  tickets: PublishTickets;
-}
 
 function requireStore(options: WorkbenchUnixServerOptions): Store {
   if (options.store === undefined) {
@@ -815,45 +781,23 @@ async function main(): Promise<void> {
     networkAllow: await loadNetworkAllow(),
     nameserverGrants: await readNameserverNetGrants(),
   });
-  // The tool sandbox, started and probed once. It never throws: a failure
-  // is an `off` sandbox, under which the tools prompt, and the line below
-  // and `runtime/status` say why.
-  const sandboxConfig = await loadSandboxConfig();
-  const gateConfig = await loadGateConfig();
-  const publishConfig = await loadPublishConfig();
-  const dispatchConfig = await loadDispatchConfig();
-  // Which config applies to a workspace (BIT-982): the operator's
-  // `[[workspaces]]` profile that covers the turn's root, else these globals.
-  // Built here, once, from the same sections; it reads nothing from a
-  // workspace's own files.
-  const workspaceConfig = new WorkspaceProfiles(config.workspaces, {
+  // The operator's tool sections, loaded once: `[gate]`, `[publish]`,
+  // `[dispatch]`, `[sandbox]`, the tool sandbox they configure, and the
+  // workspace-profile resolver that decides which of them applies to a turn's
+  // workspace (BIT-982). A malformed section fails the boot loudly.
+  const {
+    workspaceConfig,
+    sandbox,
+    publish,
+    dispatch,
+    gate,
+  } = await bootToolSections({
+    workspaces: config.workspaces,
     trustInstructions: config.trustWorkspaceInstructions,
-    gate: gateConfig,
-    publish: publishConfig,
-    sandbox: sandboxConfig,
-    dispatch: dispatchConfig,
-  });
-  const sandbox = await bootSandbox({
+    policy,
     listenProbe: listenLoopbackProbe,
     env: processEnv,
-    allowDomains: sandboxConfig.allowDomains,
-    denyRead: sandboxConfig.denyRead,
-    allowDomainsFor: (root) => workspaceConfig.allowDomainsFor(root),
-    denyReadFor: (root) => workspaceConfig.denyReadFor(root),
-    requireWorktreeFor: (root) => workspaceConfig.requireWorktreeFor(root),
   });
-  console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
-  if (config.workspaces.profiles.length > 0) {
-    console.error(
-      `dyfj runtime: ${config.workspaces.profiles.length} workspace profile(s) from [[workspaces]]`,
-    );
-  }
-  const publish = bootPublish(publishConfig);
-  const dispatch = bootDispatch(dispatchConfig ?? undefined);
-  const approvals = await loadApprovalsConfig([GATE_START_APPROVALS]);
-  if (approvals !== null) console.error(`dyfj runtime: [approvals] session_grantable: ${approvals.sessionGrantable.join(", ") || "(none)"}`);
-  const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy, sessionGrantable: approvals?.sessionGrantable };
-  if (gate !== undefined) console.error("dyfj runtime: gate tools enabled from [gate]");
   const externalMcp = await buildExternalMcpCommands(
     mcpServers,
     resolvedSecrets.named,

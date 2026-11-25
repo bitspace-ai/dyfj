@@ -50,6 +50,7 @@ import type {
   Env,
   ResolvedWorkspaceConfig,
   RuntimePolicy,
+  WorkspaceConfigResolver,
 } from "../config/mod.ts";
 import type { WorkbenchTurnParams } from "../providers/mod.ts";
 import type { BudgetScopes, SessionGrantScopes } from "./session-owner.ts";
@@ -95,11 +96,6 @@ export interface NativeTurnPorts {
    * leaves the boot-time globals in force, exactly as before profiles existed.
    */
   workspaceConfig?: WorkspaceConfigResolver;
-}
-
-/** The profile-aware view of the operator's configuration, one per boot. */
-export interface WorkspaceConfigResolver {
-  resolve(root: string): ResolvedWorkspaceConfig;
 }
 
 /** Write one event row through the store's journal. */
