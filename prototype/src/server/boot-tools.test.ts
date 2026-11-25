@@ -24,18 +24,21 @@ import {
 import { buildToolCatalog, RootAnchors } from "../tools/mod.ts";
 import { bootToolSections, type ToolSections } from "./boot-tools.ts";
 
-const HOME = "/home/example";
+// A fixture root, not a real home directory: the paths only have to be
+// absolute and consistent so the sandbox denylist never sees a real one.
+const HOME = "/fixture/operator";
 const GATE_ROOT = "/work/gated";
 const PUBLISH_ROOT = "/work/published";
 const DISPATCH_ROOT = "/work/coordinated";
 const PLAIN_ROOT = "/work/plain";
 const FREE_POLICY = { net: [], run: [], env: [], dolt: null } as const;
 
+const WHERE = "/fixture/config.toml";
 const env = new MapEnv({ HOME });
 
 /** Parse `[[workspaces]]` profiles straight from the operator's table. */
 function profiles(table: Record<string, unknown>): WorkspacesConfig {
-  return parseWorkspacesConfig(table, "/home/example/.dyfj/config.toml", env);
+  return parseWorkspacesConfig(table, WHERE, env);
 }
 
 /** Boot over an operator table with no global tool sections at all. */
