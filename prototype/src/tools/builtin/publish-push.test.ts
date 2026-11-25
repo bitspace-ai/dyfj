@@ -40,6 +40,7 @@ function config(overrides: Partial<PublishConfig> = {}): PublishConfig {
     preGate: ["./pre-gate"],
     gate: ["./gate"],
     reportPath: join(ROOT, "{ticket}.log"),
+    baseRef: "origin/main",
     gateTimeoutMs: 600_000,
     ticketTtlMs: 3_600_000,
     push: ["git", "push", "origin", "{head}:refs/heads/{branch}"],

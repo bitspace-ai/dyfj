@@ -140,7 +140,7 @@ export async function runPush(
   const policy = publishPolicyFor(deps.policy, config);
   // `{implementer}` names the models that wrote the code, which a push does
   // not have: the gates are where a reviewer is chosen.
-  const values = valuesFor(view, view.trackerIssue, "");
+  const values = valuesFor(view, view.trackerIssue, "", config.baseRef);
 
   /** Start one phase's argv and wait for it; every stop becomes a reason. */
   const runPhase = async (

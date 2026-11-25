@@ -90,6 +90,9 @@ export async function runWorkbenchRuntime(
     ...(services.gate === undefined ? {} : { gate: services.gate }),
     ...(services.publish === undefined ? {} : { publish: services.publish }),
     ...(services.dispatch === undefined ? {} : { dispatch: services.dispatch }),
+    ...(services.workspaceConfig === undefined
+      ? {}
+      : { workspaceConfig: services.workspaceConfig }),
     clock: services.clock ?? systemClock,
     env: services.env ?? processEnv,
     policy,

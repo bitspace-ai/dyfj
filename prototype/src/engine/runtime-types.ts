@@ -1,4 +1,5 @@
 import type { GateRuntimePorts } from "../tools/mod.ts";
+import type { WorkspaceConfigResolver } from "./turn-state.ts";
 /**
  * The native runtime's input, services, and result types. The input is the
  * contract request plus the ports the engine calls back through (the
@@ -384,6 +385,11 @@ export interface WorkbenchRuntimeServices {
    * `[dispatch]` section - leaves the dispatch tools unregistered.
    */
   dispatch?: DispatchEnginePorts;
+  /**
+   * Which configured sections apply to a turn's workspace (BIT-982). Absent,
+   * the boot-time sections apply to every workspace.
+   */
+  workspaceConfig?: WorkspaceConfigResolver;
   externalAgentRunner?: ExternalAgentRunner;
   /** Wall clock for durations; the system clock when absent. */
   clock?: Clock;

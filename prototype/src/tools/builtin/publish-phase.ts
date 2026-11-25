@@ -308,12 +308,13 @@ export function valuesFor(
   view: PublishTicketView,
   issue: string | undefined,
   implementer: string,
+  baseRef: string,
 ): PublishValues {
   return {
     repo: view.repository,
     branch: view.branch ?? "",
     head: view.head ?? "",
-    range: "origin/main...HEAD",
+    range: `${baseRef}...HEAD`,
     issue: issue ?? "",
     implementer,
     report: view.reportPath,
@@ -396,7 +397,7 @@ export async function runGates(
     ...publishChildEnv(deps.childEnv),
     ...publishGitEnvFor(created.layout),
   };
-  const values = valuesFor(created, issue, implementer);
+  const values = valuesFor(created, issue, implementer, deps.config.baseRef);
   const phases: readonly (readonly [PublishPhaseName, readonly string[]])[] = [
     ["pre-gate", deps.config.preGate],
     ["gate", deps.config.gate],

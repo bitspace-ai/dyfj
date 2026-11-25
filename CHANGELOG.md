@@ -11,6 +11,51 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **Operator-owned workspace profiles (`BIT-982`).** An optional
+  `[[workspaces]]` array in `~/.dyfj/config.toml` lets one runtime serve
+  several repositories without one project's settings reaching another. A
+  profile names a `path` and may override `trust_instructions` and declare
+  `[workspaces.gate]`, `[workspaces.publish]`, `[workspaces.sandbox]` and
+  `[workspaces.dispatch]` sections. Matching is canonical (`realpath`, `~/`
+  expanded) and most-specific-first: a workspace under a profiled directory
+  matches it, a sibling sharing only a name prefix does not, and two profiles
+  resolving to the same directory fail boot, as does an unknown key in a
+  profile or its sections. Each scoped section is parsed by the same parser as
+  its top-level counterpart, so a profile cannot accept a value the global
+  section refuses; a section a profile declares replaces the global one whole,
+  and a section it omits leaves the global section in force, so an existing
+  flat config file keeps working unchanged. The trust boundary stays
+  `~/.dyfj/config.toml` alone: no gate command, publish command, sandbox
+  addition or instruction-trust setting is ever read from inside the workspace
+  a profile names, and a non-loopback transport still inherits no
+  instruction elevation from any profile. Sandbox settings are additive only -
+  a profile's `allow_domains` and `deny_read` add to the global `[sandbox]`
+  lists, which add to the built-in credential deny list, and nothing in a
+  profile removes a deny. Per-workspace extra domains are registered with
+  `registerCommandNetworkLists` under an unguessable per-command id, because
+  the runtime's `network.allowedDomains` is installed once at sandbox start;
+  the GitHub domains stay denied either way. `sandbox.require_worktree = true`
+  write-denies that workspace's main-checkout `.git` on every platform, so
+  sandboxed `git add` and `git commit` fail closed with a note naming the
+  setting while read-only git keeps working; a linked worktree is unaffected.
+  Because the runtime's spawn and egress policy is composed once at boot,
+  before any turn names a workspace, every program a profile declares is
+  admitted to the run list at boot and tagged `workspace-config`; which one a
+  turn may start is still decided by that turn's gate or publish policy.
+  Grants for unmatched workspaces are unchanged.
+
+- **`[publish] base_ref`, and `{implementer}` only when a command uses it
+  (`BIT-982`).** `[publish]` accepts an optional `base_ref` (default
+  `origin/main`), and a run's `{range}` is derived as `<base_ref>...HEAD`
+  instead of hardcoding `origin/main`, so a repository integrating on `master`,
+  `develop` or `upstream/main` names it. The value is refused if empty,
+  flag-shaped, whitespace-bearing or itself a range. `publish/start` now
+  resolves the session's implementing models only when a configured pre-gate,
+  gate, push or pull-request command actually names `{implementer}`: a
+  repository whose gate does not pick a reviewer from them starts without one
+  and is no longer refused when the value cannot be resolved. Gate and publish
+  approval titles and descriptions now say workspace where they said worktree.
+
 - **Reasoning effort control on native models (`BIT-990`).** `--effort`,
   `/effort` and `dispatch/start`'s `effort` no longer stop at
   `codex-chatgpt/*`: a turn runs at the operator's level on any native model

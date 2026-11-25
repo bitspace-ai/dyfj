@@ -672,6 +672,94 @@ write-denied so read-only `status`, `diff`, and `log` work while sandboxed
 `add` and `commit` fail closed with a clear note. Hooks retain
 the native containment and network limits. Shell git commands inside Codex
 keep their existing sandbox and approval behavior.
+### Workspace profiles (`[[workspaces]]`)
+
+One runtime can serve several repositories. The flat sections above (`[gate]`,
+`[publish]`, `[sandbox]`, `[dispatch]`, `[workspace] trust_instructions`) stay
+the default for every workspace; a `[[workspaces]]` profile overrides just the
+sections it declares, for the one repository it names:
+
+```toml
+[[workspaces]]
+path = "~/projects/dyfj"
+trust_instructions = true
+
+[workspaces.gate]
+command = ["npm", "test"]
+fast_command = ["npm", "run", "test:fast"]
+timeout_seconds = 1800
+
+[workspaces.publish]
+base_ref = "origin/main"
+pre_gate = ["./scripts/pre-gate", "--gate={range}"]
+gate = ["./scripts/gate", "--range={range}", "--report={report}"]
+
+[workspaces.sandbox]
+allow_domains = ["static.crates.io"]
+deny_read = [".example-tool/token"]
+require_worktree = true
+
+[workspaces.dispatch]
+roots = ["~/projects/dyfj-worktrees"]
+```
+
+**The trust boundary is `~/.dyfj/config.toml`, and only that file.** A profile
+is read from the operator's own config; the runtime never reads a
+`config.toml`, a `[[workspaces]]` entry, a gate command or an instruction-trust
+setting from inside the repository a profile names. A workspace's `AGENTS.md`
+stays untrusted unless the operator elevated it — globally, or for that
+workspace in this file.
+
+Matching is canonical and most-specific-first: the turn's resolved workspace
+root (`realpath`) is compared with each profile's `path` (itself canonicalized,
+`~/` expanded), and a workspace under a profiled directory matches it while a
+sibling whose name merely shares a prefix does not. Two profiles whose paths
+resolve to the same directory fail boot: which one applied would otherwise
+depend on file order, and a profile decides what runs. An unknown key in a
+profile, or in one of its sections, also fails boot.
+
+Each scoped section is parsed by the same parser as its top-level counterpart,
+so a profile cannot accept a value the global section refuses:
+
+- `trust_instructions` — overrides `[workspace] trust_instructions` for this
+  workspace. Loopback turns only, exactly as the global setting; a non-loopback
+  transport inherits no elevation from any profile.
+- `[workspaces.gate]` — that workspace's `gate/start` commands. An unmatched
+  workspace gets no gate tools, and a matched one whose profile declares no
+  gate section keeps the global `[gate]`. A profile that declares `command` and
+  no `fast_command` has no fast mode: a section is replaced whole.
+- `[workspaces.publish]` — that workspace's publish commands and `base_ref`.
+  `base_ref` (default `origin/main`) derives `{range}` as
+  `<base_ref>...HEAD`, so a repository whose integration branch is `master`,
+  `develop` or `upstream/main` names it instead of the runtime hardcoding
+  `origin/main`. `{implementer}` is resolved only when a configured command
+  actually names it: a profile whose gate does not pick a reviewer from the
+  implementing models starts without resolving one.
+- `[workspaces.sandbox]` — additions, never removals. `allow_domains` and
+  `deny_read` add to the global `[sandbox]` lists, which add to the built-in list of
+  credential paths a sandboxed command may not read; nothing in a profile can
+  take a deny away. Because
+  `srt` installs `network.allowedDomains` once at `initialize`, a workspace's
+  domains are registered per sandboxed command
+  (`registerCommandNetworkLists`, under an unguessable per-command id), so one
+  workspace's extra hosts never widen another's reach and a configured
+  `deniedDomains` entry (GitHub) stays closed.
+  `require_worktree = true` write-denies that workspace's main-checkout `.git`
+  in the sandbox on every platform, so sandboxed `git add` and `git commit`
+  fail closed with a note naming the setting while read-only git still works; a
+  linked worktree is unaffected, and other repositories keep their own posture.
+- `[workspaces.dispatch]` — that workspace's dispatch `roots`, child width and
+  wait bound, in place of the global `[dispatch]`. A coordinator working inside
+  one repository starts children only inside that repository's roots.
+
+Two seams widen to the union rather than the profile, and it is worth saying so
+plainly. The runtime's spawn and egress policy is composed once at boot, before
+any turn names a workspace, so every program a profile declares (its gate and
+publish commands) is admitted to the run list at boot, tagged
+`workspace-config`; which of them a turn may actually start is still decided by
+that turn's own gate or publish policy. A flat `~/.dyfj/config.toml` with no
+`[[workspaces]]` behaves exactly as it did before profiles existed.
+
 ### Gate tools
 
 With `[gate]` configured, native and Codex-route sessions receive `gate/start`,
@@ -706,7 +794,7 @@ the executor returns output only after exit and has no cancel operation, so
 it cannot support the full log or `gate/cancel`. There is no uncontained
 fallback for these modes.
 
-`full` runs worktree code on the runtime's host, outside any sandbox, including
+`full` runs workspace code on the runtime's host, outside any sandbox, including
 when an isolated executor is configured. It requires a `reason` and asks for
 approval every time by default under both `strict` and `operator`. Calls
 without an operator on loopback are refused. Host execution is never grantable
@@ -725,7 +813,7 @@ runtime prints one line naming the opted-in entries, and otherwise prints no
 approval-config line.
 
 The opt-in offers a session grant on the first full prompt; it does not skip
-that prompt. Choosing the grant lets this session rerun worktree code on the
+that prompt. Choosing the grant lets this session rerun workspace code on the
 host, outside any sandbox, without a further prompt until the session ends,
 including after that code changes. The grant matches mode only, never paths
 or the reason, lives in memory, and does not transfer to another session.

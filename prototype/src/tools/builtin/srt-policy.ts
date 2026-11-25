@@ -150,6 +150,13 @@ export interface WorkspacePolicy {
    * succeed while read-only git commands still work.
    */
   gitDirDenied: boolean;
+  /**
+   * Why `gitDirDenied` is set: the platform's sandbox (`bwrap` on Linux), or
+   * this workspace's own `sandbox.require_worktree`. Null when git writes are
+   * allowed. The tools' refusal note says which, so the operator reads the
+   * cause rather than a platform note that does not apply.
+   */
+  gitDirDeniedBy: "platform" | "require_worktree" | null;
 }
 
 /** What host-side git says about the workspace; null outside a repository. */
@@ -225,10 +232,17 @@ export interface CompileOptions {
   env?: Record<string, string>;
   home?: string;
   /**
-   * The operator's `[sandbox] deny_read` entries: home-relative or absolute
-   * paths, added to `CREDENTIAL_READ_DENY`.
+   * The operator's `[sandbox] deny_read` entries, and any workspace profile's:
+   * home-relative or absolute paths, added to the built-in credential deny list.
    */
   extraDenyRead?: readonly string[];
+  /**
+   * A workspace profile's `sandbox.require_worktree`: refuse sandboxed
+   * `git add` and `git commit` in a main checkout, on every platform. A local
+   * guard rail the operator asks for, so the work is committed through the
+   * host-side tool from a linked worktree; a linked worktree is unaffected.
+   */
+  requireWorktree?: boolean;
   readLayout?: GitLayoutReader;
   /** Target OS platform for main-checkout `.git` policy selection; defaults to `process.platform`. */
   platform?: NodeJS.Platform;
@@ -249,7 +263,9 @@ export async function compileWorkspacePolicy(
   const allowWrite = [workspace];
   const denyWrite: string[] = [join(home, ".dyfj")];
   let gitDirDenied = false;
+  let gitDirDeniedBy: WorkspacePolicy["gitDirDeniedBy"] = null;
 
+  const requireWorktree = options.requireWorktree === true;
   const layout = options.pinnedLayout !== undefined
     ? options.pinnedLayout
     : await (options.readLayout ?? readGitLayout)(
@@ -258,7 +274,15 @@ export async function compileWorkspacePolicy(
   );
   if (layout !== null) {
     const { gitDir, commonDir, topLevel, branchRef } = layout;
-    if (gitDir === commonDir) {
+    if (gitDir === commonDir && requireWorktree) {
+      // The operator asked this workspace's commits to happen from a linked
+      // worktree, so the main checkout's whole `.git` is write-denied: on every
+      // platform the sandbox's git writes fail closed, exactly as Linux
+      // `bwrap` does by default, while read-only git commands still work.
+      gitDirDenied = true;
+      gitDirDeniedBy = "require_worktree";
+      denyWrite.push(gitDir);
+    } else if (gitDir === commonDir) {
       if (platform === "darwin") {
         // A main checkout on macOS (Seatbelt): allow commits under `.git` while
         // keeping host-execution, pointer, packed-object, remote/tag/replace,
@@ -289,6 +313,7 @@ export async function compileWorkspacePolicy(
         // reads of `.git/commondir` and absent `.git/packed-refs`. Keep the
         // whole `.git` write-denied so read-only git works and writes fail closed.
         gitDirDenied = true;
+        gitDirDeniedBy = "platform";
         denyWrite.push(gitDir);
       }
     } else {
@@ -338,5 +363,6 @@ export async function compileWorkspacePolicy(
       allowRead: [],
     },
     gitDirDenied,
+    gitDirDeniedBy,
   };
 }

@@ -80,6 +80,7 @@ import {
   type RuntimePolicy,
   unavailableSecretPointers,
   type WorkbenchConfig,
+  WorkspaceProfiles,
 } from "../config/mod.ts";
 import { summarizeError, type WorkbenchSessionEvent } from "../contract/mod.ts";
 import {
@@ -281,6 +282,13 @@ export interface WorkbenchUnixServerOptions {
    * the four `dispatch/*` tools are not registered at all.
    */
   dispatch?: DispatchConfig | DispatchServerOptions;
+  /**
+   * The operator's `[[workspaces]]` profiles (BIT-982): which gate, publish,
+   * sandbox, dispatch and instruction-trust settings apply to a turn's
+   * workspace. Absent, the boot-time sections apply to every workspace, as
+   * they did before profiles existed.
+   */
+  workspaceConfig?: WorkspaceProfiles;
   /** Optional provider HTTP transport override for hermetic server tests. */
   http?: HttpTransport;
   /** Optional socket host override for in-memory server tests. */
@@ -299,11 +307,13 @@ export interface WorkbenchUnixServerOptions {
  * would name a private path. A malformed section fails the boot loudly, like
  * every other config section.
  */
-async function bootPublish(): Promise<PublishServerPorts | undefined> {
-  const config = await loadPublishConfig();
+function bootPublish(
+  config: PublishConfig | null,
+): PublishServerPorts | undefined {
   if (config === null) return undefined;
   // One registry per runtime, so a ticket and the gate it started outlive the
-  // turn that opened them.
+  // turn that opened them. A profile may declare its own ticket lifetime; the
+  // one registry takes the longest, so no profile's tickets expire early.
   console.error("dyfj runtime: publish tools enabled from [publish]");
   return { config, tickets: new PublishTickets({ ttlMs: config.ticketTtlMs }) };
 }
@@ -313,9 +323,10 @@ async function bootPublish(): Promise<PublishServerPorts | undefined> {
  * Absent, the dispatch tools are not registered. A malformed section fails the
  * boot loudly, like every other config section.
  */
-async function bootDispatch(): Promise<DispatchConfig | undefined> {
-  const config = await loadDispatchConfig();
-  if (config === null) return undefined;
+function bootDispatch(
+  config: DispatchConfig | undefined,
+): DispatchConfig | undefined {
+  if (config === undefined) return undefined;
   console.error("dyfj runtime: dispatch tools enabled from [dispatch]");
   return config;
 }
@@ -495,6 +506,7 @@ function composeTurnRuntime(
   dispatch?: DispatchService,
   http?: HttpTransport,
   gate?: GateRuntimePorts,
+  workspaceConfig?: WorkspaceProfiles,
 ): TurnRuntime {
   const reportExtraPathDropped = codexExtraPathReporter(line => console.error(line));
   const externalAgentRunner: ExternalAgentRunner = {
@@ -545,6 +557,7 @@ function composeTurnRuntime(
         }),
       ...(dispatch === undefined ? {} : { dispatch }),
       ...(gate === undefined ? {} : { gate }),
+      ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       externalAgentRunner,
       ...(env === undefined ? {} : { env }),
       ...(policy === undefined ? {} : { policy }),
@@ -675,6 +688,7 @@ export async function serveWorkbenchUnix(
       dispatchService,
       options.http,
       options.gate,
+      options.workspaceConfig,
     );
   const lifetime = new RuntimeLifetime({
     autostarted: options.autostarted === true,
@@ -805,16 +819,37 @@ async function main(): Promise<void> {
   // is an `off` sandbox, under which the tools prompt, and the line below
   // and `runtime/status` say why.
   const sandboxConfig = await loadSandboxConfig();
+  const gateConfig = await loadGateConfig();
+  const publishConfig = await loadPublishConfig();
+  const dispatchConfig = await loadDispatchConfig();
+  // Which config applies to a workspace (BIT-982): the operator's
+  // `[[workspaces]]` profile that covers the turn's root, else these globals.
+  // Built here, once, from the same sections; it reads nothing from a
+  // workspace's own files.
+  const workspaceConfig = new WorkspaceProfiles(config.workspaces, {
+    trustInstructions: config.trustWorkspaceInstructions,
+    gate: gateConfig,
+    publish: publishConfig,
+    sandbox: sandboxConfig,
+    dispatch: dispatchConfig,
+  });
   const sandbox = await bootSandbox({
     listenProbe: listenLoopbackProbe,
     env: processEnv,
     allowDomains: sandboxConfig.allowDomains,
     denyRead: sandboxConfig.denyRead,
+    allowDomainsFor: (root) => workspaceConfig.allowDomainsFor(root),
+    denyReadFor: (root) => workspaceConfig.denyReadFor(root),
+    requireWorktreeFor: (root) => workspaceConfig.requireWorktreeFor(root),
   });
   console.error(`dyfj runtime: ${describeSandbox(sandbox.status)}`);
-  const publish = await bootPublish();
-  const dispatch = await bootDispatch();
-  const gateConfig = await loadGateConfig();
+  if (config.workspaces.profiles.length > 0) {
+    console.error(
+      `dyfj runtime: ${config.workspaces.profiles.length} workspace profile(s) from [[workspaces]]`,
+    );
+  }
+  const publish = bootPublish(publishConfig);
+  const dispatch = bootDispatch(dispatchConfig ?? undefined);
   const approvals = await loadApprovalsConfig([GATE_START_APPROVALS]);
   if (approvals !== null) console.error(`dyfj runtime: [approvals] session_grantable: ${approvals.sessionGrantable.join(", ") || "(none)"}`);
   const gate = gateConfig === null ? undefined : { config: gateConfig, runs: new GateRuns(), policy, sessionGrantable: approvals?.sessionGrantable };
@@ -919,6 +954,7 @@ async function main(): Promise<void> {
       unavailableSecrets: unavailableSecretPointers(resolvedSecrets),
       externalMcp: externalMcpLines,
       sandbox,
+      ...(workspaceConfig === undefined ? {} : { workspaceConfig }),
       // Bound to the pool this runtime's store already holds, not to a second
       // connection config: one account, one pool, one answer.
       storeProbe: createStoreProbe(pool),

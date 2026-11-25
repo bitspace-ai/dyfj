@@ -58,6 +58,7 @@ import {
 import {
   type CommandSandbox,
   GIT_DIR_DENIED_NOTE,
+  gitDirDeniedNote,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import { SANDBOX_NPM_CACHE } from "./srt-policy.ts";
@@ -410,12 +411,11 @@ function sandboxedBashRunner(
     });
     if (result.code !== 0 && /\.git\b/.test(result.stderr)) {
       const policy = await sandbox.policy(root).catch(() => undefined);
-      if (policy?.gitDirDenied === true) {
+      const note = policy === undefined ? null : gitDirDeniedNote(policy);
+      if (note !== null) {
         return {
           ...result,
-          stderr: `${result.stderr}${
-            result.stderr.endsWith("\n") ? "" : "\n"
-          }${GIT_DIR_DENIED_NOTE}`,
+          stderr: `${result.stderr}${result.stderr.endsWith("\n") ? "" : "\n"}${note}`,
         };
       }
     }

@@ -102,6 +102,13 @@ interface CoordinatorContext {
   authContext: WorkbenchAuthContext;
   depth: number;
   abortSignal?: AbortSignal;
+  /**
+   * The dispatch section that applies to this coordinator's workspace: its
+   * `[[workspaces]]` profile's, when it declares one, else the global
+   * `[dispatch]`. Absent keeps the boot-time config, so a runtime without
+   * profiles behaves exactly as before.
+   */
+  config?: DispatchConfig;
 }
 
 interface StartingReservation {
@@ -214,7 +221,7 @@ export class DispatchService implements DispatchEnginePorts {
   ): DispatchSessionPorts | undefined {
     if (this.#closed || context.depth !== 0) return undefined;
     return {
-      config: this.#config,
+      config: context.config ?? this.#config,
       depth: context.depth,
       abortSignal: context.abortSignal,
       checkStart: (input) => this.#checkStart(context, input),
@@ -376,10 +383,11 @@ export class DispatchService implements DispatchEnginePorts {
 
     const live = this.#liveChildren(context.parentSessionId);
     const starting = this.#startingReservations(context.parentSessionId);
-    if (live.length + starting.size >= this.#config.maxChildren) {
+    const config = context.config ?? this.#config;
+    if (live.length + starting.size >= config.maxChildren) {
       return {
         refusal:
-          `dispatch width limit reached (${this.#config.maxChildren} live ` +
+          `dispatch width limit reached (${config.maxChildren} live ` +
           "children per coordinator session)",
       };
     }
@@ -400,7 +408,7 @@ export class DispatchService implements DispatchEnginePorts {
     ]);
 
     return await planDispatchStart({
-      config: this.#config,
+      config,
       env: this.#env,
       input,
       loadCatalog: () => this.#resolveCatalog(),
@@ -724,13 +732,14 @@ export class DispatchService implements DispatchEnginePorts {
         "child sessions cannot wait on dispatched children",
       );
     }
+    const maxWaitSeconds = (context.config ?? this.#config).maxWaitSeconds;
     if (
       !Number.isInteger(input.timeoutSeconds) ||
       input.timeoutSeconds < 1 ||
-      input.timeoutSeconds > this.#config.maxWaitSeconds
+      input.timeoutSeconds > maxWaitSeconds
     ) {
       throw new CommandExecutionError(
-        `timeoutSeconds must be an integer between 1 and ${this.#config.maxWaitSeconds}`,
+        `timeoutSeconds must be an integer between 1 and ${maxWaitSeconds}`,
       );
     }
 
@@ -896,7 +905,7 @@ export class DispatchService implements DispatchEnginePorts {
       return `child "${safeLabel}" is ${entry.state} and cannot accept a follow-up`;
     }
     const pathRefusal = await revalidateChildPaths({
-      config: this.#config,
+      config: context.config ?? this.#config,
       env: this.#env,
       workspace: entry.workspace,
       roots: entry.roots,

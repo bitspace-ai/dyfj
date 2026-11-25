@@ -723,6 +723,7 @@ function networkEntries(
 const RUN_SOURCE_PRECEDENCE: readonly RunGrantSource["kind"][] = [
   "static",
   "secrets-resolver",
+  "workspace-config",
   "runtime-executable",
   "node-path",
 ];
@@ -736,7 +737,10 @@ function executionRole(sources: readonly RunGrantSource[]): ExecutionRole {
       return "resolver";
     case "runtime-executable":
     case "node-path":
-      return "runner";
+    case "workspace-config":
+      // A workspace profile's commands are the operator's own tools: the gate
+      // and publish programs run as tools, not as the runtime itself.
+      return "tool";
   }
 }
 

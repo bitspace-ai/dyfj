@@ -151,6 +151,7 @@ export async function buildContext(
   ports: NativeTurnPorts,
 ): Promise<void> {
   await resolveWorkspace(state);
+  resolveWorkspaceConfig(state, ports);
   await admitRoots(state, input, ports);
   if (state.session.usesRepoAskContext) {
     await buildAskContext(state, input, ports);
@@ -229,6 +230,26 @@ async function resolveWorkspace(state: TurnState): Promise<void> {
   if (!usesRepoAskContext || !state.workspaceResolutionFailed) {
     log(`Workspace: ${state.workspaceRoot}\n`);
   }
+}
+
+/**
+ * Resolve which configured sections apply to this turn's workspace, once the
+ * root is final: the operator's `[[workspaces]]` profile that covers it, else
+ * the boot-time globals. It is read by the trust decision below and by the
+ * gate, publish and dispatch ports the tool catalog is built from, so one
+ * runtime serves several repositories without one project's commands or
+ * instruction elevation reaching another.
+ *
+ * The profile is matched against the root the turn RESOLVED, and it never
+ * widens what the transport allows: a workspace profile can only narrow or
+ * replace what the operator's own config already granted, and the
+ * loopback-only checks below still decide whether anything is elevated.
+ */
+function resolveWorkspaceConfig(
+  state: TurnState,
+  ports: NativeTurnPorts,
+): void {
+  state.workspaceConfig = ports.workspaceConfig?.resolve(state.workspaceRoot);
 }
 
 /**
@@ -372,7 +393,18 @@ async function buildCompanionContext(
     sessionId: session.sessionId,
     events: ports.store.events,
   });
-  const dispatchSession = dispatchDepth === 0 && transport === "loopback"
+  // A workspace profile may give its own dispatch roots, so a coordinator in
+  // one repository starts children only inside that repository's roots. With
+  // no profile matching, the boot-time `[dispatch]` applies unchanged.
+  const dispatchConfig = state.workspaceConfig?.dispatch ?? undefined;
+  // A profile may also leave this workspace without dispatch tools at all, in
+  // which case a coordinator here starts no children whatever the global
+  // `[dispatch]` says.
+  const dispatchAvailable = ports.dispatch !== undefined &&
+    (ports.workspaceConfig === undefined ||
+      (dispatchConfig !== null && dispatchConfig !== undefined));
+  const dispatchSession = dispatchDepth === 0 && transport === "loopback" &&
+      dispatchAvailable
     ? ports.dispatch?.forSession({
       parentSessionId: session.sessionId,
       traceId: session.traceId,
@@ -381,8 +413,28 @@ async function buildCompanionContext(
       authContext: session.authContext,
       depth: dispatchDepth,
       abortSignal: input.abortSignal,
+      ...(ports.workspaceConfig === undefined || dispatchConfig === null ||
+          dispatchConfig === undefined
+        ? {}
+        : { config: dispatchConfig }),
     })
     : undefined;
+  // The gate and publish tools this workspace gets: its own profile's config
+  // when it declares one, else the boot-time global. The runtime's ticket
+  // registry and spawn policy are shared either way.
+  const workspaceGate = state.workspaceConfig?.gate ?? null;
+  const workspacePublish = state.workspaceConfig?.publish ?? null;
+  const gatePorts = ports.workspaceConfig === undefined || ports.gate === undefined
+    ? ports.gate
+    : workspaceGate === null
+    ? undefined
+    : { ...ports.gate, config: workspaceGate };
+  const publishPorts =
+    ports.workspaceConfig === undefined || ports.publish === undefined
+      ? ports.publish
+      : workspacePublish === null
+      ? undefined
+      : { ...ports.publish, config: workspacePublish };
   const toolPorts: ToolCatalogPorts = {
     readMemory: (slug) => executeReadMemory(memories, slug, clearance),
     searchMemory: memoryRecall(state, input, ports),
@@ -392,10 +444,12 @@ async function buildCompanionContext(
       ? {}
       : { dialExecutor: ports.dialExecutor }),
     ...(ports.sandbox === undefined ? {} : { sandbox: ports.sandbox }),
-    ...(ports.gate === undefined ? {} : { gate: { ...ports.gate, sessionId: session.sessionId } }),
-    ...(ports.publish === undefined
+    ...(gatePorts === undefined
       ? {}
-      : { publish: { ...ports.publish, sessionId: session.sessionId } }),
+      : { gate: { ...gatePorts, sessionId: session.sessionId } }),
+    ...(publishPorts === undefined
+      ? {}
+      : { publish: { ...publishPorts, sessionId: session.sessionId } }),
     ...(dispatchSession === undefined ? {} : { dispatch: dispatchSession }),
     // The model catalog, offered on a loopback turn only: its provider rows
     // say which providers this runtime routes to (BIT-817).
@@ -544,9 +598,15 @@ async function applyAgentsInstructions(
   // workspace request suppresses injection entirely (see above): trust
   // binds to the workspace the operator selected, never to whatever
   // root the tools fell back to.
+  // The profile that covers this workspace may elevate its instructions when
+  // the operator did not elevate them globally, or decline when they did. The
+  // transport check is unchanged and comes first: a remote caller gets no
+  // elevation from any profile.
+  const trusted = state.workspaceConfig === undefined
+    ? input.trustWorkspaceInstructions === true
+    : state.workspaceConfig.trustInstructions;
   const workspaceTrustEligible =
-    state.session.authContext.transport === "loopback" &&
-    input.trustWorkspaceInstructions === true;
+    state.session.authContext.transport === "loopback" && trusted;
   if (workspaceTrustEligible && state.workspaceResolutionFailed) {
     state.session.log(
       "AGENTS.md skipped: the requested workspace failed resolution; " +

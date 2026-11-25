@@ -260,6 +260,8 @@ function fakeSrt(overrides: Partial<SrtLibrary> = {}): SrtLibrary {
     checkDependencies: () => ({ errors: [] }),
     initialize: () => Promise.resolve(),
     wrapWithSandbox: (command) => Promise.resolve(command),
+    registerCommandNetworkLists: () => {},
+    unregisterCommandNetworkLists: () => {},
     cleanupAfterCommand: () => {},
     reset: () => Promise.resolve(),
     ...overrides,
@@ -399,6 +401,7 @@ function recordingSandbox(
       Promise.resolve({
         filesystem: { allowWrite: [], denyWrite: [], denyRead: [], allowRead: [] },
         gitDirDenied: opts.gitDirDenied ?? false,
+        gitDirDeniedBy: opts.gitDirDenied === true ? "platform" : null,
       }),
     runShell: (command) => {
       ran.push(command);
@@ -648,5 +651,175 @@ describe("the unsandboxed escape", () => {
   it("is offered only on the sandboxed route", () => {
     const native = defineBash(base, { env: new MapEnv({}) });
     assert.equal("unsandboxed" in (native.inputSchema.properties ?? {}), false);
+  });
+});
+
+/**
+ * A PATH whose `bash` reports a `/dev/tcp` connect as succeeding and otherwise
+ * runs the real bash: the probe's control connect passes, and its writes and
+ * its sandboxed connect really happen.
+ */
+function pathWithProbeBash(): string {
+  const bin = join(base, "bin-probe");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "bash"),
+    `#!/bin/sh\ncase "$*" in *"/dev/tcp/"*) exit 0;; esac\nexec ${
+      process.env.BASH_REAL ?? "/bin/bash"
+    } "$@"\n`,
+    { mode: 0o755 },
+  );
+  return `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`;
+}
+
+/**
+ * The probe's two listeners: the first (its control connect, outside the
+ * sandbox) has accepted, every later one (the sandboxed attempt) has not, so
+ * the probe's own refusal check is the one under test.
+ */
+function probeListeners() {
+  let calls = 0;
+  return () =>
+    Promise.resolve({
+      port: 9,
+      accepted: () => calls++ === 0,
+      close: () => {},
+    });
+}
+
+describe("per-workspace sandbox settings", () => {
+  /** A wrap that satisfies the boot probe: the direct connect is refused. */
+  const probeSatisfyingWrap = (command: string): Promise<string> =>
+    Promise.resolve(
+      command.includes("/dev/tcp/") || command.includes("outside")
+        ? "exit 1"
+        : `true; ${command}`,
+    );
+
+  it("a workspace's allow_domains rides registerCommandNetworkLists, not the boot allowlist", async () => {
+    const registered: { id: string; domains: string[] }[] = [];
+    const unregistered: string[] = [];
+    const wrapped: { id: string | undefined }[] = [];
+    const sandbox = await bootSandbox({
+      listenProbe: probeListeners(),
+      env: new MapEnv({ PATH: pathWithProbeBash() }),
+      srt: fakeSrt({
+        wrapWithSandbox: (command, _shell, _config, _signal, options) => {
+          wrapped.push({ id: options?.commandId });
+          return probeSatisfyingWrap(command);
+        },
+        registerCommandNetworkLists: (id, lists) => {
+          registered.push({ id, domains: [...(lists.allowedDomains ?? [])] });
+        },
+        unregisterCommandNetworkLists: (id) => {
+          unregistered.push(id);
+        },
+      }),
+      scratchDir: join(base, "scratch"),
+      readLayout: layout(null),
+      // A per-workspace extra domain, resolved by the runtime for the root the
+      // run names.
+      allowDomainsFor: (root) =>
+        Promise.resolve(root === base ? ["static.crates.io"] : []),
+    });
+    assert.equal(sandbox.status.state, "on", JSON.stringify(sandbox.status));
+    const probeCount = registered.length;
+    await sandbox.runShell("true", {
+      root: base,
+      cwd: base,
+      timeoutMs: 5_000,
+      env: {},
+    });
+    const forRun = registered.slice(probeCount);
+    assert.equal(forRun.length, 1, JSON.stringify(registered));
+    assert.deepEqual(forRun[0]!.domains, ["static.crates.io"]);
+    // The id is unguessable: at least 22 base64url characters.
+    assert.match(forRun[0]!.id, /^[A-Za-z0-9_-]{22,}$/);
+    assert.deepEqual(unregistered.slice(-1), [forRun[0]!.id]);
+    assert.equal(wrapped.at(-1)?.id, forRun[0]!.id);
+    // A second run gets a different id: the attribution key is per command.
+    await sandbox.runShell("true", {
+      root: base,
+      cwd: base,
+      timeoutMs: 5_000,
+      env: {},
+    });
+    assert.notEqual(registered.at(-1)!.id, forRun[0]!.id);
+    // Unless a run's own registration is withdrawn, it never widens another.
+    assert.deepEqual(
+      [...new Set(unregistered)].length,
+      unregistered.length,
+      "each registration is withdrawn once",
+    );
+  });
+
+  it("a workspace with no extra domains registers nothing and passes no command id", async () => {
+    let registrations = 0;
+    const ids: (string | undefined)[] = [];
+    const sandbox = await bootSandbox({
+      listenProbe: probeListeners(),
+      env: new MapEnv({ PATH: pathWithProbeBash() }),
+      srt: fakeSrt({
+        wrapWithSandbox: (command, _shell, _config, _signal, options) => {
+          ids.push(options?.commandId);
+          return probeSatisfyingWrap(command);
+        },
+        registerCommandNetworkLists: () => {
+          registrations += 1;
+        },
+      }),
+      scratchDir: join(base, "scratch"),
+      readLayout: layout(null),
+      allowDomainsFor: () => Promise.resolve([]),
+    });
+    assert.equal(sandbox.status.state, "on", JSON.stringify(sandbox.status));
+    const before = registrations;
+    ids.length = 0;
+    await sandbox.runShell("true", { root: base, cwd: base, timeoutMs: 5_000, env: {} });
+    assert.equal(registrations, before);
+    assert.deepEqual(ids, [undefined]);
+  });
+
+  it("require_worktree write-denies the git directory of a main checkout", async () => {
+    const gitDir = join(base, ".git");
+    mkdirSync(gitDir);
+    const mainLayout: GitLayout = {
+      gitDir,
+      commonDir: gitDir,
+      topLevel: base,
+      branchRef: "refs/heads/main",
+    };
+    const loose = await compileWorkspacePolicy(base, {
+      home: "/fake-home",
+      platform: "darwin",
+      readLayout: layout(mainLayout),
+    });
+    const strict = await compileWorkspacePolicy(base, {
+      home: "/fake-home",
+      platform: "darwin",
+      readLayout: layout(mainLayout),
+      requireWorktree: true,
+    });
+    assert.equal(loose.gitDirDenied, false);
+    assert.equal(strict.gitDirDenied, true);
+    assert.ok(strict.filesystem.denyWrite.includes(gitDir), "the whole git dir is denied");
+  });
+
+  it("require_worktree leaves a linked worktree alone", async () => {
+    const common = join(base, ".git");
+    const wt = join(base, "wt");
+    mkdirSync(common, { recursive: true });
+    mkdirSync(wt);
+    const policy = await compileWorkspacePolicy(wt, {
+      home: "/fake-home",
+      readLayout: layout({
+        gitDir: join(common, "worktrees", "wt"),
+        commonDir: common,
+        topLevel: wt,
+        branchRef: "refs/heads/agent/x",
+      }),
+      requireWorktree: true,
+    });
+    assert.equal(policy.gitDirDenied, false);
   });
 });

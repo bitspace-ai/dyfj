@@ -187,6 +187,12 @@ export interface DispatchSessionFactory {
     authContext: WorkbenchAuthContext;
     depth: number;
     abortSignal?: AbortSignal;
+    /**
+     * The dispatch section that applies to this coordinator's workspace: its
+     * `[[workspaces]]` profile's when it declares one. Absent keeps the
+     * runtime's boot-time `[dispatch]`.
+     */
+    config?: DispatchConfig;
   }): DispatchSessionPorts | undefined;
 }
 

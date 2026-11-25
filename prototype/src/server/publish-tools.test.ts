@@ -8,6 +8,7 @@ const CONFIG: PublishConfig = {
   preGate: ["./pre-gate", "--range={range}"],
   gate: ["./gate", "--report={report}"],
   reportPath: "/tmp/dyfj-publish/{ticket}.log",
+  baseRef: "origin/main",
   gateTimeoutMs: 600_000,
   ticketTtlMs: 3_600_000,
 };

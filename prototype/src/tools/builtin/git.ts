@@ -93,7 +93,7 @@ import type { CommandDefinition } from "../definition.ts";
 import { createContainment } from "./containment.ts";
 import {
   type CommandSandbox,
-  GIT_DIR_DENIED_NOTE,
+  gitDirDeniedNote,
   sandboxContainment,
 } from "./srt-sandbox.ts";
 import {
@@ -762,13 +762,15 @@ export function defineGit(
       // operator-facing message on `add`/`commit` instead of a bare git error.
       if (
         sandbox !== undefined &&
-        GIT_WRITE_SUBCOMMANDS.has(String(call.arguments.subcommand)) &&
-        (await sandbox.policy(root).catch(() => undefined))?.gitDirDenied ===
-          true
+        GIT_WRITE_SUBCOMMANDS.has(String(call.arguments.subcommand))
       ) {
-        return `error: refusing to run git ${
-          String(call.arguments.subcommand)
-        } in the sandbox: ${GIT_DIR_DENIED_NOTE.replace(/^note: /, "")}`;
+        const readPolicy = await sandbox.policy(root).catch(() => undefined);
+        const note = readPolicy === undefined ? null : gitDirDeniedNote(readPolicy);
+        if (note !== null) {
+          return `error: refusing to run git ${
+            String(call.arguments.subcommand)
+          } in the sandbox: ${note.replace(/^note: /, "")}`;
+        }
       }
       return executeGit(root, {
         subcommand: call.arguments.subcommand,

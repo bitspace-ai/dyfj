@@ -70,8 +70,8 @@ export function defineGateTools(deps: GateToolDeps): CommandDefinition<GateView>
     catch (error) { return (error as Error).message; }
   };
   const start: CommandDefinition<GateView> = {
-    ...GATE_START_APPROVALS, sessionGrantable: deps.sessionGrantable, title: "Run gate (full runs worktree code on the host, outside any sandbox)",
-    description: "Start the configured gate and return a run id immediately. Full runs worktree code on the host, outside any sandbox, and requires a reason and approval unless the operator opted in and granted full mode for this session. Files runs selected test files under srt; fast runs the configured fast command under srt without paths. Only one run per session may be active.",
+    ...GATE_START_APPROVALS, sessionGrantable: deps.sessionGrantable, title: "Run gate (full runs workspace code on the host, outside any sandbox)",
+    description: "Start the configured gate and return a run id immediately. Full runs workspace code on the host, outside any sandbox, and requires a reason and approval unless the operator opted in and granted full mode for this session. Files runs selected test files under srt; fast runs the configured fast command under srt without paths. Only one run per session may be active.",
     inputSchema: { type: "object", required: ["mode"], properties: {
       mode: { type: "string", enum: modes },
       paths: { type: "array", items: { type: "string" }, maxItems: 100, description: "Non-empty workspace-relative files, for files mode only; refused for full and fast." },
