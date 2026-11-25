@@ -354,10 +354,25 @@ function bashApprovalTitle(call: CommandCall, maxSec: number): string {
 // ── Command definition ───────────────────────────────────────────────────────
 
 /** Which runner a bash call goes through. */
-type BashRoute = "native" | "contained" | "sandboxed";
+export type BashRoute = "native" | "contained" | "sandboxed";
+
+/**
+ * The route a `bash` call takes from the runtime's environment and sandbox,
+ * shared by `defineBash` and the workspace grounding so the model is told the
+ * containment its commands actually have. With an executor socket the
+ * commands run in the isolated machine and never here, whatever else is set;
+ * without it, a sandbox whose boot probe passed runs them; otherwise the
+ * native route prompts.
+ */
+export function resolveBashRoute(
+  opts: { env?: Env; sandbox?: CommandSandbox } = {},
+): BashRoute {
+  if (executorSocket(opts.env) !== undefined) return "contained";
+  return opts.sandbox?.status.state === "on" ? "sandboxed" : "native";
+}
 
 /** What the command can reach, as the model is told it. */
-function bashReach(route: BashRoute): string {
+export function bashReach(route: BashRoute): string {
   return route === "contained"
     ? ". The command runs in the isolated executor: its writes persist only " +
       "in the workspace (it also has private scratch space that is discarded " +
@@ -521,15 +536,8 @@ export function defineBash(
   // passed runs every command (BIT-662); a sandbox that is off leaves the
   // native route, where every call that is not read-only asks.
   const socket = executorSocket(opts.env);
-  const contained = socket !== undefined;
-  const sandbox = !contained && opts.sandbox?.status.state === "on"
-    ? opts.sandbox
-    : undefined;
-  const route: BashRoute = contained
-    ? "contained"
-    : sandbox !== undefined
-    ? "sandboxed"
-    : "native";
+  const route = resolveBashRoute(opts);
+  const sandbox = route === "sandboxed" ? opts.sandbox : undefined;
   const runner = route === "native"
     ? opts.runner
     : route === "sandboxed"
@@ -541,12 +549,12 @@ export function defineBash(
   // a longer deadline than the default (`deriveApprovalEnvelope`), so a longer
   // one is refused as an argument the model can correct, not asked for
   // (BIT-796).
-  const maxSec = contained ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
+  const maxSec = route === "contained" ? DEFAULT_TIMEOUT_SEC : MAX_TIMEOUT_SEC;
   // Contained, approval comes from the attested envelope (BIT-736), and the
   // read-only classifier is not used: it stays for the native route only.
   const containment = route === "sandboxed"
     ? { ...sandboxContainment(sandbox!), escapesSandbox: asksUnsandboxed }
-    : !contained
+    : route !== "contained"
     ? undefined
     : createContainment(socket!, opts.dialExecutor, {
       defaultCommandTimeoutMs: DEFAULT_TIMEOUT_MS,
@@ -624,7 +632,7 @@ export function defineBash(
         timeoutMs: timeout.timeoutMs,
         runner: unsandboxed
           ? opts.runner
-          : contained && runner !== undefined
+          : route === "contained" && runner !== undefined
           ? (command, at, timeoutMs, env) =>
             runner(command, at, timeoutMs, env, context.binding)
           : runner,

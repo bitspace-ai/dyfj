@@ -60,12 +60,6 @@ export interface PackedContext {
 
 export type AskContextProfile = "compact" | "full";
 
-const WORKBENCH_NOTE_PATHS = [
-  "notes/workbench-mvp-loop.md",
-  "notes/cost-visibility-surface.md",
-  "notes/events-as-substrate.md",
-];
-
 const README_PATHS = ["README.md", "README", "README.rst"];
 
 const PROJECT_MANIFEST_PATHS = [
@@ -493,7 +487,7 @@ export async function findRepoRoot(
 
     const parent = path.dirname(current);
     if (parent === current) {
-      throw new Error(`Could not find DYFJ repo root from ${startDir}`);
+      throw new Error(`Could not find a workspace root from ${startDir}`);
     }
     current = parent;
   }
@@ -583,28 +577,6 @@ export async function loadAskRepoContext(options: {
     });
   }
 
-  for (const notePath of WORKBENCH_NOTE_PATHS) {
-    const note = await readWorkspaceContextFile(
-      repoRoot,
-      notePath,
-      rootIdentity,
-    );
-    if (!note) continue;
-    const isExcerpt = profile === "compact" || note.clipped;
-    sections.push({
-      title: isExcerpt ? `${notePath} excerpt` : notePath,
-      body: profile === "compact"
-        ? buildNoteExcerpt(notePath, note.body)
-        : note.body,
-      bucket: "active_repo",
-      source: {
-        kind: "file",
-        label: isExcerpt ? `${notePath} excerpt` : notePath,
-        path: notePath,
-      },
-    });
-  }
-
   const manifest = await readFirstWorkspaceContextFile(
     repoRoot,
     PROJECT_MANIFEST_PATHS,
@@ -677,61 +649,14 @@ function contextBudgetFromEnv(
 }
 
 function buildAgentsExcerpt(agents: string): string {
-  const projectDoc = agents.split("--- project-doc ---").at(1)?.trim();
-  if (!projectDoc) return buildGenericFileExcerpt(agents, 280);
-  return firstMatchingLines(projectDoc, [
-    "README.md",
-    "Section 1",
-    "authoritative",
-    "private tracker",
-    "Acyclic",
-    "DAGs",
-  ], 280);
+  return buildGenericFileExcerpt(agents, 280);
 }
 
 function buildReadmeSection1Excerpt(section: string): string {
-  return firstMatchingLines(section, [
-    "## 1. Decisions",
-    "Layer 0",
-    "Goal 1",
-    "local-first",
-    "policy",
-    "authority",
-    "boundaries",
-  ], 450);
-}
-
-function buildNoteExcerpt(notePath: string, body: string): string {
-  const hints = notePath.includes("cost")
-    ? ["cost", "paid", "budget", "receipt", "tier"]
-    : notePath.includes("events")
-    ? ["event", "trace", "receipt", "session"]
-    : ["workbench", "loop", "companion", "repo", "next"];
-  return firstMatchingLines(body, hints, 500);
+  return buildGenericFileExcerpt(section, 450);
 }
 
 function buildGenericFileExcerpt(body: string, maxChars = 1_500): string {
-  return body.trim().slice(0, maxChars).trimEnd();
-}
-
-function firstMatchingLines(
-  body: string,
-  hints: string[],
-  maxChars: number,
-): string {
-  const loweredHints = hints.map((hint) => hint.toLowerCase());
-  const selected: string[] = [];
-  for (const line of body.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const lowered = trimmed.toLowerCase();
-    if (loweredHints.some((hint) => lowered.includes(hint))) {
-      selected.push(trimmed);
-    }
-    const joined = selected.join("\n");
-    if (joined.length >= maxChars) return joined.slice(0, maxChars).trimEnd();
-  }
-
   return body.trim().slice(0, maxChars).trimEnd();
 }
 

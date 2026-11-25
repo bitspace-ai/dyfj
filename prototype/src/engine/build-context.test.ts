@@ -578,8 +578,8 @@ test("buildWorkspaceGrounding surfaces the mutating tools so the model acts, not
   assert.match(grounding, /approves|approval|prompts/i);
 });
 
-test("buildWorkspaceGrounding does not present bash as workspace-contained (it is not sandboxed)", () => {
-  const grounding = buildWorkspaceGrounding();
+test("buildWorkspaceGrounding describes bash as uncontained only on the native route", () => {
+  const grounding = buildWorkspaceGrounding("native");
   // bash is honestly described as uncontained, not lumped with the file tools.
   assert.match(grounding, /not sandboxed/i);
   assert.match(grounding, /anywhere on the machine/i);
@@ -587,6 +587,53 @@ test("buildWorkspaceGrounding does not present bash as workspace-contained (it i
   // are introduced before bash.
   const [beforeBash] = grounding.split("bash");
   assert.match(beforeBash, /cannot escape/i);
+});
+
+test("buildWorkspaceGrounding describes bash as sandboxed when the srt sandbox runs its commands", () => {
+  const grounding = buildWorkspaceGrounding("sandboxed");
+  // The claim follows the containment the tools actually have: a sandboxed
+  // bash is confined, and the grounding must not tell the model otherwise.
+  assert.match(grounding, /OS sandbox/i);
+  assert.match(grounding, /never GitHub/);
+  assert.ok(!/NOT sandboxed/i.test(grounding));
+  assert.ok(!/anywhere on the machine/i.test(grounding));
+});
+
+test("buildWorkspaceGrounding describes bash as contained when the isolated executor runs its commands", () => {
+  const grounding = buildWorkspaceGrounding("contained");
+  assert.match(grounding, /isolated executor/i);
+  assert.ok(!/NOT sandboxed/i.test(grounding));
+  assert.ok(!/anywhere on the machine/i.test(grounding));
+});
+
+test("a companion turn grounds bash in the containment the ports actually have", async () => {
+  await using root = await tempWorkspace();
+
+  const sandboxedFakes = enginePorts();
+  const sandboxed = await runContext({ rootOverride: root.root }, {
+    ...sandboxedFakes,
+    ports: {
+      ...sandboxedFakes.ports,
+      sandbox: {
+        status: { state: "on", backend: "test" },
+        policy: () => Promise.reject(new Error("not used")),
+        runShell: () => Promise.reject(new Error("not used")),
+        runArgv: () => Promise.reject(new Error("not used")),
+      },
+    },
+  });
+  assert.match(sandboxed.state.systemPrompt, /OS sandbox/i);
+  assert.ok(!/NOT sandboxed/i.test(sandboxed.state.systemPrompt));
+
+  const contained = await runContext(
+    { rootOverride: root.root },
+    enginePorts({ env: { DYFJ_EXECUTOR_SOCKET: "/run/exec/exec.sock" } }),
+  );
+  assert.match(contained.state.systemPrompt, /isolated executor/i);
+  assert.ok(!/NOT sandboxed/i.test(contained.state.systemPrompt));
+
+  const native = await runContext({ rootOverride: root.root });
+  assert.match(native.state.systemPrompt, /NOT sandboxed/i);
 });
 
 // ─── dyfj dev boot-failure block ─────────────────────────────────────────────

@@ -50,7 +50,7 @@ target/
 .antigravitycli/
 
 # Local security-review receipts — kept out of the public tree.
-# The Codex Security push gate is satisfied via DYFJ_SECURITY_PUSH_BYPASS
-# with the value-free evidence event recorded in the private dyfj-home guardrail store.
+# The security push gate is satisfied by an explicit, value-free bypass with
+# the evidence recorded outside this repository.
 .dyfj/
 

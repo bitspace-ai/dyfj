@@ -385,11 +385,17 @@ Otherwise it names the first missing or mismatched package and says to run
 checks those direct dependencies only, not that `node_modules` matches
 `package-lock.json`.
 
-The last line enables the repository's git hooks, which keep AI-tool
-attribution out of history (see `AGENTS.md`, Documentation Discipline):
-`commit-msg` refuses a commit authored or committed under an AI tool's identity
-and strips tool-attribution trailers from its message, and `pre-push` refuses
-to publish commits that still carry either.
+The last line enables the repository's git hooks. `commit-msg` and `pre-push`
+keep AI-tool attribution out of history (see `AGENTS.md`, Documentation
+Discipline): `commit-msg` refuses a commit authored or committed under an AI
+tool's identity and strips tool-attribution trailers from its message, and
+`pre-push` refuses to publish commits that still carry either. `pre-commit`
+keeps work off `main`: a commit made directly on `main` is refused, because
+work lands on a branch and reaches `main` by merge
+([`docs/agents/rooms.md`](docs/agents/rooms.md)). Feature branches, a linked
+worktree's session branch and a detached `HEAD` are unaffected, since only the
+branch name `main` matches. For a deliberate commit on `main`, set
+`DYFJ_ALLOW_MAIN_COMMIT=1` in the environment of that commit.
 
 `dyfj` (the launcher, below) runs the Workbench. The diagnostics, the event
 check, the smoke example, the Codex login and the memory-recall fixture are npm

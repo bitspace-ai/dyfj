@@ -11,6 +11,17 @@ README are tracked separately in its Revision history section.
 
 ### Added
 
+- **A `pre-commit` hook that keeps work off `main` (`BIT-983`).** With
+  `core.hooksPath` set to `.githooks`, a commit made directly on `main` is
+  refused with a message pointing at a branch and at the maintainer's escape:
+  `DYFJ_ALLOW_MAIN_COMMIT=1` in the environment of that commit allows it. Only
+  the branch name `main` matches, so a feature branch, a linked worktree's
+  session branch and a detached `HEAD` are unaffected. Because every harness in
+  a checkout passes the same hooks, the repository's branch rule now holds for
+  all of them rather than only for the ones whose own tooling enforced it.
+  Documented in the root README beside `commit-msg` and `pre-push`, and covered
+  by `scripts/git-hooks.test.ts`.
+
 - **Operator global instructions on native loopback companion turns (`BIT-981`).**
   An optional `[context] operator_instructions` setting in `~/.dyfj/config.toml`
   (overridable via `DYFJ_OPERATOR_INSTRUCTIONS`, accepting `~/` expansion or an
@@ -756,6 +767,26 @@ README are tracked separately in its Revision history section.
   come from.
 
 ### Changed
+
+- **Repo context carries no assumptions about this repository (`BIT-983`).**
+  The `ask` and `next-work` context loader no longer hardcodes this project's
+  note paths (`notes/workbench-mvp-loop.md`, `notes/cost-visibility-surface.md`,
+  `notes/events-as-substrate.md`) or its excerpt keywords. A selected workspace
+  contributes what it actually has: its `AGENTS.md`, a README (Section 1 when
+  the README has one, otherwise the README's head), the first project manifest
+  that exists, and a compact excerpt of each. The loader's not-found error now
+  reads `Could not find a workspace root from <dir>` instead of naming this
+  product. The `.gitignore` entry for `.dyfj/` describes what it holds without
+  naming a private store, and the `[dispatch]` config example uses a generic
+  `~/worktrees` root.
+
+- **Workspace grounding states bash's real containment (`BIT-983`).** The
+  companion grounding said `bash` is not sandboxed even when the `srt` sandbox
+  or the isolated executor runs its commands. It now takes the same route the
+  `bash` tool resolves from the engine's ports and describes the reach that
+  route actually has: the executor's workspace-and-scratch confinement with no
+  network, the OS sandbox's write and domain limits, or the unsandboxed native
+  route. Covered by unit tests per route and by a whole-turn case.
 
 - **Sandboxed git writes in a main checkout (`BIT-980`).** On macOS (Seatbelt),
   Workbench now allows sandboxed `git add` and `git commit` in a normal main
