@@ -307,6 +307,47 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
       execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
     });
 
+    it("a linked-worktree commit reports no packed-refs.lock denial", async () => {
+      // The sandbox grants a linked worktree writes to its own branch ref, that
+      // ref's lock and its reflog, and denies the rest of the shared git
+      // directory. Git's commit path (2.56.1) deletes AUTO_MERGE afterwards,
+      // and the files ref backend takes the shared `packed-refs` lock while
+      // setting that transaction up, before it decides whether a packed
+      // transaction is needed at all; that write is denied by policy, git
+      // prints the denial, and the commit still succeeds. The denial is
+      // correct and stays denied — what must not happen is an error line on a
+      // successful commit, where an agent reads failure and retries.
+      const git = defineGit(W, { env, sandbox });
+      writeFileSync(join(W, "f.txt"), "second change\n");
+      const added = String(await git.executor(
+        call("git", { subcommand: "add", paths: ["f.txt"] }),
+        { authzBasis: "policy:allow:sandboxed" },
+      ));
+      assert.match(added, /^exit 0/, added);
+      const committed = String(await git.executor(
+        call("git", { subcommand: "commit", message: "no ref-lock noise" }),
+        { authzBasis: "policy:allow:sandboxed" },
+      ));
+      assert.match(committed, /^exit 0/, committed);
+      assert.doesNotMatch(
+        committed,
+        /packed-refs\.lock/,
+        `a successful commit carried a ref-lock denial:\n${committed}`,
+      );
+      assert.equal(
+        hostGit(main, "log", "-1", "--format=%s", "session"),
+        "no ref-lock noise",
+      );
+      // The denial itself stays in force: the shared packed-refs file is
+      // still write-denied to the sandbox, which is why the line appeared.
+      const pack = await bash(`git pack-refs --all`, W);
+      assert.ok(
+        /Operation not permitted|Read-only file system/.test(pack),
+        `expected the shared packed-refs write to stay denied:\n${pack}`,
+      );
+      execFileSync("git", ["-C", main, "fsck", "--no-dangling"]);
+    });
+
     it("write_file in the worktree runs in the sandbox and succeeds", async () => {
       const anchors = new RootAnchors();
       const write = defineWriteFile(anchors.root(W), { env, sandbox });

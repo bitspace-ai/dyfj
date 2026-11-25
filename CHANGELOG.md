@@ -906,6 +906,24 @@ README are tracked separately in its Revision history section.
 
 ### Fixed
 
+- **A successful linked-worktree commit no longer reports a ref-lock error
+  (`BIT-959`).** Git's commit path (2.56.1) deletes `AUTO_MERGE` after the
+  commit via `sequencer_post_commit_cleanup`, and the files ref backend takes
+  the shared `packed-refs` lock while setting that transaction up, before it
+  decides whether a packed transaction is needed at all. The sandbox grants a
+  linked worktree writes to its own branch ref, its lock and its reflog, and
+  denies the rest of the shared git directory, so that lock attempt fails and
+  git prints `Unable to create '<git dir>/packed-refs.lock'` while still
+  exiting 0. The `git` tool now drops that one line from the standard error of
+  a sandboxed `commit` run that exited 0, and only when the reason is a sandbox
+  denial (`Operation not permitted`, `Read-only file system`, `Permission
+  denied`). Standard output is never filtered, so a `diff` context line that
+  looks like the diagnostic survives verbatim. A stale lock, any other git
+  error, a non-commit subcommand, an unsandboxed or isolated-executor run, and
+  every failed, timed-out or signal-killed run keep their lines. The denial
+  itself is unchanged: the shared `packed-refs` file stays write-denied, and
+  the srt policy is untouched.
+
 - **Accurate REPL reconnect notice for runner sessions (`BIT-957`).** After a
   runtime restart, an open REPL reports that a runner session resumed, names
   the runner that records no model, and says the next turn uses this REPL's

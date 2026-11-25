@@ -378,6 +378,213 @@ describe("executeGit", () => {
     );
   });
 
+  // Git's own commit path (observed on 2.56.1) deletes AUTO_MERGE after a
+  // commit, and the files ref backend takes the SHARED `packed-refs` lock while
+  // setting that transaction up — before it decides whether a packed
+  // transaction is needed. The sandbox write-denies that lock in a linked
+  // worktree on purpose, so git prints the denial and still exits 0.
+  const REF_LOCK_LINE =
+    "error: Unable to create '/repo/.git/packed-refs.lock': Operation not permitted";
+
+  /** A runner whose commit run answers with the given stdout and stderr. */
+  function commitRunner(
+    result: { stdout?: string; stderr?: string; code?: number } = {},
+  ): GitRunner {
+    return (args) =>
+      Promise.resolve(
+        args.includes("rev-parse")
+          // The best-effort subdirectory probe answers with the workspace
+          // itself, so only the commit's own output is under test.
+          ? {
+            code: 0,
+            signal: null,
+            stdout: `${ROOT}\n`,
+            stderr: "",
+            timedOut: false,
+          }
+          : {
+            code: result.code ?? 0,
+            signal: null,
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+            timedOut: false,
+          },
+      );
+  }
+
+  it("a successful sandboxed commit drops the packed-refs lock denial", async () => {
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "a subject" },
+      {
+        runner: commitRunner({
+          stdout:
+            "[session abc1234] a subject\n 1 file changed, 1 insertion(+)\n",
+          stderr: `${REF_LOCK_LINE}\n`,
+        }),
+        sandboxed: true,
+      },
+    );
+    assert.strictEqual(
+      out,
+      "exit 0\n[session abc1234] a subject\n 1 file changed, 1 insertion(+)",
+      `expected the denial to be dropped, got ${JSON.stringify(out)}`,
+    );
+  });
+
+  it("the filter covers each sandbox denial wording", async () => {
+    for (
+      const reason of [
+        "Operation not permitted",
+        "Read-only file system",
+        "Permission denied",
+      ]
+    ) {
+      const out = await executeGit(
+        ROOT,
+        { subcommand: "commit", message: "msg" },
+        {
+          runner: commitRunner({
+            stderr:
+              `error: Unable to create '/repo/.git/packed-refs.lock': ${reason}\n`,
+          }),
+          sandboxed: true,
+        },
+      );
+      assert.strictEqual(
+        out,
+        "exit 0",
+        `expected the ${reason} denial to be dropped, got ${
+          JSON.stringify(out)
+        }`,
+      );
+    }
+  });
+
+  it("a denial line ending in CR is dropped, and stdout is untouched", async () => {
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "msg" },
+      {
+        runner: commitRunner({
+          stdout: "submitted\n",
+          stderr: `${REF_LOCK_LINE}\r\n`,
+        }),
+        sandboxed: true,
+      },
+    );
+    assert.strictEqual(out, "exit 0\nsubmitted", out);
+  });
+
+  it("standard output is never filtered: a diff context line survives verbatim", async () => {
+    // The dangerous case the stdout filter got wrong: a result whose own text
+    // looks like the diagnostic must reach the model unchanged, indentation
+    // included. `git diff` is where such a line actually comes from.
+    const contextLine =
+      " error: Unable to create '/repo/.git/packed-refs.lock': Operation not permitted";
+    const stdout = [
+      "diff --git a/notes.md b/notes.md",
+      "--- a/notes.md",
+      "+++ b/notes.md",
+      "@@ -1,3 +1,3 @@",
+      contextLine,
+      "-old line",
+      "+new line",
+      "  error: Unable to create '/repo/.git/packed-refs.lock': File exists.",
+      "",
+    ].join("\n");
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "msg" },
+      {
+        runner: commitRunner({ stdout, stderr: `${REF_LOCK_LINE}\n` }),
+        sandboxed: true,
+      },
+    );
+    assert.strictEqual(
+      out,
+      `exit 0\n${stdout}`.trimEnd(),
+      `expected the diff context lines to survive, got ${JSON.stringify(out)}`,
+    );
+    assert.ok(out.includes(contextLine), out);
+  });
+
+  it("an unsandboxed run keeps every line, the denial included", async () => {
+    for (const sandboxed of [undefined, false]) {
+      const out = await executeGit(
+        ROOT,
+        { subcommand: "commit", message: "msg" },
+        {
+          runner: commitRunner({
+            stdout: "submitted\n",
+            stderr: `${REF_LOCK_LINE}\n`,
+          }),
+          ...(sandboxed === undefined ? {} : { sandboxed }),
+        },
+      );
+      assert.strictEqual(
+        out,
+        `exit 0\nsubmitted\n${REF_LOCK_LINE}`,
+        `expected an unsandboxed run to keep the line, got ${
+          JSON.stringify(out)
+        }`,
+      );
+    }
+  });
+
+  it("a non-commit subcommand under the sandbox keeps every line", async () => {
+    const { runner } = recordingRunner({
+      code: 0,
+      stdout: "text\n",
+      stderr: `${REF_LOCK_LINE}\n`,
+    });
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "diff" },
+      { runner, sandboxed: true },
+    );
+    assert.strictEqual(
+      out,
+      `exit 0\ntext\n${REF_LOCK_LINE}`,
+      `expected a diff to keep the line, got ${JSON.stringify(out)}`,
+    );
+  });
+
+  it("a failed run keeps the ref-lock line and every other error", async () => {
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "msg" },
+      {
+        runner: commitRunner({
+          code: 1,
+          stderr: `${REF_LOCK_LINE}\nfatal: not a git repository\n`,
+        }),
+        sandboxed: true,
+      },
+    );
+    assert.ok(out.includes("Unable to create"), out);
+    assert.ok(out.includes("not a git repository"), out);
+    assert.match(out, /^exit 1/, out);
+  });
+
+  it("a stale ref lock is not the sandbox's denial and keeps its line", async () => {
+    const out = await executeGit(
+      ROOT,
+      { subcommand: "commit", message: "a subject" },
+      {
+        runner: commitRunner({
+          stdout: "[session abc1234] a subject\n",
+          stderr:
+            "error: Unable to create '/repo/.git/packed-refs.lock': File exists.\n\n" +
+            "Another git process seems to be running in this repository, or the lock file may be stale\n",
+        }),
+        sandboxed: true,
+      },
+    );
+    assert.ok(out.includes("Unable to create"), out);
+    assert.ok(out.includes("Another git process"), out);
+  });
+
   it("a non-zero exit returns status and stderr rather than throwing", async () => {
     const { runner } = recordingRunner({
       code: 1,

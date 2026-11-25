@@ -36,6 +36,27 @@
  * helpers) run inside that sandbox (`sandboxedRunner`), and the policy may
  * allow the call without a prompt under the operator posture.
  *
+ * One git message is filtered from a successful sandboxed commit. The cause is
+ * in git's own commit path (observed on git 2.56.1): `cmd_commit` calls
+ * `sequencer_post_commit_cleanup`, which unconditionally deletes `AUTO_MERGE`.
+ * That delete is a ref transaction, and the files ref backend takes the shared
+ * `packed-refs` lock while setting the transaction up, before it decides
+ * whether a packed transaction is needed at all. In a linked worktree under
+ * srt the shared git directory is write-denied on purpose, so the lock attempt
+ * fails and git prints `error: Unable to create '…/packed-refs.lock': …` while
+ * the commit itself has already succeeded — git exits 0. Reporting that as an
+ * error on a successful commit is what makes a reader retry or stop.
+ *
+ * The filter is scoped exactly to `commit` under the sandbox (`executeGit`'s
+ * `sandboxed` option), to a run that exited 0 with no signal and no timeout,
+ * and to standard error alone, applied before stderr is joined to stdout — so
+ * stdout, and every line of a non-commit result, is returned verbatim. A line
+ * is dropped only when it is that exact OS denial: `Operation not permitted`,
+ * `Read-only file system` or `Permission denied`. No `git -c` flag suppresses
+ * the line (`gc.packRefs`, `maintenance.pack-refs.enabled`,
+ * `core.logAllRefUpdates` and the `refs.*` knobs were all tried), which is why
+ * the filter is here rather than in the argv.
+ *
  * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
  * git's whole process group, hooks and their children included, is stopped and
  * output written after the deadline is dropped. A process that leaves the group
@@ -445,6 +466,61 @@ function sandboxedRunner(
 const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
 
 /**
+ * The ref-lock denial srt causes during a successful sandboxed commit, and
+ * nothing else.
+ *
+ * The cause is in git's own commit path (observed on git 2.56.1): `cmd_commit`
+ * calls `sequencer_post_commit_cleanup`, which unconditionally deletes
+ * `AUTO_MERGE`. That delete is a ref transaction, and the files ref backend
+ * takes the shared `packed-refs` lock while setting the transaction up —
+ * before it decides whether a packed transaction is needed at all. In a linked
+ * worktree the sandbox grants writes to that branch's own ref, its lock and
+ * its reflog, and write-denies the rest of the shared git directory, so the
+ * lock attempt fails, git prints this line, and the commit still exits 0.
+ * Dropping the line is a reporting fix, not a permission change: the write
+ * stays denied.
+ *
+ * The match is deliberately narrow, so a real failure is never hidden:
+ *
+ * - the line must be the whole `error:` line for a `packed-refs.lock` path;
+ * - the reason must be one of the sandbox's own denial wordings, which is what
+ *   distinguishes a policy denial from a stale lock (`File exists`) or any
+ *   other git error, and those keep their line;
+ * - the caller applies it only to `git commit`, only when the tool runs under
+ *   the sandbox, and only to a run that exited 0.
+ */
+const REF_LOCK_DENIAL =
+  /^error: Unable to create '.*\/packed-refs\.lock': (?:Operation not permitted|Read-only file system|Permission denied)$/;
+
+/**
+ * Drop the harmless ref-lock denial lines from a successful commit's STANDARD
+ * ERROR, before it is joined to standard output.
+ *
+ * stderr is the whole of what is filtered: standard output is returned
+ * verbatim, so a diff context line that happens to look like this diagnostic
+ * survives, and so does every line of a `diff` result. Matching trims only a
+ * trailing carriage return, never leading whitespace, so a context line's
+ * indentation cannot make or break a match. A run that failed, timed out or
+ * died on a signal keeps every line: the filter only applies where git itself
+ * reported success.
+ */
+function filterRefLockDenial(
+  stderr: string,
+  res: {
+    code: number | null;
+    signal: string | null;
+    timedOut: boolean;
+  },
+): string {
+  if (res.code !== 0 || res.signal !== null || res.timedOut) return stderr;
+  if (!stderr.includes("packed-refs.lock")) return stderr;
+  return stderr
+    .split("\n")
+    .filter((line) => !REF_LOCK_DENIAL.test(line.replace(/\r$/, "")))
+    .join("\n");
+}
+
+/**
  * Run one allowed git operation and return a single string carrying the exit
  * status and combined stdout/stderr. On the normal path the collected body is
  * clipped to a byte cap, with the status line and any notice added outside it.
@@ -463,7 +539,17 @@ const GIT_WRITE_SUBCOMMANDS: ReadonlySet<string> = new Set(["add", "commit"]);
 export async function executeGit(
   root: string,
   args: GitArguments,
-  opts: { timeoutMs?: number; maxBytes?: number; runner?: GitRunner } = {},
+  opts: {
+    timeoutMs?: number;
+    maxBytes?: number;
+    runner?: GitRunner;
+    /**
+     * Whether this call runs under the srt sandbox. The ref-lock reporting fix
+     * is the sandbox's own denial, so it applies nowhere else: an unsandboxed
+     * or isolated-executor run keeps every line git printed.
+     */
+    sandboxed?: boolean;
+  } = {},
 ): Promise<string> {
   const plan = buildGitArgv(root, args);
   if (plan.error !== undefined) return plan.error;
@@ -508,9 +594,16 @@ export async function executeGit(
     return `error: cannot run git: ${(err as Error).message}`;
   }
 
+  // The sandbox's reporting fix, applied only where it can be the sandbox's
+  // own denial: a commit, run under the sandbox, that reported success. It
+  // filters stderr alone, before the join, so standard output is never touched.
+  const stderr = opts.sandboxed === true && args.subcommand === "commit"
+    ? filterRefLockDenial(res.stderr, res)
+    : res.stderr;
+
   let body = res.stdout;
-  if (res.stderr) {
-    body += (body && !body.endsWith("\n") ? "\n" : "") + res.stderr;
+  if (stderr) {
+    body += (body && !body.endsWith("\n") ? "\n" : "") + stderr;
   }
   // Byte-bounded, not `.length`-bounded: a UTF-16 slice would let a multibyte
   // diff return several times the named ceiling.
@@ -683,9 +776,12 @@ export function defineGit(
         message: call.arguments.message,
         staged: call.arguments.staged,
         limit: call.arguments.limit,
-      }, runner === undefined ? {} : {
-        runner: (args, cwd, timeoutMs) =>
-          runner(args, cwd, timeoutMs, context.binding),
+      }, {
+        ...(runner === undefined ? {} : {
+          runner: (args: readonly string[], cwd: string, timeoutMs: number) =>
+            runner(args, cwd, timeoutMs, context.binding),
+        }),
+        sandboxed: sandbox !== undefined,
       });
     },
   };
