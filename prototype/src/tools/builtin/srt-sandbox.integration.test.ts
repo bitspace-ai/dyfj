@@ -310,9 +310,11 @@ describe("the srt sandbox (BIT-662 acceptance)", { skip }, () => {
     it("a linked-worktree commit reports no packed-refs.lock denial", async () => {
       // The sandbox grants a linked worktree writes to its own branch ref, that
       // ref's lock and its reflog, and denies the rest of the shared git
-      // directory. After the ref update, git opportunistically takes the shared
-      // `packed-refs` lock to tidy loose refs; that write is denied by policy,
-      // git prints the denial, and the commit still succeeds. The denial is
+      // directory. Git's commit path (2.56.1) deletes AUTO_MERGE afterwards,
+      // and the files ref backend takes the shared `packed-refs` lock while
+      // setting that transaction up, before it decides whether a packed
+      // transaction is needed at all; that write is denied by policy, git
+      // prints the denial, and the commit still succeeds. The denial is
       // correct and stays denied — what must not happen is an error line on a
       // successful commit, where an agent reads failure and retries.
       const git = defineGit(W, { env, sandbox });
