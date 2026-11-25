@@ -36,17 +36,26 @@
  * helpers) run inside that sandbox (`sandboxedRunner`), and the policy may
  * allow the call without a prompt under the operator posture.
  *
- * One git message is filtered from a successful run: after a ref update git
- * tries to take the shared `packed-refs` lock, and in a linked worktree under
- * srt the shared git directory is write-denied on purpose, so that optional
- * lock fails and git prints `error: Unable to create '…/packed-refs.lock':
- * …`. The ref update itself has already succeeded and git exits 0. Reporting
- * that as an error on a successful commit is what makes a reader retry or
- * stop, so the line is dropped when, and only when, the run exited 0 without a
- * signal and the message is that exact OS denial. No `git -c` flag suppresses
- * it (`gc.packRefs`, `maintenance.pack-refs.enabled`, `core.logAllRefUpdates`
- * and the `refs.*` knobs were all tried), which is why the filter is here
- * rather than in the argv.
+ * One git message is filtered from a successful sandboxed commit. The cause is
+ * in git's own commit path (observed on git 2.56.1): `cmd_commit` calls
+ * `sequencer_post_commit_cleanup`, which unconditionally deletes `AUTO_MERGE`.
+ * That delete is a ref transaction, and the files ref backend takes the shared
+ * `packed-refs` lock while setting the transaction up, before it decides
+ * whether a packed transaction is needed at all. In a linked worktree under
+ * srt the shared git directory is write-denied on purpose, so the lock attempt
+ * fails and git prints `error: Unable to create '…/packed-refs.lock': …` while
+ * the commit itself has already succeeded — git exits 0. Reporting that as an
+ * error on a successful commit is what makes a reader retry or stop.
+ *
+ * The filter is scoped exactly to `commit` under the sandbox (`executeGit`'s
+ * `sandboxed` option), to a run that exited 0 with no signal and no timeout,
+ * and to standard error alone, applied before stderr is joined to stdout — so
+ * stdout, and every line of a non-commit result, is returned verbatim. A line
+ * is dropped only when it is that exact OS denial: `Operation not permitted`,
+ * `Read-only file system` or `Permission denied`. No `git -c` flag suppresses
+ * the line (`gc.packRefs`, `maintenance.pack-refs.enabled`,
+ * `core.logAllRefUpdates` and the `refs.*` knobs were all tried), which is why
+ * the filter is here rather than in the argv.
  *
  * It shares `bash`'s process runner (`bounded-process.ts`): at the timeout,
  * git's whole process group, hooks and their children included, is stopped and
